@@ -1,5 +1,14 @@
 // Generated-compatible server helpers available before cloud codegen.
 // `convex dev` may replace this file with Convex's standard generated output.
+import type {
+  GenericActionCtx,
+  GenericDatabaseReader,
+  GenericDatabaseWriter,
+  GenericMutationCtx,
+  GenericQueryCtx,
+} from "convex/server";
+import type { DataModel } from "../lib/dataModel";
+
 export {
   action,
   internalAction,
@@ -9,10 +18,8 @@ export {
   query,
 } from "../lib/server";
 
-export type {
-  GenericActionCtx as ActionCtx,
-  GenericDatabaseReader as DatabaseReader,
-  GenericDatabaseWriter as DatabaseWriter,
-  GenericMutationCtx as MutationCtx,
-  GenericQueryCtx as QueryCtx,
-} from "convex/server";
+export type QueryCtx = GenericQueryCtx<DataModel>;
+export type MutationCtx = GenericMutationCtx<DataModel>;
+export type ActionCtx = GenericActionCtx<DataModel>;
+export type DatabaseReader = GenericDatabaseReader<DataModel>;
+export type DatabaseWriter = GenericDatabaseWriter<DataModel>;
