@@ -13,6 +13,7 @@ This first slice includes:
 - a SQLite-backed item and event ledger
 - projects, actors, tasks, findings, questions, decisions, handoffs, tips, and notes
 - deterministic project briefs for actors entering work midstream
+- a deterministic custodian report for expired, stale, vague, and duplicate work
 - atomic claims with renewable, expiring leases
 - automatic recovery of abandoned claims when work is read or listed
 - explicit handoff, block, unblock, release, and completion actions
@@ -106,6 +107,38 @@ curl 'http://localhost:3000/api/projects/scrapbook/brief?limit=10'
 ```
 
 The limit applies independently to each section and accepts values from 1 through 100. Counts always cover the full project.
+
+## Run the custodian
+
+The custodian revives expired claims and emits a JSON cleanup report. It flags:
+
+- active claims expiring soon
+- actionable work with no next action
+- ready or blocked work older than a chosen age
+- open items in the same project with the same normalized title
+
+Run it against the default database:
+
+```bash
+bun run custodian
+```
+
+Inspect one project and choose the time windows:
+
+```bash
+bun run custodian \
+  --project scrapbook \
+  --stale-days 14 \
+  --expiring-within 10
+```
+
+Use it in CI or cron with a nonzero exit status when findings exist:
+
+```bash
+bun run custodian --fail-on-findings
+```
+
+Exit status `2` means the report contains findings. Exit status `1` means the command itself failed. The custodian changes only expired claims; every other finding remains a report for a human or agent to resolve explicitly.
 
 ## REST API
 
@@ -257,14 +290,14 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 4. Handoffs always carry a summary and an explicit next action.
 5. Blocked work records why it stopped and releases its claim.
 6. Artifacts remain pointers with explicit provenance.
-7. Every meaningful change leaves an event behind.
-8. Retryable clients should provide idempotency keys for writes.
-9. The server performs no model calls.
+7. Custodian checks report problems before taking broader action.
+8. Every meaningful change leaves an event behind.
+9. Retryable clients should provide idempotency keys for writes.
+10. The server performs no model calls.
 
 ## Near-term work
 
 - authentication, workspace boundaries, and scoped tokens
-- a custodian client that tidies duplicate and abandoned work
 
 ## License
 
