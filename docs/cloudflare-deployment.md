@@ -39,24 +39,27 @@ Verify the public endpoint:
 curl http://localhost:8787/health
 ```
 
-## Configure production secrets
+## First production deployment
 
-Set the Convex URL and service secret as encrypted Worker bindings. Wrangler prompts for each value and does not require putting them in shell history.
+The Wrangler configuration declares both production bindings as required. Upload them alongside the first deployment so no incomplete Worker version is created.
+
+Create an untracked `.env.production` file:
+
+```dotenv
+CONVEX_URL=https://resilient-donkey-323.convex.cloud
+STENSIBLY_SERVICE_SECRET=the-exact-secret-configured-in-convex-production
+```
+
+Deploy the Worker and encrypted bindings together:
 
 ```bash
-bunx wrangler secret put CONVEX_URL
-bunx wrangler secret put STENSIBLY_SERVICE_SECRET
+bunx wrangler deploy --secrets-file .env.production
+rm .env.production
 ```
 
-Use the production Convex URL, such as:
+The `.env.production` file is ignored by Git, but delete it immediately after a successful deployment. Do not create a second service-secret value.
 
-```text
-https://resilient-donkey-323.convex.cloud
-```
-
-Use the exact service secret already configured in the production Convex deployment. Do not create a second value.
-
-## Deploy
+For later code-only deployments, the existing Worker secrets are preserved:
 
 ```bash
 bun run worker:deploy
