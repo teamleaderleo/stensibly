@@ -20,7 +20,7 @@ export function createServerApp(
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
 
-  app.use("*", createCorsMiddleware(options.corsOrigins ?? []));
+  app.use("/api/*", createCorsMiddleware(options.corsOrigins ?? []));
 
   app.all("/mcp", (context) =>
     handleMcpHttpRequest(store, context.req.raw, options.mcp),
