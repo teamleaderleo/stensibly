@@ -28,12 +28,15 @@ export function createHttpAuthMiddleware(
     ? new SqliteTokenProvider(source)
     : source;
   return async (context, next) => {
-    context.set("principal", null);
     if (!options.required || context.req.path === "/health") {
+      if (context.get("principal") === undefined) {
+        context.set("principal", null);
+      }
       await next();
       return;
     }
 
+    context.set("principal", null);
     const authorization = context.req.header("Authorization");
     const token = parseBearerToken(authorization);
     const principal = token ? await authenticator.authenticate(token) : null;
