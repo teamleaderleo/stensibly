@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { ActorInput } from "./schemas.ts";
-import { ConflictError, StensiblyStore } from "./store.ts";
+import { z } from "zod";
+import { actorSchema, type ActorInput } from "./schemas.ts";
+import { ConflictError, NotFoundError, StensiblyStore } from "./store.ts";
 
 export const artifactKinds = [
   "file",
@@ -13,6 +14,15 @@ export const artifactKinds = [
   "dataset",
   "other",
 ] as const;
+
+export const attachArtifactSchema = z.object({
+  actor: actorSchema,
+  kind: z.enum(artifactKinds),
+  label: z.string().trim().min(1).max(240),
+  uri: z.string().trim().min(1).max(4096),
+  mimeType: z.string().trim().min(1).max(255).optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
 
 export type ArtifactKind = (typeof artifactKinds)[number];
 
@@ -147,7 +157,7 @@ export function getArtifact(store: StensiblyStore, id: string): Artifact {
   const row = store.db
     .query<ArtifactRow, [string]>("SELECT * FROM artifacts WHERE id = ?1")
     .get(id);
-  if (!row) throw new ConflictError(`Artifact ${id} does not exist`);
+  if (!row) throw new NotFoundError(`Artifact ${id} does not exist`);
   return mapArtifact(row);
 }
 
