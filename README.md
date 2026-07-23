@@ -18,13 +18,14 @@ This first slice includes:
 - automatic recovery of abandoned claims when work is read or listed
 - explicit handoff, block, unblock, release, and completion actions
 - first-class references to files, URLs, commits, issues, documents, images, logs, and datasets
+- opt-in Bearer authentication with hashed, revocable, project-scoped API tokens
 - idempotency keys for retry-safe writes
 - append-only item history
 - a tiny browser board
 - a JSON REST API
 - an MCP stdio server for local agent clients
 
-It currently has **zero authentication** and should be treated as a local development service.
+HTTP authentication stays disabled by default for local development. Enable it before exposing the web process beyond a trusted machine.
 
 ## Run the web board
 
@@ -42,6 +43,52 @@ The default database is `./stensibly.sqlite`. Override it with:
 ```bash
 STENSIBLY_DB=/somewhere/else/stensibly.sqlite bun run start
 ```
+
+## Protect the HTTP server
+
+Create a token in the same SQLite database the server will use:
+
+```bash
+STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
+  bun run tokens create \
+  --name local-agent \
+  --scopes read,write \
+  --projects scrapbook
+```
+
+The command prints the raw token once. Stensibly stores its SHA-256 hash, token metadata, scopes, and project allowlist.
+
+Start the server with authentication required:
+
+```bash
+STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
+STENSIBLY_REQUIRE_AUTH=true \
+  bun run start
+```
+
+Send the token as a Bearer credential:
+
+```bash
+curl http://localhost:3000/api/items \
+  -H "authorization: Bearer $STENSIBLY_TOKEN"
+```
+
+Available scopes:
+
+- `read` — board, briefs, item details, events, and artifact references
+- `write` — item creation and every mutation
+- `admin` — grants both read and write; reserved for broader administration later
+
+A token created with `--projects scrapbook,another-project` can access only those projects. Omit `--projects`, or use `--all-projects`, for an unrestricted project list.
+
+List token metadata or revoke a token:
+
+```bash
+bun run tokens list
+bun run tokens revoke tok_TOKEN_ID
+```
+
+Revocation takes effect on the next request. Token listings never reveal the raw secret. `/health` remains public; the board and every `/api` route require a token while `STENSIBLY_REQUIRE_AUTH=true`.
 
 ## Connect an MCP client
 
@@ -84,7 +131,7 @@ The MCP server exposes:
 - `list_artifacts`
 - `complete_work`
 
-The web server and MCP server can point at the same SQLite file. SQLite WAL mode lets both processes participate in the same scrapbook.
+The web server and MCP server can point at the same SQLite file. SQLite WAL mode lets both processes participate in the same scrapbook. The stdio MCP process is a local trusted client and does not use HTTP Bearer authentication.
 
 ## Enter a project
 
@@ -114,7 +161,7 @@ The custodian revives expired claims and emits a JSON cleanup report. It flags:
 
 - active claims expiring soon
 - actionable work with no next action
-- ready or blocked work older than a chosen age
+- actionable ready or blocked work older than a chosen age
 - open items in the same project with the same normalized title
 
 Run it against the default database:
@@ -291,13 +338,15 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 5. Blocked work records why it stopped and releases its claim.
 6. Artifacts remain pointers with explicit provenance.
 7. Custodian checks report problems before taking broader action.
-8. Every meaningful change leaves an event behind.
-9. Retryable clients should provide idempotency keys for writes.
-10. The server performs no model calls.
+8. HTTP tokens store hashed secrets and carry explicit action and project scopes.
+9. Every meaningful change leaves an event behind.
+10. Retryable clients should provide idempotency keys for writes.
+11. The server performs no model calls.
 
 ## Near-term work
 
-- authentication, workspace boundaries, and scoped tokens
+- first-class workspace boundaries
+- Streamable HTTP MCP after host validation and authentication policy settle
 
 ## License
 
