@@ -5,19 +5,15 @@ import {
   principalHasScope,
   type TokenPrincipal,
 } from "./auth.ts";
+import type { WorkLedger } from "./ledger.ts";
 import { createMcpServer } from "./mcp.ts";
-import { NotFoundError, StensiblyStore } from "./store.ts";
+import { SqliteWorkLedger } from "./sqlite-ledger.ts";
+import { StensiblyStore } from "./store.ts";
 
 export interface McpHttpOptions {
   allowedOrigins?: string[];
   allowedHosts?: string[];
-}
-
-interface JsonRpcRequest {
-  jsonrpc?: unknown;
-  id?: unknown;
-  method?: unknown;
-  params?: unknown;
+  ledger?: WorkLedger;
 }
 
 interface AccessRule {
@@ -61,7 +57,7 @@ const itemTools = new Set([
 ]);
 
 export async function handleMcpHttpRequest(
-  store: StensiblyStore,
+  authStore: StensiblyStore,
   request: Request,
   options: McpHttpOptions = {},
 ): Promise<Response> {
@@ -78,7 +74,7 @@ export async function handleMcpHttpRequest(
   if (hostDenied) return hostDenied;
 
   const token = parseBearerToken(request.headers.get("authorization"));
-  const principal = token ? authenticateApiToken(store, token) : null;
+  const principal = token ? authenticateApiToken(authStore, token) : null;
   if (!principal) {
     return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
       "WWW-Authenticate": "Bearer",
@@ -92,10 +88,11 @@ export async function handleMcpHttpRequest(
     return jsonRpcError(400, -32700, "Parse error: Invalid JSON", null);
   }
 
-  const denial = authorizePayload(store, principal, body);
+  const ledger = options.ledger ?? new SqliteWorkLedger(authStore);
+  const denial = await authorizePayload(ledger, principal, body);
   if (denial) return denial;
 
-  const server = createMcpServer(store);
+  const server = createMcpServer(ledger);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -112,43 +109,44 @@ export async function handleMcpHttpRequest(
   }
 }
 
-function authorizePayload(
-  store: StensiblyStore,
+async function authorizePayload(
+  ledger: WorkLedger,
   principal: TokenPrincipal,
   payload: unknown,
-): Response | null {
+): Promise<Response | null> {
   if (Array.isArray(payload)) {
     for (const message of payload) {
-      const denial = authorizeMessage(store, principal, message);
+      const denial = await authorizeMessage(ledger, principal, message);
       if (denial) return denial;
     }
     return null;
   }
-  return authorizeMessage(store, principal, payload);
+  return await authorizeMessage(ledger, principal, payload);
 }
 
-function authorizeMessage(
-  store: StensiblyStore,
+async function authorizeMessage(
+  ledger: WorkLedger,
   principal: TokenPrincipal,
   payload: unknown,
-): Response | null {
+): Promise<Response | null> {
   if (!isRecord(payload) || payload.method !== "tools/call") return null;
 
   const params = isRecord(payload.params) ? payload.params : {};
   const toolName = typeof params.name === "string" ? params.name : "";
   const args = isRecord(params.arguments) ? params.arguments : {};
-  const rule = resolveAccessRule(store, principal, toolName, args);
-  if (!rule) return null;
+  const scope = toolScope(toolName);
+  if (!scope) return null;
 
-  if (!principalHasScope(principal, rule.scope)) {
+  if (!principalHasScope(principal, scope)) {
     return jsonRpcError(
       403,
       -32001,
-      `Token requires ${rule.scope} scope`,
+      `Token requires ${scope} scope`,
       requestId(payload),
     );
   }
 
+  const rule = await resolveAccessRule(ledger, principal, toolName, args, scope);
   if (rule.requireProject && !rule.project) {
     return jsonRpcError(
       400,
@@ -170,19 +168,19 @@ function authorizeMessage(
   return null;
 }
 
-function resolveAccessRule(
-  store: StensiblyStore,
+function toolScope(toolName: string): "read" | "write" | null {
+  if (readTools.has(toolName)) return "read";
+  if (writeTools.has(toolName)) return "write";
+  return null;
+}
+
+async function resolveAccessRule(
+  ledger: WorkLedger,
   principal: TokenPrincipal,
   toolName: string,
   args: Record<string, unknown>,
-): AccessRule | null {
-  const scope = readTools.has(toolName)
-    ? "read"
-    : writeTools.has(toolName)
-    ? "write"
-    : null;
-  if (!scope) return null;
-
+  scope: "read" | "write",
+): Promise<AccessRule> {
   if (toolName === "get_brief" || toolName === "create_item") {
     return {
       scope,
@@ -203,10 +201,9 @@ function resolveAccessRule(
     const id = stringArgument(args, "id");
     if (!id) return { scope };
     try {
-      return { scope, project: store.getItem(id).project };
-    } catch (error) {
-      if (error instanceof NotFoundError) return { scope };
-      throw error;
+      return { scope, project: (await ledger.getItem(id)).item.project };
+    } catch {
+      return { scope };
     }
   }
 

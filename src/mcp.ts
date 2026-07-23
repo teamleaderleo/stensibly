@@ -1,24 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import {
-  artifactKinds,
-  attachArtifact,
-  listArtifacts,
-} from "./artifacts.ts";
-import { getProjectBrief } from "./briefs.ts";
-import { expireClaims, renewClaim } from "./leases.ts";
+import { artifactKinds } from "./artifacts.ts";
+import type { WorkLedger } from "./ledger.ts";
 import {
   actorSchema,
   itemKinds,
   itemStatuses,
 } from "./schemas.ts";
-import {
-  StensiblyStore,
-  type ItemStatus,
-} from "./store.ts";
-import { blockWork, handoffWork, unblockWork } from "./transitions.ts";
 
-export function createMcpServer(store: StensiblyStore): McpServer {
+export function createMcpServer(ledger: WorkLedger): McpServer {
   const server = new McpServer(
     { name: "stensibly", version: "0.0.1" },
     {
@@ -39,62 +29,49 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Get a compact project briefing with counts, ready work, active claims, blockers, knowledge, recent completions, and recent artifacts.",
       inputSchema: {
-        project: z
-          .string()
-          .trim()
-          .min(1)
-          .max(80)
-          .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug"),
+        project: projectSchema(),
         limit: z.number().int().min(1).max(100).default(10),
       },
+      annotations: { readOnlyHint: true },
     },
-    async ({ project, limit }) => asToolResult(() => getProjectBrief(store, project, limit)),
+    async ({ project, limit }) => asToolResult(() => ledger.getBrief(project, limit)),
   );
 
   server.registerTool(
     "list_work",
     {
-      description: "List current work, optionally filtered by project and status. Expired claims return to ready work first.",
+      description: "List current work, optionally filtered by project and status.",
       inputSchema: {
         project: z.string().trim().min(1).max(80).optional(),
         status: z.enum(itemStatuses).optional(),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ project, status }) =>
-      asToolResult(() => {
-        expireClaims(store);
-        return store.listItems({
-          ...(project ? { project } : {}),
-          ...(status ? { status: status as ItemStatus } : {}),
-        });
-      }),
+      asToolResult(() => ledger.listWork({
+        ...(project ? { project } : {}),
+        ...(status ? { status } : {}),
+      })),
   );
 
   server.registerTool(
     "get_item",
     {
-      description: "Read one item together with its event history and artifact references. Expired claims are persisted first.",
-      inputSchema: { id: z.string().trim().min(1) },
+      description: "Read one item together with its event history, artifact references, runs, and dependencies.",
+      inputSchema: { id: idSchema() },
+      annotations: { readOnlyHint: true },
     },
-    async ({ id }) =>
-      asToolResult(() => {
-        expireClaims(store);
-        return {
-          item: store.getItem(id),
-          events: store.listEvents(id),
-          artifacts: listArtifacts(store, id),
-        };
-      }),
+    async ({ id }) => asToolResult(() => ledger.getItem(id)),
   );
 
   server.registerTool(
     "list_artifacts",
     {
       description: "List every artifact reference attached to one work item.",
-      inputSchema: { id: z.string().trim().min(1) },
+      inputSchema: { id: idSchema() },
       annotations: { readOnlyHint: true },
     },
-    async ({ id }) => asToolResult(() => listArtifacts(store, id)),
+    async ({ id }) => asToolResult(() => ledger.listArtifacts(id)),
   );
 
   server.registerTool(
@@ -102,30 +79,18 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Attach a pointer to a file, URL, commit, issue, document, image, log, dataset, or other output.",
       inputSchema: {
-        id: z.string().trim().min(1),
+        id: idSchema(),
         actor: actorSchema,
         kind: z.enum(artifactKinds),
         label: z.string().trim().min(1).max(240),
         uri: z.string().trim().min(1).max(4096),
         mimeType: z.string().trim().min(1).max(255).optional(),
         metadata: z.record(z.string(), z.unknown()).default({}),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, kind, label, uri, mimeType, metadata, idempotencyKey }) =>
-      asToolResult(() =>
-        attachArtifact(store, {
-          itemId: id,
-          actor,
-          kind,
-          label,
-          uri,
-          metadata,
-          ...(mimeType ? { mimeType } : {}),
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        }),
-      ),
+    async (input) => asToolResult(() => ledger.attachArtifact(input)),
   );
 
   server.registerTool(
@@ -133,59 +98,38 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Create a task, finding, question, decision, tip, handoff, or note.",
       inputSchema: {
-        project: z
-          .string()
-          .trim()
-          .min(1)
-          .max(80)
-          .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug"),
+        project: projectSchema(),
         kind: z.enum(itemKinds).default("task"),
         title: z.string().trim().min(1).max(240),
         summary: z.string().trim().max(10_000).optional(),
         nextAction: z.string().trim().max(2_000).optional(),
         priority: z.number().int().min(0).max(100).default(50),
         actor: actorSchema.optional(),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ idempotencyKey, ...input }) =>
-      asToolResult(() => store.createItem(input, idempotencyKey)),
+    async (input) => asToolResult(() => ledger.createItem(input)),
   );
 
   server.registerTool(
     "claim_work",
     {
       description: "Atomically claim an item for a limited lease. A competing live claim returns an error.",
-      inputSchema: {
-        id: z.string().trim().min(1),
-        actor: actorSchema,
-        leaseSeconds: z.number().int().min(30).max(86_400).default(900),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
-      },
+      inputSchema: claimSchema(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, leaseSeconds, idempotencyKey }) =>
-      asToolResult(() => {
-        expireClaims(store);
-        return store.claimItem(id, actor, leaseSeconds, idempotencyKey);
-      }),
+    async (input) => asToolResult(() => ledger.claimWork(input)),
   );
 
   server.registerTool(
     "renew_claim",
     {
       description: "Extend a live claim held by the same actor.",
-      inputSchema: {
-        id: z.string().trim().min(1),
-        actor: actorSchema,
-        leaseSeconds: z.number().int().min(30).max(86_400).default(900),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
-      },
+      inputSchema: claimSchema(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, leaseSeconds, idempotencyKey }) =>
-      asToolResult(() => renewClaim(store, id, actor, leaseSeconds, idempotencyKey)),
+    async (input) => asToolResult(() => ledger.renewClaim(input)),
   );
 
   server.registerTool(
@@ -193,26 +137,16 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Release work to ready state with a compact summary and an explicit next action.",
       inputSchema: {
-        id: z.string().trim().min(1),
+        id: idSchema(),
         actor: actorSchema,
         summary: z.string().trim().min(1).max(10_000),
         nextAction: z.string().trim().min(1).max(2_000),
         toActorId: z.string().trim().min(1).max(120).optional(),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, summary, nextAction, toActorId, idempotencyKey }) =>
-      asToolResult(() =>
-        handoffWork(store, {
-          id,
-          actor,
-          summary,
-          nextAction,
-          ...(toActorId ? { toActorId } : {}),
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        }),
-      ),
+    async (input) => asToolResult(() => ledger.handoffWork(input)),
   );
 
   server.registerTool(
@@ -220,24 +154,15 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Mark work blocked, record the reason, and release any current lease.",
       inputSchema: {
-        id: z.string().trim().min(1),
+        id: idSchema(),
         actor: actorSchema,
         reason: z.string().trim().min(1).max(10_000),
         nextAction: z.string().trim().min(1).max(2_000).optional(),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, reason, nextAction, idempotencyKey }) =>
-      asToolResult(() =>
-        blockWork(store, {
-          id,
-          actor,
-          reason,
-          ...(nextAction ? { nextAction } : {}),
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        }),
-      ),
+    async (input) => asToolResult(() => ledger.blockWork(input)),
   );
 
   server.registerTool(
@@ -245,40 +170,24 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Return blocked work to ready state and optionally replace its next action.",
       inputSchema: {
-        id: z.string().trim().min(1),
+        id: idSchema(),
         actor: actorSchema,
         nextAction: z.string().trim().min(1).max(2_000).optional(),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, nextAction, idempotencyKey }) =>
-      asToolResult(() =>
-        unblockWork(store, {
-          id,
-          actor,
-          ...(nextAction ? { nextAction } : {}),
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        }),
-      ),
+    async (input) => asToolResult(() => ledger.unblockWork(input)),
   );
 
   server.registerTool(
     "release_work",
     {
       description: "Release an item currently claimed by this actor and return it to ready work.",
-      inputSchema: {
-        id: z.string().trim().min(1),
-        actor: actorSchema,
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
-      },
+      inputSchema: actorActionSchema(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, idempotencyKey }) =>
-      asToolResult(() => {
-        expireClaims(store);
-        return store.releaseItem(id, actor, idempotencyKey);
-      }),
+    async (input) => asToolResult(() => ledger.releaseWork(input)),
   );
 
   server.registerTool(
@@ -286,24 +195,15 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Append progress, a discovery, a warning, or another event to an item's history.",
       inputSchema: {
-        id: z.string().trim().min(1),
+        id: idSchema(),
         actor: actorSchema.optional(),
         type: z.string().trim().min(1).max(120).regex(/^[a-z0-9._-]+$/),
         payload: z.record(z.string(), z.unknown()).default({}),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, type, payload, idempotencyKey }) =>
-      asToolResult(() =>
-        store.recordEvent({
-          itemId: id,
-          ...(actor ? { actor } : {}),
-          type,
-          payload,
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        }),
-      ),
+    async (input) => asToolResult(() => ledger.recordEvent(input)),
   );
 
   server.registerTool(
@@ -311,27 +211,53 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       description: "Complete an item, clear its lease, and optionally replace its summary.",
       inputSchema: {
-        id: z.string().trim().min(1),
-        actor: actorSchema,
+        ...actorActionSchema(),
         summary: z.string().trim().max(10_000).optional(),
-        idempotencyKey: z.string().trim().min(1).max(240).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ id, actor, summary, idempotencyKey }) =>
-      asToolResult(() => {
-        expireClaims(store);
-        return store.completeItem(id, actor, summary, idempotencyKey);
-      }),
+    async (input) => asToolResult(() => ledger.completeWork(input)),
   );
 
   return server;
 }
 
-function asToolResult(read: () => unknown) {
+function projectSchema() {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug");
+}
+
+function idSchema() {
+  return z.string().trim().min(1);
+}
+
+function idempotencySchema() {
+  return z.string().trim().min(1).max(240).optional();
+}
+
+function actorActionSchema() {
+  return {
+    id: idSchema(),
+    actor: actorSchema,
+    idempotencyKey: idempotencySchema(),
+  };
+}
+
+function claimSchema() {
+  return {
+    ...actorActionSchema(),
+    leaseSeconds: z.number().int().min(30).max(86_400).default(900),
+  };
+}
+
+async function asToolResult(read: () => Promise<unknown>) {
   try {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(read(), null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(await read(), null, 2) }],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
