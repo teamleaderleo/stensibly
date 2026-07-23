@@ -148,8 +148,11 @@ function bearer(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
-async function json<T>(responsePromise: Promise<Response>, expectedStatus = 200): Promise<T> {
-  const response = await responsePromise;
+async function json<T>(
+  responseValue: Response | Promise<Response>,
+  expectedStatus = 200,
+): Promise<T> {
+  const response = await responseValue;
   const body = await response.json() as T;
   expect(response.status).toBe(expectedStatus);
   return body;
