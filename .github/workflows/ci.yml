@@ -21,7 +21,7 @@ jobs:
       - name: Run Bun tests
         run: |
           set -o pipefail
-          bun test 2>&1 | tee test-output.txt
+          bun run test 2>&1 | tee test-output.txt
       - name: Run Convex tests
         run: |
           set -o pipefail
