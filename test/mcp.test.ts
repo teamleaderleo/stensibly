@@ -12,7 +12,7 @@ const browserAgent = {
 };
 
 describe("MCP work surface", () => {
-  test("carries work through claims, handoffs, blocking, and completion", async () => {
+  test("carries work, artifacts, handoffs, blocking, and completion", async () => {
     const store = new StensiblyStore(":memory:");
     const server = createMcpServer(store);
     const client = new Client(
@@ -27,12 +27,14 @@ describe("MCP work surface", () => {
 
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+        "attach_artifact",
         "block_work",
         "claim_work",
         "complete_work",
         "create_item",
         "get_item",
         "handoff_work",
+        "list_artifacts",
         "list_work",
         "record_event",
         "release_work",
@@ -117,6 +119,39 @@ describe("MCP work surface", () => {
         }),
       );
       expect(recorded.type).toBe("progress.recorded");
+
+      const artifact = parseTextJson<{
+        id: string;
+        kind: string;
+        actorId: string;
+        metadata: Record<string, unknown>;
+      }>(
+        await client.callTool({
+          name: "attach_artifact",
+          arguments: {
+            id: created.id,
+            actor: browserAgent,
+            kind: "commit",
+            label: "MCP implementation",
+            uri: "git:teamleaderleo/stensibly@mcp123",
+            metadata: { sha: "mcp123" },
+            idempotencyKey: "mcp-artifact-1",
+          },
+        }),
+      );
+      expect(artifact).toMatchObject({
+        kind: "commit",
+        actorId: browserAgent.id,
+        metadata: { sha: "mcp123" },
+      });
+
+      const artifacts = parseTextJson<Array<{ id: string }>>(
+        await client.callTool({
+          name: "list_artifacts",
+          arguments: { id: created.id },
+        }),
+      );
+      expect(artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
 
       const handedOff = parseTextJson<{
         status: string;
@@ -214,6 +249,7 @@ describe("MCP work surface", () => {
       const detail = parseTextJson<{
         item: { id: string; status: string };
         events: Array<{ type: string }>;
+        artifacts: Array<{ id: string }>;
       }>(
         await client.callTool({
           name: "get_item",
@@ -221,11 +257,13 @@ describe("MCP work surface", () => {
         }),
       );
       expect(detail.item.status).toBe("done");
+      expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
       expect(detail.events.map((event) => event.type)).toEqual([
         "item.created",
         "claim.created",
         "claim.renewed",
         "progress.recorded",
+        "artifact.attached",
         "work.handed_off",
         "claim.created",
         "work.blocked",

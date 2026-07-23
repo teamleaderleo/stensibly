@@ -104,13 +104,72 @@ describe("REST work transitions", () => {
     expect(detailResponse.status).toBe(200);
     const detail = await detailResponse.json() as {
       events: Array<{ type: string }>;
+      artifacts: unknown[];
     };
+    expect(detail.artifacts).toEqual([]);
     expect(detail.events.map((event) => event.type)).toEqual([
       "item.created",
       "claim.created",
       "work.handed_off",
       "work.blocked",
       "work.unblocked",
+    ]);
+  });
+
+  test("attaches and lists artifact references", async () => {
+    const item = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Expose the output trail",
+      priority: 50,
+      actor: leo,
+    });
+
+    const attach = () => app.request(`/api/items/${item.id}/artifacts`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "rest-artifact-1",
+      },
+      body: JSON.stringify({
+        actor: browserAgent,
+        kind: "log",
+        label: "CI output",
+        uri: "file:///tmp/test-output.txt",
+        mimeType: "text/plain",
+        metadata: { run: 42 },
+      }),
+    });
+
+    const firstResponse = await attach();
+    expect(firstResponse.status).toBe(201);
+    const firstBody = await firstResponse.json() as {
+      artifact: { id: string; actorId: string; metadata: Record<string, unknown> };
+    };
+    expect(firstBody.artifact).toMatchObject({
+      actorId: browserAgent.id,
+      metadata: { run: 42 },
+    });
+
+    const retryResponse = await attach();
+    expect(retryResponse.status).toBe(201);
+    const retryBody = await retryResponse.json() as { artifact: { id: string } };
+    expect(retryBody.artifact.id).toBe(firstBody.artifact.id);
+
+    const listResponse = await app.request(`/api/items/${item.id}/artifacts`);
+    expect(listResponse.status).toBe(200);
+    const listBody = await listResponse.json() as { artifacts: Array<{ id: string }> };
+    expect(listBody.artifacts.map((artifact) => artifact.id)).toEqual([firstBody.artifact.id]);
+
+    const detailResponse = await app.request(`/api/items/${item.id}`);
+    const detail = await detailResponse.json() as {
+      artifacts: Array<{ id: string }>;
+      events: Array<{ type: string }>;
+    };
+    expect(detail.artifacts.map((artifact) => artifact.id)).toEqual([firstBody.artifact.id]);
+    expect(detail.events.map((event) => event.type)).toEqual([
+      "item.created",
+      "artifact.attached",
     ]);
   });
 
