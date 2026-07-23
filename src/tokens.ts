@@ -57,12 +57,15 @@ function parseCreateArgs(args: string[]): {
       continue;
     }
     if (argument === "--scopes") {
-      scopes = requireValue(args, ++index, "--scopes")
+      const requested = requireValue(args, ++index, "--scopes")
         .split(",")
         .map((scope) => scope.trim())
-        .filter((scope): scope is TokenScope =>
-          tokenScopes.includes(scope as TokenScope),
-        );
+        .filter(Boolean);
+      const unknown = requested.filter((scope) =>
+        !tokenScopes.includes(scope as TokenScope),
+      );
+      if (unknown.length > 0) throw new Error(`Unknown token scope: ${unknown.join(", ")}`);
+      scopes = requested as TokenScope[];
       continue;
     }
     if (argument === "--projects") {
