@@ -42,8 +42,6 @@ const app = createServerApp(store, {
   mcp: {
     allowedOrigins,
     allowedHosts,
-    ledger,
-    authenticator,
   },
 });
 
