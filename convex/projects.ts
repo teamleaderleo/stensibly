@@ -83,20 +83,21 @@ export const brief = query({
         .collect());
     }
     activeRuns.sort((a, b) => b.lastHeartbeatAt - a.lastHeartbeatAt);
-    const activeReservations = (await ctx.db.query("reservations").collect())
-      .filter(
-        (reservation) =>
-          reservation.projectId === project._id &&
-          reservation.status === "active" &&
-          reservation.expiresAt > Date.now(),
+    const now = Date.now();
+    const activeReservations = (await ctx.db
+      .query("reservations")
+      .withIndex("by_project_status", (q) =>
+        q.eq("projectId", project._id).eq("status", "active"),
       )
+      .collect())
+      .filter((reservation) => reservation.expiresAt > now)
       .sort((a, b) => a.expiresAt - b.expiresAt)
       .slice(0, limit);
 
     return {
       workspace: workspace.slug,
       project: project.slug,
-      generatedAt: new Date().toISOString(),
+      generatedAt: new Date(now).toISOString(),
       counts: {
         total: items.length,
         byStatus: Object.fromEntries(
@@ -112,11 +113,15 @@ export const brief = query({
       ),
       active: await mapItems(
         ctx,
-        byStatus.active.sort((a, b) => (a.claimExpiresAt ?? Infinity) - (b.claimExpiresAt ?? Infinity)).slice(0, limit),
+        byStatus.active
+          .sort((a, b) => (a.claimExpiresAt ?? Infinity) - (b.claimExpiresAt ?? Infinity))
+          .slice(0, limit),
       ),
       blocked: await mapItems(
         ctx,
-        byStatus.blocked.sort((a, b) => b.priority - a.priority || b.updatedAt - a.updatedAt).slice(0, limit),
+        byStatus.blocked
+          .sort((a, b) => b.priority - a.priority || b.updatedAt - a.updatedAt)
+          .slice(0, limit),
       ),
       recentKnowledge: await mapItems(ctx, recentKnowledge),
       recentlyCompleted: await mapItems(
@@ -143,10 +148,11 @@ async function mapItems(ctx: any, items: any[]) {
 }
 
 function emptyBrief(project: string) {
+  const now = Date.now();
   return {
     workspace: null,
     project,
-    generatedAt: new Date().toISOString(),
+    generatedAt: new Date(now).toISOString(),
     counts: { total: 0, byStatus: {}, byKind: {} },
     ready: [],
     active: [],
