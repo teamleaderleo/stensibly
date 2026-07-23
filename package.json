@@ -8,6 +8,7 @@
     "start": "bun src/index.ts",
     "mcp": "bun src/mcp-stdio.ts",
     "custodian": "bun src/custodian.ts",
+    "tokens": "bun src/tokens.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },
