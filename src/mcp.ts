@@ -1,5 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  artifactKinds,
+  attachArtifact,
+  listArtifacts,
+} from "./artifacts.ts";
 import { expireClaims, renewClaim } from "./leases.ts";
 import {
   actorSchema,
@@ -21,6 +26,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
+        "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
       ].join(" "),
     },
@@ -48,14 +54,59 @@ export function createMcpServer(store: StensiblyStore): McpServer {
   server.registerTool(
     "get_item",
     {
-      description: "Read one item together with its complete event history. Expired claims are persisted before the result is returned.",
+      description: "Read one item together with its event history and artifact references. Expired claims are persisted first.",
       inputSchema: { id: z.string().trim().min(1) },
     },
     async ({ id }) =>
       asToolResult(() => {
         expireClaims(store);
-        return { item: store.getItem(id), events: store.listEvents(id) };
+        return {
+          item: store.getItem(id),
+          events: store.listEvents(id),
+          artifacts: listArtifacts(store, id),
+        };
       }),
+  );
+
+  server.registerTool(
+    "list_artifacts",
+    {
+      description: "List every artifact reference attached to one work item.",
+      inputSchema: { id: z.string().trim().min(1) },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => asToolResult(() => listArtifacts(store, id)),
+  );
+
+  server.registerTool(
+    "attach_artifact",
+    {
+      description: "Attach a pointer to a file, URL, commit, issue, document, image, log, dataset, or other output.",
+      inputSchema: {
+        id: z.string().trim().min(1),
+        actor: actorSchema,
+        kind: z.enum(artifactKinds),
+        label: z.string().trim().min(1).max(240),
+        uri: z.string().trim().min(1).max(4096),
+        mimeType: z.string().trim().min(1).max(255).optional(),
+        metadata: z.record(z.string(), z.unknown()).default({}),
+        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ id, actor, kind, label, uri, mimeType, metadata, idempotencyKey }) =>
+      asToolResult(() =>
+        attachArtifact(store, {
+          itemId: id,
+          actor,
+          kind,
+          label,
+          uri,
+          metadata,
+          ...(mimeType ? { mimeType } : {}),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        }),
+      ),
   );
 
   server.registerTool(
