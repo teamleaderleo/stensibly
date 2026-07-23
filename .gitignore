@@ -3,6 +3,8 @@ node_modules/
 *.sqlite-shm
 *.sqlite-wal
 .env
+.env.local
+.convex/
 .DS_Store
 coverage/
 dist/
