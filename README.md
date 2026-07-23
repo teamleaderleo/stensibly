@@ -18,10 +18,11 @@ This first slice includes:
 - append-only item history
 - a tiny browser board
 - a JSON REST API
+- an MCP stdio server for local agent clients
 
 It currently has **zero authentication** and should be treated as a local development service.
 
-## Run it
+## Run the web board
 
 Install [Bun](https://bun.sh), then:
 
@@ -38,7 +39,43 @@ The default database is `./stensibly.sqlite`. Override it with:
 STENSIBLY_DB=/somewhere/else/stensibly.sqlite bun run start
 ```
 
-## API
+## Connect an MCP client
+
+Start the stdio server directly:
+
+```bash
+STENSIBLY_DB=/absolute/path/to/stensibly.sqlite bun run mcp
+```
+
+A generic local MCP client configuration looks like this:
+
+```json
+{
+  "mcpServers": {
+    "stensibly": {
+      "command": "bun",
+      "args": ["/absolute/path/to/stensibly/src/mcp-stdio.ts"],
+      "env": {
+        "STENSIBLY_DB": "/absolute/path/to/stensibly.sqlite"
+      }
+    }
+  }
+}
+```
+
+The MCP server exposes:
+
+- `list_work`
+- `get_item`
+- `create_item`
+- `claim_work`
+- `release_work`
+- `record_event`
+- `complete_work`
+
+The web server and MCP server can point at the same SQLite file. SQLite WAL mode lets both processes participate in the same scrapbook.
+
+## REST API
 
 Create an item:
 
@@ -101,12 +138,11 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 2. Claims are leases. Vanished workers eventually lose ownership.
 3. Current item state stays easy to query.
 4. Every meaningful change leaves an event behind.
-5. Retryable clients should send an `Idempotency-Key` header.
+5. Retryable clients should provide idempotency keys for writes.
 6. The server performs no model calls.
 
 ## Near-term work
 
-- MCP tools over the same service methods
 - authentication, workspace boundaries, and scoped tokens
 - explicit handoff and blocking transitions
 - artifact references
