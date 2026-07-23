@@ -6,18 +6,13 @@ import {
 } from "./auth.ts";
 import type { WorkLedger } from "./ledger.ts";
 import { createMcpServer } from "./mcp.ts";
-import { SqliteWorkLedger } from "./sqlite-ledger.ts";
-import { StensiblyStore } from "./store.ts";
-import {
-  SqliteTokenProvider,
-  type ApiTokenAuthenticator,
-} from "./token-provider.ts";
+import type { ApiTokenAuthenticator } from "./token-provider.ts";
 
 export interface McpHttpOptions {
   allowedOrigins?: string[];
   allowedHosts?: string[];
-  ledger?: WorkLedger;
-  authenticator?: ApiTokenAuthenticator;
+  ledger: WorkLedger;
+  authenticator: ApiTokenAuthenticator;
 }
 
 interface AccessRule {
@@ -61,9 +56,8 @@ const itemTools = new Set([
 ]);
 
 export async function handleMcpHttpRequest(
-  authStore: StensiblyStore,
   request: Request,
-  options: McpHttpOptions = {},
+  options: McpHttpOptions,
 ): Promise<Response> {
   if (request.method !== "POST") {
     return jsonRpcError(405, -32000, "Method not allowed.", null, {
@@ -78,8 +72,7 @@ export async function handleMcpHttpRequest(
   if (hostDenied) return hostDenied;
 
   const token = parseBearerToken(request.headers.get("authorization"));
-  const authenticator = options.authenticator ?? new SqliteTokenProvider(authStore);
-  const principal = token ? await authenticator.authenticate(token) : null;
+  const principal = token ? await options.authenticator.authenticate(token) : null;
   if (!principal) {
     return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
       "WWW-Authenticate": "Bearer",
@@ -93,11 +86,10 @@ export async function handleMcpHttpRequest(
     return jsonRpcError(400, -32700, "Parse error: Invalid JSON", null);
   }
 
-  const ledger = options.ledger ?? new SqliteWorkLedger(authStore);
-  const denial = await authorizePayload(ledger, principal, body);
+  const denial = await authorizePayload(options.ledger, principal, body);
   if (denial) return denial;
 
-  const server = createMcpServer(ledger);
+  const server = createMcpServer(options.ledger);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

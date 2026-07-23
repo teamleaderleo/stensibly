@@ -19,10 +19,11 @@ import {
   recordEventSchema,
   unblockItemSchema,
 } from "./schemas.ts";
-import { StensiblyStore, type ItemStatus } from "./store.ts";
+import type { ItemStatus } from "./store.ts";
+import type { ApiTokenAuthenticator } from "./token-provider.ts";
 
 export function createApiV1(
-  authStore: StensiblyStore,
+  authenticator: ApiTokenAuthenticator,
   ledger: WorkLedger,
   authOptions: HttpAuthOptions = { required: false },
 ): Hono<StensiblyEnv> {
@@ -43,7 +44,7 @@ export function createApiV1(
     return context.json({ error: message, code: "invalid_operation" }, 400);
   });
 
-  app.use("*", createHttpAuthMiddleware(authStore, authOptions));
+  app.use("*", createHttpAuthMiddleware(authenticator, authOptions));
 
   app.get("/projects/:project/brief", async (context) => {
     const project = context.req.param("project");
