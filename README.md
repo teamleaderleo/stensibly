@@ -2,7 +2,7 @@
 
 **A scrapbook for agents. Where work sometimes gets done and sometimes goes catastrophically off the rails.**
 
-Stensibly is a small shared work ledger for humans, agents, scripts, and whatever else wanders through a project. Participants can leave tasks and findings, claim work for a limited time, append progress, and hand the result onward.
+Stensibly is a small shared work ledger for humans, agents, scripts, and whatever else wanders through a project. Participants can leave tasks and findings, claim work for a limited time, append progress, attach useful outputs, and hand the result onward.
 
 The server owns the shared state. Agent frameworks remain optional clients.
 
@@ -15,6 +15,7 @@ This first slice includes:
 - atomic claims with renewable, expiring leases
 - automatic recovery of abandoned claims when work is read or listed
 - explicit handoff, block, unblock, release, and completion actions
+- first-class references to files, URLs, commits, issues, documents, images, logs, and datasets
 - idempotency keys for retry-safe writes
 - append-only item history
 - a tiny browser board
@@ -76,6 +77,8 @@ The MCP server exposes:
 - `unblock_work`
 - `release_work`
 - `record_event`
+- `attach_artifact`
+- `list_artifacts`
 - `complete_work`
 
 The web server and MCP server can point at the same SQLite file. SQLite WAL mode lets both processes participate in the same scrapbook.
@@ -127,6 +130,38 @@ curl http://localhost:3000/api/items/ITEM_ID/renew \
 ```
 
 Expired claims are returned to `ready` automatically the next time work is listed, read, or claimed. The ledger records a `claim.expired` event before another actor takes over.
+
+Attach a useful output:
+
+```bash
+curl http://localhost:3000/api/items/ITEM_ID/artifacts \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: artifact-ITEM_ID-1' \
+  -d '{
+    "actor": { "id": "coding-agent", "name": "Coding Agent", "kind": "agent" },
+    "kind": "commit",
+    "label": "Parser fix",
+    "uri": "git:teamleaderleo/stensibly@abc123",
+    "metadata": {
+      "repository": "teamleaderleo/stensibly",
+      "sha": "abc123"
+    }
+  }'
+```
+
+Artifacts are references. Stensibly stores the URI, label, kind, provenance, optional MIME type, and metadata. It never downloads or copies the underlying content. Each attachment adds an `artifact.attached` event and appears in item detail responses.
+
+Supported artifact kinds:
+
+```text
+file url commit issue document image log dataset other
+```
+
+List an item's artifact references:
+
+```bash
+curl http://localhost:3000/api/items/ITEM_ID/artifacts
+```
 
 Hand work onward with enough context to continue:
 
@@ -196,14 +231,14 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 2. Claims are leases. Vanished workers eventually lose ownership.
 3. Handoffs always carry a summary and an explicit next action.
 4. Blocked work records why it stopped and releases its claim.
-5. Every meaningful change leaves an event behind.
-6. Retryable clients should provide idempotency keys for writes.
-7. The server performs no model calls.
+5. Artifacts remain pointers with explicit provenance.
+6. Every meaningful change leaves an event behind.
+7. Retryable clients should provide idempotency keys for writes.
+8. The server performs no model calls.
 
 ## Near-term work
 
 - authentication, workspace boundaries, and scoped tokens
-- artifact references
 - project briefs for agents entering midstream
 - a custodian client that tidies duplicate and abandoned work
 
