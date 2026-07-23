@@ -1,13 +1,13 @@
 import type {
-  AnyDataModel,
   GenericMutationCtx,
   GenericQueryCtx,
 } from "convex/server";
 import type { GenericId } from "convex/values";
+import type { DataModel } from "./dataModel";
 import type { ActorInput } from "./validators";
 
-export type QueryContext = GenericQueryCtx<AnyDataModel>;
-export type MutationContext = GenericMutationCtx<AnyDataModel>;
+export type QueryContext = GenericQueryCtx<DataModel>;
+export type MutationContext = GenericMutationCtx<DataModel>;
 export type WorkspaceId = GenericId<"workspaces">;
 export type ProjectId = GenericId<"projects">;
 export type ActorId = GenericId<"actors">;
