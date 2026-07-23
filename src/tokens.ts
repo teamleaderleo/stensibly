@@ -1,11 +1,11 @@
-import { tokenScopes, type TokenScope } from "./auth.ts";
-import { createConvexWorkLedgerFromEnv } from "./convex-ledger.ts";
-import { StensiblyStore } from "./store.ts";
+import { tokenScopes, type TokenScope } from "./auth.js";
+import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
+import { StensiblyStore } from "./store.js";
 import {
   ConvexTokenProvider,
   SqliteTokenProvider,
   type ApiTokenManager,
-} from "./token-provider.ts";
+} from "./token-provider.js";
 
 const args = Bun.argv.slice(2);
 const command = args[0];

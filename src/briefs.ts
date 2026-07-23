@@ -1,12 +1,12 @@
-import { ensureArtifactSchema, type ArtifactKind } from "./artifacts.ts";
-import { expireClaims } from "./leases.ts";
+import { ensureArtifactSchema, type ArtifactKind } from "./artifacts.js";
+import { expireClaims } from "./leases.js";
 import {
   NotFoundError,
   StensiblyStore,
   type Item,
   type ItemKind,
   type ItemStatus,
-} from "./store.ts";
+} from "./store.js";
 
 export interface BriefItem {
   id: string;

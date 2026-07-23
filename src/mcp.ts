@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { artifactKinds } from "./artifacts.ts";
-import type { WorkLedger } from "./ledger.ts";
+import { artifactKinds } from "./artifacts.js";
+import type { WorkLedger } from "./ledger.js";
 import {
   actorSchema,
   itemKinds,
   itemStatuses,
-} from "./schemas.ts";
+} from "./schemas.js";
 
 export function createMcpServer(ledger: WorkLedger): McpServer {
   const server = new McpServer(

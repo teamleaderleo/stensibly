@@ -4,7 +4,7 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { StensiblyStore } from "./store.ts";
+import { StensiblyStore } from "./store.js";
 
 export const tokenScopes = ["read", "write", "admin"] as const;
 export type TokenScope = (typeof tokenScopes)[number];

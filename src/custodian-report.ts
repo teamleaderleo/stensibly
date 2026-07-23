@@ -1,5 +1,5 @@
-import { expireClaims } from "./leases.ts";
-import { StensiblyStore, type Item, type ItemKind, type ItemStatus } from "./store.ts";
+import { expireClaims } from "./leases.js";
+import { StensiblyStore, type Item, type ItemKind, type ItemStatus } from "./store.js";
 
 export interface CustodianItem {
   id: string;

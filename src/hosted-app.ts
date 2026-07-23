@@ -1,14 +1,14 @@
 import { Hono } from "hono";
-import { createApiV1 } from "./api-v1.ts";
-import { createConvexWorkLedgerFromEnv } from "./convex-ledger.ts";
-import { createCorsMiddleware } from "./cors.ts";
-import type { StensiblyEnv } from "./http-auth.ts";
-import type { WorkLedger } from "./ledger.ts";
-import { handleMcpHttpRequest } from "./mcp-http.ts";
+import { createApiV1 } from "./api-v1.js";
+import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
+import { createCorsMiddleware } from "./cors.js";
+import type { StensiblyEnv } from "./http-auth.js";
+import type { WorkLedger } from "./ledger.js";
+import { handleMcpHttpRequest } from "./mcp-http.js";
 import {
   ConvexTokenProvider,
   type ApiTokenAuthenticator,
-} from "./token-provider.ts";
+} from "./token-provider.js";
 
 export interface HostedAppOptions {
   ledger: WorkLedger;

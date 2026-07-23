@@ -1,5 +1,5 @@
-import { inspectScrapbook, reportHasFindings } from "./custodian-report.ts";
-import { StensiblyStore } from "./store.ts";
+import { inspectScrapbook, reportHasFindings } from "./custodian-report.js";
+import { StensiblyStore } from "./store.js";
 
 interface CliOptions {
   project?: string;

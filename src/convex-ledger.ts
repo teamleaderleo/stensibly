@@ -1,6 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { FunctionReference } from "convex/server";
-import { convexApi } from "../convex/refs.ts";
+import { convexApi } from "../convex/refs.js";
 import type {
   ActorActionInput,
   AttachWorkArtifactInput,
@@ -13,7 +13,7 @@ import type {
   RecordWorkEventInput,
   UnblockWorkInput,
   WorkLedger,
-} from "./ledger.ts";
+} from "./ledger.js";
 
 export interface ConvexCaller {
   query(reference: FunctionReference<"query">, args: Record<string, unknown>): Promise<unknown>;

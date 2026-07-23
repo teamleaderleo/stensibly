@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { ActorInput } from "./schemas.ts";
-import { ConflictError, type Item, StensiblyStore } from "./store.ts";
+import type { ActorInput } from "./schemas.js";
+import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface ExpiredClaimRow {
   id: string;

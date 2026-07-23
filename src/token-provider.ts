@@ -4,7 +4,7 @@ import {
   randomUUID,
 } from "node:crypto";
 import type { FunctionReference } from "convex/server";
-import { convexApi } from "../convex/refs.ts";
+import { convexApi } from "../convex/refs.js";
 import {
   authenticateApiToken,
   createApiToken,
@@ -14,9 +14,9 @@ import {
   type TokenPrincipal,
   type TokenRecord,
   type TokenScope,
-} from "./auth.ts";
-import type { ConvexCaller } from "./convex-ledger.ts";
-import { StensiblyStore } from "./store.ts";
+} from "./auth.js";
+import type { ConvexCaller } from "./convex-ledger.js";
+import { StensiblyStore } from "./store.js";
 
 export interface CreateTokenInput {
   name: string;

@@ -3,10 +3,10 @@ import {
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
-} from "./auth.ts";
-import type { WorkLedger } from "./ledger.ts";
-import { createMcpServer } from "./mcp.ts";
-import type { ApiTokenAuthenticator } from "./token-provider.ts";
+} from "./auth.js";
+import type { WorkLedger } from "./ledger.js";
+import { createMcpServer } from "./mcp.js";
+import type { ApiTokenAuthenticator } from "./token-provider.js";
 
 export interface McpHttpOptions {
   allowedOrigins?: string[];

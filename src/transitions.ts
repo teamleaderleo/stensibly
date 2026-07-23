@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { expireClaims } from "./leases.ts";
-import type { ActorInput } from "./schemas.ts";
-import { ConflictError, type Item, StensiblyStore } from "./store.ts";
+import { expireClaims } from "./leases.js";
+import type { ActorInput } from "./schemas.js";
+import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface IdempotentEventRow {
   item_id: string;

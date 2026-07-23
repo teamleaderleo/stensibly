@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import type { ActorInput, CreateItemInput } from "./schemas.ts";
+import type { ActorInput, CreateItemInput } from "./schemas.js";
 
 export type ItemStatus = "ready" | "active" | "blocked" | "done" | "archived";
 export type ItemKind =

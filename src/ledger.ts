@@ -1,11 +1,11 @@
-import type { Artifact, ArtifactKind } from "./artifacts.ts";
-import type { ActorInput } from "./schemas.ts";
+import type { Artifact, ArtifactKind } from "./artifacts.js";
+import type { ActorInput } from "./schemas.js";
 import type {
   Item,
   ItemEvent,
   ItemKind,
   ItemStatus,
-} from "./store.ts";
+} from "./store.js";
 
 export interface ListWorkInput {
   project?: string;

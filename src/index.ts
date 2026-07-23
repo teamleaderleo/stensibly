@@ -1,13 +1,13 @@
-import { createConvexWorkLedgerFromEnv } from "./convex-ledger.ts";
-import type { WorkLedger } from "./ledger.ts";
-import { createServerApp } from "./server-app.ts";
-import { SqliteWorkLedger } from "./sqlite-ledger.ts";
-import { StensiblyStore } from "./store.ts";
+import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
+import type { WorkLedger } from "./ledger.js";
+import { createServerApp } from "./server-app.js";
+import { SqliteWorkLedger } from "./sqlite-ledger.js";
+import { StensiblyStore } from "./store.js";
 import {
   ConvexTokenProvider,
   SqliteTokenProvider,
   type ApiTokenAuthenticator,
-} from "./token-provider.ts";
+} from "./token-provider.js";
 
 const port = Number(Bun.env.PORT ?? 3000);
 const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";

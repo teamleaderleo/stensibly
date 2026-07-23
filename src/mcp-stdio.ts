@@ -1,9 +1,9 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createConvexWorkLedgerFromEnv } from "./convex-ledger.ts";
-import type { WorkLedger } from "./ledger.ts";
-import { createMcpServer } from "./mcp.ts";
-import { SqliteWorkLedger } from "./sqlite-ledger.ts";
-import { StensiblyStore } from "./store.ts";
+import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
+import type { WorkLedger } from "./ledger.js";
+import { createMcpServer } from "./mcp.js";
+import { SqliteWorkLedger } from "./sqlite-ledger.js";
+import { StensiblyStore } from "./store.js";
 
 const backend = Bun.env.STENSIBLY_BACKEND ?? "sqlite";
 const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";

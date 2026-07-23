@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import type { StensiblyEnv } from "./http-auth.ts";
+import type { StensiblyEnv } from "./http-auth.js";
 
 export function createCorsMiddleware(
   allowedOrigins: string[],

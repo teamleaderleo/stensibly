@@ -1,6 +1,6 @@
-import { attachArtifact, listArtifacts } from "./artifacts.ts";
-import { getProjectBrief } from "./briefs.ts";
-import { expireClaims, renewClaim } from "./leases.ts";
+import { attachArtifact, listArtifacts } from "./artifacts.js";
+import { getProjectBrief } from "./briefs.js";
+import { expireClaims, renewClaim } from "./leases.js";
 import type {
   ActorActionInput,
   AttachWorkArtifactInput,
@@ -13,9 +13,9 @@ import type {
   RecordWorkEventInput,
   UnblockWorkInput,
   WorkLedger,
-} from "./ledger.ts";
-import { StensiblyStore } from "./store.ts";
-import { blockWork, handoffWork, unblockWork } from "./transitions.ts";
+} from "./ledger.js";
+import { StensiblyStore } from "./store.js";
+import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
 export class SqliteWorkLedger implements WorkLedger {
   constructor(readonly store: StensiblyStore) {}

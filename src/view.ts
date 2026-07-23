@@ -1,4 +1,4 @@
-import type { Item, ItemStatus } from "./store.ts";
+import type { Item, ItemStatus } from "./store.js";
 
 const columns: Array<{ status: ItemStatus; label: string; hint: string }> = [
   { status: "ready", label: "Ready", hint: "waiting for a willing creature" },

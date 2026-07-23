@@ -3,16 +3,16 @@ import {
   attachArtifact,
   attachArtifactSchema,
   listArtifacts,
-} from "./artifacts.ts";
-import { filterItemsForPrincipal } from "./auth.ts";
-import { getProjectBrief } from "./briefs.ts";
+} from "./artifacts.js";
+import { filterItemsForPrincipal } from "./auth.js";
+import { getProjectBrief } from "./briefs.js";
 import {
   createHttpAuthMiddleware,
   currentPrincipal,
   requireHttpAccess,
   type HttpAuthOptions,
   type StensiblyEnv,
-} from "./http-auth.ts";
+} from "./http-auth.js";
 import {
   actorActionSchema,
   blockItemSchema,
@@ -22,16 +22,16 @@ import {
   itemStatuses,
   recordEventSchema,
   unblockItemSchema,
-} from "./schemas.ts";
-import { expireClaims, renewClaim } from "./leases.ts";
+} from "./schemas.js";
+import { expireClaims, renewClaim } from "./leases.js";
 import {
   ConflictError,
   NotFoundError,
   StensiblyStore,
   type ItemStatus,
-} from "./store.ts";
-import { blockWork, handoffWork, unblockWork } from "./transitions.ts";
-import { renderBoard } from "./view.ts";
+} from "./store.js";
+import { blockWork, handoffWork, unblockWork } from "./transitions.js";
+import { renderBoard } from "./view.js";
 
 export function createApp(
   store: StensiblyStore,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { actorSchema, type ActorInput } from "./schemas.ts";
-import { ConflictError, NotFoundError, StensiblyStore } from "./store.ts";
+import { actorSchema, type ActorInput } from "./schemas.js";
+import { ConflictError, NotFoundError, StensiblyStore } from "./store.js";
 
 export const artifactKinds = [
   "file",

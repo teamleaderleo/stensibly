@@ -1,14 +1,14 @@
 import { Hono, type Context } from "hono";
-import { attachArtifactSchema } from "./artifacts.ts";
-import { filterItemsForPrincipal } from "./auth.ts";
+import { attachArtifactSchema } from "./artifacts.js";
+import { filterItemsForPrincipal } from "./auth.js";
 import {
   createHttpAuthMiddleware,
   currentPrincipal,
   requireHttpAccess,
   type HttpAuthOptions,
   type StensiblyEnv,
-} from "./http-auth.ts";
-import type { WorkLedger } from "./ledger.ts";
+} from "./http-auth.js";
+import type { WorkLedger } from "./ledger.js";
 import {
   actorActionSchema,
   blockItemSchema,
@@ -18,9 +18,9 @@ import {
   itemStatuses,
   recordEventSchema,
   unblockItemSchema,
-} from "./schemas.ts";
-import type { ItemStatus } from "./store.ts";
-import type { ApiTokenAuthenticator } from "./token-provider.ts";
+} from "./schemas.js";
+import type { ItemStatus } from "./store.js";
+import type { ApiTokenAuthenticator } from "./token-provider.js";
 
 export function createApiV1(
   authenticator: ApiTokenAuthenticator,

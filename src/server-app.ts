@@ -1,19 +1,19 @@
 import { Hono } from "hono";
-import { createApiV1 } from "./api-v1.ts";
-import { createApp } from "./app.ts";
-import { createCorsMiddleware } from "./cors.ts";
-import type { HttpAuthOptions, StensiblyEnv } from "./http-auth.ts";
-import type { WorkLedger } from "./ledger.ts";
+import { createApiV1 } from "./api-v1.js";
+import { createApp } from "./app.js";
+import { createCorsMiddleware } from "./cors.js";
+import type { HttpAuthOptions, StensiblyEnv } from "./http-auth.js";
+import type { WorkLedger } from "./ledger.js";
 import {
   handleMcpHttpRequest,
   type McpHttpOptions,
-} from "./mcp-http.ts";
-import { SqliteWorkLedger } from "./sqlite-ledger.ts";
-import { StensiblyStore } from "./store.ts";
+} from "./mcp-http.js";
+import { SqliteWorkLedger } from "./sqlite-ledger.js";
+import { StensiblyStore } from "./store.js";
 import {
   SqliteTokenProvider,
   type ApiTokenAuthenticator,
-} from "./token-provider.ts";
+} from "./token-provider.js";
 
 export interface ServerAppOptions {
   httpAuth?: HttpAuthOptions;

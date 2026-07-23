@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import type { FunctionReference } from "convex/server";
-import { convexApi } from "../convex/refs.ts";
-import { createConvexWorkLedgerFromEnv } from "./convex-ledger.ts";
+import { convexApi } from "../convex/refs.js";
+import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
 import {
   exportSqliteSnapshot,
   parseSnapshot,
   type StensiblySnapshot,
-} from "./snapshot.ts";
-import { StensiblyStore } from "./store.ts";
+} from "./snapshot.js";
+import { StensiblyStore } from "./store.js";
 
 const args = Bun.argv.slice(2);
 const command = args[0];

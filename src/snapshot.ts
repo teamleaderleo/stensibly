@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { artifactKinds, ensureArtifactSchema } from "./artifacts.ts";
-import { ensureAuthSchema, tokenScopes } from "./auth.ts";
-import { actorKinds, itemKinds, itemStatuses } from "./schemas.ts";
-import { StensiblyStore } from "./store.ts";
+import { artifactKinds, ensureArtifactSchema } from "./artifacts.js";
+import { ensureAuthSchema, tokenScopes } from "./auth.js";
+import { actorKinds, itemKinds, itemStatuses } from "./schemas.js";
+import { StensiblyStore } from "./store.js";
 
 const isoDate = z.string().datetime({ offset: true });
 

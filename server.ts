@@ -1,3 +1,3 @@
-import { createHostedAppFromEnv } from "./src/hosted-app.ts";
+import { createHostedAppFromEnv } from "./src/hosted-app.js";
 
 export default createHostedAppFromEnv();

@@ -3,12 +3,12 @@ import {
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
-} from "./auth.ts";
-import { StensiblyStore } from "./store.ts";
+} from "./auth.js";
+import { StensiblyStore } from "./store.js";
 import {
   SqliteTokenProvider,
   type ApiTokenAuthenticator,
-} from "./token-provider.ts";
+} from "./token-provider.js";
 
 export interface StensiblyEnv {
   Variables: {
