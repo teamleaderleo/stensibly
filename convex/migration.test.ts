@@ -111,6 +111,7 @@ describe("Convex snapshot migration", () => {
       createdAt: "2026-07-24T11:00:00.000Z",
       revokedAt: null,
     }];
+    const importedToken = tokens[0]!;
 
     expect(await t.mutation(convexApi.migration.importEvents, {
       serviceSecret,
@@ -156,8 +157,8 @@ describe("Convex snapshot migration", () => {
     const principal = await t.query(convexApi.tokens.authenticate, {
       serviceSecret,
       workspace: "migrated",
-      id: tokens[0].id,
-      secretHash: tokens[0].secretHash,
+      id: importedToken.id,
+      secretHash: importedToken.secretHash,
     });
     expect(principal).toMatchObject({ name: "Imported reader", projects: ["scrapbook"] });
 
