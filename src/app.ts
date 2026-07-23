@@ -1,10 +1,13 @@
 import { Hono, type Context } from "hono";
 import {
   actorActionSchema,
+  blockItemSchema,
   claimItemSchema,
   createItemSchema,
+  handoffItemSchema,
   itemStatuses,
   recordEventSchema,
+  unblockItemSchema,
 } from "./schemas.ts";
 import { expireClaims, renewClaim } from "./leases.ts";
 import {
@@ -13,6 +16,7 @@ import {
   StensiblyStore,
   type ItemStatus,
 } from "./store.ts";
+import { blockWork, handoffWork, unblockWork } from "./transitions.ts";
 import { renderBoard } from "./view.ts";
 
 export function createApp(store: StensiblyStore): Hono {
@@ -79,6 +83,48 @@ export function createApp(store: StensiblyStore): Hono {
       parsed.data.leaseSeconds,
       context.req.header("Idempotency-Key"),
     );
+    return context.json({ item });
+  });
+
+  app.post("/api/items/:id/handoff", async (context) => {
+    const parsed = handoffItemSchema.safeParse(await readJson(context.req.raw));
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+    const idempotencyKey = context.req.header("Idempotency-Key");
+    const item = handoffWork(store, {
+      id: context.req.param("id"),
+      actor: parsed.data.actor,
+      summary: parsed.data.summary,
+      nextAction: parsed.data.nextAction,
+      ...(parsed.data.toActorId ? { toActorId: parsed.data.toActorId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
+    return context.json({ item });
+  });
+
+  app.post("/api/items/:id/block", async (context) => {
+    const parsed = blockItemSchema.safeParse(await readJson(context.req.raw));
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+    const idempotencyKey = context.req.header("Idempotency-Key");
+    const item = blockWork(store, {
+      id: context.req.param("id"),
+      actor: parsed.data.actor,
+      reason: parsed.data.reason,
+      ...(parsed.data.nextAction ? { nextAction: parsed.data.nextAction } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
+    return context.json({ item });
+  });
+
+  app.post("/api/items/:id/unblock", async (context) => {
+    const parsed = unblockItemSchema.safeParse(await readJson(context.req.raw));
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+    const idempotencyKey = context.req.header("Idempotency-Key");
+    const item = unblockWork(store, {
+      id: context.req.param("id"),
+      actor: parsed.data.actor,
+      ...(parsed.data.nextAction ? { nextAction: parsed.data.nextAction } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
     return context.json({ item });
   });
 
