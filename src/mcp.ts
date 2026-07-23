@@ -32,7 +32,6 @@ export function createMcpServer(store: StensiblyStore): McpServer {
         project: z.string().trim().min(1).max(80).optional(),
         status: z.enum(itemStatuses).optional(),
       },
-      annotations: { readOnlyHint: true },
     },
     async ({ project, status }) =>
       asToolResult(() => {
@@ -47,9 +46,8 @@ export function createMcpServer(store: StensiblyStore): McpServer {
   server.registerTool(
     "get_item",
     {
-      description: "Read one item together with its complete event history.",
+      description: "Read one item together with its complete event history. Expired claims are persisted before the result is returned.",
       inputSchema: { id: z.string().trim().min(1) },
-      annotations: { readOnlyHint: true },
     },
     async ({ id }) =>
       asToolResult(() => {
@@ -130,7 +128,10 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ id, actor, idempotencyKey }) =>
-      asToolResult(() => store.releaseItem(id, actor, idempotencyKey)),
+      asToolResult(() => {
+        expireClaims(store);
+        return store.releaseItem(id, actor, idempotencyKey);
+      }),
   );
 
   server.registerTool(
@@ -171,7 +172,10 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ id, actor, summary, idempotencyKey }) =>
-      asToolResult(() => store.completeItem(id, actor, summary, idempotencyKey)),
+      asToolResult(() => {
+        expireClaims(store);
+        return store.completeItem(id, actor, summary, idempotencyKey);
+      }),
   );
 
   return server;
