@@ -12,6 +12,7 @@ This first slice includes:
 
 - a SQLite-backed item and event ledger
 - projects, actors, tasks, findings, questions, decisions, handoffs, tips, and notes
+- deterministic project briefs for actors entering work midstream
 - atomic claims with renewable, expiring leases
 - automatic recovery of abandoned claims when work is read or listed
 - explicit handoff, block, unblock, release, and completion actions
@@ -67,6 +68,7 @@ A generic local MCP client configuration looks like this:
 
 The MCP server exposes:
 
+- `get_brief`
 - `list_work`
 - `get_item`
 - `create_item`
@@ -82,6 +84,28 @@ The MCP server exposes:
 - `complete_work`
 
 The web server and MCP server can point at the same SQLite file. SQLite WAL mode lets both processes participate in the same scrapbook.
+
+## Enter a project
+
+An actor entering existing work should start with `get_brief`. The brief is assembled directly from ledger state and contains:
+
+- counts by status and item kind
+- highest-priority ready work
+- active claims and lease expiry times
+- blocked work with reasons and next actions
+- recent findings, questions, decisions, tips, handoffs, and notes
+- recently completed work
+- recent artifact references
+
+The server performs no model call while producing it. Every actor receives the same facts.
+
+REST clients can request the same view:
+
+```bash
+curl 'http://localhost:3000/api/projects/scrapbook/brief?limit=10'
+```
+
+The limit applies independently to each section and accepts values from 1 through 100. Counts always cover the full project.
 
 ## REST API
 
@@ -228,18 +252,18 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 ## Core rules
 
 1. Work belongs to projects, independent of any agent runtime.
-2. Claims are leases. Vanished workers eventually lose ownership.
-3. Handoffs always carry a summary and an explicit next action.
-4. Blocked work records why it stopped and releases its claim.
-5. Artifacts remain pointers with explicit provenance.
-6. Every meaningful change leaves an event behind.
-7. Retryable clients should provide idempotency keys for writes.
-8. The server performs no model calls.
+2. Project briefs report shared ledger state without generating prose.
+3. Claims are leases. Vanished workers eventually lose ownership.
+4. Handoffs always carry a summary and an explicit next action.
+5. Blocked work records why it stopped and releases its claim.
+6. Artifacts remain pointers with explicit provenance.
+7. Every meaningful change leaves an event behind.
+8. Retryable clients should provide idempotency keys for writes.
+9. The server performs no model calls.
 
 ## Near-term work
 
 - authentication, workspace boundaries, and scoped tokens
-- project briefs for agents entering midstream
 - a custodian client that tidies duplicate and abandoned work
 
 ## License
