@@ -157,6 +157,7 @@ describe("custodian report", () => {
   });
 
   test("can inspect a clean project without noise from another project", () => {
+    const now = new Date("2100-01-01T00:00:00.000Z");
     store.createItem({
       project: "clean",
       kind: "decision",
@@ -171,15 +172,34 @@ describe("custodian report", () => {
       priority: 50,
       actor: leo,
     });
+    const expiredElsewhere = store.createItem({
+      project: "messy",
+      kind: "task",
+      title: "Expired somewhere else",
+      nextAction: "Return this to ready work.",
+      priority: 40,
+      actor: leo,
+    });
+    store.claimItem(expiredElsewhere.id, browserAgent, 900);
+    setItemTimes(expiredElsewhere.id, {
+      updatedAt: "2099-12-31T23:58:00.000Z",
+      claimExpiresAt: "2099-12-31T23:59:00.000Z",
+    });
 
     const report = inspectScrapbook(store, {
       project: "clean",
-      now: new Date(),
+      now,
       staleDays: 30,
       expiringWithinMinutes: 5,
     });
     expect(report.scope.project).toBe("clean");
+    expect(report.expiredClaimIds).toEqual([]);
     expect(reportHasFindings(report)).toBe(false);
+    expect(store.getItem(expiredElsewhere.id)).toMatchObject({
+      status: "ready",
+      claimedBy: null,
+      claimExpiresAt: null,
+    });
   });
 
   test("validates inspection windows", () => {
