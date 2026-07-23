@@ -12,7 +12,7 @@
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
-    "test": "bun test test",
+    "test": "bun test ./test/*.test.ts",
     "test:convex": "vitest run",
     "typecheck": "bunx tsc --noEmit"
   },
