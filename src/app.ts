@@ -4,7 +4,15 @@ import {
   attachArtifactSchema,
   listArtifacts,
 } from "./artifacts.ts";
+import { filterItemsForPrincipal } from "./auth.ts";
 import { getProjectBrief } from "./briefs.ts";
+import {
+  createHttpAuthMiddleware,
+  currentPrincipal,
+  requireHttpAccess,
+  type HttpAuthOptions,
+  type StensiblyEnv,
+} from "./http-auth.ts";
 import {
   actorActionSchema,
   blockItemSchema,
@@ -25,8 +33,11 @@ import {
 import { blockWork, handoffWork, unblockWork } from "./transitions.ts";
 import { renderBoard } from "./view.ts";
 
-export function createApp(store: StensiblyStore): Hono {
-  const app = new Hono();
+export function createApp(
+  store: StensiblyStore,
+  authOptions: HttpAuthOptions = { required: false },
+): Hono<StensiblyEnv> {
+  const app = new Hono<StensiblyEnv>();
 
   app.onError((error, context) => {
     if (error instanceof NotFoundError) return context.json({ error: error.message }, 404);
@@ -35,36 +46,56 @@ export function createApp(store: StensiblyStore): Hono {
     return context.json({ error: "Unexpected server error" }, 500);
   });
 
+  app.use("*", createHttpAuthMiddleware(store, authOptions));
+
   app.get("/", (context) => {
+    const denied = requireHttpAccess(context, "read");
+    if (denied) return denied;
     expireClaims(store);
-    return context.html(renderBoard(store.listItems()));
+    let items = store.listItems();
+    const principal = currentPrincipal(context);
+    if (principal) items = filterItemsForPrincipal(principal, items);
+    return context.html(renderBoard(items));
   });
   app.get("/health", (context) => context.json({ ok: true, service: "stensibly" }));
 
   app.get("/api/projects/:project/brief", (context) => {
+    const project = context.req.param("project");
+    const denied = requireHttpAccess(context, "read", project);
+    if (denied) return denied;
+
     const rawLimit = context.req.query("limit");
     const limit = rawLimit === undefined ? 10 : Number(rawLimit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       return context.json({ error: "Brief limit must be between 1 and 100" }, 400);
     }
-    return context.json({ brief: getProjectBrief(store, context.req.param("project"), limit) });
+    return context.json({ brief: getProjectBrief(store, project, limit) });
   });
 
   app.get("/api/items", (context) => {
     expireClaims(store);
     const project = context.req.query("project");
+    const denied = requireHttpAccess(context, "read", project);
+    if (denied) return denied;
+
     const rawStatus = context.req.query("status");
     const status = rawStatus && itemStatuses.includes(rawStatus as ItemStatus)
       ? (rawStatus as ItemStatus)
       : undefined;
-
     if (rawStatus && !status) return context.json({ error: `Unknown status: ${rawStatus}` }, 400);
-    return context.json({ items: store.listItems({ project, status }) });
+
+    let items = store.listItems({ project, status });
+    const principal = currentPrincipal(context);
+    if (principal && !project) items = filterItemsForPrincipal(principal, items);
+    return context.json({ items });
   });
 
   app.post("/api/items", async (context) => {
     const parsed = createItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
+    const denied = requireHttpAccess(context, "write", parsed.data.project);
+    if (denied) return denied;
+
     const item = store.createItem(parsed.data, context.req.header("Idempotency-Key"));
     return context.json({ item }, 201);
   });
@@ -72,23 +103,36 @@ export function createApp(store: StensiblyStore): Hono {
   app.get("/api/items/:id", (context) => {
     expireClaims(store);
     const id = context.req.param("id");
+    const item = store.getItem(id);
+    const denied = requireHttpAccess(context, "read", item.project);
+    if (denied) return denied;
+
     return context.json({
-      item: store.getItem(id),
+      item,
       events: store.listEvents(id),
       artifacts: listArtifacts(store, id),
     });
   });
 
-  app.get("/api/items/:id/artifacts", (context) =>
-    context.json({ artifacts: listArtifacts(store, context.req.param("id")) }),
-  );
+  app.get("/api/items/:id/artifacts", (context) => {
+    const id = context.req.param("id");
+    const item = store.getItem(id);
+    const denied = requireHttpAccess(context, "read", item.project);
+    if (denied) return denied;
+    return context.json({ artifacts: listArtifacts(store, id) });
+  });
 
   app.post("/api/items/:id/artifacts", async (context) => {
+    const id = context.req.param("id");
+    const item = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", item.project);
+    if (denied) return denied;
+
     const parsed = attachArtifactSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const idempotencyKey = context.req.header("Idempotency-Key");
     const artifact = attachArtifact(store, {
-      itemId: context.req.param("id"),
+      itemId: id,
       actor: parsed.data.actor,
       kind: parsed.data.kind,
       label: parsed.data.label,
@@ -101,11 +145,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/claim", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = claimItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     expireClaims(store);
     const item = store.claimItem(
-      context.req.param("id"),
+      id,
       parsed.data.actor,
       parsed.data.leaseSeconds,
       context.req.header("Idempotency-Key"),
@@ -114,11 +163,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/renew", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = claimItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const item = renewClaim(
       store,
-      context.req.param("id"),
+      id,
       parsed.data.actor,
       parsed.data.leaseSeconds,
       context.req.header("Idempotency-Key"),
@@ -127,11 +181,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/handoff", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = handoffItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const idempotencyKey = context.req.header("Idempotency-Key");
     const item = handoffWork(store, {
-      id: context.req.param("id"),
+      id,
       actor: parsed.data.actor,
       summary: parsed.data.summary,
       nextAction: parsed.data.nextAction,
@@ -142,11 +201,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/block", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = blockItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const idempotencyKey = context.req.header("Idempotency-Key");
     const item = blockWork(store, {
-      id: context.req.param("id"),
+      id,
       actor: parsed.data.actor,
       reason: parsed.data.reason,
       ...(parsed.data.nextAction ? { nextAction: parsed.data.nextAction } : {}),
@@ -156,11 +220,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/unblock", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = unblockItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const idempotencyKey = context.req.header("Idempotency-Key");
     const item = unblockWork(store, {
-      id: context.req.param("id"),
+      id,
       actor: parsed.data.actor,
       ...(parsed.data.nextAction ? { nextAction: parsed.data.nextAction } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -169,11 +238,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/release", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     expireClaims(store);
     const item = store.releaseItem(
-      context.req.param("id"),
+      id,
       parsed.data.actor,
       context.req.header("Idempotency-Key"),
     );
@@ -181,11 +255,16 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/complete", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     expireClaims(store);
     const item = store.completeItem(
-      context.req.param("id"),
+      id,
       parsed.data.actor,
       parsed.data.summary,
       context.req.header("Idempotency-Key"),
@@ -194,10 +273,15 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.post("/api/items/:id/events", async (context) => {
+    const id = context.req.param("id");
+    const existing = store.getItem(id);
+    const denied = requireHttpAccess(context, "write", existing.project);
+    if (denied) return denied;
+
     const parsed = recordEventSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const event = store.recordEvent({
-      itemId: context.req.param("id"),
+      itemId: id,
       actor: parsed.data.actor,
       type: parsed.data.type,
       payload: parsed.data.payload,
@@ -218,7 +302,7 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 function validationError(
-  context: Context,
+  context: Context<StensiblyEnv>,
   issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
 ) {
   return context.json({
