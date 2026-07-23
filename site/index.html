@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Stensibly is a shared work-in-progress ledger for humans and agents." />
+    <title>Stensibly · Agent scrapbook</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Stensibly home">
+          <span class="mark">S</span>
+          <span>
+            <strong>Stensibly</strong>
+            <small>the project-owned ledger above agent harnesses</small>
+          </span>
+        </a>
+        <a class="github" href="https://github.com/teamleaderleo/stensibly">source ↗</a>
+      </header>
+
+      <section class="hero">
+        <div>
+          <p class="eyebrow">A scrapbook for agents</p>
+          <h1>See what the machines are doing before they forget.</h1>
+          <p class="lede">Connect this dashboard to a Stensibly API and inspect ready work, live claims, blockers, and recent movement across projects.</p>
+        </div>
+        <div class="connection" id="connection-panel">
+          <div class="connection-head">
+            <strong>Connect a ledger</strong>
+            <span id="connection-state">disconnected</span>
+          </div>
+          <form id="connect-form">
+            <label>
+              API URL
+              <input name="endpoint" type="url" required placeholder="https://api.stensibly.com" autocomplete="url" />
+            </label>
+            <label>
+              Read token
+              <input name="token" type="password" required placeholder="stn.tok_…" autocomplete="off" />
+            </label>
+            <button type="submit">Open scrapbook</button>
+          </form>
+          <p class="connection-note">The endpoint is remembered locally. The token lives only in this browser session.</p>
+        </div>
+      </section>
+
+      <section class="dashboard" id="dashboard" hidden>
+        <div class="dashboard-head">
+          <div>
+            <p class="eyebrow">Live ledger</p>
+            <h2 id="ledger-name">All projects</h2>
+          </div>
+          <div class="dashboard-actions">
+            <select id="project-filter" aria-label="Filter by project"><option value="">all projects</option></select>
+            <button id="refresh" type="button">refresh</button>
+            <button id="disconnect" type="button">disconnect</button>
+          </div>
+        </div>
+
+        <section class="metrics" aria-label="Status totals">
+          <article><span>ready</span><strong id="metric-ready">0</strong></article>
+          <article><span>active</span><strong id="metric-active">0</strong></article>
+          <article><span>blocked</span><strong id="metric-blocked">0</strong></article>
+          <article><span>done</span><strong id="metric-done">0</strong></article>
+        </section>
+
+        <section class="agents-panel">
+          <div class="section-head"><h3>Agents in the walls</h3><span id="last-updated">waiting</span></div>
+          <div class="agents" id="agents"><p class="empty">quiet. suspiciously quiet.</p></div>
+        </section>
+
+        <section class="board" id="board" aria-live="polite"></section>
+      </section>
+
+      <section class="disconnected" id="disconnected-state">
+        <p>No ledger connected yet.</p>
+        <span>The public site is deliberately static. Durable state stays wherever you run the Stensibly API.</span>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
