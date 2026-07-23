@@ -4,7 +4,9 @@ node_modules/
 *.sqlite-wal
 .env
 .env.local
+.dev.vars*
 .convex/
+.wrangler/
 .DS_Store
 coverage/
 dist/
