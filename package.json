@@ -9,6 +9,7 @@
     "mcp": "bun src/mcp-stdio.ts",
     "custodian": "bun src/custodian.ts",
     "tokens": "bun src/tokens.ts",
+    "snapshot": "bun src/snapshot-cli.ts",
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
