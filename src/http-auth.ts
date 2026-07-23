@@ -1,11 +1,14 @@
 import type { Context, MiddlewareHandler } from "hono";
 import {
-  authenticateApiToken,
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
 } from "./auth.ts";
 import { StensiblyStore } from "./store.ts";
+import {
+  SqliteTokenProvider,
+  type ApiTokenAuthenticator,
+} from "./token-provider.ts";
 
 export interface StensiblyEnv {
   Variables: {
@@ -18,9 +21,12 @@ export interface HttpAuthOptions {
 }
 
 export function createHttpAuthMiddleware(
-  store: StensiblyStore,
+  source: StensiblyStore | ApiTokenAuthenticator,
   options: HttpAuthOptions,
 ): MiddlewareHandler<StensiblyEnv> {
+  const authenticator = source instanceof StensiblyStore
+    ? new SqliteTokenProvider(source)
+    : source;
   return async (context, next) => {
     context.set("principal", null);
     if (!options.required || context.req.path === "/health") {
@@ -30,7 +36,7 @@ export function createHttpAuthMiddleware(
 
     const authorization = context.req.header("Authorization");
     const token = parseBearerToken(authorization);
-    const principal = token ? authenticateApiToken(store, token) : null;
+    const principal = token ? await authenticator.authenticate(token) : null;
     if (!principal) {
       context.header("WWW-Authenticate", "Bearer");
       return context.json({ error: "A valid Bearer token is required" }, 401);
