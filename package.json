@@ -13,6 +13,9 @@
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "worker:tail": "wrangler tail",
     "test": "bun test ./test/*.test.ts",
     "test:convex": "vitest run",
     "typecheck": "bunx tsc --noEmit"
@@ -28,6 +31,7 @@
     "@types/bun": "latest",
     "convex-test": "^0.0.54",
     "typescript": "^5.0.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "wrangler": "^4.113.0"
   }
 }
