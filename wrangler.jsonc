@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stensibly-api",
+  "main": "src/cloudflare-worker.ts",
+  "compatibility_date": "2026-07-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "minify": true,
+  "vars": {
+    "STENSIBLY_WORKSPACE": "default",
+    "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://stensibly.app,https://stensibly.vercel.app"
+  },
+  "secrets": {
+    "required": ["CONVEX_URL", "STENSIBLY_SERVICE_SECRET"]
+  }
+}

@@ -74,10 +74,7 @@ describe("async hosted authentication", () => {
       scopes: ["read"],
       projects: ["scrapbook"],
     });
-    const app = createServerApp(store, {
-      authenticator,
-      mcp: { authenticator },
-    });
+    const app = createServerApp(store, { authenticator });
 
     const initialized = await app.request("/mcp", {
       method: "POST",
