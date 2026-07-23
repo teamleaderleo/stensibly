@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createApp } from "./app.ts";
+import { createCorsMiddleware } from "./cors.ts";
 import type { HttpAuthOptions, StensiblyEnv } from "./http-auth.ts";
 import {
   handleMcpHttpRequest,
@@ -10,6 +11,7 @@ import { StensiblyStore } from "./store.ts";
 export interface ServerAppOptions {
   httpAuth?: HttpAuthOptions;
   mcp?: McpHttpOptions;
+  corsOrigins?: string[];
 }
 
 export function createServerApp(
@@ -17,6 +19,8 @@ export function createServerApp(
   options: ServerAppOptions = {},
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
+
+  app.use("*", createCorsMiddleware(options.corsOrigins ?? []));
 
   app.all("/mcp", (context) =>
     handleMcpHttpRequest(store, context.req.raw, options.mcp),
