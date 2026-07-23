@@ -12,7 +12,7 @@ const browserAgent = {
 };
 
 describe("MCP work surface", () => {
-  test("runs a complete create, claim, event, and completion loop", async () => {
+  test("runs a complete create, claim, renew, event, and completion loop", async () => {
     const store = new StensiblyStore(":memory:");
     const server = createMcpServer(store);
     const client = new Client(
@@ -34,6 +34,7 @@ describe("MCP work surface", () => {
         "list_work",
         "record_event",
         "release_work",
+        "renew_claim",
       ]);
 
       const created = parseTextJson<{
@@ -64,7 +65,11 @@ describe("MCP work surface", () => {
       );
       expect(available.map((item) => item.id)).toContain(created.id);
 
-      const claimed = parseTextJson<{ status: string; claimedBy: string }>(
+      const claimed = parseTextJson<{
+        status: string;
+        claimedBy: string;
+        claimExpiresAt: string;
+      }>(
         await client.callTool({
           name: "claim_work",
           arguments: {
@@ -76,6 +81,20 @@ describe("MCP work surface", () => {
       );
       expect(claimed.status).toBe("active");
       expect(claimed.claimedBy).toBe(browserAgent.id);
+
+      const renewed = parseTextJson<{ claimExpiresAt: string }>(
+        await client.callTool({
+          name: "renew_claim",
+          arguments: {
+            id: created.id,
+            actor: browserAgent,
+            leaseSeconds: 1800,
+          },
+        }),
+      );
+      expect(new Date(renewed.claimExpiresAt).getTime()).toBeGreaterThan(
+        new Date(claimed.claimExpiresAt).getTime(),
+      );
 
       const competingClaim = await client.callTool({
         name: "claim_work",
@@ -126,6 +145,7 @@ describe("MCP work surface", () => {
       expect(detail.events.map((event) => event.type)).toEqual([
         "item.created",
         "claim.created",
+        "claim.renewed",
         "progress.recorded",
         "item.completed",
       ]);
