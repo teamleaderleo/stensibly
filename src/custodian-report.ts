@@ -97,7 +97,9 @@ export function inspectScrapbook(
 
   const staleReady = items
     .filter((item) =>
-      item.status === "ready" && new Date(item.updatedAt).getTime() <= staleCutoff,
+      item.status === "ready"
+      && requiresNextAction(item.kind, item.status)
+      && new Date(item.updatedAt).getTime() <= staleCutoff,
     )
     .sort(oldestFirst)
     .map(toCustodianItem);
