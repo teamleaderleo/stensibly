@@ -7,6 +7,7 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "mcp": "bun src/mcp-stdio.ts",
+    "custodian": "bun src/custodian.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },
