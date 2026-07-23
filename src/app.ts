@@ -1,5 +1,10 @@
 import { Hono, type Context } from "hono";
 import {
+  attachArtifact,
+  attachArtifactSchema,
+  listArtifacts,
+} from "./artifacts.ts";
+import {
   actorActionSchema,
   blockItemSchema,
   claimItemSchema,
@@ -57,7 +62,32 @@ export function createApp(store: StensiblyStore): Hono {
   app.get("/api/items/:id", (context) => {
     expireClaims(store);
     const id = context.req.param("id");
-    return context.json({ item: store.getItem(id), events: store.listEvents(id) });
+    return context.json({
+      item: store.getItem(id),
+      events: store.listEvents(id),
+      artifacts: listArtifacts(store, id),
+    });
+  });
+
+  app.get("/api/items/:id/artifacts", (context) =>
+    context.json({ artifacts: listArtifacts(store, context.req.param("id")) }),
+  );
+
+  app.post("/api/items/:id/artifacts", async (context) => {
+    const parsed = attachArtifactSchema.safeParse(await readJson(context.req.raw));
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+    const idempotencyKey = context.req.header("Idempotency-Key");
+    const artifact = attachArtifact(store, {
+      itemId: context.req.param("id"),
+      actor: parsed.data.actor,
+      kind: parsed.data.kind,
+      label: parsed.data.label,
+      uri: parsed.data.uri,
+      metadata: parsed.data.metadata,
+      ...(parsed.data.mimeType ? { mimeType: parsed.data.mimeType } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
+    return context.json({ artifact }, 201);
   });
 
   app.post("/api/items/:id/claim", async (context) => {
