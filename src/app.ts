@@ -4,6 +4,7 @@ import {
   attachArtifactSchema,
   listArtifacts,
 } from "./artifacts.ts";
+import { getProjectBrief } from "./briefs.ts";
 import {
   actorActionSchema,
   blockItemSchema,
@@ -39,6 +40,15 @@ export function createApp(store: StensiblyStore): Hono {
     return context.html(renderBoard(store.listItems()));
   });
   app.get("/health", (context) => context.json({ ok: true, service: "stensibly" }));
+
+  app.get("/api/projects/:project/brief", (context) => {
+    const rawLimit = context.req.query("limit");
+    const limit = rawLimit === undefined ? 10 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return context.json({ error: "Brief limit must be between 1 and 100" }, 400);
+    }
+    return context.json({ brief: getProjectBrief(store, context.req.param("project"), limit) });
+  });
 
   app.get("/api/items", (context) => {
     expireClaims(store);

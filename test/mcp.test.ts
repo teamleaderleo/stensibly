@@ -12,7 +12,7 @@ const browserAgent = {
 };
 
 describe("MCP work surface", () => {
-  test("carries work, artifacts, handoffs, blocking, and completion", async () => {
+  test("carries a project brief, work, artifacts, handoffs, blocking, and completion", async () => {
     const store = new StensiblyStore(":memory:");
     const server = createMcpServer(store);
     const client = new Client(
@@ -32,6 +32,7 @@ describe("MCP work surface", () => {
         "claim_work",
         "complete_work",
         "create_item",
+        "get_brief",
         "get_item",
         "handoff_work",
         "list_artifacts",
@@ -57,6 +58,20 @@ describe("MCP work surface", () => {
       );
       expect(created.status).toBe("ready");
       expect(created.project).toBe("scrapbook");
+
+      const brief = parseTextJson<{
+        project: string;
+        counts: { total: number };
+        ready: Array<{ id: string }>;
+      }>(
+        await client.callTool({
+          name: "get_brief",
+          arguments: { project: "scrapbook", limit: 5 },
+        }),
+      );
+      expect(brief.project).toBe("scrapbook");
+      expect(brief.counts.total).toBe(1);
+      expect(brief.ready.map((item) => item.id)).toEqual([created.id]);
 
       const available = parseTextJson<Array<{ id: string }>>(
         await client.callTool({
