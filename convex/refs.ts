@@ -40,6 +40,12 @@ export const convexApi = {
     add: mutationRef("dependencies:add"),
     list: queryRef("dependencies:list"),
   },
+  tokens: {
+    register: mutationRef("tokens:register"),
+    authenticate: queryRef("tokens:authenticate"),
+    list: queryRef("tokens:list"),
+    revoke: mutationRef("tokens:revoke"),
+  },
   reservations: {
     acquire: mutationRef("reservations:acquire"),
     release: mutationRef("reservations:release"),
