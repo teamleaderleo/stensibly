@@ -1,23 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  actorKinds,
   actorSchema,
   itemKinds,
   itemStatuses,
 } from "./schemas.ts";
 import {
-  ConflictError,
-  NotFoundError,
   StensiblyStore,
   type ItemStatus,
 } from "./store.ts";
-
-const actorInput = {
-  id: z.string().trim().min(1).max(120),
-  name: z.string().trim().min(1).max(160),
-  kind: z.enum(actorKinds).default("agent"),
-};
 
 export function createMcpServer(store: StensiblyStore): McpServer {
   const server = new McpServer(
@@ -93,7 +84,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       description: "Atomically claim an item for a limited lease. A competing live claim returns an error.",
       inputSchema: {
         id: z.string().trim().min(1),
-        actor: actorInput,
+        actor: actorSchema,
         leaseSeconds: z.number().int().min(30).max(86_400).default(900),
         idempotencyKey: z.string().trim().min(1).max(240).optional(),
       },
@@ -109,7 +100,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       description: "Release an item currently claimed by this actor and return it to ready work.",
       inputSchema: {
         id: z.string().trim().min(1),
-        actor: actorInput,
+        actor: actorSchema,
         idempotencyKey: z.string().trim().min(1).max(240).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
@@ -149,7 +140,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       description: "Complete an item, clear its lease, and optionally replace its summary.",
       inputSchema: {
         id: z.string().trim().min(1),
-        actor: actorInput,
+        actor: actorSchema,
         summary: z.string().trim().max(10_000).optional(),
         idempotencyKey: z.string().trim().min(1).max(240).optional(),
       },
@@ -164,17 +155,14 @@ export function createMcpServer(store: StensiblyStore): McpServer {
 
 function asToolResult(read: () => unknown) {
   try {
-    const value = read();
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(read(), null, 2) }],
     };
   } catch (error) {
-    const known = error instanceof ConflictError || error instanceof NotFoundError;
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text" as const, text: message }],
       isError: true,
-      ...(known ? {} : { _meta: { unexpected: true } }),
     };
   }
 }
