@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
+    "mcp": "bun src/mcp-stdio.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "hono": "^4.0.0",
     "zod": "^4.0.0"
   },
