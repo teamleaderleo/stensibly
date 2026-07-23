@@ -189,27 +189,25 @@ export const listActive = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) return [];
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500);
-    if (args.resource) {
-      const resource = assertText(args.resource, "Resource", 500);
-      const reservations = await ctx.db
-        .query("reservations")
-        .withIndex("by_resource_status", (q) =>
-          q.eq("workspaceId", workspace._id).eq("resource", resource).eq("status", "active"),
-        )
-        .collect();
-      return reservations
-        .filter((reservation) => reservation.expiresAt > Date.now())
-        .slice(0, limit)
-        .map(publicReservation);
-    }
-    const reservations = await ctx.db.query("reservations").collect();
+    const now = Date.now();
+    const reservations = args.resource
+      ? await ctx.db
+          .query("reservations")
+          .withIndex("by_resource_status", (q) =>
+            q
+              .eq("workspaceId", workspace._id)
+              .eq("resource", assertText(args.resource!, "Resource", 500))
+              .eq("status", "active"),
+          )
+          .collect()
+      : await ctx.db
+          .query("reservations")
+          .withIndex("by_workspace_status", (q) =>
+            q.eq("workspaceId", workspace._id).eq("status", "active"),
+          )
+          .collect();
     return reservations
-      .filter(
-        (reservation) =>
-          reservation.workspaceId === workspace._id &&
-          reservation.status === "active" &&
-          reservation.expiresAt > Date.now(),
-      )
+      .filter((reservation) => reservation.expiresAt > now)
       .sort((a, b) => a.expiresAt - b.expiresAt)
       .slice(0, limit)
       .map(publicReservation);
