@@ -55,6 +55,7 @@ const dependencyKind = v.union(
 
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
 const reservationStatus = v.union(v.literal("active"), v.literal("released"), v.literal("expired"));
+const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
 
 export default defineSchema({
   workspaces: defineTable({
@@ -184,6 +185,19 @@ export default defineSchema({
   })
     .index("by_from_kind", ["fromItemId", "kind", "toItemId"])
     .index("by_to_kind", ["toItemId", "kind", "fromItemId"]),
+
+  apiTokens: defineTable({
+    workspaceId: v.id("workspaces"),
+    externalId: v.string(),
+    name: v.string(),
+    secretHash: v.string(),
+    scopes: v.array(tokenScope),
+    projects: v.optional(v.array(v.string())),
+    createdAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_workspace_created", ["workspaceId", "createdAt"]),
 
   reservations: defineTable({
     workspaceId: v.id("workspaces"),

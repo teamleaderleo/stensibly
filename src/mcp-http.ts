@@ -1,6 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
-  authenticateApiToken,
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
@@ -9,11 +8,16 @@ import type { WorkLedger } from "./ledger.ts";
 import { createMcpServer } from "./mcp.ts";
 import { SqliteWorkLedger } from "./sqlite-ledger.ts";
 import { StensiblyStore } from "./store.ts";
+import {
+  SqliteTokenProvider,
+  type ApiTokenAuthenticator,
+} from "./token-provider.ts";
 
 export interface McpHttpOptions {
   allowedOrigins?: string[];
   allowedHosts?: string[];
   ledger?: WorkLedger;
+  authenticator?: ApiTokenAuthenticator;
 }
 
 interface AccessRule {
@@ -74,7 +78,8 @@ export async function handleMcpHttpRequest(
   if (hostDenied) return hostDenied;
 
   const token = parseBearerToken(request.headers.get("authorization"));
-  const principal = token ? authenticateApiToken(authStore, token) : null;
+  const authenticator = options.authenticator ?? new SqliteTokenProvider(authStore);
+  const principal = token ? await authenticator.authenticate(token) : null;
   if (!principal) {
     return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
       "WWW-Authenticate": "Bearer",
