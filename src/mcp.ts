@@ -10,6 +10,7 @@ import {
   StensiblyStore,
   type ItemStatus,
 } from "./store.ts";
+import { blockWork, handoffWork, unblockWork } from "./transitions.ts";
 
 export function createMcpServer(store: StensiblyStore): McpServer {
   const server = new McpServer(
@@ -19,6 +20,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
         "Stensibly is a shared scrapbook for work in motion.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
+        "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Record discoveries and progress as events so another actor can continue.",
       ].join(" "),
     },
@@ -114,6 +116,81 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     },
     async ({ id, actor, leaseSeconds, idempotencyKey }) =>
       asToolResult(() => renewClaim(store, id, actor, leaseSeconds, idempotencyKey)),
+  );
+
+  server.registerTool(
+    "handoff_work",
+    {
+      description: "Release work to ready state with a compact summary and an explicit next action.",
+      inputSchema: {
+        id: z.string().trim().min(1),
+        actor: actorSchema,
+        summary: z.string().trim().min(1).max(10_000),
+        nextAction: z.string().trim().min(1).max(2_000),
+        toActorId: z.string().trim().min(1).max(120).optional(),
+        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ id, actor, summary, nextAction, toActorId, idempotencyKey }) =>
+      asToolResult(() =>
+        handoffWork(store, {
+          id,
+          actor,
+          summary,
+          nextAction,
+          ...(toActorId ? { toActorId } : {}),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "block_work",
+    {
+      description: "Mark work blocked, record the reason, and release any current lease.",
+      inputSchema: {
+        id: z.string().trim().min(1),
+        actor: actorSchema,
+        reason: z.string().trim().min(1).max(10_000),
+        nextAction: z.string().trim().min(1).max(2_000).optional(),
+        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ id, actor, reason, nextAction, idempotencyKey }) =>
+      asToolResult(() =>
+        blockWork(store, {
+          id,
+          actor,
+          reason,
+          ...(nextAction ? { nextAction } : {}),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "unblock_work",
+    {
+      description: "Return blocked work to ready state and optionally replace its next action.",
+      inputSchema: {
+        id: z.string().trim().min(1),
+        actor: actorSchema,
+        nextAction: z.string().trim().min(1).max(2_000).optional(),
+        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ id, actor, nextAction, idempotencyKey }) =>
+      asToolResult(() =>
+        unblockWork(store, {
+          id,
+          actor,
+          ...(nextAction ? { nextAction } : {}),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        }),
+      ),
   );
 
   server.registerTool(
