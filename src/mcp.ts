@@ -5,6 +5,7 @@ import {
   attachArtifact,
   listArtifacts,
 } from "./artifacts.ts";
+import { getProjectBrief } from "./briefs.ts";
 import { expireClaims, renewClaim } from "./leases.ts";
 import {
   actorSchema,
@@ -23,6 +24,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
     {
       instructions: [
         "Stensibly is a shared scrapbook for work in motion.",
+        "Start with get_brief when entering an existing project.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
@@ -30,6 +32,23 @@ export function createMcpServer(store: StensiblyStore): McpServer {
         "Record discoveries and progress as events so another actor can continue.",
       ].join(" "),
     },
+  );
+
+  server.registerTool(
+    "get_brief",
+    {
+      description: "Get a compact project briefing with counts, ready work, active claims, blockers, knowledge, recent completions, and recent artifacts.",
+      inputSchema: {
+        project: z
+          .string()
+          .trim()
+          .min(1)
+          .max(80)
+          .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug"),
+        limit: z.number().int().min(1).max(100).default(10),
+      },
+    },
+    async ({ project, limit }) => asToolResult(() => getProjectBrief(store, project, limit)),
   );
 
   server.registerTool(
