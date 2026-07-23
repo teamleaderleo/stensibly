@@ -143,8 +143,8 @@ function bearer(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
-function createItem(token: string, project: string, title: string): Promise<Response> {
-  return app.request("/api/items", {
+async function createItem(token: string, project: string, title: string): Promise<Response> {
+  return await app.request("/api/items", {
     method: "POST",
     headers: {
       ...bearer(token),
