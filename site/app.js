@@ -48,7 +48,7 @@ async function refresh() {
   connectionState.textContent = 'connecting';
   connectionState.classList.remove('error');
   try {
-    const response = await fetch(endpoint + '/api/items', {
+    const response = await fetch(endpoint + '/api/v1/items', {
       headers: { authorization: `Bearer ${token}` },
     });
     const data = await response.json().catch(() => ({}));
