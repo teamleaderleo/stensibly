@@ -6,6 +6,7 @@ import {
   itemStatuses,
   recordEventSchema,
 } from "./schemas.ts";
+import { expireClaims, renewClaim } from "./leases.ts";
 import {
   ConflictError,
   NotFoundError,
@@ -24,10 +25,14 @@ export function createApp(store: StensiblyStore): Hono {
     return context.json({ error: "Unexpected server error" }, 500);
   });
 
-  app.get("/", (context) => context.html(renderBoard(store.listItems())));
+  app.get("/", (context) => {
+    expireClaims(store);
+    return context.html(renderBoard(store.listItems()));
+  });
   app.get("/health", (context) => context.json({ ok: true, service: "stensibly" }));
 
   app.get("/api/items", (context) => {
+    expireClaims(store);
     const project = context.req.query("project");
     const rawStatus = context.req.query("status");
     const status = rawStatus && itemStatuses.includes(rawStatus as ItemStatus)
@@ -46,6 +51,7 @@ export function createApp(store: StensiblyStore): Hono {
   });
 
   app.get("/api/items/:id", (context) => {
+    expireClaims(store);
     const id = context.req.param("id");
     return context.json({ item: store.getItem(id), events: store.listEvents(id) });
   });
@@ -53,7 +59,21 @@ export function createApp(store: StensiblyStore): Hono {
   app.post("/api/items/:id/claim", async (context) => {
     const parsed = claimItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
+    expireClaims(store);
     const item = store.claimItem(
+      context.req.param("id"),
+      parsed.data.actor,
+      parsed.data.leaseSeconds,
+      context.req.header("Idempotency-Key"),
+    );
+    return context.json({ item });
+  });
+
+  app.post("/api/items/:id/renew", async (context) => {
+    const parsed = claimItemSchema.safeParse(await readJson(context.req.raw));
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+    const item = renewClaim(
+      store,
       context.req.param("id"),
       parsed.data.actor,
       parsed.data.leaseSeconds,
@@ -65,6 +85,7 @@ export function createApp(store: StensiblyStore): Hono {
   app.post("/api/items/:id/release", async (context) => {
     const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
+    expireClaims(store);
     const item = store.releaseItem(
       context.req.param("id"),
       parsed.data.actor,
@@ -76,6 +97,7 @@ export function createApp(store: StensiblyStore): Hono {
   app.post("/api/items/:id/complete", async (context) => {
     const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
+    expireClaims(store);
     const item = store.completeItem(
       context.req.param("id"),
       parsed.data.actor,

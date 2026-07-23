@@ -12,7 +12,8 @@ This first slice includes:
 
 - a SQLite-backed item and event ledger
 - projects, actors, tasks, findings, questions, decisions, handoffs, tips, and notes
-- atomic claims with expiring leases
+- atomic claims with renewable, expiring leases
+- automatic recovery of abandoned claims when work is read or listed
 - release and completion actions
 - idempotency keys for retry-safe writes
 - append-only item history
@@ -69,6 +70,7 @@ The MCP server exposes:
 - `get_item`
 - `create_item`
 - `claim_work`
+- `renew_claim`
 - `release_work`
 - `record_event`
 - `complete_work`
@@ -109,6 +111,20 @@ curl http://localhost:3000/api/items/ITEM_ID/claim \
   }'
 ```
 
+Renew a live claim:
+
+```bash
+curl http://localhost:3000/api/items/ITEM_ID/renew \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: renew-ITEM_ID-1' \
+  -d '{
+    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
+    "leaseSeconds": 900
+  }'
+```
+
+Expired claims are returned to `ready` automatically the next time work is listed, read, or claimed. The ledger records a `claim.expired` event before another actor takes over.
+
 Record progress or a finding:
 
 ```bash
@@ -146,7 +162,6 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 - authentication, workspace boundaries, and scoped tokens
 - explicit handoff and blocking transitions
 - artifact references
-- claim renewal and stale-claim cleanup
 - project briefs for agents entering midstream
 - a custodian client that tidies duplicate and abandoned work
 

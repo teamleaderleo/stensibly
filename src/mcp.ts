@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { expireClaims, renewClaim } from "./leases.ts";
 import {
   actorSchema,
   itemKinds,
@@ -17,7 +18,7 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       instructions: [
         "Stensibly is a shared scrapbook for work in motion.",
         "List relevant work before claiming it.",
-        "Claims are temporary leases; release work you abandon.",
+        "Claims are temporary leases; renew active work and release work you abandon.",
         "Record discoveries and progress as events so another actor can continue.",
       ].join(" "),
     },
@@ -26,31 +27,33 @@ export function createMcpServer(store: StensiblyStore): McpServer {
   server.registerTool(
     "list_work",
     {
-      description: "List current work, optionally filtered by project and status.",
+      description: "List current work, optionally filtered by project and status. Expired claims return to ready work first.",
       inputSchema: {
         project: z.string().trim().min(1).max(80).optional(),
         status: z.enum(itemStatuses).optional(),
       },
-      annotations: { readOnlyHint: true },
     },
     async ({ project, status }) =>
-      asToolResult(() =>
-        store.listItems({
+      asToolResult(() => {
+        expireClaims(store);
+        return store.listItems({
           ...(project ? { project } : {}),
           ...(status ? { status: status as ItemStatus } : {}),
-        }),
-      ),
+        });
+      }),
   );
 
   server.registerTool(
     "get_item",
     {
-      description: "Read one item together with its complete event history.",
+      description: "Read one item together with its complete event history. Expired claims are persisted before the result is returned.",
       inputSchema: { id: z.string().trim().min(1) },
-      annotations: { readOnlyHint: true },
     },
     async ({ id }) =>
-      asToolResult(() => ({ item: store.getItem(id), events: store.listEvents(id) })),
+      asToolResult(() => {
+        expireClaims(store);
+        return { item: store.getItem(id), events: store.listEvents(id) };
+      }),
   );
 
   server.registerTool(
@@ -91,7 +94,26 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ id, actor, leaseSeconds, idempotencyKey }) =>
-      asToolResult(() => store.claimItem(id, actor, leaseSeconds, idempotencyKey)),
+      asToolResult(() => {
+        expireClaims(store);
+        return store.claimItem(id, actor, leaseSeconds, idempotencyKey);
+      }),
+  );
+
+  server.registerTool(
+    "renew_claim",
+    {
+      description: "Extend a live claim held by the same actor.",
+      inputSchema: {
+        id: z.string().trim().min(1),
+        actor: actorSchema,
+        leaseSeconds: z.number().int().min(30).max(86_400).default(900),
+        idempotencyKey: z.string().trim().min(1).max(240).optional(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ id, actor, leaseSeconds, idempotencyKey }) =>
+      asToolResult(() => renewClaim(store, id, actor, leaseSeconds, idempotencyKey)),
   );
 
   server.registerTool(
@@ -106,7 +128,10 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ id, actor, idempotencyKey }) =>
-      asToolResult(() => store.releaseItem(id, actor, idempotencyKey)),
+      asToolResult(() => {
+        expireClaims(store);
+        return store.releaseItem(id, actor, idempotencyKey);
+      }),
   );
 
   server.registerTool(
@@ -147,7 +172,10 @@ export function createMcpServer(store: StensiblyStore): McpServer {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ id, actor, summary, idempotencyKey }) =>
-      asToolResult(() => store.completeItem(id, actor, summary, idempotencyKey)),
+      asToolResult(() => {
+        expireClaims(store);
+        return store.completeItem(id, actor, summary, idempotencyKey);
+      }),
   );
 
   return server;
