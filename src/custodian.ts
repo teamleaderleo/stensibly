@@ -6,25 +6,31 @@ interface CliOptions {
   staleDays: number;
   expiringWithinMinutes: number;
   failOnFindings: boolean;
+  showHelp: boolean;
 }
-
-const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";
-const store = new StensiblyStore(databasePath);
 
 try {
   const options = parseArgs(Bun.argv.slice(2));
-  const report = inspectScrapbook(store, {
-    ...(options.project ? { project: options.project } : {}),
-    staleDays: options.staleDays,
-    expiringWithinMinutes: options.expiringWithinMinutes,
-  });
-  console.log(JSON.stringify(report, null, 2));
-  if (options.failOnFindings && reportHasFindings(report)) process.exitCode = 2;
+  if (options.showHelp) {
+    console.log(usage());
+  } else {
+    const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";
+    const store = new StensiblyStore(databasePath);
+    try {
+      const report = inspectScrapbook(store, {
+        ...(options.project ? { project: options.project } : {}),
+        staleDays: options.staleDays,
+        expiringWithinMinutes: options.expiringWithinMinutes,
+      });
+      console.log(JSON.stringify(report, null, 2));
+      if (options.failOnFindings && reportHasFindings(report)) process.exitCode = 2;
+    } finally {
+      store.close();
+    }
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
-} finally {
-  store.close();
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -32,13 +38,14 @@ function parseArgs(args: string[]): CliOptions {
     staleDays: 7,
     expiringWithinMinutes: 5,
     failOnFindings: false,
+    showHelp: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--help" || argument === "-h") {
-      console.log(usage());
-      process.exit(0);
+      options.showHelp = true;
+      continue;
     }
     if (argument === "--fail-on-findings") {
       options.failOnFindings = true;
