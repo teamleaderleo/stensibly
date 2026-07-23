@@ -9,8 +9,8 @@ export interface CloudflareBindings extends Record<string, string | undefined> {
 }
 
 const worker = {
-  fetch(request: Request, env: CloudflareBindings): Promise<Response> {
-    return createHostedAppFromEnv(env).fetch(request);
+  async fetch(request: Request, env: CloudflareBindings): Promise<Response> {
+    return await createHostedAppFromEnv(env).fetch(request);
   },
 };
 
