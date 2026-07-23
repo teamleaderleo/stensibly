@@ -12,7 +12,7 @@ const browserAgent = {
 };
 
 describe("MCP work surface", () => {
-  test("runs a complete create, claim, renew, event, and completion loop", async () => {
+  test("carries work through claims, handoffs, blocking, and completion", async () => {
     const store = new StensiblyStore(":memory:");
     const server = createMcpServer(store);
     const client = new Client(
@@ -27,21 +27,20 @@ describe("MCP work surface", () => {
 
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+        "block_work",
         "claim_work",
         "complete_work",
         "create_item",
         "get_item",
+        "handoff_work",
         "list_work",
         "record_event",
         "release_work",
         "renew_claim",
+        "unblock_work",
       ]);
 
-      const created = parseTextJson<{
-        id: string;
-        status: string;
-        project: string;
-      }>(
+      const created = parseTextJson<{ id: string; status: string; project: string }>(
         await client.callTool({
           name: "create_item",
           arguments: {
@@ -119,6 +118,86 @@ describe("MCP work surface", () => {
       );
       expect(recorded.type).toBe("progress.recorded");
 
+      const handedOff = parseTextJson<{
+        status: string;
+        claimedBy: null;
+        summary: string;
+        nextAction: string;
+      }>(
+        await client.callTool({
+          name: "handoff_work",
+          arguments: {
+            id: created.id,
+            actor: browserAgent,
+            summary: "The protocol path works and needs a human pass.",
+            nextAction: "Review the visible wording.",
+            toActorId: leo.id,
+          },
+        }),
+      );
+      expect(handedOff).toMatchObject({
+        status: "ready",
+        claimedBy: null,
+        summary: "The protocol path works and needs a human pass.",
+        nextAction: "Review the visible wording.",
+      });
+
+      parseTextJson(
+        await client.callTool({
+          name: "claim_work",
+          arguments: { id: created.id, actor: leo, leaseSeconds: 900 },
+        }),
+      );
+
+      const blocked = parseTextJson<{
+        status: string;
+        claimedBy: null;
+        summary: string;
+      }>(
+        await client.callTool({
+          name: "block_work",
+          arguments: {
+            id: created.id,
+            actor: leo,
+            reason: "Needs a sample client configuration.",
+            nextAction: "Add one client example.",
+          },
+        }),
+      );
+      expect(blocked).toMatchObject({
+        status: "blocked",
+        claimedBy: null,
+        summary: "Needs a sample client configuration.",
+      });
+
+      const blockedClaim = await client.callTool({
+        name: "claim_work",
+        arguments: { id: created.id, actor: browserAgent, leaseSeconds: 900 },
+      });
+      expect(blockedClaim.isError).toBe(true);
+
+      const unblocked = parseTextJson<{ status: string; nextAction: string }>(
+        await client.callTool({
+          name: "unblock_work",
+          arguments: {
+            id: created.id,
+            actor: leo,
+            nextAction: "Finish the sample and close the work.",
+          },
+        }),
+      );
+      expect(unblocked).toMatchObject({
+        status: "ready",
+        nextAction: "Finish the sample and close the work.",
+      });
+
+      parseTextJson(
+        await client.callTool({
+          name: "claim_work",
+          arguments: { id: created.id, actor: browserAgent, leaseSeconds: 900 },
+        }),
+      );
+
       const completed = parseTextJson<{ status: string; summary: string }>(
         await client.callTool({
           name: "complete_work",
@@ -147,6 +226,11 @@ describe("MCP work surface", () => {
         "claim.created",
         "claim.renewed",
         "progress.recorded",
+        "work.handed_off",
+        "claim.created",
+        "work.blocked",
+        "work.unblocked",
+        "claim.created",
         "item.completed",
       ]);
     } finally {
@@ -157,7 +241,7 @@ describe("MCP work surface", () => {
   });
 });
 
-function parseTextJson<T>(result: unknown): T {
+function parseTextJson<T = unknown>(result: unknown): T {
   const content = (result as { content?: unknown }).content;
   if (!Array.isArray(content) || content.length === 0) {
     throw new Error("MCP result had no content");
