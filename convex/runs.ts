@@ -110,14 +110,19 @@ export const heartbeat = mutation({
     const run = await getRun(ctx, args.id);
     await assertRunWorkspace(ctx, run, args.workspace);
     if (run.actorExternalId !== args.actorId) throw new Error("Only the run owner can heartbeat it");
-    if (!['running', 'waiting'].includes(run.status)) throw new Error("Run is already finished");
+    if (!["running", "waiting"].includes(run.status)) throw new Error("Run is already finished");
     const now = Date.now();
-    await ctx.db.patch(run._id, {
+    const patch: Record<string, unknown> = {
       status: args.status ?? run.status,
-      childAgentCount: count(args.childAgentCount, "Child agent count"),
-      toolCallCount: count(args.toolCallCount, "Tool call count"),
       lastHeartbeatAt: now,
-    });
+    };
+    if (args.childAgentCount !== undefined) {
+      patch.childAgentCount = count(args.childAgentCount, "Child agent count");
+    }
+    if (args.toolCallCount !== undefined) {
+      patch.toolCallCount = count(args.toolCallCount, "Tool call count");
+    }
+    await ctx.db.patch(run._id, patch);
     const updated = await ctx.db.get("runs", run._id);
     if (!updated) throw new Error("Run disappeared");
     const item = await ctx.db.get("items", run.itemId);
@@ -139,7 +144,7 @@ export const finish = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    if (!['succeeded', 'failed', 'cancelled'].includes(args.status)) {
+    if (!["succeeded", "failed", "cancelled"].includes(args.status)) {
       throw new Error("A finished run must succeed, fail, or be cancelled");
     }
     const run = await getRun(ctx, args.id);
@@ -156,17 +161,22 @@ export const finish = mutation({
       return { ...publicRun(current ?? run), itemId: item?.externalId ?? String(run.itemId) };
     }
     if (run.actorExternalId !== args.actorId) throw new Error("Only the run owner can finish it");
-    if (!['running', 'waiting'].includes(run.status)) throw new Error("Run is already finished");
+    if (!["running", "waiting"].includes(run.status)) throw new Error("Run is already finished");
     const now = Date.now();
     const outcome = assertOptionalText(args.outcome, "Outcome", 10_000);
-    await ctx.db.patch(run._id, {
+    const patch: Record<string, unknown> = {
       status: args.status,
       outcome,
-      childAgentCount: count(args.childAgentCount, "Child agent count"),
-      toolCallCount: count(args.toolCallCount, "Tool call count"),
       lastHeartbeatAt: now,
       endedAt: now,
-    });
+    };
+    if (args.childAgentCount !== undefined) {
+      patch.childAgentCount = count(args.childAgentCount, "Child agent count");
+    }
+    if (args.toolCallCount !== undefined) {
+      patch.toolCallCount = count(args.toolCallCount, "Tool call count");
+    }
+    await ctx.db.patch(run._id, patch);
     const item = await ctx.db.get("items", run.itemId);
     if (!item) throw new Error("Run item no longer exists");
     await appendEvent(ctx, {
@@ -198,7 +208,7 @@ export const listActive = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) return [];
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500);
-    let runs: any[] = [];
+    const runs: any[] = [];
     if (args.project) {
       const project = await findProject(ctx, workspace._id, assertSlug(args.project, "Project"));
       if (!project) return [];
@@ -251,8 +261,7 @@ async function assertRunWorkspace(ctx: any, run: any, workspaceValue: string | u
   return workspace;
 }
 
-function count(value: number | undefined, label: string): number | undefined {
-  if (value === undefined) return undefined;
+function count(value: number, label: string): number {
   if (!Number.isInteger(value) || value < 0) throw new Error(`${label} must be a non-negative integer`);
   return value;
 }
