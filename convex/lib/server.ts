@@ -6,13 +6,18 @@ import {
   mutationGeneric,
   queryGeneric,
 } from "convex/server";
+import type {
+  ActionBuilder,
+  MutationBuilder,
+  QueryBuilder,
+} from "convex/server";
+import type { DataModel } from "./dataModel";
 
-// These generic wrappers let the backend typecheck before a developer runs
-// `convex dev` and generates deployment-specific helpers. Convex codegen may
-// replace imports with ./_generated/server later without changing behavior.
-export const query = queryGeneric;
-export const mutation = mutationGeneric;
-export const action = actionGeneric;
-export const internalQuery = internalQueryGeneric;
-export const internalMutation = internalMutationGeneric;
-export const internalAction = internalActionGeneric;
+// These wrappers are equivalent to Convex's generated server helpers while
+// remaining available before a developer selects a cloud deployment.
+export const query: QueryBuilder<DataModel, "public"> = queryGeneric;
+export const mutation: MutationBuilder<DataModel, "public"> = mutationGeneric;
+export const action: ActionBuilder<DataModel, "public"> = actionGeneric;
+export const internalQuery: QueryBuilder<DataModel, "internal"> = internalQueryGeneric;
+export const internalMutation: MutationBuilder<DataModel, "internal"> = internalMutationGeneric;
+export const internalAction: ActionBuilder<DataModel, "internal"> = internalActionGeneric;
