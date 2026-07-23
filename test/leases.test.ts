@@ -33,13 +33,13 @@ describe("claim leases", () => {
       .query("UPDATE items SET claim_expires_at = ?1 WHERE id = ?2")
       .run("2020-01-01T00:00:00.000Z", item.id);
 
-    expect(expireClaims(store, new Date("2026-07-23T12:00:00.000Z"))).toEqual([item.id]);
+    expect(expireClaims(store, new Date("2100-01-01T00:00:00.000Z"))).toEqual([item.id]);
     expect(store.getItem(item.id)).toMatchObject({
       status: "ready",
       claimedBy: null,
       claimExpiresAt: null,
     });
-    expect(expireClaims(store, new Date("2026-07-23T12:01:00.000Z"))).toEqual([]);
+    expect(expireClaims(store, new Date("2100-01-01T00:01:00.000Z"))).toEqual([]);
     expect(store.listEvents(item.id).map((event) => event.type)).toEqual([
       "item.created",
       "claim.created",
