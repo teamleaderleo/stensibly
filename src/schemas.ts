@@ -44,6 +44,24 @@ export const actorActionSchema = z.object({
   summary: z.string().trim().max(10_000).optional(),
 });
 
+export const handoffItemSchema = z.object({
+  actor: actorSchema,
+  summary: z.string().trim().min(1).max(10_000),
+  nextAction: z.string().trim().min(1).max(2_000),
+  toActorId: z.string().trim().min(1).max(120).optional(),
+});
+
+export const blockItemSchema = z.object({
+  actor: actorSchema,
+  reason: z.string().trim().min(1).max(10_000),
+  nextAction: z.string().trim().min(1).max(2_000).optional(),
+});
+
+export const unblockItemSchema = z.object({
+  actor: actorSchema,
+  nextAction: z.string().trim().min(1).max(2_000).optional(),
+});
+
 export const recordEventSchema = z.object({
   actor: actorSchema.optional(),
   type: z.string().trim().min(1).max(120).regex(/^[a-z0-9._-]+$/),
