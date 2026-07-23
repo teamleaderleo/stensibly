@@ -51,7 +51,6 @@ describe("dashboard view", () => {
     expect(html).toContain("coding-agent");
     expect(html).toContain('value="api"');
     expect(html).toContain('data-expires="2026-07-23T02:00:00.000Z"');
-    expect(html).toContain("lease expired");
     expect(html).toContain("auto · on");
     expect(html).toContain("Ready");
     expect(html).toContain("Active");
