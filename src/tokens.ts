@@ -1,11 +1,11 @@
-import {
-  createApiToken,
-  listApiTokens,
-  revokeApiToken,
-  tokenScopes,
-  type TokenScope,
-} from "./auth.ts";
+import { tokenScopes, type TokenScope } from "./auth.ts";
+import { createConvexWorkLedgerFromEnv } from "./convex-ledger.ts";
 import { StensiblyStore } from "./store.ts";
+import {
+  ConvexTokenProvider,
+  SqliteTokenProvider,
+  type ApiTokenManager,
+} from "./token-provider.ts";
 
 const args = Bun.argv.slice(2);
 const command = args[0];
@@ -14,31 +14,63 @@ try {
   if (!command || command === "--help" || command === "-h") {
     console.log(usage());
   } else {
-    const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";
-    const store = new StensiblyStore(databasePath);
+    const { provider, close, description } = createProvider();
     try {
       if (command === "create") {
         const options = parseCreateArgs(args.slice(1));
-        const created = createApiToken(store, options);
+        const created = await provider.create(options);
         console.log(JSON.stringify(created, null, 2));
         console.error("Save the token now. Stensibly stores only its hash.");
       } else if (command === "list") {
         requireNoArgs(args.slice(1), "list");
-        console.log(JSON.stringify(listApiTokens(store), null, 2));
+        console.log(JSON.stringify(await provider.list(), null, 2));
       } else if (command === "revoke") {
         const id = args[1];
-        if (!id || args.length !== 2) throw new Error("Usage: bun run tokens revoke <token-id>");
-        console.log(JSON.stringify(revokeApiToken(store, id), null, 2));
+        if (!id || args.length !== 2) {
+          throw new Error("Usage: bun run tokens revoke <token-id>");
+        }
+        console.log(JSON.stringify(await provider.revoke(id), null, 2));
       } else {
         throw new Error(`Unknown token command: ${command}`);
       }
+      console.error(`Token authority: ${description}`);
     } finally {
-      store.close();
+      close();
     }
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
+}
+
+function createProvider(): {
+  provider: ApiTokenManager;
+  close: () => void;
+  description: string;
+} {
+  const backend = Bun.env.STENSIBLY_BACKEND ?? "sqlite";
+  if (backend === "convex") {
+    const ledger = createConvexWorkLedgerFromEnv();
+    return {
+      provider: new ConvexTokenProvider({
+        client: ledger.client,
+        serviceSecret: ledger.serviceSecret,
+        workspace: ledger.workspace,
+      }),
+      close: () => {},
+      description: `Convex workspace ${ledger.workspace}`,
+    };
+  }
+  if (backend === "sqlite") {
+    const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";
+    const store = new StensiblyStore(databasePath);
+    return {
+      provider: new SqliteTokenProvider(store),
+      close: () => store.close(),
+      description: `SQLite ${databasePath}`,
+    };
+  }
+  throw new Error(`Unknown STENSIBLY_BACKEND: ${backend}`);
 }
 
 function parseCreateArgs(args: string[]): {
@@ -64,7 +96,9 @@ function parseCreateArgs(args: string[]): {
       const unknown = requested.filter((scope) =>
         !tokenScopes.includes(scope as TokenScope),
       );
-      if (unknown.length > 0) throw new Error(`Unknown token scope: ${unknown.join(", ")}`);
+      if (unknown.length > 0) {
+        throw new Error(`Unknown token scope: ${unknown.join(", ")}`);
+      }
       scopes = requested as TokenScope[];
       continue;
     }
@@ -83,7 +117,9 @@ function parseCreateArgs(args: string[]): {
   }
 
   if (!name) throw new Error("create requires --name");
-  if (scopes.length === 0) throw new Error("create requires --scopes read, write, or admin");
+  if (scopes.length === 0) {
+    throw new Error("create requires --scopes read, write, or admin");
+  }
   return { name, scopes, projects };
 }
 
@@ -111,5 +147,9 @@ Examples:
   bun run tokens revoke tok_abc123
 
 Environment:
-  STENSIBLY_DB  SQLite database path (default: stensibly.sqlite)`;
+  STENSIBLY_BACKEND         sqlite (default) or convex
+  STENSIBLY_DB              SQLite database path (default: stensibly.sqlite)
+  CONVEX_URL                Convex deployment URL when backend=convex
+  STENSIBLY_SERVICE_SECRET  Private Convex gateway secret
+  STENSIBLY_WORKSPACE       Convex workspace slug (default: default)`;
 }
