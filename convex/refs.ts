@@ -46,6 +46,13 @@ export const convexApi = {
     list: queryRef("tokens:list"),
     revoke: mutationRef("tokens:revoke"),
   },
+  migration: {
+    importProjectsActors: mutationRef("migration:importProjectsActors"),
+    importItems: mutationRef("migration:importItems"),
+    importEvents: mutationRef("migration:importEvents"),
+    importArtifacts: mutationRef("migration:importArtifacts"),
+    importTokens: mutationRef("migration:importTokens"),
+  },
   reservations: {
     acquire: mutationRef("reservations:acquire"),
     release: mutationRef("reservations:release"),
