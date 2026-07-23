@@ -115,6 +115,7 @@ export const list = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) return [];
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500);
+    const status = args.status;
 
     let documents: any[];
     if (args.project) {
@@ -124,11 +125,11 @@ export const list = query({
         assertSlug(args.project, "Project"),
       );
       if (!project) return [];
-      documents = args.status
+      documents = status
         ? await ctx.db
             .query("items")
             .withIndex("by_project_status", (q) =>
-              q.eq("projectId", project._id).eq("status", args.status),
+              q.eq("projectId", project._id).eq("status", status),
             )
             .collect()
         : await ctx.db
@@ -136,11 +137,11 @@ export const list = query({
             .withIndex("by_project_status", (q) => q.eq("projectId", project._id))
             .collect();
     } else {
-      documents = args.status
+      documents = status
         ? await ctx.db
             .query("items")
             .withIndex("by_workspace_status", (q) =>
-              q.eq("workspaceId", workspace._id).eq("status", args.status),
+              q.eq("workspaceId", workspace._id).eq("status", status),
             )
             .collect()
         : await ctx.db
@@ -320,7 +321,7 @@ async function transition(ctx: any, args: any, operation: "complete" | "handoff"
     };
     payload = summary ? { summary } : {};
   } else if (operation === "handoff") {
-    if (!['ready', 'active', 'blocked'].includes(item.status)) {
+    if (!["ready", "active", "blocked"].includes(item.status)) {
       throw new Error("Work is complete or archived");
     }
     const summary = assertText(args.summary, "Summary", 10_000);
@@ -332,7 +333,7 @@ async function transition(ctx: any, args: any, operation: "complete" | "handoff"
       ...(args.toActorId ? { toActorId: assertText(args.toActorId, "Target actor", 120) } : {}),
     };
   } else if (operation === "block") {
-    if (!['ready', 'active'].includes(item.status)) {
+    if (!["ready", "active"].includes(item.status)) {
       throw new Error("Work is already blocked, complete, or archived");
     }
     const reason = assertText(args.reason, "Reason", 10_000);
