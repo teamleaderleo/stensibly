@@ -85,6 +85,7 @@ export function createApp(store: StensiblyStore): Hono {
   app.post("/api/items/:id/release", async (context) => {
     const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
+    expireClaims(store);
     const item = store.releaseItem(
       context.req.param("id"),
       parsed.data.actor,
@@ -96,6 +97,7 @@ export function createApp(store: StensiblyStore): Hono {
   app.post("/api/items/:id/complete", async (context) => {
     const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
+    expireClaims(store);
     const item = store.completeItem(
       context.req.param("id"),
       parsed.data.actor,
