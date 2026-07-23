@@ -9,6 +9,7 @@ const allowedHosts = splitList(Bun.env.STENSIBLY_ALLOWED_HOSTS);
 const store = new StensiblyStore(databasePath);
 const app = createServerApp(store, {
   httpAuth: { required: requireAuth },
+  corsOrigins: allowedOrigins,
   mcp: {
     allowedOrigins,
     allowedHosts,
@@ -23,6 +24,7 @@ Bun.serve({
 console.log(`Stensibly is loitering at http://localhost:${port}`);
 console.log(`Database: ${databasePath}`);
 console.log(`HTTP auth: ${requireAuth ? "required" : "disabled"}`);
+console.log(`Allowed remote origins: ${allowedOrigins.length ? allowedOrigins.join(", ") : "none"}`);
 console.log("Remote MCP: /mcp (Bearer token always required)");
 
 function splitList(value: string | undefined): string[] {
