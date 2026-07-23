@@ -14,7 +14,7 @@ This first slice includes:
 - projects, actors, tasks, findings, questions, decisions, handoffs, tips, and notes
 - atomic claims with renewable, expiring leases
 - automatic recovery of abandoned claims when work is read or listed
-- release and completion actions
+- explicit handoff, block, unblock, release, and completion actions
 - idempotency keys for retry-safe writes
 - append-only item history
 - a tiny browser board
@@ -71,6 +71,9 @@ The MCP server exposes:
 - `create_item`
 - `claim_work`
 - `renew_claim`
+- `handoff_work`
+- `block_work`
+- `unblock_work`
 - `release_work`
 - `record_event`
 - `complete_work`
@@ -125,6 +128,45 @@ curl http://localhost:3000/api/items/ITEM_ID/renew \
 
 Expired claims are returned to `ready` automatically the next time work is listed, read, or claimed. The ledger records a `claim.expired` event before another actor takes over.
 
+Hand work onward with enough context to continue:
+
+```bash
+curl http://localhost:3000/api/items/ITEM_ID/handoff \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: handoff-ITEM_ID-1' \
+  -d '{
+    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
+    "summary": "Found the relevant files and narrowed the fault.",
+    "nextAction": "Patch the parser and rerun the fixture.",
+    "toActorId": "coding-agent"
+  }'
+```
+
+A handoff clears the claim, returns the item to `ready`, and records `work.handed_off`.
+
+Block work while it waits on something external:
+
+```bash
+curl http://localhost:3000/api/items/ITEM_ID/block \
+  -H 'content-type: application/json' \
+  -d '{
+    "actor": { "id": "coding-agent", "name": "Coding Agent", "kind": "agent" },
+    "reason": "Waiting for API credentials.",
+    "nextAction": "Retry after credentials arrive."
+  }'
+```
+
+Return it to ready work:
+
+```bash
+curl http://localhost:3000/api/items/ITEM_ID/unblock \
+  -H 'content-type: application/json' \
+  -d '{
+    "actor": { "id": "leo", "name": "Leo", "kind": "human" },
+    "nextAction": "Use the supplied credentials and continue."
+  }'
+```
+
 Record progress or a finding:
 
 ```bash
@@ -152,15 +194,15 @@ curl http://localhost:3000/api/items/ITEM_ID/complete \
 
 1. Work belongs to projects, independent of any agent runtime.
 2. Claims are leases. Vanished workers eventually lose ownership.
-3. Current item state stays easy to query.
-4. Every meaningful change leaves an event behind.
-5. Retryable clients should provide idempotency keys for writes.
-6. The server performs no model calls.
+3. Handoffs always carry a summary and an explicit next action.
+4. Blocked work records why it stopped and releases its claim.
+5. Every meaningful change leaves an event behind.
+6. Retryable clients should provide idempotency keys for writes.
+7. The server performs no model calls.
 
 ## Near-term work
 
 - authentication, workspace boundaries, and scoped tokens
-- explicit handoff and blocking transitions
 - artifact references
 - project briefs for agents entering midstream
 - a custodian client that tidies duplicate and abandoned work
