@@ -1,0 +1,70 @@
+import { describe, expect, test } from "bun:test";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
+import { StensiblyStore } from "../src/store.ts";
+
+const actor = { id: "agent-1", name: "Agent One", kind: "agent" as const };
+
+describe("SQLite completion parity", () => {
+  test("completion preserves or replaces summary, clears next action and lease, and replays once", async () => {
+    const store = new StensiblyStore(":memory:");
+    const ledger = new SqliteWorkLedger(store);
+    try {
+      const preserved = await ledger.createItem({
+        project: "scrapbook",
+        kind: "task",
+        title: "Preserve the final summary",
+        summary: "Original summary",
+        nextAction: "This must disappear",
+        priority: 50,
+        actor,
+      });
+      await ledger.claimWork({ id: preserved.id, actor, leaseSeconds: 900 });
+      const completed = await ledger.completeWork({
+        id: preserved.id,
+        actor,
+        idempotencyKey: "complete-preserve",
+      });
+      expect(completed).toMatchObject({
+        status: "done",
+        summary: "Original summary",
+        nextAction: null,
+        claimedBy: null,
+        claimExpiresAt: null,
+      });
+      const completedVersion = completed.version;
+      const replayed = await ledger.completeWork({
+        id: preserved.id,
+        actor,
+        idempotencyKey: "complete-preserve",
+      });
+      expect(replayed.version).toBe(completedVersion);
+      expect(replayed.nextAction).toBeNull();
+      expect((await ledger.getItem(preserved.id)).events.filter((event) => event.type === "item.completed")).toHaveLength(1);
+
+      const replaced = await ledger.createItem({
+        project: "scrapbook",
+        kind: "task",
+        title: "Replace the final summary",
+        summary: "Before completion",
+        nextAction: "Also disappears",
+        priority: 50,
+        actor,
+      });
+      const replacedResult = await ledger.completeWork({
+        id: replaced.id,
+        actor,
+        summary: "Completed with evidence",
+        idempotencyKey: "complete-replace",
+      });
+      expect(replacedResult).toMatchObject({
+        status: "done",
+        summary: "Completed with evidence",
+        nextAction: null,
+        claimedBy: null,
+        claimExpiresAt: null,
+      });
+    } finally {
+      store.close();
+    }
+  });
+});
