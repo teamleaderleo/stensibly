@@ -9,6 +9,10 @@ import {
   ConvexTokenProvider,
   type ApiTokenAuthenticator,
 } from "./token-provider.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+  type FailureCategory,
+} from "./worker-observability.js";
 
 export interface HostedAppOptions {
   ledger: WorkLedger;
@@ -20,6 +24,15 @@ export interface HostedAppOptions {
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
   const allowedOrigins = options.allowedOrigins ?? [];
+
+  app.onError((_error, context) => {
+    const category = failureCategoryForPath(context.req.path);
+    context.header(FAILURE_CATEGORY_HEADER, category);
+    return context.json({
+      error: "Hosted gateway request failed",
+      code: category,
+    }, 500);
+  });
 
   app.use("/api/*", createCorsMiddleware(allowedOrigins));
   app.get("/health", (context) => context.json({
@@ -62,6 +75,14 @@ export function createHostedAppFromEnv(
     allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
   });
+}
+
+function failureCategoryForPath(path: string): FailureCategory {
+  if (path === "/mcp") return "mcp_failure";
+  if (path === "/api/v1" || path.startsWith("/api/v1/")) {
+    return "convex_failure";
+  }
+  return "gateway_failure";
 }
 
 function splitList(value: string | undefined): string[] {
