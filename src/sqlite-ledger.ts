@@ -10,6 +10,10 @@ import {
 import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
 import {
+  editContinuation,
+  type EditContinuationInput,
+} from "./continuation-edit.js";
+import {
   ensureContinuationSchema,
   getContinuation,
   listContinuations,
@@ -166,5 +170,9 @@ export class SqliteWorkLedger implements WorkLedger, CompletionContinuationLedge
 
   async resolveContinuation(input: ResolveContinuationInput) {
     return resolveContinuation(this.store, input);
+  }
+
+  async editContinuation(input: EditContinuationInput) {
+    return editContinuation(this.store, input);
   }
 }
