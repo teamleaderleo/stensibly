@@ -1,33 +1,72 @@
 # Stensibly
 
-**A scrapbook for agents. Where work sometimes gets done and sometimes goes catastrophically off the rails.**
+**A vendor-neutral coordination ledger for humans, agents, scripts, and services.**
 
-Stensibly is a small shared work ledger for humans, agents, scripts, and whatever else wanders through a project. Participants can leave tasks and findings, claim work for a limited time, append progress, attach useful outputs, and hand the result onward.
+Stensibly records shared coordination facts: what needs doing, who is responsible, what is blocked, what evidence exists, and what happens next. The server owns this shared state. Agent frameworks remain optional clients.
 
-The server owns the shared state. Agent frameworks remain optional clients.
+External systems continue to own source code, files, deployments, CI output, and private agent execution. Stensibly stores references and coordination history instead of copying those systems into the ledger.
 
-## Current v0
+## Hosted service
 
-This first slice includes:
+The running hosted path is:
 
-- a SQLite-backed item and event ledger
-- projects, actors, tasks, findings, questions, decisions, handoffs, tips, and notes
-- deterministic project briefs for actors entering work midstream
-- a deterministic custodian report for expired, stale, vague, and duplicate work
-- atomic claims with renewable, expiring leases
-- automatic recovery of abandoned claims when work is read or listed
-- explicit handoff, block, unblock, release, and completion actions
-- first-class references to files, URLs, commits, issues, documents, images, logs, and datasets
-- opt-in Bearer authentication with hashed, revocable, project-scoped API tokens
-- idempotency keys for retry-safe writes
-- append-only item history
-- a tiny browser board
-- a JSON REST API
-- an MCP stdio server for local agent clients
+| Surface | Endpoint | Role |
+| --- | --- | --- |
+| Dashboard | `https://www.stensibly.com` | Static, read-only browser board |
+| REST v1 and remote MCP | `https://api.stensibly.com` | Official authenticated API |
+| Worker fallback | `https://stensibly-api.leoli-082000.workers.dev` | Direct Worker endpoint during rollout and diagnosis |
+| System of record | Convex | Workspaces, projects, actors, items, events, artifacts, runs, dependencies, reservations, and API-token hashes |
 
-HTTP authentication stays disabled by default for local development. Enable it before exposing the web process beyond a trusted machine.
+The Cloudflare Worker authenticates public API tokens, enforces workspace and project scopes, and calls Convex with a private service secret. The browser never receives that service secret.
 
-## Run the web board
+The dashboard currently polls REST v1. It stores the selected endpoint in `localStorage` and a user-supplied read token in `sessionStorage`. The token disappears when the browser session ends and is never rendered after connection.
+
+### Verify the hosted path
+
+Use a read token through the environment so it stays out of shell history:
+
+```bash
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
+```
+
+The verifier performs five read-only checks:
+
+1. Convex-backed health
+2. unauthenticated REST rejection
+3. dashboard CORS preflight
+4. authenticated item listing
+5. authenticated remote MCP initialization
+
+Use the Worker fallback or a project-scoped check when needed:
+
+```bash
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run verify:hosted -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev \
+  --project scrapbook
+```
+
+See [docs/operations.md](docs/operations.md) for deployment, verification, logs, rollback, and incident diagnosis.
+
+## Two supported modes
+
+### Hosted Convex mode
+
+This is the production path. Convex owns shared state and API-token authority. Cloudflare Workers exposes REST v1 and Streamable HTTP MCP. The static Vercel site is a client of that API.
+
+Hosted clients should use:
+
+- `/api/v1` for REST
+- `/mcp` for remote MCP
+- Bearer authentication for both surfaces
+
+### Local SQLite compatibility mode
+
+The original Bun and SQLite application remains useful for local experiments and small self-hosted setups. It includes the browser board, REST v1, legacy unversioned `/api` routes, local token authority, and remote MCP.
+
+The unversioned `/api` routes are compatibility routes. New clients should use `/api/v1` in both modes.
+
+## Run locally with SQLite
 
 Install [Bun](https://bun.sh), then:
 
@@ -36,17 +75,17 @@ bun install
 bun run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. The default database is `./stensibly.sqlite`.
 
-The default database is `./stensibly.sqlite`. Override it with:
+Choose another database path with:
 
 ```bash
-STENSIBLY_DB=/somewhere/else/stensibly.sqlite bun run start
+STENSIBLY_DB=/absolute/path/to/stensibly.sqlite bun run start
 ```
 
-## Protect the HTTP server
+Local HTTP authentication is disabled by default. Enable it before exposing the process beyond a trusted machine.
 
-Create a token in the same SQLite database the server will use:
+Create a local token:
 
 ```bash
 STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
@@ -56,9 +95,7 @@ STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
   --projects scrapbook
 ```
 
-The command prints the raw token once. Stensibly stores its SHA-256 hash, token metadata, scopes, and project allowlist.
-
-Start the server with authentication required:
+Start the local server with authentication required:
 
 ```bash
 STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
@@ -66,55 +103,62 @@ STENSIBLY_REQUIRE_AUTH=true \
   bun run start
 ```
 
-Send the token as a Bearer credential:
+The token command prints the raw token once. Stensibly stores its SHA-256 hash, metadata, scopes, project allowlist, and revocation state.
+
+## REST v1
+
+Set the endpoint and token for examples:
 
 ```bash
-curl http://localhost:3000/api/items \
+export STENSIBLY_ENDPOINT=https://api.stensibly.com
+export STENSIBLY_TOKEN=stn.tok_...
+```
+
+List work:
+
+```bash
+curl "$STENSIBLY_ENDPOINT/api/v1/items?project=scrapbook&status=ready" \
   -H "authorization: Bearer $STENSIBLY_TOKEN"
 ```
 
-Available scopes:
-
-- `read` — board, briefs, item details, events, and artifact references
-- `write` — item creation and every mutation
-- `admin` — grants both read and write; reserved for broader administration later
-
-A token created with `--projects scrapbook,another-project` can access only those projects. Omit `--projects`, or use `--all-projects`, for an unrestricted project list.
-
-List token metadata or revoke a token:
+Get a deterministic project brief:
 
 ```bash
-bun run tokens list
-bun run tokens revoke tok_TOKEN_ID
+curl "$STENSIBLY_ENDPOINT/api/v1/projects/scrapbook/brief?limit=10" \
+  -H "authorization: Bearer $STENSIBLY_TOKEN"
 ```
 
-Revocation takes effect on the next request. Token listings never reveal the raw secret. `/health` remains public; the board and every `/api` route require a token while `STENSIBLY_REQUIRE_AUTH=true`.
-
-## Connect an MCP client
-
-Start the stdio server directly:
+Create an item with a write token:
 
 ```bash
-STENSIBLY_DB=/absolute/path/to/stensibly.sqlite bun run mcp
+curl "$STENSIBLY_ENDPOINT/api/v1/items" \
+  -H "authorization: Bearer $STENSIBLY_TOKEN" \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: demo-create-1' \
+  -d '{
+    "project": "scrapbook",
+    "kind": "task",
+    "title": "See whether this thing works",
+    "nextAction": "Claim it from another process",
+    "actor": { "id": "leo", "name": "Leo", "kind": "human" }
+  }'
 ```
 
-A generic local MCP client configuration looks like this:
+REST v1 supports project briefs, item listing and detail, creation, artifacts, claims, renewal, handoff, block, unblock, release, completion, and append-only event recording. Retryable clients should supply idempotency keys for writes.
 
-```json
-{
-  "mcpServers": {
-    "stensibly": {
-      "command": "bun",
-      "args": ["/absolute/path/to/stensibly/src/mcp-stdio.ts"],
-      "env": {
-        "STENSIBLY_DB": "/absolute/path/to/stensibly.sqlite"
-      }
-    }
-  }
-}
+## MCP
+
+### Remote Streamable HTTP
+
+The hosted MCP endpoint is:
+
+```text
+https://api.stensibly.com/mcp
 ```
 
-The MCP server exposes:
+Remote MCP requires Bearer authentication. It exposes the same ledger operations as REST v1 and applies the same token scopes and project boundaries.
+
+Available tools include:
 
 - `get_brief`
 - `list_work`
@@ -131,222 +175,83 @@ The MCP server exposes:
 - `list_artifacts`
 - `complete_work`
 
-The web server and MCP server can point at the same SQLite file. SQLite WAL mode lets both processes participate in the same scrapbook. The stdio MCP process is a local trusted client and does not use HTTP Bearer authentication.
+### Local stdio
 
-## Enter a project
-
-An actor entering existing work should start with `get_brief`. The brief is assembled directly from ledger state and contains:
-
-- counts by status and item kind
-- highest-priority ready work
-- active claims and lease expiry times
-- blocked work with reasons and next actions
-- recent findings, questions, decisions, tips, handoffs, and notes
-- recently completed work
-- recent artifact references
-
-The server performs no model call while producing it. Every actor receives the same facts.
-
-REST clients can request the same view:
+For a trusted local client:
 
 ```bash
-curl 'http://localhost:3000/api/projects/scrapbook/brief?limit=10'
+STENSIBLY_DB=/absolute/path/to/stensibly.sqlite bun run mcp
 ```
 
-The limit applies independently to each section and accepts values from 1 through 100. Counts always cover the full project.
+The stdio process uses the local SQLite database directly and does not use HTTP Bearer authentication.
 
-## Run the custodian
+## Token administration
 
-The custodian revives expired claims and emits a JSON cleanup report. It flags:
-
-- active claims expiring soon
-- actionable work with no next action
-- actionable ready or blocked work older than a chosen age
-- open items in the same project with the same normalized title
-
-Run it against the default database:
+Token records contain hashes instead of raw secrets. List or revoke token metadata with:
 
 ```bash
-bun run custodian
+bun run tokens list
+bun run tokens revoke tok_TOKEN_ID
 ```
 
-Inspect one project and choose the time windows:
+To administer hosted Convex tokens, run the command in a trusted operator environment with:
 
 ```bash
-bun run custodian \
-  --project scrapbook \
-  --stale-days 14 \
-  --expiring-within 10
+STENSIBLY_BACKEND=convex
+CONVEX_URL=https://your-deployment.convex.cloud
+STENSIBLY_SERVICE_SECRET=...
+STENSIBLY_WORKSPACE=default
 ```
 
-Use it in CI or cron with a nonzero exit status when findings exist:
-
-```bash
-bun run custodian --fail-on-findings
-```
-
-Exit status `2` means the report contains findings. Exit status `1` means the command itself failed. The custodian changes only expired claims; every other finding remains a report for a human or agent to resolve explicitly.
-
-## REST API
-
-Create an item:
-
-```bash
-curl http://localhost:3000/api/items \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: demo-create-1' \
-  -d '{
-    "project": "scrapbook",
-    "kind": "task",
-    "title": "See whether this thing works",
-    "nextAction": "Claim it from another process",
-    "actor": { "id": "leo", "name": "Leo", "kind": "human" }
-  }'
-```
-
-List work:
-
-```bash
-curl 'http://localhost:3000/api/items?project=scrapbook&status=ready'
-```
-
-Claim an item:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/claim \
-  -H 'content-type: application/json' \
-  -d '{
-    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
-    "leaseSeconds": 900
-  }'
-```
-
-Renew a live claim:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/renew \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: renew-ITEM_ID-1' \
-  -d '{
-    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
-    "leaseSeconds": 900
-  }'
-```
-
-Expired claims are returned to `ready` automatically the next time work is listed, read, or claimed. The ledger records a `claim.expired` event before another actor takes over.
-
-Attach a useful output:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/artifacts \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: artifact-ITEM_ID-1' \
-  -d '{
-    "actor": { "id": "coding-agent", "name": "Coding Agent", "kind": "agent" },
-    "kind": "commit",
-    "label": "Parser fix",
-    "uri": "git:teamleaderleo/stensibly@abc123",
-    "metadata": {
-      "repository": "teamleaderleo/stensibly",
-      "sha": "abc123"
-    }
-  }'
-```
-
-Artifacts are references. Stensibly stores the URI, label, kind, provenance, optional MIME type, and metadata. It never downloads or copies the underlying content. Each attachment adds an `artifact.attached` event and appears in item detail responses.
-
-Supported artifact kinds:
-
-```text
-file url commit issue document image log dataset other
-```
-
-List an item's artifact references:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/artifacts
-```
-
-Hand work onward with enough context to continue:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/handoff \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: handoff-ITEM_ID-1' \
-  -d '{
-    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
-    "summary": "Found the relevant files and narrowed the fault.",
-    "nextAction": "Patch the parser and rerun the fixture.",
-    "toActorId": "coding-agent"
-  }'
-```
-
-A handoff clears the claim, returns the item to `ready`, and records `work.handed_off`.
-
-Block work while it waits on something external:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/block \
-  -H 'content-type: application/json' \
-  -d '{
-    "actor": { "id": "coding-agent", "name": "Coding Agent", "kind": "agent" },
-    "reason": "Waiting for API credentials.",
-    "nextAction": "Retry after credentials arrive."
-  }'
-```
-
-Return it to ready work:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/unblock \
-  -H 'content-type: application/json' \
-  -d '{
-    "actor": { "id": "leo", "name": "Leo", "kind": "human" },
-    "nextAction": "Use the supplied credentials and continue."
-  }'
-```
-
-Record progress or a finding:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/events \
-  -H 'content-type: application/json' \
-  -d '{
-    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
-    "type": "progress.recorded",
-    "payload": { "summary": "Found three suspicious little files" }
-  }'
-```
-
-Complete it:
-
-```bash
-curl http://localhost:3000/api/items/ITEM_ID/complete \
-  -H 'content-type: application/json' \
-  -d '{
-    "actor": { "id": "browser-agent", "name": "Browser Agent", "kind": "agent" },
-    "summary": "Handled, more or less"
-  }'
-```
+`STENSIBLY_SERVICE_SECRET` is a Worker/CLI-to-Convex credential. It is never an API bearer token and never belongs in the dashboard, a static host variable, a URL, or a client configuration.
 
 ## Core rules
 
-1. Work belongs to projects, independent of any agent runtime.
+1. Work belongs to a workspace and project, independent of any agent runtime.
 2. Project briefs report shared ledger state without generating prose.
-3. Claims are leases. Vanished workers eventually lose ownership.
-4. Handoffs always carry a summary and an explicit next action.
-5. Blocked work records why it stopped and releases its claim.
-6. Artifacts remain pointers with explicit provenance.
-7. Custodian checks report problems before taking broader action.
-8. HTTP tokens store hashed secrets and carry explicit action and project scopes.
-9. Every meaningful change leaves an event behind.
-10. Retryable clients should provide idempotency keys for writes.
+3. Claims are renewable, expiring leases.
+4. Handoffs carry a summary and an explicit next action.
+5. Blocking work records a reason and releases ownership.
+6. Meaningful changes append events.
+7. Artifacts remain references with explicit provenance.
+8. API tokens store hashed secrets and carry explicit scopes.
+9. Workspace and project boundaries are enforced by the server.
+10. Writes support idempotency keys.
 11. The server performs no model calls.
 
-## Near-term work
+## Development checks
 
-- first-class workspace boundaries
-- Streamable HTTP MCP after host validation and authentication policy settle
+```bash
+bun install
+bun run typecheck
+bun test
+bun run test:convex
+bun run worker:check
+```
+
+The Convex test suite runs in memory and covers competing claims, idempotent commands, scheduled lease expiry, timer races, artifacts, handoffs, dependencies, runs, reservations, tokens, and project briefs.
+
+## Current release boundary
+
+The hosted read path is live: Convex state, API-token authority, Cloudflare Worker, REST v1, remote MCP, custom API domain, static dashboard, and read-only verification.
+
+The next product slice is one complete write workflow in the dashboard:
+
+- create an item
+- inspect item detail and history
+- claim work
+- record progress
+- block and unblock
+- complete the item
+
+That loop should prove human and agent coordination before broader dependency, reservation, and agent-run interfaces are added.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Hosted operations](docs/operations.md)
+- [Cloudflare deployment](docs/cloudflare-deployment.md)
+- [Convex backend](docs/convex-backend.md)
 
 ## License
 
