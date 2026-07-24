@@ -1,5 +1,9 @@
 import type { MiddlewareHandler } from "hono";
 import type { StensiblyEnv } from "./http-auth.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+  REQUEST_ID_HEADER,
+} from "./worker-observability.js";
 
 export function createCorsMiddleware(
   allowedOrigins: string[],
@@ -14,13 +18,15 @@ export function createCorsMiddleware(
     }
 
     if (!allowed.has(origin)) {
+      context.header(FAILURE_CATEGORY_HEADER, "cors_rejection");
       return context.json({ error: `Origin is not allowed: ${origin}` }, 403);
     }
 
     context.header("Access-Control-Allow-Origin", origin);
     context.header("Access-Control-Allow-Credentials", "false");
-    context.header("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key");
+    context.header("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID");
     context.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    context.header("Access-Control-Expose-Headers", REQUEST_ID_HEADER);
     context.header("Access-Control-Max-Age", "600");
     context.header("Vary", "Origin");
 
