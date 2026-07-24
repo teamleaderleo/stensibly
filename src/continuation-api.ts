@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import {
   continuationLedger,
   listContinuationsSchema,
@@ -92,7 +92,7 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 function validationError(
-  context: Parameters<Hono<StensiblyEnv>["get"]>[1] extends (...args: infer A) => unknown ? A[0] : never,
+  context: Context<StensiblyEnv>,
   issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
 ) {
   return context.json({
@@ -102,9 +102,7 @@ function validationError(
   }, 400);
 }
 
-function unavailable(
-  context: Parameters<Hono<StensiblyEnv>["get"]>[1] extends (...args: infer A) => unknown ? A[0] : never,
-) {
+function unavailable(context: Context<StensiblyEnv>) {
   return context.json({
     error: "Continuation proposals are unavailable on this backend",
     code: "unsupported_feature",
