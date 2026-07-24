@@ -1,6 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { artifactKinds } from "./artifact-contracts.js";
+import {
+  completionContinuationLedger,
+  continuationDraftSchema,
+} from "./completion-continuation-contracts.js";
 import { registerContinuationTools } from "./continuation-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import {
@@ -238,14 +242,30 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "complete_work",
     {
-      description: "Complete an item, clear its lease, and optionally replace its summary.",
+      description: "Complete an item, clear its lease, optionally replace its summary, and optionally propose durable next actions in the same transaction.",
       inputSchema: {
         ...actorActionSchema(),
         summary: z.string().trim().max(10_000).optional(),
+        continuations: z.array(continuationDraftSchema).max(20).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async (input) => asToolResult(() => ledger.completeWork(input)),
+    async (input) => asToolResult(async () => {
+      if (input.continuations?.length) {
+        const atomic = completionContinuationLedger(ledger);
+        if (!atomic) {
+          throw new Error(
+            "Atomic completion continuations are unavailable on this backend",
+          );
+        }
+        return await atomic.completeWorkWithContinuations({
+          ...input,
+          continuations: input.continuations,
+        });
+      }
+      const { continuations: _continuations, ...legacyInput } = input;
+      return await ledger.completeWork(legacyInput);
+    }),
   );
 
   registerContinuationTools(server, ledger);
