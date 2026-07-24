@@ -9,7 +9,7 @@
   "minify": true,
   "vars": {
     "STENSIBLY_WORKSPACE": "default",
-    "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://stensibly.app,https://stensibly.vercel.app"
+    "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app"
   },
   "secrets": {
     "required": ["CONVEX_URL", "STENSIBLY_SERVICE_SECRET"]
