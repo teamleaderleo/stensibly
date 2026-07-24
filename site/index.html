@@ -29,7 +29,7 @@
         </div>
         <div class="connection" id="connection-panel">
           <div class="connection-head">
-            <strong>Connect a ledger</strong>
+            <strong id="connection-title">Connect a ledger</strong>
             <span id="connection-state">disconnected</span>
           </div>
           <form id="connect-form">
@@ -39,11 +39,25 @@
             </label>
             <label>
               Read token
-              <input name="token" type="password" required placeholder="stn.tok_…" autocomplete="off" />
+              <input name="token" type="password" placeholder="stn.tok_…" autocomplete="off" aria-describedby="connection-note" />
             </label>
-            <button type="submit">Open scrapbook</button>
+            <div class="connection-form-actions">
+              <button type="submit">Open scrapbook</button>
+              <button class="secondary" id="cancel-connection" type="button" hidden>cancel</button>
+            </div>
           </form>
-          <p class="connection-note">The endpoint is remembered locally. The token lives only in this browser session.</p>
+          <div class="connected-summary" id="connected-summary" hidden>
+            <div class="connected-copy">
+              <span>Connected endpoint</span>
+              <strong id="connected-endpoint"></strong>
+            </div>
+            <div class="connected-actions">
+              <button class="secondary" id="change-connection" type="button">change connection</button>
+              <button class="secondary" id="disconnect-connection" type="button">disconnect</button>
+            </div>
+          </div>
+          <p class="connection-error" id="connection-error" role="alert" hidden></p>
+          <p class="connection-note" id="connection-note">The endpoint is remembered locally. The token lives only in this browser session and is never displayed after connection.</p>
         </div>
       </section>
 
@@ -56,7 +70,6 @@
           <div class="dashboard-actions">
             <select id="project-filter" aria-label="Filter by project"><option value="">all projects</option></select>
             <button id="refresh" type="button">refresh</button>
-            <button id="disconnect" type="button">disconnect</button>
           </div>
         </div>
 
@@ -77,7 +90,7 @@
 
       <section class="disconnected" id="disconnected-state">
         <p>No ledger connected yet.</p>
-        <span>The public site is deliberately static. Durable state stays wherever you run the Stensibly API.</span>
+        <span>Enter a read-only API token to inspect shared work.</span>
       </section>
     </main>
     <script src="/app.js" type="module"></script>
