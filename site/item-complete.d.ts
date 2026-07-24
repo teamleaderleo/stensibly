@@ -26,9 +26,6 @@ export function validateCompleteInput(
   summary: unknown,
   actor: ActorSession | null,
 ): CompleteInput;
-export function readCompletedItem(
-  payload: unknown,
-  expected: CompleteInput & { previousSummary?: string | null },
-): CompletedItem;
+export function readCompletedItem(payload: unknown, expected: CompleteInput): CompletedItem;
 export function createCompletionIdempotencyTracker(generateKey?: () => string): CompletionIdempotencyTracker;
 export function canCompleteStatus(status: unknown): boolean;
