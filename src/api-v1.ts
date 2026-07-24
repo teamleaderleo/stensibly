@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import { attachArtifactSchema } from "./artifact-contracts.js";
-import { filterItemsForPrincipal } from "./token-contracts.js";
+import {
+  filterItemsForPrincipal,
+  principalHasScope,
+} from "./token-contracts.js";
 import {
   createHttpAuthMiddleware,
   currentPrincipal,
@@ -26,10 +29,14 @@ import {
   type FailureCategory,
 } from "./worker-observability.js";
 
+export interface ApiV1Options extends HttpAuthOptions {
+  workspace?: string | null;
+}
+
 export function createApiV1(
   authenticator: ApiTokenAuthenticator,
   ledger: WorkLedger,
-  authOptions: HttpAuthOptions = { required: false },
+  options: ApiV1Options = { required: false },
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
 
@@ -50,7 +57,34 @@ export function createApiV1(
     return context.json({ error: message, code: "invalid_operation" }, 400);
   });
 
-  app.use("*", createHttpAuthMiddleware(authenticator, authOptions));
+  app.use("*", createHttpAuthMiddleware(authenticator, options));
+
+  app.get("/principal", (context) => {
+    const principal = currentPrincipal(context);
+    if (!principal) {
+      context.header("WWW-Authenticate", "Bearer");
+      context.header(FAILURE_CATEGORY_HEADER, "auth_failure");
+      return context.json({
+        error: "A valid Bearer token is required",
+        code: "unauthorized",
+      }, 401);
+    }
+
+    return context.json({
+      principal: {
+        kind: "api_token",
+        name: principal.name,
+        workspace: options.workspace ?? null,
+        scopes: [...principal.scopes],
+        projects: principal.projects === null ? null : [...principal.projects],
+      },
+      capabilities: {
+        read: principalHasScope(principal, "read"),
+        write: principalHasScope(principal, "write"),
+        admin: principal.scopes.includes("admin"),
+      },
+    });
+  });
 
   app.get("/projects/:project/brief", async (context) => {
     const project = context.req.param("project");
