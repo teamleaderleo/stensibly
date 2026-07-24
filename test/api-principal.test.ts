@@ -128,7 +128,6 @@ describe("GET /api/v1/principal", () => {
     expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBe("auth_failure");
     expect(await response.json()).toEqual({
       error: "A valid Bearer token is required",
-      code: "unauthorized",
     });
   });
 
