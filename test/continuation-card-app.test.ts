@@ -13,7 +13,7 @@ const agent = { id: "agent", name: "Agent", kind: "agent" as const };
 const leo = { id: "leo", name: "Leo", kind: "human" as const };
 
 describe("ChatGPT continuation card app", () => {
-  test("renders one durable proposal with a fresh-turn interaction contract", async () => {
+  test("renders one durable proposal with editing and fresh-turn interaction contracts", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);
     const item = await ledger.createItem({
@@ -55,11 +55,22 @@ describe("ChatGPT continuation card app", () => {
       const tools = await client.listTools();
       const names = tools.tools.map((tool) => tool.name);
       expect(names).toContain("show_continuation_card");
-      expect(names).toContain("list_decision_inbox");
+      expect(names).toContain("list_continuation_inbox");
+      expect(names).toContain("edit_continuation");
       const cardTool = tools.tools.find((tool) => tool.name === "show_continuation_card");
-      expect(cardTool?._meta).toMatchObject({
-        "openai/outputTemplate": CONTINUATION_CARD_URI,
+      expect(cardTool).toMatchObject({
+        title: "Show continuation decision card",
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: false,
+        },
+        _meta: {
+          ui: { resourceUri: CONTINUATION_CARD_URI },
+          "openai/outputTemplate": CONTINUATION_CARD_URI,
+        },
       });
+      expect(cardTool?.outputSchema).toBeDefined();
 
       const result = await client.callTool({
         name: "show_continuation_card",
@@ -94,25 +105,21 @@ describe("ChatGPT continuation card app", () => {
           },
           prefersBorder: true,
         },
+        "openai/widgetDescription": expect.any(String),
       });
-      expect(content && "text" in content ? content.text : "").toContain(
-        "window.openai.sendFollowUpMessage",
-      );
-      expect(content && "text" in content ? content.text : "").toContain(
-        'method: "ui/message"',
-      );
-      expect(content && "text" in content ? content.text : "").toContain(
-        "verify it is still at generation",
-      );
-      expect(content && "text" in content ? content.text : "").toContain(
-        "Continue here",
-      );
-      expect(content && "text" in content ? content.text : "").toContain(
-        "Later",
-      );
-      expect(content && "text" in content ? content.text : "").toContain(
-        "Reject",
-      );
+      const html = content && "text" in content ? content.text : "";
+      expect(html).toContain("window.openai.sendFollowUpMessage");
+      expect(html).toContain("window.openai.callTool");
+      expect(html).toContain('method: "ui/message"');
+      expect(html).toContain('bridgeRequest("tools/call"');
+      expect(html).toContain('callServerTool("edit_continuation"');
+      expect(html).toContain("updated?.generation !== currentGeneration + 1");
+      expect(html).toContain("verify it is still at generation");
+      expect(html).toContain("Edit instruction");
+      expect(html).toContain("Save instruction");
+      expect(html).toContain("Continue here");
+      expect(html).toContain("Later");
+      expect(html).toContain("Reject");
     } finally {
       await client.close();
       await server.close();
