@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ConvexWorkLedger } from "../src/convex-ledger.ts";
 import { createServerApp } from "../src/server-app.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import { readProjectBrief } from "../site/project-brief.js";
 
@@ -46,6 +47,25 @@ const fixture = {
   activeReservations: [],
 };
 
+const emptyFixture = {
+  workspace: null,
+  project: "missing",
+  generatedAt: "2026-07-24T23:00:00.000Z",
+  counts: {
+    total: 0,
+    byStatus: { ready: 0, active: 0, blocked: 0, done: 0, archived: 0 },
+    byKind: { task: 0, finding: 0, question: 0, decision: 0, tip: 0, handoff: 0, note: 0 },
+  },
+  ready: [],
+  active: [],
+  blocked: [],
+  knowledge: [],
+  recentlyCompleted: [],
+  recentArtifacts: [],
+  activeRuns: [],
+  activeReservations: [],
+};
+
 let store: StensiblyStore | null = null;
 
 afterEach(() => {
@@ -55,17 +75,7 @@ afterEach(() => {
 
 describe("hosted project brief gateway parity", () => {
   test("passes the hosted result through the public ledger and dashboard parser", async () => {
-    const ledger = new ConvexWorkLedger({
-      client: {
-        query: async () => fixture,
-        mutation: async () => {
-          throw new Error("not used");
-        },
-      },
-      serviceSecret: "service-secret",
-      workspace: "test",
-    });
-
+    const ledger = convexLedgerReturning(fixture);
     const brief = await ledger.getBrief("scrapbook", 10);
     expect(brief).toBe(fixture);
     expect(readProjectBrief({ brief }, "scrapbook")).toMatchObject({
@@ -76,26 +86,43 @@ describe("hosted project brief gateway parity", () => {
     });
   });
 
-  test("maps a hosted missing-project error to REST v1 404", async () => {
-    const ledger = new ConvexWorkLedger({
-      client: {
-        query: async () => {
-          throw new Error("Project missing does not exist");
-        },
-        mutation: async () => {
-          throw new Error("not used");
-        },
-      },
-      serviceSecret: "service-secret",
-      workspace: "test",
-    });
+  test("returns the same empty 200 contract as SQLite for an unknown project", async () => {
     store = new StensiblyStore(":memory:");
-    const app = createServerApp(store, { ledger });
+    const local = await new SqliteWorkLedger(store).getBrief("missing", 10) as any;
+    const hostedLedger = convexLedgerReturning(emptyFixture);
+    const app = createServerApp(store, { ledger: hostedLedger });
     const response = await app.request("/api/v1/projects/missing/brief?limit=10");
-    expect(response.status).toBe(404);
-    expect(await response.json()).toMatchObject({
-      code: "not_found",
-      error: "Project missing does not exist",
+    expect(response.status).toBe(200);
+    const payload = await response.json() as any;
+    expect(payload.brief).toMatchObject({
+      project: local.project,
+      counts: local.counts,
+      ready: local.ready,
+      active: local.active,
+      blocked: local.blocked,
+      knowledge: local.knowledge,
+      recentlyCompleted: local.recentlyCompleted,
+      recentArtifacts: local.recentArtifacts,
+    });
+    expect(readProjectBrief(payload, "missing")).toMatchObject({
+      project: "missing",
+      counts: emptyFixture.counts,
+      ready: [],
+      knowledge: [],
+      recentArtifacts: [],
     });
   });
 });
+
+function convexLedgerReturning(value: unknown) {
+  return new ConvexWorkLedger({
+    client: {
+      query: async () => value,
+      mutation: async () => {
+        throw new Error("not used");
+      },
+    },
+    serviceSecret: "service-secret",
+    workspace: "test",
+  });
+}
