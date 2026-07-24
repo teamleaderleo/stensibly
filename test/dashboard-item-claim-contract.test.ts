@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
+const index = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
 const app = await Bun.file(new URL("../site/app.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-detail-controller.js", import.meta.url)).text();
 const helper = await Bun.file(new URL("../site/item-claim.js", import.meta.url)).text();
 const declaration = await Bun.file(new URL("../site/item-detail-controller.d.ts", import.meta.url)).text();
-const styles = await Bun.file(new URL("../site/styles.css", import.meta.url)).text();
+const claimStyles = await Bun.file(new URL("../site/item-claim.css", import.meta.url)).text();
 
 describe("dashboard claim integration", () => {
   test("gates claim controls on write authority, actor, and item status", () => {
@@ -64,10 +65,12 @@ describe("dashboard claim integration", () => {
     expect(controller).not.toContain("innerHTML");
   });
 
-  test("includes responsive claim presentation", () => {
-    expect(styles).toContain(".detail-claim-summary");
-    expect(styles).toContain(".detail-claim-form");
-    expect(styles).toContain(".detail-claim-actions");
-    expect(styles).toContain(".detail-claim-error");
+  test("loads responsive claim presentation", () => {
+    expect(index).toContain('<link rel="stylesheet" href="/item-claim.css" />');
+    expect(claimStyles).toContain(".detail-claim-summary");
+    expect(claimStyles).toContain(".detail-claim-form");
+    expect(claimStyles).toContain(".detail-claim-actions");
+    expect(claimStyles).toContain(".detail-claim-error");
+    expect(claimStyles).toContain("@media (max-width: 560px)");
   });
 });
