@@ -31,6 +31,7 @@ const columns = [
 
 let items = [];
 let refreshTimer;
+let requestGeneration = 0;
 let connected = false;
 let endpoint = savedEndpoint();
 let token = sessionStorage.stensiblyToken || '';
@@ -55,6 +56,7 @@ if (token && isPlausibleToken(token)) {
 async function connect(event) {
   event.preventDefault();
   clearRefreshTimer();
+  const requestId = beginRequest();
   hideConnectionError();
 
   let candidateEndpoint;
@@ -90,6 +92,7 @@ async function connect(event) {
   setConnectionStatus('connecting');
   try {
     const nextItems = await loadItems(candidateEndpoint, candidateToken);
+    if (!isCurrentRequest(requestId)) return;
     endpoint = candidateEndpoint;
     token = candidateToken;
     items = nextItems;
@@ -102,7 +105,9 @@ async function connect(event) {
     showConnectedState();
     scheduleRefresh();
   } catch (error) {
+    if (!isCurrentRequest(requestId)) return;
     const message = await explainConnectionFailure(error, candidateEndpoint);
+    if (!isCurrentRequest(requestId)) return;
     const failedCurrentConnection = candidateEndpoint === endpoint
       && candidateToken === token
       && isTerminalConnectionFailure(error);
@@ -125,16 +130,21 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
   }
 
   clearRefreshTimer();
+  const requestId = beginRequest();
   if (interactive || initial) setConnectionStatus(interactive ? 'refreshing' : 'connecting');
 
   try {
-    items = await loadItems(endpoint, token);
+    const nextItems = await loadItems(endpoint, token);
+    if (!isCurrentRequest(requestId)) return;
+    items = nextItems;
     connected = true;
     updateDashboard();
     showConnectedState();
     scheduleRefresh();
   } catch (error) {
+    if (!isCurrentRequest(requestId)) return;
     const message = await explainConnectionFailure(error, endpoint);
+    if (!isCurrentRequest(requestId)) return;
     if (isTerminalConnectionFailure(error)) {
       if (isCredentialFailure(error)) clearStoredToken();
       connected = false;
@@ -214,6 +224,7 @@ function isCredentialFailure(error) {
 }
 
 function beginConnectionChange() {
+  invalidateRequests();
   clearRefreshTimer();
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
@@ -223,6 +234,7 @@ function beginConnectionChange() {
 
 function cancelConnectionChange() {
   if (!connected) return;
+  invalidateRequests();
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
   showConnectedState();
@@ -230,6 +242,7 @@ function cancelConnectionChange() {
 }
 
 function disconnect() {
+  invalidateRequests();
   clearRefreshTimer();
   clearStoredToken();
   connected = false;
@@ -243,6 +256,19 @@ function clearStoredToken() {
   token = '';
   sessionStorage.removeItem('stensiblyToken');
   form.elements.token.value = '';
+}
+
+function beginRequest() {
+  requestGeneration += 1;
+  return requestGeneration;
+}
+
+function invalidateRequests() {
+  requestGeneration += 1;
+}
+
+function isCurrentRequest(requestId) {
+  return requestId === requestGeneration;
 }
 
 function showConnectedState() {
@@ -279,7 +305,7 @@ function showConnectionForm(message = '', { keepDashboard = false, allowCancel =
     setConnectionStatus('connection failed', true);
   } else {
     hideConnectionError();
-    setConnectionStatus('disconnected');
+    setConnectionStatus(allowCancel ? 'editing' : 'disconnected');
   }
 
   if (!keepDashboard) {
