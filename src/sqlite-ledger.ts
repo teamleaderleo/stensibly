@@ -1,5 +1,6 @@
 import { attachArtifact, listArtifacts } from "./artifacts.js";
 import { getProjectBrief } from "./briefs.js";
+import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
   ActorActionInput,
@@ -43,7 +44,8 @@ export class SqliteWorkLedger implements WorkLedger {
   }
 
   async attachArtifact(input: AttachWorkArtifactInput) {
-    return attachArtifact(this.store, {
+    const replay = hasRecordedIdempotencyKey(this.store, input.idempotencyKey);
+    const artifact = attachArtifact(this.store, {
       itemId: input.id,
       actor: input.actor,
       kind: input.kind,
@@ -53,6 +55,8 @@ export class SqliteWorkLedger implements WorkLedger {
       ...(input.mimeType ? { mimeType: input.mimeType } : {}),
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     });
+    if (!replay) touchItemActivity(this.store, input.id, artifact.createdAt);
+    return artifact;
   }
 
   async createItem(input: CreateWorkInput) {
@@ -98,13 +102,16 @@ export class SqliteWorkLedger implements WorkLedger {
   }
 
   async recordEvent(input: RecordWorkEventInput) {
-    return this.store.recordEvent({
+    const replay = hasRecordedIdempotencyKey(this.store, input.idempotencyKey);
+    const event = this.store.recordEvent({
       itemId: input.id,
       ...(input.actor ? { actor: input.actor } : {}),
       type: input.type,
       payload: input.payload,
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     });
+    if (!replay) touchItemActivity(this.store, input.id, event.createdAt);
+    return event;
   }
 
   async completeWork(input: CompleteWorkInput) {
