@@ -74,6 +74,28 @@ describe("hosted verifier output", () => {
 });
 
 describe("hosted verifier checks", () => {
+  test("validates direct options before requesting", async () => {
+    let calls = 0;
+    const fetchImpl: FetchLike = async () => {
+      calls += 1;
+      return jsonResponse({});
+    };
+
+    await expect(verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+      project: "Bad Project",
+    }, fetchImpl)).rejects.toThrow("lowercase project slug");
+    await expect(verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+      timeoutMs: 0,
+    }, fetchImpl)).rejects.toThrow("timeoutMs");
+    expect(calls).toBe(0);
+  });
+
   test("verifies health, auth, CORS, items, and MCP initialize", async () => {
     const calls: Array<{ url: URL; init: RequestInit }> = [];
     const fetchImpl: FetchLike = async (input, init = {}) => {
