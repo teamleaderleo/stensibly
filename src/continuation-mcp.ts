@@ -35,7 +35,7 @@ export function registerContinuationTools(
   server.registerTool(
     "get_continuation",
     {
-      description: "Read one durable continuation proposal and its current generation and lifecycle state.",
+      description: "Read one durable continuation proposal, its current generation, and any materialized result references.",
       inputSchema: { id: idSchema },
       annotations: { readOnlyHint: true },
     },
@@ -58,7 +58,7 @@ export function registerContinuationTools(
   server.registerTool(
     "resolve_continuation",
     {
-      description: "Apply one generation-guarded continuation lifecycle command such as approve, reject, defer, queue, start, succeed, fail, cancel, or supersede.",
+      description: "Apply a generation-guarded proposal command: approve, reject, defer, consume, cancel, or supersede. Consume records the item, run, decision, or conversation that took ownership of the approved intent.",
       inputSchema: {
         id: idSchema,
         ...resolveContinuationSchema.shape,
