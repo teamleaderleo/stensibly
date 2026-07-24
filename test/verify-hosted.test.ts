@@ -1,0 +1,158 @@
+import { describe, expect, test } from "bun:test";
+import {
+  formatResults,
+  parseVerifyHostedArgs,
+  redactSecrets,
+  verifyHosted,
+  type FetchLike,
+} from "../src/verify-hosted.ts";
+
+const token = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
+
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
+}
+
+describe("hosted verifier arguments", () => {
+  test("uses safe defaults and environment values", () => {
+    const parsed = parseVerifyHostedArgs(["--", "--project", "scrapbook"], {
+      STENSIBLY_TOKEN: token,
+    });
+    expect(parsed).toEqual({
+      help: false,
+      options: {
+        endpoint: "https://api.stensibly.com",
+        token,
+        origin: "https://www.stensibly.com",
+        project: "scrapbook",
+      },
+    });
+  });
+
+  test("lets command arguments override environment values", () => {
+    const parsed = parseVerifyHostedArgs([
+      "--endpoint", "https://example.test/",
+      "--token", token,
+      "--origin", "https://dashboard.example.test",
+    ], {
+      STENSIBLY_ENDPOINT: "https://ignored.test",
+      STENSIBLY_TOKEN: "ignored",
+    });
+    expect(parsed.options).toEqual({
+      endpoint: "https://example.test",
+      token,
+      origin: "https://dashboard.example.test",
+    });
+  });
+
+  test("rejects missing, unknown, and malformed values", () => {
+    expect(() => parseVerifyHostedArgs([], {})).toThrow("token is required");
+    expect(() => parseVerifyHostedArgs(["--token"], {})).toThrow("--token requires a value");
+    expect(() => parseVerifyHostedArgs(["--wat"], { STENSIBLY_TOKEN: token })).toThrow("Unknown argument");
+    expect(() => parseVerifyHostedArgs(["--endpoint", "https://example.test/path"], { STENSIBLY_TOKEN: token }))
+      .toThrow("must be an origin");
+    expect(() => parseVerifyHostedArgs(["--project", "Not A Slug"], { STENSIBLY_TOKEN: token }))
+      .toThrow("lowercase project slug");
+  });
+});
+
+describe("hosted verifier output", () => {
+  test("redacts explicit and token-shaped secrets", () => {
+    expect(redactSecrets(`failed with ${token}`, token)).toBe("failed with [REDACTED]");
+    expect(redactSecrets(new Error(`server echoed ${token}`))).toBe("server echoed [REDACTED]");
+  });
+
+  test("formats a complete summary", () => {
+    expect(formatResults([
+      { name: "one", ok: true, detail: "good" },
+      { name: "two", ok: false, detail: "bad" },
+    ])).toBe("[PASS] one: good\n[FAIL] two: bad\n1/2 hosted checks passed");
+  });
+});
+
+describe("hosted verifier checks", () => {
+  test("verifies health, auth, CORS, items, and MCP initialize", async () => {
+    const calls: Array<{ url: URL; init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (input, init = {}) => {
+      const requestUrl = new URL(String(input));
+      calls.push({ url: requestUrl, init });
+
+      if (requestUrl.pathname === "/health") {
+        return jsonResponse({ ok: true, backend: "convex" });
+      }
+      if (requestUrl.pathname === "/api/v1/items" && init.method === "OPTIONS") {
+        expect(new Headers(init.headers).get("origin")).toBe("https://www.stensibly.com");
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "access-control-allow-origin": "https://www.stensibly.com",
+            "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key",
+            "access-control-allow-methods": "GET, POST, OPTIONS",
+          },
+        });
+      }
+      if (requestUrl.pathname === "/api/v1/items") {
+        if (!new Headers(init.headers).has("authorization")) {
+          return jsonResponse({ error: "A valid Bearer token is required" }, 401, {
+            "www-authenticate": "Bearer",
+          });
+        }
+        expect(requestUrl.searchParams.get("project")).toBe("scrapbook");
+        expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${token}`);
+        return jsonResponse({ items: [{ id: "item_1" }] });
+      }
+      if (requestUrl.pathname === "/mcp") {
+        const headers = new Headers(init.headers);
+        expect(headers.get("authorization")).toBe(`Bearer ${token}`);
+        expect(headers.get("origin")).toBe("https://www.stensibly.com");
+        expect(headers.get("mcp-protocol-version")).toBe("2025-06-18");
+        const payload = JSON.parse(String(init.body)) as { method?: string };
+        expect(payload.method).toBe("initialize");
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            serverInfo: { name: "stensibly", version: "0.0.1" },
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${requestUrl}`);
+    };
+
+    const results = await verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+      project: "scrapbook",
+    }, fetchImpl);
+
+    expect(results).toHaveLength(5);
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(calls).toHaveLength(5);
+    expect(formatResults(results)).not.toContain(token);
+  });
+
+  test("runs every check and redacts failures", async () => {
+    let calls = 0;
+    const fetchImpl: FetchLike = async () => {
+      calls += 1;
+      return jsonResponse({ error: `failed for ${token}` }, 500);
+    };
+
+    const results = await verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(calls).toBe(5);
+    expect(results).toHaveLength(5);
+    expect(results.every((result) => !result.ok)).toBe(true);
+    expect(formatResults(results)).not.toContain(token);
+  });
+});
