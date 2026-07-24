@@ -76,6 +76,18 @@ describe("Convex work ledger", () => {
     await ledger.unblockWork({ id: "item_1", actor });
     await ledger.releaseWork({ id: "item_1", actor });
     await ledger.completeWork({ id: "item_1", actor, summary: "Done." });
+    await ledger.completeWorkWithContinuations({
+      id: "item_1",
+      actor,
+      summary: "Done with a next move.",
+      continuations: [{
+        title: "Review the result",
+        rationale: "A decision remains.",
+        instruction: "Review and continue.",
+        action: { kind: "request_decision", decisionType: "review" },
+      }],
+      idempotencyKey: "complete-continuation-1",
+    });
     await ledger.proposeContinuation({
       sourceItemId: "item_1",
       title: "Review the result",
@@ -109,6 +121,7 @@ describe("Convex work ledger", () => {
       "mutation:items:unblock",
       "mutation:claims:release",
       "mutation:items:complete",
+      "mutation:completionContinuations:complete",
       "mutation:continuations:propose",
       "mutation:continuations:get",
       "mutation:continuations:list",
@@ -128,6 +141,10 @@ describe("Convex work ledger", () => {
       idempotencyKey: "claim-1",
     });
     expect(client.calls[13]?.args).toMatchObject({
+      id: "item_1",
+      idempotencyKey: "complete-continuation-1",
+    });
+    expect(client.calls[14]?.args).toMatchObject({
       sourceItemId: "item_1",
       idempotencyKey: "continuation-1",
     });
@@ -181,6 +198,9 @@ function fixture(name: string): unknown {
       metadata: {},
       createdAt: new Date().toISOString(),
     };
+  }
+  if (name === "completionContinuations:complete") {
+    return { item: item(), continuations: [continuation()] };
   }
   if (name.startsWith("continuations:")) return continuation();
   return item();
