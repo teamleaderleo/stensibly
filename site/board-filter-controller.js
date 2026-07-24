@@ -242,6 +242,11 @@ function statusFromColumn(column) {
 function updateColumnEmpty(column, total, visible, filtered) {
   const cards = column.querySelector('.cards');
   if (!cards) return;
+  const baseline = cards.querySelector('.empty:not(.board-filter-column-empty)');
+  if (baseline) {
+    const baselineText = filtered ? 'No items exist in this status.' : 'nothing here';
+    if (baseline.textContent !== baselineText) baseline.textContent = baselineText;
+  }
   const existing = cards.querySelector('.board-filter-column-empty');
   const shouldShow = filtered && total > 0 && visible === 0;
   if (!shouldShow) {
