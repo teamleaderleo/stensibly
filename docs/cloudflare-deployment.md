@@ -1,6 +1,45 @@
 # Deploy the hosted gateway to Cloudflare Workers
 
-The Cloudflare Worker is an additional hosted entrypoint for the same Convex-backed REST API and remote MCP gateway. It does not replace the local SQLite app, the static dashboard, the Convex deployment, or the existing Vercel entrypoint.
+The `stensibly-api` Cloudflare Worker is the production gateway for Convex-backed REST v1 and remote MCP.
+
+It is separate from:
+
+- the static Vercel dashboard project named `stensibly`
+- the Convex deployment that owns hosted state
+- the local SQLite compatibility application
+- the parked Vercel API project named `stensibly-api`
+
+## Production endpoints
+
+| Purpose | Endpoint |
+| --- | --- |
+| Official REST v1 and MCP | `https://api.stensibly.com` |
+| Worker fallback | `https://stensibly-api.leoli-082000.workers.dev` |
+| Static dashboard | `https://www.stensibly.com` |
+
+The custom-domain Worker record should remain proxied through Cloudflare.
+
+## Configuration checked into Git
+
+`wrangler.jsonc` declares:
+
+```text
+Worker name: stensibly-api
+Entry point: src/cloudflare-worker.ts
+Workspace: default
+```
+
+The browser origin allowlist is:
+
+```text
+https://stensibly.com
+https://www.stensibly.com
+https://stensibly.app
+https://www.stensibly.app
+https://stensibly.vercel.app
+```
+
+`CONVEX_URL` and `STENSIBLY_SERVICE_SECRET` are required encrypted bindings. They never belong in `wrangler.jsonc`.
 
 ## Install and authenticate
 
@@ -9,22 +48,15 @@ bun install
 bunx wrangler login
 ```
 
-Wrangler opens a browser so you can authorize the Cloudflare account that should own the `stensibly-api` Worker.
+Use the Cloudflare account that owns the `stensibly-api` Worker and the `stensibly.com` zone.
 
-## Configure local Worker development
+## Local Worker development
 
 Create an untracked `.dev.vars` file:
 
 ```dotenv
-CONVEX_URL=https://your-production-deployment.convex.cloud
-STENSIBLY_SERVICE_SECRET=the-same-secret-configured-in-convex-production
-```
-
-`wrangler.jsonc` supplies these non-secret defaults:
-
-```text
-STENSIBLY_WORKSPACE=default
-STENSIBLY_ALLOWED_ORIGINS=https://stensibly.com,https://stensibly.app,https://stensibly.vercel.app
+CONVEX_URL=https://your-convex-deployment.convex.cloud
+STENSIBLY_SERVICE_SECRET=use-the-same-private-value-configured-in-convex
 ```
 
 Start the Worker locally:
@@ -33,63 +65,93 @@ Start the Worker locally:
 bun run worker:dev
 ```
 
-Verify the public endpoint:
+Check the local health route:
 
 ```bash
 curl http://localhost:8787/health
 ```
 
+`.dev.vars`, `.env*`, `.wrangler/`, and `.wrangler-dry-run/` are ignored by Git.
+
 ## First production deployment
 
-The Wrangler configuration declares both production bindings as required. Upload them alongside the first deployment so no incomplete Worker version is created.
+The first deployment must upload code and both encrypted bindings together. This avoids creating an active Worker version with missing production credentials.
 
-Create an untracked `.env.production` file:
+Create a temporary untracked file:
 
 ```dotenv
-CONVEX_URL=https://resilient-donkey-323.convex.cloud
+CONVEX_URL=https://your-production-deployment.convex.cloud
 STENSIBLY_SERVICE_SECRET=the-exact-secret-configured-in-convex-production
 ```
 
-Deploy the Worker and encrypted bindings together:
+Save it as `.env.production`, then deploy:
 
 ```bash
 bunx wrangler deploy --secrets-file .env.production
 rm .env.production
 ```
 
-The `.env.production` file is ignored by Git, but delete it immediately after a successful deployment. Do not create a second service-secret value.
+Delete the temporary file immediately after the successful deployment. Keep one matching service-secret value in Convex and Cloudflare; creating an unrelated second value breaks gateway calls.
 
-For later code-only deployments, the existing Worker secrets are preserved:
+## Code-only deployments
+
+Once the encrypted bindings exist, routine code deployments preserve them:
 
 ```bash
 bun run worker:deploy
 ```
 
-Wrangler prints the Worker URL, normally under your account's `workers.dev` subdomain. Verify it before attaching a custom domain:
+Before deployment, run:
 
 ```bash
-curl https://YOUR-WORKER.workers.dev/health
-curl -i https://YOUR-WORKER.workers.dev/api/v1/items
+bun run typecheck
+bun test
+bun run test:convex
+bun run worker:check
 ```
 
-The first request should return `200`. The unauthenticated API request should return `401`.
+`worker:check` performs a dry-run bundle and writes ignored output under `.wrangler-dry-run/`.
 
-## Attach `api.stensibly.com`
+## Attach the custom domain
 
-Cloudflare Worker Custom Domains require `stensibly.com` to be an active Cloudflare zone. After the Worker is healthy:
+Cloudflare Worker Custom Domains require `stensibly.com` to be an active Cloudflare zone.
 
-1. Open **Workers & Pages** in Cloudflare.
+1. Open **Workers & Pages**.
 2. Select **stensibly-api**.
 3. Open **Domains & Routes**.
 4. Add the Custom Domain `api.stensibly.com`.
 
-Cloudflare creates the DNS record and certificate. Do not keep another CNAME record on `api.stensibly.com` while attaching the Worker.
+Cloudflare creates the DNS record and certificate. Avoid a second manual CNAME on the same hostname.
 
-After the custom domain works, add it to `STENSIBLY_ALLOWED_ORIGINS` only if a browser application will itself be served from that origin. The API hostname does not need to be in the CORS allowlist merely because it hosts the API.
+The API hostname itself does not need to appear in the browser CORS allowlist. Add origins where browser applications are served.
 
-## Vercel cleanup
+## Verify after deployment
 
-Keep the `stensibly-api` Vercel project until the Worker passes health, authenticated REST, MCP initialization, and CORS checks. Afterwards, disconnect its Git integration or delete the project to stop duplicate deployment attempts. The static `stensibly` Vercel project remains the dashboard host.
+Use a read-only API token through the environment:
+
+```bash
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
+```
+
+Expected output contains five passing checks:
+
+```text
+[PASS] health
+[PASS] unauthenticated REST
+[PASS] REST CORS preflight
+[PASS] authenticated REST
+[PASS] remote MCP initialize
+```
+
+Verify the fallback independently when custom-domain diagnosis is needed:
+
+```bash
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run verify:hosted -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev
+```
+
+The official endpoint should remain the public configuration after both pass.
 
 ## Logs
 
@@ -98,3 +160,52 @@ Stream production Worker logs with:
 ```bash
 bun run worker:tail
 ```
+
+During an incident, identify which layer failed:
+
+- `GET /health` failure: Worker route, Worker runtime, or Convex gateway setup
+- unauthenticated request returns something other than `401`: route or authentication regression
+- CORS failure: origin allowlist or preflight handling
+- authenticated REST failure: token, scope, Worker-to-Convex call, or Convex state
+- MCP initialize failure: MCP route, protocol handling, origin, or authentication
+
+Avoid logging Authorization headers, raw tokens, or the service secret.
+
+## Rollback
+
+Cloudflare Worker versions can be rolled back from the dashboard or with Wrangler. A rollback creates a new deployment pointing at the selected earlier Worker version and activates it across Worker routes and custom domains.
+
+Interactive rollback to the previous version:
+
+```bash
+bunx wrangler rollback
+```
+
+Rollback to a known version ID:
+
+```bash
+bunx wrangler rollback VERSION_ID
+```
+
+After rollback, run the hosted verifier against both the Worker fallback and official custom domain.
+
+A Worker rollback changes Worker code and bindings captured in that version. It does not reverse Convex data changes. Coordinate any data recovery separately.
+
+## Parked Vercel API project
+
+The old Vercel project named `stensibly-api` no longer serves the production API. The static project named `stensibly` remains the dashboard host.
+
+Retire the parked API project after a confidence period in which:
+
+- the official and fallback Worker endpoints pass the hosted verifier
+- routine Worker deploy and rollback have been exercised
+- required logs are available
+- no client configuration points at the old Vercel API deployment
+
+Disconnecting its Git integration first stops duplicate builds while preserving an easy recovery window. Delete the project later when that recovery value is gone.
+
+## Local Stash and fake-IP DNS caveat
+
+One development Mac runs Stash continuously with fake-IP DNS through a remote proxy path. On that machine, ordinary local resolution of `api.stensibly.com` may fail while public DNS, TLS, direct HTTP checks, and Worker routing remain healthy.
+
+Use the `workers.dev` fallback for local diagnosis. Avoid recreating the Worker, custom domain, or Cloudflare DNS record in response to that local resolver behavior.
