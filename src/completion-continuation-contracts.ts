@@ -15,11 +15,11 @@ export const completeWithContinuationsSchema = z.object({
   continuations: z.array(continuationDraftSchema).max(20).optional(),
 });
 
-export type ContinuationDraft = z.infer<typeof continuationDraftSchema>;
+export type ContinuationDraft = z.input<typeof continuationDraftSchema>;
 
 export interface CompleteWithContinuationsInput {
   id: string;
-  actor: z.infer<typeof actorSchema>;
+  actor: z.input<typeof actorSchema>;
   summary?: string;
   continuations: ContinuationDraft[];
   idempotencyKey?: string;
