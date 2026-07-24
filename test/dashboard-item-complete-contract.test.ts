@@ -43,12 +43,13 @@ describe("dashboard completion integration", () => {
     expect(controller).toContain("idempotency.reset()");
   });
 
-  test("preserves input and success state across item-detail refresh races", () => {
+  test("preserves typed input, success, and terminal errors across detail refresh races", () => {
     expect(controller).toContain("let formState = freshState()");
     expect(controller).toContain("!['submitting', 'completed'].includes(formState.phase)");
     expect(controller).toContain("formState.phase === 'completed'");
-    expect(controller).toContain("previousSummary = currentSummary");
-    expect(controller).toContain("readRenderedSummary(body)");
+    expect(controller).toContain("summary: previous.summary");
+    expect(controller).toContain("appendActionMessage(section, formState.message)");
+    expect(controller).not.toContain("previousSummary");
   });
 
   test("prevents overlapping actions and unlocks only controls it owns", () => {
