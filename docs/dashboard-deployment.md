@@ -4,6 +4,8 @@ The static dashboard is the Vercel project named `stensibly`. The parked project
 
 The preferred controlled release path is the manual GitHub Actions workflow named **Deploy Dashboard Production**. It validates the repository without production secrets, waits for the existing GitHub `production` environment approval, creates a staged production deployment without assigning domains, verifies it, promotes that exact deployment, and then verifies `https://www.stensibly.com`.
 
+Automatic Git deployments are disabled in both checked-in Vercel configurations. Repository-root `vercel.json` prevents the parked API project from building pushes and pull requests, while `site/vercel.json` prevents the dashboard project from creating automatic preview or production deployments. These settings apply to Git-triggered deployments only; the guarded CLI workflow remains the release path.
+
 ## One-time Vercel setup
 
 In the Vercel project `stensibly`:
@@ -11,7 +13,7 @@ In the Vercel project `stensibly`:
 1. confirm the project Root Directory is exactly `site`
 2. confirm `www.stensibly.com` is attached to this project
 3. turn off automatic assignment of custom production domains for new production deployments
-4. retain the Git integration only when its automatic deployments cannot take production traffic before the guarded workflow promotes a verified deployment
+4. confirm the project reads `site/vercel.json`, where `git.deploymentEnabled` is `false`
 5. create a Vercel access token scoped only to the account or team that owns `stensibly`, with the shortest practical expiration
 6. record the project ID and owner/team ID from the `stensibly` project settings or a linked repository-root `.vercel/project.json`
 
