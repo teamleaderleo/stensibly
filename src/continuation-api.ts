@@ -6,6 +6,11 @@ import {
   resolveContinuationSchema,
 } from "./continuation-contracts.js";
 import {
+  buildContinuationInbox,
+  continuationInboxSchema,
+} from "./continuation-inbox.js";
+import {
+  currentPrincipal,
   requireHttpAccess,
   type StensiblyEnv,
 } from "./http-auth.js";
@@ -53,6 +58,30 @@ export function registerContinuationApi(
     });
   });
 
+  app.get("/continuations/inbox", async (context) => {
+    if (!continuationLedger(ledger)) return unavailable(context);
+    const parsed = continuationInboxSchema.safeParse({
+      project: context.req.query("project"),
+      limit: numberQuery(context.req.query("limit")),
+      expiringWithinSeconds: numberQuery(context.req.query("expiringWithinSeconds")),
+      previousFingerprint: context.req.query("previousFingerprint"),
+    });
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+
+    const principal = currentPrincipal(context);
+    if (principal?.projects !== null && !parsed.data.project) {
+      return context.json({
+        error: "A project is required when a token has a project allowlist",
+        code: "invalid_request",
+      }, 400);
+    }
+    const denied = requireHttpAccess(context, "read", parsed.data.project);
+    if (denied) return denied;
+    return context.json({
+      inbox: await buildContinuationInbox(ledger, parsed.data),
+    });
+  });
+
   app.get("/continuations/:id", async (context) => {
     const continuations = continuationLedger(ledger);
     if (!continuations) return unavailable(context);
@@ -89,6 +118,10 @@ async function readJson(request: Request): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+function numberQuery(value: string | undefined): number | undefined {
+  return value === undefined ? undefined : Number(value);
 }
 
 function validationError(
