@@ -68,7 +68,7 @@ ChatGPT scheduled tasks can perform recurring app-backed checks. Their cadence a
 
 A lightweight service can call MCP every few minutes, persist the returned fingerprint, and stop immediately when `changed` is false. Invoke a model only when the survey reports a material change or actionable state.
 
-Example JSON-RPC request:
+First request:
 
 ```bash
 curl --fail-with-body --silent --show-error \
@@ -77,7 +77,7 @@ curl --fail-with-body --silent --show-error \
   -H "content-type: application/json" \
   -H "accept: application/json, text/event-stream" \
   -H "mcp-protocol-version: 2025-06-18" \
-  --data-binary @- <<JSON
+  --data-binary @- <<'JSON'
 {
   "jsonrpc": "2.0",
   "id": 1,
@@ -86,15 +86,18 @@ curl --fail-with-body --silent --show-error \
     "name": "survey_workspace",
     "arguments": {
       "limit": 10,
-      "expiringWithinSeconds": 900,
-      "previousFingerprint": "${PREVIOUS_FINGERPRINT:-}"
+      "expiringWithinSeconds": 900
     }
   }
 }
 JSON
 ```
 
-Omit `previousFingerprint` on the first request rather than sending an empty value.
+On later requests, add the exact fingerprint returned by the previous successful call:
+
+```json
+"previousFingerprint": "sha256:0123456789abcdef..."
+```
 
 A practical loop is:
 
