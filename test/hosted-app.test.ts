@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { TokenPrincipal } from "../src/auth.ts";
 import { createHostedApp } from "../src/hosted-app.ts";
+import type { WorkLedger } from "../src/ledger.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import type { ApiTokenAuthenticator } from "../src/token-provider.ts";
+import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
 
 const leo = { id: "leo", name: "Leo", kind: "human" as const };
 const protocolVersion = "2025-06-18";
@@ -17,6 +19,12 @@ class FixedAuthenticator implements ApiTokenAuthenticator {
       scopes: ["read", "write"],
       projects: ["scrapbook"],
     };
+  }
+}
+
+class FailingAuthenticator implements ApiTokenAuthenticator {
+  async authenticate(): Promise<TokenPrincipal | null> {
+    throw new Error("token authority unavailable");
   }
 }
 
@@ -51,7 +59,10 @@ describe("hosted gateway", () => {
       surfaces: ["api-v1", "mcp"],
     });
 
-    expect((await app.request("/api/v1/items")).status).toBe(401);
+    const denied = await app.request("/api/v1/items");
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get(FAILURE_CATEGORY_HEADER)).toBe("auth_failure");
+
     const listed = await app.request("/api/v1/items", {
       headers: { authorization: "Bearer hosted-token" },
     });
@@ -105,6 +116,14 @@ describe("hosted gateway", () => {
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("access-control-allow-origin")).toBe("https://stensibly.com");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("X-Request-ID");
+    expect(preflight.headers.get("access-control-expose-headers")).toBe("x-request-id");
+
+    const deniedRest = await app.request("/api/v1/items", {
+      headers: { origin: "https://untrusted.example" },
+    });
+    expect(deniedRest.status).toBe(403);
+    expect(deniedRest.headers.get(FAILURE_CATEGORY_HEADER)).toBe("cors_rejection");
 
     const deniedMcp = await app.request("/mcp", {
       method: "POST",
@@ -124,6 +143,24 @@ describe("hosted gateway", () => {
       }),
     });
     expect(deniedMcp.status).toBe(403);
+    expect(deniedMcp.headers.get(FAILURE_CATEGORY_HEADER)).toBe("cors_rejection");
+  });
+
+  test("sanitizes hosted authentication backend failures", async () => {
+    const failingApp = createHostedApp({
+      ledger: new SqliteWorkLedger(store) as WorkLedger,
+      authenticator: new FailingAuthenticator(),
+    });
+    const response = await failingApp.request("/api/v1/items", {
+      headers: { authorization: "Bearer opaque-token" },
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBe("convex_failure");
+    expect(await response.json()).toEqual({
+      error: "Hosted gateway request failed",
+      code: "convex_failure",
+    });
   });
 });
 
