@@ -1,7 +1,17 @@
+import { describeHttpFailure, isPlausibleToken, readItems } from './connection.js';
+
+const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
+const REFRESH_INTERVAL_MS = 15000;
+
 const form = document.querySelector('#connect-form');
 const dashboard = document.querySelector('#dashboard');
 const disconnected = document.querySelector('#disconnected-state');
+const connectionTitle = document.querySelector('#connection-title');
 const connectionState = document.querySelector('#connection-state');
+const connectionError = document.querySelector('#connection-error');
+const connectedSummary = document.querySelector('#connected-summary');
+const connectedEndpoint = document.querySelector('#connected-endpoint');
+const cancelConnection = document.querySelector('#cancel-connection');
 const projectFilter = document.querySelector('#project-filter');
 const board = document.querySelector('#board');
 const agents = document.querySelector('#agents');
@@ -16,63 +26,274 @@ const columns = [
 
 let items = [];
 let refreshTimer;
-let endpoint = localStorage.stensiblyEndpoint || '';
+let connected = false;
+let endpoint = savedEndpoint();
 let token = sessionStorage.stensiblyToken || '';
 
 form.elements.endpoint.value = endpoint;
-form.elements.token.value = token;
+form.elements.token.value = '';
 
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  endpoint = normalizeEndpoint(form.elements.endpoint.value);
-  token = form.elements.token.value.trim();
-  localStorage.stensiblyEndpoint = endpoint;
-  sessionStorage.stensiblyToken = token;
-  await refresh();
-});
-
-document.querySelector('#refresh').addEventListener('click', refresh);
-document.querySelector('#disconnect').addEventListener('click', () => {
-  token = '';
-  sessionStorage.removeItem('stensiblyToken');
-  form.elements.token.value = '';
-  clearInterval(refreshTimer);
-  setDisconnected('disconnected');
-});
+form.addEventListener('submit', connect);
+document.querySelector('#refresh').addEventListener('click', () => refreshCurrent({ interactive: true }));
+document.querySelector('#change-connection').addEventListener('click', beginConnectionChange);
+document.querySelector('#disconnect-connection').addEventListener('click', disconnect);
+cancelConnection.addEventListener('click', cancelConnectionChange);
 projectFilter.addEventListener('change', render);
 
-if (endpoint && token) refresh();
+if (token && isPlausibleToken(token)) {
+  void refreshCurrent({ initial: true });
+} else {
+  if (token) clearStoredToken();
+  showConnectionForm();
+}
 
-async function refresh() {
-  clearInterval(refreshTimer);
-  connectionState.textContent = 'connecting';
-  connectionState.classList.remove('error');
+async function connect(event) {
+  event.preventDefault();
+  clearRefreshTimer();
+  hideConnectionError();
+
+  let candidateEndpoint;
   try {
-    const response = await fetch(endpoint + '/api/v1/items', {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Request failed with ${response.status}`);
-    items = Array.isArray(data.items) ? data.items.filter((item) => item.status !== 'archived') : [];
-    connectionState.textContent = 'connected';
-    dashboard.hidden = false;
-    disconnected.hidden = true;
-    populateProjects();
-    render();
-    lastUpdated.textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    refreshTimer = setInterval(refresh, 15000);
+    candidateEndpoint = normalizeEndpoint(form.elements.endpoint.value);
   } catch (error) {
-    setDisconnected(error instanceof Error ? error.message : String(error));
+    showConnectionForm(error instanceof Error ? error.message : String(error), {
+      keepDashboard: connected,
+      allowCancel: connected,
+    });
+    return;
+  }
+
+  const suppliedToken = form.elements.token.value.trim();
+  const endpointChanged = candidateEndpoint !== endpoint;
+  if (endpointChanged && !suppliedToken) {
+    showConnectionForm('Enter the token again before sending credentials to a different endpoint.', {
+      keepDashboard: connected,
+      allowCancel: connected,
+    });
+    return;
+  }
+
+  const candidateToken = suppliedToken || token;
+  if (!isPlausibleToken(candidateToken)) {
+    showConnectionForm('Enter a complete Stensibly token in the stn.tok_… format.', {
+      keepDashboard: connected,
+      allowCancel: connected,
+    });
+    return;
+  }
+
+  setConnectionStatus('connecting');
+  try {
+    const nextItems = await loadItems(candidateEndpoint, candidateToken);
+    endpoint = candidateEndpoint;
+    token = candidateToken;
+    items = nextItems;
+    connected = true;
+    localStorage.stensiblyEndpoint = endpoint;
+    sessionStorage.stensiblyToken = token;
+    form.elements.endpoint.value = endpoint;
+    form.elements.token.value = '';
+    updateDashboard();
+    showConnectedState();
+    scheduleRefresh();
+  } catch (error) {
+    const message = await explainConnectionFailure(error, candidateEndpoint);
+    if (error instanceof ConnectionFailure && error.kind === 'invalid_token' && candidateToken === token) {
+      clearStoredToken();
+    }
+    showConnectionForm(message, {
+      keepDashboard: connected,
+      allowCancel: connected,
+    });
   }
 }
 
-function setDisconnected(message) {
-  dashboard.hidden = true;
-  disconnected.hidden = false;
-  disconnected.querySelector('p').textContent = 'No ledger connected.';
-  disconnected.querySelector('span').textContent = message;
-  connectionState.textContent = 'error';
-  connectionState.classList.add('error');
+async function refreshCurrent({ interactive = false, initial = false } = {}) {
+  if (!endpoint || !token) {
+    showConnectionForm();
+    return;
+  }
+
+  clearRefreshTimer();
+  if (interactive || initial) setConnectionStatus(interactive ? 'refreshing' : 'connecting');
+
+  try {
+    items = await loadItems(endpoint, token);
+    connected = true;
+    updateDashboard();
+    showConnectedState();
+    scheduleRefresh();
+  } catch (error) {
+    const message = await explainConnectionFailure(error, endpoint);
+    if (error instanceof ConnectionFailure && error.kind === 'invalid_token') {
+      clearStoredToken();
+      connected = false;
+      showConnectionForm(message);
+      return;
+    }
+    if (!connected) {
+      showConnectionForm(message);
+      return;
+    }
+    showConnectedIssue(message);
+    scheduleRefresh();
+  }
+}
+
+async function loadItems(apiEndpoint, apiToken) {
+  let response;
+  try {
+    response = await fetch(apiEndpoint + '/api/v1/items', {
+      headers: { authorization: `Bearer ${apiToken}` },
+      cache: 'no-store',
+    });
+  } catch (error) {
+    throw new ConnectionFailure('fetch_failed', error instanceof Error ? error.message : String(error));
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const failure = describeHttpFailure(response.status, payload);
+    throw new ConnectionFailure(failure.kind, failure.message);
+  }
+
+  try {
+    return readItems(payload).filter((item) => item.status !== 'archived');
+  } catch (error) {
+    throw new ConnectionFailure(
+      'incompatible_response',
+      error instanceof Error ? error.message : 'The endpoint returned an incompatible response.',
+    );
+  }
+}
+
+async function explainConnectionFailure(error, apiEndpoint) {
+  if (!(error instanceof ConnectionFailure) || error.kind !== 'fetch_failed') {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  if (navigator.onLine === false) {
+    return 'This browser is offline. Reconnect and try again.';
+  }
+
+  try {
+    await fetch(apiEndpoint + '/health', {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store',
+    });
+    return `The API host is reachable, but this browser request was blocked. Allow ${window.location.origin} in STENSIBLY_ALLOWED_ORIGINS and verify the API CORS settings.`;
+  } catch {
+    return 'The endpoint could not be reached. Check the URL, DNS, proxy path, or whether the API is running.';
+  }
+}
+
+function beginConnectionChange() {
+  clearRefreshTimer();
+  form.elements.endpoint.value = endpoint;
+  form.elements.token.value = '';
+  showConnectionForm('', { keepDashboard: true, allowCancel: true });
+  form.elements.endpoint.focus();
+}
+
+function cancelConnectionChange() {
+  if (!connected) return;
+  form.elements.endpoint.value = endpoint;
+  form.elements.token.value = '';
+  showConnectedState();
+  scheduleRefresh();
+}
+
+function disconnect() {
+  clearRefreshTimer();
+  clearStoredToken();
+  connected = false;
+  items = [];
+  form.elements.endpoint.value = endpoint;
+  form.elements.token.value = '';
+  showConnectionForm();
+}
+
+function clearStoredToken() {
+  token = '';
+  sessionStorage.removeItem('stensiblyToken');
+  form.elements.token.value = '';
+}
+
+function showConnectedState() {
+  connectionTitle.textContent = 'Ledger connected';
+  form.hidden = true;
+  connectedSummary.hidden = false;
+  cancelConnection.hidden = true;
+  connectedEndpoint.textContent = endpoint;
+  hideConnectionError();
+  setConnectionStatus('connected');
+  dashboard.hidden = false;
+  disconnected.hidden = true;
+}
+
+function showConnectedIssue(message) {
+  connectionTitle.textContent = 'Connection needs attention';
+  form.hidden = true;
+  connectedSummary.hidden = false;
+  cancelConnection.hidden = true;
+  connectedEndpoint.textContent = endpoint;
+  showConnectionError(message);
+  setConnectionStatus('retrying', true);
+  dashboard.hidden = false;
+  disconnected.hidden = true;
+}
+
+function showConnectionForm(message = '', { keepDashboard = false, allowCancel = false } = {}) {
+  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Connect a ledger';
+  form.hidden = false;
+  connectedSummary.hidden = true;
+  cancelConnection.hidden = !allowCancel;
+  if (message) {
+    showConnectionError(message);
+    setConnectionStatus('connection failed', true);
+  } else {
+    hideConnectionError();
+    setConnectionStatus('disconnected');
+  }
+
+  if (!keepDashboard) {
+    dashboard.hidden = true;
+    disconnected.hidden = false;
+    disconnected.querySelector('p').textContent = 'No ledger connected.';
+    disconnected.querySelector('span').textContent = 'Enter a read-only API token to inspect shared work.';
+  }
+}
+
+function showConnectionError(message) {
+  connectionError.textContent = message;
+  connectionError.hidden = false;
+}
+
+function hideConnectionError() {
+  connectionError.textContent = '';
+  connectionError.hidden = true;
+}
+
+function setConnectionStatus(label, isError = false) {
+  connectionState.textContent = label;
+  connectionState.classList.toggle('error', isError);
+}
+
+function updateDashboard() {
+  populateProjects();
+  render();
+  lastUpdated.textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function scheduleRefresh() {
+  clearRefreshTimer();
+  refreshTimer = setTimeout(() => void refreshCurrent(), REFRESH_INTERVAL_MS);
+}
+
+function clearRefreshTimer() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = undefined;
 }
 
 function populateProjects() {
@@ -128,8 +349,25 @@ function renderCard(item) {
   </article>`;
 }
 
+function savedEndpoint() {
+  try {
+    return normalizeEndpoint(localStorage.stensiblyEndpoint || DEFAULT_ENDPOINT);
+  } catch {
+    localStorage.removeItem('stensiblyEndpoint');
+    return DEFAULT_ENDPOINT;
+  }
+}
+
 function normalizeEndpoint(value) {
-  return value.trim().replace(/\/+$/, '');
+  const normalized = String(value).trim().replace(/\/+$/, '');
+  const parsed = new URL(normalized);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new TypeError('The API URL must use HTTP or HTTPS.');
+  }
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new TypeError('Enter the API origin without a path, query, or fragment.');
+  }
+  return parsed.origin;
 }
 
 function statusClass(status) {
@@ -165,4 +403,12 @@ function escapeHtml(value) {
     "'": '&#39;',
     '"': '&quot;',
   })[character]);
+}
+
+class ConnectionFailure extends Error {
+  constructor(kind, message) {
+    super(message);
+    this.name = 'ConnectionFailure';
+    this.kind = kind;
+  }
 }
