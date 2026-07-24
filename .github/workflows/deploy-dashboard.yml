@@ -50,7 +50,7 @@ jobs:
         run: bun run verify:dashboard -- --html-file site/index.html
 
       - name: Reject committed Vercel link state
-        run: test ! -e site/.vercel
+        run: test ! -e .vercel
 
   deploy:
     name: Stage, verify, and promote dashboard
@@ -101,8 +101,13 @@ jobs:
               > /tmp/vercel-project.json
           fi
           project_name="$(jq -r '.name // empty' /tmp/vercel-project.json)"
+          root_directory="$(jq -r '.rootDirectory // empty' /tmp/vercel-project.json)"
           if [ "${project_name}" != "${EXPECTED_VERCEL_PROJECT}" ]; then
             echo "VERCEL_PROJECT_ID must reference the existing ${EXPECTED_VERCEL_PROJECT} dashboard project." >&2
+            exit 1
+          fi
+          if [ "${root_directory}" != "site" ]; then
+            echo "The ${EXPECTED_VERCEL_PROJECT} project Root Directory must be site." >&2
             exit 1
           fi
 
@@ -112,7 +117,6 @@ jobs:
           --yes
           --environment=production
           --token="${VERCEL_TOKEN}"
-          --cwd site
 
       - name: Validate linked project IDs
         run: |
@@ -120,19 +124,18 @@ jobs:
             --arg project "${VERCEL_PROJECT_ID}" \
             --arg org "${VERCEL_ORG_ID}" \
             '.projectId == $project and .orgId == $org' \
-            site/.vercel/project.json > /dev/null
+            .vercel/project.json > /dev/null
 
       - name: Build production artifacts
         run: >-
           npx --yes vercel@${VERCEL_CLI_VERSION} build
           --prod
           --token="${VERCEL_TOKEN}"
-          --cwd site
 
       - name: Validate build output
         run: |
-          test -f site/.vercel/output/config.json
-          test -d site/.vercel/output/static
+          test -f .vercel/output/config.json
+          test -d .vercel/output/static
 
       - name: Create staged production deployment
         id: stage
@@ -143,8 +146,7 @@ jobs:
               --prod \
               --skip-domain \
               --yes \
-              --token="${VERCEL_TOKEN}" \
-              --cwd site
+              --token="${VERCEL_TOKEN}"
           )"
           case "${deployment_url}" in
             https://*.vercel.app) ;;
@@ -162,7 +164,6 @@ jobs:
           npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
             --deployment "${DEPLOYMENT_URL}" \
             --token="${VERCEL_TOKEN}" \
-            --cwd site \
             --fail --silent --show-error \
             > /tmp/dashboard-index.html
           bun run verify:dashboard -- --html-file /tmp/dashboard-index.html
@@ -179,7 +180,6 @@ jobs:
             npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
               --deployment "${DEPLOYMENT_URL}" \
               --token="${VERCEL_TOKEN}" \
-              --cwd site \
               --fail --silent --show-error \
               --output /tmp/dashboard-asset
             test -s /tmp/dashboard-asset
@@ -194,7 +194,6 @@ jobs:
           --yes
           --timeout=5m
           --token="${VERCEL_TOKEN}"
-          --cwd site
 
       - name: Verify production dashboard
         run: |
