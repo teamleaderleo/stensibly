@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { EditContinuationInput } from "./continuation-edit.js";
 import type {
   ContinuationProposal,
   ListContinuationsInput,
@@ -95,6 +96,13 @@ export const resolveContinuationSchema = z.object({
   result: continuationResultSchema.optional(),
 });
 
+export const editContinuationSchema = z.object({
+  actor: actorSchema,
+  expectedGeneration: z.number().int().min(1),
+  instruction: z.string().trim().min(1).max(10_000),
+  note: z.string().trim().max(10_000).optional(),
+});
+
 export const listContinuationsSchema = z.object({
   status: z.enum(continuationStatuses).optional(),
   deliveryMode: z.enum(continuationDeliveryModes).optional(),
@@ -105,6 +113,7 @@ export interface ContinuationLedger {
   getContinuation(id: string): Promise<ContinuationProposal>;
   listContinuations(input?: ListContinuationsInput): Promise<ContinuationProposal[]>;
   resolveContinuation(input: ResolveContinuationInput): Promise<ContinuationProposal>;
+  editContinuation(input: EditContinuationInput): Promise<ContinuationProposal>;
 }
 
 export function continuationLedger(value: unknown): ContinuationLedger | null {
@@ -113,7 +122,8 @@ export function continuationLedger(value: unknown): ContinuationLedger | null {
   return typeof candidate.proposeContinuation === "function" &&
       typeof candidate.getContinuation === "function" &&
       typeof candidate.listContinuations === "function" &&
-      typeof candidate.resolveContinuation === "function"
+      typeof candidate.resolveContinuation === "function" &&
+      typeof candidate.editContinuation === "function"
     ? value as ContinuationLedger
     : null;
 }
