@@ -71,11 +71,7 @@ export function parseVerifyHostedArgs(
   if (!parseToken(token)) {
     throw new Error("The token must use the generated stn.tok_… format");
   }
-
-  const normalizedProject = project?.trim();
-  if (normalizedProject && !/^[a-z0-9][a-z0-9-_]*$/.test(normalizedProject)) {
-    throw new Error("--project must be a lowercase project slug");
-  }
+  const normalizedProject = normalizeProject(project, "--project");
 
   return {
     help: false,
@@ -92,16 +88,22 @@ export async function verifyHosted(
   options: VerifyHostedOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<CheckResult[]> {
-  const normalized: VerifyHostedOptions = {
-    ...options,
-    endpoint: normalizeOrigin(options.endpoint, "endpoint"),
-    origin: normalizeOrigin(options.origin, "origin"),
-    token: options.token.trim(),
-    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  };
-  if (!parseToken(normalized.token)) {
+  const token = options.token.trim();
+  if (!parseToken(token)) {
     throw new Error("The token must use the generated stn.tok_… format");
   }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60_000) {
+    throw new Error("timeoutMs must be an integer between 100 and 60000");
+  }
+  const project = normalizeProject(options.project, "project");
+  const normalized: VerifyHostedOptions = {
+    endpoint: normalizeOrigin(options.endpoint, "endpoint"),
+    token,
+    origin: normalizeOrigin(options.origin, "origin"),
+    ...(project ? { project } : {}),
+    timeoutMs,
+  };
 
   const results: CheckResult[] = [];
   results.push(await runCheck("health", normalized, async () => {
@@ -145,6 +147,7 @@ export async function verifyHosted(
       throw new Error(`Expected Access-Control-Allow-Origin ${normalized.origin}; received ${allowedOrigin ?? "missing"}`);
     }
     requireHeaderToken(response, "access-control-allow-headers", "authorization");
+    requireHeaderToken(response, "access-control-allow-headers", "content-type");
     requireHeaderToken(response, "access-control-allow-methods", "get");
     return `204 origin=${normalized.origin}`;
   }));
@@ -295,6 +298,15 @@ function normalizeOrigin(value: string, label: string): string {
     throw new Error(`${label} must be an origin without credentials, path, query, or fragment`);
   }
   return parsed.origin;
+}
+
+function normalizeProject(value: string | undefined, label: string): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+  if (!/^[a-z0-9][a-z0-9-_]*$/.test(normalized)) {
+    throw new Error(`${label} must be a lowercase project slug`);
+  }
+  return normalized;
 }
 
 function requireValue(args: string[], index: number, flag: string): string {
