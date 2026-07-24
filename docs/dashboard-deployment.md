@@ -8,12 +8,14 @@ The preferred controlled release path is the manual GitHub Actions workflow name
 
 In the Vercel project `stensibly`:
 
-1. confirm the project root directory is `site`
+1. confirm the project Root Directory is exactly `site`
 2. confirm `www.stensibly.com` is attached to this project
 3. turn off automatic assignment of custom production domains for new production deployments
 4. retain the Git integration only when its automatic deployments cannot take production traffic before the guarded workflow promotes a verified deployment
 5. create a Vercel access token scoped only to the account or team that owns `stensibly`, with the shortest practical expiration
-6. record the project ID and owner/team ID from the `stensibly` project settings or its local `.vercel/project.json`
+6. record the project ID and owner/team ID from the `stensibly` project settings or a linked repository-root `.vercel/project.json`
+
+Vercel applies the configured Root Directory to CLI builds. Run the CLI from the repository root; do not combine the `site` project setting with `--cwd site`.
 
 Turning off automatic domain assignment is required for the staged-release sequence. The workflow also passes `--skip-domain`, verifies the generated deployment URL, and uses `vercel promote` only after those checks pass.
 
@@ -25,7 +27,7 @@ Use the existing repository environment named `production`. Keep its required re
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
 
-`VERCEL_PROJECT_ID` must identify the project named `stensibly`. The workflow queries Vercel before linking or building and fails if the configured project has another name.
+`VERCEL_PROJECT_ID` must identify the project named `stensibly`. The workflow queries Vercel before linking or building and fails if the configured project has another name or a Root Directory other than `site`.
 
 The dashboard workflow does not receive:
 
@@ -34,7 +36,7 @@ The dashboard workflow does not receive:
 - `CONVEX_URL`
 - Cloudflare account or API credentials
 
-The generated `site/.vercel` directory is ephemeral workflow state and must not be committed.
+The generated repository-root `.vercel` directory is ephemeral workflow state and must not be committed.
 
 ## Release through GitHub Actions
 
@@ -52,9 +54,9 @@ The workflow performs these stages:
 2. installs the committed Bun lockfile
 3. runs typecheck, Bun tests, Convex tests, Worker bundling, and source-shell verification without production secrets
 4. validates the three Vercel environment secrets
-5. requires the Vercel project name `stensibly`
-6. pulls production project settings into `site/.vercel`
-7. builds `site/` through a pinned Vercel CLI version
+5. requires the Vercel project name `stensibly` and Root Directory `site`
+6. pulls production project settings into the repository-root `.vercel` directory
+7. builds the configured `site` project through a pinned Vercel CLI version
 8. creates a production deployment with `--skip-domain`
 9. uses `vercel curl` to verify protected staged HTML and critical static assets
 10. promotes the exact verified deployment
@@ -87,7 +89,7 @@ The verifier checks the Stensibly document markers, rejects token-shaped content
 
 ## Manual CLI fallback
 
-Use this only from a trusted shell when GitHub Actions is unavailable or being repaired. Export the Vercel token and the IDs for the `stensibly` project without writing them to shell history or repository files.
+Use this only from a trusted repository-root shell when GitHub Actions is unavailable or being repaired. Export the Vercel token and the IDs for the `stensibly` project without writing them to shell history or repository files.
 
 ```bash
 bun install --frozen-lockfile
@@ -100,21 +102,18 @@ bun run verify:dashboard -- --html-file site/index.html
 npx --yes vercel@56.5.0 pull \
   --yes \
   --environment=production \
-  --token="$VERCEL_TOKEN" \
-  --cwd site
+  --token="$VERCEL_TOKEN"
 
 npx --yes vercel@56.5.0 build \
   --prod \
-  --token="$VERCEL_TOKEN" \
-  --cwd site
+  --token="$VERCEL_TOKEN"
 
 npx --yes vercel@56.5.0 deploy \
   --prebuilt \
   --prod \
   --skip-domain \
   --yes \
-  --token="$VERCEL_TOKEN" \
-  --cwd site
+  --token="$VERCEL_TOKEN"
 ```
 
 Capture the deployment URL printed on standard output. Verify it with `vercel curl`, then promote that exact URL:
@@ -123,7 +122,6 @@ Capture the deployment URL printed on standard output. Verify it with `vercel cu
 npx --yes vercel@56.5.0 curl / \
   --deployment "$DEPLOYMENT_URL" \
   --token="$VERCEL_TOKEN" \
-  --cwd site \
   --fail --silent --show-error \
   > /tmp/dashboard-index.html
 
@@ -132,8 +130,7 @@ bun run verify:dashboard -- --html-file /tmp/dashboard-index.html
 npx --yes vercel@56.5.0 promote "$DEPLOYMENT_URL" \
   --yes \
   --timeout=5m \
-  --token="$VERCEL_TOKEN" \
-  --cwd site
+  --token="$VERCEL_TOKEN"
 
 bun run verify:dashboard
 ```
@@ -142,11 +139,11 @@ Do not promote a deployment that has not passed the staged checks.
 
 ## Rollback
 
-When the promoted dashboard is unhealthy, use the Vercel deployment history to perform Instant Rollback, or use the linked CLI from a trusted environment:
+When the promoted dashboard is unhealthy, use the Vercel deployment history to perform Instant Rollback, or use the linked CLI from a trusted repository-root environment:
 
 ```bash
-npx --yes vercel@56.5.0 rollback --token="$VERCEL_TOKEN" --cwd site
-npx --yes vercel@56.5.0 rollback status --token="$VERCEL_TOKEN" --cwd site
+npx --yes vercel@56.5.0 rollback --token="$VERCEL_TOKEN"
+npx --yes vercel@56.5.0 rollback status --token="$VERCEL_TOKEN"
 ```
 
 After rollback:
