@@ -4,11 +4,14 @@ import {
   listApiTokens,
   revokeApiToken,
 } from "./auth.js";
+import { installSqliteCompletionParity } from "./completion-parity.js";
 import type { ApiTokenManager, CreateTokenInput } from "./token-provider.js";
 import { StensiblyStore } from "./store.js";
 
 export class SqliteTokenProvider implements ApiTokenManager {
-  constructor(readonly store: StensiblyStore) {}
+  constructor(readonly store: StensiblyStore) {
+    installSqliteCompletionParity(this.store);
+  }
 
   async authenticate(rawToken: string) {
     return authenticateApiToken(this.store, rawToken);
