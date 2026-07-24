@@ -17,6 +17,7 @@ import {
 export interface HostedAppOptions {
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
+  workspace?: string | null;
   allowedOrigins?: string[];
   allowedHosts?: string[];
 }
@@ -51,7 +52,10 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   );
   app.route(
     "/api/v1",
-    createApiV1(options.authenticator, options.ledger, { required: true }),
+    createApiV1(options.authenticator, options.ledger, {
+      required: true,
+      workspace: options.workspace ?? null,
+    }),
   );
   app.notFound((context) => context.json({
     error: "Not found",
@@ -72,6 +76,7 @@ export function createHostedAppFromEnv(
   return createHostedApp({
     ledger,
     authenticator,
+    workspace: ledger.workspace,
     allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
   });
