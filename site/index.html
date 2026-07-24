@@ -93,6 +93,27 @@
         <span>Enter a read-only API token to inspect shared work.</span>
       </section>
     </main>
+
+    <dialog class="item-detail-dialog" id="item-detail-dialog" aria-labelledby="item-detail-title">
+      <article class="item-detail-panel">
+        <header class="item-detail-head">
+          <div>
+            <p class="eyebrow">Server-owned record</p>
+            <h2 id="item-detail-title">Item detail</h2>
+            <p id="item-detail-subtitle"></p>
+          </div>
+          <button class="detail-close" id="item-detail-close" type="button" aria-label="Close item detail">close</button>
+        </header>
+        <div class="item-detail-toolbar">
+          <span id="item-detail-state" role="status">waiting</span>
+          <button id="item-detail-refresh" type="button">refresh detail</button>
+        </div>
+        <p class="detail-error" id="item-detail-error" role="alert" hidden></p>
+        <div class="item-detail-body" id="item-detail-body"></div>
+      </article>
+    </dialog>
+    <p class="sr-only" id="item-detail-announcer" aria-live="polite"></p>
+
     <script src="/app.js" type="module"></script>
   </body>
 </html>
