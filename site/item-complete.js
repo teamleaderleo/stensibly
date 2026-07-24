@@ -35,11 +35,6 @@ export function readCompletedItem(payload, expected) {
   if (typeof expected.summary === 'string' && summary !== expected.summary) {
     throw new TypeError('The endpoint returned a different completion summary.');
   }
-  if (!Object.prototype.hasOwnProperty.call(expected, 'summary')
-      && Object.prototype.hasOwnProperty.call(expected, 'previousSummary')
-      && summary !== expected.previousSummary) {
-    throw new TypeError('The endpoint did not preserve the current summary.');
-  }
   return { id, status, summary, nextAction: null, version: item.version };
 }
 
