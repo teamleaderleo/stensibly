@@ -35,10 +35,10 @@ export async function observeWorkerRequest(
   handle: (request: Request) => Promise<Response>,
   options: ObserveRequestOptions = {},
 ): Promise<Response> {
-  const now = options.now ?? performance.now.bind(performance);
+  const now = options.now ?? (() => performance.now());
   const startedAt = now();
   const requestId = acceptedRequestId(request.headers.get(REQUEST_ID_HEADER))
-    ?? (options.createRequestId ?? crypto.randomUUID.bind(crypto))();
+    ?? (options.createRequestId ?? (() => crypto.randomUUID()))();
   const headers = new Headers(request.headers);
   headers.set(REQUEST_ID_HEADER, requestId);
   const observedRequest = new Request(request, { headers });
@@ -86,7 +86,11 @@ export async function observeWorkerRequest(
     outcome: response.status < 400 ? "success" : "failure",
     ...(failureCategory ? { failureCategory } : {}),
   };
-  (options.log ?? defaultLog)(record);
+  try {
+    (options.log ?? defaultLog)(record);
+  } catch {
+    // Observability failures must never replace an application response.
+  }
 
   return new Response(response.body, {
     status: response.status,
