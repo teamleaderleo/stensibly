@@ -6,6 +6,7 @@ import type {
   CompletionContinuationLedger,
 } from "./completion-continuation-contracts.js";
 import type { ContinuationLedger } from "./continuation-contracts.js";
+import type { EditContinuationInput } from "./continuation-edit.js";
 import type {
   ListContinuationsInput,
   ProposeContinuationInput,
@@ -136,6 +137,14 @@ export class ConvexWorkLedger implements WorkLedger, ContinuationLedger, Complet
       convexApi.continuations.resolve,
       this.args(input),
     ) as Awaited<ReturnType<ContinuationLedger["resolveContinuation"]>>;
+  }
+
+  async editContinuation(input: EditContinuationInput) {
+    await this.getContinuation(input.id);
+    return await this.client.mutation(
+      convexApi.continuations.edit,
+      this.args(input),
+    ) as Awaited<ReturnType<ContinuationLedger["editContinuation"]>>;
   }
 
   private args(input: object): Record<string, unknown> {
