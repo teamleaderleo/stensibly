@@ -14,6 +14,15 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).not.toMatch(/^\s*push:/m);
   });
 
+  test("runs checks before entering the production environment", () => {
+    expect(workflow).toContain("name: Validate production candidate");
+    expect(workflow).toContain("needs: test");
+    expect(workflow.indexOf("name: Validate production candidate"))
+      .toBeLessThan(workflow.indexOf("name: production"));
+    expect(workflow.indexOf("bun run worker:check"))
+      .toBeLessThan(workflow.indexOf("environment:"));
+  });
+
   test("requires only the deployment and read-verification secrets", () => {
     expect(workflow).toContain("secrets.CLOUDFLARE_ACCOUNT_ID");
     expect(workflow).toContain("secrets.CLOUDFLARE_API_TOKEN");
