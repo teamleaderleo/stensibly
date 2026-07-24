@@ -26,7 +26,6 @@ export function installCompletionController() {
   const locks = { refresh: false };
   let itemId = '';
   let currentStatus = '';
-  let currentSummary = null;
   let contextFingerprint = readContext().fingerprint;
   let renderQueued = false;
   let formState = freshState();
@@ -42,7 +41,6 @@ export function installCompletionController() {
     restoreOtherActions(body, refreshButton, locks);
     itemId = nextItemId;
     currentStatus = statusFromCard(card);
-    currentSummary = null;
     formState = freshState();
     scheduleRender();
   });
@@ -53,26 +51,20 @@ export function installCompletionController() {
     restoreOtherActions(body, refreshButton, locks);
     itemId = '';
     currentStatus = '';
-    currentSummary = null;
     formState = freshState();
   });
 
   const bodyObserver = new MutationObserver((records) => {
     if (records.every(isSidecarOnlyMutation)) return;
     const nextStatus = readRenderedStatus(body) || statusFromBoard(board, itemId) || currentStatus;
-    const nextSummary = readRenderedSummary(body);
     if (nextStatus && nextStatus !== currentStatus) {
       if (formState.phase !== 'submitting' && formState.phase !== 'completed') {
         currentStatus = nextStatus;
-        currentSummary = nextSummary;
         idempotency.reset();
         formState = stateForStatusChange(formState);
       }
     } else if (nextStatus && formState.phase === 'completed' && nextStatus === currentStatus) {
-      currentSummary = nextSummary;
       formState = freshState();
-    } else if (formState.phase !== 'submitting' && formState.phase !== 'completed') {
-      currentSummary = nextSummary;
     }
     scheduleRender();
   });
@@ -110,7 +102,6 @@ export function installCompletionController() {
       && !['submitting', 'completed'].includes(formState.phase)
     ) {
       currentStatus = renderedStatus;
-      currentSummary = readRenderedSummary(body);
       idempotency.reset();
       formState = stateForStatusChange(formState);
     }
@@ -124,6 +115,7 @@ export function installCompletionController() {
 
       if (!context.canWrite || !context.actor) {
         section.append(emptyBlock('A write-capable token and active session actor are required to complete work.'));
+        appendActionMessage(section, formState.message);
         eventSection.before(section);
         return;
       }
@@ -132,6 +124,7 @@ export function installCompletionController() {
           ? 'This item is already complete.'
           : `Completion is unavailable while this item is ${currentStatus || 'in its current state'}.`;
         section.append(emptyBlock(message));
+        appendActionMessage(section, formState.message);
         eventSection.before(section);
         return;
       }
@@ -214,7 +207,6 @@ export function installCompletionController() {
 
     const requestId = gate.begin();
     const expectedContext = context.fingerprint;
-    const previousSummary = currentSummary;
     formState = { phase: 'submitting', summary: input.summary || '', message: '' };
     detailState.textContent = 'completing item';
     render();
@@ -261,7 +253,7 @@ export function installCompletionController() {
 
     let completed;
     try {
-      completed = readCompletedItem(payload, { ...input, previousSummary });
+      completed = readCompletedItem(payload, input);
     } catch (cause) {
       if (!isCurrent(requestId, input.id, expectedContext)) return;
       setFailure(cause instanceof Error ? cause.message : 'The endpoint returned an incompatible completion.', 'needs attention');
@@ -271,7 +263,6 @@ export function installCompletionController() {
     idempotency.reset();
     restoreOtherActions(body, refreshButton, locks);
     currentStatus = completed.status;
-    currentSummary = completed.summary;
     formState = { phase: 'completed', summary: '', message: '' };
     detailState.textContent = 'item completed';
     announcer.textContent = 'Item completed, claim released, and next action cleared.';
@@ -341,17 +332,6 @@ function readRenderedStatus(body) {
   return '';
 }
 
-function readRenderedSummary(body) {
-  const currentState = [...body.querySelectorAll('.detail-section')]
-    .find((section) => section.querySelector('h3')?.textContent === 'Current state');
-  if (!currentState) return null;
-  for (const heading of currentState.querySelectorAll('.detail-copy h4')) {
-    if (heading.textContent?.trim() !== 'Summary') continue;
-    return heading.nextElementSibling?.textContent?.trim() || null;
-  }
-  return null;
-}
-
 function statusFromCard(card) {
   const column = card.closest('section.column');
   return ITEM_STATUSES.find((status) => column?.classList.contains(status)) || '';
@@ -384,8 +364,12 @@ function isSidecarOnlyMutation(record) {
 }
 
 function stateForStatusChange(previous) {
-  if (!['conflict', 'retry available'].includes(previous.phase)) return freshState();
-  return { ...previous };
+  const preserveFailure = ['conflict', 'retry available'].includes(previous.phase);
+  return {
+    phase: preserveFailure ? previous.phase : 'ready',
+    summary: previous.summary,
+    message: preserveFailure ? previous.message : '',
+  };
 }
 
 function sectionBlock(heading) {
@@ -400,6 +384,14 @@ function emptyBlock(message) {
   const block = element('p', 'detail-empty');
   block.textContent = message;
   return block;
+}
+
+function appendActionMessage(section, message) {
+  if (!message) return;
+  const error = element('p', 'detail-complete-error');
+  error.setAttribute('role', 'alert');
+  error.textContent = redactCredentialText(message);
+  section.append(error);
 }
 
 function phaseLabel(phase) {
