@@ -80,6 +80,7 @@ const continuationCommand = v.union(
   v.literal("consume"),
   v.literal("cancel"),
   v.literal("supersede"),
+  v.literal("edit"),
 );
 
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
