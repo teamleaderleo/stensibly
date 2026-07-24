@@ -43,6 +43,7 @@ describe("dashboard item creation integration", () => {
     expect(controller).toContain("Retry the unchanged form to reuse the same idempotency key");
     expect(controller).toContain("gate.begin()");
     expect(controller).toContain("gate.isCurrent(requestId)");
+    expect(controller).toContain("if (submitButton.disabled) return");
     expect(controller).toContain("submitButton.disabled = true");
     expect(controller).toContain("formatValidationIssues");
     expect(controller).toContain("safeRequestId");
@@ -67,5 +68,6 @@ describe("dashboard item creation integration", () => {
     expect(styles).toContain(".create-item-dialog");
     expect(styles).toContain(".create-item-form");
     expect(styles).toContain(".create-item-actions");
+    expect(styles).toContain("max-height: min(90vh, 55rem)");
   });
 });
