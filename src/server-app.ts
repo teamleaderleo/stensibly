@@ -9,11 +9,9 @@ import {
   type McpHttpOptions,
 } from "./mcp-http.js";
 import { SqliteWorkLedger } from "./sqlite-ledger.js";
+import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import { StensiblyStore } from "./store.js";
-import {
-  SqliteTokenProvider,
-  type ApiTokenAuthenticator,
-} from "./token-provider.js";
+import type { ApiTokenAuthenticator } from "./token-provider.js";
 
 export interface ServerAppOptions {
   httpAuth?: HttpAuthOptions;
