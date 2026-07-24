@@ -90,6 +90,10 @@ export const attach = mutation({
       idempotencyKey: args.idempotencyKey,
       createdAt: now,
     });
+    await ctx.db.patch(item._id, {
+      version: item.version + 1,
+      updatedAt: now,
+    });
     const artifact = await ctx.db.get("artifacts", artifactId);
     if (!artifact) throw new Error("Attached artifact disappeared");
     return { ...publicArtifact(artifact), itemId: item.externalId };
