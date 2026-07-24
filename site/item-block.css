@@ -1,0 +1,56 @@
+.detail-transition-note {
+  margin: 0 0 .7rem;
+  color: #c3c3cb;
+  font-size: .76rem;
+  line-height: 1.45;
+}
+
+.detail-transition-form {
+  display: grid;
+  gap: .65rem;
+}
+
+.detail-transition-form label {
+  display: grid;
+  gap: .3rem;
+}
+
+.detail-transition-form textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.detail-transition-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.detail-transition-actions button {
+  color: #111;
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.detail-transition-actions span {
+  color: var(--muted);
+  font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.detail-transition-error {
+  margin: 0;
+  padding: .62rem .68rem;
+  border: 1px solid rgba(255,154,118,.35);
+  border-radius: .55rem;
+  color: #ffc0aa;
+  background: rgba(255,154,118,.08);
+  font-size: .7rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 560px) {
+  .detail-transition-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
