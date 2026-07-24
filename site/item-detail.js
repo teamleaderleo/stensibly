@@ -44,6 +44,12 @@ export function safeRequestId(value, activeToken = '') {
   return /^[A-Za-z0-9._:-]+$/.test(requestId) ? requestId : null;
 }
 
+export function redactCredentialText(value, activeToken = '') {
+  let output = String(value ?? '');
+  if (activeToken) output = output.split(activeToken).join('[redacted token]');
+  return output.replace(/stn\.tok_[A-Za-z0-9._-]+/gi, '[redacted token]');
+}
+
 export function createRequestGate() {
   let generation = 0;
   return {
@@ -78,6 +84,7 @@ function displayValue(value, maxLength) {
     }
     if (output === undefined) output = String(value);
   }
+  output = redactCredentialText(output);
   return output.length > maxLength ? `${output.slice(0, maxLength)}…` : output;
 }
 
