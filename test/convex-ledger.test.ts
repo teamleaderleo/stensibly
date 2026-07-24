@@ -26,7 +26,7 @@ class RecordingCaller implements ConvexCaller {
 }
 
 describe("Convex work ledger", () => {
-  test("maps the agent work contract to scoped Convex functions", async () => {
+  test("maps the agent work and continuation contracts to scoped Convex functions", async () => {
     const client = new RecordingCaller();
     const ledger = new ConvexWorkLedger({
       client,
@@ -76,6 +76,24 @@ describe("Convex work ledger", () => {
     await ledger.unblockWork({ id: "item_1", actor });
     await ledger.releaseWork({ id: "item_1", actor });
     await ledger.completeWork({ id: "item_1", actor, summary: "Done." });
+    await ledger.proposeContinuation({
+      sourceItemId: "item_1",
+      title: "Review the result",
+      rationale: "A decision remains.",
+      instruction: "Review and continue.",
+      action: { kind: "request_decision", decisionType: "review" },
+      actor,
+      idempotencyKey: "continuation-1",
+    });
+    await ledger.getContinuation("cont_1");
+    await ledger.listContinuations({ sourceItemId: "item_1", status: "proposed" });
+    await ledger.resolveContinuation({
+      id: "cont_1",
+      actor,
+      command: "approve",
+      expectedGeneration: 1,
+      idempotencyKey: "continuation-approve-1",
+    });
 
     expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
       "query:projects:brief",
@@ -91,6 +109,10 @@ describe("Convex work ledger", () => {
       "mutation:items:unblock",
       "mutation:claims:release",
       "mutation:items:complete",
+      "mutation:continuations:propose",
+      "mutation:continuations:get",
+      "mutation:continuations:list",
+      "mutation:continuations:resolve",
     ]);
 
     for (const call of client.calls) {
@@ -104,6 +126,10 @@ describe("Convex work ledger", () => {
       id: "item_1",
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
+    });
+    expect(client.calls[13]?.args).toMatchObject({
+      sourceItemId: "item_1",
+      idempotencyKey: "continuation-1",
     });
   });
 
@@ -121,7 +147,7 @@ describe("Convex work ledger", () => {
 });
 
 function fixture(name: string): unknown {
-  if (name === "items:list") return [];
+  if (name === "items:list" || name === "continuations:list") return [];
   if (name === "items:get") {
     return {
       item: item(),
@@ -156,7 +182,35 @@ function fixture(name: string): unknown {
       createdAt: new Date().toISOString(),
     };
   }
+  if (name.startsWith("continuations:")) return continuation();
   return item();
+}
+
+function continuation() {
+  const now = new Date().toISOString();
+  return {
+    id: "cont_1",
+    sourceItemId: "item_1",
+    sourceEventId: "evt_continuation",
+    sourceRunId: null,
+    title: "Review the result",
+    rationale: "A decision remains.",
+    instruction: "Review and continue.",
+    action: { kind: "request_decision", decisionType: "review" },
+    evidence: [],
+    suggestedBy: actor.id,
+    approvalMode: "human",
+    deliveryMode: "human_inbox",
+    status: "proposed",
+    generation: 1,
+    expiresAt: null,
+    resolutionActorId: null,
+    resolutionNote: null,
+    result: null,
+    consumedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function item() {

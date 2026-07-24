@@ -53,6 +53,35 @@ const dependencyKind = v.union(
   v.literal("supersedes"),
 );
 
+const continuationApprovalMode = v.union(
+  v.literal("automatic"),
+  v.literal("notify"),
+  v.literal("human"),
+);
+const continuationDeliveryMode = v.union(
+  v.literal("current_conversation"),
+  v.literal("human_inbox"),
+  v.literal("supervisor"),
+);
+const continuationStatus = v.union(
+  v.literal("proposed"),
+  v.literal("approved"),
+  v.literal("rejected"),
+  v.literal("deferred"),
+  v.literal("consumed"),
+  v.literal("cancelled"),
+  v.literal("superseded"),
+  v.literal("expired"),
+);
+const continuationCommand = v.union(
+  v.literal("approve"),
+  v.literal("reject"),
+  v.literal("defer"),
+  v.literal("consume"),
+  v.literal("cancel"),
+  v.literal("supersede"),
+);
+
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
 const reservationStatus = v.union(v.literal("active"), v.literal("released"), v.literal("expired"));
 const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
@@ -186,6 +215,53 @@ export default defineSchema({
   })
     .index("by_from_kind", ["fromItemId", "kind", "toItemId"])
     .index("by_to_kind", ["toItemId", "kind", "fromItemId"]),
+
+  continuations: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    sourceItemId: v.id("items"),
+    sourceEventExternalId: v.string(),
+    sourceRunId: v.optional(v.string()),
+    externalId: v.string(),
+    title: v.string(),
+    rationale: v.string(),
+    instruction: v.string(),
+    action: v.any(),
+    evidence: v.any(),
+    suggestedByActorId: v.id("actors"),
+    suggestedByExternalId: v.string(),
+    approvalMode: continuationApprovalMode,
+    deliveryMode: continuationDeliveryMode,
+    status: continuationStatus,
+    generation: v.number(),
+    expiresAt: v.optional(v.number()),
+    resolutionActorId: v.optional(v.id("actors")),
+    resolutionActorExternalId: v.optional(v.string()),
+    resolutionNote: v.optional(v.string()),
+    result: v.optional(v.any()),
+    consumedAt: v.optional(v.number()),
+    request: v.any(),
+    idempotencyKey: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace_external", ["workspaceId", "externalId"])
+    .index("by_workspace_created", ["workspaceId", "createdAt"])
+    .index("by_item_status", ["sourceItemId", "status", "createdAt"])
+    .index("by_delivery_status", ["workspaceId", "deliveryMode", "status", "updatedAt"])
+    .index("by_expiry", ["status", "expiresAt"])
+    .index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
+
+  continuationCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    continuationId: v.id("continuations"),
+    continuationExternalId: v.string(),
+    idempotencyKey: v.string(),
+    command: continuationCommand,
+    request: v.any(),
+    result: v.any(),
+    createdAt: v.number(),
+  }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 
   apiTokens: defineTable({
     workspaceId: v.id("workspaces"),
