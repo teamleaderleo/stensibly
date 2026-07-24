@@ -1,6 +1,10 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { FunctionReference } from "convex/server";
 import { convexApi } from "../convex/refs.js";
+import type {
+  CompleteWithContinuationsInput,
+  CompletionContinuationLedger,
+} from "./completion-continuation-contracts.js";
 import type { ContinuationLedger } from "./continuation-contracts.js";
 import type {
   ListContinuationsInput,
@@ -32,7 +36,7 @@ export interface ConvexWorkLedgerOptions {
   workspace?: string;
 }
 
-export class ConvexWorkLedger implements WorkLedger, ContinuationLedger {
+export class ConvexWorkLedger implements WorkLedger, ContinuationLedger, CompletionContinuationLedger {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
@@ -97,6 +101,13 @@ export class ConvexWorkLedger implements WorkLedger, ContinuationLedger {
 
   async completeWork(input: CompleteWorkInput) {
     return await this.client.mutation(convexApi.items.complete, this.args(input)) as Awaited<ReturnType<WorkLedger["completeWork"]>>;
+  }
+
+  async completeWorkWithContinuations(input: CompleteWithContinuationsInput) {
+    return await this.client.mutation(
+      convexApi.completionContinuations.complete,
+      this.args(input),
+    ) as Awaited<ReturnType<CompletionContinuationLedger["completeWorkWithContinuations"]>>;
   }
 
   async proposeContinuation(input: ProposeContinuationInput) {
