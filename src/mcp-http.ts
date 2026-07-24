@@ -27,6 +27,7 @@ interface AccessRule {
 
 const readTools = new Set([
   "get_brief",
+  "survey_workspace",
   "list_work",
   "get_item",
   "list_artifacts",
@@ -204,7 +205,7 @@ async function resolveAccessRule(
     };
   }
 
-  if (toolName === "list_work") {
+  if (toolName === "list_work" || toolName === "survey_workspace") {
     const project = stringArgument(args, "project");
     return {
       scope,
