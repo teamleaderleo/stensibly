@@ -155,11 +155,11 @@ describe("hosted gateway", () => {
       headers: { authorization: "Bearer opaque-token" },
     });
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBe("convex_failure");
     expect(await response.json()).toEqual({
-      error: "Hosted gateway request failed",
-      code: "convex_failure",
+      error: "Hosted token authority failed",
+      code: "backend_failure",
     });
   });
 });
