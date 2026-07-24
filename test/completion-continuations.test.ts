@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { ConflictError, StensiblyStore } from "../src/store.ts";
 
@@ -120,5 +121,58 @@ describe("atomic completion continuations", () => {
     });
     expect(detail.events.map((event) => event.type)).toEqual(["item.created"]);
     expect(await ledger.listContinuations({ sourceItemId: item.id })).toEqual([]);
+  });
+
+  test("extends the existing REST completion response only when proposals exist", async () => {
+    const app = createServerApp(store);
+    const item = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Complete through REST with a proposed next move",
+      priority: 55,
+      actor: agent,
+    });
+    const body = {
+      actor: agent,
+      summary: "Completed through the existing endpoint.",
+      continuations: [{
+        title: "Review the REST completion",
+        rationale: "The human should choose whether to continue.",
+        instruction: "Review the completed item and approve the next move.",
+        action: { kind: "request_decision", decisionType: "rest_review" },
+        deliveryMode: "current_conversation",
+      }],
+    };
+
+    const response = await app.request(`/api/v1/items/${item.id}/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "rest-complete-with-continuation",
+      },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json() as {
+      item: { status: string; summary: string };
+      continuations: Array<{ status: string; sourceItemId: string }>;
+    };
+    expect(result.item).toMatchObject({
+      status: "done",
+      summary: "Completed through the existing endpoint.",
+    });
+    expect(result.continuations).toEqual([
+      expect.objectContaining({ status: "proposed", sourceItemId: item.id }),
+    ]);
+
+    const replay = await app.request(`/api/v1/items/${item.id}/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "rest-complete-with-continuation",
+      },
+      body: JSON.stringify(body),
+    });
+    expect(await replay.json()).toEqual(result);
   });
 });
