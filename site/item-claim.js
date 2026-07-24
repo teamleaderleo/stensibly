@@ -1,3 +1,4 @@
+import './actor-activity-controller.js';
 import './board-filter-controller.js';
 import './project-brief-controller.js';
 import './item-progress-controller.js';
