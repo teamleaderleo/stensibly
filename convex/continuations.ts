@@ -626,7 +626,24 @@ function safeOptionalText(value: string | undefined, label: string, max: number)
 }
 
 function requireSameRequest(existing: unknown, requested: unknown, label: string) {
-  if (JSON.stringify(existing) !== JSON.stringify(requested)) {
+  if (stableJson(existing) !== stableJson(requested)) {
     throw new Error(`Idempotency key was already used for a different ${label}`);
   }
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
+  }
+  return value;
 }
