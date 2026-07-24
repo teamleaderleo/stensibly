@@ -34,6 +34,7 @@ describe("MCP work surface", () => {
         "get_item",
         "handoff_work",
         "list_artifacts",
+        "list_continuation_inbox",
         "list_continuations",
         "list_work",
         "propose_continuation",

@@ -6,6 +6,10 @@ import {
   proposeContinuationSchema,
   resolveContinuationSchema,
 } from "./continuation-contracts.js";
+import {
+  buildContinuationInbox,
+  continuationInboxSchema,
+} from "./continuation-inbox.js";
 import type { WorkLedger } from "./ledger.js";
 
 const idSchema = z.string().trim().min(1).max(240);
@@ -53,6 +57,16 @@ export function registerContinuationTools(
       annotations: { readOnlyHint: true },
     },
     async (input) => asToolResult(() => continuations.listContinuations(input)),
+  );
+
+  server.registerTool(
+    "list_continuation_inbox",
+    {
+      description: "List unresolved human-inbox continuation proposals with source-item context, expiry urgency, project summaries, and a material-change fingerprint.",
+      inputSchema: continuationInboxSchema.shape,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asToolResult(() => buildContinuationInbox(ledger, input)),
   );
 
   server.registerTool(

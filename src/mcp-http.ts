@@ -34,6 +34,7 @@ const readTools = new Set([
   "list_artifacts",
   "get_continuation",
   "list_continuations",
+  "list_continuation_inbox",
 ]);
 
 const writeTools = new Set([
@@ -210,7 +211,11 @@ async function resolveAccessRule(
     };
   }
 
-  if (toolName === "list_work" || toolName === "survey_workspace") {
+  if (
+    toolName === "list_work"
+    || toolName === "survey_workspace"
+    || toolName === "list_continuation_inbox"
+  ) {
     const project = stringArgument(args, "project");
     return {
       scope,
