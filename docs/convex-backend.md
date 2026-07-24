@@ -1,18 +1,25 @@
 # Convex backend
 
-Stensibly is moving its canonical shared state from the original SQLite prototype into Convex.
+Convex is the hosted system of record for Stensibly coordination state and hosted API-token authority.
 
-The SQLite service remains available while the public REST and MCP gateways are adapted. New coordination behavior belongs in Convex first.
+The original SQLite implementation remains available for local compatibility. The Cloudflare Worker, REST v1, remote MCP, and public dashboard use the Convex-backed path in production.
 
-## Why Convex fits
+## Hosted request path
 
-The ledger needs transactional state changes, live project views, durable timers, and eventually event-driven dispatch. Convex provides those primitives in one backend:
+```text
+Dashboard, agents, scripts, and services
+                    |
+             Bearer API token
+                    |
+          Cloudflare Worker gateway
+             /api/v1 and /mcp
+                    |
+       STENSIBLY_SERVICE_SECRET
+                    |
+                  Convex
+```
 
-- serializable mutations for claims and transitions
-- reactive queries for boards and briefs
-- durable scheduled functions for lease expiry
-- actions and workflows for external agent launches later
-- local and cloud development paths
+The Worker authenticates the public token, enforces workspace and project access, and invokes Convex with the private service secret. Convex never receives the raw public token secret; the gateway sends its token ID and SHA-256 secret digest for authentication.
 
 ## Current Convex domain
 
@@ -21,22 +28,63 @@ The schema includes:
 - workspaces
 - projects
 - actors
-- items
+- work items
 - append-only events
 - artifact references
 - agent runs
 - item dependencies
 - resource reservations
+- API-token records
 
-Work claims and resource reservations are deliberately separate.
+The hosted ledger supports:
 
-A claim means an actor is responsible for driving an item. A reservation protects a scarce resource such as a staging environment, test account, migration window, or capacity pool.
+- deterministic project briefs
+- item creation and detail
+- renewable claims with expiring leases
+- handoff, block, unblock, release, and completion
+- append-only progress and coordination events
+- artifact attachment and listing
+- dependencies
+- agent-run visibility in the data model
+- resource reservations
+- scoped, hashed, revocable API tokens
+- idempotent writes
+
+## Claims and reservations
+
+Work claims and resource reservations are separate concepts.
+
+A claim says an actor is responsible for driving an item. A reservation protects a scarce resource such as a staging environment, test account, migration window, or capacity pool.
+
+Both use a generation-guarded expiry model:
+
+1. Creation schedules an expiry for generation `N`.
+2. Renewal increments the generation and schedules a new expiry.
+3. An older scheduled function sees the generation mismatch and exits.
+4. The latest expiry releases the claim or reservation and appends the appropriate event.
+5. Ownership-sensitive mutations also recover already-expired state when a scheduled function is delayed.
+
+This prevents an obsolete timer from releasing a renewed lease.
 
 ## Authentication boundary
 
-Convex functions currently require `STENSIBLY_SERVICE_SECRET`. This is a server-to-server credential for Stensibly's REST and MCP gateways. It must never be sent to the public dashboard or an untrusted agent client.
+`STENSIBLY_SERVICE_SECRET` is a server-to-server credential for trusted Worker and operator calls into Convex.
 
-The existing Stensibly API tokens remain the public credential model. The gateway authenticates those tokens, applies workspace/project scopes, and invokes Convex with its private service secret.
+It belongs only in:
+
+- the Convex deployment environment
+- encrypted Cloudflare Worker secrets
+- a trusted operator shell for token administration or migration
+
+It never belongs in:
+
+- the public dashboard
+- static Vercel environment variables exposed to browser code
+- an MCP client
+- an API `Authorization` header
+- logs, issue bodies, or repository files
+
+Public clients use opaque `stn.tok_...` API tokens. Token records store hashes, scopes, workspace ownership, optional project allowlists, and revocation state.
 
 ## Test without a Convex account
 
@@ -48,9 +96,9 @@ bun test
 bun run test:convex
 ```
 
-The Convex suite uses `convex-test` in memory. It covers competing claims, idempotent commands, scheduled lease expiry, obsolete-timer races, artifacts, handoffs, dependencies, runs, reservations, and project briefs.
+The Convex suite uses `convex-test` in memory. It covers competing claims, idempotent commands, scheduled lease expiry, obsolete-timer races, artifacts, handoffs, dependencies, runs, reservations, token lifecycle, and project briefs.
 
-## Run a local Convex backend
+## Run Convex locally
 
 Convex can run locally without selecting a cloud project:
 
@@ -58,53 +106,47 @@ Convex can run locally without selecting a cloud project:
 bun run convex:local
 ```
 
-Local deployment state is written under `.convex/` and is ignored by Git.
+Local deployment state is written under `.convex/` and ignored by Git.
 
-Set a private service secret for manual calls:
-
-```bash
-export STENSIBLY_SERVICE_SECRET="replace-this-with-a-long-random-value"
-```
-
-## Cloud setup blocker
-
-A real Convex account/project is needed only when the gateway or public dashboard is ready to connect to a persistent deployment.
-
-At that point:
+For a local Convex-backed Bun gateway, configure:
 
 ```bash
-bun run convex:dev
+export STENSIBLY_BACKEND=convex
+export CONVEX_URL=http://127.0.0.1:3210
+export STENSIBLY_SERVICE_SECRET=replace-with-a-long-random-value
+export STENSIBLY_WORKSPACE=default
+bun run start
 ```
 
-Select or create a project named `stensibly`, then configure the same `STENSIBLY_SERVICE_SECRET` in the Convex deployment and the server-side Vercel environment.
+Use the URL printed by the local Convex process when it differs from the example.
 
-Do not expose that secret through a `VITE_`, `NEXT_PUBLIC_`, or other browser-visible environment variable.
+## Hosted migration status
 
-## Lease model
+Completed:
 
-Each claim has a monotonically increasing generation.
+- Convex domain and tests
+- server-only Convex ledger client
+- REST `/api/v1` operations on Convex
+- remote MCP tools on the same ledger interface
+- Convex-backed API-token authority
+- Cloudflare Worker production gateway
+- SQLite-free Worker bundle
+- static dashboard reads from hosted REST v1
+- versioned SQLite snapshot export and staged Convex import
+- hosted smoke verifier
 
-1. Claiming schedules an expiry for generation `N`.
-2. Renewal increments the generation and schedules a new expiry.
-3. An old scheduled function sees the generation mismatch and exits.
-4. The latest expiry releases the claim and appends `claim.expired`.
-5. Ownership-sensitive mutations also recover an already-expired claim in case a scheduled function is delayed.
+Remaining product and operations work:
 
-Resource reservations use the same generation pattern.
+- decide whether useful local SQLite data should enter production
+- define retention and archival rules
+- exercise backup and recovery against production-like data
+- expand the dashboard from read-only inspection to one complete write workflow
+- decide the longer-term browser authentication and workspace tenancy model
 
-## Migration sequence
+The dashboard currently polls REST v1. Reactive Convex queries exist as a backend capability; the browser has no direct Convex connection.
 
-1. Land and test the Convex domain.
-2. Add a server-only Convex gateway client.
-3. Port REST `/api/v1` operations to Convex.
-4. Port MCP tools to the same gateway operations.
-5. Switch the dashboard from polling the SQLite service to reactive Convex-backed views.
-6. Add an export/import command for useful SQLite data.
-7. Remove SQLite from the hosted path after compatibility tests pass.
-8. Keep the old SQLite implementation available in history and releases for small self-hosted experiments until the Convex local deployment path is comfortable enough.
+## Durable boundary
 
-## Durable rule
+External systems own code, CI results, files, deployments, and private execution trees.
 
-External systems still own code, CI results, files, deployments, and private agent execution trees.
-
-Convex stores the coordination facts: what work exists, who is responsible, what is blocked, which resources are reserved, what evidence came back, and what should happen next.
+Convex stores coordination facts: what work exists, who is responsible, what is blocked, which resources are reserved, what evidence came back, and what should happen next.
