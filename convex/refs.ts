@@ -17,6 +17,9 @@ export const convexApi = {
     block: mutationRef("items:block"),
     unblock: mutationRef("items:unblock"),
   },
+  completionContinuations: {
+    complete: mutationRef("completionContinuations:complete"),
+  },
   claims: {
     acquire: mutationRef("claims:acquire"),
     renew: mutationRef("claims:renew"),
