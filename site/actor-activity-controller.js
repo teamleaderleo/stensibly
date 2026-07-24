@@ -299,7 +299,9 @@ function activityCandidates(board) {
 }
 
 function candidateFingerprint(candidates) {
-  return candidates.map((candidate) => `${candidate.id}\u0000${candidate.project}`).join('\u0001');
+  return candidates
+    .map((candidate) => [candidate.id, candidate.project, candidate.title, candidate.status].join('\u0000'))
+    .join('\u0001');
 }
 
 function requestFingerprint(connection, candidates) {
