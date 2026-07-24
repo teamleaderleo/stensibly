@@ -67,8 +67,10 @@ export function installBlockController() {
       currentStatus = nextStatus;
       if (formState.phase !== 'submitting') {
         idempotency.reset();
-        formState = freshState(transitionForStatus(currentStatus));
+        formState = stateForStatusChange(currentStatus, formState);
       }
+    } else if (nextStatus && formState.phase === 'transitioned') {
+      formState = freshState(transitionForStatus(currentStatus));
     }
     scheduleRender();
   });
@@ -81,7 +83,11 @@ export function installBlockController() {
     gate.invalidate();
     idempotency.reset();
     restoreOtherActions(body, refreshButton, locks);
-    formState = { ...freshState(transitionForStatus(currentStatus)), reason: formState.reason, nextAction: formState.nextAction };
+    formState = {
+      ...freshState(transitionForStatus(currentStatus)),
+      reason: formState.reason,
+      nextAction: formState.nextAction,
+    };
     scheduleRender();
   });
   contextObserver.observe(contextPanel, { attributes: true, childList: true, subtree: true, characterData: true });
@@ -100,10 +106,14 @@ export function installBlockController() {
     const eventSection = findEventSection(body);
     if (!eventSection) return;
     const renderedStatus = readRenderedStatus(body);
-    if (renderedStatus && renderedStatus !== currentStatus && formState.phase !== 'submitting') {
+    if (
+      renderedStatus
+      && renderedStatus !== currentStatus
+      && !['submitting', 'transitioned'].includes(formState.phase)
+    ) {
       currentStatus = renderedStatus;
       idempotency.reset();
-      formState = freshState(transitionForStatus(currentStatus));
+      formState = stateForStatusChange(currentStatus, formState);
     }
 
     bodyObserver.disconnect();
@@ -125,8 +135,10 @@ export function installBlockController() {
         eventSection.before(section);
         return;
       }
-      if (formState.mode !== action && formState.phase !== 'submitting') formState = freshState(action);
-      section.append(action === 'block' ? blockForm(context.actor) : unblockForm(context.actor));
+      if (formState.mode !== action && formState.phase !== 'submitting') {
+        formState = stateForStatusChange(currentStatus, formState);
+      }
+      section.append(action === 'block' ? blockForm() : unblockForm());
       eventSection.before(section);
       if (formState.phase === 'submitting') lockOtherActions(body, refreshButton, locks);
       else restoreOtherActions(body, refreshButton, locks);
@@ -135,7 +147,7 @@ export function installBlockController() {
     }
   }
 
-  function blockForm(actor) {
+  function blockForm() {
     const fragment = document.createDocumentFragment();
     const note = element('p', 'detail-transition-note');
     note.textContent = 'Blocking replaces the current summary with this reason, releases the current lease, and optionally replaces the next action.';
@@ -152,13 +164,13 @@ export function installBlockController() {
     const next = nextActionField('Next action after the blocker is resolved (optional)');
     const controls = transitionControls('block item');
     bindInputs(reason, next.input, controls.error, controls.state);
-    form.addEventListener('submit', (event) => void submitTransition(event, 'block', actor, reason, next.input));
+    form.addEventListener('submit', (event) => void submitTransition(event, 'block', reason, next.input));
     form.append(reasonLabel, next.label, controls.actions, controls.error);
     fragment.append(note, form);
     return fragment;
   }
 
-  function unblockForm(actor) {
+  function unblockForm() {
     const fragment = document.createDocumentFragment();
     const note = element('p', 'detail-transition-note');
     note.textContent = 'Unblocking returns this item to ready, leaves the block summary intact, clears lease state, and optionally replaces the next action.';
@@ -166,7 +178,7 @@ export function installBlockController() {
     const next = nextActionField('Next action (optional)');
     const controls = transitionControls('unblock item');
     bindInputs(null, next.input, controls.error, controls.state);
-    form.addEventListener('submit', (event) => void submitTransition(event, 'unblock', actor, null, next.input));
+    form.addEventListener('submit', (event) => void submitTransition(event, 'unblock', null, next.input));
     form.append(next.label, controls.actions, controls.error);
     fragment.append(note, form);
     return fragment;
@@ -222,7 +234,7 @@ export function installBlockController() {
     nextAction.addEventListener('input', onInput);
   }
 
-  async function submitTransition(event, action, actor, reason, nextAction) {
+  async function submitTransition(event, action, reason, nextAction) {
     event.preventDefault();
     if (formState.phase === 'submitting') return;
     if (refreshButton.disabled && !locks.refresh) {
@@ -238,8 +250,8 @@ export function installBlockController() {
     let input;
     try {
       input = action === 'block'
-        ? validateBlockInput(itemId, reason?.value, nextAction.value, actor)
-        : validateUnblockInput(itemId, nextAction.value, actor);
+        ? validateBlockInput(itemId, reason?.value, nextAction.value, context.actor)
+        : validateUnblockInput(itemId, nextAction.value, context.actor);
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : 'Transition validation failed.', 'needs attention', 'ready');
       return;
@@ -470,6 +482,18 @@ function phaseLabel(phase) {
 
 function freshState(mode) {
   return { mode, phase: 'ready', reason: '', nextAction: '', message: '' };
+}
+
+function stateForStatusChange(status, previous) {
+  const next = freshState(transitionForStatus(status));
+  if (!['conflict', 'retry available'].includes(previous.phase)) return next;
+  return {
+    ...next,
+    phase: previous.phase,
+    reason: next.mode === 'block' ? previous.reason : '',
+    nextAction: previous.nextAction,
+    message: previous.message,
+  };
 }
 
 function ensureStyles(id, href) {
