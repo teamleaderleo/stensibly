@@ -30,13 +30,17 @@ describe("MCP work surface", () => {
         "complete_work",
         "create_item",
         "get_brief",
+        "get_continuation",
         "get_item",
         "handoff_work",
         "list_artifacts",
+        "list_continuations",
         "list_work",
+        "propose_continuation",
         "record_event",
         "release_work",
         "renew_claim",
+        "resolve_continuation",
         "survey_workspace",
         "unblock_work",
       ]);
@@ -134,6 +138,41 @@ describe("MCP work surface", () => {
       });
       expect(completed).toMatchObject({ status: "done", summary: "Handled through the protocol." });
 
+      const proposed = await call<{ id: string; status: string; generation: number }>(
+        client,
+        "propose_continuation",
+        {
+          sourceItemId: created.id,
+          title: "Review the result",
+          rationale: "A human should inspect the completed protocol flow.",
+          instruction: "Review the completed item and approve any follow-up fixes.",
+          action: { kind: "request_decision", decisionType: "review_result" },
+          evidence: [{ kind: "commit", label: "Implementation", uri: "git:repo@mcp123" }],
+          actor: agent,
+          approvalMode: "human",
+          deliveryMode: "current_conversation",
+          idempotencyKey: "mcp-continuation-1",
+        },
+      );
+      expect(proposed).toMatchObject({ status: "proposed", generation: 1 });
+
+      const listed = await call<Array<{ id: string }>>(client, "list_continuations", {
+        sourceItemId: created.id,
+      });
+      expect(listed.map((continuation) => continuation.id)).toEqual([proposed.id]);
+
+      const approved = await call<{ status: string; generation: number }>(client, "resolve_continuation", {
+        id: proposed.id,
+        actor: leo,
+        command: "approve",
+        expectedGeneration: proposed.generation,
+        idempotencyKey: "mcp-continuation-approve-1",
+      });
+      expect(approved).toMatchObject({ status: "approved", generation: 2 });
+
+      const readBack = await call<{ status: string }>(client, "get_continuation", { id: proposed.id });
+      expect(readBack.status).toBe("approved");
+
       const detail = await call<{
         item: { status: string };
         events: Array<{ type: string }>;
@@ -142,6 +181,7 @@ describe("MCP work surface", () => {
       expect(detail.item.status).toBe("done");
       expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
       expect(detail.events.map((entry) => entry.type)).toContain("item.completed");
+      expect(detail.events.map((entry) => entry.type)).toContain("continuation.approved");
     } finally {
       await client.close();
       await server.close();
