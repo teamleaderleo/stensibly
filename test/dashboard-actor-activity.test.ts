@@ -58,8 +58,8 @@ describe("dashboard actor activity contract", () => {
       title: `Item ${index}`,
       status: index % 2 ? "ready" : "active",
     }));
-    values.splice(1, 0, values[0]);
-    values.splice(2, 0, { ...values[0], id: "stn.tok_secret" });
+    values.splice(1, 0, { ...candidate, id: "item_0", title: "Item 0" });
+    values.splice(2, 0, { ...candidate, id: "stn.tok_secret" });
     const result = normalizeActivityCandidates(values);
     expect(result).toHaveLength(MAX_ACTIVITY_ITEMS);
     expect(result[0]?.id).toBe("item_0");
