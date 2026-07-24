@@ -180,6 +180,8 @@ jobs:
             "/board-filter.css|.board-filter-panel"
             "/project-brief-controller.js|installProjectBriefController"
             "/project-brief.css|.project-brief-dialog"
+            "/actor-activity-controller.js|installActorActivityController"
+            "/actor-activity.css|.actor-activity-dialog"
             "/favicon.svg|<svg"
           )
           for spec in "${asset_specs[@]}"; do
