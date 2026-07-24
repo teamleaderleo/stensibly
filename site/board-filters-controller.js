@@ -2,10 +2,13 @@ import {
   BOARD_FILTER_KINDS,
   BOARD_FILTER_STATUSES,
   boardResultLabel,
+  buildBoardSearchText,
   matchesBoardRecord,
   normalizeBoardFilter,
   normalizeBoardQuery,
 } from './board-filters.js';
+
+const PROJECT_PATTERN = /^[a-z0-9][a-z0-9-_]*$/;
 
 export function installBoardFilterController() {
   const dashboard = document.querySelector('#dashboard');
@@ -121,6 +124,7 @@ export function installBoardFilterController() {
       status = BOARD_FILTER_STATUSES.includes(statusSelect.value) ? statusSelect.value : '';
     }
 
+    prepareBoardMetadata(board);
     const filters = { query, kind, status };
     const active = Boolean(query || kind || status);
     const cards = [...board.querySelectorAll('button.card[data-item-id]')];
@@ -193,6 +197,26 @@ export function installBoardFilterController() {
       panel.remove();
     },
   };
+}
+
+function prepareBoardMetadata(board) {
+  for (const column of board.querySelectorAll('section.column')) {
+    const status = BOARD_FILTER_STATUSES.find((candidate) => column.classList.contains(`status-${candidate}`)) || '';
+    column.dataset.status = status;
+    for (const card of column.querySelectorAll('button.card[data-item-id]')) {
+      card.dataset.status = status;
+      const identity = card.querySelector('.card-top span')?.textContent || '';
+      const [rawKind = '', rawProject = ''] = identity.split('·', 2).map((value) => value.trim());
+      card.dataset.kind = BOARD_FILTER_KINDS.includes(rawKind) ? rawKind : '';
+      card.dataset.project = PROJECT_PATTERN.test(rawProject) && rawProject.length <= 80 && !/stn\.tok_/i.test(rawProject)
+        ? rawProject
+        : '';
+      card.dataset.search = buildBoardSearchText(
+        [...card.querySelectorAll('.card-top span, h4, p, .card-meta span')]
+          .map((node) => node.textContent || ''),
+      );
+    }
+  }
 }
 
 function option(value, label) {
