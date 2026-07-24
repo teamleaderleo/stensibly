@@ -1,4 +1,11 @@
 import { describeHttpFailure } from './connection.js';
+import { formatValidationIssues } from './item-create.js';
+import {
+  createClaimIdempotencyTracker,
+  describeClaim,
+  readClaimedItem,
+  validateClaimInput,
+} from './item-claim.js';
 import {
   createRequestGate,
   payloadEntries,
@@ -8,7 +15,14 @@ import {
   safeRequestId,
 } from './item-detail.js';
 
-export function createItemDetailController({ board, getConnection, getItems }) {
+export function createItemDetailController({
+  board,
+  getConnection,
+  getItems,
+  getContext = () => ({ principal: null, actor: null }),
+  onChanged = async () => {},
+  reportConnectionIssue = () => {},
+}) {
   const dialog = document.querySelector('#item-detail-dialog');
   const closeButton = document.querySelector('#item-detail-close');
   const refreshButton = document.querySelector('#item-detail-refresh');
@@ -19,10 +33,14 @@ export function createItemDetailController({ board, getConnection, getItems }) {
   const body = document.querySelector('#item-detail-body');
   const announcer = document.querySelector('#item-detail-announcer');
   const gate = createRequestGate();
+  const claimGate = createRequestGate();
+  const claimIdempotency = createClaimIdempotencyTracker();
 
   let selectedItemId = '';
   let triggerItemId = '';
   let restoreFocus = true;
+  let currentDetail = null;
+  let claimInFlight = false;
 
   board.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
@@ -44,6 +62,11 @@ export function createItemDetailController({ board, getConnection, getItems }) {
   });
   dialog.addEventListener('close', () => {
     gate.invalidate();
+    claimGate.invalidate();
+    claimIdempotency.reset();
+    claimInFlight = false;
+    refreshButton.disabled = false;
+    currentDetail = null;
     const itemId = triggerItemId;
     selectedItemId = '';
     triggerItemId = '';
@@ -58,6 +81,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
 
   function open(itemId) {
     selectedItemId = itemId;
+    currentDetail = null;
     triggerItemId = itemId;
     restoreFocus = true;
     title.textContent = 'Item detail';
@@ -71,7 +95,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
   }
 
   async function refresh({ interactive = false } = {}) {
-    if (!selectedItemId || !dialog.open) return;
+    if (!selectedItemId || !dialog.open || claimInFlight) return;
     const { endpoint, token, connected } = getConnection();
     if (!connected || !endpoint || !token) {
       reset({ announce: 'Item detail closed because the ledger disconnected.' });
@@ -86,6 +110,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
     try {
       const detail = await loadDetail(endpoint, token, selectedItemId);
       if (!gate.isCurrent(requestId) || !dialog.open || detail.item.id !== selectedItemId) return;
+      currentDetail = detail;
       renderDetail(detail);
       state.textContent = `updated ${formatTime(new Date())}`;
     } catch (cause) {
@@ -94,6 +119,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
       state.textContent = failure.kind === 'missing' ? 'closed' : 'needs attention';
       showError(failure.message);
       if (failure.kind === 'missing') {
+        currentDetail = null;
         body.replaceChildren(emptyBlock('This item is no longer available on the current ledger.'));
       } else if (!body.firstElementChild || body.firstElementChild.classList.contains('detail-loading')) {
         body.replaceChildren(emptyBlock('The board remains available. Retry item detail when the connection is healthy.'));
@@ -148,6 +174,11 @@ export function createItemDetailController({ board, getConnection, getItems }) {
 
   function reset({ announce = '' } = {}) {
     gate.invalidate();
+    claimGate.invalidate();
+    claimIdempotency.reset();
+    claimInFlight = false;
+    refreshButton.disabled = false;
+    currentDetail = null;
     restoreFocus = false;
     if (dialog.open) dialog.close();
     selectedItemId = '';
@@ -157,6 +188,10 @@ export function createItemDetailController({ board, getConnection, getItems }) {
 
   function close() {
     gate.invalidate();
+    claimGate.invalidate();
+    claimIdempotency.reset();
+    claimInFlight = false;
+    refreshButton.disabled = false;
     if (dialog.open) dialog.close();
   }
 
@@ -168,6 +203,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
     const fragment = document.createDocumentFragment();
     fragment.append(
       itemOverview(item, detail.events),
+      claimSection(item),
       eventSection(detail.events),
       artifactSection(detail.artifacts),
     );
@@ -195,6 +231,174 @@ export function createItemDetailController({ board, getConnection, getItems }) {
     if (item.nextAction) section.append(copyBlock('Next action', item.nextAction));
     if (blockedReason) section.append(copyBlock('Block reason', blockedReason));
     return section;
+  }
+
+  function claimSection(item) {
+    const section = sectionBlock('Claim');
+    const { principal, actor } = getContext();
+    const summary = element('p', 'detail-claim-summary');
+    summary.textContent = redactCredentialText(describeClaim(item, actor));
+    section.append(summary);
+
+    if (!principal?.capabilities.write || !actor) {
+      section.append(emptyBlock('A write-capable token and active session actor are required to claim work.'));
+      return section;
+    }
+
+    if (!['ready', 'active'].includes(item.status)) {
+      section.append(emptyBlock(`Claim is unavailable while this item is ${text(item.status, 'in its current state')}.`));
+      return section;
+    }
+
+    const form = element('form', 'detail-claim-form');
+    const label = element('label');
+    label.textContent = 'Lease seconds';
+    const input = element('input');
+    input.name = 'leaseSeconds';
+    input.type = 'number';
+    input.min = '30';
+    input.max = '86400';
+    input.step = '1';
+    input.value = '1800';
+    label.append(input);
+
+    const actions = element('div', 'detail-claim-actions');
+    const submit = element('button');
+    submit.type = 'submit';
+    submit.textContent = item.claimedBy === actor.id ? 'extend lease' : 'claim item';
+    const actionState = element('span');
+    actionState.textContent = 'ready';
+    actions.append(submit, actionState);
+
+    const actionError = element('p', 'detail-claim-error');
+    actionError.hidden = true;
+    actionError.setAttribute('role', 'alert');
+    form.append(label, actions, actionError);
+    form.addEventListener('submit', (event) => void submitClaim(event, item, input, submit, actionState, actionError));
+    section.append(form);
+    return section;
+  }
+
+  async function submitClaim(event, item, input, submitButton, actionState, actionError) {
+    event.preventDefault();
+    if (submitButton.disabled || claimInFlight) return;
+    const { principal, actor } = getContext();
+    const { endpoint, token, connected } = getConnection();
+    if (!connected || !endpoint || !token || !principal?.capabilities.write || !actor) {
+      syncContext();
+      return;
+    }
+
+    let claim;
+    try {
+      claim = validateClaimInput(item.id, input.value, actor);
+    } catch (cause) {
+      setClaimError(actionError, cause instanceof Error ? cause.message : 'Claim validation failed.');
+      return;
+    }
+
+    let idempotencyKey;
+    try {
+      idempotencyKey = claimIdempotency.keyFor(claim);
+    } catch (cause) {
+      setClaimError(actionError, cause instanceof Error ? cause.message : 'Could not generate a claim idempotency key.');
+      return;
+    }
+
+    gate.invalidate();
+    const requestId = claimGate.begin();
+    claimInFlight = true;
+    refreshButton.disabled = true;
+    submitButton.disabled = true;
+    state.textContent = 'claiming';
+    clearError();
+    clearClaimError(actionError);
+
+    let response;
+    try {
+      response = await fetch(`${endpoint}/api/v1/items/${encodeURIComponent(claim.id)}/claim`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'idempotency-key': idempotencyKey,
+        },
+        body: JSON.stringify({ actor: claim.actor, leaseSeconds: claim.leaseSeconds }),
+      });
+    } catch {
+      if (!claimGate.isCurrent(requestId)) return;
+      claimInFlight = false;
+      refreshButton.disabled = false;
+      submitButton.disabled = false;
+      actionState.textContent = 'retry available';
+      setClaimError(actionError, 'The claim request could not reach the API. Retry the unchanged lease to reuse the same idempotency key.');
+      return;
+    }
+
+    const payload = await response.json().catch(() => null);
+    if (!claimGate.isCurrent(requestId)) return;
+    if (!response.ok) {
+      claimInFlight = false;
+      refreshButton.disabled = false;
+      submitButton.disabled = false;
+      const failure = describeHttpFailure(response.status, payload);
+      const validation = formatValidationIssues(payload);
+      const serverRequestId = safeRequestId(response.headers.get('x-request-id'), token);
+      const baseMessage = response.status === 404
+        ? 'This item no longer exists or is outside the token project boundary.'
+        : failure.message;
+      const conflictHint = response.status === 409
+        ? 'Refresh detail to inspect the current holder and lease.'
+        : '';
+      const message = [baseMessage, validation, conflictHint, serverRequestId ? `Request ID: ${serverRequestId}` : '']
+        .filter(Boolean)
+        .join(' ');
+      actionState.textContent = response.status === 409 ? 'conflict' : 'retry available';
+      setClaimError(actionError, message);
+      if (response.status === 401 || response.status === 403) reportConnectionIssue(message);
+      return;
+    }
+
+    let claimed;
+    try {
+      claimed = readClaimedItem(payload, claim.id, claim.actor.id);
+    } catch (cause) {
+      claimInFlight = false;
+      refreshButton.disabled = false;
+      submitButton.disabled = false;
+      actionState.textContent = 'retry available';
+      setClaimError(actionError, cause instanceof Error ? cause.message : 'The endpoint returned an incompatible claimed item.');
+      return;
+    }
+
+    claimInFlight = false;
+    refreshButton.disabled = false;
+    claimIdempotency.reset();
+    actionState.textContent = 'claimed';
+    announcer.textContent = `Claimed item until ${formatTimestamp(claimed.claimExpiresAt)}.`;
+    try {
+      await onChanged(claimed.id);
+    } catch {
+      setClaimError(actionError, 'The claim succeeded, but the board did not refresh. Use refresh to load the current server state.');
+    }
+  }
+
+  function syncContext() {
+    claimGate.invalidate();
+    claimIdempotency.reset();
+    claimInFlight = false;
+    refreshButton.disabled = false;
+    if (dialog.open && currentDetail) renderDetail(currentDetail);
+  }
+
+  function setClaimError(node, message) {
+    node.textContent = redactCredentialText(message);
+    node.hidden = false;
+  }
+
+  function clearClaimError(node) {
+    node.textContent = '';
+    node.hidden = true;
   }
 
   function eventSection(events) {
@@ -285,7 +489,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
     error.hidden = true;
   }
 
-  return { reconcile, reset, close };
+  return { reconcile, reset, close, syncContext };
 }
 
 function sectionBlock(heading) {

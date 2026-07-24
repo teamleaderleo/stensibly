@@ -1,0 +1,53 @@
+.detail-claim-summary {
+  margin: 0 0 .7rem;
+  color: #c3c3cb;
+  font-size: .76rem;
+  line-height: 1.45;
+}
+
+.detail-claim-form {
+  display: grid;
+  grid-template-columns: minmax(10rem, .45fr) minmax(0, 1fr);
+  gap: .65rem;
+  align-items: end;
+}
+
+.detail-claim-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.detail-claim-actions button {
+  color: #111;
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.detail-claim-actions span {
+  color: var(--muted);
+  font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.detail-claim-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: .62rem .68rem;
+  border: 1px solid rgba(255,154,118,.35);
+  border-radius: .55rem;
+  color: #ffc0aa;
+  background: rgba(255,154,118,.08);
+  font-size: .7rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 560px) {
+  .detail-claim-form {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-claim-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

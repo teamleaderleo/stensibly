@@ -39,16 +39,28 @@ let connected = false;
 let endpoint = savedEndpoint();
 let token = sessionStorage.stensiblyToken || '';
 
-const itemDetail = createItemDetailController({
-  board,
-  getConnection: () => ({ endpoint, token, connected }),
-  getItems: () => items,
-});
+let itemDetail;
 let itemCreate;
 const sessionContext = createSessionContextController({
   getConnection: () => ({ endpoint, token, connected }),
   reportConnectionIssue: (message) => showConnectedIssue(message),
-  onChange: () => itemCreate?.sync(),
+  onChange: () => {
+    itemCreate?.sync();
+    itemDetail?.syncContext();
+  },
+});
+itemDetail = createItemDetailController({
+  board,
+  getConnection: () => ({ endpoint, token, connected }),
+  getItems: () => items,
+  getContext: () => ({
+    principal: sessionContext.getPrincipal(),
+    actor: sessionContext.getActor(),
+  }),
+  reportConnectionIssue: (message) => showConnectedIssue(message),
+  onChanged: async () => {
+    await refreshCurrent();
+  },
 });
 itemCreate = createItemCreateController({
   getConnection: () => ({ endpoint, token, connected }),
