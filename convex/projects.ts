@@ -55,9 +55,9 @@ export const brief = query({
     requireServiceSecret(args.serviceSecret);
     const projectSlug = assertSlug(args.project, "Project");
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
-    if (!workspace) return emptyBrief(projectSlug);
+    if (!workspace) throw new Error(`Project ${projectSlug} does not exist`);
     const project = await findProject(ctx, workspace._id, projectSlug);
-    if (!project) return emptyBrief(projectSlug);
+    if (!project) throw new Error(`Project ${projectSlug} does not exist`);
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 10), 1), 100);
 
     const items = await ctx.db
@@ -159,25 +159,4 @@ async function mapArtifacts(ctx: any, artifacts: any[]) {
     });
   }
   return output;
-}
-
-function emptyBrief(project: string) {
-  return {
-    workspace: null,
-    project,
-    generatedAt: new Date().toISOString(),
-    counts: {
-      total: 0,
-      byStatus: Object.fromEntries(itemStatuses.map((status) => [status, 0])),
-      byKind: Object.fromEntries(itemKinds.map((kind) => [kind, 0])),
-    },
-    ready: [],
-    active: [],
-    blocked: [],
-    knowledge: [],
-    recentlyCompleted: [],
-    recentArtifacts: [],
-    activeRuns: [],
-    activeReservations: [],
-  };
 }
