@@ -1,6 +1,7 @@
 import { attachArtifact, listArtifacts } from "./artifacts.js";
 import { getProjectBrief } from "./briefs.js";
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
+import { installSqliteCompletionParity } from "./completion-parity.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
   ActorActionInput,
@@ -18,18 +19,9 @@ import type {
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
-const completionParityTrigger = `
-  CREATE TRIGGER IF NOT EXISTS items_clear_next_action_on_completion
-  AFTER UPDATE OF status ON items
-  WHEN NEW.status = 'done' AND NEW.next_action IS NOT NULL
-  BEGIN
-    UPDATE items SET next_action = NULL WHERE id = NEW.id;
-  END;
-`;
-
 export class SqliteWorkLedger implements WorkLedger {
   constructor(readonly store: StensiblyStore) {
-    this.store.db.exec(completionParityTrigger);
+    installSqliteCompletionParity(this.store);
   }
 
   async getBrief(project: string, limit: number) {
