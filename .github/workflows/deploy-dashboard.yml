@@ -176,6 +176,8 @@ jobs:
             "/item-progress-controller.js|installProgressController"
             "/item-block-controller.js|installBlockController"
             "/item-complete-controller.js|installCompletionController"
+            "/board-filter-controller.js|installBoardFilterController"
+            "/board-filter.css|.board-filter-panel"
             "/project-brief-controller.js|installProjectBriefController"
             "/project-brief.css|.project-brief-dialog"
             "/favicon.svg|<svg"
