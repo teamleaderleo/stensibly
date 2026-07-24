@@ -76,7 +76,19 @@ export async function handleMcpHttpRequest(
   if (hostDenied) return hostDenied;
 
   const token = parseBearerToken(request.headers.get("authorization"));
-  const principal = token ? await options.authenticator.authenticate(token) : null;
+  let principal: TokenPrincipal | null;
+  try {
+    principal = token ? await options.authenticator.authenticate(token) : null;
+  } catch {
+    return jsonRpcError(
+      502,
+      -32603,
+      "Hosted token authority failed",
+      null,
+      {},
+      "convex_failure",
+    );
+  }
   if (!principal) {
     return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
       "WWW-Authenticate": "Bearer",
