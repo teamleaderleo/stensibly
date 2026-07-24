@@ -7,6 +7,8 @@ import { modules } from "./test.setup";
 const secret = "test-service-secret";
 const workspace = "test";
 const actor = { id: "agent-1", name: "Agent One", kind: "agent" as const };
+const zeroStatusCounts = { ready: 0, active: 0, blocked: 0, done: 0, archived: 0 };
+const zeroKindCounts = { task: 0, finding: 0, question: 0, decision: 0, tip: 0, handoff: 0, note: 0 };
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", secret);
@@ -84,7 +86,7 @@ describe("hosted project brief parity", () => {
     expect(Number.isNaN(Date.parse(brief.recentArtifacts[0].createdAt))).toBe(false);
   });
 
-  test("rejects missing projects with the REST-mappable message", async () => {
+  test("returns the same zero-filled empty brief as SQLite for unknown projects", async () => {
     const t = convexTest(schema, modules);
     await createItem(t, {
       title: "Create the workspace",
@@ -93,19 +95,27 @@ describe("hosted project brief parity", () => {
       nextAction: "Check a missing project.",
     });
 
-    await expect(t.query(convexApi.projects.brief, {
-      serviceSecret: secret,
-      workspace,
-      project: "missing",
-      limit: 10,
-    })).rejects.toThrow(/Project missing does not exist/);
-
-    await expect(t.query(convexApi.projects.brief, {
-      serviceSecret: secret,
-      workspace: "missing-workspace",
-      project: "scrapbook",
-      limit: 10,
-    })).rejects.toThrow(/Project scrapbook does not exist/);
+    for (const input of [
+      { workspace, project: "missing" },
+      { workspace: "missing-workspace", project: "scrapbook" },
+    ]) {
+      const brief = await t.query(convexApi.projects.brief, {
+        serviceSecret: secret,
+        ...input,
+        limit: 10,
+      }) as any;
+      expect(brief).toMatchObject({
+        project: input.project,
+        counts: { total: 0, byStatus: zeroStatusCounts, byKind: zeroKindCounts },
+        ready: [],
+        active: [],
+        blocked: [],
+        knowledge: [],
+        recentlyCompleted: [],
+        recentArtifacts: [],
+      });
+      expect(Number.isNaN(Date.parse(brief.generatedAt))).toBe(false);
+    }
   });
 });
 
