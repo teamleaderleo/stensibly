@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { artifactKinds } from "./artifact-contracts.js";
+import { registerContinuationTools } from "./continuation-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   actorSchema,
@@ -23,6 +24,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
+        "Use continuation proposals when useful work should survive the current run and wait for approval or dispatch.",
       ].join(" "),
     },
   );
@@ -246,6 +248,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
     async (input) => asToolResult(() => ledger.completeWork(input)),
   );
 
+  registerContinuationTools(server, ledger);
   return server;
 }
 
