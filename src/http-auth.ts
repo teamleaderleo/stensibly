@@ -33,7 +33,16 @@ export function createHttpAuthMiddleware(
     context.set("principal", null);
     const authorization = context.req.header("Authorization");
     const token = parseBearerToken(authorization);
-    const principal = token ? await authenticator.authenticate(token) : null;
+    let principal: TokenPrincipal | null;
+    try {
+      principal = token ? await authenticator.authenticate(token) : null;
+    } catch {
+      context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
+      return context.json({
+        error: "Hosted token authority failed",
+        code: "backend_failure",
+      }, 502);
+    }
     if (!principal) {
       context.header("WWW-Authenticate", "Bearer");
       context.header(FAILURE_CATEGORY_HEADER, "auth_failure");
