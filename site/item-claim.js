@@ -1,3 +1,4 @@
+import './project-brief-controller.js';
 import './item-progress-controller.js';
 import './item-block-controller.js';
 import './item-complete-controller.js';
