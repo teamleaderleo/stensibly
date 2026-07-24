@@ -1,6 +1,7 @@
 import { attachArtifact, listArtifacts } from "./artifacts.js";
 import { getProjectBrief } from "./briefs.js";
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
+import { installSqliteCompletionParity } from "./completion-parity.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
   ActorActionInput,
@@ -19,7 +20,9 @@ import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
 export class SqliteWorkLedger implements WorkLedger {
-  constructor(readonly store: StensiblyStore) {}
+  constructor(readonly store: StensiblyStore) {
+    installSqliteCompletionParity(this.store);
+  }
 
   async getBrief(project: string, limit: number) {
     return getProjectBrief(this.store, project, limit);
