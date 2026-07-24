@@ -24,11 +24,14 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
     button { appearance: none; border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); border-radius: 10px; padding: 9px 12px; font: inherit; font-weight: 650; cursor: pointer; background: ButtonFace; color: ButtonText; }
     button.primary { background: Highlight; color: HighlightText; border-color: Highlight; }
+    button.danger { color: #b42318; }
     button:disabled { cursor: wait; opacity: 0.55; }
+    textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 10px; padding: 10px; font: inherit; line-height: 1.45; background: Field; color: FieldText; }
     .status { min-height: 1.2em; font-size: 0.82rem; opacity: 0.78; }
     .error { color: #b42318; opacity: 1; }
     ul { margin: 0; padding-left: 20px; }
     a { color: LinkText; }
+    code { overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -39,6 +42,12 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
     (() => {
       let model = null;
       let busy = false;
+      let editing = false;
+      let draftInstruction = "";
+      let bridgeReady = false;
+      let statusMessage = "";
+      let statusIsError = false;
+      const pending = new Map();
       const card = document.getElementById("card");
 
       const escapeHtml = (value) => String(value ?? "")
@@ -48,6 +57,33 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
 
+      const safeWebHref = (value) => {
+        try {
+          const url = new URL(String(value));
+          return url.protocol === "https:" || url.protocol === "http:"
+            ? escapeHtml(url.href)
+            : null;
+        } catch {
+          return null;
+        }
+      };
+
+      const evidenceHtml = (entries) => Array.isArray(entries)
+        ? entries.map((entry) => {
+            const href = safeWebHref(entry.uri);
+            const label = escapeHtml(entry.label);
+            const uri = escapeHtml(entry.uri);
+            return href
+              ? '<li><a href="' + href + '" target="_blank" rel="noreferrer">' + label + "</a></li>"
+              : "<li>" + label + " — <code>" + uri + "</code></li>";
+          }).join("")
+        : "";
+
+      const setStatus = (message, isError = false) => {
+        statusMessage = message;
+        statusIsError = isError;
+      };
+
       const render = () => {
         if (!model?.continuation || !model?.sourceItem || !model?.actor) {
           card.innerHTML = "<p>Continuation data is unavailable.</p>";
@@ -55,14 +91,20 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
         }
         const continuation = model.continuation;
         const source = model.sourceItem;
-        const evidence = Array.isArray(continuation.evidence)
-          ? continuation.evidence.map((entry) => {
-              const uri = escapeHtml(entry.uri);
-              return '<li><a href="' + uri + '" target="_blank" rel="noreferrer">' +
-                escapeHtml(entry.label) + "</a></li>";
-            }).join("")
-          : "";
-        const canResolve = continuation.status === "proposed" || continuation.status === "deferred";
+        const evidence = evidenceHtml(continuation.evidence);
+        const canDecide = continuation.status === "proposed" || continuation.status === "deferred";
+        const canEdit = canDecide;
+        const instruction = editing
+          ? '<textarea id="instruction-editor" aria-label="Continuation instruction">' + escapeHtml(draftInstruction) + "</textarea>"
+          : "<p>" + escapeHtml(continuation.instruction) + "</p>";
+        const editActions = editing
+          ? '<button class="primary" id="save-edit" ' + (busy ? "disabled" : "") + '>Save instruction</button>' +
+            '<button id="cancel-edit" ' + (busy ? "disabled" : "") + '>Cancel</button>'
+          : '<button id="begin-edit" ' + (!canEdit || busy ? "disabled" : "") + '>Edit instruction</button>' +
+            '<button class="primary" data-command="approve" ' + (!canDecide || busy ? "disabled" : "") + '>Continue here</button>' +
+            '<button data-command="defer" ' + (continuation.status !== "proposed" || busy ? "disabled" : "") + '>Later</button>' +
+            '<button class="danger" data-command="reject" ' + (!canDecide || busy ? "disabled" : "") + '>Reject</button>';
+
         card.innerHTML =
           "<header>" +
             "<h1>" + escapeHtml(continuation.title) + "</h1>" +
@@ -70,33 +112,178 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
               '<span class="pill">' + escapeHtml(source.project) + "</span>" +
               '<span class="pill">' + escapeHtml(continuation.status) + "</span>" +
               '<span class="pill">generation ' + escapeHtml(continuation.generation) + "</span>" +
+              (continuation.expiresAt
+                ? '<span class="pill">expires ' + escapeHtml(continuation.expiresAt) + "</span>"
+                : "") +
             "</div>" +
           "</header>" +
           '<section class="section"><span class="label">Why</span><p>' +
             escapeHtml(continuation.rationale) + "</p></section>" +
-          '<section class="section"><span class="label">Proposed action</span><p>' +
-            escapeHtml(continuation.instruction) + "</p></section>" +
+          '<section class="section"><span class="label">Proposed instruction</span>' +
+            instruction + "</section>" +
           '<section class="section"><span class="label">Source work</span><p>' +
             escapeHtml(source.title) + "</p></section>" +
+          (source.summary
+            ? '<section class="section"><span class="label">Source summary</span><p>' + escapeHtml(source.summary) + "</p></section>"
+            : "") +
           (evidence
             ? '<section class="section"><span class="label">Evidence</span><ul>' + evidence + "</ul></section>"
             : "") +
-          '<div class="actions">' +
-            '<button class="primary" data-command="approve" ' + (!canResolve || busy ? "disabled" : "") + '>Continue here</button>' +
-            '<button data-command="defer" ' + (continuation.status !== "proposed" || busy ? "disabled" : "") + '>Later</button>' +
-            '<button data-command="reject" ' + (!canResolve || busy ? "disabled" : "") + '>Reject</button>' +
-          "</div>" +
-          '<p id="status" class="status"></p>';
+          '<div class="actions">' + editActions + "</div>" +
+          '<p id="status" class="status' + (statusIsError ? " error" : "") + '"></p>';
 
+        const status = document.getElementById("status");
+        if (status) status.textContent = statusMessage;
+        const beginEdit = document.getElementById("begin-edit");
+        if (beginEdit) beginEdit.addEventListener("click", startEditing);
+        const saveEditButton = document.getElementById("save-edit");
+        if (saveEditButton) saveEditButton.addEventListener("click", saveEdit);
+        const cancelEditButton = document.getElementById("cancel-edit");
+        if (cancelEditButton) cancelEditButton.addEventListener("click", cancelEditing);
         card.querySelectorAll("button[data-command]").forEach((button) => {
-          button.addEventListener("click", () => submit(button.dataset.command));
+          button.addEventListener("click", () => submitDecision(button.dataset.command));
         });
+      };
+
+      const bridgeRequest = (method, params) => new Promise((resolve, reject) => {
+        const id = crypto.randomUUID();
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error("The host did not answer the widget request."));
+        }, 10000);
+        pending.set(id, {
+          resolve: (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        });
+        window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+      });
+
+      const callServerTool = async (name, args) => {
+        if (bridgeReady) {
+          try {
+            return await bridgeRequest("tools/call", { name, arguments: args });
+          } catch (error) {
+            if (!window.openai?.callTool) throw error;
+          }
+        }
+        if (window.openai?.callTool) {
+          return await window.openai.callTool(name, args);
+        }
+        return await bridgeRequest("tools/call", { name, arguments: args });
+      };
+
+      const sendFollowUp = async (prompt) => {
+        if (bridgeReady) {
+          window.parent.postMessage({
+            jsonrpc: "2.0",
+            method: "ui/message",
+            params: { content: [{ type: "text", text: prompt }] },
+          }, "*");
+          return;
+        }
+        if (window.openai?.sendFollowUpMessage) {
+          await window.openai.sendFollowUpMessage({ prompt });
+          return;
+        }
+        window.parent.postMessage({
+          jsonrpc: "2.0",
+          method: "ui/message",
+          params: { content: [{ type: "text", text: prompt }] },
+        }, "*");
+      };
+
+      const parseToolResult = (result) => {
+        if (result?.isError) {
+          const message = result?.content?.find((entry) => entry?.type === "text")?.text;
+          throw new Error(message || "The continuation edit failed.");
+        }
+        if (result?.structuredContent?.id) return result.structuredContent;
+        const text = result?.content?.find((entry) => entry?.type === "text")?.text;
+        if (typeof text !== "string") {
+          throw new Error("The continuation edit returned no readable result.");
+        }
+        return JSON.parse(text);
+      };
+
+      const startEditing = () => {
+        if (busy || !model?.continuation) return;
+        editing = true;
+        draftInstruction = model.continuation.instruction;
+        setStatus("");
+        render();
+        document.getElementById("instruction-editor")?.focus();
+      };
+
+      const cancelEditing = () => {
+        if (busy) return;
+        editing = false;
+        draftInstruction = "";
+        setStatus("");
+        render();
+      };
+
+      const saveEdit = async () => {
+        if (busy || !model?.continuation || !model?.actor) return;
+        const textarea = document.getElementById("instruction-editor");
+        const nextInstruction = String(textarea?.value ?? "").trim();
+        if (!nextInstruction) {
+          setStatus("Instruction cannot be empty.", true);
+          render();
+          return;
+        }
+        if (nextInstruction === model.continuation.instruction) {
+          editing = false;
+          draftInstruction = "";
+          setStatus("Instruction is unchanged.");
+          render();
+          return;
+        }
+
+        const currentId = model.continuation.id;
+        const currentGeneration = model.continuation.generation;
+        draftInstruction = nextInstruction;
+        busy = true;
+        setStatus("Saving instruction…");
+        render();
+        try {
+          const result = await callServerTool("edit_continuation", {
+            id: currentId,
+            actor: model.actor,
+            expectedGeneration: currentGeneration,
+            instruction: nextInstruction,
+            note: "Edited from the ChatGPT continuation card.",
+            idempotencyKey: "widget-edit-" + crypto.randomUUID(),
+          });
+          const updated = parseToolResult(result);
+          if (
+            updated?.id !== currentId
+            || updated?.generation !== currentGeneration + 1
+            || updated?.instruction !== nextInstruction
+          ) {
+            throw new Error("The proposal changed while the edit was being applied. Re-open the current server state.");
+          }
+          model = { ...model, continuation: updated };
+          busy = false;
+          editing = false;
+          draftInstruction = "";
+          setStatus("Instruction updated at generation " + updated.generation + ".");
+          render();
+        } catch (error) {
+          busy = false;
+          setStatus(error instanceof Error ? error.message : String(error), true);
+          render();
+        }
       };
 
       const promptFor = (command) => {
         const continuation = model.continuation;
-        const actor = model.actor;
-        const actorJson = JSON.stringify(actor);
+        const actorJson = JSON.stringify(model.actor);
         if (command === "approve") {
           return "Re-read Stensibly continuation " + continuation.id +
             " and verify it is still at generation " + continuation.generation +
@@ -109,48 +296,54 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
           ". If the generation is stale, explain the current server-owned state instead of retrying blindly.";
       };
 
-      const submit = async (command) => {
+      const submitDecision = async (command) => {
         if (busy || !model) return;
         busy = true;
+        setStatus("Sending your decision…");
         render();
-        const status = document.getElementById("status");
-        if (status) status.textContent = "Sending your decision…";
         try {
-          const prompt = promptFor(command);
-          if (window.openai?.sendFollowUpMessage) {
-            await window.openai.sendFollowUpMessage({ prompt });
-          } else {
-            window.parent.postMessage({
-              jsonrpc: "2.0",
-              id: crypto.randomUUID(),
-              method: "ui/message",
-              params: { content: [{ type: "text", text: prompt }] },
-            }, "*");
-          }
-          if (status) status.textContent = "Decision sent to the conversation.";
+          await sendFollowUp(promptFor(command));
+          setStatus("Decision sent to the conversation.");
+          render();
         } catch (error) {
           busy = false;
+          setStatus(error instanceof Error ? error.message : String(error), true);
           render();
-          const failure = document.getElementById("status");
-          if (failure) {
-            failure.classList.add("error");
-            failure.textContent = error instanceof Error ? error.message : String(error);
-          }
         }
       };
 
       const accept = (value) => {
         const structured = value?.structuredContent ?? value;
-        if (structured?.kind === "stensibly.continuation-card") {
-          model = structured;
-          render();
+        if (structured?.kind !== "stensibly.continuation-card") return;
+        if (
+          model?.continuation?.id === structured.continuation?.id
+          && Number(structured.continuation?.generation) < Number(model.continuation.generation)
+        ) {
+          return;
         }
+        model = structured;
+        editing = false;
+        draftInstruction = "";
+        render();
       };
 
       window.addEventListener("message", (event) => {
         const message = event.data;
+        if (message?.method === "ui/initialize") {
+          bridgeReady = true;
+        }
         if (message?.method === "ui/notifications/tool-result") {
+          bridgeReady = true;
           accept(message.params);
+        }
+        if (message?.id && pending.has(message.id)) {
+          const request = pending.get(message.id);
+          pending.delete(message.id);
+          if (message.error) {
+            request.reject(new Error(message.error.message || "Widget request failed."));
+          } else {
+            request.resolve(message.result);
+          }
         }
       });
 
