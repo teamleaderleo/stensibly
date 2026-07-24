@@ -79,6 +79,7 @@ export function createItemCreateController({
 
   async function submit(event) {
     event.preventDefault();
+    if (submitButton.disabled) return;
     const { principal, actor } = getContext();
     const { endpoint, token, connected } = getConnection();
     if (!connected || !endpoint || !token || !principal?.capabilities.write || !actor) {
