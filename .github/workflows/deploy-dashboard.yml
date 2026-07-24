@@ -1,0 +1,228 @@
+name: Deploy Dashboard Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-dashboard-production
+  cancel-in-progress: false
+
+env:
+  VERCEL_CLI_VERSION: 56.5.0
+  EXPECTED_VERCEL_PROJECT: stensibly
+  DASHBOARD_URL: https://www.stensibly.com
+
+jobs:
+  test:
+    name: Validate dashboard production candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main branch
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Dashboard production deployments must run from main." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run typecheck
+        run: bun run typecheck
+
+      - name: Run Bun tests
+        run: bun run test
+
+      - name: Run Convex tests
+        run: bun run test:convex
+
+      - name: Bundle Cloudflare Worker
+        run: bun run worker:check
+
+      - name: Validate dashboard source shell
+        run: bun run verify:dashboard -- --html-file site/index.html
+
+      - name: Reject committed Vercel link state
+        run: test ! -e site/.vercel
+
+  deploy:
+    name: Stage, verify, and promote dashboard
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://www.stensibly.com
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Require main branch
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Dashboard production deployments must run from main." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate required Vercel secrets
+        run: |
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing production environment secret: ${name}" >&2
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Require the stensibly Vercel project
+        run: |
+          project_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_ORG_ID}"
+          if ! curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "${project_url}" > /tmp/vercel-project.json; then
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+              "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
+              > /tmp/vercel-project.json
+          fi
+          project_name="$(jq -r '.name // empty' /tmp/vercel-project.json)"
+          if [ "${project_name}" != "${EXPECTED_VERCEL_PROJECT}" ]; then
+            echo "VERCEL_PROJECT_ID must reference the existing ${EXPECTED_VERCEL_PROJECT} dashboard project." >&2
+            exit 1
+          fi
+
+      - name: Pull production project settings
+        run: >-
+          npx --yes vercel@${VERCEL_CLI_VERSION} pull
+          --yes
+          --environment=production
+          --token="${VERCEL_TOKEN}"
+          --cwd site
+
+      - name: Validate linked project IDs
+        run: |
+          jq --exit-status \
+            --arg project "${VERCEL_PROJECT_ID}" \
+            --arg org "${VERCEL_ORG_ID}" \
+            '.projectId == $project and .orgId == $org' \
+            site/.vercel/project.json > /dev/null
+
+      - name: Build production artifacts
+        run: >-
+          npx --yes vercel@${VERCEL_CLI_VERSION} build
+          --prod
+          --token="${VERCEL_TOKEN}"
+          --cwd site
+
+      - name: Validate build output
+        run: |
+          test -f site/.vercel/output/config.json
+          test -d site/.vercel/output/static
+
+      - name: Create staged production deployment
+        id: stage
+        run: |
+          deployment_url="$(
+            npx --yes vercel@${VERCEL_CLI_VERSION} deploy \
+              --prebuilt \
+              --prod \
+              --skip-domain \
+              --yes \
+              --token="${VERCEL_TOKEN}" \
+              --cwd site
+          )"
+          case "${deployment_url}" in
+            https://*.vercel.app) ;;
+            *)
+              echo "Vercel did not return a valid staged deployment URL." >&2
+              exit 1
+              ;;
+          esac
+          echo "deployment_url=${deployment_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify staged deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: |
+          npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
+            --deployment "${DEPLOYMENT_URL}" \
+            --token="${VERCEL_TOKEN}" \
+            --cwd site \
+            --fail --silent --show-error \
+            > /tmp/dashboard-index.html
+          bun run verify:dashboard -- --html-file /tmp/dashboard-index.html
+
+          for asset in \
+            /styles.css \
+            /app.js \
+            /item-claim.css \
+            /item-claim.js \
+            /item-progress-controller.js \
+            /item-block-controller.js \
+            /item-complete-controller.js \
+            /favicon.svg; do
+            npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
+              --deployment "${DEPLOYMENT_URL}" \
+              --token="${VERCEL_TOKEN}" \
+              --cwd site \
+              --fail --silent --show-error \
+              --output /tmp/dashboard-asset
+            test -s /tmp/dashboard-asset
+          done
+
+      - name: Promote verified deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: >-
+          npx --yes vercel@${VERCEL_CLI_VERSION} promote
+          "${DEPLOYMENT_URL}"
+          --yes
+          --timeout=5m
+          --token="${VERCEL_TOKEN}"
+          --cwd site
+
+      - name: Verify production dashboard
+        run: |
+          for attempt in 1 2 3; do
+            if bun run verify:dashboard -- --url "${DASHBOARD_URL}"; then
+              exit 0
+            fi
+            if [ "${attempt}" -lt 3 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          echo "Production dashboard verification failed after promotion. Use an explicit Vercel rollback decision." >&2
+          exit 1
+
+      - name: Record deployment summary
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: |
+          {
+            echo "## Dashboard production deployment"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- verified staged deployment: ${DEPLOYMENT_URL}"
+            echo "- promoted production domain: ${DASHBOARD_URL}"
+            echo "- project: ${EXPECTED_VERCEL_PROJECT}"
+            echo "- result: staged and production verification passed"
+          } >> "${GITHUB_STEP_SUMMARY}"
