@@ -4,13 +4,24 @@ import {
   findProject,
   findWorkspace,
   normalizeWorkspace,
-  publicArtifact,
   publicItem,
   publicRun,
   requireServiceSecret,
 } from "./lib/domain";
 import { query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
+
+const itemStatuses = ["ready", "active", "blocked", "done", "archived"] as const;
+const itemKinds = [
+  "task",
+  "finding",
+  "question",
+  "decision",
+  "tip",
+  "handoff",
+  "note",
+] as const;
+const knowledgeKinds = new Set(["finding", "question", "decision", "tip", "handoff", "note"]);
 
 export const list = query({
   args: { ...serviceArgs },
@@ -42,31 +53,33 @@ export const brief = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     const projectSlug = assertSlug(args.project, "Project");
-    if (!workspace) return emptyBrief(projectSlug);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) throw new Error(`Project ${projectSlug} does not exist`);
     const project = await findProject(ctx, workspace._id, projectSlug);
-    if (!project) return emptyBrief(projectSlug);
+    if (!project) throw new Error(`Project ${projectSlug} does not exist`);
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 10), 1), 100);
 
     const items = await ctx.db
       .query("items")
       .withIndex("by_project_status", (q) => q.eq("projectId", project._id))
       .collect();
-    const byStatus = {
-      ready: items.filter((item) => item.status === "ready"),
-      active: items.filter((item) => item.status === "active"),
-      blocked: items.filter((item) => item.status === "blocked"),
-      done: items.filter((item) => item.status === "done"),
-      archived: items.filter((item) => item.status === "archived"),
-    };
-    const countsByKind: Record<string, number> = {};
-    for (const item of items) countsByKind[item.kind] = (countsByKind[item.kind] ?? 0) + 1;
+    const byStatus = Object.fromEntries(
+      itemStatuses.map((status) => [status, items.filter((item) => item.status === status)]),
+    ) as Record<(typeof itemStatuses)[number], typeof items>;
+    const countsByKind = Object.fromEntries(itemKinds.map((kind) => [kind, 0])) as Record<
+      (typeof itemKinds)[number],
+      number
+    >;
+    for (const item of items) countsByKind[item.kind] += 1;
 
-    const knowledgeKinds = new Set(["finding", "question", "decision", "tip", "handoff", "note"]);
-    const recentKnowledge = items
+    const newestFirst = (left: (typeof items)[number], right: (typeof items)[number]) =>
+      right.updatedAt - left.updatedAt || right.priority - left.priority;
+    const priorityFirst = (left: (typeof items)[number], right: (typeof items)[number]) =>
+      right.priority - left.priority || right.updatedAt - left.updatedAt;
+    const knowledge = items
       .filter((item) => knowledgeKinds.has(item.kind) && item.status !== "archived")
-      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .sort(newestFirst)
       .slice(0, limit);
     const recentArtifacts = await ctx.db
       .query("artifacts")
@@ -101,34 +114,16 @@ export const brief = query({
       counts: {
         total: items.length,
         byStatus: Object.fromEntries(
-          Object.entries(byStatus).map(([status, values]) => [status, values.length]),
+          itemStatuses.map((status) => [status, byStatus[status].length]),
         ),
         byKind: countsByKind,
       },
-      ready: await mapItems(
-        ctx,
-        byStatus.ready
-          .sort((a, b) => b.priority - a.priority || b.updatedAt - a.updatedAt)
-          .slice(0, limit),
-      ),
-      active: await mapItems(
-        ctx,
-        byStatus.active
-          .sort((a, b) => (a.claimExpiresAt ?? Infinity) - (b.claimExpiresAt ?? Infinity))
-          .slice(0, limit),
-      ),
-      blocked: await mapItems(
-        ctx,
-        byStatus.blocked
-          .sort((a, b) => b.priority - a.priority || b.updatedAt - a.updatedAt)
-          .slice(0, limit),
-      ),
-      recentKnowledge: await mapItems(ctx, recentKnowledge),
-      recentlyCompleted: await mapItems(
-        ctx,
-        byStatus.done.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
-      ),
-      recentArtifacts: recentArtifacts.map((artifact) => publicArtifact(artifact)),
+      ready: await mapItems(ctx, byStatus.ready.sort(priorityFirst).slice(0, limit)),
+      active: await mapItems(ctx, byStatus.active.sort(newestFirst).slice(0, limit)),
+      blocked: await mapItems(ctx, byStatus.blocked.sort(priorityFirst).slice(0, limit)),
+      knowledge: await mapItems(ctx, knowledge),
+      recentlyCompleted: await mapItems(ctx, byStatus.done.sort(newestFirst).slice(0, limit)),
+      recentArtifacts: await mapArtifacts(ctx, recentArtifacts),
       activeRuns: activeRuns.slice(0, limit).map(publicRun),
       activeReservations: activeReservations.map((reservation) => ({
         id: reservation.externalId,
@@ -147,20 +142,21 @@ async function mapItems(ctx: any, items: any[]) {
   return await Promise.all(items.map((item) => publicItem(ctx, item)));
 }
 
-function emptyBrief(project: string) {
-  const now = Date.now();
-  return {
-    workspace: null,
-    project,
-    generatedAt: new Date(now).toISOString(),
-    counts: { total: 0, byStatus: {}, byKind: {} },
-    ready: [],
-    active: [],
-    blocked: [],
-    recentKnowledge: [],
-    recentlyCompleted: [],
-    recentArtifacts: [],
-    activeRuns: [],
-    activeReservations: [],
-  };
+async function mapArtifacts(ctx: any, artifacts: any[]) {
+  const output = [];
+  for (const artifact of artifacts) {
+    const item = await ctx.db.get("items", artifact.itemId);
+    if (!item) continue;
+    output.push({
+      id: artifact.externalId,
+      itemId: item.externalId,
+      itemTitle: item.title,
+      actorId: artifact.actorExternalId,
+      kind: artifact.kind,
+      label: artifact.label,
+      uri: artifact.uri,
+      createdAt: new Date(artifact.createdAt).toISOString(),
+    });
+  }
+  return output;
 }
