@@ -1,6 +1,15 @@
 import { attachArtifact, listArtifacts } from "./artifacts.js";
-import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
+import type { ContinuationLedger } from "./continuation-contracts.js";
+import {
+  getContinuation,
+  listContinuations,
+  proposeContinuation,
+  resolveContinuation,
+  type ListContinuationsInput,
+  type ProposeContinuationInput,
+  type ResolveContinuationInput,
+} from "./continuations.js";
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
@@ -19,10 +28,8 @@ import type {
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
-export class SqliteWorkLedger implements WorkLedger {
-  constructor(readonly store: StensiblyStore) {
-    installSqliteCompletionParity(store);
-  }
+export class SqliteWorkLedger implements WorkLedger, ContinuationLedger {
+  constructor(readonly store: StensiblyStore) {}
 
   async getBrief(project: string, limit: number) {
     return getProjectBrief(this.store, project, limit);
@@ -125,5 +132,21 @@ export class SqliteWorkLedger implements WorkLedger {
       input.summary,
       input.idempotencyKey,
     );
+  }
+
+  async proposeContinuation(input: ProposeContinuationInput) {
+    return proposeContinuation(this.store, input);
+  }
+
+  async getContinuation(id: string) {
+    return getContinuation(this.store, id);
+  }
+
+  async listContinuations(input: ListContinuationsInput = {}) {
+    return listContinuations(this.store, input);
+  }
+
+  async resolveContinuation(input: ResolveContinuationInput) {
+    return resolveContinuation(this.store, input);
   }
 }
