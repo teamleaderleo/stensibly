@@ -5,7 +5,7 @@
   padding: 0.9rem 1rem;
   border: 1px solid var(--line);
   border-radius: 0.85rem;
-  background: var(--paper);
+  background: rgba(21, 21, 24, 0.9);
 }
 
 .board-filter-controls {
@@ -45,7 +45,7 @@
 }
 
 .board-filter-error {
-  color: var(--danger, #a32622);
+  color: var(--blocked);
 }
 
 .board-filter-overall-empty {
