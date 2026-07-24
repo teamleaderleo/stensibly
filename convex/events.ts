@@ -39,6 +39,7 @@ export const record = mutation({
 
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
     const actor = args.actor ? await upsertActor(ctx, workspace._id, args.actor) : null;
+    const now = Date.now();
     const event = await appendEvent(ctx, {
       workspaceId: item.workspaceId,
       projectId: item.projectId,
@@ -48,6 +49,11 @@ export const record = mutation({
       type,
       payload: args.payload,
       idempotencyKey: args.idempotencyKey,
+      createdAt: now,
+    });
+    await ctx.db.patch(item._id, {
+      version: item.version + 1,
+      updatedAt: now,
     });
     return { ...event, itemId: item.externalId };
   },
