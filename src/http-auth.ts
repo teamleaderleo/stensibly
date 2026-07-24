@@ -5,6 +5,7 @@ import {
   type TokenPrincipal,
 } from "./token-contracts.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
+import { FAILURE_CATEGORY_HEADER } from "./worker-observability.js";
 
 export interface StensiblyEnv {
   Variables: {
@@ -32,9 +33,19 @@ export function createHttpAuthMiddleware(
     context.set("principal", null);
     const authorization = context.req.header("Authorization");
     const token = parseBearerToken(authorization);
-    const principal = token ? await authenticator.authenticate(token) : null;
+    let principal: TokenPrincipal | null;
+    try {
+      principal = token ? await authenticator.authenticate(token) : null;
+    } catch {
+      context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
+      return context.json({
+        error: "Hosted token authority failed",
+        code: "backend_failure",
+      }, 502);
+    }
     if (!principal) {
       context.header("WWW-Authenticate", "Bearer");
+      context.header(FAILURE_CATEGORY_HEADER, "auth_failure");
       return context.json({ error: "A valid Bearer token is required" }, 401);
     }
 
@@ -52,9 +63,11 @@ export function requireHttpAccess(
   if (!principal) return null;
 
   if (!principalHasScope(principal, required)) {
+    context.header(FAILURE_CATEGORY_HEADER, "authorization_failure");
     return context.json({ error: `Token requires ${required} scope` }, 403);
   }
   if (project && !principalCanAccessProject(principal, project)) {
+    context.header(FAILURE_CATEGORY_HEADER, "authorization_failure");
     return context.json({ error: `Token cannot access project ${project}` }, 403);
   }
   return null;
