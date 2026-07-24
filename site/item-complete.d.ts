@@ -1,8 +1,8 @@
-import type { StoredActor } from './session-context.js';
+import type { ActorSession } from './session-context.js';
 
 export interface CompleteInput {
   id: string;
-  actor: StoredActor;
+  actor: ActorSession;
   action: 'complete';
   summary?: string;
 }
