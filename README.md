@@ -194,13 +194,13 @@ bun run tokens list
 bun run tokens revoke tok_TOKEN_ID
 ```
 
-To administer hosted Convex tokens, run the command in a trusted operator environment with:
+To administer hosted Convex tokens, configure a trusted operator shell before running those commands:
 
 ```bash
-STENSIBLY_BACKEND=convex
-CONVEX_URL=https://your-deployment.convex.cloud
-STENSIBLY_SERVICE_SECRET=...
-STENSIBLY_WORKSPACE=default
+export STENSIBLY_BACKEND=convex
+export CONVEX_URL=https://your-deployment.convex.cloud
+export STENSIBLY_SERVICE_SECRET=...
+export STENSIBLY_WORKSPACE=default
 ```
 
 `STENSIBLY_SERVICE_SECRET` is a Worker/CLI-to-Convex credential. It is never an API bearer token and never belongs in the dashboard, a static host variable, a URL, or a client configuration.
