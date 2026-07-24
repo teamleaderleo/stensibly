@@ -184,7 +184,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         id: idSchema(),
         actor: actorSchema,
         reason: z.string().trim().min(1).max(10_000),
-        nextAction: z.string().trim().max(2_000).optional(),
+        nextAction: z.string().trim().min(1).max(2_000).optional(),
         idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
@@ -199,7 +199,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       inputSchema: {
         id: idSchema(),
         actor: actorSchema,
-        nextAction: z.string().trim().max(2_000).optional(),
+        nextAction: z.string().trim().min(1).max(2_000).optional(),
         idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
