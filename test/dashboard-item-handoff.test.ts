@@ -7,7 +7,7 @@ import {
   validateHandoffInput,
 } from "../site/item-handoff.js";
 
-const actor = { id: "agent-1", name: "Agent One", kind: "agent" };
+const actor = { id: "agent-1", name: "Agent One", kind: "agent" as const };
 
 describe("dashboard handoff contract", () => {
   test("validates required continuation fields and optional target actor", () => {
