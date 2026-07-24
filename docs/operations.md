@@ -20,32 +20,29 @@ The Vercel project named `stensibly-api` is a parked legacy API deployment. It i
 
 ## Credential inventory
 
-### Read or write API token
+### API tokens
 
-Used by dashboards, agents, scripts, services, and the hosted verifier.
+Read or write API tokens are used by dashboards, agents, scripts, services, and the hosted verifier.
 
 - format: `stn.tok_...`
-- sent as a Bearer credential
-- stored as a hash in the selected token authority
+- sent as Bearer credentials
+- stored as hashes in the selected token authority
 - may carry workspace, project, and action scopes
 
 ### Service secret
 
-Used by the Worker and trusted operator commands to call Convex.
+`STENSIBLY_SERVICE_SECRET` authorizes trusted Worker and operator calls to Convex.
 
-- environment name: `STENSIBLY_SERVICE_SECRET`
 - configured in Convex and as an encrypted Cloudflare binding
 - separate from API tokens
-- never supplied to browser or MCP clients
+- never supplied to browsers or MCP clients
+- absent from the production deployment workflow
 
 ### Convex URL
 
-Used by the Worker and trusted operator commands.
+`CONVEX_URL` identifies the Convex deployment for the Worker and trusted operator commands. It is stored as an encrypted Worker binding in the current deployment setup.
 
-- environment name: `CONVEX_URL`
-- stored as an encrypted Worker binding in the current deployment setup
-
-Avoid placing any credential in issue comments, pull requests, repository files, command output pasted into chat, or static host variables exposed to the browser.
+Keep credentials out of issue comments, pull requests, repository files, command output pasted into chat, and static host variables exposed to browser code.
 
 ## Known-good baseline
 
@@ -58,11 +55,11 @@ The production path has previously demonstrated:
 - `api.stensibly.com` has public DNS, TLS, and Worker routing
 - the static dashboard connects with a read-only token
 
-Remote MCP is exposed at `/mcp`. The hosted verifier adds the first repeatable authenticated `initialize` check; record a production `5/5` result in issue #24 when an operator runs it with a current read token.
-
-Use the verifier to establish the current state instead of repeating manual tests one layer at a time.
+Remote MCP is exposed at `/mcp`. Record a production `5/5` verifier result in issue #24 after an operator runs it with a current read token.
 
 ## Routine verification
+
+Verify the official endpoint:
 
 ```bash
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
@@ -82,75 +79,120 @@ STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
   --endpoint https://stensibly-api.leoli-082000.workers.dev
 ```
 
-For a project-scoped token:
+For a project-scoped check:
 
 ```bash
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
   bun run verify:hosted -- --project PROJECT_SLUG
 ```
 
-The verifier redacts token-shaped values, runs every check, and exits nonzero when any check fails.
+The verifier runs every check, redacts token-shaped values, and exits nonzero on failure. Response-based failures include the Worker request ID when available, which can be matched against production logs.
 
 ## Worker deployment
 
-### Before deployment
+The preferred production path is the manual GitHub Actions workflow named **Deploy Worker Production**. It accepts dispatches from `main`, validates the candidate without production secrets, waits for the `production` environment approval, deploys one Worker version, and verifies both production endpoints.
+
+### One-time GitHub setup
+
+Create a repository environment named `production` and configure:
+
+- required reviewers for production approval
+- deployment branch protection limited to `main`
+- `CLOUDFLARE_ACCOUNT_ID` as an environment secret
+- `CLOUDFLARE_API_TOKEN` as an environment secret
+- `STENSIBLY_READ_TOKEN` as an environment secret
+
+Use a least-privilege Cloudflare API token scoped to the account and Worker deployment permissions required for `stensibly-api`.
+
+`STENSIBLY_READ_TOKEN` should carry read scope. A project-scoped token works with the matching optional project input. An all-projects read token can verify without that input.
+
+The workflow never receives `STENSIBLY_SERVICE_SECRET` or `CONVEX_URL`. Existing encrypted Worker bindings remain attached during its code-only deployment.
+
+### Deploy through GitHub Actions
+
+1. Open **Actions** in the repository.
+2. Select **Deploy Worker Production**.
+3. Choose **Run workflow** from `main`.
+4. Optionally enter a lowercase project slug for a project-scoped verifier token.
+5. Wait for the candidate-validation job to pass.
+6. Approve the `production` environment deployment when GitHub requests approval.
+
+The workflow performs these stages:
+
+1. confirms the selected ref is `main`
+2. installs the committed Bun lockfile in a secret-free job
+3. runs typecheck, Bun tests, Convex tests, and the Worker dry-run bundle
+4. requests production environment approval
+5. installs locked dependencies in the deployment job
+6. validates the required environment secrets and optional project slug
+7. deploys with the locked Wrangler dependency
+8. verifies the `workers.dev` fallback up to three times
+9. verifies `api.stensibly.com` up to three times
+10. records the deployed commit and successful endpoint checks in the job summary
+
+Production secrets become available only in the deployment job after candidate checks pass and environment approval is granted.
+
+Verifier failures include request IDs when the deployed Worker responds. Use those IDs with `bun run worker:tail` to find matching completion records.
+
+The workflow stops after a failed post-deploy verification. It leaves rollback to an operator because Worker rollback and any Convex data implications require an explicit decision.
+
+### Manual deployment fallback
+
+Use the trusted-shell path when GitHub Actions is unavailable or while repairing its environment configuration.
+
+Run the candidate checks:
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run typecheck
 bun test
 bun run test:convex
 bun run worker:check
 ```
 
-Review the proposed changes for:
+Review changes to bindings, browser origins, authentication, scopes, REST contracts, MCP behavior, and logging before deploying.
 
-- new environment bindings
-- changes to `STENSIBLY_ALLOWED_ORIGINS`
-- authentication or scope behavior
-- REST response contracts
-- MCP protocol behavior
-- raw token or secret logging
-
-### Deploy code
+Deploy code:
 
 ```bash
 bun run worker:deploy
 ```
 
-Existing encrypted bindings remain attached during a code-only deployment.
-
-### Verify immediately
+Verify both endpoints:
 
 ```bash
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
+
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run verify:hosted -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev
 ```
 
-Then verify the fallback endpoint. A custom-domain failure with a healthy fallback points toward DNS, TLS, or route attachment. Failure on both points toward Worker code, bindings, or Convex.
+A custom-domain failure with a healthy fallback points toward DNS, TLS, or route attachment. Failure on both points toward Worker code, bindings, or Convex.
 
 ## Dashboard deployment
 
 The dashboard is the static Vercel project named `stensibly`. Its production branch is deployed through Vercel Git integration.
 
-Before merging dashboard changes:
+Before merging dashboard changes, confirm:
 
-- confirm CSP remains restrictive
-- confirm API calls use `/api/v1`
-- confirm the token stays in `sessionStorage`
-- confirm the endpoint alone enters `localStorage`
-- confirm no credential appears in HTML, JavaScript, Vercel variables, URLs, or analytics
-- test connection, change, cancel, disconnect, refresh, and expired-token behavior
+- CSP remains restrictive
+- API calls use `/api/v1`
+- the token stays in `sessionStorage`
+- the endpoint alone enters `localStorage`
+- credentials stay out of HTML, JavaScript, Vercel variables, URLs, and analytics
+- connection, change, cancel, disconnect, refresh, and expired-token behavior work
 
-After the production deployment:
+After production deployment:
 
-1. Open a clean browser profile.
-2. Connect with a read-only token.
-3. Confirm the compact connected state shows the endpoint and never the token.
-4. Refresh the page and confirm same-session reconnection.
-5. Disconnect and confirm the token is cleared.
-6. Run the hosted verifier separately to confirm the API path.
+1. open a clean browser profile
+2. connect with a read-only token
+3. confirm the compact state shows the endpoint and never the token
+4. refresh and confirm same-session reconnection
+5. disconnect and confirm the token is cleared
+6. run the hosted verifier separately
 
-A dedicated dashboard deployment script or workflow remains future automation work.
+A dedicated dashboard deployment workflow remains future automation work.
 
 ## Logs
 
@@ -160,34 +202,34 @@ Stream Worker logs:
 bun run worker:tail
 ```
 
-Useful log categories should include:
+Every Worker response carries `X-Request-ID`. Allowed dashboard origins can read that header through CORS.
 
+Each completed request emits one JSON record containing:
+
+- event name
 - request ID
-- route and method
-- authentication failure category
-- CORS rejection
-- Convex call failure
+- method
+- route class: `health`, `rest_v1`, `mcp`, or `other`
 - response status
+- duration in milliseconds
+- success or failure outcome
+- failure category when applicable
 
-Logs should exclude:
+Failure categories include authentication, authorization, CORS, Convex, MCP, request, and gateway failures.
 
-- `Authorization` headers
-- raw API tokens
-- token hashes
-- `STENSIBLY_SERVICE_SECRET`
-- private artifact contents
+Completion records exclude URLs, query strings, item IDs, project names, request headers, request bodies, raw tokens, token IDs, token hashes, service secrets, and private artifact content.
 
-Request IDs and categorized failures remain a product backlog item where the current logs lack them.
+When the verifier reports `requestId=...`, search the Worker tail output for the same value.
 
 ## Incident diagnosis
 
 ### Health fails on official and fallback endpoints
 
-Inspect Worker logs and encrypted bindings. Confirm the Worker is deployed and `CONVEX_URL` plus `STENSIBLY_SERVICE_SECRET` are present. Check Convex availability and service-secret agreement.
+Inspect Worker logs and encrypted bindings. Confirm the Worker is deployed and the `CONVEX_URL` and `STENSIBLY_SERVICE_SECRET` bindings are present. Check Convex availability and service-secret agreement.
 
-### Health passes; unauthenticated REST fails its `401` check
+### Health passes; unauthenticated REST misses its `401` result
 
-Treat this as an authentication regression or route mismatch. Inspect recent gateway and middleware changes before testing write behavior.
+Treat this as an authentication regression or route mismatch. Inspect recent gateway and middleware changes before testing writes.
 
 ### CORS preflight fails
 
@@ -207,11 +249,11 @@ Redeploy the Worker after changing the allowlist.
 
 ### Authenticated REST returns `401`
 
-The token is malformed, revoked, unknown to the active token authority, or signed for another environment. Create or select a current read token. Keep the raw value out of logs and issue comments.
+The token is malformed, revoked, unknown to the active token authority, or belongs to another environment. Create or select a current read token through a trusted operator path.
 
 ### Authenticated REST returns `403`
 
-The token lacks read scope, workspace access, project access, or the browser origin is forbidden. Read the API error and check the token metadata from a trusted operator environment.
+The token lacks read scope, workspace access, or project access, or the browser origin is forbidden. Read the API response and inspect token metadata from a trusted operator environment.
 
 ### Authenticated REST returns `404`
 
@@ -223,7 +265,7 @@ Inspect `/mcp` routing, Bearer authentication, the MCP protocol version, host re
 
 ### Official endpoint fails; Worker fallback passes
 
-Inspect the `api.stensibly.com` Worker Custom Domain, proxied DNS record, certificate, and route attachment. Preserve the healthy Worker and avoid recreating it as a first response.
+Inspect the `api.stensibly.com` Worker Custom Domain, proxied DNS record, certificate, and route attachment. Preserve the healthy Worker.
 
 ### Dashboard fails; verifier passes
 
@@ -251,14 +293,14 @@ Worker rollback does not reverse Convex records. Evaluate data recovery separate
 
 ### Dashboard
 
-Use the Vercel project deployment history to select Instant Rollback. When the Vercel CLI is installed and linked to the `stensibly` project, the equivalent commands are:
+Use the Vercel project deployment history to select Instant Rollback. With the Vercel CLI installed and linked to the `stensibly` project:
 
 ```bash
 vercel rollback
 vercel rollback status
 ```
 
-After recovery, verify the production domain in a clean browser. Promoting a corrected deployment restores the normal production assignment flow.
+After recovery, verify the production domain in a clean browser.
 
 ## Token operations
 
@@ -285,7 +327,7 @@ STENSIBLY_WORKSPACE=default \
   --projects PROJECT_SLUG
 ```
 
-Save the raw token once, then deliver it through an appropriate secret channel. Revoke compromised or obsolete hosted tokens by ID with the same Convex environment:
+Save the raw token once and deliver it through an appropriate secret channel. Revoke hosted tokens by ID with the same Convex environment:
 
 ```bash
 STENSIBLY_BACKEND=convex \
@@ -299,13 +341,13 @@ STENSIBLY_WORKSPACE=default \
 
 The current design expects one matching secret in the Worker and Convex deployment. Rotate it as a coordinated maintenance action:
 
-1. prepare the new high-entropy value in a trusted environment
+1. prepare a new high-entropy value in a trusted environment
 2. update Convex and the encrypted Worker binding in one controlled window
 3. redeploy or activate the Worker binding
 4. run the hosted verifier
 5. remove temporary local copies
 
-A dual-secret overlap mechanism would make future zero-downtime rotation safer and belongs in the hosted security roadmap.
+A dual-secret overlap mechanism would enable a smoother future rotation and belongs in the hosted security roadmap.
 
 ## Backup and recovery
 
