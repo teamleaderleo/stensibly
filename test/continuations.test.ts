@@ -34,7 +34,11 @@ describe("continuation proposals", () => {
       rationale: "The completed work exposed a clear adjacent improvement.",
       instruction: "Open the proposal, claim the resulting item, and implement it.",
       action: { kind: "create_item" as const, project: "scrapbook" },
-      evidence: [{ kind: "pull_request", label: "Completed PR", uri: "https://example.test/pr/62" }],
+      evidence: [{
+        kind: "pull_request",
+        label: "Completed PR",
+        uri: "https://example.test/pr/62",
+      }],
       actor: agent,
       approvalMode: "human" as const,
       deliveryMode: "current_conversation" as const,
@@ -50,6 +54,8 @@ describe("continuation proposals", () => {
       suggestedBy: agent.id,
       status: "proposed",
       generation: 1,
+      result: null,
+      consumedAt: null,
     });
     expect(proposeContinuation(store, input)).toEqual(proposal);
     expect(listContinuations(store, { sourceItemId })).toEqual([proposal]);
@@ -81,11 +87,12 @@ describe("continuation proposals", () => {
       idempotencyKey: "proposal-conflict",
     };
     proposeContinuation(store, base);
-    expect(() => proposeContinuation(store, { ...base, title: "Different continuation" }))
-      .toThrow(ConflictError);
+    expect(() =>
+      proposeContinuation(store, { ...base, title: "Different continuation" })
+    ).toThrow(ConflictError);
   });
 
-  test("uses generation guards and idempotent lifecycle commands", () => {
+  test("uses generation guards and consumes into durable execution references", () => {
     const proposal = proposeContinuation(store, {
       sourceItemId,
       title: "Continue in this chat",
@@ -110,46 +117,119 @@ describe("continuation proposals", () => {
       generation: 2,
       resolutionActorId: leo.id,
       resolutionNote: "Continue here.",
+      result: null,
+      consumedAt: null,
     });
     expect(resolveContinuation(store, approvedInput)).toEqual(approved);
 
-    expect(() => resolveContinuation(store, {
-      id: proposal.id,
-      actor: leo,
-      command: "queue",
-      expectedGeneration: 1,
-    })).toThrow(ConflictError);
+    expect(() =>
+      resolveContinuation(store, {
+        id: proposal.id,
+        actor: agent,
+        command: "consume",
+        expectedGeneration: 1,
+        result: { itemId: sourceItemId },
+      })
+    ).toThrow(ConflictError);
 
-    const queued = resolveContinuation(store, {
+    const consumedInput = {
       id: proposal.id,
-      actor: leo,
-      command: "queue",
+      actor: agent,
+      command: "consume" as const,
       expectedGeneration: 2,
+      result: {
+        itemId: sourceItemId,
+        conversationRef: "chatgpt:conversation:test",
+      },
+      idempotencyKey: "consume-1",
+    };
+    const consumed = resolveContinuation(store, consumedInput);
+    expect(consumed).toMatchObject({
+      status: "consumed",
+      generation: 3,
+      result: consumedInput.result,
+      resolutionActorId: agent.id,
     });
-    expect(queued).toMatchObject({ status: "queued", generation: 3 });
+    expect(consumed.consumedAt).toBeString();
+    expect(resolveContinuation(store, consumedInput)).toEqual(consumed);
 
-    const started = resolveContinuation(store, {
-      id: proposal.id,
+    expect(() =>
+      resolveContinuation(store, {
+        ...consumedInput,
+        result: { itemId: sourceItemId, conversationRef: "different-chat" },
+      })
+    ).toThrow(ConflictError);
+
+    expect(() =>
+      resolveContinuation(store, {
+        id: proposal.id,
+        actor: leo,
+        command: "defer",
+        expectedGeneration: 3,
+      })
+    ).toThrow(ConflictError);
+
+    expect(
+      store.listEvents(sourceItemId).filter(
+        (event) => event.type === "continuation.consumed",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          continuationId: proposal.id,
+          result: consumedInput.result,
+        }),
+      }),
+    ]);
+  });
+
+  test("requires action-appropriate references when consuming", () => {
+    const proposal = proposeContinuation(store, {
+      sourceItemId,
+      title: "Create the follow-up item",
+      rationale: "The next work deserves a separate unit of intent.",
+      instruction: "Create and return the resulting item.",
+      action: { kind: "create_item", project: "scrapbook" },
       actor: agent,
-      command: "start",
-      expectedGeneration: 3,
     });
-    expect(started).toMatchObject({ status: "started", generation: 4 });
-
-    const succeeded = resolveContinuation(store, {
-      id: proposal.id,
-      actor: agent,
-      command: "succeed",
-      expectedGeneration: 4,
-    });
-    expect(succeeded).toMatchObject({ status: "succeeded", generation: 5 });
-
-    expect(() => resolveContinuation(store, {
+    const approved = resolveContinuation(store, {
       id: proposal.id,
       actor: leo,
-      command: "defer",
-      expectedGeneration: 5,
-    })).toThrow(ConflictError);
+      command: "approve",
+      expectedGeneration: 1,
+    });
+
+    expect(() =>
+      resolveContinuation(store, {
+        id: proposal.id,
+        actor: agent,
+        command: "consume",
+        expectedGeneration: approved.generation,
+        result: { runId: "run_wrong_kind" },
+      })
+    ).toThrow(TypeError);
+
+    expect(() =>
+      resolveContinuation(store, {
+        id: proposal.id,
+        actor: leo,
+        command: "cancel",
+        expectedGeneration: approved.generation,
+        result: { itemId: "item_unexpected" },
+      })
+    ).toThrow(TypeError);
+
+    const consumed = resolveContinuation(store, {
+      id: proposal.id,
+      actor: agent,
+      command: "consume",
+      expectedGeneration: approved.generation,
+      result: { itemId: "item_follow_up" },
+    });
+    expect(consumed).toMatchObject({
+      status: "consumed",
+      result: { itemId: "item_follow_up" },
+    });
   });
 
   test("expires live proposals once and invalidates stale approval", () => {
@@ -168,33 +248,44 @@ describe("continuation proposals", () => {
     const expired = getContinuation(store, proposal.id);
     expect(expired).toMatchObject({ status: "expired", generation: 2 });
     expect(getContinuation(store, proposal.id)).toEqual(expired);
-    expect(store.listEvents(sourceItemId).filter((event) => event.type === "continuation.expired"))
-      .toHaveLength(1);
+    expect(
+      store.listEvents(sourceItemId).filter(
+        (event) => event.type === "continuation.expired",
+      ),
+    ).toHaveLength(1);
 
-    expect(() => resolveContinuation(store, {
-      id: proposal.id,
-      actor: leo,
-      command: "approve",
-      expectedGeneration: 1,
-    })).toThrow(ConflictError);
+    expect(() =>
+      resolveContinuation(store, {
+        id: proposal.id,
+        actor: leo,
+        command: "approve",
+        expectedGeneration: 1,
+      })
+    ).toThrow(ConflictError);
   });
 
   test("validates typed actions and cascades with the source item", () => {
-    expect(() => proposeContinuation(store, {
-      sourceItemId,
-      title: "Unsafe action",
-      rationale: "Attempt arbitrary execution.",
-      instruction: "Run arbitrary code.",
-      action: { kind: "shell" } as never,
-      actor: agent,
-    })).toThrow(TypeError);
+    expect(() =>
+      proposeContinuation(store, {
+        sourceItemId,
+        title: "Unsafe action",
+        rationale: "Attempt arbitrary execution.",
+        instruction: "Run arbitrary code.",
+        action: { kind: "shell" } as never,
+        actor: agent,
+      })
+    ).toThrow(TypeError);
 
     proposeContinuation(store, {
       sourceItemId,
       title: "Disposable continuation",
       rationale: "Used to verify source ownership.",
       instruction: "Delete with the source item.",
-      action: { kind: "dispatch_item", itemId: sourceItemId, runnerProfile: "codex" },
+      action: {
+        kind: "dispatch_item",
+        itemId: sourceItemId,
+        runnerProfile: "codex",
+      },
       actor: agent,
     });
     store.db.query("DELETE FROM items WHERE id = ?1").run(sourceItemId);
