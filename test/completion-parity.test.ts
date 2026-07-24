@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createApp } from "../src/app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 
@@ -59,6 +60,41 @@ describe("SQLite completion parity", () => {
       expect(replacedResult).toMatchObject({
         status: "done",
         summary: "Completed with evidence",
+        nextAction: null,
+        claimedBy: null,
+        claimExpiresAt: null,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("the legacy local completion route uses the same next-action contract", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const item = store.createItem({
+        project: "scrapbook",
+        kind: "task",
+        title: "Complete through legacy REST",
+        summary: "Keep this summary",
+        nextAction: "Remove this action",
+        priority: 50,
+        actor,
+      });
+      const app = createApp(store);
+      const response = await app.request(`/api/items/${item.id}/complete`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "legacy-complete",
+        },
+        body: JSON.stringify({ actor }),
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json() as any;
+      expect(payload.item).toMatchObject({
+        status: "done",
+        summary: "Keep this summary",
         nextAction: null,
         claimedBy: null,
         claimExpiresAt: null,
