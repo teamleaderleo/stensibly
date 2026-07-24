@@ -1,6 +1,7 @@
 import { type Context, type Hono } from "hono";
 import {
   continuationLedger,
+  editContinuationSchema,
   listContinuationsSchema,
   proposeContinuationSchema,
   resolveContinuationSchema,
@@ -89,6 +90,25 @@ export function registerContinuationApi(
     const detail = await ledger.getItem(continuation.sourceItemId);
     const denied = requireHttpAccess(context, "read", detail.item.project);
     if (denied) return denied;
+    return context.json({ continuation });
+  });
+
+  app.post("/continuations/:id/edit", async (context) => {
+    const continuations = continuationLedger(ledger);
+    if (!continuations) return unavailable(context);
+    const id = context.req.param("id");
+    const current = await continuations.getContinuation(id);
+    const detail = await ledger.getItem(current.sourceItemId);
+    const denied = requireHttpAccess(context, "write", detail.item.project);
+    if (denied) return denied;
+    const parsed = editContinuationSchema.safeParse(await readJson(context.req.raw));
+    if (!parsed.success) return validationError(context, parsed.error.issues);
+    const idempotencyKey = context.req.header("Idempotency-Key");
+    const continuation = await continuations.editContinuation({
+      id,
+      ...parsed.data,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
     return context.json({ continuation });
   });
 
