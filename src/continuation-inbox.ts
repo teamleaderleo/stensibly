@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import {
-  continuationLedger,
-  continuationStatuses,
-} from "./continuation-contracts.js";
+import { continuationLedger } from "./continuation-contracts.js";
 import type {
   ContinuationAction,
   ContinuationEvidence,
@@ -108,7 +105,7 @@ export async function buildContinuationInbox(
   const rows = (
     await Promise.all([
       continuations.listContinuations({
-        status: continuationStatuses[0],
+        status: "proposed",
         deliveryMode: "human_inbox",
       }),
       continuations.listContinuations({
@@ -257,9 +254,13 @@ function fingerprintInbox(items: readonly ContinuationInboxItem[]): string {
       generation: item.generation,
       status: item.status,
       title: item.title,
+      rationale: item.rationale,
       instruction: item.instruction,
       action: item.action,
+      evidence: item.evidence,
+      suggestedBy: item.suggestedBy,
       expiresAt: item.expiresAt,
+      expiryState: item.expiryState,
       sourceItem: {
         id: item.sourceItem.id,
         project: item.sourceItem.project,
