@@ -41,6 +41,7 @@ export function safeBriefArtifactHref(value) {
   if (!uri || /stn\.tok_/i.test(uri)) return '';
   try {
     const parsed = new URL(uri);
+    if (parsed.username || parsed.password) return '';
     return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
   } catch {
     return '';
@@ -54,6 +55,9 @@ function readCounts(value) {
   const total = count(value.total, 'total');
   const byStatus = Object.fromEntries(ITEM_STATUSES.map((status) => [status, count(value.byStatus[status], status)]));
   const byKind = Object.fromEntries(ITEM_KINDS.map((kind) => [kind, count(value.byKind[kind], kind)]));
+  if (sumCounts(byStatus) !== total || sumCounts(byKind) !== total) {
+    throw new TypeError('The project brief returned contradictory counts.');
+  }
   return { total, byStatus, byKind };
 }
 
@@ -97,6 +101,10 @@ function readArtifacts(value) {
       createdAt: timestamp(artifact.createdAt, 'A project brief artifact returned an invalid created time.'),
     };
   });
+}
+
+function sumCounts(value) {
+  return Object.values(value).reduce((total, entry) => total + entry, 0);
 }
 
 function count(value, label) {
