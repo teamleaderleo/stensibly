@@ -11,12 +11,14 @@ const TOKEN_STORAGE_KEY = 'stensiblyToken';
 const ENDPOINT_STORAGE_KEY = 'stensiblyEndpoint';
 const STATUS_ORDER = ['ready', 'active', 'blocked', 'done', 'archived'];
 const KIND_ORDER = ['task', 'finding', 'question', 'decision', 'tip', 'handoff', 'note'];
+const CONNECTION_RESET_STATES = ['connecting', 'editing', 'disconnected', 'connection failed'];
 
 export function installProjectBriefController() {
   const dashboard = document.querySelector('#dashboard');
   const actions = document.querySelector('.dashboard-actions');
   const projectFilter = document.querySelector('#project-filter');
   const refreshBoardButton = document.querySelector('#refresh');
+  const connectionState = document.querySelector('#connection-state');
   if (!dashboard || !actions || !(projectFilter instanceof HTMLSelectElement) || !refreshBoardButton) return null;
   if (document.querySelector('#project-brief-button')) return null;
 
@@ -122,6 +124,16 @@ export function installProjectBriefController() {
     if (dashboard.hidden && dialog.open) dialog.close();
   });
   dashboardObserver.observe(dashboard, { attributes: true, attributeFilter: ['hidden'] });
+  const connectionObserver = connectionState
+    ? new MutationObserver(() => {
+      const label = connectionState.textContent?.trim() || '';
+      if (!CONNECTION_RESET_STATES.includes(label)) return;
+      gate.invalidate();
+      currentBrief = null;
+      if (dialog.open) dialog.close();
+    })
+    : null;
+  connectionObserver?.observe(connectionState, { childList: true, subtree: true, characterData: true });
 
   function syncProjects() {
     const projects = normalizeBriefProjects([...projectFilter.options].map((option) => option.value));
@@ -176,13 +188,13 @@ export function installProjectBriefController() {
         cache: 'no-store',
       });
     } catch {
-      if (!isCurrent(requestId, project)) return;
+      if (!isCurrent(requestId, project, connection)) return;
       showFailure('The project brief request could not reach the API. Check the connection and retry.');
       return;
     }
 
     const payload = await response.json().catch(() => null);
-    if (!isCurrent(requestId, project)) return;
+    if (!isCurrent(requestId, project, connection)) return;
     if (!response.ok) {
       const failure = describeHttpFailure(response.status, payload);
       const validation = formatValidationIssues(payload);
@@ -198,7 +210,7 @@ export function installProjectBriefController() {
     try {
       brief = readProjectBrief(payload, project);
     } catch (cause) {
-      if (!isCurrent(requestId, project)) return;
+      if (!isCurrent(requestId, project, connection)) return;
       showFailure(cause instanceof Error ? cause.message : 'The endpoint returned an incompatible project brief.');
       return;
     }
@@ -209,8 +221,13 @@ export function installProjectBriefController() {
     renderBrief(brief);
   }
 
-  function isCurrent(requestId, project) {
-    return gate.isCurrent(requestId) && dialog.open && projectSelect.value === project;
+  function isCurrent(requestId, project, expectedConnection) {
+    const connection = readConnection();
+    return gate.isCurrent(requestId)
+      && dialog.open
+      && projectSelect.value === project
+      && connection.endpoint === expectedConnection.endpoint
+      && connection.token === expectedConnection.token;
   }
 
   function showFailure(message) {
@@ -240,6 +257,7 @@ export function installProjectBriefController() {
       gate.invalidate();
       projectObserver.disconnect();
       dashboardObserver.disconnect();
+      connectionObserver?.disconnect();
       dialog.remove();
       openButton.remove();
     },
