@@ -106,19 +106,21 @@ Convex can run locally without selecting a cloud project:
 bun run convex:local
 ```
 
-Local deployment state is written under `.convex/` and ignored by Git.
+Keep that process running. Local deployment state is written under `.convex/` and ignored by Git. The Convex CLI selects the local deployment and writes its connection information to the local environment file.
 
-For a local Convex-backed Bun gateway, configure:
+In a second trusted shell, create one private value and configure the same value in the local Convex deployment and Bun gateway:
 
 ```bash
+export STENSIBLY_SERVICE_SECRET="$(openssl rand -hex 32)"
+bunx convex env set STENSIBLY_SERVICE_SECRET "$STENSIBLY_SERVICE_SECRET"
+
 export STENSIBLY_BACKEND=convex
-export CONVEX_URL=http://127.0.0.1:3210
-export STENSIBLY_SERVICE_SECRET=replace-with-a-long-random-value
+export CONVEX_URL=<the-CONVEX_URL-written-or-printed-by-the-Convex-CLI>
 export STENSIBLY_WORKSPACE=default
 bun run start
 ```
 
-Use the URL printed by the local Convex process when it differs from the example.
+The local Convex process must remain active while the gateway uses it. Keep the generated secret and local environment files untracked.
 
 ## Hosted migration status
 
