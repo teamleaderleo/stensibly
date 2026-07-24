@@ -178,6 +178,8 @@ jobs:
             "/item-complete-controller.js|installCompletionController"
             "/project-brief-controller.js|installProjectBriefController"
             "/project-brief.css|.project-brief-dialog"
+            "/board-filter-controller.js|installBoardFilterController"
+            "/board-filter.css|.board-filter-panel"
             "/favicon.svg|<svg"
           )
           for spec in "${asset_specs[@]}"; do
