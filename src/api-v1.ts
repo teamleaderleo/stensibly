@@ -1,5 +1,9 @@
 import { Hono, type Context } from "hono";
 import { attachArtifactSchema } from "./artifact-contracts.js";
+import {
+  completeWithContinuationsSchema,
+  completionContinuationLedger,
+} from "./completion-continuation-contracts.js";
 import { registerContinuationApi } from "./continuation-api.js";
 import {
   filterItemsForPrincipal,
@@ -228,9 +232,26 @@ export function createApiV1(
     const detail = await ledger.getItem(id);
     const denied = requireHttpAccess(context, "write", detail.item.project);
     if (denied) return denied;
-    const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
+    const parsed = completeWithContinuationsSchema.safeParse(
+      await readJson(context.req.raw),
+    );
     if (!parsed.success) return validationError(context, parsed.error.issues);
-    return context.json({ item: await ledger.completeWork(actionInput(context, id, parsed.data)) });
+    if (parsed.data.continuations?.length) {
+      const atomic = completionContinuationLedger(ledger);
+      if (!atomic) return unsupportedFeature(context);
+      return context.json(await atomic.completeWorkWithContinuations(
+        actionInput(context, id, {
+          ...parsed.data,
+          continuations: parsed.data.continuations,
+        }),
+      ));
+    }
+    return context.json({
+      item: await ledger.completeWork(actionInput(context, id, {
+        actor: parsed.data.actor,
+        ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
+      })),
+    });
   });
 
   app.post("/items/:id/events", async (context) => {
@@ -278,6 +299,13 @@ function validationError(
     code: "invalid_request",
     issues: issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
   }, 400);
+}
+
+function unsupportedFeature(context: Context<StensiblyEnv>) {
+  return context.json({
+    error: "Atomic completion continuations are unavailable on this backend",
+    code: "unsupported_feature",
+  }, 501);
 }
 
 function backendFailure(context: Context<StensiblyEnv>): Response {

@@ -1,7 +1,11 @@
 import { attachArtifact, listArtifacts } from "./artifacts.js";
+import type {
+  CompleteWithContinuationsInput,
+  CompletionContinuationLedger,
+} from "./completion-continuation-contracts.js";
+import { completeWorkWithContinuations } from "./completion-continuations.js";
 import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
-import type { ContinuationLedger } from "./continuation-contracts.js";
 import {
   getContinuation,
   listContinuations,
@@ -29,7 +33,7 @@ import type {
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
-export class SqliteWorkLedger implements WorkLedger, ContinuationLedger {
+export class SqliteWorkLedger implements WorkLedger, CompletionContinuationLedger {
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
   }
@@ -135,6 +139,11 @@ export class SqliteWorkLedger implements WorkLedger, ContinuationLedger {
       input.summary,
       input.idempotencyKey,
     );
+  }
+
+  async completeWorkWithContinuations(input: CompleteWithContinuationsInput) {
+    expireClaims(this.store);
+    return completeWorkWithContinuations(this.store, input);
   }
 
   async proposeContinuation(input: ProposeContinuationInput) {
