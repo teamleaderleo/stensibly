@@ -1,4 +1,9 @@
-import { describeHttpFailure, isPlausibleToken, readItems } from './connection.js';
+import {
+  describeHttpFailure,
+  isPlausibleToken,
+  normalizeEndpoint,
+  readItems,
+} from './connection.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const REFRESH_INTERVAL_MS = 15000;
@@ -98,8 +103,13 @@ async function connect(event) {
     scheduleRefresh();
   } catch (error) {
     const message = await explainConnectionFailure(error, candidateEndpoint);
-    if (error instanceof ConnectionFailure && error.kind === 'invalid_token' && candidateToken === token) {
-      clearStoredToken();
+    const failedCurrentConnection = candidateEndpoint === endpoint
+      && candidateToken === token
+      && isTerminalConnectionFailure(error);
+    if (failedCurrentConnection) {
+      if (isCredentialFailure(error)) clearStoredToken();
+      connected = false;
+      items = [];
     }
     showConnectionForm(message, {
       keepDashboard: connected,
@@ -125,9 +135,10 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     scheduleRefresh();
   } catch (error) {
     const message = await explainConnectionFailure(error, endpoint);
-    if (error instanceof ConnectionFailure && error.kind === 'invalid_token') {
-      clearStoredToken();
+    if (isTerminalConnectionFailure(error)) {
+      if (isCredentialFailure(error)) clearStoredToken();
       connected = false;
+      items = [];
       showConnectionForm(message);
       return;
     }
@@ -186,6 +197,20 @@ async function explainConnectionFailure(error, apiEndpoint) {
   } catch {
     return 'The endpoint could not be reached. Check the URL, DNS, proxy path, or whether the API is running.';
   }
+}
+
+function isTerminalConnectionFailure(error) {
+  return error instanceof ConnectionFailure && [
+    'invalid_token',
+    'forbidden',
+    'forbidden_origin',
+    'incompatible_api',
+    'incompatible_response',
+  ].includes(error.kind);
+}
+
+function isCredentialFailure(error) {
+  return error instanceof ConnectionFailure && ['invalid_token', 'forbidden'].includes(error.kind);
 }
 
 function beginConnectionChange() {
@@ -356,18 +381,6 @@ function savedEndpoint() {
     localStorage.removeItem('stensiblyEndpoint');
     return DEFAULT_ENDPOINT;
   }
-}
-
-function normalizeEndpoint(value) {
-  const normalized = String(value).trim().replace(/\/+$/, '');
-  const parsed = new URL(normalized);
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new TypeError('The API URL must use HTTP or HTTPS.');
-  }
-  if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
-    throw new TypeError('Enter the API origin without a path, query, or fragment.');
-  }
-  return parsed.origin;
 }
 
 function statusClass(status) {
