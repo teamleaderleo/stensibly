@@ -52,9 +52,11 @@ describe("atomic MCP completion continuations", () => {
         status: "done",
         summary: "Completed with an atomic proposal.",
       });
-      expect(result.continuations).toEqual([
-        expect.objectContaining({ status: "proposed", sourceItemId: item.id }),
-      ]);
+      expect(result.continuations).toHaveLength(1);
+      expect(result.continuations[0]).toMatchObject({
+        status: "proposed",
+        sourceItemId: item.id,
+      });
       const replay = await call<CompletionResult>(client, "complete_work", input);
       expect(replay).toEqual(result);
     } finally {
