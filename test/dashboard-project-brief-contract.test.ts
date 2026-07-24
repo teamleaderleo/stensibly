@@ -39,10 +39,20 @@ describe("dashboard project brief integration", () => {
     expect(controller).not.toContain("STENSIBLY_SERVICE_SECRET");
   });
 
+  test("binds responses to the exact active endpoint and token", () => {
+    expect(controller).toContain("isCurrent(requestId, project, connection)");
+    expect(controller).toContain("connection.endpoint === expectedConnection.endpoint");
+    expect(controller).toContain("connection.token === expectedConnection.token");
+    expect(controller).toContain("CONNECTION_RESET_STATES");
+    expect(controller).toContain("connectionObserver?.observe(connectionState");
+    expect(controller).toContain("connectionObserver?.disconnect()");
+  });
+
   test("guards stale responses and preserves the last valid brief on refresh failure", () => {
     expect(controller).toContain("const requestId = gate.begin()");
     expect(controller).toContain("gate.invalidate()");
-    expect(controller).toContain("gate.isCurrent(requestId) && dialog.open && projectSelect.value === project");
+    expect(controller).toContain("gate.isCurrent(requestId)");
+    expect(controller).toContain("projectSelect.value === project");
     expect(controller).toContain("currentBrief?.project === project ? 'refreshing' : 'loading'");
     expect(controller).toContain("if (!currentBrief || currentBrief.project !== projectSelect.value)");
     expect(controller).toContain("currentBrief = brief");
