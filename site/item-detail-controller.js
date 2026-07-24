@@ -305,11 +305,13 @@ export function createItemDetailController({
       return;
     }
 
+    gate.invalidate();
     const requestId = claimGate.begin();
     claimInFlight = true;
     refreshButton.disabled = true;
     submitButton.disabled = true;
-    actionState.textContent = 'claiming';
+    state.textContent = 'claiming';
+    clearError();
     clearClaimError(actionError);
 
     let response;
@@ -575,3 +577,4 @@ class DetailFailure extends Error {
     this.name = 'DetailFailure';
     this.kind = kind;
   }
+}
