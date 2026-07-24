@@ -24,6 +24,7 @@ import {
   unblockItemSchema,
 } from "./schemas.js";
 import { expireClaims, renewClaim } from "./leases.js";
+import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import {
   ConflictError,
   NotFoundError,
@@ -46,7 +47,7 @@ export function createApp(
     return context.json({ error: "Unexpected server error" }, 500);
   });
 
-  app.use("*", createHttpAuthMiddleware(store, authOptions));
+  app.use("*", createHttpAuthMiddleware(new SqliteTokenProvider(store), authOptions));
 
   app.get("/", (context) => {
     const denied = requireHttpAccess(context, "read");
