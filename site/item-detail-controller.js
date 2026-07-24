@@ -3,6 +3,7 @@ import {
   createRequestGate,
   payloadEntries,
   readItemDetail,
+  redactCredentialText,
   safeArtifactHref,
   safeRequestId,
 } from './item-detail.js';
@@ -48,9 +49,9 @@ export function createItemDetailController({ board, getConnection, getItems }) {
     triggerItemId = '';
     clearError();
     if (restoreFocus && itemId) {
-      [...board.querySelectorAll('button.card[data-item-id]')]
-        .find((button) => button.dataset.itemId === itemId)
-        ?.focus();
+      const currentCard = [...board.querySelectorAll('button.card[data-item-id]')]
+        .find((button) => button.dataset.itemId === itemId);
+      (currentCard || document.querySelector('#refresh'))?.focus();
     }
     restoreFocus = true;
   });
@@ -60,7 +61,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
     triggerItemId = itemId;
     restoreFocus = true;
     title.textContent = 'Item detail';
-    subtitle.textContent = itemId;
+    subtitle.textContent = redactCredentialText(itemId);
     state.textContent = 'loading';
     clearError();
     body.replaceChildren(loadingBlock());
@@ -120,7 +121,10 @@ export function createItemDetailController({ board, getConnection, getItems }) {
         throw new DetailFailure('missing', withRequestId('This item no longer exists or is outside the token project boundary.', requestId));
       }
       const failure = describeHttpFailure(response.status, payload);
-      throw new DetailFailure(failure.kind, withRequestId(failure.message, requestId));
+      throw new DetailFailure(
+        failure.kind,
+        withRequestId(redactCredentialText(failure.message, token), requestId),
+      );
     }
 
     try {
@@ -211,7 +215,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
       head.append(eventName, when);
       row.append(head);
       const actor = element('p', 'detail-event-actor');
-      actor.textContent = event.actorId ? `actor · ${event.actorId}` : 'system event';
+      actor.textContent = event.actorId ? `actor · ${text(event.actorId)}` : 'system event';
       row.append(actor);
       const entries = payloadEntries(event.payload);
       if (entries.length) {
@@ -272,7 +276,7 @@ export function createItemDetailController({ board, getConnection, getItems }) {
   }
 
   function showError(message) {
-    error.textContent = message;
+    error.textContent = redactCredentialText(message);
     error.hidden = false;
   }
 
@@ -341,7 +345,7 @@ function withRequestId(message, requestId) {
 function formatTimestamp(value) {
   if (typeof value !== 'string' || !value) return '';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? redactCredentialText(value) : date.toLocaleString();
 }
 
 function formatTime(date) {
@@ -349,11 +353,12 @@ function formatTime(date) {
 }
 
 function display(value) {
-  return value === null || value === undefined || value === '' ? '' : String(value);
+  return value === null || value === undefined || value === '' ? '' : redactCredentialText(String(value));
 }
 
 function text(value, fallback = '') {
-  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  const output = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  return redactCredentialText(output);
 }
 
 function element(tagName, className = '') {
