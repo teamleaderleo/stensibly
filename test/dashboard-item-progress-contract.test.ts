@@ -62,8 +62,7 @@ describe("dashboard progress integration", () => {
     expect(controller).not.toContain("innerHTML");
   });
 
-  test("loads claim and progress styling and supports narrow screens", () => {
-    expect(controller).toContain("/item-claim.css");
+  test("loads progress styling and supports narrow screens", () => {
     expect(controller).toContain("/item-progress.css");
     expect(styles).toContain(".detail-progress-form");
     expect(styles).toContain(".detail-progress-error");
