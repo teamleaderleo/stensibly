@@ -49,7 +49,7 @@ describe("Convex atomic completion continuations", () => {
       id: item.id,
       status: "done",
       summary: "Completed with hosted continuation proposals.",
-      nextAction: undefined,
+      nextAction: null,
       version: item.version + 3,
     });
     expect(result.continuations).toHaveLength(2);
@@ -109,7 +109,7 @@ describe("Convex atomic completion continuations", () => {
     }) as any;
     expect(detail.item).toMatchObject({
       status: "ready",
-      summary: undefined,
+      summary: null,
       nextAction: "Finish the current unit.",
       version: item.version,
     });
