@@ -70,6 +70,11 @@ input:focus, select:focus { border-color: #686874; box-shadow: 0 0 0 .18rem rgba
 .column-head { display: flex; justify-content: space-between; gap: .7rem; align-items: flex-start; margin-bottom: .65rem; }
 .column h3 { margin: 0; font-size: .76rem; text-transform: uppercase; letter-spacing: .09em; }
 .column small { display: block; margin-top: .18rem; color: var(--muted); font-size: .66rem; }
+.status-ready { --status: var(--ready); }
+.status-active { --status: var(--active); }
+.status-blocked { --status: var(--blocked); }
+.status-done { --status: var(--done); }
+.status-muted { --status: var(--muted); }
 .count { min-width: 1.55rem; padding: .16rem .38rem; text-align: center; border-radius: 999px; color: #111; background: var(--status); font: 700 .7rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cards { display: grid; gap: .55rem; }
 .card { position: relative; overflow: hidden; padding: .76rem; border: 1px solid #33333a; border-radius: .66rem; background: linear-gradient(155deg, #1c1c21, #151519 70%); }
