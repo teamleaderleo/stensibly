@@ -104,7 +104,7 @@ function render() {
     const matching = visible
       .filter((item) => item.status === status)
       .sort((left, right) => right.priority - left.priority || right.updatedAt.localeCompare(left.updatedAt));
-    return `<section class="column" style="--status:${statusColor(status)}">
+    return `<section class="column ${statusClass(status)}">
       <header class="column-head">
         <div><h3>${label}</h3><small>${hint}</small></div>
         <span class="count">${matching.length}</span>
@@ -119,7 +119,7 @@ function render() {
 function renderCard(item) {
   const owner = item.claimedBy ? `held by ${escapeHtml(item.claimedBy)}` : relativeTime(item.updatedAt);
   const lease = item.claimExpiresAt ? leaseTime(item.claimExpiresAt) : `v${item.version}`;
-  return `<article class="card" style="--status:${statusColor(item.status)}">
+  return `<article class="card ${statusClass(item.status)}">
     <div class="card-top"><span>${escapeHtml(item.kind)} · ${escapeHtml(item.project)}</span><span>p${item.priority}</span></div>
     <h4>${escapeHtml(item.title)}</h4>
     ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ''}
@@ -132,8 +132,13 @@ function normalizeEndpoint(value) {
   return value.trim().replace(/\/+$/, '');
 }
 
-function statusColor(status) {
-  return ({ ready: 'var(--ready)', active: 'var(--active)', blocked: 'var(--blocked)', done: 'var(--done)' })[status] || 'var(--muted)';
+function statusClass(status) {
+  return ({
+    ready: 'status-ready',
+    active: 'status-active',
+    blocked: 'status-blocked',
+    done: 'status-done',
+  })[status] || 'status-muted';
 }
 
 function relativeTime(value) {
