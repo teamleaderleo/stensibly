@@ -62,6 +62,16 @@ describe("dashboard project brief contract", () => {
     expect(() => readProjectBrief({ ...payload(), brief: { ...payload().brief, project: "Bad Project" } })).toThrow(/invalid project slug/);
     expect(() => readProjectBrief({ ...payload(), brief: { ...payload().brief, generatedAt: "not-a-date" } })).toThrow(/generated time/);
     expect(() => readProjectBrief({ ...payload(), brief: { ...payload().brief, counts: { ...payload().brief.counts, total: -1 } } })).toThrow(/total count/);
+    expect(() => readProjectBrief({
+      ...payload(),
+      brief: {
+        ...payload().brief,
+        counts: {
+          ...payload().brief.counts,
+          byStatus: { ...payload().brief.counts.byStatus, ready: 2 },
+        },
+      },
+    })).toThrow(/contradictory counts/);
     expect(() => readProjectBrief({ ...payload(), brief: { ...payload().brief, ready: [{ ...item, status: "blocked" }] } })).toThrow(/outside the ready section/);
     expect(() => readProjectBrief({ ...payload(), brief: { ...payload().brief, ready: [{ ...item, title: "stn.tok_secret" }] } })).toThrow(/Credential-shaped/);
     expect(() => readProjectBrief({ ...payload(), brief: { ...payload().brief, recentArtifacts: Array.from({ length: 101 }, () => payload().brief.recentArtifacts[0]) } })).toThrow(/too many artifacts/);
@@ -72,9 +82,10 @@ describe("dashboard project brief contract", () => {
     expect(normalizeBriefProjects(null)).toEqual([]);
   });
 
-  test("allows only explicit HTTP and HTTPS artifact links", () => {
+  test("allows only explicit HTTP and HTTPS artifact links without URL credentials", () => {
     expect(safeBriefArtifactHref("https://example.com/report")).toBe("https://example.com/report");
     expect(safeBriefArtifactHref("http://example.com/report")).toBe("http://example.com/report");
+    expect(safeBriefArtifactHref("https://user:pass@example.com/report")).toBe("");
     expect(safeBriefArtifactHref("git:repo@deadbeef")).toBe("");
     expect(safeBriefArtifactHref("javascript:alert(1)")).toBe("");
     expect(safeBriefArtifactHref("https://example.com/stn.tok_secret")).toBe("");
