@@ -90,6 +90,8 @@ describe("production dashboard deployment workflow", () => {
     expect(workflow).toContain('\"/board-filter.css|.board-filter-panel\"');
     expect(workflow).toContain('\"/project-brief-controller.js|installProjectBriefController\"');
     expect(workflow).toContain('\"/project-brief.css|.project-brief-dialog\"');
+    expect(workflow).toContain('\"/actor-activity-controller.js|installActorActivityController\"');
+    expect(workflow).toContain('\"/actor-activity.css|.actor-activity-dialog\"');
     expect(workflow).toContain("grep --fixed-strings --quiet");
     expect(workflow).toContain("stn\\.tok_[A-Za-z0-9._-]+");
     expect(position("asset_specs=("))
