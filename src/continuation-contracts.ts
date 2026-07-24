@@ -12,10 +12,7 @@ export const continuationStatuses = [
   "approved",
   "rejected",
   "deferred",
-  "queued",
-  "started",
-  "succeeded",
-  "failed",
+  "consumed",
   "cancelled",
   "superseded",
   "expired",
@@ -31,10 +28,7 @@ export const continuationCommands = [
   "approve",
   "reject",
   "defer",
-  "queue",
-  "start",
-  "succeed",
-  "fail",
+  "consume",
   "cancel",
   "supersede",
 ] as const;
@@ -70,13 +64,23 @@ export const continuationEvidenceSchema = z.object({
   uri: z.string().trim().min(1).max(4096),
 });
 
+export const continuationResultSchema = z.object({
+  itemId: optionalIdentifier,
+  runId: optionalIdentifier,
+  decisionId: optionalIdentifier,
+  conversationRef: z.string().trim().min(1).max(4096).optional(),
+}).refine(
+  (value) => Object.values(value).some((entry) => entry !== undefined),
+  { message: "A continuation result requires at least one durable reference" },
+);
+
 export const proposeContinuationSchema = z.object({
   sourceRunId: optionalIdentifier,
   title: z.string().trim().min(1).max(240),
   rationale: z.string().trim().min(1).max(10_000),
   instruction: z.string().trim().min(1).max(10_000),
   action: continuationActionSchema,
-  evidence: z.array(continuationEvidenceSchema).max(100).default([]),
+  evidence: z.array(continuationEvidenceSchema).max(50).default([]),
   actor: actorSchema,
   approvalMode: z.enum(continuationApprovalModes).default("human"),
   deliveryMode: z.enum(continuationDeliveryModes).default("human_inbox"),
@@ -88,6 +92,7 @@ export const resolveContinuationSchema = z.object({
   command: z.enum(continuationCommands),
   expectedGeneration: z.number().int().min(1),
   note: z.string().trim().max(10_000).optional(),
+  result: continuationResultSchema.optional(),
 });
 
 export const listContinuationsSchema = z.object({
