@@ -1,4 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { continuationLedger } from "./continuation-contracts.js";
 import {
   principalCanAccessProject,
   principalHasScope,
@@ -31,6 +32,8 @@ const readTools = new Set([
   "list_work",
   "get_item",
   "list_artifacts",
+  "get_continuation",
+  "list_continuations",
 ]);
 
 const writeTools = new Set([
@@ -44,6 +47,8 @@ const writeTools = new Set([
   "release_work",
   "record_event",
   "complete_work",
+  "propose_continuation",
+  "resolve_continuation",
 ]);
 
 const itemTools = new Set([
@@ -214,17 +219,43 @@ async function resolveAccessRule(
     };
   }
 
-  if (itemTools.has(toolName)) {
+  if (toolName === "propose_continuation" || toolName === "list_continuations") {
+    return await itemAccessRule(ledger, scope, stringArgument(args, "sourceItemId"));
+  }
+
+  if (toolName === "get_continuation" || toolName === "resolve_continuation") {
     const id = stringArgument(args, "id");
-    if (!id) return { scope };
+    const continuations = continuationLedger(ledger);
+    if (!id || !continuations) return { scope };
     try {
-      return { scope, project: (await ledger.getItem(id)).item.project };
+      const continuation = await continuations.getContinuation(id);
+      return {
+        scope,
+        project: (await ledger.getItem(continuation.sourceItemId)).item.project,
+      };
     } catch {
       return { scope };
     }
   }
 
+  if (itemTools.has(toolName)) {
+    return await itemAccessRule(ledger, scope, stringArgument(args, "id"));
+  }
+
   return { scope };
+}
+
+async function itemAccessRule(
+  ledger: WorkLedger,
+  scope: "read" | "write",
+  id: string | undefined,
+): Promise<AccessRule> {
+  if (!id) return { scope };
+  try {
+    return { scope, project: (await ledger.getItem(id)).item.project };
+  } catch {
+    return { scope };
+  }
 }
 
 function validateOrigin(request: Request, allowedOrigins: string[]): Response | null {
