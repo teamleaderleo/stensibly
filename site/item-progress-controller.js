@@ -22,7 +22,6 @@ export function installProgressController() {
   const contextPanel = document.querySelector('#session-context-panel');
   if (!board || !dialog || !body || !refreshButton || !detailState || !announcer || !contextPanel) return null;
 
-  ensureStyles('stensibly-item-claim-styles', '/item-claim.css');
   ensureStyles('stensibly-item-progress-styles', '/item-progress.css');
 
   const gate = createRequestGate();
