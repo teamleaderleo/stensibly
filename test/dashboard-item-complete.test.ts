@@ -41,17 +41,17 @@ describe("dashboard completion response", () => {
     version: 4,
   };
 
-  test("accepts safe preserve and replace continuations", () => {
+  test("accepts the server-current summary when blank and exact replacement when supplied", () => {
     const preserve = validateCompleteInput("item_1", "", actor);
-    expect(readCompletedItem({ item: { ...base, private: "ignored" } }, { ...preserve, previousSummary: "Original summary" })).toEqual({
+    expect(readCompletedItem({ item: { ...base, summary: "Server-current summary", private: "ignored" } }, preserve)).toEqual({
       id: "item_1",
       status: "done",
-      summary: "Original summary",
+      summary: "Server-current summary",
       nextAction: null,
       version: 4,
     });
     const replace = validateCompleteInput("item_1", "Completed with evidence", actor);
-    expect(readCompletedItem({ item: { ...base, summary: "Completed with evidence" } }, { ...replace, previousSummary: "Original summary" })).toEqual({
+    expect(readCompletedItem({ item: { ...base, summary: "Completed with evidence" } }, replace)).toEqual({
       id: "item_1",
       status: "done",
       summary: "Completed with evidence",
@@ -60,11 +60,12 @@ describe("dashboard completion response", () => {
     });
   });
 
-  test("rejects mismatched status, summary, next action, lease, and version", () => {
+  test("rejects mismatched status, explicit summary, next action, lease, and version", () => {
     const preserve = validateCompleteInput("item_1", "", actor);
+    const replace = validateCompleteInput("item_1", "Completed with evidence", actor);
     expect(() => readCompletedItem({ item: { ...base, id: "item_2" } }, preserve)).toThrow("different completed item");
     expect(() => readCompletedItem({ item: { ...base, status: "active" } }, preserve)).toThrow("did not become done");
-    expect(() => readCompletedItem({ item: { ...base, summary: "Changed" } }, { ...preserve, previousSummary: "Original summary" })).toThrow("did not preserve");
+    expect(() => readCompletedItem({ item: { ...base, summary: "Changed" } }, replace)).toThrow("different completion summary");
     expect(() => readCompletedItem({ item: { ...base, nextAction: "Still here" } }, preserve)).toThrow("did not clear its next action");
     expect(() => readCompletedItem({ item: { ...base, claimedBy: "agent:other" } }, preserve)).toThrow("did not release its claim");
     expect(() => readCompletedItem({ item: { ...base, version: 0 } }, preserve)).toThrow("invalid version");
