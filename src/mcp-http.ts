@@ -49,6 +49,7 @@ const writeTools = new Set([
   "record_event",
   "complete_work",
   "propose_continuation",
+  "edit_continuation",
   "resolve_continuation",
 ]);
 
@@ -228,7 +229,11 @@ async function resolveAccessRule(
     return await itemAccessRule(ledger, scope, stringArgument(args, "sourceItemId"));
   }
 
-  if (toolName === "get_continuation" || toolName === "resolve_continuation") {
+  if (
+    toolName === "get_continuation"
+    || toolName === "edit_continuation"
+    || toolName === "resolve_continuation"
+  ) {
     const id = stringArgument(args, "id");
     const continuations = continuationLedger(ledger);
     if (!id || !continuations) return { scope };

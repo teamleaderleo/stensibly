@@ -99,11 +99,18 @@ describe("Convex work ledger", () => {
     });
     await ledger.getContinuation("cont_1");
     await ledger.listContinuations({ sourceItemId: "item_1", status: "proposed" });
+    await ledger.editContinuation({
+      id: "cont_1",
+      actor,
+      expectedGeneration: 1,
+      instruction: "Review and record the decision.",
+      idempotencyKey: "continuation-edit-1",
+    });
     await ledger.resolveContinuation({
       id: "cont_1",
       actor,
       command: "approve",
-      expectedGeneration: 1,
+      expectedGeneration: 2,
       idempotencyKey: "continuation-approve-1",
     });
 
@@ -125,6 +132,8 @@ describe("Convex work ledger", () => {
       "mutation:continuations:propose",
       "mutation:continuations:get",
       "mutation:continuations:list",
+      "mutation:continuations:get",
+      "mutation:continuationEdits:edit",
       "mutation:continuations:resolve",
     ]);
 
@@ -147,6 +156,11 @@ describe("Convex work ledger", () => {
     expect(client.calls[14]?.args).toMatchObject({
       sourceItemId: "item_1",
       idempotencyKey: "continuation-1",
+    });
+    expect(client.calls[18]?.args).toMatchObject({
+      id: "cont_1",
+      instruction: "Review and record the decision.",
+      idempotencyKey: "continuation-edit-1",
     });
   });
 
@@ -202,7 +216,9 @@ function fixture(name: string): unknown {
   if (name === "completionContinuations:complete") {
     return { item: item(), continuations: [continuation()] };
   }
-  if (name.startsWith("continuations:")) return continuation();
+  if (name === "continuationEdits:edit" || name.startsWith("continuations:")) {
+    return continuation();
+  }
   return item();
 }
 

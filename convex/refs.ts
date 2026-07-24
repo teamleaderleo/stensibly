@@ -38,6 +38,7 @@ export const convexApi = {
     get: mutationRef("continuations:get"),
     list: mutationRef("continuations:list"),
     resolve: mutationRef("continuations:resolve"),
+    edit: mutationRef("continuationEdits:edit"),
   },
   runs: {
     start: mutationRef("runs:start"),

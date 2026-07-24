@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   continuationLedger,
+  editContinuationSchema,
   listContinuationsSchema,
   proposeContinuationSchema,
   resolveContinuationSchema,
@@ -67,6 +68,20 @@ export function registerContinuationTools(
       annotations: { readOnlyHint: true },
     },
     async (input) => asToolResult(() => buildContinuationInbox(ledger, input)),
+  );
+
+  server.registerTool(
+    "edit_continuation",
+    {
+      description: "Replace the instruction on a proposed or deferred continuation using its current generation. Editing preserves lifecycle status and advances generation.",
+      inputSchema: {
+        id: idSchema,
+        ...editContinuationSchema.shape,
+        idempotencyKey: idempotencySchema,
+      },
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => asToolResult(() => continuations.editContinuation(input)),
   );
 
   server.registerTool(
