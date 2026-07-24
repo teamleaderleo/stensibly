@@ -42,10 +42,11 @@ export function createApiV1(
       return context.json({ error: message, code: "conflict" }, 409);
     }
     if (/unauthorized|STENSIBLY_SERVICE_SECRET is not configured/i.test(message)) {
-      context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
-      return context.json({ error: "Unauthorized", code: "unauthorized" }, 401);
+      return backendFailure(context);
     }
-    context.header(FAILURE_CATEGORY_HEADER, apiFailureCategory(error, message));
+    const category = apiFailureCategory(error, message);
+    if (category === "convex_failure") return backendFailure(context);
+    context.header(FAILURE_CATEGORY_HEADER, category);
     return context.json({ error: message, code: "invalid_operation" }, 400);
   });
 
@@ -241,6 +242,14 @@ function validationError(
     code: "invalid_request",
     issues: issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
   }, 400);
+}
+
+function backendFailure(context: Context<StensiblyEnv>): Response {
+  context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
+  return context.json({
+    error: "Hosted backend request failed",
+    code: "backend_failure",
+  }, 502);
 }
 
 function apiFailureCategory(error: unknown, message: string): FailureCategory {
