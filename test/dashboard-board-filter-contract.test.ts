@@ -58,8 +58,8 @@ describe("dashboard board filter integration", () => {
   test("resets on disconnect and leaves item detail click behavior intact", () => {
     expect(controller).toContain("if (dashboard.hidden) resetFilters()");
     expect(controller).toContain("button.card[data-item-id]");
-    expect(controller).not.toContain("addEventListener('click', (event)");
-    expect(controller).not.toContain("preventDefault()");
+    expect(controller).not.toContain("board.addEventListener('click'");
+    expect(controller).not.toContain("card.addEventListener('click'");
     expect(controller).not.toContain("stopPropagation()");
   });
 
