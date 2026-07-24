@@ -92,7 +92,9 @@ export const complete = mutation({
     const id = safeText(args.id, "Item ID", 240);
     const summary = assertOptionalText(args.summary, "Summary", 10_000);
     const actorRequest = publicActor(args.actor);
-    const drafts = (args.continuations as ContinuationDraft[]).map(normalizeDraft);
+    const drafts = (args.continuations as ContinuationDraft[]).map((draft) =>
+      normalizeDraft(draft, id)
+    );
     const request = {
       id,
       actor: actorRequest,
@@ -154,7 +156,7 @@ export const complete = mutation({
       createdAt: now,
     });
 
-    const continuations = [];
+    const continuations: any[] = [];
     for (const draft of drafts) {
       const continuationId = await ctx.db.insert("continuations", {
         workspaceId: workspace._id,
@@ -254,7 +256,7 @@ async function requireUnusedIdempotencyKey(ctx: any, workspaceId: any, key: stri
   }
 }
 
-function normalizeDraft(draft: ContinuationDraft) {
+function normalizeDraft(draft: ContinuationDraft, sourceItemId: string) {
   const action = normalizeAction(draft.action);
   const evidence = normalizeEvidence(draft.evidence ?? []);
   const expiresAt = normalizeTimestamp(draft.expiresAt, "Continuation expiry");
@@ -265,14 +267,14 @@ function normalizeDraft(draft: ContinuationDraft) {
     instruction: safeText(draft.instruction, "Instruction", 10_000),
     action,
     evidence,
-    approvalMode: draft.approvalMode ?? "human" as const,
-    deliveryMode: draft.deliveryMode ?? "human_inbox" as const,
+    approvalMode: draft.approvalMode ?? ("human" as const),
+    deliveryMode: draft.deliveryMode ?? ("human_inbox" as const),
     expiresAt,
   };
   return {
     ...normalized,
     request: {
-      sourceItemId: "",
+      sourceItemId,
       sourceRunId: normalized.sourceRunId,
       title: normalized.title,
       rationale: normalized.rationale,
