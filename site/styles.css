@@ -46,7 +46,17 @@ h1 { max-width: 13ch; margin: 0; font-size: clamp(2.5rem, 6vw, 5.8rem); line-hei
 label { display: grid; gap: .3rem; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; }
 input, select, button { border: 1px solid #393941; border-radius: .58rem; color: var(--text); background: #111114; padding: .7rem .75rem; outline: none; }
 input:focus, select:focus { border-color: #686874; box-shadow: 0 0 0 .18rem rgba(255,255,255,.04); }
-.connection button { color: #111; border-color: transparent; background: var(--accent); font-weight: 750; }
+.connection button { font-weight: 750; }
+.connection-form-actions, .connected-actions { display: flex; gap: .5rem; }
+.connection-form-actions button:first-child { flex: 1; color: #111; border-color: transparent; background: var(--accent); }
+.connection .secondary { color: var(--muted); border-color: #393941; background: #111114; }
+.connection .secondary:hover { color: var(--text); border-color: #555560; }
+.connected-summary { display: grid; gap: .75rem; margin-top: .9rem; }
+.connected-copy { display: grid; gap: .28rem; padding: .72rem; border: 1px solid #303038; border-radius: .62rem; background: #111114; }
+.connected-copy span { color: var(--muted); font-size: .66rem; text-transform: uppercase; letter-spacing: .07em; }
+.connected-copy strong { overflow-wrap: anywhere; font: 700 .78rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.connected-actions button { flex: 1; padding: .58rem .65rem; font-size: .72rem; }
+.connection-error { margin: .72rem 0 0; padding: .65rem .72rem; border: 1px solid rgba(255,154,118,.35); border-radius: .58rem; color: #ffc0aa; background: rgba(255,154,118,.08); font-size: .72rem; line-height: 1.45; }
 .connection-note { margin: .65rem 0 0; color: #74747e; font-size: .68rem; line-height: 1.4; }
 .dashboard { display: grid; gap: .75rem; }
 .dashboard-head { margin: 1rem 0 .1rem; }
@@ -99,4 +109,5 @@ input:focus, select:focus { border-color: #686874; box-shadow: 0 0 0 .18rem rgba
   .brand small { display: none; }
   .dashboard-head { align-items: flex-start; }
   .dashboard-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .connection-form-actions, .connected-actions { flex-direction: column; }
 }
