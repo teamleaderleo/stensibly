@@ -7,6 +7,7 @@ import {
   itemKinds,
   itemStatuses,
 } from "./schemas.js";
+import { buildWorkspaceSurvey } from "./survey.js";
 
 export function createMcpServer(ledger: WorkLedger): McpServer {
   const server = new McpServer(
@@ -14,6 +15,8 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
     {
       instructions: [
         "Stensibly is a shared scrapbook for work in motion.",
+        "Use survey_workspace for centralized triage and repeat polling across projects.",
+        "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
         "Start with get_brief when entering an existing project.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
@@ -35,6 +38,30 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       annotations: { readOnlyHint: true },
     },
     async ({ project, limit }) => asToolResult(() => ledger.getBrief(project, limit)),
+  );
+
+  server.registerTool(
+    "survey_workspace",
+    {
+      description: "Get one deterministic read-only survey for dispatching new chats: project counts, urgent lease states, ready candidates, active work, blockers, recent completions, and a material-change fingerprint.",
+      inputSchema: {
+        project: projectSchema().optional(),
+        limit: z.number().int().min(1).max(100).default(10),
+        expiringWithinSeconds: z.number().int().min(60).max(86_400).default(900),
+        previousFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ project, limit, expiringWithinSeconds, previousFingerprint }) =>
+      asToolResult(async () => buildWorkspaceSurvey(
+        await ledger.listWork(project ? { project } : {}),
+        {
+          ...(project ? { project } : {}),
+          limit,
+          expiringWithinSeconds,
+          ...(previousFingerprint ? { previousFingerprint } : {}),
+        },
+      )),
   );
 
   server.registerTool(
@@ -157,7 +184,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         id: idSchema(),
         actor: actorSchema,
         reason: z.string().trim().min(1).max(10_000),
-        nextAction: z.string().trim().min(1).max(2_000).optional(),
+        nextAction: z.string().trim().max(2_000).optional(),
         idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
@@ -172,7 +199,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       inputSchema: {
         id: idSchema(),
         actor: actorSchema,
-        nextAction: z.string().trim().min(1).max(2_000).optional(),
+        nextAction: z.string().trim().max(2_000).optional(),
         idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
