@@ -116,7 +116,7 @@ export const complete = mutation({
           );
         }
         requireSameRequest(replay.request, request);
-        return replay.result;
+        return canonicalReplayResult(replay.result, replay.itemExternalId);
       }
 
       const existingEvent = await ctx.db
@@ -295,6 +295,18 @@ function normalizeEvidence(evidence: Array<{ kind: string; label: string; uri: s
     label: safeText(entry.label, "Evidence label", 240),
     uri: safeText(entry.uri, "Evidence URI", 4096),
   }));
+}
+
+function canonicalReplayResult(result: any, itemExternalId: string) {
+  return {
+    ...result,
+    continuations: Array.isArray(result?.continuations)
+      ? result.continuations.map((continuation: any) => ({
+          ...continuation,
+          sourceItemId: itemExternalId,
+        }))
+      : [],
+  };
 }
 
 function publicContinuation(continuation: any) {
