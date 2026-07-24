@@ -3,7 +3,10 @@ import type {
   CompleteWithContinuationsResult,
 } from "./completion-continuation-contracts.js";
 import { completeWithContinuationsSchema } from "./completion-continuation-contracts.js";
-import { proposeContinuation } from "./continuations.js";
+import {
+  ensureContinuationSchema,
+  proposeContinuation,
+} from "./continuations.js";
 import { ConflictError, type StensiblyStore } from "./store.js";
 
 interface ReplayRow {
@@ -19,6 +22,7 @@ export function completeWorkWithContinuations(
   rawInput: CompleteWithContinuationsInput,
 ): CompleteWithContinuationsResult {
   ensureCompletionContinuationSchema(store);
+  ensureContinuationSchema(store);
   const id = requiredText(rawInput.id, "Item ID", 240);
   const parsed = completeWithContinuationsSchema.parse({
     actor: rawInput.actor,
