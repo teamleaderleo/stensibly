@@ -359,7 +359,7 @@ function showConnectionForm(message = '', { keepDashboard = false, allowCancel =
     dashboard.hidden = true;
     disconnected.hidden = false;
     disconnected.querySelector('p').textContent = 'No ledger connected.';
-    disconnected.querySelector('span').textContent = 'Enter a read-only API token to inspect shared work.';
+    disconnected.querySelector('span').textContent = 'Enter an API token with read access to inspect shared work.';
   }
 }
 
