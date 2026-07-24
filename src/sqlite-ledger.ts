@@ -3,10 +3,14 @@ import type {
   CompleteWithContinuationsInput,
   CompletionContinuationLedger,
 } from "./completion-continuation-contracts.js";
-import { completeWorkWithContinuations } from "./completion-continuations.js";
+import {
+  completeWorkWithContinuations,
+  ensureCompletionContinuationSchema,
+} from "./completion-continuations.js";
 import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
 import {
+  ensureContinuationSchema,
   getContinuation,
   listContinuations,
   proposeContinuation,
@@ -36,6 +40,8 @@ import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 export class SqliteWorkLedger implements WorkLedger, CompletionContinuationLedger {
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
+    ensureContinuationSchema(store);
+    ensureCompletionContinuationSchema(store);
   }
 
   async getBrief(project: string, limit: number) {
