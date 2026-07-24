@@ -49,22 +49,25 @@ describe("production dashboard deployment workflow", () => {
     expect(workflow).not.toContain("CONVEX_URL");
   });
 
-  test("requires the existing stensibly project before linking or building", () => {
+  test("requires the existing stensibly project and configured site root", () => {
     expect(workflow).toContain("EXPECTED_VERCEL_PROJECT: stensibly");
     expect(workflow).toContain("api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}");
     expect(workflow).toContain("project_name");
     expect(workflow).toContain('!= "${EXPECTED_VERCEL_PROJECT}"');
+    expect(workflow).toContain("rootDirectory // empty");
+    expect(workflow).toContain('!= "site"');
     expect(position("Require the stensibly Vercel project"))
       .toBeLessThan(position("Pull production project settings"));
-    expect(workflow).toContain("site/.vercel/project.json");
+    expect(workflow).toContain(".vercel/project.json");
     expect(workflow).toContain(".projectId == $project and .orgId == $org");
     expect(workflow).not.toContain("stensibly-api");
   });
 
-  test("builds site, stages without domains, verifies, then promotes once", () => {
-    expect(workflow).toContain("--cwd site");
+  test("builds from the repository root, stages without domains, verifies, then promotes once", () => {
+    expect(workflow).not.toContain("--cwd site");
     expect(workflow).toContain("vercel@${VERCEL_CLI_VERSION} build");
-    expect(workflow).toContain("site/.vercel/output/config.json");
+    expect(workflow).toContain(".vercel/output/config.json");
+    expect(workflow).toContain(".vercel/output/static");
     expect(workflow).toContain("--prebuilt");
     expect(workflow).toContain("--prod");
     expect(workflow).toContain("--skip-domain");
