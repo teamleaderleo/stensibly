@@ -21,7 +21,7 @@ const itemKinds = [
   "handoff",
   "note",
 ] as const;
-const knowledgeKinds = new Set(["finding", "question", "decision", "tip", "handoff", "note"]);
+const knowledgeKinds = new Set<string>(["finding", "question", "decision", "tip", "handoff", "note"]);
 
 export const list = query({
   args: { ...serviceArgs },
