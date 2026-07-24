@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 // @ts-ignore The static dashboard helper is intentionally plain browser JavaScript.
-import { describeHttpFailure, isPlausibleToken, readItems } from "../site/connection.js";
+import {
+  describeHttpFailure,
+  isPlausibleToken,
+  normalizeEndpoint,
+  readItems,
+} from "../site/connection.js";
 
 const validToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
 
@@ -14,6 +19,20 @@ describe("dashboard token validation", () => {
     expect(isPlausibleToken("stn.tok_…")).toBe(false);
     expect(isPlausibleToken(`stn.tok_${"g".repeat(32)}.${"B".repeat(43)}`)).toBe(false);
     expect(isPlausibleToken(`stn.tok_${"a".repeat(32)}.short`)).toBe(false);
+  });
+});
+
+describe("dashboard endpoint validation", () => {
+  test("normalizes an HTTP or HTTPS origin", () => {
+    expect(normalizeEndpoint("https://api.stensibly.com/")).toBe("https://api.stensibly.com");
+    expect(normalizeEndpoint("http://127.0.0.1:8787")).toBe("http://127.0.0.1:8787");
+  });
+
+  test("rejects paths, queries, fragments, and other protocols", () => {
+    expect(() => normalizeEndpoint("https://api.stensibly.com/api")).toThrow("without a path");
+    expect(() => normalizeEndpoint("https://api.stensibly.com?x=1")).toThrow("without a path");
+    expect(() => normalizeEndpoint("file:///tmp/api")).toThrow("HTTP or HTTPS");
+    expect(() => normalizeEndpoint("not a url")).toThrow("valid API URL");
   });
 });
 
