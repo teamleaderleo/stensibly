@@ -22,7 +22,7 @@ describe("dashboard deployment operations guide", () => {
 
   test("documents repository-root CLI use, clean-browser checks, and explicit rollback", () => {
     expect(docs).toContain("Run the CLI from the repository root");
-    expect(docs).not.toContain("--cwd site");
+    expect(docs).toContain("do not combine the `site` project setting with `--cwd site`");
     expect(docs).toContain("clean browser profile");
     expect(docs).toContain("vercel@56.5.0 rollback");
     expect(docs).toContain("Dashboard rollback changes static code only");
