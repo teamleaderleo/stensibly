@@ -21,7 +21,10 @@ import {
 } from "./schemas.js";
 import type { ItemStatus } from "./store.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
-import { FAILURE_CATEGORY_HEADER } from "./worker-observability.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+  type FailureCategory,
+} from "./worker-observability.js";
 
 export function createApiV1(
   authenticator: ApiTokenAuthenticator,
@@ -38,11 +41,11 @@ export function createApiV1(
     if (/held by another|current claimant|already|unavailable|capacity|reserved|only blocked/i.test(message)) {
       return context.json({ error: message, code: "conflict" }, 409);
     }
-    if (/unauthorized/i.test(message)) {
-      context.header(FAILURE_CATEGORY_HEADER, "auth_failure");
+    if (/unauthorized|STENSIBLY_SERVICE_SECRET is not configured/i.test(message)) {
+      context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
       return context.json({ error: "Unauthorized", code: "unauthorized" }, 401);
     }
-    context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
+    context.header(FAILURE_CATEGORY_HEADER, apiFailureCategory(error, message));
     return context.json({ error: message, code: "invalid_operation" }, 400);
   });
 
@@ -238,4 +241,12 @@ function validationError(
     code: "invalid_request",
     issues: issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
   }, 400);
+}
+
+function apiFailureCategory(error: unknown, message: string): FailureCategory {
+  if (error instanceof TypeError) return "convex_failure";
+  if (/fetch failed|failed to fetch|network|ECONN|ENOTFOUND|timed? out|timeout|internal server error/i.test(message)) {
+    return "convex_failure";
+  }
+  return "request_failure";
 }
