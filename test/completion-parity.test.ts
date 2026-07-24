@@ -103,4 +103,32 @@ describe("SQLite completion parity", () => {
       store.close();
     }
   });
+
+  test("startup repairs stale completed next actions without changing version or history", () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const item = store.createItem({
+        project: "scrapbook",
+        kind: "task",
+        title: "Repair an old completion",
+        summary: "Already done",
+        nextAction: "Old stale action",
+        priority: 50,
+        actor,
+      });
+      store.completeItem(item.id, actor, undefined, "old-complete");
+      store.db.query("UPDATE items SET next_action = ?1 WHERE id = ?2").run("Stale legacy value", item.id);
+      const before = store.getItem(item.id);
+      const eventCount = store.listEvents(item.id).length;
+
+      new SqliteWorkLedger(store);
+
+      const repaired = store.getItem(item.id);
+      expect(repaired.nextAction).toBeNull();
+      expect(repaired.version).toBe(before.version);
+      expect(store.listEvents(item.id)).toHaveLength(eventCount);
+    } finally {
+      store.close();
+    }
+  });
 });
