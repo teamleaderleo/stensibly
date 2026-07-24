@@ -73,6 +73,64 @@
           </div>
         </div>
 
+        <section class="session-context" id="session-context-panel" data-mode="unavailable" aria-labelledby="session-context-title">
+          <div class="session-context-head">
+            <div>
+              <p class="eyebrow">Session context</p>
+              <h3 id="session-context-title">Authority and actor</h3>
+            </div>
+            <span id="capability-state">unavailable</span>
+          </div>
+
+          <div class="principal-summary" id="principal-summary" hidden>
+            <div>
+              <span>Token authority</span>
+              <strong id="principal-name"></strong>
+              <small id="principal-boundary"></small>
+            </div>
+            <div>
+              <span>Declared scopes</span>
+              <strong id="principal-scopes"></strong>
+              <div class="capability-badges" id="capability-badges" aria-label="Effective capabilities"></div>
+            </div>
+          </div>
+
+          <div class="actor-summary" id="actor-summary" hidden>
+            <div>
+              <span>Active write actor</span>
+              <strong id="actor-display"></strong>
+            </div>
+            <div class="actor-actions">
+              <button id="change-actor" type="button">change actor</button>
+              <button id="clear-actor" type="button">clear actor</button>
+            </div>
+          </div>
+
+          <form class="actor-form" id="actor-form" hidden>
+            <label>
+              Actor ID
+              <input name="actorId" required maxlength="120" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="leo" />
+            </label>
+            <label>
+              Display name
+              <input name="actorName" required maxlength="160" autocomplete="name" placeholder="Leo" />
+            </label>
+            <label>
+              Kind
+              <select name="actorKind" aria-label="Actor kind"></select>
+            </label>
+            <div class="actor-form-actions">
+              <button type="submit">use this actor</button>
+              <button id="cancel-actor" type="button">cancel</button>
+            </div>
+            <p class="actor-error" id="actor-error" role="alert" hidden></p>
+          </form>
+
+          <p class="actor-unavailable" id="actor-unavailable">Connect a ledger to inspect token capability.</p>
+          <p class="session-context-error" id="session-context-error" role="alert" hidden></p>
+          <p class="session-context-note">The bearer token grants authority. The actor identifies who or what will be recorded in ledger events. Actor context stays in this browser session.</p>
+        </section>
+
         <section class="metrics" aria-label="Status totals">
           <article><span>ready</span><strong id="metric-ready">0</strong></article>
           <article><span>active</span><strong id="metric-active">0</strong></article>
