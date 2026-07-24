@@ -4,6 +4,26 @@ export function isPlausibleToken(value) {
   return TOKEN_PATTERN.test(String(value).trim());
 }
 
+export function normalizeEndpoint(value) {
+  const normalized = String(value).trim().replace(/\/+$/, '');
+  if (!normalized) throw new TypeError('Enter an API URL.');
+
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new TypeError('Enter a valid API URL.');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new TypeError('The API URL must use HTTP or HTTPS.');
+  }
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new TypeError('Enter the API origin without a path, query, or fragment.');
+  }
+  return parsed.origin;
+}
+
 export function describeHttpFailure(status, payload) {
   const apiMessage = readApiMessage(payload);
 
