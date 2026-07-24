@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: false
+  review_details: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 10
+    drafts: false
+    labels:
+      - "!review-exempt"
+    ignore_title_keywords:
+      - "[skip review]"
+
+  path_instructions:
+    - path: "src/cloudflare-worker.ts"
+      instructions: |
+        Review this as a public authentication and authorization boundary.
+        - Verify bearer-token handling, workspace and project scoping, CORS, service-secret isolation, and safe error projection.
+        - Flag any path that trusts client-supplied authority, leaks credentials, or bypasses the Convex-backed permission model.
+        - Check retry and idempotency behavior for every write route.
+
+    - path: "src/**"
+      instructions: |
+        Preserve the documented REST, MCP, and local SQLite contracts.
+        - Check input limits, authorization, idempotency, stale-state handling, lease races, and error classification.
+        - Require deterministic behavior across equivalent REST and MCP operations.
+        - Flag semantic drift between local SQLite mode and hosted Convex mode.
+        - Treat external references and artifacts as untrusted input.
+
+    - path: "convex/**"
+      instructions: |
+        Read convex/_generated/ai/guidelines.md before judging Convex code.
+        - Preserve workspace and project isolation on every query, mutation, action, and scheduled function.
+        - Check generation guards, idempotent replay, lease expiry, timer races, and append-only event semantics.
+        - Flag behavior that diverges from the corresponding SQLite implementation or public API contract.
+
+    - path: "site/**"
+      instructions: |
+        Review browser code as an untrusted client.
+        - Keep authority on the server and avoid treating UI state as proof of permission or current ownership.
+        - Check stale-response guards, retry-key reuse and rotation, session changes, polling races, and safe rendering of server data.
+        - Keep secrets out of URLs, persistent browser storage, logs, and rendered output.
+
+    - path: "test/**"
+      instructions: |
+        Require coverage for success, rejection, replay, stale revision, competing actor, expiry, and partial-failure paths.
+        Check that hosted Convex and local SQLite tests assert equivalent externally visible behavior where both backends implement the same operation.
+
+chat:
+  auto_reply: true
