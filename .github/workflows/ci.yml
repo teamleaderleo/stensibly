@@ -26,6 +26,10 @@ jobs:
         run: |
           set -o pipefail
           bun run test:convex 2>&1 | tee convex-test-output.txt
+      - name: Bundle Cloudflare Worker
+        run: |
+          set -o pipefail
+          bun run worker:check 2>&1 | tee worker-check-output.txt
       - name: Upload failing diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -35,4 +39,5 @@ jobs:
             typecheck-output.txt
             test-output.txt
             convex-test-output.txt
+            worker-check-output.txt
           if-no-files-found: ignore
