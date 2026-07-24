@@ -61,7 +61,7 @@ describe("dashboard URL verification", () => {
     globalThis.fetch = mockFetch(missingMarker);
     await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow("expected marker");
 
-    globalThis.fetch = async () => new Response("missing", { status: 404 });
+    globalThis.fetch = (async () => new Response("missing", { status: 404 })) as typeof fetch;
     await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow("HTTP 404");
   });
 });
