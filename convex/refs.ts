@@ -30,6 +30,12 @@ export const convexApi = {
     attach: mutationRef("artifacts:attach"),
     list: queryRef("artifacts:list"),
   },
+  continuations: {
+    propose: mutationRef("continuations:propose"),
+    get: mutationRef("continuations:get"),
+    list: mutationRef("continuations:list"),
+    resolve: mutationRef("continuations:resolve"),
+  },
   runs: {
     start: mutationRef("runs:start"),
     heartbeat: mutationRef("runs:heartbeat"),
