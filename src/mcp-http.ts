@@ -7,6 +7,10 @@ import {
 import type { WorkLedger } from "./ledger.js";
 import { createMcpServer } from "./mcp.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+  type FailureCategory,
+} from "./worker-observability.js";
 
 export interface McpHttpOptions {
   allowedOrigins?: string[];
@@ -76,7 +80,7 @@ export async function handleMcpHttpRequest(
   if (!principal) {
     return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
       "WWW-Authenticate": "Bearer",
-    });
+    }, "auth_failure");
   }
 
   let body: unknown;
@@ -98,8 +102,7 @@ export async function handleMcpHttpRequest(
   try {
     await server.connect(transport);
     return await transport.handleRequest(request, { parsedBody: body });
-  } catch (error) {
-    console.error("Remote MCP request failed", error);
+  } catch {
     return jsonRpcError(500, -32603, "Internal server error", requestId(body));
   } finally {
     await server.close();
@@ -140,6 +143,8 @@ async function authorizeMessage(
       -32001,
       `Token requires ${scope} scope`,
       requestId(payload),
+      {},
+      "authorization_failure",
     );
   }
 
@@ -159,6 +164,8 @@ async function authorizeMessage(
       -32001,
       `Token cannot access project ${rule.project}`,
       requestId(payload),
+      {},
+      "authorization_failure",
     );
   }
 
@@ -211,7 +218,14 @@ function validateOrigin(request: Request, allowedOrigins: string[]): Response | 
   const origin = request.headers.get("origin");
   if (!origin) return null;
   if (allowedOrigins.includes(origin)) return null;
-  return jsonRpcError(403, -32001, `Origin is not allowed: ${origin}`, null);
+  return jsonRpcError(
+    403,
+    -32001,
+    `Origin is not allowed: ${origin}`,
+    null,
+    {},
+    "cors_rejection",
+  );
 }
 
 function validateHost(request: Request, allowedHosts?: string[]): Response | null {
@@ -247,6 +261,7 @@ function jsonRpcError(
   message: string,
   id: unknown,
   extraHeaders: Record<string, string> = {},
+  failureCategory: FailureCategory = "mcp_failure",
 ): Response {
   return new Response(
     JSON.stringify({
@@ -258,6 +273,7 @@ function jsonRpcError(
       status,
       headers: {
         "content-type": "application/json",
+        [FAILURE_CATEGORY_HEADER]: failureCategory,
         ...extraHeaders,
       },
     },
