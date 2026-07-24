@@ -465,7 +465,7 @@ async function touchItem(ctx: any, item: any, now: number) {
 function publicContinuation(continuation: any) {
   return {
     id: continuation.externalId,
-    sourceItemId: String(continuation.sourceItemId),
+    sourceItemId: continuation.request.sourceItemId,
     sourceEventId: continuation.sourceEventExternalId,
     sourceRunId: continuation.sourceRunId ?? null,
     title: continuation.title,
