@@ -3,7 +3,7 @@ import {
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
-} from "./auth.js";
+} from "./token-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import { createMcpServer } from "./mcp.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
