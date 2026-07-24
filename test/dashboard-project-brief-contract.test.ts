@@ -23,9 +23,17 @@ describe("dashboard project brief integration", () => {
     expect(helper).toContain("PROJECT_PATTERN");
   });
 
-  test("uses the exact authorized bounded brief route", () => {
+  test("reloads immediately when polling removes the selected project", () => {
+    expect(controller).toContain("if (dialog.open && desired !== previous)");
+    expect(controller).toContain("currentBrief = currentBrief?.project === desired ? currentBrief : null");
+    expect(controller).toContain("queueMicrotask(() => void loadBrief())");
+    expect(controller).toContain("if (dialog.open && !desired)");
+  });
+
+  test("uses the exact authorized bounded no-cache brief route", () => {
     expect(controller).toContain("/api/v1/projects/${encodeURIComponent(project)}/brief?limit=10");
     expect(controller).toContain("authorization: `Bearer ${connection.token}`");
+    expect(controller).toContain("cache: 'no-store'");
     expect(controller).toContain("sessionStorage.getItem(TOKEN_STORAGE_KEY)");
     expect(controller).toContain("localStorage.getItem(ENDPOINT_STORAGE_KEY)");
     expect(controller).not.toContain("STENSIBLY_SERVICE_SECRET");
