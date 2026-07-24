@@ -1,5 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { continuationLedger } from "./continuation-contracts.js";
+import { registerDecisionInboxTool } from "./decision-inbox-mcp.js";
 import {
   principalCanAccessProject,
   principalHasScope,
@@ -34,6 +35,7 @@ const readTools = new Set([
   "list_artifacts",
   "get_continuation",
   "list_continuations",
+  "list_decision_inbox",
 ]);
 
 const writeTools = new Set([
@@ -112,6 +114,7 @@ export async function handleMcpHttpRequest(
   if (denial) return denial;
 
   const server = createMcpServer(options.ledger);
+  registerDecisionInboxTool(server, options.ledger);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -210,7 +213,11 @@ async function resolveAccessRule(
     };
   }
 
-  if (toolName === "list_work" || toolName === "survey_workspace") {
+  if (
+    toolName === "list_work" ||
+    toolName === "survey_workspace" ||
+    toolName === "list_decision_inbox"
+  ) {
     const project = stringArgument(args, "project");
     return {
       scope,
