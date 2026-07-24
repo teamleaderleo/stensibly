@@ -1,3 +1,8 @@
+.dashboard-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .actor-activity-dialog {
   width: min(70rem, calc(100% - 2rem));
   max-height: calc(100vh - 2rem);
@@ -174,6 +179,10 @@
 }
 
 @media (max-width: 720px) {
+  .dashboard-head {
+    align-items: flex-start;
+  }
+
   .actor-activity-dialog {
     width: 100%;
     max-width: none;
