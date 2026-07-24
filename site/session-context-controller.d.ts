@@ -10,4 +10,5 @@ export interface SessionContextController {
 export function createSessionContextController(options: {
   getConnection(): { endpoint: string; token: string; connected: boolean };
   reportConnectionIssue(message: string): void;
+  onChange?(): void;
 }): SessionContextController;
