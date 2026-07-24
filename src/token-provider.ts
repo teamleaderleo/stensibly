@@ -5,18 +5,13 @@ import {
 } from "node:crypto";
 import type { FunctionReference } from "convex/server";
 import { convexApi } from "../convex/refs.js";
-import {
-  authenticateApiToken,
-  createApiToken,
-  listApiTokens,
-  revokeApiToken,
-  type CreatedToken,
-  type TokenPrincipal,
-  type TokenRecord,
-  type TokenScope,
-} from "./auth.js";
 import type { ConvexCaller } from "./convex-ledger.js";
-import { StensiblyStore } from "./store.js";
+import type {
+  CreatedToken,
+  TokenPrincipal,
+  TokenRecord,
+  TokenScope,
+} from "./token-contracts.js";
 
 export interface CreateTokenInput {
   name: string;
@@ -32,26 +27,6 @@ export interface ApiTokenManager extends ApiTokenAuthenticator {
   create(input: CreateTokenInput): Promise<CreatedToken>;
   list(): Promise<TokenRecord[]>;
   revoke(id: string): Promise<TokenRecord>;
-}
-
-export class SqliteTokenProvider implements ApiTokenManager {
-  constructor(readonly store: StensiblyStore) {}
-
-  async authenticate(rawToken: string) {
-    return authenticateApiToken(this.store, rawToken);
-  }
-
-  async create(input: CreateTokenInput) {
-    return createApiToken(this.store, input);
-  }
-
-  async list() {
-    return listApiTokens(this.store);
-  }
-
-  async revoke(id: string) {
-    return revokeApiToken(this.store, id);
-  }
 }
 
 export interface ConvexTokenProviderOptions {
