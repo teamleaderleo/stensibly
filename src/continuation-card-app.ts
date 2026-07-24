@@ -9,6 +9,35 @@ import {
 import type { WorkLedger } from "./ledger.js";
 import { actorSchema } from "./schemas.js";
 
+const continuationCardOutputSchema = {
+  kind: z.literal("stensibly.continuation-card"),
+  continuation: z.object({
+    id: z.string(),
+    sourceItemId: z.string(),
+    title: z.string(),
+    rationale: z.string(),
+    instruction: z.string(),
+    status: z.string(),
+    generation: z.number().int().min(1),
+    expiresAt: z.string().nullable(),
+    evidence: z.array(z.object({
+      kind: z.string(),
+      label: z.string(),
+      uri: z.string(),
+    })),
+  }).passthrough(),
+  sourceItem: z.object({
+    id: z.string(),
+    project: z.string(),
+    title: z.string(),
+    status: z.string(),
+    priority: z.number(),
+    summary: z.string().nullable(),
+    nextAction: z.string().nullable(),
+  }),
+  actor: actorSchema,
+};
+
 export function registerContinuationCardApp(
   server: McpServer,
   ledger: WorkLedger,
@@ -36,7 +65,7 @@ export function registerContinuationCardApp(
             },
             prefersBorder: true,
           },
-          "openai/widgetDescription": "Review a durable next action and send an approved, deferred, or rejected decision back into the conversation.",
+          "openai/widgetDescription": "Review a durable next action, refine its instruction, or send an approved, deferred, or rejected decision back into the conversation.",
           "openai/widgetPrefersBorder": true,
           "openai/widgetCSP": {
             connect_domains: [],
@@ -50,12 +79,18 @@ export function registerContinuationCardApp(
   server.registerTool(
     "show_continuation_card",
     {
-      description: "Render one continuation proposal as an interactive human decision card. Use this after reading or listing a proposal when the current user should approve, defer, or reject it.",
+      title: "Show continuation decision card",
+      description: "Use this when a person should review one durable continuation proposal in an interactive card after the proposal has been read or listed.",
       inputSchema: {
         id: z.string().trim().min(1).max(240),
         actor: actorSchema,
       },
-      annotations: { readOnlyHint: true },
+      outputSchema: continuationCardOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       _meta: {
         ui: { resourceUri: CONTINUATION_CARD_URI },
         "openai/outputTemplate": CONTINUATION_CARD_URI,
