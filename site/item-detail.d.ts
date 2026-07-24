@@ -19,4 +19,5 @@ export function readItemDetail(payload: unknown, expectedItemId?: string): ItemD
 export function safeArtifactHref(value: unknown): string | null;
 export function payloadEntries(payload: unknown, maxLength?: number, maxEntries?: number): PayloadEntry[];
 export function safeRequestId(value: unknown, activeToken?: string): string | null;
+export function redactCredentialText(value: unknown, activeToken?: string): string;
 export function createRequestGate(): RequestGate;
