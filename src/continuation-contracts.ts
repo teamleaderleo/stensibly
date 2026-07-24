@@ -1,15 +1,43 @@
 import { z } from "zod";
-import {
-  continuationApprovalModes,
-  continuationCommands,
-  continuationDeliveryModes,
-  continuationStatuses,
-  type ContinuationProposal,
-  type ListContinuationsInput,
-  type ProposeContinuationInput,
-  type ResolveContinuationInput,
+import type {
+  ContinuationProposal,
+  ListContinuationsInput,
+  ProposeContinuationInput,
+  ResolveContinuationInput,
 } from "./continuations.js";
 import { actorSchema } from "./schemas.js";
+
+export const continuationStatuses = [
+  "proposed",
+  "approved",
+  "rejected",
+  "deferred",
+  "queued",
+  "started",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "superseded",
+  "expired",
+] as const;
+
+export const continuationApprovalModes = ["automatic", "notify", "human"] as const;
+export const continuationDeliveryModes = [
+  "current_conversation",
+  "human_inbox",
+  "supervisor",
+] as const;
+export const continuationCommands = [
+  "approve",
+  "reject",
+  "defer",
+  "queue",
+  "start",
+  "succeed",
+  "fail",
+  "cancel",
+  "supersede",
+] as const;
 
 const identifier = z.string().trim().min(1).max(240);
 const optionalIdentifier = z.string().trim().min(1).max(240).optional();
