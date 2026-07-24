@@ -29,6 +29,7 @@ describe("MCP work surface", () => {
         "claim_work",
         "complete_work",
         "create_item",
+        "edit_continuation",
         "get_brief",
         "get_continuation",
         "get_item",
@@ -198,6 +199,24 @@ describe("MCP work surface", () => {
       );
       expect(proposed).toMatchObject({ status: "proposed", generation: 1 });
 
+      const edited = await call<{
+        status: string;
+        generation: number;
+        instruction: string;
+      }>(client, "edit_continuation", {
+        id: proposed.id,
+        actor: leo,
+        expectedGeneration: proposed.generation,
+        instruction: "Review the completed item and record a merge decision.",
+        note: "Clarify the expected output.",
+        idempotencyKey: "mcp-continuation-edit-1",
+      });
+      expect(edited).toMatchObject({
+        status: "proposed",
+        generation: 2,
+        instruction: "Review the completed item and record a merge decision.",
+      });
+
       const listed = await call<Array<{ id: string }>>(
         client,
         "list_continuations",
@@ -214,11 +233,11 @@ describe("MCP work surface", () => {
           id: proposed.id,
           actor: leo,
           command: "approve",
-          expectedGeneration: proposed.generation,
+          expectedGeneration: edited.generation,
           idempotencyKey: "mcp-continuation-approve-1",
         },
       );
-      expect(approved).toMatchObject({ status: "approved", generation: 2 });
+      expect(approved).toMatchObject({ status: "approved", generation: 3 });
 
       const consumed = await call<{
         status: string;
@@ -241,7 +260,7 @@ describe("MCP work surface", () => {
       );
       expect(consumed).toMatchObject({
         status: "consumed",
-        generation: 3,
+        generation: 4,
         result: {
           decisionId: "decision_mcp_review",
           conversationRef: "chatgpt:conversation:mcp-review",
@@ -265,6 +284,9 @@ describe("MCP work surface", () => {
       expect(detail.item.status).toBe("done");
       expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
       expect(detail.events.map((entry) => entry.type)).toContain("item.completed");
+      expect(detail.events.map((entry) => entry.type)).toContain(
+        "continuation.edited",
+      );
       expect(detail.events.map((entry) => entry.type)).toContain(
         "continuation.approved",
       );
