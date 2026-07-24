@@ -5,6 +5,7 @@ import {
   readItems,
 } from './connection.js';
 import { createItemDetailController } from './item-detail-controller.js';
+import { createSessionContextController } from './session-context-controller.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const REFRESH_INTERVAL_MS = 15000;
@@ -41,6 +42,10 @@ const itemDetail = createItemDetailController({
   board,
   getConnection: () => ({ endpoint, token, connected }),
   getItems: () => items,
+});
+const sessionContext = createSessionContextController({
+  getConnection: () => ({ endpoint, token, connected }),
+  reportConnectionIssue: (message) => showConnectedIssue(message),
 });
 
 form.elements.endpoint.value = endpoint;
@@ -88,6 +93,7 @@ async function connect(event) {
   }
 
   const candidateToken = suppliedToken || token;
+  const tokenChanged = candidateToken !== token;
   if (!isPlausibleToken(candidateToken)) {
     showConnectionForm('Enter a complete Stensibly token in the stn.tok_… format.', {
       keepDashboard: connected,
@@ -96,7 +102,10 @@ async function connect(event) {
     return;
   }
 
-  if (endpointChanged) itemDetail.reset();
+  if (endpointChanged || tokenChanged) {
+    itemDetail.reset();
+    sessionContext.reset();
+  }
   setConnectionStatus('connecting');
   try {
     const nextItems = await loadItems(candidateEndpoint, candidateToken);
@@ -111,6 +120,7 @@ async function connect(event) {
     form.elements.token.value = '';
     updateDashboard();
     showConnectedState();
+    void sessionContext.refresh();
     scheduleRefresh();
   } catch (error) {
     if (!isCurrentRequest(requestId)) return;
@@ -124,6 +134,7 @@ async function connect(event) {
       connected = false;
       items = [];
       itemDetail.reset();
+      sessionContext.reset();
     }
     showConnectionForm(message, {
       keepDashboard: connected,
@@ -149,6 +160,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     connected = true;
     updateDashboard();
     showConnectedState();
+    if (interactive || initial) void sessionContext.refresh();
     scheduleRefresh();
   } catch (error) {
     if (!isCurrentRequest(requestId)) return;
@@ -159,6 +171,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
       connected = false;
       items = [];
       itemDetail.reset();
+      sessionContext.reset();
       showConnectionForm(message);
       return;
     }
@@ -234,6 +247,7 @@ function beginConnectionChange() {
   invalidateRequests();
   clearRefreshTimer();
   itemDetail.reset();
+  sessionContext.reset();
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
   showConnectionForm('', { keepDashboard: true, allowCancel: true });
@@ -246,6 +260,7 @@ function cancelConnectionChange() {
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
   showConnectedState();
+  void sessionContext.refresh();
   scheduleRefresh();
 }
 
@@ -253,6 +268,7 @@ function disconnect() {
   invalidateRequests();
   clearRefreshTimer();
   itemDetail.reset({ announce: 'Item detail closed because the ledger disconnected.' });
+  sessionContext.reset();
   clearStoredToken();
   connected = false;
   items = [];
