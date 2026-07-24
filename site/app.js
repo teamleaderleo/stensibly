@@ -4,6 +4,7 @@ import {
   normalizeEndpoint,
   readItems,
 } from './connection.js';
+import { createItemDetailController } from './item-detail-controller.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const REFRESH_INTERVAL_MS = 15000;
@@ -35,6 +36,12 @@ let requestGeneration = 0;
 let connected = false;
 let endpoint = savedEndpoint();
 let token = sessionStorage.stensiblyToken || '';
+
+const itemDetail = createItemDetailController({
+  board,
+  getConnection: () => ({ endpoint, token, connected }),
+  getItems: () => items,
+});
 
 form.elements.endpoint.value = endpoint;
 form.elements.token.value = '';
@@ -89,6 +96,7 @@ async function connect(event) {
     return;
   }
 
+  if (endpointChanged) itemDetail.reset();
   setConnectionStatus('connecting');
   try {
     const nextItems = await loadItems(candidateEndpoint, candidateToken);
@@ -115,6 +123,7 @@ async function connect(event) {
       if (isCredentialFailure(error)) clearStoredToken();
       connected = false;
       items = [];
+      itemDetail.reset();
     }
     showConnectionForm(message, {
       keepDashboard: connected,
@@ -149,6 +158,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
       if (isCredentialFailure(error)) clearStoredToken();
       connected = false;
       items = [];
+      itemDetail.reset();
       showConnectionForm(message);
       return;
     }
@@ -192,10 +202,7 @@ async function explainConnectionFailure(error, apiEndpoint) {
   if (!(error instanceof ConnectionFailure) || error.kind !== 'fetch_failed') {
     return error instanceof Error ? error.message : String(error);
   }
-
-  if (navigator.onLine === false) {
-    return 'This browser is offline. Reconnect and try again.';
-  }
+  if (navigator.onLine === false) return 'This browser is offline. Reconnect and try again.';
 
   try {
     await fetch(apiEndpoint + '/health', {
@@ -226,6 +233,7 @@ function isCredentialFailure(error) {
 function beginConnectionChange() {
   invalidateRequests();
   clearRefreshTimer();
+  itemDetail.reset();
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
   showConnectionForm('', { keepDashboard: true, allowCancel: true });
@@ -244,6 +252,7 @@ function cancelConnectionChange() {
 function disconnect() {
   invalidateRequests();
   clearRefreshTimer();
+  itemDetail.reset({ announce: 'Item detail closed because the ledger disconnected.' });
   clearStoredToken();
   connected = false;
   items = [];
@@ -335,6 +344,7 @@ function updateDashboard() {
   populateProjects();
   render();
   lastUpdated.textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  itemDetail.reconcile();
 }
 
 function scheduleRefresh() {
@@ -391,13 +401,13 @@ function render() {
 function renderCard(item) {
   const owner = item.claimedBy ? `held by ${escapeHtml(item.claimedBy)}` : relativeTime(item.updatedAt);
   const lease = item.claimExpiresAt ? leaseTime(item.claimExpiresAt) : `v${item.version}`;
-  return `<article class="card ${statusClass(item.status)}">
+  return `<button class="card ${statusClass(item.status)}" type="button" data-item-id="${escapeHtml(item.id)}" aria-label="Open ${escapeHtml(item.title)}">
     <div class="card-top"><span>${escapeHtml(item.kind)} · ${escapeHtml(item.project)}</span><span>p${item.priority}</span></div>
     <h4>${escapeHtml(item.title)}</h4>
     ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ''}
     ${item.nextAction ? `<p>next · ${escapeHtml(item.nextAction)}</p>` : ''}
     <div class="card-meta"><span>${owner}</span><span>${lease}</span></div>
-  </article>`;
+  </button>`;
 }
 
 function savedEndpoint() {
