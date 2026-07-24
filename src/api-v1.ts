@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { attachArtifactSchema } from "./artifact-contracts.js";
+import { registerContinuationApi } from "./continuation-api.js";
 import {
   filterItemsForPrincipal,
   principalHasScope,
@@ -45,7 +46,7 @@ export function createApiV1(
     if (/does not exist|not found/i.test(message)) {
       return context.json({ error: message, code: "not_found" }, 404);
     }
-    if (/held by another|current claimant|already|unavailable|capacity|reserved|only blocked/i.test(message)) {
+    if (/held by another|current claimant|already|unavailable|capacity|reserved|only blocked|generation changed|cannot .* while|changed while/i.test(message)) {
       return context.json({ error: message, code: "conflict" }, 409);
     }
     if (/unauthorized|STENSIBLY_SERVICE_SECRET is not configured/i.test(message)) {
@@ -243,6 +244,7 @@ export function createApiV1(
     return context.json({ event }, 201);
   });
 
+  registerContinuationApi(app, ledger);
   return app;
 }
 
