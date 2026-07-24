@@ -21,6 +21,7 @@ import {
 } from "./schemas.js";
 import type { ItemStatus } from "./store.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
+import { FAILURE_CATEGORY_HEADER } from "./worker-observability.js";
 
 export function createApiV1(
   authenticator: ApiTokenAuthenticator,
@@ -38,9 +39,10 @@ export function createApiV1(
       return context.json({ error: message, code: "conflict" }, 409);
     }
     if (/unauthorized/i.test(message)) {
+      context.header(FAILURE_CATEGORY_HEADER, "auth_failure");
       return context.json({ error: "Unauthorized", code: "unauthorized" }, 401);
     }
-    console.error("API v1 request failed", error);
+    context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
     return context.json({ error: message, code: "invalid_operation" }, 400);
   });
 
