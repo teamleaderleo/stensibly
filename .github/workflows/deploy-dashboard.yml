@@ -168,21 +168,31 @@ jobs:
             > /tmp/dashboard-index.html
           bun run verify:dashboard -- --html-file /tmp/dashboard-index.html
 
-          for asset in \
-            /styles.css \
-            /app.js \
-            /item-claim.css \
-            /item-claim.js \
-            /item-progress-controller.js \
-            /item-block-controller.js \
-            /item-complete-controller.js \
-            /favicon.svg; do
+          asset_specs=(
+            "/styles.css|:root"
+            "/app.js|DEFAULT_ENDPOINT"
+            "/item-claim.css|.detail-claim"
+            "/item-claim.js|validateClaimInput"
+            "/item-progress-controller.js|installProgressController"
+            "/item-block-controller.js|installBlockController"
+            "/item-complete-controller.js|installCompletionController"
+            "/favicon.svg|<svg"
+          )
+          for spec in "${asset_specs[@]}"; do
+            asset="${spec%%|*}"
+            marker="${spec#*|}"
+            output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
             npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
               --deployment "${DEPLOYMENT_URL}" \
               --token="${VERCEL_TOKEN}" \
               --fail --silent --show-error \
-              --output /tmp/dashboard-asset
-            test -s /tmp/dashboard-asset
+              --output "${output}"
+            test -s "${output}"
+            grep --fixed-strings --quiet -- "${marker}" "${output}"
+            if grep --extended-regexp --quiet 'stn\.tok_[A-Za-z0-9._-]+' "${output}"; then
+              echo "Staged asset ${asset} contains a token-shaped value." >&2
+              exit 1
+            fi
           done
 
       - name: Promote verified deployment
