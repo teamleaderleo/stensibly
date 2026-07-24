@@ -14,6 +14,7 @@
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
     "worker:dev": "wrangler dev",
+    "worker:check": "wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "worker:deploy": "wrangler deploy",
     "worker:tail": "wrangler tail",
     "test": "bun test ./test/*.test.ts",
