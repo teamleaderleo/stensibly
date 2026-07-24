@@ -263,6 +263,16 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 
+  completionContinuationCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    itemId: v.id("items"),
+    itemExternalId: v.string(),
+    idempotencyKey: v.string(),
+    request: v.any(),
+    result: v.any(),
+    createdAt: v.number(),
+  }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
+
   apiTokens: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
