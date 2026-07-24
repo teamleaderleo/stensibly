@@ -1,5 +1,6 @@
 import './item-progress-controller.js';
 import './item-block-controller.js';
+import './item-complete-controller.js';
 import { createIdempotencyTracker } from './item-create.js';
 import { validateActor } from './session-context.js';
 
