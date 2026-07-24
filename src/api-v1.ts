@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
-import { attachArtifactSchema } from "./artifacts.js";
-import { filterItemsForPrincipal } from "./auth.js";
+import { attachArtifactSchema } from "./artifact-contracts.js";
+import { filterItemsForPrincipal } from "./token-contracts.js";
 import {
   createHttpAuthMiddleware,
   currentPrincipal,

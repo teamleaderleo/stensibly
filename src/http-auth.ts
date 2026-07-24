@@ -3,12 +3,8 @@ import {
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
-} from "./auth.js";
-import { StensiblyStore } from "./store.js";
-import {
-  SqliteTokenProvider,
-  type ApiTokenAuthenticator,
-} from "./token-provider.js";
+} from "./token-contracts.js";
+import type { ApiTokenAuthenticator } from "./token-provider.js";
 
 export interface StensiblyEnv {
   Variables: {
@@ -21,12 +17,9 @@ export interface HttpAuthOptions {
 }
 
 export function createHttpAuthMiddleware(
-  source: StensiblyStore | ApiTokenAuthenticator,
+  authenticator: ApiTokenAuthenticator,
   options: HttpAuthOptions,
 ): MiddlewareHandler<StensiblyEnv> {
-  const authenticator = source instanceof StensiblyStore
-    ? new SqliteTokenProvider(source)
-    : source;
   return async (context, next) => {
     if (!options.required || context.req.path === "/health") {
       if (context.get("principal") === undefined) {

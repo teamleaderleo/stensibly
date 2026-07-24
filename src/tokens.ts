@@ -1,9 +1,9 @@
 import { tokenScopes, type TokenScope } from "./auth.js";
 import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
+import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import { StensiblyStore } from "./store.js";
 import {
   ConvexTokenProvider,
-  SqliteTokenProvider,
   type ApiTokenManager,
 } from "./token-provider.js";
 

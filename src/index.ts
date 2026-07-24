@@ -2,10 +2,10 @@ import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
 import type { WorkLedger } from "./ledger.js";
 import { createServerApp } from "./server-app.js";
 import { SqliteWorkLedger } from "./sqlite-ledger.js";
+import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import { StensiblyStore } from "./store.js";
 import {
   ConvexTokenProvider,
-  SqliteTokenProvider,
   type ApiTokenAuthenticator,
 } from "./token-provider.js";
 

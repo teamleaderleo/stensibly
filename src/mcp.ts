@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { artifactKinds } from "./artifacts.js";
+import { artifactKinds } from "./artifact-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   actorSchema,
