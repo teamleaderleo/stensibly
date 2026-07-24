@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-// @ts-ignore The static dashboard helper is intentionally plain browser JavaScript.
 import {
   describeHttpFailure,
   isPlausibleToken,
