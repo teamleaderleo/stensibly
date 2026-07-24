@@ -10,6 +10,7 @@
     "custodian": "bun src/custodian.ts",
     "tokens": "bun src/tokens.ts",
     "snapshot": "bun src/snapshot-cli.ts",
+    "verify:hosted": "bun src/verify-hosted.ts",
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
