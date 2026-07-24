@@ -37,6 +37,7 @@ describe("MCP work surface", () => {
         "record_event",
         "release_work",
         "renew_claim",
+        "survey_workspace",
         "unblock_work",
       ]);
 
