@@ -3,6 +3,7 @@ import {
   createRequestGate,
   payloadEntries,
   readItemDetail,
+  redactCredentialText,
   safeArtifactHref,
   safeRequestId,
 } from "../site/item-detail.js";
@@ -70,6 +71,17 @@ describe("dashboard event payloads", () => {
       { key: "two", value: "2" },
     ]);
     expect(payloadEntries(["not", "an", "object"])).toEqual([]);
+  });
+});
+
+describe("dashboard credential redaction", () => {
+  test("removes active and token-shaped values from rendered text", () => {
+    expect(redactCredentialText("failed stn.tok_secret.value")).toBe("failed [redacted token]");
+    expect(redactCredentialText("prefix active-token suffix", "active-token"))
+      .toBe("prefix [redacted token] suffix");
+    expect(payloadEntries({ secret: "stn.tok_secret.value" })).toEqual([
+      { key: "secret", value: "[redacted token]" },
+    ]);
   });
 });
 
