@@ -17,7 +17,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("continuation REST API", () => {
-  test("proposes, reads, lists, and resolves a continuation", async () => {
+  test("proposes, reads, lists, approves, and consumes a continuation", async () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -36,7 +36,9 @@ describe("continuation REST API", () => {
       approvalMode: "human",
       deliveryMode: "current_conversation",
     };
-    const proposed = await json<{ continuation: { id: string; status: string; generation: number } }>(
+    const proposed = await json<{
+      continuation: { id: string; status: string; generation: number };
+    }>(
       app.request(`/api/v1/items/${item.id}/continuations`, {
         method: "POST",
         headers: {
@@ -47,7 +49,10 @@ describe("continuation REST API", () => {
       }),
       201,
     );
-    expect(proposed.continuation).toMatchObject({ status: "proposed", generation: 1 });
+    expect(proposed.continuation).toMatchObject({
+      status: "proposed",
+      generation: 1,
+    });
 
     const replayed = await json<{ continuation: { id: string } }>(
       app.request(`/api/v1/items/${item.id}/continuations`, {
@@ -65,54 +70,125 @@ describe("continuation REST API", () => {
     const listed = await json<{ continuations: Array<{ id: string }> }>(
       app.request(`/api/v1/items/${item.id}/continuations?status=proposed`),
     );
-    expect(listed.continuations.map((entry) => entry.id)).toEqual([proposed.continuation.id]);
+    expect(listed.continuations.map((entry) => entry.id)).toEqual([
+      proposed.continuation.id,
+    ]);
 
-    const read = await json<{ continuation: { sourceItemId: string; status: string } }>(
-      app.request(`/api/v1/continuations/${proposed.continuation.id}`),
-    );
-    expect(read.continuation).toMatchObject({ sourceItemId: item.id, status: "proposed" });
+    const read = await json<{
+      continuation: { sourceItemId: string; status: string };
+    }>(app.request(`/api/v1/continuations/${proposed.continuation.id}`));
+    expect(read.continuation).toMatchObject({
+      sourceItemId: item.id,
+      status: "proposed",
+    });
 
-    const approved = await json<{ continuation: { status: string; generation: number } }>(
-      app.request(`/api/v1/continuations/${proposed.continuation.id}/resolve`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "idempotency-key": "continuation-approve-1",
+    const approved = await json<{
+      continuation: { status: string; generation: number };
+    }>(
+      app.request(
+        `/api/v1/continuations/${proposed.continuation.id}/resolve`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": "continuation-approve-1",
+          },
+          body: JSON.stringify({
+            actor: leo,
+            command: "approve",
+            expectedGeneration: 1,
+            note: "Continue in the current conversation.",
+          }),
         },
-        body: JSON.stringify({
-          actor: leo,
-          command: "approve",
-          expectedGeneration: 1,
-          note: "Continue in the current conversation.",
-        }),
-      }),
+      ),
     );
-    expect(approved.continuation).toMatchObject({ status: "approved", generation: 2 });
+    expect(approved.continuation).toMatchObject({
+      status: "approved",
+      generation: 2,
+    });
 
-    const replayedApproval = await json<{ continuation: { status: string; generation: number } }>(
-      app.request(`/api/v1/continuations/${proposed.continuation.id}/resolve`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "idempotency-key": "continuation-approve-1",
+    const replayedApproval = await json<{
+      continuation: { status: string; generation: number };
+    }>(
+      app.request(
+        `/api/v1/continuations/${proposed.continuation.id}/resolve`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": "continuation-approve-1",
+          },
+          body: JSON.stringify({
+            actor: leo,
+            command: "approve",
+            expectedGeneration: 1,
+            note: "Continue in the current conversation.",
+          }),
         },
-        body: JSON.stringify({
-          actor: leo,
-          command: "approve",
-          expectedGeneration: 1,
-          note: "Continue in the current conversation.",
-        }),
-      }),
+      ),
     );
     expect(replayedApproval.continuation).toEqual(approved.continuation);
 
-    const stale = await app.request(`/api/v1/continuations/${proposed.continuation.id}/resolve`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ actor: leo, command: "reject", expectedGeneration: 1 }),
-    });
+    const stale = await app.request(
+      `/api/v1/continuations/${proposed.continuation.id}/resolve`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          actor: leo,
+          command: "reject",
+          expectedGeneration: 1,
+        }),
+      },
+    );
     expect(stale.status).toBe(409);
     expect(await stale.json()).toMatchObject({ code: "conflict" });
+
+    const consumed = await json<{
+      continuation: {
+        status: string;
+        generation: number;
+        result: { decisionId: string; conversationRef: string };
+        consumedAt: string;
+      };
+    }>(
+      app.request(
+        `/api/v1/continuations/${proposed.continuation.id}/resolve`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": "continuation-consume-1",
+          },
+          body: JSON.stringify({
+            actor: agent,
+            command: "consume",
+            expectedGeneration: 2,
+            result: {
+              decisionId: "decision_review_change",
+              conversationRef: "chatgpt:conversation:review",
+            },
+          }),
+        },
+      ),
+    );
+    expect(consumed.continuation).toMatchObject({
+      status: "consumed",
+      generation: 3,
+      result: {
+        decisionId: "decision_review_change",
+        conversationRef: "chatgpt:conversation:review",
+      },
+    });
+    expect(consumed.continuation.consumedAt).toBeString();
+
+    const finalRead = await json<{
+      continuation: { status: string; result: { decisionId: string } };
+    }>(app.request(`/api/v1/continuations/${proposed.continuation.id}`));
+    expect(finalRead.continuation).toMatchObject({
+      status: "consumed",
+      result: { decisionId: "decision_review_change" },
+    });
   });
 
   test("enforces source-item project scopes", async () => {
@@ -144,18 +220,24 @@ describe("continuation REST API", () => {
       action: { kind: "create_item", project: "scrapbook" },
       actor: agent,
     });
-    const allowed = await app.request(`/api/v1/items/${visible.id}/continuations`, {
-      method: "POST",
-      headers: { ...bearer(token.token), "content-type": "application/json" },
-      body,
-    });
+    const allowed = await app.request(
+      `/api/v1/items/${visible.id}/continuations`,
+      {
+        method: "POST",
+        headers: { ...bearer(token.token), "content-type": "application/json" },
+        body,
+      },
+    );
     expect(allowed.status).toBe(201);
 
-    const denied = await app.request(`/api/v1/items/${hidden.id}/continuations`, {
-      method: "POST",
-      headers: { ...bearer(token.token), "content-type": "application/json" },
-      body,
-    });
+    const denied = await app.request(
+      `/api/v1/items/${hidden.id}/continuations`,
+      {
+        method: "POST",
+        headers: { ...bearer(token.token), "content-type": "application/json" },
+        body,
+      },
+    );
     expect(denied.status).toBe(403);
   });
 });
