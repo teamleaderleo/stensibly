@@ -10,7 +10,7 @@ import {
 
 const ACTOR_STORAGE_KEY = 'stensiblyActor';
 
-export function createSessionContextController({ getConnection, reportConnectionIssue }) {
+export function createSessionContextController({ getConnection, reportConnectionIssue, onChange = () => {} }) {
   const panel = document.querySelector('#session-context-panel');
   const capabilityState = document.querySelector('#capability-state');
   const principalSummary = document.querySelector('#principal-summary');
@@ -116,6 +116,7 @@ export function createSessionContextController({ getConnection, reportConnection
     capabilityBadges.replaceChildren(...capabilityNodes(principalContext.capabilities));
     clearContextError();
     renderActor();
+    onChange();
   }
 
   function renderUnavailable(message) {
@@ -131,6 +132,7 @@ export function createSessionContextController({ getConnection, reportConnection
     actorUnavailable.hidden = false;
     actorUnavailable.textContent = message;
     clearActorError();
+    onChange();
   }
 
   function renderActor() {
@@ -178,6 +180,7 @@ export function createSessionContextController({ getConnection, reportConnection
       });
       storeActor(actor);
       renderActor();
+      onChange();
     } catch (cause) {
       showActorError(cause instanceof Error ? cause.message : 'Actor validation failed.');
     }
@@ -191,6 +194,7 @@ export function createSessionContextController({ getConnection, reportConnection
       // The in-memory actor is still cleared when browser storage is unavailable.
     }
     renderActor();
+    onChange();
   }
 
   function getActor() {
