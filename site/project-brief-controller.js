@@ -107,7 +107,11 @@ export function installProjectBriefController() {
   projectFilter.addEventListener('change', () => {
     if (projectFilter.value && [...projectSelect.options].some((option) => option.value === projectFilter.value)) {
       projectSelect.value = projectFilter.value;
-      if (dialog.open) void loadBrief();
+      if (dialog.open) {
+        gate.invalidate();
+        currentBrief = currentBrief?.project === projectFilter.value ? currentBrief : null;
+        void loadBrief();
+      }
     }
   });
 
@@ -137,7 +141,15 @@ export function installProjectBriefController() {
     projectSelect.value = desired;
     openButton.disabled = dashboard.hidden || projects.length === 0;
     openButton.title = projects.length ? 'Open a compact server-owned project brief' : 'No visible project is available';
-    if (dialog.open && !desired) dialog.close();
+    if (dialog.open && !desired) {
+      dialog.close();
+      return;
+    }
+    if (dialog.open && desired !== previous) {
+      gate.invalidate();
+      currentBrief = currentBrief?.project === desired ? currentBrief : null;
+      queueMicrotask(() => void loadBrief());
+    }
   }
 
   async function loadBrief() {
@@ -161,6 +173,7 @@ export function installProjectBriefController() {
     try {
       response = await fetch(`${connection.endpoint}/api/v1/projects/${encodeURIComponent(project)}/brief?limit=10`, {
         headers: { authorization: `Bearer ${connection.token}` },
+        cache: 'no-store',
       });
     } catch {
       if (!isCurrent(requestId, project)) return;
