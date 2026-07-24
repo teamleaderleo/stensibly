@@ -89,14 +89,59 @@ STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
   bun run verify:hosted -- --project PROJECT_SLUG
 ```
 
-The verifier redacts token-shaped values, runs every check, and exits nonzero when any check fails.
+The verifier redacts token-shaped values, runs every check, and exits nonzero when any check fails. Response-based failures include the Worker request ID when one is available, which can be matched against production logs.
 
 ## Worker deployment
 
-### Before deployment
+The preferred production path is the manual GitHub Actions workflow named **Deploy Worker Production**. It runs only when an operator dispatches it from `main`, uses the GitHub environment named `production`, serializes deployments, executes the full test suite, deploys one Worker version, and verifies both production endpoints.
+
+### One-time GitHub setup
+
+Create a repository environment named `production` and configure:
+
+- required reviewers for production approval
+- deployment branch protection limited to `main`
+- `CLOUDFLARE_ACCOUNT_ID` as an environment secret
+- `CLOUDFLARE_API_TOKEN` as an environment secret
+- `STENSIBLY_READ_TOKEN` as an environment secret
+
+Use a least-privilege Cloudflare API token scoped to the account and Worker deployment permissions required for `stensibly-api`.
+
+`STENSIBLY_READ_TOKEN` should carry read scope. A project-scoped token works when the matching project slug is supplied to the workflow. An all-projects read token verifies the default empty-project request.
+
+The workflow never receives `STENSIBLY_SERVICE_SECRET` or `CONVEX_URL`. Existing encrypted Worker bindings remain attached during its code-only deployment.
+
+### Deploy through GitHub Actions
+
+1. Open **Actions** in the repository.
+2. Select **Deploy Worker Production**.
+3. Choose **Run workflow** from `main`.
+4. Optionally enter a lowercase project slug when the verification token is project-scoped.
+5. Approve the `production` environment deployment when GitHub requests approval.
+
+The workflow then:
+
+1. confirms the selected ref is `main`
+2. installs the committed Bun lockfile with `--frozen-lockfile`
+3. validates the required environment secrets and optional project slug
+4. runs typecheck, Bun tests, Convex tests, and the Worker dry-run bundle
+5. deploys with the repository's pinned Wrangler dependency
+6. verifies the `workers.dev` fallback up to three times
+7. verifies `api.stensibly.com` up to three times
+8. writes the deployed commit and endpoint status to the job summary
+
+Verifier failures include request IDs when the deployed Worker responds. Use those IDs with `bun run worker:tail` to find the matching completion records.
+
+The workflow stops on a failed post-deploy verification. It does not automatically roll back, because Worker rollback and any Convex data implications require an operator decision.
+
+### Manual deployment fallback
+
+Use the manual path from a trusted operator shell when GitHub Actions is unavailable or while repairing its environment configuration.
+
+Before deployment:
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run typecheck
 bun test
 bun run test:convex
@@ -112,7 +157,7 @@ Review the proposed changes for:
 - MCP protocol behavior
 - raw token or secret logging
 
-### Deploy code
+Deploy code:
 
 ```bash
 bun run worker:deploy
@@ -120,13 +165,17 @@ bun run worker:deploy
 
 Existing encrypted bindings remain attached during a code-only deployment.
 
-### Verify immediately
+Verify both endpoints immediately:
 
 ```bash
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
+
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run verify:hosted -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev
 ```
 
-Then verify the fallback endpoint. A custom-domain failure with a healthy fallback points toward DNS, TLS, or route attachment. Failure on both points toward Worker code, bindings, or Convex.
+A custom-domain failure with a healthy fallback points toward DNS, TLS, or route attachment. Failure on both points toward Worker code, bindings, or Convex.
 
 ## Dashboard deployment
 
@@ -160,24 +209,33 @@ Stream Worker logs:
 bun run worker:tail
 ```
 
-Useful log categories should include:
+Every Worker response carries `X-Request-ID`. Allowed dashboard origins can read that header through CORS.
 
+Each completed request emits one JSON record containing:
+
+- event name
 - request ID
-- route and method
-- authentication failure category
-- CORS rejection
-- Convex call failure
+- method
+- route class: `health`, `rest_v1`, `mcp`, or `other`
 - response status
+- duration in milliseconds
+- success or failure outcome
+- failure category when applicable
 
-Logs should exclude:
+Failure categories include authentication, authorization, CORS, Convex, MCP, request, and gateway failures.
 
+Completion records exclude:
+
+- URLs and query strings
+- item IDs and project names
 - `Authorization` headers
 - raw API tokens
-- token hashes
+- token IDs and token hashes
+- request bodies
 - `STENSIBLY_SERVICE_SECRET`
 - private artifact contents
 
-Request IDs and categorized failures remain a product backlog item where the current logs lack them.
+When the hosted verifier reports `requestId=...`, search the Worker tail output for the same value.
 
 ## Incident diagnosis
 
