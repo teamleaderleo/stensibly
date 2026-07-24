@@ -9,7 +9,21 @@ Completion and continuation remain separate facts:
 
 This separation lets an agent finish its request immediately while the proposed next move survives chat closure, process restarts, delivery failures, and later approval.
 
-## First implemented slice
+## Boundary with agent harnesses
+
+Claude Code, Codex, Cursor, OpenCode, and similar harnesses own execution inside a run: model turns, tools, subagents, worktrees, retries, and run outcomes.
+
+Stensibly owns the durable boundary between those runs:
+
+- what next move was proposed
+- who may approve it
+- which delivery path should receive it
+- where the approved intent was materialized
+- what evidence a later actor needs
+
+A continuation proposal does not duplicate run state. Once an approved intent creates or resumes an item, queues a run, opens a decision, or submits a conversation follow-up, the proposal becomes `consumed`. The resulting item, run, decision, or conversation owns everything after that handoff.
+
+## Implemented local slice
 
 The local SQLite state machine lives in `src/continuations.ts`.
 
@@ -22,6 +36,7 @@ A proposal records:
 - suggesting actor
 - approval and delivery modes
 - status, generation, expiry, and resolution metadata
+- durable result references after consumption
 
 Typed actions are limited to:
 
@@ -35,23 +50,29 @@ Stored actions are domain intents. They are never arbitrary executable tool call
 ## Lifecycle
 
 ```text
-proposed ──approve──> approved ──queue──> queued ──start──> started
-    │                    │                    │                 ├──succeed──> succeeded
-    │                    │                    │                 └──fail─────> failed
-    │                    │                    └──fail───────────> failed
-    │                    ├──start────────────> started
-    │                    ├──cancel───────────> cancelled
-    │                    └──supersede────────> superseded
-    ├──defer────> deferred ──approve──> approved
-    │                ├──reject────────> rejected
-    │                ├──cancel────────> cancelled
-    │                └──supersede─────> superseded
+proposed ──approve──> approved ──consume──> consumed
+    │                    │
+    ├──defer────> deferred ──approve──────> approved
+    │                ├──reject────────────> rejected
+    │                ├──cancel────────────> cancelled
+    │                └──supersede─────────> superseded
     ├──reject───> rejected
     ├──cancel───> cancelled
     └──supersede> superseded
 ```
 
-Live proposals with an elapsed expiry become `expired` lazily during reads or commands. Expiry increments the generation and appends one event.
+`consumed` means the intent crossed into another durable owner. It does not mean the resulting work succeeded.
+
+Consumption stores one or more result references:
+
+- `itemId`
+- `runId`
+- `decisionId`
+- `conversationRef`
+
+The action controls which reference is required. For example, `create_item` requires an item ID and `dispatch_item` requires a run ID.
+
+Live `proposed`, `deferred`, and `approved` records with an elapsed expiry become `expired` lazily during reads or commands. Expiry increments the generation and appends one event.
 
 ## Concurrency and retries
 
@@ -61,7 +82,7 @@ Proposal creation and lifecycle commands support idempotency keys:
 
 - exact replays return the first result
 - reuse with different input returns a conflict
-- lifecycle replay returns the original command result even when later transitions have occurred
+- lifecycle replay returns the original command result even after later changes
 
 Each meaningful change appends an event to the source item:
 
@@ -69,27 +90,23 @@ Each meaningful change appends an event to the source item:
 - `continuation.approved`
 - `continuation.rejected`
 - `continuation.deferred`
-- `continuation.queued`
-- `continuation.started`
-- `continuation.succeeded`
-- `continuation.failed`
+- `continuation.consumed`
 - `continuation.cancelled`
 - `continuation.superseded`
 - `continuation.expired`
 
 The source item freshness fields advance with each event so polling clients can detect the change.
 
-## Planned hosted and client slices
+## Protocol and hosted slices
 
 Issue #69 tracks the remaining work:
 
-1. add the same state machine to Convex
-2. add shared `WorkLedger` contracts
-3. expose propose, get, list, and resolve through REST v1 and MCP
-4. add optional atomic proposals to completion after the dashboard completion slice settles
-5. project proposals into a human decision inbox
-6. render a ChatGPT MCP App card
-7. have **Continue here** resolve the proposal and send a fresh follow-up message containing the durable continuation ID
-8. let a supervisor dispatch approved proposals according to project policy
+1. expose propose, get, list, and resolve through REST v1 and MCP
+2. add the same state machine to Convex
+3. add optional atomic proposals to completion
+4. project approval-required proposals into a human decision inbox
+5. render a ChatGPT MCP App card
+6. have **Continue here** approve the proposal, submit a fresh follow-up message, and consume the proposal with a conversation reference
+7. let a supervisor materialize approved proposals into queued runs according to project policy
 
-The original completion request never stays open. A later click creates a fresh tool call and a fresh model turn that reads the current proposal state before acting.
+The original completion request never stays open. A later click creates a fresh request that reads the current proposal generation before acting.
