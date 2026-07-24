@@ -5,6 +5,7 @@ import {
   readItems,
 } from './connection.js';
 import { createItemDetailController } from './item-detail-controller.js';
+import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
@@ -43,10 +44,31 @@ const itemDetail = createItemDetailController({
   getConnection: () => ({ endpoint, token, connected }),
   getItems: () => items,
 });
+let itemCreate;
 const sessionContext = createSessionContextController({
   getConnection: () => ({ endpoint, token, connected }),
   reportConnectionIssue: (message) => showConnectedIssue(message),
+  onChange: () => itemCreate?.sync(),
 });
+itemCreate = createItemCreateController({
+  getConnection: () => ({ endpoint, token, connected }),
+  getContext: () => ({
+    principal: sessionContext.getPrincipal(),
+    actor: sessionContext.getActor(),
+  }),
+  getSelectedProject: () => projectFilter.value,
+  reportConnectionIssue: (message) => showConnectedIssue(message),
+  onCreated: async (item) => {
+    await refreshCurrent({ interactive: true });
+    if (!items.some((candidate) => candidate.id === item.id)) return;
+    projectFilter.value = item.project;
+    render();
+    const card = [...board.querySelectorAll('button.card[data-item-id]')]
+      .find((button) => button.dataset.itemId === item.id);
+    card?.click();
+  },
+});
+itemCreate.sync();
 
 form.elements.endpoint.value = endpoint;
 form.elements.token.value = '';
