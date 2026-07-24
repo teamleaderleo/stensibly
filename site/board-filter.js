@@ -6,7 +6,7 @@ export function normalizeBoardQuery(value) {
   const query = typeof value === 'string' ? value.normalize('NFKC').trim().replace(/\s+/g, ' ') : '';
   if (query.length > 200) throw new TypeError('Board search may contain at most 200 characters.');
   rejectCredential(query);
-  return query.toLocaleLowerCase();
+  return query.toLowerCase();
 }
 
 export function normalizeBoardKind(value) {
@@ -22,7 +22,6 @@ export function normalizeBoardStatus(value) {
 export function normalizeBoardProject(value) {
   const project = typeof value === 'string' ? value.trim() : '';
   if (!project || project.length > 80 || !PROJECT_PATTERN.test(project)) return '';
-  rejectCredential(project);
   return project;
 }
 
@@ -39,9 +38,8 @@ export function matchesBoardCard(card, filters) {
   if (selectedStatus && status !== selectedStatus) return false;
   if (!query) return true;
   const text = typeof card.text === 'string'
-    ? card.text.normalize('NFKC').replace(/\s+/g, ' ').toLocaleLowerCase()
+    ? card.text.normalize('NFKC').replace(/\s+/g, ' ').toLowerCase()
     : '';
-  rejectCredential(text);
   return text.includes(query);
 }
 
