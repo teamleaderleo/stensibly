@@ -103,7 +103,9 @@ describe("hosted verifier checks", () => {
       calls.push({ url: requestUrl, init });
 
       if (requestUrl.pathname === "/health") {
-        return jsonResponse({ ok: true, backend: "convex" });
+        return jsonResponse({ ok: true, backend: "convex" }, 200, {
+          "x-request-id": "health-success",
+        });
       }
       if (requestUrl.pathname === "/api/v1/items" && init.method === "OPTIONS") {
         expect(new Headers(init.headers).get("origin")).toBe("https://www.stensibly.com");
@@ -113,6 +115,7 @@ describe("hosted verifier checks", () => {
             "access-control-allow-origin": "https://www.stensibly.com",
             "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key",
             "access-control-allow-methods": "GET, POST, OPTIONS",
+            "x-request-id": "cors-success",
           },
         });
       }
@@ -120,11 +123,14 @@ describe("hosted verifier checks", () => {
         if (!new Headers(init.headers).has("authorization")) {
           return jsonResponse({ error: "A valid Bearer token is required" }, 401, {
             "www-authenticate": "Bearer",
+            "x-request-id": "unauth-success",
           });
         }
         expect(requestUrl.searchParams.get("project")).toBe("scrapbook");
         expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${token}`);
-        return jsonResponse({ items: [{ id: "item_1" }] });
+        return jsonResponse({ items: [{ id: "item_1" }] }, 200, {
+          "x-request-id": "items-success",
+        });
       }
       if (requestUrl.pathname === "/mcp") {
         const headers = new Headers(init.headers);
@@ -141,7 +147,7 @@ describe("hosted verifier checks", () => {
             capabilities: {},
             serverInfo: { name: "stensibly", version: "0.0.1" },
           },
-        });
+        }, 200, { "x-request-id": "mcp-success" });
       }
       throw new Error(`Unexpected request: ${requestUrl}`);
     };
@@ -156,14 +162,18 @@ describe("hosted verifier checks", () => {
     expect(results).toHaveLength(5);
     expect(results.every((result) => result.ok)).toBe(true);
     expect(calls).toHaveLength(5);
-    expect(formatResults(results)).not.toContain(token);
+    const output = formatResults(results);
+    expect(output).not.toContain(token);
+    expect(output).not.toContain("requestId=");
   });
 
-  test("runs every check and redacts failures", async () => {
+  test("runs every check, redacts failures, and includes valid request IDs", async () => {
     let calls = 0;
     const fetchImpl: FetchLike = async () => {
       calls += 1;
-      return jsonResponse({ error: `failed for ${token}` }, 500);
+      return jsonResponse({ error: `failed for ${token}` }, 500, {
+        "x-request-id": "worker-500",
+      });
     };
 
     const results = await verifyHosted({
@@ -175,6 +185,40 @@ describe("hosted verifier checks", () => {
     expect(calls).toBe(5);
     expect(results).toHaveLength(5);
     expect(results.every((result) => !result.ok)).toBe(true);
+    const output = formatResults(results);
+    expect(output).not.toContain(token);
+    expect(results.every((result) => result.detail.includes("requestId=worker-500"))).toBe(true);
+  });
+
+  test("ignores malformed request IDs without losing the diagnosis", async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({ error: "backend failed" }, 503, {
+        "x-request-id": "unsafe request id",
+      });
+
+    const results = await verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(results[0]?.detail).toContain("Expected HTTP 200; received HTTP 503");
+    expect(results[0]?.detail).not.toContain("requestId=");
+  });
+
+  test("redacts a token-shaped request ID", async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({ error: "backend failed" }, 503, {
+        "x-request-id": token,
+      });
+
+    const results = await verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(results[0]?.detail).toContain("requestId=[REDACTED]");
     expect(formatResults(results)).not.toContain(token);
   });
 });

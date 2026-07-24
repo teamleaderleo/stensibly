@@ -5,6 +5,7 @@ const DEFAULT_ORIGIN = "https://www.stensibly.com";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const TOKEN_PATTERN = /stn\.tok_[a-f0-9]{32}\.[A-Za-z0-9_-]{40,}/g;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export interface VerifyHostedOptions {
   endpoint: string;
@@ -113,7 +114,7 @@ export async function verifyHosted(
     const body = await readJson(response);
     expectStatus(response, 200, body);
     if (!isRecord(body) || body.backend !== "convex") {
-      throw new Error(`Expected backend=convex; received ${jsonPreview(body)}`);
+      throw responseError(response, `Expected backend=convex; received ${jsonPreview(body)}`);
     }
     return "200 backend=convex";
   }));
@@ -126,7 +127,7 @@ export async function verifyHosted(
     expectStatus(response, 401, body);
     const challenge = response.headers.get("www-authenticate") ?? "";
     if (!/\bbearer\b/i.test(challenge)) {
-      throw new Error("Expected a Bearer WWW-Authenticate challenge");
+      throw responseError(response, "Expected a Bearer WWW-Authenticate challenge");
     }
     return "401 Bearer challenge";
   }));
@@ -144,7 +145,10 @@ export async function verifyHosted(
     expectStatus(response, 204, body);
     const allowedOrigin = response.headers.get("access-control-allow-origin");
     if (allowedOrigin !== normalized.origin) {
-      throw new Error(`Expected Access-Control-Allow-Origin ${normalized.origin}; received ${allowedOrigin ?? "missing"}`);
+      throw responseError(
+        response,
+        `Expected Access-Control-Allow-Origin ${normalized.origin}; received ${allowedOrigin ?? "missing"}`,
+      );
     }
     requireHeaderToken(response, "access-control-allow-headers", "authorization");
     requireHeaderToken(response, "access-control-allow-headers", "content-type");
@@ -160,7 +164,7 @@ export async function verifyHosted(
     const body = await readJson(response);
     expectStatus(response, 200, body);
     if (!isRecord(body) || !Array.isArray(body.items)) {
-      throw new Error(`Expected an items array; received ${jsonPreview(body)}`);
+      throw responseError(response, `Expected an items array; received ${jsonPreview(body)}`);
     }
     return `200 items=${body.items.length}${normalized.project ? ` project=${normalized.project}` : ""}`;
   }));
@@ -194,7 +198,10 @@ export async function verifyHosted(
       ? body.result.serverInfo
       : null;
     if (serverInfo?.name !== "stensibly") {
-      throw new Error(`Expected MCP serverInfo.name=stensibly; received ${jsonPreview(body)}`);
+      throw responseError(
+        response,
+        `Expected MCP serverInfo.name=stensibly; received ${jsonPreview(body)}`,
+      );
     }
     return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly`;
   }));
@@ -327,7 +334,10 @@ async function readJson(response: Response): Promise<unknown> {
 
 function expectStatus(response: Response, expected: number, body: unknown): void {
   if (response.status !== expected) {
-    throw new Error(`Expected HTTP ${expected}; received HTTP ${response.status}: ${jsonPreview(body)}`);
+    throw responseError(
+      response,
+      `Expected HTTP ${expected}; received HTTP ${response.status}: ${jsonPreview(body)}`,
+    );
   }
 }
 
@@ -335,8 +345,22 @@ function requireHeaderToken(response: Response, header: string, expected: string
   const raw = response.headers.get(header) ?? "";
   const tokens = raw.split(",").map((entry) => entry.trim().toLowerCase());
   if (!tokens.includes(expected.toLowerCase())) {
-    throw new Error(`Expected ${header} to include ${expected}; received ${raw || "missing"}`);
+    throw responseError(
+      response,
+      `Expected ${header} to include ${expected}; received ${raw || "missing"}`,
+    );
   }
+}
+
+function responseError(response: Response, message: string): Error {
+  const requestId = responseRequestId(response);
+  return new Error(requestId ? `${message}; requestId=${requestId}` : message);
+}
+
+function responseRequestId(response: Response): string | null {
+  const value = response.headers.get("x-request-id")?.trim();
+  if (!value || !REQUEST_ID_PATTERN.test(value)) return null;
+  return value;
 }
 
 function jsonPreview(value: unknown): string {
