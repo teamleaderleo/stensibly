@@ -7,10 +7,7 @@ export const continuationStatuses = [
   "approved",
   "rejected",
   "deferred",
-  "queued",
-  "started",
-  "succeeded",
-  "failed",
+  "consumed",
   "cancelled",
   "superseded",
   "expired",
@@ -26,10 +23,7 @@ export const continuationCommands = [
   "approve",
   "reject",
   "defer",
-  "queue",
-  "start",
-  "succeed",
-  "fail",
+  "consume",
   "cancel",
   "supersede",
 ] as const;
@@ -51,6 +45,13 @@ export interface ContinuationEvidence {
   uri: string;
 }
 
+export interface ContinuationResult {
+  itemId?: string;
+  runId?: string;
+  decisionId?: string;
+  conversationRef?: string;
+}
+
 export interface ContinuationProposal {
   id: string;
   sourceItemId: string;
@@ -69,6 +70,8 @@ export interface ContinuationProposal {
   expiresAt: string | null;
   resolutionActorId: string | null;
   resolutionNote: string | null;
+  result: ContinuationResult | null;
+  consumedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,6 +97,7 @@ export interface ResolveContinuationInput {
   command: ContinuationCommand;
   expectedGeneration: number;
   note?: string;
+  result?: ContinuationResult;
   idempotencyKey?: string;
 }
 
@@ -121,6 +125,8 @@ interface ContinuationRow {
   expires_at: string | null;
   resolution_actor_id: string | null;
   resolution_note: string | null;
+  result_json: string | null;
+  consumed_at: string | null;
   request_json: string;
   idempotency_key: string | null;
   created_at: string;
@@ -139,28 +145,25 @@ const liveExpirableStatuses: ContinuationStatus[] = [
   "proposed",
   "deferred",
   "approved",
-  "queued",
 ];
 
-const transitions: Record<ContinuationCommand, Partial<Record<ContinuationStatus, ContinuationStatus>>> = {
+const transitions: Record<
+  ContinuationCommand,
+  Partial<Record<ContinuationStatus, ContinuationStatus>>
+> = {
   approve: { proposed: "approved", deferred: "approved" },
   reject: { proposed: "rejected", deferred: "rejected" },
   defer: { proposed: "deferred" },
-  queue: { approved: "queued" },
-  start: { approved: "started", queued: "started" },
-  succeed: { started: "succeeded" },
-  fail: { queued: "failed", started: "failed" },
+  consume: { approved: "consumed" },
   cancel: {
     proposed: "cancelled",
     deferred: "cancelled",
     approved: "cancelled",
-    queued: "cancelled",
   },
   supersede: {
     proposed: "superseded",
     deferred: "superseded",
     approved: "superseded",
-    queued: "superseded",
   },
 };
 
@@ -254,7 +257,9 @@ export function getContinuation(
 ): ContinuationProposal {
   ensureContinuationSchema(store);
   expireContinuations(store);
-  return mapContinuation(getContinuationRow(store, requiredText(id, "Continuation ID", 240)));
+  return mapContinuation(
+    getContinuationRow(store, requiredText(id, "Continuation ID", 240)),
+  );
 }
 
 export function listContinuations(
@@ -266,7 +271,9 @@ export function listContinuations(
   const sourceItemId = input.sourceItemId
     ? requiredText(input.sourceItemId, "Source item ID", 240)
     : null;
-  const status = input.status ? enumValue(input.status, continuationStatuses, "Continuation status") : null;
+  const status = input.status
+    ? enumValue(input.status, continuationStatuses, "Continuation status")
+    : null;
   const deliveryMode = input.deliveryMode
     ? enumValue(input.deliveryMode, continuationDeliveryModes, "Delivery mode")
     : null;
@@ -319,12 +326,18 @@ export function resolveContinuation(
         `Continuation generation changed from ${input.expectedGeneration} to ${current.generation}`,
       );
     }
+
     const nextStatus = transitions[input.command][current.status];
     if (!nextStatus) {
       throw new ConflictError(
         `Continuation cannot ${input.command} while ${current.status}`,
       );
     }
+
+    const action = JSON.parse(current.action_json) as ContinuationAction;
+    const consumptionResult = input.command === "consume"
+      ? normalizeConsumptionResult(input.result, action)
+      : rejectUnexpectedResult(input.result);
 
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -336,21 +349,27 @@ export function resolveContinuation(
             generation = ?2,
             resolution_actor_id = ?3,
             resolution_note = ?4,
-            updated_at = ?5
-        WHERE id = ?6 AND generation = ?7 AND status = ?8
+            result_json = ?5,
+            consumed_at = ?6,
+            updated_at = ?7
+        WHERE id = ?8 AND generation = ?9 AND status = ?10
       `)
       .run(
         nextStatus,
         nextGeneration,
         input.actor.id,
         input.note ?? null,
+        consumptionResult ? JSON.stringify(consumptionResult) : null,
+        input.command === "consume" ? now : null,
         now,
         input.id,
         input.expectedGeneration,
         current.status,
       );
     if (result.changes !== 1) {
-      throw new ConflictError("Continuation changed while the command was being applied");
+      throw new ConflictError(
+        "Continuation changed while the command was being applied",
+      );
     }
 
     appendContinuationEvent(store, {
@@ -364,6 +383,7 @@ export function resolveContinuation(
         toStatus: nextStatus,
         generation: nextGeneration,
         ...(input.note ? { note: input.note } : {}),
+        ...(consumptionResult ? { result: consumptionResult } : {}),
       },
       now,
     });
@@ -409,13 +429,15 @@ export function ensureContinuationSchema(store: StensiblyStore): void {
       approval_mode TEXT NOT NULL CHECK (approval_mode IN ('automatic', 'notify', 'human')),
       delivery_mode TEXT NOT NULL CHECK (delivery_mode IN ('current_conversation', 'human_inbox', 'supervisor')),
       status TEXT NOT NULL CHECK (status IN (
-        'proposed', 'approved', 'rejected', 'deferred', 'queued', 'started',
-        'succeeded', 'failed', 'cancelled', 'superseded', 'expired'
+        'proposed', 'approved', 'rejected', 'deferred', 'consumed',
+        'cancelled', 'superseded', 'expired'
       )),
       generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
       expires_at TEXT,
       resolution_actor_id TEXT REFERENCES actors(id),
       resolution_note TEXT,
+      result_json TEXT,
+      consumed_at TEXT,
       request_json TEXT NOT NULL,
       idempotency_key TEXT UNIQUE,
       created_at TEXT NOT NULL,
@@ -437,7 +459,7 @@ export function ensureContinuationSchema(store: StensiblyStore): void {
       ON continuations(delivery_mode, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_continuations_expiry
       ON continuations(expires_at)
-      WHERE status IN ('proposed', 'deferred', 'approved', 'queued');
+      WHERE status IN ('proposed', 'deferred', 'approved');
   `);
   initializedStores.add(store);
 }
@@ -446,7 +468,7 @@ function expireContinuations(store: StensiblyStore): void {
   const rows = store.db
     .query<{ id: string }, [string]>(`
       SELECT id FROM continuations
-      WHERE status IN ('proposed', 'deferred', 'approved', 'queued')
+      WHERE status IN ('proposed', 'deferred', 'approved')
         AND expires_at IS NOT NULL
         AND expires_at <= ?1
       ORDER BY expires_at ASC
@@ -478,6 +500,7 @@ function expireContinuationInTransaction(
   ) {
     return fresh;
   }
+
   const nextGeneration = fresh.generation + 1;
   const result = store.db
     .query(`
@@ -504,9 +527,14 @@ function expireContinuationInTransaction(
   return getContinuationRow(store, id);
 }
 
-function getContinuationRow(store: StensiblyStore, id: string): ContinuationRow {
+function getContinuationRow(
+  store: StensiblyStore,
+  id: string,
+): ContinuationRow {
   const row = store.db
-    .query<ContinuationRow, [string]>("SELECT * FROM continuations WHERE id = ?1")
+    .query<ContinuationRow, [string]>(
+      "SELECT * FROM continuations WHERE id = ?1",
+    )
     .get(id);
   if (!row) throw new NotFoundError(`Continuation ${id} does not exist`);
   return row;
@@ -537,7 +565,11 @@ function normalizeProposalInput(input: ProposeContinuationInput) {
       "Delivery mode",
     ),
     expiresAt,
-    idempotencyKey: optionalText(input.idempotencyKey, "Idempotency key", 240),
+    idempotencyKey: optionalText(
+      input.idempotencyKey,
+      "Idempotency key",
+      240,
+    ),
   };
 }
 
@@ -549,16 +581,31 @@ function normalizeResolutionInput(input: ResolveContinuationInput) {
   return {
     id: requiredText(input.id, "Continuation ID", 240),
     actor: normalizeActor(input.actor),
-    command: enumValue(input.command, continuationCommands, "Continuation command"),
+    command: enumValue(
+      input.command,
+      continuationCommands,
+      "Continuation command",
+    ),
     expectedGeneration: generation,
     note: optionalText(input.note, "Resolution note", 10_000),
-    idempotencyKey: optionalText(input.idempotencyKey, "Idempotency key", 240),
+    result: input.result,
+    idempotencyKey: optionalText(
+      input.idempotencyKey,
+      "Idempotency key",
+      240,
+    ),
   };
 }
 
 function normalizeActor(actor: ActorInput): ActorInput {
-  if (!actor || typeof actor !== "object") throw new TypeError("Actor is required");
-  const kind = enumValue(actor.kind, ["human", "agent", "service"] as const, "Actor kind");
+  if (!actor || typeof actor !== "object") {
+    throw new TypeError("Actor is required");
+  }
+  const kind = enumValue(
+    actor.kind,
+    ["human", "agent", "service"] as const,
+    "Actor kind",
+  );
   return {
     id: requiredText(actor.id, "Actor ID", 120),
     name: requiredText(actor.name, "Actor name", 160),
@@ -567,46 +614,148 @@ function normalizeActor(actor: ActorInput): ActorInput {
 }
 
 function normalizeAction(action: ContinuationAction): ContinuationAction {
-  if (!action || typeof action !== "object") throw new TypeError("Continuation action is required");
+  if (!action || typeof action !== "object") {
+    throw new TypeError("Continuation action is required");
+  }
   if (action.kind === "create_item") {
-    const project = requiredText(action.project, "Action project", 80).toLowerCase();
+    const project = requiredText(
+      action.project,
+      "Action project",
+      80,
+    ).toLowerCase();
     if (!/^[a-z0-9][a-z0-9-_]*$/.test(project)) {
       throw new TypeError("Action project must be a lowercase slug");
     }
     return { kind: action.kind, project };
   }
   if (action.kind === "resume_item") {
-    return { kind: action.kind, itemId: requiredText(action.itemId, "Action item ID", 240) };
+    return {
+      kind: action.kind,
+      itemId: requiredText(action.itemId, "Action item ID", 240),
+    };
   }
   if (action.kind === "dispatch_item") {
     return {
       kind: action.kind,
       itemId: requiredText(action.itemId, "Action item ID", 240),
       ...(action.runnerProfile
-        ? { runnerProfile: requiredText(action.runnerProfile, "Runner profile", 240) }
+        ? {
+            runnerProfile: requiredText(
+              action.runnerProfile,
+              "Runner profile",
+              240,
+            ),
+          }
         : {}),
     };
   }
   if (action.kind === "request_decision") {
     return {
       kind: action.kind,
-      decisionType: requiredText(action.decisionType, "Decision type", 120),
+      decisionType: requiredText(
+        action.decisionType,
+        "Decision type",
+        120,
+      ),
     };
   }
   throw new TypeError("Unknown continuation action kind");
 }
 
-function normalizeEvidence(evidence: ContinuationEvidence[]): ContinuationEvidence[] {
-  if (!Array.isArray(evidence)) throw new TypeError("Evidence must be an array");
-  if (evidence.length > 50) throw new TypeError("Evidence may contain at most 50 references");
+function normalizeEvidence(
+  evidence: ContinuationEvidence[],
+): ContinuationEvidence[] {
+  if (!Array.isArray(evidence)) {
+    throw new TypeError("Evidence must be an array");
+  }
+  if (evidence.length > 50) {
+    throw new TypeError("Evidence may contain at most 50 references");
+  }
   return evidence.map((entry) => {
-    if (!entry || typeof entry !== "object") throw new TypeError("Evidence entries must be objects");
+    if (!entry || typeof entry !== "object") {
+      throw new TypeError("Evidence entries must be objects");
+    }
     return {
       kind: requiredText(entry.kind, "Evidence kind", 80),
       label: requiredText(entry.label, "Evidence label", 240),
       uri: requiredText(entry.uri, "Evidence URI", 4096),
     };
   });
+}
+
+function normalizeConsumptionResult(
+  result: ContinuationResult | undefined,
+  action: ContinuationAction,
+): ContinuationResult {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new TypeError("A consumption result is required");
+  }
+  const itemId = optionalText(result.itemId, "Result item ID", 240);
+  const runId = optionalText(result.runId, "Result run ID", 240);
+  const decisionId = optionalText(
+    result.decisionId,
+    "Result decision ID",
+    240,
+  );
+  const conversationRef = optionalText(
+    result.conversationRef,
+    "Conversation reference",
+    4096,
+  );
+  const normalized: ContinuationResult = {
+    ...(itemId ? { itemId } : {}),
+    ...(runId ? { runId } : {}),
+    ...(decisionId ? { decisionId } : {}),
+    ...(conversationRef ? { conversationRef } : {}),
+  };
+
+  if (Object.keys(normalized).length === 0) {
+    throw new TypeError("A consumption result must include a durable reference");
+  }
+  if (action.kind === "create_item" && !normalized.itemId) {
+    throw new TypeError("Creating an item requires a result item ID");
+  }
+  if (
+    action.kind === "resume_item" &&
+    !normalized.itemId &&
+    !normalized.runId &&
+    !normalized.conversationRef
+  ) {
+    throw new TypeError(
+      "Resuming an item requires an item, run, or conversation reference",
+    );
+  }
+  if (
+    action.kind === "resume_item" &&
+    normalized.itemId &&
+    normalized.itemId !== action.itemId
+  ) {
+    throw new TypeError("A resumed item result must reference the action item");
+  }
+  if (action.kind === "dispatch_item" && !normalized.runId) {
+    throw new TypeError("Dispatching an item requires a result run ID");
+  }
+  if (
+    action.kind === "request_decision" &&
+    !normalized.decisionId &&
+    !normalized.itemId
+  ) {
+    throw new TypeError(
+      "Requesting a decision requires a decision or item reference",
+    );
+  }
+  return normalized;
+}
+
+function rejectUnexpectedResult(
+  result: ContinuationResult | undefined,
+): null {
+  if (result !== undefined) {
+    throw new TypeError(
+      "Only the consume command accepts a continuation result",
+    );
+  }
+  return null;
 }
 
 function proposalRequest(input: ReturnType<typeof normalizeProposalInput>) {
@@ -625,17 +774,24 @@ function proposalRequest(input: ReturnType<typeof normalizeProposalInput>) {
   };
 }
 
-function resolutionRequest(input: ReturnType<typeof normalizeResolutionInput>) {
+function resolutionRequest(
+  input: ReturnType<typeof normalizeResolutionInput>,
+) {
   return {
     id: input.id,
     actor: input.actor,
     command: input.command,
     expectedGeneration: input.expectedGeneration,
     note: input.note ?? null,
+    result: input.result ?? null,
   };
 }
 
-function upsertActor(store: StensiblyStore, actor: ActorInput, now: string): void {
+function upsertActor(
+  store: StensiblyStore,
+  actor: ActorInput,
+  now: string,
+): void {
   store.db
     .query(`
       INSERT INTO actors (id, name, kind, updated_at)
@@ -676,7 +832,11 @@ function appendContinuationEvent(
   return id;
 }
 
-function touchItem(store: StensiblyStore, itemId: string, now: string): void {
+function touchItem(
+  store: StensiblyStore,
+  itemId: string,
+  now: string,
+): void {
   store.db
     .query(`
       UPDATE items
@@ -705,16 +865,30 @@ function mapContinuation(row: ContinuationRow): ContinuationProposal {
     expiresAt: row.expires_at,
     resolutionActorId: row.resolution_actor_id,
     resolutionNote: row.resolution_note,
+    result: row.result_json
+      ? JSON.parse(row.result_json) as ContinuationResult
+      : null,
+    consumedAt: row.consumed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-function requiredText(value: unknown, label: string, maxLength: number): string {
+function requiredText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string {
   const output = typeof value === "string" ? value.trim() : "";
   if (!output) throw new TypeError(`${label} is required`);
-  if (output.length > maxLength) throw new TypeError(`${label} may contain at most ${maxLength} characters`);
-  if (/stn\.tok_/i.test(output)) throw new TypeError(`${label} cannot contain credential-shaped text`);
+  if (output.length > maxLength) {
+    throw new TypeError(
+      `${label} may contain at most ${maxLength} characters`,
+    );
+  }
+  if (/stn\.tok_/i.test(output)) {
+    throw new TypeError(`${label} cannot contain credential-shaped text`);
+  }
   return output;
 }
 
@@ -730,7 +904,9 @@ function optionalText(
 function validTimestamp(value: unknown, label: string): string {
   const output = requiredText(value, label, 120);
   const parsed = Date.parse(output);
-  if (Number.isNaN(parsed)) throw new TypeError(`${label} must be an ISO timestamp`);
+  if (Number.isNaN(parsed)) {
+    throw new TypeError(`${label} must be an ISO timestamp`);
+  }
   return new Date(parsed).toISOString();
 }
 
