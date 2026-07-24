@@ -55,9 +55,10 @@ The production path has previously demonstrated:
 - unauthenticated `/api/v1/items` returns `401`
 - authenticated `/api/v1/items` returns `200`
 - dashboard CORS preflight succeeds
-- remote MCP initializes with Bearer authentication
 - `api.stensibly.com` has public DNS, TLS, and Worker routing
 - the static dashboard connects with a read-only token
+
+Remote MCP is exposed at `/mcp`. The hosted verifier adds the first repeatable authenticated `initialize` check; record a production `5/5` result in issue #24 when an operator runs it with a current read token.
 
 Use the verifier to establish the current state instead of repeating manual tests one layer at a time.
 
@@ -250,7 +251,7 @@ Worker rollback does not reverse Convex records. Evaluate data recovery separate
 
 ### Dashboard
 
-Use the Vercel project deployment history or the CLI to return production traffic to the previous deployment:
+Use the Vercel project deployment history to select Instant Rollback. When the Vercel CLI is installed and linked to the `stensibly` project, the equivalent commands are:
 
 ```bash
 vercel rollback
@@ -284,13 +285,15 @@ STENSIBLY_WORKSPACE=default \
   --projects PROJECT_SLUG
 ```
 
-Save the raw token once, then deliver it through an appropriate secret channel. Revoke compromised or obsolete tokens by ID:
+Save the raw token once, then deliver it through an appropriate secret channel. Revoke compromised or obsolete hosted tokens by ID with the same Convex environment:
 
 ```bash
-bun run tokens revoke tok_TOKEN_ID
+STENSIBLY_BACKEND=convex \
+CONVEX_URL="$CONVEX_URL" \
+STENSIBLY_SERVICE_SECRET="$STENSIBLY_SERVICE_SECRET" \
+STENSIBLY_WORKSPACE=default \
+  bun run tokens revoke tok_TOKEN_ID
 ```
-
-Run the token command with the same Convex environment variables so it targets hosted authority.
 
 ## Service-secret rotation
 
