@@ -1,6 +1,12 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { FunctionReference } from "convex/server";
 import { convexApi } from "../convex/refs.js";
+import type { ContinuationLedger } from "./continuation-contracts.js";
+import type {
+  ListContinuationsInput,
+  ProposeContinuationInput,
+  ResolveContinuationInput,
+} from "./continuations.js";
 import type {
   ActorActionInput,
   AttachWorkArtifactInput,
@@ -26,7 +32,7 @@ export interface ConvexWorkLedgerOptions {
   workspace?: string;
 }
 
-export class ConvexWorkLedger implements WorkLedger {
+export class ConvexWorkLedger implements WorkLedger, ContinuationLedger {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
@@ -91,6 +97,34 @@ export class ConvexWorkLedger implements WorkLedger {
 
   async completeWork(input: CompleteWorkInput) {
     return await this.client.mutation(convexApi.items.complete, this.args(input)) as Awaited<ReturnType<WorkLedger["completeWork"]>>;
+  }
+
+  async proposeContinuation(input: ProposeContinuationInput) {
+    return await this.client.mutation(
+      convexApi.continuations.propose,
+      this.args(input),
+    ) as Awaited<ReturnType<ContinuationLedger["proposeContinuation"]>>;
+  }
+
+  async getContinuation(id: string) {
+    return await this.client.mutation(
+      convexApi.continuations.get,
+      this.args({ id }),
+    ) as Awaited<ReturnType<ContinuationLedger["getContinuation"]>>;
+  }
+
+  async listContinuations(input: ListContinuationsInput = {}) {
+    return await this.client.mutation(
+      convexApi.continuations.list,
+      this.args(input),
+    ) as Awaited<ReturnType<ContinuationLedger["listContinuations"]>>;
+  }
+
+  async resolveContinuation(input: ResolveContinuationInput) {
+    return await this.client.mutation(
+      convexApi.continuations.resolve,
+      this.args(input),
+    ) as Awaited<ReturnType<ContinuationLedger["resolveContinuation"]>>;
   }
 
   private args(input: object): Record<string, unknown> {
