@@ -33,7 +33,7 @@ export function readCompletedItem(payload, expected = {}) {
     throw new TypeError('The completed item returned an invalid version.');
   }
   const summary = nullableString(item.summary, 10_000, 'summary');
-  if (Object.hasOwn(expected, 'summary') && summary !== expected.summary) {
+  if (Object.prototype.hasOwnProperty.call(expected, 'summary') && summary !== expected.summary) {
     throw new TypeError('The endpoint returned a different completion summary.');
   }
   return { id, status, summary, version: item.version };
