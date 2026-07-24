@@ -151,15 +151,37 @@ describe("hosted gateway", () => {
       ledger: new SqliteWorkLedger(store) as WorkLedger,
       authenticator: new FailingAuthenticator(),
     });
-    const response = await failingApp.request("/api/v1/items", {
+    const restResponse = await failingApp.request("/api/v1/items", {
       headers: { authorization: "Bearer opaque-token" },
     });
 
-    expect(response.status).toBe(502);
-    expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBe("convex_failure");
-    expect(await response.json()).toEqual({
+    expect(restResponse.status).toBe(502);
+    expect(restResponse.headers.get(FAILURE_CATEGORY_HEADER)).toBe("convex_failure");
+    expect(await restResponse.json()).toEqual({
       error: "Hosted token authority failed",
       code: "backend_failure",
+    });
+
+    const mcpResponse = await failingApp.request("/mcp", {
+      method: "POST",
+      headers: mcpHeaders(),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "initialize",
+        params: {
+          protocolVersion,
+          capabilities: {},
+          clientInfo: { name: "failed-auth", version: "0.0.1" },
+        },
+      }),
+    });
+    expect(mcpResponse.status).toBe(502);
+    expect(mcpResponse.headers.get(FAILURE_CATEGORY_HEADER)).toBe("convex_failure");
+    expect(await mcpResponse.json()).toEqual({
+      jsonrpc: "2.0",
+      error: { code: -32603, message: "Hosted token authority failed" },
+      id: null,
     });
   });
 });
