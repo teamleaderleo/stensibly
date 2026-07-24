@@ -7,6 +7,11 @@ import { StensiblyStore } from "../src/store.ts";
 
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
 
+type CompletionResult = {
+  item: { status: string; summary: string };
+  continuations: Array<{ status: string; sourceItemId: string }>;
+};
+
 describe("atomic MCP completion continuations", () => {
   test("returns the completed item and durable proposals from complete_work", async () => {
     const store = new StensiblyStore(":memory:");
@@ -42,10 +47,7 @@ describe("atomic MCP completion continuations", () => {
         idempotencyKey: "mcp-complete-with-continuation",
       };
 
-      const result = await call<{
-        item: { status: string; summary: string };
-        continuations: Array<{ status: string; sourceItemId: string }>;
-      }>(client, "complete_work", input);
+      const result = await call<CompletionResult>(client, "complete_work", input);
       expect(result.item).toMatchObject({
         status: "done",
         summary: "Completed with an atomic proposal.",
@@ -53,7 +55,8 @@ describe("atomic MCP completion continuations", () => {
       expect(result.continuations).toEqual([
         expect.objectContaining({ status: "proposed", sourceItemId: item.id }),
       ]);
-      expect(await call(client, "complete_work", input)).toEqual(result);
+      const replay = await call<CompletionResult>(client, "complete_work", input);
+      expect(replay).toEqual(result);
     } finally {
       await client.close();
       await server.close();
