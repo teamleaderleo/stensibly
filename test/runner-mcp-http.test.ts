@@ -10,6 +10,7 @@ const protocolVersion = "2025-06-18";
 
 let store: StensiblyStore;
 let app: ReturnType<typeof createServerApp>;
+let alphaItemId: string;
 let alphaRunId: string;
 let secretRunId: string;
 
@@ -17,6 +18,7 @@ beforeEach(() => {
   store = new StensiblyStore(":memory:");
   const alpha = createItem("alpha", "Run alpha work");
   const secret = createItem("secret", "Run secret work");
+  alphaItemId = alpha.id;
   alphaRunId = dispatch(alpha.id, "dispatch-alpha");
   secretRunId = dispatch(secret.id, "dispatch-secret");
   app = createServerApp(store);
@@ -25,7 +27,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("generic runner MCP endpoint", () => {
-  test("claims context, advances the run, heartbeats, and finishes", async () => {
+  test("claims exact context, advances the run, heartbeats, and finishes", async () => {
     const token = createApiToken(store, {
       name: "Alpha runner",
       scopes: ["read", "write"],
@@ -36,7 +38,7 @@ describe("generic runner MCP endpoint", () => {
       actor: runner,
       runnerType: "generic-mcp",
       runnerProfile: "codex-default",
-      project: "alpha",
+      runId: alphaRunId,
       externalRunId: "mcp-session-alpha",
       leaseSeconds: 600,
       idempotencyKey: "claim-alpha",
@@ -50,7 +52,7 @@ describe("generic runner MCP endpoint", () => {
         leaseGeneration: number;
         leaseOwnerId: string;
       };
-      item: { project: string; claimedBy: string };
+      item: { id: string; project: string; claimedBy: string };
       context: { item: { id: string }; characterCount: number };
     }>(claimedResponse);
     expect(claimed.run).toMatchObject({
@@ -58,8 +60,12 @@ describe("generic runner MCP endpoint", () => {
       status: "starting",
       leaseOwnerId: runner.id,
     });
-    expect(claimed.item).toMatchObject({ project: "alpha", claimedBy: runner.id });
-    expect(claimed.context.item.id).toBe(claimed.context.item.id);
+    expect(claimed.item).toMatchObject({
+      id: alphaItemId,
+      project: "alpha",
+      claimedBy: runner.id,
+    });
+    expect(claimed.context.item.id).toBe(claimed.item.id);
     expect(claimed.context.characterCount).toBeGreaterThan(0);
 
     const running = await readToolJson<{
@@ -155,7 +161,15 @@ describe("generic runner MCP endpoint", () => {
     }));
     expect(deniedProject.status).toBe(403);
 
-    const deniedRead = await runnerRequest(alpha.token, toolCall(13, "get_runner_run", {
+    const deniedExact = await runnerRequest(alpha.token, toolCall(13, "claim_runner_work", {
+      actor: runner,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      runId: secretRunId,
+    }));
+    expect(deniedExact.status).toBe(403);
+
+    const deniedRead = await runnerRequest(alpha.token, toolCall(14, "get_runner_run", {
       id: secretRunId,
     }));
     expect(deniedRead.status).toBe(403);
