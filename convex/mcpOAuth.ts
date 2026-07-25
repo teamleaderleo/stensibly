@@ -136,6 +136,9 @@ export const createAuthorizationCode = mutation({
     const redirectUri = assertRegisteredRedirect(client, args.redirectUri);
     const principal = await requireAccountPrincipal(ctx, workspace._id, workspaceSlug, args.accountId);
     const scopes = requireAuthorisedScopes(args.scopes, principal.scopes);
+    if (scopes.includes("offline_access") && !client.grantTypes.includes("refresh_token")) {
+      throw new Error("OAuth client is not registered for refresh tokens");
+    }
     const externalId = assertCredentialId(args.id, "code");
     const existing = await ctx.db
       .query("mcpOAuthCodes")
@@ -204,31 +207,35 @@ export const exchangeAuthorizationCode = mutation({
       await ctx.db.delete(code._id);
       return null;
     }
-    const refreshId = assertCredentialId(args.refreshId, "refresh");
-    const existingRefresh = await ctx.db
-      .query("mcpOAuthRefreshTokens")
-      .withIndex("by_external_id", (q) => q.eq("externalId", refreshId))
-      .unique();
-    if (existingRefresh) throw new Error(`OAuth refresh token ${refreshId} already exists`);
-    const refreshExpiresAt = assertExpiry(
-      args.refreshExpiresAt,
-      now,
-      MAX_REFRESH_LIFETIME_MS,
-      "Refresh token",
-    );
+
+    if (allowedScopes.includes("offline_access")) {
+      const refreshId = assertCredentialId(args.refreshId, "refresh");
+      const existingRefresh = await ctx.db
+        .query("mcpOAuthRefreshTokens")
+        .withIndex("by_external_id", (q) => q.eq("externalId", refreshId))
+        .unique();
+      if (existingRefresh) throw new Error(`OAuth refresh token ${refreshId} already exists`);
+      const refreshExpiresAt = assertExpiry(
+        args.refreshExpiresAt,
+        now,
+        MAX_REFRESH_LIFETIME_MS,
+        "Refresh token",
+      );
+      await ctx.db.insert("mcpOAuthRefreshTokens", {
+        workspaceId: workspace._id,
+        accountId: code.accountId,
+        externalId: refreshId,
+        familyExternalId: refreshId,
+        secretHash: assertHash(args.refreshSecretHash),
+        clientExternalId: code.clientExternalId,
+        scopes: allowedScopes,
+        resource: code.resource,
+        createdAt: now,
+        expiresAt: refreshExpiresAt,
+      });
+    }
+
     await ctx.db.delete(code._id);
-    await ctx.db.insert("mcpOAuthRefreshTokens", {
-      workspaceId: workspace._id,
-      accountId: code.accountId,
-      externalId: refreshId,
-      familyExternalId: refreshId,
-      secretHash: assertHash(args.refreshSecretHash),
-      clientExternalId: code.clientExternalId,
-      scopes: allowedScopes,
-      resource: code.resource,
-      createdAt: now,
-      expiresAt: refreshExpiresAt,
-    });
     return grant(code.clientExternalId, code.resource, allowedScopes, principal);
   },
 });
@@ -505,9 +512,12 @@ async function revokeRefreshFamily(
   familyExternalId: string,
   now: number,
 ): Promise<void> {
+  // A refresh family has one current leaf. Reading newest-first guarantees that
+  // the active token is included even after more than 100 historical rotations.
   const family = await ctx.db
     .query("mcpOAuthRefreshTokens")
     .withIndex("by_family_created", (q) => q.eq("familyExternalId", familyExternalId))
+    .order("desc")
     .take(100);
   for (const token of family) {
     if (token.revokedAt === undefined) await ctx.db.patch(token._id, { revokedAt: now });
