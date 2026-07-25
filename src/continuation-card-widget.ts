@@ -94,6 +94,12 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
         const evidence = evidenceHtml(continuation.evidence);
         const canDecide = continuation.status === "proposed" || continuation.status === "deferred";
         const canEdit = canDecide;
+        const canQueue = Boolean(model.capabilities?.supervisorQueue) &&
+          canDecide &&
+          continuation.action?.kind !== "request_decision";
+        const queueTitle = model.capabilities?.supervisorQueue
+          ? "Queue this typed action for supervisor execution"
+          : "Supervisor queueing is unavailable on this backend";
         const instruction = editing
           ? '<textarea id="instruction-editor" aria-label="Continuation instruction">' + escapeHtml(draftInstruction) + "</textarea>"
           : "<p>" + escapeHtml(continuation.instruction) + "</p>";
@@ -102,6 +108,7 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
             '<button id="cancel-edit" ' + (busy ? "disabled" : "") + '>Cancel</button>'
           : '<button id="begin-edit" ' + (!canEdit || busy ? "disabled" : "") + '>Edit instruction</button>' +
             '<button class="primary" data-command="approve" ' + (!canDecide || busy ? "disabled" : "") + '>Continue here</button>' +
+            '<button data-command="queue" title="' + escapeHtml(queueTitle) + '" ' + (!canQueue || busy ? "disabled" : "") + '>Queue for supervisor</button>' +
             '<button data-command="defer" ' + (continuation.status !== "proposed" || busy ? "disabled" : "") + '>Later</button>' +
             '<button class="danger" data-command="reject" ' + (!canDecide || busy ? "disabled" : "") + '>Reject</button>';
 
@@ -290,6 +297,13 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
             ". Resolve it with command approve using human actor " + actorJson +
             ". After approval, carry out its typed action in this conversation. Create or identify the durable resulting item, run, decision, or conversation reference, then consume the continuation with that result. If the generation is stale, explain the current server-owned state instead of retrying blindly.";
         }
+        if (command === "queue") {
+          return "Re-read Stensibly continuation " + continuation.id +
+            " and verify it is still at generation " + continuation.generation +
+            ". Queue it with queue_continuation_for_supervisor using human actor " + actorJson +
+            " and expectedGeneration " + continuation.generation +
+            ". Report the durable item and queued run references returned by the server. If the generation is stale or the target is ineligible, explain the current server-owned state instead of retrying blindly.";
+        }
         return "Re-read Stensibly continuation " + continuation.id +
           " and verify it is still at generation " + continuation.generation +
           ". Resolve it with command " + command + " using human actor " + actorJson +
@@ -298,12 +312,17 @@ export const CONTINUATION_CARD_HTML = String.raw`<!doctype html>
 
       const submitDecision = async (command) => {
         if (busy || !model) return;
+        if (command === "queue" && !model.capabilities?.supervisorQueue) {
+          setStatus("Supervisor queueing is unavailable on this backend.", true);
+          render();
+          return;
+        }
         busy = true;
-        setStatus("Sending your decision…");
+        setStatus(command === "queue" ? "Sending the queue request…" : "Sending your decision…");
         render();
         try {
           await sendFollowUp(promptFor(command));
-          setStatus("Decision sent to the conversation.");
+          setStatus(command === "queue" ? "Queue request sent to the conversation." : "Decision sent to the conversation.");
           render();
         } catch (error) {
           busy = false;
