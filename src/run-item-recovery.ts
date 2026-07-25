@@ -13,6 +13,7 @@ interface StaleRunRow {
   status: WorkRunStatus;
   generation: number;
   lease_generation: number;
+  lease_owner_id: string | null;
   lease_expires_at: string;
 }
 
@@ -32,7 +33,8 @@ export function reconcileStaleRunItems(
   const transaction = store.db.transaction(() => {
     const rows = store.db
       .query<StaleRunRow, [string]>(`
-        SELECT id, item_id, actor_id, status, generation, lease_generation, lease_expires_at
+        SELECT id, item_id, actor_id, status, generation, lease_generation,
+               lease_owner_id, lease_expires_at
         FROM work_runs
         WHERE status IN ('queued', 'starting', 'running', 'waiting')
           AND lease_expires_at IS NOT NULL
@@ -79,7 +81,7 @@ export function reconcileStaleRunItems(
       const itemClaimReleased = releaseItemClaim(
         store,
         current.item_id,
-        current.actor_id,
+        current.lease_owner_id ?? current.actor_id,
         timestamp,
       );
       appendEvent(store, {
