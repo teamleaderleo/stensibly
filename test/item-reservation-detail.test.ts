@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("hosted item detail composition", () => {
-  test("combines canonical detail with bounded reservation and run queries", async () => {
+  test("combines bounded canonical detail with the reservation query", async () => {
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const reservations = [{
       id: "res_1",
@@ -67,10 +67,9 @@ describe("hosted item detail composition", () => {
           const name = getFunctionName(reference);
           calls.push({ name, args });
           if (name === "items:get") {
-            return { item, events: [], artifacts: [], runs: [], dependencies: [] };
+            return { item, events: [], artifacts: [], runs, dependencies: [] };
           }
           if (name === "itemReservations:list") return reservations;
-          if (name === "itemRuns:list") return runs;
           throw new Error(`Unexpected query ${name}`);
         },
         mutation: async () => {
@@ -96,11 +95,9 @@ describe("hosted item detail composition", () => {
     expect(calls.map((call) => call.name)).toEqual([
       "items:get",
       "itemReservations:list",
-      "itemRuns:list",
     ]);
     const itemCall = calls.find((call) => call.name === "items:get")!;
     const reservationCall = calls.find((call) => call.name === "itemReservations:list")!;
-    const runCall = calls.find((call) => call.name === "itemRuns:list")!;
     expect(itemCall.args).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
@@ -113,12 +110,6 @@ describe("hosted item detail composition", () => {
     });
     expect(reservationCall.args.now as number).toBeGreaterThanOrEqual(before);
     expect(reservationCall.args.now as number).toBeLessThanOrEqual(after);
-    expect(runCall.args).toMatchObject({
-      serviceSecret: "service-secret",
-      workspace: "default",
-      itemId: item.id,
-      limit: 20,
-    });
   });
 
   test("keeps local REST item detail explicit and compatible", async () => {
@@ -137,6 +128,7 @@ describe("hosted item detail composition", () => {
     expect(await response.json()).toMatchObject({
       dependencies: [],
       reservations: [],
+      runs: [],
     });
   });
 });
