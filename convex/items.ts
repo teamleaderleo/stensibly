@@ -215,9 +215,18 @@ export const get = query({
       });
     }
 
+    const visibleDependencyIds = new Set(dependencies.map((dependency) => dependency.id));
+    const visibleEvents = events.filter((event) => {
+      if (event.type !== "dependency.added") return true;
+      const dependencyId = event.payload && typeof event.payload === "object"
+        ? event.payload.dependencyId
+        : undefined;
+      return typeof dependencyId === "string" && visibleDependencyIds.has(dependencyId);
+    });
+
     return {
       item: await publicItem(ctx, item),
-      events: events.map((event) => ({ ...publicEvent(event), itemId: item.externalId })),
+      events: visibleEvents.map((event) => ({ ...publicEvent(event), itemId: item.externalId })),
       artifacts: artifacts.map((artifact) => ({
         ...publicArtifact(artifact),
         itemId: item.externalId,
