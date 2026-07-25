@@ -77,6 +77,7 @@ function normalizeOrigin(value: string | null | undefined): string | null {
     const parsed = new URL(normalized);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
     if (parsed.username || parsed.password) return null;
+    if (parsed.pathname !== "/" || parsed.search || parsed.hash) return null;
     return parsed.origin;
   } catch {
     return null;
