@@ -1,6 +1,8 @@
 const dependencyDirections = new Set(['incoming', 'outgoing']);
 const dependencyKinds = new Set(['blocks', 'depends_on', 'related_to', 'duplicates', 'supersedes']);
 const reservationModes = new Set(['exclusive', 'shared']);
+const runStatuses = new Set(['running', 'waiting', 'succeeded', 'failed', 'cancelled']);
+const activeRunStatuses = new Set(['running', 'waiting']);
 const completedStatuses = new Set(['done', 'archived']);
 
 export function readItemDetail(payload, expectedItemId = '') {
@@ -21,12 +23,16 @@ export function readItemDetail(payload, expectedItemId = '') {
   if (payload.reservations !== undefined && !Array.isArray(payload.reservations)) {
     throw new TypeError('The item detail response contains incompatible reservations.');
   }
+  if (payload.runs !== undefined && !Array.isArray(payload.runs)) {
+    throw new TypeError('The item detail response contains incompatible runs.');
+  }
   return {
     item: payload.item,
     events: payload.events.filter(isRecord),
     artifacts: payload.artifacts.filter(isRecord),
     dependencies: (payload.dependencies || []).map(readDependency).filter(Boolean),
     reservations: (payload.reservations || []).map(readReservation).filter(Boolean),
+    runs: (payload.runs || []).map((run) => readRun(run, itemId)).filter(Boolean),
   };
 }
 
@@ -59,6 +65,20 @@ export function reservationCapacityLabel(reservation) {
 
 export function reservationIsFull(reservation) {
   return nonNegativeInteger(reservation?.availableUnits) === 0;
+}
+
+export function runIsActive(run) {
+  return activeRunStatuses.has(run?.status);
+}
+
+export function runStatusLabel(run) {
+  return {
+    running: 'running',
+    waiting: 'waiting',
+    succeeded: 'succeeded',
+    failed: 'failed',
+    cancelled: 'cancelled',
+  }[run?.status] || 'status unavailable';
 }
 
 export function safeArtifactHref(value) {
@@ -171,6 +191,59 @@ function readReservation(value) {
   };
 }
 
+function readRun(value, expectedItemId) {
+  if (!isRecord(value)) return null;
+  const id = textValue(value.id);
+  const itemId = textValue(value.itemId);
+  const actorId = textValue(value.actorId);
+  const harness = textValue(value.harness);
+  const status = textValue(value.status);
+  const startedAt = timestampValue(value.startedAt);
+  const lastHeartbeatAt = timestampValue(value.lastHeartbeatAt);
+  const endedAt = nullableTimestamp(value.endedAt);
+  const childAgentCount = nullableNonNegativeInteger(value.childAgentCount);
+  const toolCallCount = nullableNonNegativeInteger(value.toolCallCount);
+  if (
+    !id
+    || itemId !== expectedItemId
+    || !actorId
+    || !harness
+    || !runStatuses.has(status)
+    || !startedAt
+    || !lastHeartbeatAt
+    || childAgentCount === undefined
+    || toolCallCount === undefined
+  ) return null;
+
+  const startedMs = Date.parse(startedAt);
+  const heartbeatMs = Date.parse(lastHeartbeatAt);
+  if (heartbeatMs < startedMs) return null;
+  if (activeRunStatuses.has(status)) {
+    if (endedAt !== null) return null;
+  } else {
+    if (!endedAt || Date.parse(endedAt) < heartbeatMs) return null;
+  }
+
+  return {
+    id,
+    itemId,
+    actorId,
+    harness,
+    model: nullableText(value.model),
+    externalRunId: nullableText(value.externalRunId),
+    repository: nullableText(value.repository),
+    branch: nullableText(value.branch),
+    worktree: nullableText(value.worktree),
+    status,
+    childAgentCount,
+    toolCallCount,
+    startedAt,
+    lastHeartbeatAt,
+    endedAt,
+    outcome: nullableText(value.outcome),
+  };
+}
+
 function displayValue(value, maxLength) {
   let output;
   if (value === undefined) {
@@ -199,6 +272,28 @@ function positiveInteger(value) {
 
 function nonNegativeInteger(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function nullableNonNegativeInteger(value) {
+  if (value === null || value === undefined) return null;
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function nullableText(value) {
+  if (value === null || value === undefined) return null;
+  const output = textValue(value);
+  return output || null;
+}
+
+function timestampValue(value) {
+  const output = textValue(value);
+  return output && !Number.isNaN(Date.parse(output)) ? output : '';
+}
+
+function nullableTimestamp(value) {
+  if (value === null || value === undefined) return null;
+  const output = timestampValue(value);
+  return output || undefined;
 }
 
 function textValue(value) {
