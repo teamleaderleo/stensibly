@@ -17,7 +17,7 @@ import { FAILURE_CATEGORY_HEADER } from "./worker-observability.js";
 const DEFAULT_ACCESS_TOKEN_SECONDS = 10 * 60;
 const DEFAULT_AUTHORIZATION_CODE_SECONDS = 5 * 60;
 const DEFAULT_REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60;
-const CONSENT_REQUEST_SECONDS = 10 * 60;
+export const MCP_OAUTH_CONSENT_REQUEST_SECONDS = 10 * 60;
 export const MAX_REGISTRATION_BODY_BYTES = 32 * 1024;
 const OAUTH_SCOPES = ["read", "write", "offline_access"] as const;
 
@@ -164,7 +164,6 @@ export async function parseAuthorizationRequest(
   if (!/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) throw new Error("PKCE challenge is invalid");
   const resource = context.req.query("resource")?.trim() || options.resource;
   if (resource !== options.resource) throw new Error("Requested resource is invalid");
-  const scopes = parseScopes(context.req.query("scope"));
   const state = optionalBounded(context.req.query("state"), 1024, "state");
   let client: McpOAuthClientRecord | null;
   try {
@@ -175,8 +174,25 @@ export async function parseAuthorizationRequest(
   if (!client || !client.redirectUris.includes(redirectUri)) {
     throw new Error("OAuth client or redirect URI is invalid");
   }
+
+  let scopes: McpOAuthScope[];
+  try {
+    scopes = parseScopes(context.req.query("scope"));
+  } catch (error) {
+    throw new OAuthAuthorizationRedirectFailure(
+      redirectUri,
+      state,
+      "invalid_scope",
+      message(error),
+    );
+  }
   if (scopes.includes("offline_access") && !client.grantTypes.includes("refresh_token")) {
-    throw new Error("OAuth client is not registered for refresh tokens");
+    throw new OAuthAuthorizationRedirectFailure(
+      redirectUri,
+      state,
+      "invalid_scope",
+      "OAuth client is not registered for refresh tokens",
+    );
   }
   const issuedAt = options.now();
   return {
@@ -189,7 +205,7 @@ export async function parseAuthorizationRequest(
       resource,
       state,
       issuedAt,
-      expiresAt: issuedAt + CONSENT_REQUEST_SECONDS * 1000,
+      expiresAt: issuedAt + MCP_OAUTH_CONSENT_REQUEST_SECONDS * 1000,
     },
   };
 }
@@ -219,7 +235,7 @@ export function parseSignedAuthorizationRequest(
   if (
     issuedAt > now + 60_000
     || expiresAt <= now
-    || expiresAt > issuedAt + CONSENT_REQUEST_SECONDS * 1000
+    || expiresAt > issuedAt + MCP_OAUTH_CONSENT_REQUEST_SECONDS * 1000
   ) {
     throw new Error("Consent request expired");
   }
@@ -315,6 +331,14 @@ export function authorizationInputError(
   error: unknown,
 ) {
   if (error instanceof OAuthBackendFailure) return oauthBackendError(context);
+  if (error instanceof OAuthAuthorizationRedirectFailure) {
+    return redirectAuthorizationError(
+      error.redirectUri,
+      error.state,
+      error.oauthError,
+      error.message,
+    );
+  }
   return oauthJsonError(context, 400, "invalid_request", message(error));
 }
 
@@ -493,3 +517,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 class OAuthBackendFailure extends Error {}
+
+class OAuthAuthorizationRedirectFailure extends Error {
+  readonly redirectUri: string;
+  readonly state: string | undefined;
+  readonly oauthError: string;
+
+  constructor(
+    redirectUri: string,
+    state: string | undefined,
+    oauthError: string,
+    description: string,
+  ) {
+    super(description);
+    this.redirectUri = redirectUri;
+    this.state = state;
+    this.oauthError = oauthError;
+  }
+}
