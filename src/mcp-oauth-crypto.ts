@@ -102,7 +102,7 @@ export async function parseOpaqueCredential(raw: string, kind: "code" | "refresh
 export async function signDetached(value: string, secret: Uint8Array): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
-    secret,
+    toArrayBuffer(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -125,7 +125,7 @@ export async function verifyDetached(
   }
   const key = await crypto.subtle.importKey(
     "raw",
-    secret,
+    toArrayBuffer(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["verify"],
@@ -133,7 +133,7 @@ export async function verifyDetached(
   return await crypto.subtle.verify(
     "HMAC",
     key,
-    bytes,
+    toArrayBuffer(bytes),
     new TextEncoder().encode(value),
   );
 }
@@ -171,6 +171,12 @@ async function sha256Hex(value: string): Promise<string> {
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
   );
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function toArrayBuffer(value: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy.buffer;
 }
 
 function parseAccessScopes(value: unknown): ("read" | "write")[] | null {
