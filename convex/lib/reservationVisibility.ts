@@ -4,13 +4,15 @@ export async function publicItemReservations(
   workspaceId: any,
 ) {
   const now = Date.now();
-  const itemReservations = await ctx.db
+  const projectReservations = await ctx.db
     .query("reservations")
-    .withIndex("by_item_status", (q: any) =>
-      q.eq("itemId", item._id).eq("status", "active"),
+    .withIndex("by_project_status", (q: any) =>
+      q.eq("projectId", item.projectId).eq("status", "active"),
     )
     .collect();
-  const live = itemReservations.filter((reservation: any) => reservation.expiresAt > now);
+  const live = projectReservations.filter(
+    (reservation: any) => reservation.itemId === item._id && reservation.expiresAt > now,
+  );
   const resources = [...new Set<string>(
     live.map((reservation: any) => String(reservation.resource)),
   )];
