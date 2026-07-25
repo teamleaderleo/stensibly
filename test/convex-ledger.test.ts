@@ -56,7 +56,12 @@ describe("Convex work ledger", () => {
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
     });
-    await ledger.renewClaim({ id: "item_1", actor, leaseSeconds: 1800 });
+    await ledger.renewClaim({
+      id: "item_1",
+      actor,
+      leaseSeconds: 1800,
+      expectedClaimGeneration: 1,
+    });
     await ledger.recordEvent({
       id: "item_1",
       actor,
@@ -79,7 +84,11 @@ describe("Convex work ledger", () => {
     });
     await ledger.blockWork({ id: "item_1", actor, reason: "Review pending." });
     await ledger.unblockWork({ id: "item_1", actor });
-    await ledger.releaseWork({ id: "item_1", actor });
+    await ledger.releaseWork({
+      id: "item_1",
+      actor,
+      expectedClaimGeneration: 2,
+    });
     await ledger.completeWork({ id: "item_1", actor, summary: "Done." });
     await ledger.completeWorkWithContinuations({
       id: "item_1",
@@ -175,6 +184,14 @@ describe("Convex work ledger", () => {
       id: "item_1",
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
+    });
+    expect(client.calls[5]?.args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 1,
+    });
+    expect(client.calls[11]?.args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 2,
     });
     expect(client.calls[13]?.args).toMatchObject({
       id: "item_1",
@@ -352,6 +369,7 @@ function item() {
     nextAction: null,
     claimedBy: null,
     claimExpiresAt: null,
+    claimGeneration: 0,
     version: 1,
     createdAt: now,
     updatedAt: now,
