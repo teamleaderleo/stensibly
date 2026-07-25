@@ -63,6 +63,7 @@ export class SqliteWorkLedger implements WorkLedger, CompletionContinuationLedge
       item: this.store.getItem(id),
       events: this.store.listEvents(id),
       artifacts: listArtifacts(this.store, id),
+      runs: [],
       dependencies: [],
       reservations: [],
     };
