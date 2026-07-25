@@ -6,6 +6,11 @@ import {
 } from "../src/convex-ledger.ts";
 
 const actor = { id: "agent-1", name: "Agent One", kind: "agent" as const };
+const supervisor = {
+  id: "service:supervisor",
+  name: "Supervisor",
+  kind: "service" as const,
+};
 
 class RecordingCaller implements ConvexCaller {
   calls: Array<{
@@ -113,6 +118,23 @@ describe("Convex work ledger", () => {
       expectedGeneration: 2,
       idempotencyKey: "continuation-approve-1",
     });
+    await ledger.queueContinuationForSupervisor({
+      id: "cont_1",
+      actor,
+      supervisor,
+      expectedGeneration: 3,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      leaseSeconds: 900,
+      idempotencyKey: "continuation-queue-1",
+    });
+    await ledger.runContinuationSupervisorPolicy({
+      supervisor,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      project: "scrapbook",
+      limit: 8,
+    });
 
     expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
       "query:projects:brief",
@@ -135,6 +157,8 @@ describe("Convex work ledger", () => {
       "mutation:continuations:get",
       "mutation:continuationEdits:edit",
       "mutation:continuations:resolve",
+      "mutation:continuationSupervisor:queue",
+      "mutation:continuationSupervisor:runPolicy",
     ]);
 
     for (const call of client.calls) {
@@ -161,6 +185,18 @@ describe("Convex work ledger", () => {
       id: "cont_1",
       instruction: "Review and record the decision.",
       idempotencyKey: "continuation-edit-1",
+    });
+    expect(client.calls[20]?.args).toMatchObject({
+      id: "cont_1",
+      expectedGeneration: 3,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      leaseSeconds: 900,
+      idempotencyKey: "continuation-queue-1",
+    });
+    expect(client.calls[21]?.args).toMatchObject({
+      project: "scrapbook",
+      limit: 8,
     });
   });
 
@@ -216,6 +252,18 @@ function fixture(name: string): unknown {
   if (name === "completionContinuations:complete") {
     return { item: item(), continuations: [continuation()] };
   }
+  if (name === "continuationSupervisor:queue") {
+    return {
+      continuation: continuation(),
+      item: item(),
+      run: queuedRun(),
+      createdItemId: null,
+      notificationRecommended: false,
+    };
+  }
+  if (name === "continuationSupervisor:runPolicy") {
+    return { considered: 0, dispatched: [], skipped: [] };
+  }
   if (name === "continuationEdits:edit" || name.startsWith("continuations:")) {
     return continuation();
   }
@@ -246,6 +294,36 @@ function continuation() {
     consumedAt: null,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function queuedRun() {
+  const now = new Date().toISOString();
+  return {
+    id: "run_1",
+    itemId: "item_1",
+    actorId: supervisor.id,
+    runnerType: "generic-mcp",
+    runnerProfile: "codex-default",
+    externalRunId: null,
+    status: "queued",
+    generation: 1,
+    leaseGeneration: 1,
+    leaseOwnerId: supervisor.id,
+    leaseExpiresAt: now,
+    lastHeartbeatAt: null,
+    checkpoint: null,
+    outcome: null,
+    continuationRef: "cont_1",
+    usage: {},
+    retryAttempt: 0,
+    maxAttempts: 3,
+    retryBackoffSeconds: 60,
+    nextRetryAt: null,
+    createdAt: now,
+    updatedAt: now,
+    startedAt: null,
+    endedAt: null,
   };
 }
 
