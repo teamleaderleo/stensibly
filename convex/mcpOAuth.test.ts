@@ -92,7 +92,7 @@ describe("Convex MCP OAuth authority", () => {
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_expirycheck",
+      id: "oauth_code_expirycheckx",
       scopes: ["read", "offline_access"],
       expiresAt: now + 60_000,
     });
@@ -101,7 +101,7 @@ describe("Convex MCP OAuth authority", () => {
     try {
       expect(await exchangeCode(t, {
         clientId: client.clientId,
-        id: "oauth_code_expirycheck",
+        id: "oauth_code_expirycheckx",
         refreshId: "oauth_refresh_expirycheck",
       })).toBeNull();
     } finally {
@@ -139,12 +139,12 @@ describe("Convex MCP OAuth authority", () => {
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_refreshflow",
+      id: "oauth_code_refreshflowx",
       scopes: ["read", "offline_access"],
     });
     await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_refreshflow",
+      id: "oauth_code_refreshflowx",
       refreshId: "oauth_refresh_abcdefghijkl",
     });
 
@@ -209,13 +209,13 @@ describe("Convex MCP OAuth authority", () => {
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_scopechange",
+      id: "oauth_code_scopechangex",
       scopes: ["read", "write", "offline_access"],
     });
     await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_scopechange",
-      refreshId: "oauth_refresh_scopechange",
+      id: "oauth_code_scopechangex",
+      refreshId: "oauth_refresh_scopechangex",
       refreshExpiresAt: Date.now() + 60_000,
     });
 
@@ -232,7 +232,7 @@ describe("Convex MCP OAuth authority", () => {
     });
     expect(await rotateRefresh(t, {
       clientId: client.clientId,
-      id: "oauth_refresh_scopechange",
+      id: "oauth_refresh_scopechangex",
       secretHash: "b".repeat(64),
       nextId: "oauth_refresh_scopedown",
     })).toEqual({ status: "invalid" });
