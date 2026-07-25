@@ -308,6 +308,5 @@ export default defineSchema({
     .index("by_resource_status", ["workspaceId", "resource", "status", "expiresAt"])
     .index("by_workspace_status", ["workspaceId", "status", "expiresAt"])
     .index("by_project_status", ["projectId", "status", "expiresAt"])
-    .index("by_item_status", ["itemId", "status", "expiresAt"])
     .index("by_holder_status", ["holderActorId", "status", "expiresAt"]),
 });
