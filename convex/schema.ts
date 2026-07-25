@@ -98,6 +98,11 @@ const continuationCommand = v.union(
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
 const reservationStatus = v.union(v.literal("active"), v.literal("released"), v.literal("expired"));
 const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
+const mcpOAuthScope = v.union(
+  v.literal("read"),
+  v.literal("write"),
+  v.literal("offline_access"),
+);
 export const accountRole = v.union(
   v.literal("owner"),
   v.literal("admin"),
@@ -201,6 +206,55 @@ export default defineSchema({
     expiresAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
+    .index("by_expiry", ["expiresAt"]),
+
+  mcpOAuthClients: defineTable({
+    workspaceId: v.id("workspaces"),
+    externalId: v.string(),
+    clientName: v.string(),
+    redirectUris: v.array(v.string()),
+    tokenEndpointAuthMethod: v.literal("none"),
+    grantTypes: v.array(v.string()),
+    responseTypes: v.array(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_workspace_created", ["workspaceId", "createdAt"]),
+
+  mcpOAuthCodes: defineTable({
+    workspaceId: v.id("workspaces"),
+    accountId: v.id("accounts"),
+    externalId: v.string(),
+    secretHash: v.string(),
+    clientExternalId: v.string(),
+    redirectUri: v.string(),
+    codeChallenge: v.string(),
+    scopes: v.array(mcpOAuthScope),
+    resource: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_expiry", ["expiresAt"]),
+
+  mcpOAuthRefreshTokens: defineTable({
+    workspaceId: v.id("workspaces"),
+    accountId: v.id("accounts"),
+    externalId: v.string(),
+    familyExternalId: v.string(),
+    secretHash: v.string(),
+    clientExternalId: v.string(),
+    scopes: v.array(mcpOAuthScope),
+    resource: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    rotatedToExternalId: v.optional(v.string()),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_family_created", ["familyExternalId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
   items: defineTable({
