@@ -8,6 +8,8 @@ import {
 } from './item-claim.js';
 import {
   createRequestGate,
+  dependencyBlocksCurrent,
+  dependencyRelationship,
   payloadEntries,
   readItemDetail,
   redactCredentialText,
@@ -203,6 +205,7 @@ export function createItemDetailController({
     const fragment = document.createDocumentFragment();
     fragment.append(
       itemOverview(item, detail.events),
+      dependencySection(detail.dependencies),
       claimSection(item),
       eventSection(detail.events),
       artifactSection(detail.artifacts),
@@ -230,6 +233,46 @@ export function createItemDetailController({
     if (item.summary) section.append(copyBlock('Summary', item.summary));
     if (item.nextAction) section.append(copyBlock('Next action', item.nextAction));
     if (blockedReason) section.append(copyBlock('Block reason', blockedReason));
+    return section;
+  }
+
+  function dependencySection(dependencies) {
+    const section = sectionBlock(`Dependencies · ${dependencies.length}`);
+    if (!dependencies.length) {
+      section.append(emptyBlock('No dependency links are recorded for this item.'));
+      return section;
+    }
+
+    const blockers = dependencies.filter(dependencyBlocksCurrent);
+    if (blockers.length) {
+      const summary = element('p', 'detail-dependency-summary');
+      summary.textContent = `${blockers.length} unresolved ${blockers.length === 1 ? 'link currently blocks' : 'links currently block'} this item.`;
+      section.append(summary);
+    }
+
+    const list = element('ul', 'detail-dependencies');
+    for (const dependency of dependencies) {
+      const blocked = dependencyBlocksCurrent(dependency);
+      const row = element('li', `detail-dependency${blocked ? ' detail-dependency-blocking' : ''}`);
+      const head = element('div', 'detail-dependency-head');
+      const relationship = element('strong');
+      relationship.textContent = dependencyRelationship(dependency);
+      const status = element('span', 'detail-dependency-status');
+      status.textContent = text(dependency.status, 'status unavailable');
+      head.append(relationship, status);
+
+      const target = element('p', 'detail-dependency-target');
+      target.textContent = text(dependency.title, dependency.itemId);
+      const identifier = element('code');
+      identifier.textContent = text(dependency.itemId);
+      const meta = element('span', 'detail-dependency-meta');
+      meta.textContent = [text(dependency.kind), text(dependency.direction), formatTimestamp(dependency.createdAt)]
+        .filter(Boolean)
+        .join(' · ');
+      row.append(head, target, identifier, meta);
+      list.append(row);
+    }
+    section.append(list);
     return section;
   }
 
@@ -530,7 +573,7 @@ function emptyBlock(message, extraClass = '') {
 
 function latestBlockedReason(events) {
   for (const event of [...events].reverse()) {
-    if (event.type !== 'item.blocked' || !event.payload || typeof event.payload !== 'object') continue;
+    if (!['item.blocked', 'work.blocked'].includes(event.type) || !event.payload || typeof event.payload !== 'object') continue;
     const reason = event.payload.reason;
     if (typeof reason === 'string' && reason.trim()) return reason.trim();
   }

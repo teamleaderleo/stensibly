@@ -25,6 +25,15 @@ describe("dashboard item detail integration", () => {
     expect(controller).not.toContain("innerHTML");
   });
 
+  test("renders dependency links and unresolved blockers from item detail", () => {
+    expect(controller).toContain("dependencySection(detail.dependencies)");
+    expect(controller).toContain("dependencyBlocksCurrent");
+    expect(controller).toContain("dependencyRelationship");
+    expect(controller).toContain("unresolved");
+    expect(styles).toContain(".detail-dependencies");
+    expect(styles).toContain(".detail-dependency-blocking");
+  });
+
   test("guards stale responses and supports close, retry, and focus restoration", () => {
     expect(controller).toContain("createRequestGate");
     expect(controller).toContain("gate.isCurrent");
