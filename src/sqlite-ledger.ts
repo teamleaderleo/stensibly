@@ -46,6 +46,7 @@ import type {
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
+import { listWorkRuns } from "./runs.js";
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
@@ -76,6 +77,7 @@ export class SqliteWorkLedger implements
       item: this.store.getItem(id),
       events: this.store.listEvents(id),
       artifacts: listArtifacts(this.store, id),
+      runs: listWorkRuns(this.store, { itemId: id }),
     };
   }
 
