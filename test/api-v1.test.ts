@@ -71,10 +71,12 @@ describe("REST API v1", () => {
       item: { status: string };
       events: Array<{ type: string }>;
       artifacts: Array<{ kind: string }>;
+      dependencies: unknown[];
     }>(app.request(`/api/v1/items/${encodeURIComponent(created.item.id)}`));
     expect(detail.item.status).toBe("done");
     expect(detail.artifacts).toEqual([expect.objectContaining({ kind: "commit" })]);
     expect(detail.events.map((event) => event.type)).toContain("item.completed");
+    expect(detail.dependencies).toEqual([]);
 
     const legacy = await json<{ items: Array<{ id: string }> }>(app.request("/api/items"));
     expect(legacy.items.map((item) => item.id)).toContain(created.item.id);
