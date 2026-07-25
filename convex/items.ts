@@ -15,12 +15,12 @@ import {
   publicArtifact,
   publicEvent,
   publicItem,
-  publicRun,
   requireMatchingIdempotency,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
 import { publicItemReservations } from "./lib/reservationVisibility";
+import { publicItemRuns } from "./lib/runVisibility";
 import { mutation, query } from "./lib/server";
 import {
   actorValidator,
@@ -233,7 +233,7 @@ export const get = query({
         ...publicArtifact(artifact),
         itemId: item.externalId,
       })),
-      runs: runs.map((run) => ({ ...publicRun(run), itemId: item.externalId })),
+      runs: publicItemRuns(runs, item.externalId),
       dependencies,
       reservations,
     };
