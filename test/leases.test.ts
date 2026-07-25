@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("claim leases", () => {
-  test("expired claims return to ready work exactly once", () => {
+  test("expired claims return to ready work exactly once and advance the fence", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -28,7 +28,8 @@ describe("claim leases", () => {
       priority: 50,
       actor: leo,
     });
-    store.claimItem(item.id, browserAgent, 900);
+    const claimed = store.claimItem(item.id, browserAgent, 900);
+    expect(claimed.claimGeneration).toBe(1);
     store.db
       .query("UPDATE items SET claim_expires_at = ?1 WHERE id = ?2")
       .run("2020-01-01T00:00:00.000Z", item.id);
@@ -38,6 +39,7 @@ describe("claim leases", () => {
       status: "ready",
       claimedBy: null,
       claimExpiresAt: null,
+      claimGeneration: 2,
     });
     expect(expireClaims(store, new Date("2100-01-01T00:01:00.000Z"))).toEqual([]);
     expect(store.listEvents(item.id).map((event) => event.type)).toEqual([
@@ -45,9 +47,13 @@ describe("claim leases", () => {
       "claim.created",
       "claim.expired",
     ]);
+    expect(store.listEvents(item.id).at(-1)?.payload).toMatchObject({
+      generation: 1,
+      nextGeneration: 2,
+    });
   });
 
-  test("only the live claimant can renew a lease", () => {
+  test("only the live claimant with the current generation can renew a lease", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -56,13 +62,41 @@ describe("claim leases", () => {
       actor: leo,
     });
     const claimed = store.claimItem(item.id, browserAgent, 60);
-    const renewed = renewClaim(store, item.id, browserAgent, 3600, "renew-1");
+    const renewed = renewClaim(
+      store,
+      item.id,
+      browserAgent,
+      3600,
+      claimed.claimGeneration,
+      "renew-1",
+    );
 
     expect(new Date(renewed.claimExpiresAt ?? 0).getTime()).toBeGreaterThan(
       new Date(claimed.claimExpiresAt ?? 0).getTime(),
     );
-    expect(renewClaim(store, item.id, browserAgent, 3600, "renew-1").id).toBe(item.id);
-    expect(() => renewClaim(store, item.id, leo, 3600)).toThrow(ConflictError);
+    expect(renewed.claimGeneration).toBe(claimed.claimGeneration + 1);
+    expect(renewClaim(
+      store,
+      item.id,
+      browserAgent,
+      3600,
+      claimed.claimGeneration,
+      "renew-1",
+    ).id).toBe(item.id);
+    expect(() => renewClaim(
+      store,
+      item.id,
+      browserAgent,
+      3600,
+      claimed.claimGeneration,
+    )).toThrow(ConflictError);
+    expect(() => renewClaim(
+      store,
+      item.id,
+      leo,
+      3600,
+      renewed.claimGeneration,
+    )).toThrow(ConflictError);
     expect(store.listEvents(item.id).map((event) => event.type)).toEqual([
       "item.created",
       "claim.created",
