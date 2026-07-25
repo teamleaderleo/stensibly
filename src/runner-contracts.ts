@@ -6,6 +6,11 @@ import type {
   WorkRun,
 } from "./runs.js";
 
+export interface RunnerConcurrencyPolicy {
+  globalLimit: number;
+  projectLimit: number;
+}
+
 export interface ClaimRunnerWorkInput {
   actor: ActorInput;
   runnerType: string;
@@ -15,6 +20,7 @@ export interface ClaimRunnerWorkInput {
   externalRunId?: string;
   leaseSeconds?: number;
   idempotencyKey?: string;
+  concurrency?: RunnerConcurrencyPolicy;
 }
 
 export interface RunnerLedger {
