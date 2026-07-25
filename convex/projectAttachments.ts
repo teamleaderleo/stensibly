@@ -25,6 +25,12 @@ const attachmentRecord = v.object({
   authorityWidening: v.boolean(),
   acceptedAt: v.string(),
 });
+const acceptArgs = attachmentRecord
+  .omit("id", "acceptedAt")
+  .extend({
+    expectedCurrentSnapshotSha256: nullableHash,
+    externalId: v.string(),
+  });
 
 export const getCurrent = query({
   args: {
@@ -50,16 +56,7 @@ export const getCurrent = query({
 export const accept = mutation({
   args: {
     ...serviceArgs,
-    project: v.string(),
-    expectedCurrentSnapshotSha256: nullableHash,
-    externalId: v.string(),
-    snapshotJson: v.string(),
-    snapshotSha256: v.string(),
-    contentSha256: v.string(),
-    sourcePath: v.string(),
-    sourceRevision: v.string(),
-    acceptedBy: v.string(),
-    authorityWidening: v.boolean(),
+    ...acceptArgs.fields,
   },
   returns: attachmentRecord,
   handler: async (ctx, args) => {
