@@ -11,7 +11,9 @@ export async function publicItemReservations(
     )
     .collect();
   const live = itemReservations.filter((reservation: any) => reservation.expiresAt > now);
-  const resources = [...new Set(live.map((reservation: any) => reservation.resource))];
+  const resources = [...new Set<string>(
+    live.map((reservation: any) => String(reservation.resource)),
+  )];
   const usedByResource = new Map<string, number>();
 
   await Promise.all(resources.map(async (resource) => {
