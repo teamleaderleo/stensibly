@@ -98,7 +98,7 @@ const continuationCommand = v.union(
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
 const reservationStatus = v.union(v.literal("active"), v.literal("released"), v.literal("expired"));
 const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
-const accountRole = v.union(
+export const accountRole = v.union(
   v.literal("owner"),
   v.literal("admin"),
   v.literal("member"),
