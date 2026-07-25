@@ -5,32 +5,23 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { StensiblyStore } from "./store.js";
+import {
+  tokenScopes,
+  type AuthorizationPrincipal,
+  type CreatedToken,
+  type TokenPrincipal,
+  type TokenRecord,
+  type TokenScope,
+} from "./token-contracts.js";
 
-export const tokenScopes = ["read", "write", "admin"] as const;
-export type TokenScope = (typeof tokenScopes)[number];
-
-export interface TokenRecord {
-  id: string;
-  name: string;
-  scopes: TokenScope[];
-  projects: string[] | null;
-  createdAt: string;
-  revokedAt: string | null;
-}
-
-export interface CreatedToken extends TokenRecord {
-  token: string;
-}
-
-export interface AuthorizationPrincipal {
-  name: string;
-  scopes: TokenScope[];
-  projects: string[] | null;
-}
-
-export interface TokenPrincipal extends AuthorizationPrincipal {
-  tokenId: string;
-}
+export { tokenScopes } from "./token-contracts.js";
+export type {
+  AuthorizationPrincipal,
+  CreatedToken,
+  TokenPrincipal,
+  TokenRecord,
+  TokenScope,
+} from "./token-contracts.js";
 
 interface TokenRow {
   id: string;
