@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type GenericId } from "convex/values";
 import {
   assertOptionalText,
   assertText,
@@ -6,6 +6,9 @@ import {
   findWorkspace,
   normalizeWorkspace,
   requireServiceSecret,
+  type MutationContext,
+  type QueryContext,
+  type WorkspaceId,
 } from "./lib/domain";
 import { mutation, query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
@@ -19,6 +22,7 @@ const accountRole = v.union(
 
 type AccountRole = "owner" | "admin" | "member" | "viewer";
 type AccountScope = "read" | "write" | "admin";
+type AccountId = GenericId<"accounts">;
 
 const MAX_SESSION_SECONDS = 60 * 60 * 24 * 90;
 
@@ -46,6 +50,7 @@ export const upsertProviderIdentity = mutation({
     const displayName = assertText(args.displayName, "Display name", 160);
     const username = assertOptionalText(args.username, "Provider username", 160);
     const email = normalizeEmail(args.email);
+    const emailVerified = email !== undefined && args.emailVerified;
     const avatarUrl = normalizeUrl(args.avatarUrl, "Avatar URL");
     const projects = normalizeProjects(args.projects);
     const now = Date.now();
@@ -66,18 +71,20 @@ export const upsertProviderIdentity = mutation({
       const identityPatch = {
         username,
         email,
-        emailVerified: args.emailVerified,
+        emailVerified,
         avatarUrl,
         updatedAt: now,
       };
       await ctx.db.patch(existingIdentity._id, identityPatch);
 
-      const accountPatch = {
-        displayName,
-        primaryEmail: args.emailVerified ? email : account.primaryEmail,
-        avatarUrl,
-        updatedAt: now,
-      };
+      const accountPatch: {
+        displayName: string;
+        updatedAt: number;
+        primaryEmail?: string;
+        avatarUrl?: string;
+      } = { displayName, updatedAt: now };
+      if (emailVerified && email !== undefined) accountPatch.primaryEmail = email;
+      if (avatarUrl !== undefined) accountPatch.avatarUrl = avatarUrl;
       await ctx.db.patch(account._id, accountPatch);
 
       const membership = await ensureActiveMembership(ctx, {
@@ -98,7 +105,7 @@ export const upsertProviderIdentity = mutation({
     const accountId = await ctx.db.insert("accounts", {
       externalId: "pending",
       displayName,
-      primaryEmail: args.emailVerified ? email : undefined,
+      primaryEmail: emailVerified ? email : undefined,
       avatarUrl,
       createdAt: now,
       updatedAt: now,
@@ -112,7 +119,7 @@ export const upsertProviderIdentity = mutation({
       subject,
       username,
       email,
-      emailVerified: args.emailVerified,
+      emailVerified,
       avatarUrl,
       createdAt: now,
       updatedAt: now,
@@ -144,8 +151,8 @@ export const createSession = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const account = await findAccount(ctx, args.accountId);
-    if (!account || account.disabledAt !== undefined) throw new Error("Account is unavailable");
+    const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
+    if (!accountContext) throw new Error("Account membership is unavailable");
 
     const externalId = assertText(args.id, "Session id", 120);
     const existing = await ctx.db
@@ -157,7 +164,7 @@ export const createSession = mutation({
     const now = Date.now();
     const expiresAt = assertSessionExpiry(args.expiresAt, now);
     const sessionId = await ctx.db.insert("browserSessions", {
-      accountId: account._id,
+      accountId: accountContext.account._id,
       externalId,
       secretHash: assertHash(args.secretHash),
       userAgent: assertOptionalText(args.userAgent, "User agent", 500),
@@ -180,45 +187,27 @@ export const authenticateSession = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
-    if (!workspace) return null;
+    const sessionContext = await findActiveSessionContext(
+      ctx,
+      args.workspace,
+      args.id,
+      args.secretHash,
+    );
+    if (!sessionContext) return null;
 
-    const session = await ctx.db
-      .query("browserSessions")
-      .withIndex("by_external_id", (q) => q.eq("externalId", args.id))
-      .unique();
-    if (
-      !session ||
-      session.revokedAt !== undefined ||
-      session.expiresAt <= Date.now() ||
-      session.secretHash !== assertHash(args.secretHash)
-    ) {
-      return null;
-    }
-
-    const account = await ctx.db.get("accounts", session.accountId);
-    if (!account || account.disabledAt !== undefined) return null;
-    const membership = await ctx.db
-      .query("workspaceMemberships")
-      .withIndex("by_account_workspace", (q) =>
-        q.eq("accountId", account._id).eq("workspaceId", workspace._id),
-      )
-      .unique();
-    if (!membership || membership.revokedAt !== undefined) return null;
-
-    const scopes = scopesForRole(membership.role);
+    const scopes = scopesForRole(sessionContext.membership.role);
     return {
-      session: publicSession(session),
-      account: publicAccount(account),
-      membership: publicMembership(membership, workspace.slug),
+      session: publicSession(sessionContext.session),
+      account: publicAccount(sessionContext.account),
+      membership: publicMembership(sessionContext.membership, sessionContext.workspace.slug),
       principal: {
         type: "account",
-        accountId: account.externalId,
-        name: account.displayName,
-        workspace: workspace.slug,
-        role: membership.role,
+        accountId: sessionContext.account.externalId,
+        name: sessionContext.account.displayName,
+        workspace: sessionContext.workspace.slug,
+        role: sessionContext.membership.role,
         scopes,
-        projects: membership.projects ?? null,
+        projects: sessionContext.membership.projects ?? null,
       },
       capabilities: {
         read: scopes.includes("read"),
@@ -238,11 +227,16 @@ export const touchSession = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const session = await activeSession(ctx, args.id, args.secretHash);
-    if (!session) return null;
+    const sessionContext = await findActiveSessionContext(
+      ctx,
+      args.workspace,
+      args.id,
+      args.secretHash,
+    );
+    if (!sessionContext) return null;
     const lastSeenAt = Date.now();
-    await ctx.db.patch(session._id, { lastSeenAt });
-    return publicSession({ ...session, lastSeenAt });
+    await ctx.db.patch(sessionContext.session._id, { lastSeenAt });
+    return publicSession({ ...sessionContext.session, lastSeenAt });
   },
 });
 
@@ -257,32 +251,44 @@ export const rotateSession = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const session = await activeSession(ctx, args.id, args.secretHash);
-    if (!session) return null;
+    const sessionContext = await findActiveSessionContext(
+      ctx,
+      args.workspace,
+      args.id,
+      args.secretHash,
+    );
+    if (!sessionContext) return null;
     const now = Date.now();
     const patch = {
       secretHash: assertHash(args.nextSecretHash),
       expiresAt: assertSessionExpiry(args.expiresAt, now),
       lastSeenAt: now,
     };
-    await ctx.db.patch(session._id, patch);
-    return publicSession({ ...session, ...patch });
+    await ctx.db.patch(sessionContext.session._id, patch);
+    return publicSession({ ...sessionContext.session, ...patch });
   },
 });
 
 export const revokeSession = mutation({
   args: {
     ...serviceArgs,
+    accountId: v.string(),
     id: v.string(),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
+    const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
+    if (!accountContext) return null;
+    const externalId = readCredentialId(args.id);
+    if (!externalId) return null;
+
     const session = await ctx.db
       .query("browserSessions")
-      .withIndex("by_external_id", (q) => q.eq("externalId", args.id))
+      .withIndex("by_external_id", (q) => q.eq("externalId", externalId))
       .unique();
-    if (!session) return null;
+    if (!session || session.accountId !== accountContext.account._id) return null;
+
     const revokedAt = session.revokedAt ?? Date.now();
     if (session.revokedAt === undefined) await ctx.db.patch(session._id, { revokedAt });
     return publicSession({ ...session, revokedAt });
@@ -297,11 +303,11 @@ export const listSessions = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const account = await findAccount(ctx, args.accountId);
-    if (!account) return [];
+    const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
+    if (!accountContext) return [];
     const sessions = await ctx.db
       .query("browserSessions")
-      .withIndex("by_account_created", (q) => q.eq("accountId", account._id))
+      .withIndex("by_account_created", (q) => q.eq("accountId", accountContext.account._id))
       .order("desc")
       .collect();
     return sessions.map(publicSession);
@@ -317,20 +323,20 @@ export const setDefaultActor = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const account = await findAccount(ctx, args.accountId);
-    if (!account || account.disabledAt !== undefined) throw new Error("Account is unavailable");
+    const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
+    if (!accountContext) throw new Error("Account membership is unavailable");
     const defaultActorExternalId = assertOptionalText(args.actorId, "Actor id", 120);
     const updatedAt = Date.now();
-    await ctx.db.patch(account._id, { defaultActorExternalId, updatedAt });
-    return publicAccount({ ...account, defaultActorExternalId, updatedAt });
+    await ctx.db.patch(accountContext.account._id, { defaultActorExternalId, updatedAt });
+    return publicAccount({ ...accountContext.account, defaultActorExternalId, updatedAt });
   },
 });
 
 async function ensureActiveMembership(
-  ctx: any,
+  ctx: MutationContext,
   input: {
-    workspaceId: any;
-    accountId: any;
+    workspaceId: WorkspaceId;
+    accountId: AccountId;
     role: AccountRole;
     projects: string[] | undefined;
     now: number;
@@ -338,7 +344,7 @@ async function ensureActiveMembership(
 ) {
   const existing = await ctx.db
     .query("workspaceMemberships")
-    .withIndex("by_account_workspace", (q: any) =>
+    .withIndex("by_account_workspace", (q) =>
       q.eq("accountId", input.accountId).eq("workspaceId", input.workspaceId),
     )
     .unique();
@@ -359,29 +365,72 @@ async function ensureActiveMembership(
   return membership;
 }
 
-async function findAccount(ctx: any, externalId: string) {
+async function findAccount(ctx: QueryContext, externalId: string) {
   return await ctx.db
     .query("accounts")
-    .withIndex("by_external_id", (q: any) =>
+    .withIndex("by_external_id", (q) =>
       q.eq("externalId", assertText(externalId, "Account id", 120)),
     )
     .unique();
 }
 
-async function activeSession(ctx: any, id: string, secretHash: string) {
+async function findActiveAccountMembership(
+  ctx: QueryContext,
+  workspaceValue: string | undefined,
+  accountExternalId: string,
+) {
+  const account = await findAccount(ctx, accountExternalId);
+  if (!account || account.disabledAt !== undefined) return null;
+  return await findActiveMembershipForAccount(ctx, workspaceValue, account._id);
+}
+
+async function findActiveMembershipForAccount(
+  ctx: QueryContext,
+  workspaceValue: string | undefined,
+  accountId: AccountId,
+) {
+  const workspace = await findWorkspace(ctx, normalizeWorkspace(workspaceValue));
+  if (!workspace) return null;
+  const account = await ctx.db.get("accounts", accountId);
+  if (!account || account.disabledAt !== undefined) return null;
+  const membership = await ctx.db
+    .query("workspaceMemberships")
+    .withIndex("by_account_workspace", (q) =>
+      q.eq("accountId", account._id).eq("workspaceId", workspace._id),
+    )
+    .unique();
+  if (!membership || membership.revokedAt !== undefined) return null;
+  return { account, membership, workspace };
+}
+
+async function findActiveSessionContext(
+  ctx: QueryContext,
+  workspaceValue: string | undefined,
+  id: string,
+  secretHashValue: string,
+) {
+  const externalId = readCredentialId(id);
+  const secretHash = readHash(secretHashValue);
+  if (!externalId || !secretHash) return null;
   const session = await ctx.db
     .query("browserSessions")
-    .withIndex("by_external_id", (q: any) => q.eq("externalId", id))
+    .withIndex("by_external_id", (q) => q.eq("externalId", externalId))
     .unique();
   if (
     !session ||
     session.revokedAt !== undefined ||
     session.expiresAt <= Date.now() ||
-    session.secretHash !== assertHash(secretHash)
+    session.secretHash !== secretHash
   ) {
     return null;
   }
-  return session;
+  const accountContext = await findActiveMembershipForAccount(
+    ctx,
+    workspaceValue,
+    session.accountId,
+  );
+  if (!accountContext) return null;
+  return { ...accountContext, session };
 }
 
 function normalizeProvider(value: string): string {
@@ -427,12 +476,21 @@ function normalizeProjects(projects: string[] | undefined): string[] | undefined
   }))].sort();
 }
 
-function assertHash(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(normalized)) {
-    throw new Error("Session secret hash must be a SHA-256 hex digest");
-  }
+function readCredentialId(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 120) return null;
   return normalized;
+}
+
+function assertHash(value: string): string {
+  const normalized = readHash(value);
+  if (!normalized) throw new Error("Session secret hash must be a SHA-256 hex digest");
+  return normalized;
+}
+
+function readHash(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
 function assertSessionExpiry(value: number, now: number): number {
