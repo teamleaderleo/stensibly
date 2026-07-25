@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  serializeDashboardAssets,
+  type DashboardAssetKind,
+} from "../src/dashboard-assets.ts";
+import {
   dashboardAssets,
   formatGitHubErrorAnnotation,
   verifyDashboardHtml,
@@ -45,28 +49,30 @@ describe("GitHub dashboard verification annotations", () => {
 });
 
 describe("dashboard asset verification contract", () => {
-  test("matches the markers in the checked-in dashboard assets", async () => {
+  test("matches the markers in every checked-in dashboard asset", async () => {
     for (const asset of dashboardAssets) {
       const source = await Bun.file(new URL(`../site${asset.path}`, import.meta.url)).text();
       expect(source, `${asset.path} should contain ${asset.marker}`).toContain(asset.marker);
     }
   });
+
+  test("serializes the same manifest consumed by staged verification", () => {
+    expect(JSON.parse(serializeDashboardAssets())).toEqual(dashboardAssets);
+  });
+
+  test("keeps the deployment workflow on the canonical manifest", async () => {
+    const workflow = await Bun.file(
+      new URL("../.github/workflows/deploy-dashboard.yml", import.meta.url),
+    ).text();
+    expect(workflow).toContain("bun src/dashboard-assets.ts");
+    expect(workflow).toContain("jq -r '.[] | [.path, .marker] | @tsv'");
+    expect(workflow).not.toContain("asset_specs=(");
+  });
 });
 
 describe("dashboard URL verification", () => {
-  test("checks the HTML and critical static module graph", async () => {
-    const fixtures = new Map<string, [string, string]>([
-      ["/", [validHtml, "text/html; charset=utf-8"]],
-      ["/styles.css", [":root { color-scheme: dark; }", "text/css"]],
-      ["/app.js", ["const DEFAULT_ENDPOINT = 'https://api.stensibly.com';", "text/javascript"]],
-      ["/item-claim.css", [".detail-claim-form {}", "text/css"]],
-      ["/item-claim.js", ["export function validateClaimInput() {}", "text/javascript"]],
-      ["/item-progress-controller.js", ["export function installProgressController() {}", "text/javascript"]],
-      ["/item-block-controller.js", ["export function installBlockController() {}", "text/javascript"]],
-      ["/item-complete-controller.js", ["export function installCompleteController() {}", "text/javascript"]],
-      ["/favicon.svg", ["<svg></svg>", "image/svg+xml"]],
-    ]);
-    globalThis.fetch = mockFetch(fixtures);
+  test("checks the HTML and complete static module graph", async () => {
+    globalThis.fetch = mockFetch(fullFixtures());
 
     await expect(verifyDashboardUrl("https://www.stensibly.com")).resolves.toBeUndefined();
   });
@@ -91,17 +97,22 @@ describe("dashboard URL verification", () => {
 });
 
 function fullFixtures(): Map<string, [string, string]> {
-  return new Map([
-    ["/", [validHtml, "text/html"]],
-    ["/styles.css", [":root {}", "text/css"]],
-    ["/app.js", ["DEFAULT_ENDPOINT", "application/javascript"]],
-    ["/item-claim.css", [".detail-claim", "text/css"]],
-    ["/item-claim.js", ["validateClaimInput", "application/javascript"]],
-    ["/item-progress-controller.js", ["installProgressController", "application/javascript"]],
-    ["/item-block-controller.js", ["installBlockController", "application/javascript"]],
-    ["/item-complete-controller.js", ["installCompleteController", "application/javascript"]],
-    ["/favicon.svg", ["<svg", "image/svg+xml"]],
-  ]);
+  const fixtures = new Map<string, [string, string]>([["/", [validHtml, "text/html"]]]);
+  for (const asset of dashboardAssets) {
+    fixtures.set(asset.path, [asset.marker, fixtureContentType(asset.kind)]);
+  }
+  return fixtures;
+}
+
+function fixtureContentType(kind: DashboardAssetKind): string {
+  switch (kind) {
+    case "css":
+      return "text/css";
+    case "javascript":
+      return "application/javascript";
+    case "svg":
+      return "image/svg+xml";
+  }
 }
 
 function mockFetch(fixtures: Map<string, [string, string]>): typeof fetch {
