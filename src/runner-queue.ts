@@ -100,7 +100,10 @@ export function claimRunnerWork(
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
-          AND status IN ('ready', 'active')
+          AND (
+            status IN ('ready', 'active')
+            OR (?6 = 1 AND status = 'blocked')
+          )
           AND (
             claimed_by IS NULL
             OR claimed_by = ?1
@@ -114,6 +117,7 @@ export function claimRunnerWork(
         timestamp,
         candidate.item_id,
         candidate.actor_id,
+        retrying ? 1 : 0,
       );
     if (itemClaim.changes !== 1) {
       throw new ConflictError("Run item is actively claimed by another actor");
