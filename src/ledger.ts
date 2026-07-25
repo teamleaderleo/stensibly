@@ -30,10 +30,18 @@ export interface ClaimWorkInput {
   idempotencyKey?: string;
 }
 
+export interface RenewClaimInput extends ClaimWorkInput {
+  expectedClaimGeneration: number;
+}
+
 export interface ActorActionInput {
   id: string;
   actor: ActorInput;
   idempotencyKey?: string;
+}
+
+export interface ClaimActionInput extends ActorActionInput {
+  expectedClaimGeneration: number;
 }
 
 export interface CompleteWorkInput extends ActorActionInput {
@@ -90,11 +98,11 @@ export interface WorkLedger {
   attachArtifact(input: AttachWorkArtifactInput): Promise<Artifact>;
   createItem(input: CreateWorkInput): Promise<Item>;
   claimWork(input: ClaimWorkInput): Promise<Item>;
-  renewClaim(input: ClaimWorkInput): Promise<Item>;
+  renewClaim(input: RenewClaimInput): Promise<Item>;
   handoffWork(input: HandoffWorkInput): Promise<Item>;
   blockWork(input: BlockWorkInput): Promise<Item>;
   unblockWork(input: UnblockWorkInput): Promise<Item>;
-  releaseWork(input: ActorActionInput): Promise<Item>;
+  releaseWork(input: ClaimActionInput): Promise<Item>;
   recordEvent(input: RecordWorkEventInput): Promise<ItemEvent>;
   completeWork(input: CompleteWorkInput): Promise<Item>;
 }
