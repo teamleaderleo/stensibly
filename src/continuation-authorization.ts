@@ -44,11 +44,9 @@ export async function supervisorPolicyAccessProjects(
 
   const projects = new Set<string>();
   for (const proposal of rows) {
-    const sourceProject = (await ledger.getItem(proposal.sourceItemId)).item.project;
-    if (project && sourceProject !== project) continue;
-    for (const touched of await continuationAccessProjects(ledger, proposal)) {
-      projects.add(touched);
-    }
+    const touchedProjects = await continuationAccessProjects(ledger, proposal);
+    if (project && touchedProjects.some((touched) => touched !== project)) continue;
+    for (const touched of touchedProjects) projects.add(touched);
   }
   if (project) projects.add(project);
   return [...projects].sort();
