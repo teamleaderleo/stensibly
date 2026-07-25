@@ -116,6 +116,16 @@ export function buildRunnerContextPacket(
     const packet = assemblePacket(item, events, artifacts, runs, dependencies, omitted, options.now);
     if (packet.characterCount <= options.maxCharacters) return packet;
 
+    const overflow = packet.characterCount - options.maxCharacters;
+    if (item.summary && item.summary.length > 80) {
+      item.summary = clip(item.summary, Math.max(80, item.summary.length - overflow - 16));
+      continue;
+    }
+    if (item.nextAction && item.nextAction.length > 80) {
+      item.nextAction = clip(item.nextAction, Math.max(80, item.nextAction.length - overflow - 16));
+      continue;
+    }
+
     const ordinaryIndex = events.findIndex((event) => !event.protected);
     if (ordinaryIndex >= 0) {
       events.splice(ordinaryIndex, 1);
@@ -140,16 +150,6 @@ export function buildRunnerContextPacket(
     if (events.length > 0) {
       events.shift();
       omitted.events += 1;
-      continue;
-    }
-
-    const overflow = packet.characterCount - options.maxCharacters;
-    if (item.summary && item.summary.length > 80) {
-      item.summary = clip(item.summary, Math.max(80, item.summary.length - overflow - 16));
-      continue;
-    }
-    if (item.nextAction && item.nextAction.length > 80) {
-      item.nextAction = clip(item.nextAction, Math.max(80, item.nextAction.length - overflow - 16));
       continue;
     }
     return packet;
