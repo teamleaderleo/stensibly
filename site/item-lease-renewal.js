@@ -130,7 +130,7 @@ export function createLeaseRenewalController({
       inFlight = false;
       submitButton.disabled = false;
       actionState.textContent = 'retry available';
-      setBusy(false);
+      setBusy(false, 'needs attention');
       setError(error, 'The renewal request could not reach the API. Retry the unchanged duration to reuse the same idempotency key.');
       return;
     }
@@ -140,7 +140,7 @@ export function createLeaseRenewalController({
     if (!response.ok) {
       inFlight = false;
       submitButton.disabled = false;
-      setBusy(false);
+      setBusy(false, 'needs attention');
       const failure = describeHttpFailure(response.status, payload);
       const validation = formatValidationIssues(payload);
       const serverRequestId = safeRequestId(response.headers.get('x-request-id'), token);
@@ -169,7 +169,7 @@ export function createLeaseRenewalController({
       inFlight = false;
       submitButton.disabled = false;
       actionState.textContent = 'retry available';
-      setBusy(false);
+      setBusy(false, 'needs attention');
       setError(error, cause instanceof Error ? cause.message : 'The endpoint returned an incompatible renewed item.');
       return;
     }
@@ -177,12 +177,13 @@ export function createLeaseRenewalController({
     inFlight = false;
     idempotency.reset();
     actionState.textContent = 'renewed';
-    setBusy(false);
+    setBusy(false, 'renewed');
     announce(`Renewed lease until ${formatTimestamp(renewed.claimExpiresAt)}.`);
     try {
       await onChanged(renewed.id);
     } catch {
       submitButton.disabled = false;
+      setBusy(false, 'needs attention');
       setError(error, 'The renewal succeeded, but the board did not refresh. Use refresh to load the current server state.');
     }
   }
@@ -191,7 +192,6 @@ export function createLeaseRenewalController({
     gate.invalidate();
     idempotency.reset();
     inFlight = false;
-    setBusy(false);
   }
 
   function syncContext() {
