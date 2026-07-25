@@ -50,13 +50,13 @@ import {
   reconcileStaleRunItems,
   syncItemLeaseFromRun,
 } from "./run-item-recovery.js";
+import { transitionWorkRunWithItemProjection } from "./run-item-projection.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import { claimRunnerWork } from "./runner-queue.js";
 import {
   getWorkRun,
   heartbeatWorkRun,
   listWorkRuns,
-  transitionWorkRun,
   type HeartbeatWorkRunInput,
   type ListWorkRunsInput,
   type TransitionWorkRunInput,
@@ -248,8 +248,6 @@ export class SqliteWorkLedger implements
 
   async transitionRun(input: TransitionWorkRunInput) {
     reconcileStaleRunItems(this.store);
-    const run = transitionWorkRun(this.store, input);
-    syncItemLeaseFromRun(this.store, run, new Date(run.updatedAt), input.actor.id);
-    return run;
+    return transitionWorkRunWithItemProjection(this.store, input);
   }
 }
