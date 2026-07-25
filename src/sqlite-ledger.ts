@@ -116,7 +116,9 @@ export class SqliteWorkLedger implements
       uri: input.uri,
       metadata: input.metadata,
       ...(input.mimeType ? { mimeType: input.mimeType } : {}),
-      ...(input.idempotencyKey ? { idempotencyKey } : {}),
+      ...(input.idempotencyKey
+        ? { idempotencyKey: input.idempotencyKey }
+        : {}),
     });
     if (!replay) touchItemActivity(this.store, input.id, artifact.createdAt);
     return artifact;
