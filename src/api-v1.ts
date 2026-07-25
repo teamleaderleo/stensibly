@@ -17,6 +17,7 @@ import {
   type StensiblyEnv,
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
+import { registerProjectAttachmentApi } from "./project-attachment-api.js";
 import {
   actorActionSchema,
   blockItemSchema,
@@ -278,6 +279,7 @@ export function createApiV1(
     return context.json({ event }, 201);
   });
 
+  registerProjectAttachmentApi(app, ledger);
   registerContinuationApi(app, ledger);
   return app;
 }
