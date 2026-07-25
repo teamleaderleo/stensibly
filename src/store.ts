@@ -158,21 +158,6 @@ export class StensiblyStore {
         "ALTER TABLE items ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0 CHECK (claim_generation >= 0);",
       );
     }
-
-    this.db.exec(`
-      CREATE TRIGGER IF NOT EXISTS trg_items_claim_generation_fence
-      AFTER UPDATE OF claimed_by, claim_expires_at ON items
-      WHEN NEW.claim_generation = OLD.claim_generation
-        AND (
-          NEW.claimed_by IS NOT OLD.claimed_by
-          OR NEW.claim_expires_at IS NOT OLD.claim_expires_at
-        )
-      BEGIN
-        UPDATE items
-        SET claim_generation = claim_generation + 1
-        WHERE id = NEW.id;
-      END;
-    `);
   }
 
   listItems(filters: { project?: string; status?: ItemStatus } = {}): Item[] {
@@ -402,6 +387,10 @@ export class StensiblyStore {
               summary = COALESCE(?1, summary),
               claimed_by = NULL,
               claim_expires_at = NULL,
+              claim_generation = claim_generation + CASE
+                WHEN claimed_by IS NOT NULL OR claim_expires_at IS NOT NULL THEN 1
+                ELSE 0
+              END,
               version = version + 1,
               updated_at = ?2
           WHERE id = ?3
