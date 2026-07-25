@@ -1,6 +1,7 @@
 interface DashboardVerificationOptions {
   url: string;
   htmlFile?: string;
+  githubAnnotation: boolean;
 }
 
 export interface DashboardAssetExpectation {
@@ -55,6 +56,10 @@ export async function verifyDashboardUrl(url: string): Promise<void> {
   }
 }
 
+export function formatGitHubErrorAnnotation(message: string): string {
+  return `::error title=Dashboard verification failed::${escapeGitHubCommandData(message)}`;
+}
+
 async function fetchText(url: string, expectedContentType: RegExp): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -100,14 +105,26 @@ function safeUrl(value: string): string {
   }
 }
 
+function escapeGitHubCommandData(value: string): string {
+  return value
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+}
+
 function parseArgs(argv: string[]): DashboardVerificationOptions {
-  const options: DashboardVerificationOptions = { url: DEFAULT_URL };
+  const options: DashboardVerificationOptions = {
+    url: DEFAULT_URL,
+    githubAnnotation: false,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--url") {
       options.url = requireValue(argv[++index], "--url");
     } else if (value === "--html-file") {
       options.htmlFile = requireValue(argv[++index], "--html-file");
+    } else if (value === "--github-annotation") {
+      options.githubAnnotation = true;
     } else {
       throw new Error(`unknown option ${value}`);
     }
@@ -133,7 +150,11 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : "dashboard verification failed");
+    const message = error instanceof Error ? error.message : "dashboard verification failed";
+    console.error(message);
+    if (Bun.argv.includes("--github-annotation")) {
+      console.error(formatGitHubErrorAnnotation(message));
+    }
     process.exitCode = 1;
   });
 }
