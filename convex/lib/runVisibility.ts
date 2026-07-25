@@ -26,9 +26,16 @@ export async function readPublicItemRuns(
       .order("desc")
       .take(normalizedLimit),
   ));
+  return publicItemRuns(groups.flat(), item.externalId, normalizedLimit);
+}
 
-  return groups
-    .flat()
+export function publicItemRuns(
+  runs: Doc<"runs">[],
+  itemExternalId: string,
+  limit = MAX_VISIBLE_ITEM_RUNS,
+) {
+  const normalizedLimit = normalizeLimit(limit);
+  return [...runs]
     .sort((left, right) =>
       Number(activeStatuses.has(right.status)) - Number(activeStatuses.has(left.status))
       || right.lastHeartbeatAt - left.lastHeartbeatAt
@@ -38,7 +45,7 @@ export async function readPublicItemRuns(
     .slice(0, normalizedLimit)
     .map((run) => ({
       ...publicRun(run),
-      itemId: item.externalId,
+      itemId: itemExternalId,
     }));
 }
 
