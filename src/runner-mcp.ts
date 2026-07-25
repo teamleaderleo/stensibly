@@ -3,13 +3,22 @@ import { z } from "zod";
 import { getRunnerContextPacket } from "./context-packets.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
-import { runnerLedger } from "./runner-contracts.js";
+import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
+import { runnerLedger, type RunnerConcurrencyPolicy } from "./runner-contracts.js";
 import { runCommands, runStatuses } from "./runs.js";
 import { actorSchema } from "./schemas.js";
 
-export function createRunnerMcpServer(ledger: WorkLedger): McpServer {
+export interface RunnerMcpServerOptions {
+  concurrency?: Partial<RunnerConcurrencyPolicy>;
+}
+
+export function createRunnerMcpServer(
+  ledger: WorkLedger,
+  options: RunnerMcpServerOptions = {},
+): McpServer {
   const runs = runnerLedger(ledger);
   if (!runs) throw new Error("Runner lifecycle is unavailable on this backend");
+  const concurrency = normalizeRunnerConcurrencyPolicy(options.concurrency);
 
   const server = new McpServer(
     { name: "stensibly-runner", version: "0.1.0" },
@@ -19,6 +28,7 @@ export function createRunnerMcpServer(ledger: WorkLedger): McpServer {
         "Claim one queued or retry-eligible run, then use the returned generation and lease generation for every guarded mutation.",
         "Move a claimed run from starting to running, heartbeat before the lease expires, and finish it with a terminal transition.",
         "The returned context packet is bounded and redacted; durable item state remains authoritative.",
+        "Global and project concurrency limits are server-owned policy and cannot be changed by a runner call.",
       ].join(" "),
     },
   );
@@ -26,7 +36,7 @@ export function createRunnerMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "claim_runner_work",
     {
-      description: "Atomically claim and start the oldest matching queued or retry-eligible run, transfer its item lease to this runner, and return its bounded context packet.",
+      description: "Atomically claim and start the oldest matching queued or retry-eligible run when server-owned global and project capacity are available, transfer its item lease to this runner, and return its bounded context packet.",
       inputSchema: {
         actor: actorSchema,
         runnerType: z.string().trim().min(1).max(80),
@@ -41,7 +51,7 @@ export function createRunnerMcpServer(ledger: WorkLedger): McpServer {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ maxContextCharacters, ...input }) => asToolResult(async () => {
-      const run = await runs.claimRunnerWork(input);
+      const run = await runs.claimRunnerWork({ ...input, concurrency });
       if (!run) return null;
       return {
         run,
