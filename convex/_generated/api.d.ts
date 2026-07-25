@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accounts from "../accounts.js";
 import type * as artifacts from "../artifacts.js";
 import type * as claims from "../claims.js";
 import type * as completionContinuations from "../completionContinuations.js";
@@ -36,6 +37,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accounts: typeof accounts;
   artifacts: typeof artifacts;
   claims: typeof claims;
   completionContinuations: typeof completionContinuations;
