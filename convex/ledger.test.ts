@@ -276,6 +276,52 @@ describe("Convex ledger", () => {
       actor: leo,
     })).rejects.toThrow(/within one project/);
 
+    await t.run(async (ctx) => {
+      const items = await ctx.db.query("items").collect();
+      const source = items.find((item) => item.externalId === docsItem.id);
+      const target = items.find((item) => item.externalId === otherProjectItem.id);
+      const actors = await ctx.db.query("actors").collect();
+      const actor = actors.find((candidate) => candidate.externalId === leo.id);
+      if (!source || !target || !actor) throw new Error("Legacy fixture setup failed");
+      const createdAt = Date.now();
+      const dependencyId = await ctx.db.insert("dependencies", {
+        workspaceId: source.workspaceId,
+        projectId: source.projectId,
+        fromItemId: source._id,
+        toItemId: target._id,
+        kind: "related_to",
+        createdByActorId: actor._id,
+        createdAt,
+      });
+      await ctx.db.insert("events", {
+        workspaceId: source.workspaceId,
+        projectId: source.projectId,
+        itemId: source._id,
+        externalId: "evt_legacy_cross_project_dependency",
+        actorId: actor._id,
+        actorExternalId: actor.externalId,
+        type: "dependency.added",
+        payload: {
+          dependencyId: String(dependencyId),
+          kind: "related_to",
+          toItemId: target.externalId,
+        },
+        createdAt,
+      });
+    });
+
+    const isolatedDetail = await t.query(convexApi.items.get, {
+      serviceSecret: secret,
+      workspace,
+      id: docsItem.id,
+    }) as any;
+    expect(isolatedDetail.dependencies).toHaveLength(1);
+    const dependencyEvents = isolatedDetail.events.filter(
+      (event: any) => event.type === "dependency.added",
+    );
+    expect(dependencyEvents).toHaveLength(1);
+    expect(dependencyEvents[0].payload.toItemId).toBe(apiItem.id);
+
     const finished = await t.mutation(convexApi.runs.finish, {
       serviceSecret: secret,
       workspace,
