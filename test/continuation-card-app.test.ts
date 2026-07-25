@@ -57,6 +57,7 @@ describe("ChatGPT continuation card app", () => {
       expect(names).toContain("show_continuation_card");
       expect(names).toContain("list_continuation_inbox");
       expect(names).toContain("edit_continuation");
+      expect(names).toContain("queue_continuation_for_supervisor");
       const cardTool = tools.tools.find((tool) => tool.name === "show_continuation_card");
       expect(cardTool).toMatchObject({
         title: "Show continuation decision card",
@@ -91,6 +92,7 @@ describe("ChatGPT continuation card app", () => {
           priority: 75,
         },
         actor: leo,
+        capabilities: { supervisorQueue: true },
       });
 
       const resource = await client.readResource({ uri: CONTINUATION_CARD_URI });
@@ -118,6 +120,9 @@ describe("ChatGPT continuation card app", () => {
       expect(html).toContain("Edit instruction");
       expect(html).toContain("Save instruction");
       expect(html).toContain("Continue here");
+      expect(html).toContain("Queue for supervisor");
+      expect(html).toContain("queue_continuation_for_supervisor");
+      expect(html).toContain("model.capabilities?.supervisorQueue");
       expect(html).toContain("Later");
       expect(html).toContain("Reject");
     } finally {

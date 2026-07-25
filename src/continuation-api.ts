@@ -10,6 +10,7 @@ import {
   buildContinuationInbox,
   continuationInboxSchema,
 } from "./continuation-inbox.js";
+import { registerContinuationSupervisorApi } from "./continuation-supervisor-api.js";
 import {
   currentPrincipal,
   requireHttpAccess,
@@ -130,6 +131,8 @@ export function registerContinuationApi(
     });
     return context.json({ continuation });
   });
+
+  registerContinuationSupervisorApi(app, ledger);
 }
 
 async function readJson(request: Request): Promise<unknown> {

@@ -6,6 +6,7 @@ import {
   CONTINUATION_CARD_MIME_TYPE,
   CONTINUATION_CARD_URI,
 } from "./continuation-card-widget.js";
+import { continuationSupervisorLedger } from "./continuation-supervisor-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import { actorSchema } from "./schemas.js";
 
@@ -36,6 +37,9 @@ const continuationCardOutputSchema = {
     nextAction: z.string().nullable(),
   }),
   actor: actorSchema,
+  capabilities: z.object({
+    supervisorQueue: z.boolean(),
+  }),
 };
 
 export function registerContinuationCardApp(
@@ -44,6 +48,7 @@ export function registerContinuationCardApp(
 ): void {
   const continuations = continuationLedger(ledger);
   if (!continuations) return;
+  const supervisorQueue = continuationSupervisorLedger(ledger) !== null;
 
   server.registerResource(
     "continuation-card",
@@ -65,7 +70,7 @@ export function registerContinuationCardApp(
             },
             prefersBorder: true,
           },
-          "openai/widgetDescription": "Review a durable next action, refine its instruction, or send an approved, deferred, or rejected decision back into the conversation.",
+          "openai/widgetDescription": "Review a durable next action, refine its instruction, continue in the conversation, or queue it for supervisor execution.",
           "openai/widgetPrefersBorder": true,
           "openai/widgetCSP": {
             connect_domains: [],
@@ -115,6 +120,7 @@ export function registerContinuationCardApp(
             nextAction: detail.item.nextAction,
           },
           actor,
+          capabilities: { supervisorQueue },
         };
         return {
           structuredContent,

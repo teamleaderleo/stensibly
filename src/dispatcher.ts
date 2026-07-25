@@ -44,6 +44,7 @@ export interface DispatchNextWorkInput {
   runnerType: string;
   runnerProfile: string;
   project?: string;
+  itemId?: string;
   externalRunId?: string;
   continuationRef?: string;
   leaseSeconds?: number;
@@ -113,6 +114,7 @@ export function surveyDispatch(
   const runResult = reconcileStaleRuns(store, now);
   const candidates = queryCandidates(store, {
     project: input.project ?? null,
+    itemId: null,
     limit: input.limit,
     now: timestamp,
     actorId: null,
@@ -157,6 +159,7 @@ export function dispatchNextWork(
     upsertActor(store, input.actor, timestamp);
     const candidate = queryCandidates(store, {
       project: input.project ?? null,
+      itemId: input.itemId ?? null,
       limit: 1,
       now: timestamp,
       actorId: input.actor.id,
@@ -289,13 +292,14 @@ function queryCandidates(
   store: StensiblyStore,
   input: {
     project: string | null;
+    itemId: string | null;
     limit: number;
     now: string;
     actorId: string | null;
   },
 ): CandidateRow[] {
   return store.db
-    .query<CandidateRow, [string | null, string, string | null, number]>(`
+    .query<CandidateRow, [string | null, string | null, string, string | null, number]>(`
       SELECT
         i.id,
         i.project_id,
@@ -309,11 +313,12 @@ function queryCandidates(
         ON w.item_id = i.id AND w.state = 'ready'
       WHERE i.status = 'ready'
         AND (?1 IS NULL OR i.project_id = ?1)
+        AND (?2 IS NULL OR i.id = ?2)
         AND (
           i.claimed_by IS NULL
           OR i.claim_expires_at IS NULL
-          OR i.claim_expires_at <= ?2
-          OR (?3 IS NOT NULL AND i.claimed_by = ?3)
+          OR i.claim_expires_at <= ?3
+          OR (?4 IS NOT NULL AND i.claimed_by = ?4)
         )
         AND NOT EXISTS (
           SELECT 1
@@ -330,9 +335,9 @@ function queryCandidates(
         i.priority DESC,
         i.created_at ASC,
         i.id ASC
-      LIMIT ?4
+      LIMIT ?5
     `)
-    .all(input.project, input.now, input.actorId, input.limit);
+    .all(input.project, input.itemId, input.now, input.actorId, input.limit);
 }
 
 function mapCandidate(row: CandidateRow): DispatchCandidate {
@@ -441,6 +446,7 @@ function normalizeDispatchInput(raw: DispatchNextWorkInput) {
   const actor = actorSchema.parse(raw.actor);
   if (actor.kind === "human") throw new TypeError("Supervisor dispatch actor must be an agent or service");
   const project = optionalProject(raw.project);
+  const itemId = optionalText(raw.itemId, "Item ID", 240);
   const externalRunId = optionalText(raw.externalRunId, "External run ID", 240);
   const continuationRef = optionalText(raw.continuationRef, "Continuation reference", 500);
   const idempotencyKey = optionalText(raw.idempotencyKey, "Idempotency key", 240);
@@ -449,6 +455,7 @@ function normalizeDispatchInput(raw: DispatchNextWorkInput) {
     runnerType: requiredText(raw.runnerType, "Runner type", 80),
     runnerProfile: requiredText(raw.runnerProfile, "Runner profile", 160),
     ...(project ? { project } : {}),
+    ...(itemId ? { itemId } : {}),
     ...(externalRunId ? { externalRunId } : {}),
     ...(continuationRef ? { continuationRef } : {}),
     leaseSeconds: positiveInteger(raw.leaseSeconds ?? 900, "Lease seconds", 86_400, 30),
@@ -464,6 +471,7 @@ function dispatchRequest(input: ReturnType<typeof normalizeDispatchInput>) {
     runnerType: input.runnerType,
     runnerProfile: input.runnerProfile,
     project: input.project ?? null,
+    itemId: input.itemId ?? null,
     externalRunId: input.externalRunId ?? null,
     continuationRef: input.continuationRef ?? null,
     leaseSeconds: input.leaseSeconds,

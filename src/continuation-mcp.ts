@@ -11,7 +11,9 @@ import {
   buildContinuationInbox,
   continuationInboxSchema,
 } from "./continuation-inbox.js";
+import { registerContinuationSupervisorTools } from "./continuation-supervisor-mcp.js";
 import type { WorkLedger } from "./ledger.js";
+import { asToolResult } from "./mcp-tool-result.js";
 
 const idSchema = z.string().trim().min(1).max(240);
 const idempotencySchema = z.string().trim().min(1).max(240).optional();
@@ -97,20 +99,6 @@ export function registerContinuationTools(
     },
     async (input) => asToolResult(() => continuations.resolveContinuation(input)),
   );
-}
 
-async function asToolResult(read: () => Promise<unknown>) {
-  try {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(await read(), null, 2) }],
-    };
-  } catch (error) {
-    return {
-      content: [{
-        type: "text" as const,
-        text: error instanceof Error ? error.message : String(error),
-      }],
-      isError: true,
-    };
-  }
+  registerContinuationSupervisorTools(server, ledger);
 }

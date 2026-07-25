@@ -13,6 +13,14 @@ import {
   editContinuation,
   type EditContinuationInput,
 } from "./continuation-edit.js";
+import type { ContinuationSupervisorLedger } from "./continuation-supervisor-contracts.js";
+import {
+  ensureContinuationSupervisorSchema,
+  queueContinuationForSupervisor,
+  runContinuationSupervisorPolicy,
+  type QueueContinuationForSupervisorInput,
+  type RunContinuationSupervisorPolicyInput,
+} from "./continuation-supervisor.js";
 import {
   ensureContinuationSchema,
   getContinuation,
@@ -41,11 +49,16 @@ import type {
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
-export class SqliteWorkLedger implements WorkLedger, CompletionContinuationLedger {
+export class SqliteWorkLedger implements
+  WorkLedger,
+  CompletionContinuationLedger,
+  ContinuationSupervisorLedger
+{
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
     ensureContinuationSchema(store);
     ensureCompletionContinuationSchema(store);
+    ensureContinuationSupervisorSchema(store);
   }
 
   async getBrief(project: string, limit: number) {
@@ -174,5 +187,13 @@ export class SqliteWorkLedger implements WorkLedger, CompletionContinuationLedge
 
   async editContinuation(input: EditContinuationInput) {
     return editContinuation(this.store, input);
+  }
+
+  async queueContinuationForSupervisor(input: QueueContinuationForSupervisorInput) {
+    return queueContinuationForSupervisor(this.store, input);
+  }
+
+  async runContinuationSupervisorPolicy(input: RunContinuationSupervisorPolicyInput) {
+    return runContinuationSupervisorPolicy(this.store, input);
   }
 }

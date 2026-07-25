@@ -7,6 +7,7 @@ import {
 } from "./completion-continuation-contracts.js";
 import { registerContinuationTools } from "./continuation-mcp.js";
 import type { WorkLedger } from "./ledger.js";
+import { asToolResult } from "./mcp-tool-result.js";
 import {
   actorSchema,
   itemKinds,
@@ -302,18 +303,4 @@ function claimSchema() {
     ...actorActionSchema(),
     leaseSeconds: z.number().int().min(30).max(86_400).default(900),
   };
-}
-
-async function asToolResult(read: () => Promise<unknown>) {
-  try {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(await read(), null, 2) }],
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: "text" as const, text: message }],
-      isError: true,
-    };
-  }
 }
