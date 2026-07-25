@@ -1,7 +1,10 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { WorkLedger } from "./ledger.js";
 import { createRunnerMcpServer } from "./runner-mcp.js";
-import { runnerLedger } from "./runner-contracts.js";
+import {
+  runnerLedger,
+  type RunnerConcurrencyPolicy,
+} from "./runner-contracts.js";
 import {
   principalCanAccessProject,
   principalHasScope,
@@ -16,6 +19,7 @@ import {
 export interface RunnerMcpHttpOptions {
   allowedOrigins?: string[];
   allowedHosts?: string[];
+  concurrency?: Partial<RunnerConcurrencyPolicy>;
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
 }
@@ -85,7 +89,9 @@ export async function handleRunnerMcpHttpRequest(
   const denial = await authorizePayload(options.ledger, principal, body);
   if (denial) return denial;
 
-  const server = createRunnerMcpServer(options.ledger);
+  const server = createRunnerMcpServer(options.ledger, {
+    concurrency: options.concurrency,
+  });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
 import type { ClaimRunnerWorkInput } from "./runner-contracts.js";
 import { actorSchema, type ActorInput } from "./schemas.js";
 import {
@@ -42,6 +43,10 @@ interface ClaimCommandRow {
   result_json: string;
 }
 
+interface CountRow {
+  count: number;
+}
+
 const initializedStores = new WeakSet<StensiblyStore>();
 
 export function claimRunnerWork(
@@ -67,6 +72,11 @@ export function claimRunnerWork(
         }
         return JSON.parse(existing.result_json) as WorkRun | null;
       }
+    }
+
+    if (!globalCapacityAvailable(store, timestamp, input.concurrency.globalLimit)) {
+      storeReplay(store, input.idempotencyKey, requestJson, null, timestamp);
+      return null;
     }
 
     const candidate = selectCandidate(store, input, timestamp);
@@ -166,6 +176,7 @@ export function claimRunnerWork(
         leaseGeneration: nextLeaseGeneration,
         leaseExpiresAt,
         previousActorId: candidate.actor_id,
+        concurrency: input.concurrency,
         ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
         ...(retrying ? { retryAttempt: candidate.retry_attempt } : {}),
       },
@@ -194,13 +205,32 @@ export function ensureRunnerQueueSchema(store: StensiblyStore): void {
   initializedStores.add(store);
 }
 
+function globalCapacityAvailable(
+  store: StensiblyStore,
+  now: string,
+  limit: number,
+): boolean {
+  const row = store.db
+    .query<CountRow, [string]>(`
+      SELECT COUNT(*) AS count
+      FROM work_runs
+      WHERE status IN ('starting', 'running', 'waiting')
+        AND (lease_expires_at IS NULL OR lease_expires_at > ?1)
+    `)
+    .get(now);
+  return Number(row?.count ?? 0) < limit;
+}
+
 function selectCandidate(
   store: StensiblyStore,
   input: ReturnType<typeof normalizeInput>,
   now: string,
 ): CandidateRow | null {
   return store.db
-    .query<CandidateRow, [string, string, string | null, string | null, string]>(`
+    .query<
+      CandidateRow,
+      [string, string, string | null, string | null, string, number]
+    >(`
       SELECT r.*, i.project_id
       FROM work_runs r
       JOIN items i ON i.id = r.item_id
@@ -217,6 +247,14 @@ function selectCandidate(
             AND r.retry_attempt < r.max_attempts
           )
         )
+        AND (
+          SELECT COUNT(*)
+          FROM work_runs active
+          JOIN items active_item ON active_item.id = active.item_id
+          WHERE active_item.project_id = i.project_id
+            AND active.status IN ('starting', 'running', 'waiting')
+            AND (active.lease_expires_at IS NULL OR active.lease_expires_at > ?5)
+        ) < ?6
       ORDER BY
         CASE WHEN r.status = 'failed' THEN 0 ELSE 1 END,
         COALESCE(r.next_retry_at, r.created_at) ASC,
@@ -230,6 +268,7 @@ function selectCandidate(
       input.project ?? null,
       input.runId ?? null,
       now,
+      input.concurrency.projectLimit,
     ) ?? null;
 }
 
@@ -318,6 +357,7 @@ function normalizeInput(raw: ClaimRunnerWorkInput) {
     ...(runId ? { runId } : {}),
     ...(externalRunId ? { externalRunId } : {}),
     leaseSeconds: positiveInteger(raw.leaseSeconds ?? 900, "Lease seconds", 86_400, 30),
+    concurrency: normalizeRunnerConcurrencyPolicy(raw.concurrency),
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 }

@@ -1,5 +1,6 @@
 import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
 import type { WorkLedger } from "./ledger.js";
+import { defaultRunnerConcurrencyPolicy } from "./runner-concurrency.js";
 import { createServerApp } from "./server-app.js";
 import { SqliteWorkLedger } from "./sqlite-ledger.js";
 import { SqliteTokenProvider } from "./sqlite-token-provider.js";
@@ -15,6 +16,16 @@ const requireAuth = Bun.env.STENSIBLY_REQUIRE_AUTH === "true";
 const allowedOrigins = splitList(Bun.env.STENSIBLY_ALLOWED_ORIGINS);
 const allowedHosts = splitList(Bun.env.STENSIBLY_ALLOWED_HOSTS);
 const backend = Bun.env.STENSIBLY_BACKEND ?? "sqlite";
+const runnerGlobalConcurrency = positiveIntegerEnv(
+  Bun.env.STENSIBLY_RUNNER_GLOBAL_CONCURRENCY,
+  defaultRunnerConcurrencyPolicy.globalLimit,
+  "STENSIBLY_RUNNER_GLOBAL_CONCURRENCY",
+);
+const runnerProjectConcurrency = positiveIntegerEnv(
+  Bun.env.STENSIBLY_RUNNER_PROJECT_CONCURRENCY,
+  defaultRunnerConcurrencyPolicy.projectLimit,
+  "STENSIBLY_RUNNER_PROJECT_CONCURRENCY",
+);
 const store = new StensiblyStore(databasePath);
 let ledger: WorkLedger;
 let authenticator: ApiTokenAuthenticator;
@@ -43,6 +54,14 @@ const app = createServerApp(store, {
     allowedOrigins,
     allowedHosts,
   },
+  runnerMcp: {
+    allowedOrigins,
+    allowedHosts,
+    concurrency: {
+      globalLimit: runnerGlobalConcurrency,
+      projectLimit: runnerProjectConcurrency,
+    },
+  },
 });
 
 Bun.serve({
@@ -56,6 +75,10 @@ console.log(`HTTP auth: ${requireAuth ? "required" : "disabled"}`);
 console.log(`Allowed remote origins: ${allowedOrigins.length ? allowedOrigins.join(", ") : "none"}`);
 console.log(`API v1, token authority, and MCP backend: ${backend}`);
 console.log("Remote MCP: /mcp (Bearer token always required)");
+console.log("Runner MCP: /runner/mcp (Bearer token always required)");
+console.log(
+  `Runner concurrency: ${runnerGlobalConcurrency} global, ${runnerProjectConcurrency} per project`,
+);
 
 function splitList(value: string | undefined): string[] {
   if (!value) return [];
@@ -63,4 +86,17 @@ function splitList(value: string | undefined): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function positiveIntegerEnv(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized < 1 || normalized > 1_000) {
+    throw new Error(`${name} must be a whole number from 1 to 1000`);
+  }
+  return normalized;
 }
