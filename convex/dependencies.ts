@@ -30,6 +30,9 @@ export const add = mutation({
     const from = await getItemByExternalId(ctx, workspace._id, args.fromItemId);
     const to = await getItemByExternalId(ctx, workspace._id, args.toItemId);
     if (from._id === to._id) throw new Error("An item cannot depend on itself");
+    if (from.projectId !== to.projectId) {
+      throw new Error("Dependencies must stay within one project");
+    }
     const actor = await upsertActor(ctx, workspace._id, args.actor);
     if (!actor) throw new Error("Failed to create actor");
 
@@ -104,21 +107,27 @@ export const list = query({
     const output = [];
     for (const dependency of outgoing) {
       const target = await ctx.db.get("items", dependency.toItemId);
+      if (!target || target.projectId !== item.projectId) continue;
       output.push({
         id: String(dependency._id),
         direction: "outgoing",
         kind: dependency.kind,
-        itemId: target?.externalId ?? String(dependency.toItemId),
+        itemId: target.externalId,
+        title: target.title,
+        status: target.status,
         createdAt: new Date(dependency.createdAt).toISOString(),
       });
     }
     for (const dependency of incoming) {
       const source = await ctx.db.get("items", dependency.fromItemId);
+      if (!source || source.projectId !== item.projectId) continue;
       output.push({
         id: String(dependency._id),
         direction: "incoming",
         kind: dependency.kind,
-        itemId: source?.externalId ?? String(dependency.fromItemId),
+        itemId: source.externalId,
+        title: source.title,
+        status: source.status,
         createdAt: new Date(dependency.createdAt).toISOString(),
       });
     }

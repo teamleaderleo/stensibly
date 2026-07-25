@@ -7,6 +7,23 @@ import type {
   ItemStatus,
 } from "./store.js";
 
+export type DependencyKind =
+  | "blocks"
+  | "depends_on"
+  | "related_to"
+  | "duplicates"
+  | "supersedes";
+
+export interface ItemDependency {
+  id: string;
+  direction: "incoming" | "outgoing";
+  kind: DependencyKind;
+  itemId: string;
+  title: string;
+  status: ItemStatus;
+  createdAt: string;
+}
+
 export interface ListWorkInput {
   project?: string;
   status?: ItemStatus;
@@ -79,7 +96,7 @@ export interface ItemDetail {
   events: ItemEvent[];
   artifacts: Artifact[];
   runs?: unknown[];
-  dependencies?: unknown[];
+  dependencies?: ItemDependency[];
 }
 
 export interface WorkLedger {

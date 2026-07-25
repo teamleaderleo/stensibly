@@ -233,8 +233,48 @@ describe("Convex ledger", () => {
       itemId: docsItem.id,
     }) as any[];
     expect(dependencies).toEqual([
-      expect.objectContaining({ direction: "outgoing", kind: "depends_on", itemId: apiItem.id }),
+      expect.objectContaining({
+        direction: "outgoing",
+        kind: "depends_on",
+        itemId: apiItem.id,
+        title: "Change the API",
+        status: "ready",
+      }),
     ]);
+
+    const detail = await t.query(convexApi.items.get, {
+      serviceSecret: secret,
+      workspace,
+      id: docsItem.id,
+    }) as any;
+    expect(detail.dependencies).toEqual([
+      expect.objectContaining({
+        direction: "outgoing",
+        kind: "depends_on",
+        itemId: apiItem.id,
+        title: "Change the API",
+        status: "ready",
+      }),
+    ]);
+
+    const otherProjectItem = await t.mutation(convexApi.items.create, {
+      serviceSecret: secret,
+      workspace,
+      project: "elsewhere",
+      kind: "task",
+      title: "Keep this project private",
+      nextAction: "Stay isolated.",
+      priority: 50,
+      actor: leo,
+    }) as any;
+    await expect(t.mutation(convexApi.dependencies.add, {
+      serviceSecret: secret,
+      workspace,
+      fromItemId: docsItem.id,
+      toItemId: otherProjectItem.id,
+      kind: "related_to",
+      actor: leo,
+    })).rejects.toThrow(/within one project/);
 
     const finished = await t.mutation(convexApi.runs.finish, {
       serviceSecret: secret,

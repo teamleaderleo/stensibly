@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   createRequestGate,
+  dependencyBlocksCurrent,
+  dependencyRelationship,
   payloadEntries,
   readItemDetail,
   redactCredentialText,
@@ -9,18 +11,37 @@ import {
 } from "../site/item-detail.js";
 
 describe("dashboard item detail response", () => {
-  test("accepts a matching item and filters malformed collection entries", () => {
+  test("accepts matching item collections and filters malformed entries", () => {
     const payload = {
       item: { id: "item_1", title: "Inspect me" },
       events: [{ id: "evt_1" }, null, "bad"],
       artifacts: [{ id: "art_1" }, []],
+      dependencies: [
+        {
+          id: "dep_1",
+          direction: "outgoing",
+          kind: "depends_on",
+          itemId: "item_2",
+          title: "Finish the API",
+          status: "active",
+          createdAt: "2026-07-25T00:00:00.000Z",
+        },
+        null,
+        { direction: "sideways", kind: "depends_on", itemId: "item_3" },
+      ],
     };
 
     expect(readItemDetail(payload, "item_1")).toEqual({
       item: payload.item,
       events: [{ id: "evt_1" }],
       artifacts: [{ id: "art_1" }],
+      dependencies: [payload.dependencies[0]],
     });
+  });
+
+  test("keeps compatibility with item detail responses that predate dependency visibility", () => {
+    expect(readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [] }, "item_1"))
+      .toEqual({ item: { id: "item_1" }, events: [], artifacts: [], dependencies: [] });
   });
 
   test("rejects malformed and mismatched responses", () => {
@@ -29,6 +50,26 @@ describe("dashboard item detail response", () => {
     expect(() => readItemDetail({ item: { id: "item_2" }, events: [], artifacts: [] }, "item_1"))
       .toThrow("different item");
     expect(() => readItemDetail({ item: { id: "item_1" }, events: [] })).toThrow("missing events or artifacts");
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], dependencies: {} }))
+      .toThrow("incompatible dependencies");
+  });
+});
+
+describe("dashboard dependency relationships", () => {
+  test("describes both sides of dependency links", () => {
+    expect(dependencyRelationship({ direction: "outgoing", kind: "depends_on" })).toBe("Depends on");
+    expect(dependencyRelationship({ direction: "incoming", kind: "depends_on" })).toBe("Required by");
+    expect(dependencyRelationship({ direction: "outgoing", kind: "blocks" })).toBe("Blocks");
+    expect(dependencyRelationship({ direction: "incoming", kind: "blocks" })).toBe("Blocked by");
+    expect(dependencyRelationship({ direction: "outgoing", kind: "related_to" })).toBe("Related to");
+  });
+
+  test("flags only unresolved links that block the current item", () => {
+    expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "depends_on", status: "active" })).toBe(true);
+    expect(dependencyBlocksCurrent({ direction: "incoming", kind: "blocks", status: "ready" })).toBe(true);
+    expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "depends_on", status: "done" })).toBe(false);
+    expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "blocks", status: "active" })).toBe(false);
+    expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "depends_on", status: "" })).toBe(false);
   });
 });
 

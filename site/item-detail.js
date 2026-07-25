@@ -1,3 +1,7 @@
+const dependencyDirections = new Set(['incoming', 'outgoing']);
+const dependencyKinds = new Set(['blocks', 'depends_on', 'related_to', 'duplicates', 'supersedes']);
+const completedStatuses = new Set(['done', 'archived']);
+
 export function readItemDetail(payload, expectedItemId = '') {
   if (!isRecord(payload) || !isRecord(payload.item)) {
     throw new TypeError('The endpoint returned an incompatible item detail response.');
@@ -10,11 +14,34 @@ export function readItemDetail(payload, expectedItemId = '') {
   if (!Array.isArray(payload.events) || !Array.isArray(payload.artifacts)) {
     throw new TypeError('The item detail response is missing events or artifacts.');
   }
+  if (payload.dependencies !== undefined && !Array.isArray(payload.dependencies)) {
+    throw new TypeError('The item detail response contains incompatible dependencies.');
+  }
   return {
     item: payload.item,
     events: payload.events.filter(isRecord),
     artifacts: payload.artifacts.filter(isRecord),
+    dependencies: (payload.dependencies || []).map(readDependency).filter(Boolean),
   };
+}
+
+export function dependencyRelationship(dependency) {
+  const direction = dependency?.direction;
+  const kind = dependency?.kind;
+  if (kind === 'depends_on') return direction === 'incoming' ? 'Required by' : 'Depends on';
+  if (kind === 'blocks') return direction === 'incoming' ? 'Blocked by' : 'Blocks';
+  if (kind === 'duplicates') return direction === 'incoming' ? 'Duplicated by' : 'Duplicates';
+  if (kind === 'supersedes') return direction === 'incoming' ? 'Superseded by' : 'Supersedes';
+  return 'Related to';
+}
+
+export function dependencyBlocksCurrent(dependency) {
+  const status = typeof dependency?.status === 'string' ? dependency.status : '';
+  if (!status || completedStatuses.has(status)) return false;
+  return (
+    (dependency.direction === 'outgoing' && dependency.kind === 'depends_on')
+    || (dependency.direction === 'incoming' && dependency.kind === 'blocks')
+  );
 }
 
 export function safeArtifactHref(value) {
@@ -66,6 +93,23 @@ export function createRequestGate() {
   };
 }
 
+function readDependency(value) {
+  if (!isRecord(value)) return null;
+  const direction = textValue(value.direction);
+  const kind = textValue(value.kind);
+  const itemId = textValue(value.itemId);
+  if (!dependencyDirections.has(direction) || !dependencyKinds.has(kind) || !itemId) return null;
+  return {
+    id: textValue(value.id) || `${direction}:${kind}:${itemId}`,
+    direction,
+    kind,
+    itemId,
+    title: textValue(value.title) || itemId,
+    status: textValue(value.status),
+    createdAt: textValue(value.createdAt),
+  };
+}
+
 function displayValue(value, maxLength) {
   let output;
   if (value === undefined) {
@@ -86,6 +130,10 @@ function displayValue(value, maxLength) {
   }
   output = redactCredentialText(output);
   return output.length > maxLength ? `${output.slice(0, maxLength)}…` : output;
+}
+
+function textValue(value) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function isRecord(value) {

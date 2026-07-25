@@ -200,14 +200,17 @@ export const get = query({
 
     const dependencies = [];
     for (const dependency of [...outgoing, ...incoming]) {
-      const otherId = dependency.fromItemId === item._id
-        ? dependency.toItemId
-        : dependency.fromItemId;
+      const outgoingFromItem = dependency.fromItemId === item._id;
+      const otherId = outgoingFromItem ? dependency.toItemId : dependency.fromItemId;
       const other = await ctx.db.get("items", otherId);
+      if (!other || other.projectId !== item.projectId) continue;
       dependencies.push({
-        direction: dependency.fromItemId === item._id ? "outgoing" : "incoming",
+        id: String(dependency._id),
+        direction: outgoingFromItem ? "outgoing" : "incoming",
         kind: dependency.kind,
-        itemId: other?.externalId ?? String(otherId),
+        itemId: other.externalId,
+        title: other.title,
+        status: other.status,
         createdAt: new Date(dependency.createdAt).toISOString(),
       });
     }
