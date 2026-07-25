@@ -46,6 +46,10 @@ import type {
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
+import {
+  reconcileStaleRunItems,
+  syncItemLeaseFromRun,
+} from "./run-item-recovery.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import { claimRunnerWork } from "./runner-queue.js";
 import {
@@ -74,15 +78,19 @@ export class SqliteWorkLedger implements
   }
 
   async getBrief(project: string, limit: number) {
+    reconcileStaleRunItems(this.store);
+    expireClaims(this.store);
     return getProjectBrief(this.store, project, limit);
   }
 
   async listWork(input: ListWorkInput = {}) {
+    reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return this.store.listItems(input);
   }
 
   async getItem(id: string) {
+    reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return {
       item: this.store.getItem(id),
@@ -118,6 +126,7 @@ export class SqliteWorkLedger implements
   }
 
   async claimWork(input: ClaimWorkInput) {
+    reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return this.store.claimItem(
       input.id,
@@ -150,6 +159,7 @@ export class SqliteWorkLedger implements
   }
 
   async releaseWork(input: ActorActionInput) {
+    reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return this.store.releaseItem(input.id, input.actor, input.idempotencyKey);
   }
@@ -168,6 +178,7 @@ export class SqliteWorkLedger implements
   }
 
   async completeWork(input: CompleteWorkInput) {
+    reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return this.store.completeItem(
       input.id,
@@ -178,6 +189,7 @@ export class SqliteWorkLedger implements
   }
 
   async completeWorkWithContinuations(input: CompleteWithContinuationsInput) {
+    reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return completeWorkWithContinuations(this.store, input);
   }
@@ -203,30 +215,41 @@ export class SqliteWorkLedger implements
   }
 
   async queueContinuationForSupervisor(input: QueueContinuationForSupervisorInput) {
+    reconcileStaleRunItems(this.store);
     return queueContinuationForSupervisor(this.store, input);
   }
 
   async runContinuationSupervisorPolicy(input: RunContinuationSupervisorPolicyInput) {
+    reconcileStaleRunItems(this.store);
     return runContinuationSupervisorPolicy(this.store, input);
   }
 
   async claimRunnerWork(input: ClaimRunnerWorkInput) {
+    reconcileStaleRunItems(this.store);
     return claimRunnerWork(this.store, input);
   }
 
   async getRun(id: string) {
+    reconcileStaleRunItems(this.store);
     return getWorkRun(this.store, id);
   }
 
   async listRuns(input: ListWorkRunsInput = {}) {
+    reconcileStaleRunItems(this.store);
     return listWorkRuns(this.store, input);
   }
 
   async heartbeatRun(input: HeartbeatWorkRunInput) {
-    return heartbeatWorkRun(this.store, input);
+    reconcileStaleRunItems(this.store);
+    const run = heartbeatWorkRun(this.store, input);
+    syncItemLeaseFromRun(this.store, run, new Date(), input.actor.id);
+    return run;
   }
 
   async transitionRun(input: TransitionWorkRunInput) {
-    return transitionWorkRun(this.store, input);
+    reconcileStaleRunItems(this.store);
+    const run = transitionWorkRun(this.store, input);
+    syncItemLeaseFromRun(this.store, run, new Date(), input.actor.id);
+    return run;
   }
 }
