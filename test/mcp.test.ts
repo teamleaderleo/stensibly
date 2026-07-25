@@ -39,10 +39,12 @@ describe("MCP work surface", () => {
         "list_continuations",
         "list_work",
         "propose_continuation",
+        "queue_continuation_for_supervisor",
         "record_event",
         "release_work",
         "renew_claim",
         "resolve_continuation",
+        "run_continuation_supervisor_policy",
         "survey_workspace",
         "unblock_work",
       ]);
