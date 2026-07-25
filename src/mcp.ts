@@ -6,6 +6,7 @@ import {
   continuationDraftSchema,
 } from "./completion-continuation-contracts.js";
 import { registerContinuationTools } from "./continuation-mcp.js";
+import { registerContextPacketTools } from "./context-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import {
@@ -30,6 +31,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
         "Use continuation proposals when useful work should survive the current run and wait for approval or dispatch.",
+        "Use get_runner_context before starting or resuming a run so execution begins from a bounded canonical handoff.",
       ].join(" "),
     },
   );
@@ -269,6 +271,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
     }),
   );
 
+  registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
   return server;
 }
