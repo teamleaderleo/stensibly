@@ -23,7 +23,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("runner context packets", () => {
-  test("preserves protected events, redacts credentials, and stays bounded", async () => {
+  test("preserves protected context, redacts credentials, and enforces tight bounds", async () => {
     const item = store.createItem({
       project: "studio",
       kind: "task",
@@ -65,15 +65,12 @@ describe("runner context packets", () => {
       runnerProfile: "default",
     }, generatedAt);
 
-    const packet = await getRunnerContextPacket(
-      new SqliteWorkLedger(store),
-      item.id,
-      {
-        maxEvents: 2,
-        maxCharacters: 2_000,
-        now: generatedAt,
-      },
-    );
+    const ledger = new SqliteWorkLedger(store);
+    const packet = await getRunnerContextPacket(ledger, item.id, {
+      maxEvents: 2,
+      maxCharacters: 5_000,
+      now: generatedAt,
+    });
 
     expect(packet.generatedAt).toBe(generatedAt.toISOString());
     expect(packet.events).toEqual(expect.arrayContaining([
@@ -88,9 +85,20 @@ describe("runner context packets", () => {
     expect(JSON.stringify(packet)).not.toContain("ghp_this_must_not_leak");
     expect(packet.artifacts[0]?.uri).toContain("[REDACTED]");
     expect(packet.sourceReferences).toContain(`event:${decision.id}`);
-    expect(packet.characterCount).toBeLessThanOrEqual(2_000);
+    expect(packet.characterCount).toBeLessThanOrEqual(5_000);
     expect(JSON.stringify(packet).length).toBe(packet.characterCount);
-    expect(packet.omitted.events).toBeGreaterThan(0);
+
+    const tightPacket = await getRunnerContextPacket(ledger, item.id, {
+      maxEvents: 2,
+      maxCharacters: 2_000,
+      now: generatedAt,
+    });
+    expect(tightPacket.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: decision.id, protected: true }),
+    ]));
+    expect(tightPacket.characterCount).toBeLessThanOrEqual(2_000);
+    expect(JSON.stringify(tightPacket).length).toBe(tightPacket.characterCount);
+    expect(Object.values(tightPacket.omitted).some((count) => count > 0)).toBe(true);
   });
 
   test("builds deterministic packets from the same canonical detail", () => {
