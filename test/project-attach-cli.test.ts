@@ -9,8 +9,10 @@ describe("project attachment import CLI", () => {
     const directory = await mkdtemp(join(tmpdir(), "stensibly-attachment-cli-"));
     const contractPath = join(directory, "STENSIBLY.md");
     const token = "test-admin-token";
-    let seenAuthorization: string | null = null;
-    let seenMethod = "";
+    const observed: { authorization: string | null; method: string } = {
+      authorization: null,
+      method: "",
+    };
 
     await Bun.write(contractPath, renderProjectContract({
       version: 1,
@@ -34,8 +36,8 @@ describe("project attachment import CLI", () => {
       hostname: "127.0.0.1",
       port: 0,
       async fetch(request) {
-        seenAuthorization = request.headers.get("authorization");
-        seenMethod = request.method;
+        observed.authorization = request.headers.get("authorization");
+        observed.method = request.method;
         const body = await request.json() as {
           sourceRevision?: unknown;
           snapshot?: { snapshotSha256?: unknown };
@@ -78,8 +80,8 @@ describe("project attachment import CLI", () => {
       ]);
 
       expect(exitCode).toBe(1);
-      expect(seenMethod).toBe("PUT");
-      expect(seenAuthorization).toBe(`Bearer ${token}`);
+      expect(observed.method).toBe("PUT");
+      expect(observed.authorization).toBe(`Bearer ${token}`);
       expect(stdout).toBe("");
       expect(stderr).toContain("Attachment import returned an invalid success response");
       expect(`${stdout}\n${stderr}`).not.toContain(token);
