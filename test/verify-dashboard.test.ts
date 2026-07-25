@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { verifyDashboardHtml, verifyDashboardUrl } from "../src/verify-dashboard.ts";
+import {
+  dashboardAssets,
+  verifyDashboardHtml,
+  verifyDashboardUrl,
+} from "../src/verify-dashboard.ts";
 
 const validHtml = `<!doctype html>
 <html><head>
@@ -31,6 +35,15 @@ describe("dashboard HTML verification", () => {
   });
 });
 
+describe("dashboard asset verification contract", () => {
+  test("matches the markers in the checked-in dashboard assets", async () => {
+    for (const asset of dashboardAssets) {
+      const source = await Bun.file(new URL(`../site${asset.path}`, import.meta.url)).text();
+      expect(source, `${asset.path} should contain ${asset.marker}`).toContain(asset.marker);
+    }
+  });
+});
+
 describe("dashboard URL verification", () => {
   test("checks the HTML and critical static module graph", async () => {
     const fixtures = new Map<string, [string, string]>([
@@ -41,7 +54,7 @@ describe("dashboard URL verification", () => {
       ["/item-claim.js", ["export function validateClaimInput() {}", "text/javascript"]],
       ["/item-progress-controller.js", ["export function installProgressController() {}", "text/javascript"]],
       ["/item-block-controller.js", ["export function installBlockController() {}", "text/javascript"]],
-      ["/item-complete-controller.js", ["export function installCompletionController() {}", "text/javascript"]],
+      ["/item-complete-controller.js", ["export function installCompleteController() {}", "text/javascript"]],
       ["/favicon.svg", ["<svg></svg>", "image/svg+xml"]],
     ]);
     globalThis.fetch = mockFetch(fixtures);
@@ -59,7 +72,9 @@ describe("dashboard URL verification", () => {
     const missingMarker = fullFixtures();
     missingMarker.set("/app.js", ["console.log('wrong bundle')", "text/javascript"]);
     globalThis.fetch = mockFetch(missingMarker);
-    await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow("expected marker");
+    await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow(
+      'https://www.stensibly.com/app.js is missing expected marker "DEFAULT_ENDPOINT"',
+    );
 
     globalThis.fetch = (async () => new Response("missing", { status: 404 })) as unknown as typeof fetch;
     await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow("HTTP 404");
@@ -75,7 +90,7 @@ function fullFixtures(): Map<string, [string, string]> {
     ["/item-claim.js", ["validateClaimInput", "application/javascript"]],
     ["/item-progress-controller.js", ["installProgressController", "application/javascript"]],
     ["/item-block-controller.js", ["installBlockController", "application/javascript"]],
-    ["/item-complete-controller.js", ["installCompletionController", "application/javascript"]],
+    ["/item-complete-controller.js", ["installCompleteController", "application/javascript"]],
     ["/favicon.svg", ["<svg", "image/svg+xml"]],
   ]);
 }
