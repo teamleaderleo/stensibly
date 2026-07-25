@@ -35,7 +35,7 @@ export function evaluateSessionRequestSecurity(
 
   const allowed = normalizedOriginSet(input.allowedOrigins);
   if (!allowed.has(origin)) {
-    return rejection(`Origin is not allowed for browser-session writes: ${origin}`);
+    return rejection("Origin is not allowed for browser-session writes");
   }
 
   return null;
