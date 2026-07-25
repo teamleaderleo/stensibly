@@ -108,6 +108,18 @@ describe("Convex project attachments", () => {
       project: "other",
     })).toBeNull();
   });
+
+  test("rejects snapshot JSON that disagrees with indexed metadata", async () => {
+    const t = convexTest(schema, modules);
+    await expect(accept(t, {
+      externalId: "attach_tampered",
+      snapshotSha256: firstHash,
+      sourceRevision: "1111111",
+      expectedCurrentSnapshotSha256: null,
+      authorityWidening: true,
+      embeddedProject: "other",
+    })).rejects.toThrow("metadata does not match");
+  });
 });
 
 async function accept(
@@ -118,8 +130,10 @@ async function accept(
     sourceRevision: string;
     expectedCurrentSnapshotSha256: string | null;
     authorityWidening: boolean;
+    embeddedProject?: string;
   },
 ) {
+  const sourcePath = "STENSIBLY.md";
   return await t.mutation(convexApi.projectAttachments.accept, {
     serviceSecret,
     workspace,
@@ -128,11 +142,14 @@ async function accept(
     externalId: input.externalId,
     snapshotJson: JSON.stringify({
       format: "stensibly.project-attachment",
+      schemaVersion: 1,
+      contract: { project: input.embeddedProject ?? project },
+      source: { path: sourcePath, contentSha256: contentHash },
       snapshotSha256: input.snapshotSha256,
     }),
     snapshotSha256: input.snapshotSha256,
     contentSha256: contentHash,
-    sourcePath: "STENSIBLY.md",
+    sourcePath,
     sourceRevision: input.sourceRevision,
     acceptedBy: "token:operator",
     authorityWidening: input.authorityWidening,
