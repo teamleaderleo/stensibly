@@ -33,7 +33,10 @@ export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements P
   }
 
   async getProjectAttachment(project: string): Promise<ProjectAttachmentRecord | null> {
-    const raw = await this.client.query(convexApi.projectAttachments.getCurrent, this.args({ project }));
+    const raw = await this.client.query(
+      convexApi.projectAttachments.getCurrent,
+      this.attachmentArgs({ project }),
+    );
     return raw === null ? null : mapRecord(raw);
   }
 
@@ -45,18 +48,21 @@ export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements P
     }
 
     const externalId = `attach_${randomUUID()}`;
-    const raw = await this.client.mutation(convexApi.projectAttachments.accept, this.args({
-      project: input.project,
-      expectedCurrentSnapshotSha256: prepared.expectedCurrentSnapshotSha256,
-      externalId,
-      snapshotJson: JSON.stringify(prepared.snapshot),
-      snapshotSha256: prepared.snapshot.snapshotSha256,
-      contentSha256: prepared.snapshot.source.contentSha256,
-      sourcePath: prepared.snapshot.source.path,
-      sourceRevision: prepared.sourceRevision,
-      acceptedBy: prepared.acceptedBy,
-      authorityWidening: prepared.authorityWidening,
-    }));
+    const raw = await this.client.mutation(
+      convexApi.projectAttachments.accept,
+      this.attachmentArgs({
+        project: input.project,
+        expectedCurrentSnapshotSha256: prepared.expectedCurrentSnapshotSha256,
+        externalId,
+        snapshotJson: JSON.stringify(prepared.snapshot),
+        snapshotSha256: prepared.snapshot.snapshotSha256,
+        contentSha256: prepared.snapshot.source.contentSha256,
+        sourcePath: prepared.snapshot.source.path,
+        sourceRevision: prepared.sourceRevision,
+        acceptedBy: prepared.acceptedBy,
+        authorityWidening: prepared.authorityWidening,
+      }),
+    );
     const attachment = mapRecord(raw);
     if (
       attachment.project !== input.project
@@ -72,7 +78,7 @@ export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements P
     };
   }
 
-  private args(input: object): Record<string, unknown> {
+  private attachmentArgs(input: object): Record<string, unknown> {
     return {
       serviceSecret: this.serviceSecret,
       workspace: this.workspace,
