@@ -305,8 +305,21 @@ function readRenderedItem(body) {
   return {
     status: fields.Status || '',
     claimedBy: fields['Claimed by'] || null,
-    claimExpiresAt: fields['Lease expires'] || null,
+    claimExpiresAt: latestRenderedClaimExpiry(body) || fields['Lease expires'] || null,
   };
+}
+
+function latestRenderedClaimExpiry(body) {
+  for (const row of body.querySelectorAll('.detail-event')) {
+    const type = row.querySelector('.detail-event-head strong')?.textContent?.trim();
+    if (!['claim.created', 'claim.renewed'].includes(type)) continue;
+    for (const term of row.querySelectorAll('.detail-payload dt')) {
+      if (term.textContent?.trim() !== 'expiresAt') continue;
+      const value = term.nextElementSibling?.textContent?.trim() || '';
+      if (value && !Number.isNaN(Date.parse(value))) return value;
+    }
+  }
+  return '';
 }
 
 function findSection(body, heading) {
