@@ -48,7 +48,13 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   const mcpAuthenticator = options.mcpOAuth
     ? createMcpOAuthAuthenticator(options.authenticator, options.mcpOAuth)
     : options.authenticator;
-  const oauthChallenge = options.mcpOAuth ? mcpOAuthChallenge(options.mcpOAuth) : null;
+  const oauthChallenges = options.mcpOAuth
+    ? {
+        required: mcpOAuthChallenge(options.mcpOAuth),
+        invalidToken: mcpOAuthChallenge(options.mcpOAuth, "invalid_token"),
+        insufficientScope: mcpOAuthChallenge(options.mcpOAuth, "insufficient_scope"),
+      }
+    : null;
 
   app.onError((_error, context) => {
     const category = failureCategoryForPath(context.req.path);
@@ -75,9 +81,12 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
       allowedOrigins,
       allowedHosts: options.allowedHosts,
     });
-    if (oauthChallenge && response.status === 401) {
+    const challenge = oauthChallenges
+      ? oauthChallengeForResponse(context.req.header("authorization"), response, oauthChallenges)
+      : null;
+    if (challenge) {
       const headers = new Headers(response.headers);
-      headers.set("WWW-Authenticate", oauthChallenge);
+      headers.set("WWW-Authenticate", challenge);
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -227,6 +236,27 @@ function hostedSurfaces(options: HostedAppOptions): string[] {
   if (options.hostedAuth) surfaces.push("auth");
   if (options.mcpOAuth) surfaces.push("oauth");
   return surfaces;
+}
+
+function oauthChallengeForResponse(
+  authorization: string | undefined,
+  response: Response,
+  challenges: {
+    required: string;
+    invalidToken: string;
+    insufficientScope: string;
+  },
+): string | null {
+  if (response.status === 401) {
+    return authorization ? challenges.invalidToken : challenges.required;
+  }
+  if (
+    response.status === 403
+    && response.headers.get(FAILURE_CATEGORY_HEADER) === "authorization_failure"
+  ) {
+    return challenges.insufficientScope;
+  }
+  return null;
 }
 
 function failureCategoryForPath(path: string): FailureCategory {
