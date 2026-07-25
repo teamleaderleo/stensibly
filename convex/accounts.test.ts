@@ -187,6 +187,47 @@ describe("Convex hosted accounts", () => {
     expect(await authenticateBrowserSession(t, created.id, nextHash)).toBeNull();
   });
 
+  test("bounds session listings to the newest 100 records", async () => {
+    const t = convexTest(schema, modules);
+    const accountContext = await upsertGithubAccount(t, {
+      subject: "1001",
+      username: "leo",
+      displayName: "Leo",
+      email: "leo@example.com",
+      role: "viewer",
+    });
+    const createdAt = Date.now();
+
+    await t.run(async (ctx) => {
+      const account = await ctx.db
+        .query("accounts")
+        .withIndex("by_external_id", (q) => q.eq("externalId", accountContext.account.id))
+        .unique();
+      if (!account) throw new Error("Test account disappeared");
+
+      for (let index = 0; index < 105; index += 1) {
+        await ctx.db.insert("browserSessions", {
+          accountId: account._id,
+          externalId: `ses_bulk_${String(index).padStart(3, "0")}`,
+          secretHash: "a".repeat(64),
+          createdAt: createdAt + index,
+          lastSeenAt: createdAt + index,
+          expiresAt: createdAt + 60_000,
+        });
+      }
+    });
+
+    const sessions = await t.query(convexApi.accounts.listSessions, {
+      serviceSecret,
+      workspace: "test",
+      accountId: accountContext.account.id,
+    }) as any[];
+
+    expect(sessions).toHaveLength(100);
+    expect(sessions[0]?.id).toBe("ses_bulk_104");
+    expect(sessions.at(-1)?.id).toBe("ses_bulk_005");
+  });
+
   test("fails closed for missing memberships, disabled accounts, revoked memberships, and expiry", async () => {
     const t = convexTest(schema, modules);
     const accountContext = await upsertGithubAccount(t, {
@@ -282,19 +323,20 @@ describe("Convex hosted accounts", () => {
       email: "expired@example.com",
       role: "viewer",
     });
+    const expiresAt = Date.now() + 60_000;
     const expiringSession = await createBrowserSession(t, expiringAccount.account.id, {
       id: "ses_expired",
       secretHash: "f".repeat(64),
+      expiresAt,
     });
-    await t.run(async (ctx) => {
-      const session = await ctx.db
-        .query("browserSessions")
-        .withIndex("by_external_id", (q) => q.eq("externalId", expiringSession.id))
-        .unique();
-      if (!session) throw new Error("Test session disappeared");
-      await ctx.db.patch(session._id, { expiresAt: Date.now() - 1 });
-    });
-    expect(await authenticateBrowserSession(t, expiringSession.id, "f".repeat(64))).toBeNull();
+    expect(
+      await authenticateBrowserSession(
+        t,
+        expiringSession.id,
+        "f".repeat(64),
+        expiresAt,
+      ),
+    ).toBeNull();
   });
 });
 
@@ -334,6 +376,7 @@ async function createBrowserSession(
     secretHash: string;
     userAgent?: string;
     workspace?: string;
+    expiresAt?: number;
   },
 ) {
   return await t.mutation(convexApi.accounts.createSession, {
@@ -342,7 +385,7 @@ async function createBrowserSession(
     accountId,
     id: input.id,
     secretHash: input.secretHash,
-    expiresAt: Date.now() + 60_000,
+    expiresAt: input.expiresAt ?? Date.now() + 60_000,
     userAgent: input.userAgent,
   }) as any;
 }
@@ -351,11 +394,13 @@ async function authenticateBrowserSession(
   t: ReturnType<typeof convexTest>,
   id: string,
   secretHash: string,
+  now = Date.now(),
 ) {
   return await t.query(convexApi.accounts.authenticateSession, {
     serviceSecret,
     workspace: "test",
     id,
     secretHash,
+    now,
   }) as any;
 }
