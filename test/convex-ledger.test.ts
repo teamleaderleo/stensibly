@@ -159,6 +159,7 @@ describe("Convex work ledger", () => {
       "query:items:list",
       "query:items:get",
       "query:itemReservations:list",
+      "query:itemRuns:list",
       "mutation:items:create",
       "mutation:claims:acquire",
       "mutation:claims:renew",
@@ -197,6 +198,10 @@ describe("Convex work ledger", () => {
     expect(client.one("query", "itemReservations:list").args).toMatchObject({
       itemId: "item_1",
       now: expect.any(Number),
+    });
+    expect(client.one("query", "itemRuns:list").args).toMatchObject({
+      itemId: "item_1",
+      limit: 20,
     });
     expect(client.one("mutation", "claims:acquire").args).toMatchObject({
       id: "item_1",
@@ -264,6 +269,7 @@ function fixture(name: string): unknown {
   if (
     name === "items:list"
     || name === "itemReservations:list"
+    || name === "itemRuns:list"
     || name === "continuations:list"
     || name === "artifacts:list"
   ) {
