@@ -12,21 +12,39 @@ const supervisor = {
   kind: "service" as const,
 };
 
-class RecordingCaller implements ConvexCaller {
-  calls: Array<{
-    type: "query" | "mutation";
-    name: string;
-    args: Record<string, unknown>;
-  }> = [];
+type RecordedCall = {
+  type: "query" | "mutation";
+  name: string;
+  args: Record<string, unknown>;
+};
 
-  async query(reference: FunctionReference<"query">, args: Record<string, unknown>) {
-    this.calls.push({ type: "query", name: getFunctionName(reference), args });
-    return fixture(getFunctionName(reference));
+class RecordingCaller implements ConvexCaller {
+  readonly calls: RecordedCall[] = [];
+
+  async query(
+    reference: FunctionReference<"query">,
+    args: Record<string, unknown>,
+  ) {
+    const name = getFunctionName(reference);
+    this.calls.push({ type: "query", name, args });
+    return fixture(name);
   }
 
-  async mutation(reference: FunctionReference<"mutation">, args: Record<string, unknown>) {
-    this.calls.push({ type: "mutation", name: getFunctionName(reference), args });
-    return fixture(getFunctionName(reference));
+  async mutation(
+    reference: FunctionReference<"mutation">,
+    args: Record<string, unknown>,
+  ) {
+    const name = getFunctionName(reference);
+    this.calls.push({ type: "mutation", name, args });
+    return fixture(name);
+  }
+
+  one(type: RecordedCall["type"], name: string): RecordedCall {
+    const matches = this.calls.filter(
+      (call) => call.type === type && call.name === name,
+    );
+    expect(matches).toHaveLength(1);
+    return matches[0]!;
   }
 }
 
@@ -140,6 +158,7 @@ describe("Convex work ledger", () => {
       "query:projects:brief",
       "query:items:list",
       "query:items:get",
+      "query:itemReservations:list",
       "mutation:items:create",
       "mutation:claims:acquire",
       "mutation:claims:renew",
@@ -170,27 +189,38 @@ describe("Convex work ledger", () => {
         workspace: "shared-work",
       });
     }
-    expect(client.calls[0]?.args).toMatchObject({ project: "scrapbook", limit: 12 });
-    expect(client.calls[4]?.args).toMatchObject({
+
+    expect(client.one("query", "projects:brief").args).toMatchObject({
+      project: "scrapbook",
+      limit: 12,
+    });
+    expect(client.one("query", "itemReservations:list").args).toMatchObject({
+      itemId: "item_1",
+      now: expect.any(Number),
+    });
+    expect(client.one("mutation", "claims:acquire").args).toMatchObject({
       id: "item_1",
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
     });
-    expect(client.calls[13]?.args).toMatchObject({
+    expect(
+      client.one("mutation", "completionContinuations:complete").args,
+    ).toMatchObject({
       id: "item_1",
       idempotencyKey: "complete-continuation-1",
     });
-    expect(client.calls[14]?.args).toMatchObject({
+    expect(client.one("mutation", "continuations:propose").args).toMatchObject({
       sourceItemId: "item_1",
       idempotencyKey: "continuation-1",
     });
-    expect(client.calls[18]?.args).toMatchObject({
+    expect(client.one("mutation", "continuationEdits:edit").args).toMatchObject({
       id: "cont_1",
       instruction: "Review and record the decision.",
       idempotencyKey: "continuation-edit-1",
     });
-    expect(client.calls[20]?.args).toMatchObject({ id: "cont_1" });
-    expect(client.calls[21]?.args).toMatchObject({
+    expect(
+      client.one("mutation", "continuationSupervisor:queue").args,
+    ).toMatchObject({
       id: "cont_1",
       expectedGeneration: 3,
       runnerType: "generic-mcp",
@@ -198,18 +228,23 @@ describe("Convex work ledger", () => {
       leaseSeconds: 900,
       idempotencyKey: "continuation-queue-1",
     });
-    expect(client.calls[22]?.args).toMatchObject({
-      status: "proposed",
-      deliveryMode: "supervisor",
-    });
-    expect(client.calls[23]?.args).toMatchObject({
-      status: "deferred",
-      deliveryMode: "supervisor",
-    });
-    expect(client.calls[24]?.args).toMatchObject({
-      project: "scrapbook",
-      limit: 8,
-    });
+
+    const supervisorLists = client.calls.filter(
+      (call) => call.type === "mutation" && call.name === "continuations:list",
+    );
+    expect(supervisorLists.slice(-2).map((call) => call.args)).toEqual([
+      expect.objectContaining({
+        status: "proposed",
+        deliveryMode: "supervisor",
+      }),
+      expect.objectContaining({
+        status: "deferred",
+        deliveryMode: "supervisor",
+      }),
+    ]);
+    expect(
+      client.one("mutation", "continuationSupervisor:runPolicy").args,
+    ).toMatchObject({ project: "scrapbook", limit: 8 });
   });
 
   test("rejects incomplete or unsafe configuration", () => {
@@ -226,7 +261,14 @@ describe("Convex work ledger", () => {
 });
 
 function fixture(name: string): unknown {
-  if (name === "items:list" || name === "continuations:list") return [];
+  if (
+    name === "items:list"
+    || name === "itemReservations:list"
+    || name === "continuations:list"
+    || name === "artifacts:list"
+  ) {
+    return [];
+  }
   if (name === "items:get") {
     return {
       item: item(),
@@ -236,8 +278,9 @@ function fixture(name: string): unknown {
       dependencies: [],
     };
   }
-  if (name === "artifacts:list") return [];
-  if (name === "projects:brief") return { project: "scrapbook", counts: { total: 0 } };
+  if (name === "projects:brief") {
+    return { project: "scrapbook", counts: { total: 0 } };
+  }
   if (name === "events:record") {
     return {
       id: "evt_1",
