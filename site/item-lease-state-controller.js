@@ -1,5 +1,6 @@
 import { actionEmptyState, classifyLease, describeLease } from './item-lease-state.js';
 import { redactCredentialText } from './item-detail.js';
+import { createLeaseRenewalController } from './item-lease-renewal.js';
 import { readStoredActor } from './session-context.js';
 
 const ACTOR_STORAGE_KEY = 'stensiblyActor';
@@ -13,6 +14,13 @@ const ACTIONS = [
     form: '.detail-claim-form',
     error: '.detail-claim-error',
     state: '.detail-claim-actions span',
+  },
+  {
+    name: 'renewal',
+    heading: 'Lease renewal',
+    form: '.detail-renewal-form',
+    error: '.detail-renewal-error',
+    state: '.detail-renewal-actions span',
   },
   {
     name: 'progress',
@@ -42,6 +50,8 @@ export function installLeaseStateController() {
   const dialog = document.querySelector('#item-detail-dialog');
   const body = document.querySelector('#item-detail-body');
   const refreshButton = document.querySelector('#item-detail-refresh');
+  const detailState = document.querySelector('#item-detail-state');
+  const announcer = document.querySelector('#item-detail-announcer');
   const contextPanel = document.querySelector('#session-context-panel');
   if (!board || !dialog || !body || !refreshButton || !contextPanel) return null;
 
@@ -52,6 +62,38 @@ export function installLeaseStateController() {
   let renderQueued = false;
   let conflict = null;
 
+  const renewal = createLeaseRenewalController({
+    getConnection: () => {
+      const context = readContext();
+      return {
+        endpoint: context.endpoint,
+        token: context.token,
+        connected: Boolean(context.endpoint && context.token),
+      };
+    },
+    getContext: () => {
+      const context = readContext();
+      return {
+        principal: { capabilities: { write: context.canWrite } },
+        actor: context.actor,
+      };
+    },
+    onChanged: async () => {
+      refreshButton.click();
+    },
+    setBusy: (busy, label = '') => {
+      if (label && detailState) detailState.textContent = label;
+      refreshButton.dataset.renewalBusy = busy ? 'true' : 'false';
+      const otherActionBusy = Boolean(
+        body.querySelector('form:not(.detail-renewal-form) button[type="submit"]:disabled'),
+      );
+      refreshButton.disabled = busy || otherActionBusy;
+    },
+    announce: (message) => {
+      if (announcer) announcer.textContent = message;
+    },
+  });
+
   board.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
     const card = event.target.closest('button.card[data-item-id]');
@@ -60,12 +102,14 @@ export function installLeaseStateController() {
     if (!nextItemId) return;
     itemId = nextItemId;
     conflict = null;
+    renewal.reset();
     scheduleRender();
   });
 
   dialog.addEventListener('close', () => {
     itemId = '';
     conflict = null;
+    renewal.reset();
   });
 
   const bodyObserver = new MutationObserver(() => scheduleRender());
@@ -76,6 +120,7 @@ export function installLeaseStateController() {
     if (next === contextFingerprint) return;
     contextFingerprint = next;
     conflict = null;
+    renewal.syncContext();
     scheduleRender();
   });
   contextObserver.observe(contextPanel, {
@@ -100,7 +145,7 @@ export function installLeaseStateController() {
 
   function render() {
     if (!dialog.open || !itemId) return;
-    const item = readRenderedItem(body);
+    const item = { id: itemId, ...readRenderedItem(body) };
     if (!item.status) return;
     const context = readContext();
     const captured = captureConflict(body, itemId, item.status);
@@ -117,6 +162,8 @@ export function installLeaseStateController() {
     bodyObserver.disconnect();
     try {
       renderLeaseState(body, item, context.actor);
+      renderClaimAcquisitionState(body, item, context.actor);
+      renderLeaseRenewal(body, item);
       polishEmptyStates(body, item.status, context);
       restoreConflict(body, itemId, item.status);
       bindConflictClearing(body);
@@ -125,6 +172,13 @@ export function installLeaseStateController() {
     }
 
     if (refreshConflict) queueMicrotask(() => refreshButton.click());
+  }
+
+  function renderLeaseRenewal(root, item) {
+    findSection(root, 'Lease renewal')?.remove();
+    const claimSection = findSection(root, 'Claim');
+    if (!claimSection) return;
+    claimSection.after(renewal.section(item));
   }
 
   function restoreConflict(root, expectedItemId, status) {
@@ -161,10 +215,12 @@ export function installLeaseStateController() {
   return {
     reset() {
       conflict = null;
+      renewal.reset();
       scheduleRender();
     },
     destroy() {
       clearInterval(clock);
+      renewal.reset();
       bodyObserver.disconnect();
       contextObserver.disconnect();
     },
@@ -212,10 +268,27 @@ function renderLeaseState(body, item, actor) {
   else section.append(state);
 }
 
+function renderClaimAcquisitionState(body, item, actor) {
+  const section = findSection(body, 'Claim');
+  const form = section?.querySelector('.detail-claim-form');
+  if (!(section instanceof HTMLElement) || !(form instanceof HTMLFormElement)) return;
+  section.querySelector('.detail-claim-renewal-note')?.remove();
+  const liveClaim = item.status === 'active' && item.claimedBy;
+  form.hidden = Boolean(liveClaim);
+  if (!liveClaim) return;
+
+  const note = document.createElement('p');
+  note.className = 'detail-empty detail-claim-renewal-note';
+  note.textContent = item.claimedBy === actor?.id
+    ? 'This item is already held by the active actor. Use Lease renewal below to extend the live lease.'
+    : `This item is currently held by ${redactCredentialText(item.claimedBy)}. Claim acquisition becomes available after release or server-side expiry.`;
+  section.append(note);
+}
+
 function polishEmptyStates(body, status, context) {
   for (const action of ACTIONS) {
     const section = findSection(body, action.heading);
-    const empty = section?.querySelector('.detail-empty');
+    const empty = section?.querySelector('.detail-empty:not(.detail-claim-renewal-note)');
     if (!(empty instanceof HTMLElement)) continue;
     const message = actionEmptyState(action.name, status, context.canWrite, Boolean(context.actor));
     if (message) empty.textContent = message;
@@ -264,6 +337,8 @@ function readContext() {
   return {
     actor,
     canWrite,
+    endpoint,
+    token,
     fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token ? 'token' : 'no-token'}\u0000${actorFingerprint}`,
   };
 }
