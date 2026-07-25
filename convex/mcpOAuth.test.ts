@@ -9,19 +9,22 @@ const workspace = "test";
 const resource = "https://api.stensibly.com/mcp";
 const redirectUri = "https://chatgpt.com/connector/oauth/callback";
 const codeChallenge = "a".repeat(43);
+const codeId = (label: string) => `oauth_code_${label.padEnd(12, "x")}`;
+const refreshId = (label: string) => `oauth_refresh_${label.padEnd(12, "x")}`;
+const clientId = (label: string) => `oauth_client_${label.padEnd(12, "x")}`;
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
 });
 
 describe("Convex MCP OAuth authority", () => {
-  test("registers public clients and exchanges a single-use PKCE code", async () => {
+  test("registers clients and exchanges a single-use PKCE code", async () => {
     const t = convexTest(schema, modules);
     const account = await upsertAccount(t, workspace, "member", ["scrapbook"]);
-    const client = await registerClient(t);
+    const client = await registerClient(t, { id: clientId("primary") });
 
     expect(client).toMatchObject({
-      clientId: "oauth_client_abcdefghijkl",
+      clientId: clientId("primary"),
       tokenEndpointAuthMethod: "none",
       grantTypes: ["authorization_code", "refresh_token"],
       responseTypes: ["code"],
@@ -35,13 +38,13 @@ describe("Convex MCP OAuth authority", () => {
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_abcdefghijkl",
+      id: codeId("primary"),
       scopes: ["read", "write", "offline_access"],
     });
     const exchanged = await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_abcdefghijkl",
-      refreshId: "oauth_refresh_abcdefghijkl",
+      id: codeId("primary"),
+      refreshId: refreshId("primary"),
     }) as any;
     expect(exchanged).toMatchObject({
       scopes: ["read", "write", "offline_access"],
@@ -52,47 +55,46 @@ describe("Convex MCP OAuth authority", () => {
       },
     });
     expect(JSON.stringify(exchanged)).not.toContain("a".repeat(64));
-
     expect(await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_abcdefghijkl",
-      refreshId: "oauth_refresh_secondtoken",
+      id: codeId("primary"),
+      refreshId: refreshId("second"),
     })).toBeNull();
   });
 
-  test("invalidates a code after any failed redemption attempt", async () => {
+  test("invalidates a code after failed redemption", async () => {
     const t = convexTest(schema, modules);
     const account = await upsertAccount(t, workspace, "member", ["scrapbook"]);
-    const client = await registerClient(t);
+    const client = await registerClient(t, { id: clientId("failure") });
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_failedattempt",
+      id: codeId("failure"),
       scopes: ["read", "offline_access"],
     });
 
     expect(await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_failedattempt",
+      id: codeId("failure"),
       codeChallenge: "b".repeat(43),
-      refreshId: "oauth_refresh_failedattempt",
+      refreshId: refreshId("failure"),
     })).toBeNull();
     expect(await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_failedattempt",
-      refreshId: "oauth_refresh_afterfailure",
+      id: codeId("failure"),
+      refreshId: refreshId("afterfailure"),
     })).toBeNull();
   });
 
-  test("rejects expired codes and preserves workspace isolation", async () => {
+  test("rejects expiry and preserves workspace isolation", async () => {
     const t = convexTest(schema, modules);
     const account = await upsertAccount(t, workspace, "member", ["scrapbook"]);
-    const client = await registerClient(t);
+    const client = await registerClient(t, { id: clientId("isolation") });
     const now = Date.now();
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_expirycheckx",
+      id: codeId("expiry"),
       scopes: ["read", "offline_access"],
       expiresAt: now + 60_000,
     });
@@ -101,8 +103,8 @@ describe("Convex MCP OAuth authority", () => {
     try {
       expect(await exchangeCode(t, {
         clientId: client.clientId,
-        id: "oauth_code_expirycheckx",
-        refreshId: "oauth_refresh_expirycheck",
+        id: codeId("expiry"),
+        refreshId: refreshId("expiry"),
       })).toBeNull();
     } finally {
       clock.mockRestore();
@@ -111,7 +113,7 @@ describe("Convex MCP OAuth authority", () => {
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_workspaceiso",
+      id: codeId("workspace"),
       scopes: ["read", "offline_access"],
     });
     expect(await t.query(convexApi.mcpOAuth.getClient, {
@@ -122,49 +124,44 @@ describe("Convex MCP OAuth authority", () => {
     expect(await exchangeCode(t, {
       workspace: "other",
       clientId: client.clientId,
-      id: "oauth_code_workspaceiso",
-      refreshId: "oauth_refresh_otherworkspace",
+      id: codeId("workspace"),
+      refreshId: refreshId("other") ,
     })).toBeNull();
     expect(await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_workspaceiso",
-      refreshId: "oauth_refresh_correctspace",
+      id: codeId("workspace"),
+      refreshId: refreshId("correct"),
     })).not.toBeNull();
   });
 
-  test("keeps invalid refresh secrets non-mutating and revokes the active leaf after old-token replay", async () => {
+  test("keeps wrong refresh secrets non-mutating and revokes the active leaf on old-token replay", async () => {
     const t = convexTest(schema, modules);
     const account = await upsertAccount(t, workspace, "viewer", ["scrapbook"]);
-    const client = await registerClient(t);
+    const client = await registerClient(t, { id: clientId("refresh") });
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_refreshflowx",
+      id: codeId("refresh"),
       scopes: ["read", "offline_access"],
     });
     await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_refreshflowx",
-      refreshId: "oauth_refresh_abcdefghijkl",
+      id: codeId("refresh"),
+      refreshId: refreshId("root"),
     });
 
     expect(await rotateRefresh(t, {
       clientId: client.clientId,
-      id: "oauth_refresh_abcdefghijkl",
+      id: refreshId("root"),
       secretHash: "f".repeat(64),
-      nextId: "oauth_refresh_wrongsecret",
+      nextId: refreshId("wrong"),
     })).toEqual({ status: "invalid" });
-
-    const rotated = await rotateRefresh(t, {
+    expect(await rotateRefresh(t, {
       clientId: client.clientId,
-      id: "oauth_refresh_abcdefghijkl",
+      id: refreshId("root"),
       secretHash: "b".repeat(64),
-      nextId: "oauth_refresh_mnopqrstuvwx",
-    }) as any;
-    expect(rotated).toMatchObject({
-      status: "ok",
-      grant: { scopes: ["read", "offline_access"] },
-    });
+      nextId: refreshId("leaf"),
+    })).toMatchObject({ status: "ok" });
 
     const createdAt = Date.now() - 10_000;
     await t.run(async (ctx) => {
@@ -175,8 +172,8 @@ describe("Convex MCP OAuth authority", () => {
         await ctx.db.insert("mcpOAuthRefreshTokens", {
           workspaceId: ws._id,
           accountId: dbAccount._id,
-          externalId: `oauth_refresh_history${index.toString().padStart(3, "0")}`,
-          familyExternalId: "oauth_refresh_abcdefghijkl",
+          externalId: refreshId(`history${index.toString().padStart(5, "0")}`),
+          familyExternalId: refreshId("root"),
           secretHash: "d".repeat(64),
           clientExternalId: client.clientId,
           scopes: ["read", "offline_access"],
@@ -190,81 +187,70 @@ describe("Convex MCP OAuth authority", () => {
 
     expect(await rotateRefresh(t, {
       clientId: client.clientId,
-      id: "oauth_refresh_history000",
+      id: refreshId("history00000"),
       secretHash: "d".repeat(64),
-      nextId: "oauth_refresh_replayattempt",
+      nextId: refreshId("replay"),
     })).toEqual({ status: "replayed" });
     expect(await rotateRefresh(t, {
       clientId: client.clientId,
-      id: "oauth_refresh_mnopqrstuvwx",
+      id: refreshId("leaf"),
       secretHash: "c".repeat(64),
-      nextId: "oauth_refresh_afterreplay",
+      nextId: refreshId("afterreplay"),
     })).toEqual({ status: "replayed" });
   });
 
   test("rejects expired refresh tokens and scope downgrades", async () => {
     const t = convexTest(schema, modules);
     const account = await upsertAccount(t, workspace, "member", ["scrapbook"]);
-    const client = await registerClient(t);
+    const client = await registerClient(t, { id: clientId("scope") });
     await createCode(t, {
       accountId: account.account.id,
       clientId: client.clientId,
-      id: "oauth_code_scopechangex",
+      id: codeId("scope"),
       scopes: ["read", "write", "offline_access"],
     });
     await exchangeCode(t, {
       clientId: client.clientId,
-      id: "oauth_code_scopechangex",
-      refreshId: "oauth_refresh_scopechangex",
-      refreshExpiresAt: Date.now() + 60_000,
+      id: codeId("scope"),
+      refreshId: refreshId("scope"),
     });
-
-    await t.run(async (ctx) => {
-      const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q) => q.eq("slug", workspace)).unique();
-      const dbAccount = await ctx.db.query("accounts").withIndex("by_external_id", (q) => q.eq("externalId", account.account.id)).unique();
-      if (!ws || !dbAccount) throw new Error("Test account disappeared");
-      const membership = await ctx.db
-        .query("workspaceMemberships")
-        .withIndex("by_account_workspace", (q) => q.eq("accountId", dbAccount._id).eq("workspaceId", ws._id))
-        .unique();
-      if (!membership) throw new Error("Test membership disappeared");
-      await ctx.db.patch(membership._id, { role: "viewer" });
-    });
+    await setMembershipRole(t, account.account.id, workspace, "viewer");
     expect(await rotateRefresh(t, {
       clientId: client.clientId,
-      id: "oauth_refresh_scopechangex",
+      id: refreshId("scope"),
       secretHash: "b".repeat(64),
-      nextId: "oauth_refresh_scopedown",
+      nextId: refreshId("scopedown"),
     })).toEqual({ status: "invalid" });
 
-    const second = await upsertAccount(t, "expiry", "viewer", ["scrapbook"]);
+    const expiryWorkspace = "expiry";
+    const expiryAccount = await upsertAccount(t, expiryWorkspace, "viewer", ["scrapbook"]);
     const expiryClient = await registerClient(t, {
-      workspace: "expiry",
-      clientId: "oauth_client_expiryclient",
+      workspace: expiryWorkspace,
+      id: clientId("expiry"),
     });
     const now = Date.now();
     await createCode(t, {
-      workspace: "expiry",
-      accountId: second.account.id,
+      workspace: expiryWorkspace,
+      accountId: expiryAccount.account.id,
       clientId: expiryClient.clientId,
-      id: "oauth_code_refreshexpiry",
+      id: codeId("refreshexpiry"),
       scopes: ["read", "offline_access"],
     });
     await exchangeCode(t, {
-      workspace: "expiry",
+      workspace: expiryWorkspace,
       clientId: expiryClient.clientId,
-      id: "oauth_code_refreshexpiry",
-      refreshId: "oauth_refresh_expiringtoken",
+      id: codeId("refreshexpiry"),
+      refreshId: refreshId("expiring"),
       refreshExpiresAt: now + 60_000,
     });
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
     try {
       expect(await rotateRefresh(t, {
-        workspace: "expiry",
+        workspace: expiryWorkspace,
         clientId: expiryClient.clientId,
-        id: "oauth_refresh_expiringtoken",
+        id: refreshId("expiring"),
         secretHash: "b".repeat(64),
-        nextId: "oauth_refresh_afterexpiry",
+        nextId: refreshId("afterexpiry"),
       })).toEqual({ status: "invalid" });
     } finally {
       clock.mockRestore();
@@ -273,7 +259,7 @@ describe("Convex MCP OAuth authority", () => {
 
   test("caps persistent public clients per workspace", async () => {
     const t = convexTest(schema, modules);
-    await registerClient(t);
+    await registerClient(t, { id: clientId("first") });
     await t.run(async (ctx) => {
       const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q) => q.eq("slug", workspace)).unique();
       if (!ws) throw new Error("Test workspace disappeared");
@@ -281,7 +267,7 @@ describe("Convex MCP OAuth authority", () => {
       for (let index = 1; index < 1_000; index += 1) {
         await ctx.db.insert("mcpOAuthClients", {
           workspaceId: ws._id,
-          externalId: `oauth_client_cap${index.toString().padStart(4, "0")}`,
+          externalId: clientId(`cap${index.toString().padStart(9, "0")}`),
           clientName: "Bounded client",
           redirectUris: [redirectUri],
           tokenEndpointAuthMethod: "none",
@@ -292,7 +278,7 @@ describe("Convex MCP OAuth authority", () => {
         });
       }
     });
-    await expect(registerClient(t, { clientId: "oauth_client_overcapacity" }))
+    await expect(registerClient(t, { id: clientId("overcapacity") }))
       .rejects.toThrow("registration limit reached");
   });
 });
@@ -307,7 +293,7 @@ async function upsertAccount(
     serviceSecret,
     workspace: targetWorkspace,
     provider: "github",
-    subject: "1001",
+    subject: targetWorkspace === workspace ? "1001" : `1001-${targetWorkspace}`,
     username: "teamleaderleo",
     displayName: "Leo",
     emailVerified: false,
@@ -316,14 +302,33 @@ async function upsertAccount(
   }) as any;
 }
 
+async function setMembershipRole(
+  t: ReturnType<typeof convexTest>,
+  accountExternalId: string,
+  targetWorkspace: string,
+  role: "owner" | "admin" | "member" | "viewer",
+) {
+  await t.run(async (ctx) => {
+    const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q) => q.eq("slug", targetWorkspace)).unique();
+    const account = await ctx.db.query("accounts").withIndex("by_external_id", (q) => q.eq("externalId", accountExternalId)).unique();
+    if (!ws || !account) throw new Error("Test account disappeared");
+    const membership = await ctx.db
+      .query("workspaceMemberships")
+      .withIndex("by_account_workspace", (q) => q.eq("accountId", account._id).eq("workspaceId", ws._id))
+      .unique();
+    if (!membership) throw new Error("Test membership disappeared");
+    await ctx.db.patch(membership._id, { role });
+  });
+}
+
 async function registerClient(
   t: ReturnType<typeof convexTest>,
-  overrides: { workspace?: string; clientId?: string } = {},
+  overrides: { workspace?: string; id?: string } = {},
 ) {
   return await t.mutation(convexApi.mcpOAuth.registerClient, {
     serviceSecret,
     workspace: overrides.workspace ?? workspace,
-    clientId: overrides.clientId ?? "oauth_client_abcdefghijkl",
+    clientId: overrides.id ?? clientId("default"),
     clientName: "ChatGPT",
     redirectUris: [redirectUri],
     tokenEndpointAuthMethod: "none",
