@@ -147,7 +147,7 @@ export function createHttpAuthMiddleware(
 
 export function requireHttpAccess(
   context: Context<StensiblyEnv>,
-  required: "read" | "write",
+  required: TokenScope,
   project?: string,
 ): Response | null {
   const principal = context.get("principal");
