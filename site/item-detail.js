@@ -1,5 +1,6 @@
 const dependencyDirections = new Set(['incoming', 'outgoing']);
 const dependencyKinds = new Set(['blocks', 'depends_on', 'related_to', 'duplicates', 'supersedes']);
+const reservationModes = new Set(['exclusive', 'shared']);
 const completedStatuses = new Set(['done', 'archived']);
 
 export function readItemDetail(payload, expectedItemId = '') {
@@ -17,11 +18,15 @@ export function readItemDetail(payload, expectedItemId = '') {
   if (payload.dependencies !== undefined && !Array.isArray(payload.dependencies)) {
     throw new TypeError('The item detail response contains incompatible dependencies.');
   }
+  if (payload.reservations !== undefined && !Array.isArray(payload.reservations)) {
+    throw new TypeError('The item detail response contains incompatible reservations.');
+  }
   return {
     item: payload.item,
     events: payload.events.filter(isRecord),
     artifacts: payload.artifacts.filter(isRecord),
     dependencies: (payload.dependencies || []).map(readDependency).filter(Boolean),
+    reservations: (payload.reservations || []).map(readReservation).filter(Boolean),
   };
 }
 
@@ -42,6 +47,18 @@ export function dependencyBlocksCurrent(dependency) {
     (dependency.direction === 'outgoing' && dependency.kind === 'depends_on')
     || (dependency.direction === 'incoming' && dependency.kind === 'blocks')
   );
+}
+
+export function reservationCapacityLabel(reservation) {
+  const usedUnits = nonNegativeInteger(reservation?.usedUnits);
+  const capacity = positiveInteger(reservation?.capacity);
+  const availableUnits = nonNegativeInteger(reservation?.availableUnits);
+  if (usedUnits === null || capacity === null || availableUnits === null) return 'Capacity unavailable';
+  return `${usedUnits} of ${capacity} units used · ${availableUnits} available`;
+}
+
+export function reservationIsFull(reservation) {
+  return nonNegativeInteger(reservation?.availableUnits) === 0;
 }
 
 export function safeArtifactHref(value) {
@@ -110,6 +127,43 @@ function readDependency(value) {
   };
 }
 
+function readReservation(value) {
+  if (!isRecord(value)) return null;
+  const id = textValue(value.id);
+  const resource = textValue(value.resource);
+  const mode = textValue(value.mode);
+  const capacity = positiveInteger(value.capacity);
+  const units = positiveInteger(value.units);
+  const usedUnits = nonNegativeInteger(value.usedUnits);
+  const availableUnits = nonNegativeInteger(value.availableUnits);
+  const holderActorId = textValue(value.holderActorId);
+  if (
+    !id
+    || !resource
+    || !reservationModes.has(mode)
+    || capacity === null
+    || units === null
+    || units > capacity
+    || usedUnits === null
+    || usedUnits < units
+    || availableUnits === null
+    || !holderActorId
+  ) return null;
+  return {
+    id,
+    resource,
+    mode,
+    capacity,
+    units,
+    usedUnits,
+    availableUnits,
+    holderActorId,
+    expiresAt: textValue(value.expiresAt),
+    createdAt: textValue(value.createdAt),
+    updatedAt: textValue(value.updatedAt),
+  };
+}
+
 function displayValue(value, maxLength) {
   let output;
   if (value === undefined) {
@@ -130,6 +184,14 @@ function displayValue(value, maxLength) {
   }
   output = redactCredentialText(output);
   return output.length > maxLength ? `${output.slice(0, maxLength)}…` : output;
+}
+
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function nonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function textValue(value) {
