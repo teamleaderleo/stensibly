@@ -208,7 +208,17 @@ jobs:
           jq --exit-status '
             type == "array"
             and length > 0
-            and all(.[ ]; false)
+            and all(.[];
+              (.path | type == "string")
+              and (.path | test("^/[A-Za-z0-9._/-]+$"))
+              and (.kind == "css" or .kind == "javascript" or .kind == "svg")
+              and (.contentTypes | type == "array")
+              and (.contentTypes | length > 0)
+              and all(.contentTypes[]; type == "string" and test("^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"))
+              and (.marker | type == "string")
+              and (.marker | length > 0)
+              and (.marker | test("[\\t\\r\\n]") | not)
+            )
           ' /tmp/dashboard-assets.json > /dev/null
 
           while IFS=$'\t' read -r asset kind allowed_content_types marker; do
