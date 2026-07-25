@@ -4,6 +4,7 @@ const html = await Bun.file(new URL("../site/index.html", import.meta.url)).text
 const app = await Bun.file(new URL("../site/app.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-detail-controller.js", import.meta.url)).text();
 const reservations = await Bun.file(new URL("../site/item-reservations.js", import.meta.url)).text();
+const runs = await Bun.file(new URL("../site/item-runs.js", import.meta.url)).text();
 const styles = await Bun.file(new URL("../site/styles.css", import.meta.url)).text();
 
 describe("dashboard item detail integration", () => {
@@ -25,8 +26,11 @@ describe("dashboard item detail integration", () => {
     expect(controller).toContain("noreferrer noopener");
     expect(reservations).toContain("document.createElement");
     expect(reservations).toContain("textContent");
+    expect(runs).toContain("document.createElement");
+    expect(runs).toContain("textContent");
     expect(controller).not.toContain("innerHTML");
     expect(reservations).not.toContain("innerHTML");
+    expect(runs).not.toContain("innerHTML");
   });
 
   test("renders dependency links and unresolved blockers from item detail", () => {
@@ -49,6 +53,20 @@ describe("dashboard item detail integration", () => {
     expect(styles).toContain(".detail-reservation-full");
   });
 
+  test("renders bounded agent run state and execution context", () => {
+    expect(controller).toContain("runSection(detail.runs)");
+    expect(controller).toContain("from './item-runs.js'");
+    expect(runs).toContain("runIsActive");
+    expect(runs).toContain("heartbeat");
+    expect(runs).toContain("child agents");
+    expect(runs).toContain("tool calls");
+    expect(runs).toContain("Worktree");
+    expect(runs).toContain("outcome");
+    expect(styles).toContain(".detail-runs");
+    expect(styles).toContain(".detail-run-active");
+    expect(styles).toContain(".detail-run-failed");
+  });
+
   test("guards stale responses and supports close, retry, and focus restoration", () => {
     expect(controller).toContain("createRequestGate");
     expect(controller).toContain("gate.isCurrent");
@@ -62,5 +80,6 @@ describe("dashboard item detail integration", () => {
     expect(styles).toContain(".item-detail-dialog::backdrop");
     expect(styles).toContain("height: 100%");
     expect(styles).toContain("overscroll-behavior: contain");
+    expect(styles).toContain(".detail-run-code");
   });
 });
