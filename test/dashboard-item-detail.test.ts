@@ -8,6 +8,8 @@ import {
   redactCredentialText,
   reservationCapacityLabel,
   reservationIsFull,
+  runIsActive,
+  runStatusLabel,
   safeArtifactHref,
   safeRequestId,
 } from "../site/item-detail.js";
@@ -36,6 +38,24 @@ describe("dashboard item detail response", () => {
       createdAt: "2026-07-25T00:00:00.000Z",
       updatedAt: "2026-07-25T00:30:00.000Z",
     };
+    const validRun = {
+      id: "run_1",
+      itemId: "item_1",
+      actorId: "alpha",
+      harness: "codex",
+      model: "gpt-5.6",
+      externalRunId: "external-1",
+      repository: "teamleaderleo/stensibly",
+      branch: "feat/run-visibility",
+      worktree: "/tmp/stensibly-run",
+      status: "waiting" as const,
+      childAgentCount: 2,
+      toolCallCount: 14,
+      startedAt: "2026-07-25T00:00:00.000Z",
+      lastHeartbeatAt: "2026-07-25T00:30:00.000Z",
+      endedAt: null,
+      outcome: null,
+    };
     const payload = {
       item: { id: "item_1", title: "Inspect me" },
       events: [{ id: "evt_1" }, null, "bad"],
@@ -50,6 +70,11 @@ describe("dashboard item detail response", () => {
         null,
         { id: "res_bad", resource: "gpu", mode: "shared", capacity: 2, units: 3 },
       ],
+      runs: [
+        validRun,
+        null,
+        { ...validRun, id: "run_bad", itemId: "item_2" },
+      ],
     };
 
     expect(readItemDetail(payload, "item_1")).toEqual({
@@ -58,6 +83,7 @@ describe("dashboard item detail response", () => {
       artifacts: [{ id: "art_1" }],
       dependencies: [validDependency],
       reservations: [validReservation],
+      runs: [validRun],
     });
   });
 
@@ -69,6 +95,7 @@ describe("dashboard item detail response", () => {
         artifacts: [],
         dependencies: [],
         reservations: [],
+        runs: [],
       });
   });
 
@@ -82,6 +109,8 @@ describe("dashboard item detail response", () => {
       .toThrow("incompatible dependencies");
     expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], reservations: {} }))
       .toThrow("incompatible reservations");
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], runs: {} }))
+      .toThrow("incompatible runs");
   });
 });
 
@@ -118,6 +147,51 @@ describe("dashboard reservation capacity", () => {
     expect(reservationIsFull({ availableUnits: 1 })).toBe(false);
     expect(reservationIsFull({ availableUnits: -1 })).toBe(false);
     expect(reservationIsFull({})).toBe(false);
+  });
+});
+
+describe("dashboard agent run state", () => {
+  test("labels active and terminal states", () => {
+    expect(runIsActive({ status: "running" })).toBe(true);
+    expect(runIsActive({ status: "waiting" })).toBe(true);
+    expect(runIsActive({ status: "succeeded" })).toBe(false);
+    expect(runStatusLabel({ status: "failed" })).toBe("failed");
+    expect(runStatusLabel({})).toBe("status unavailable");
+  });
+
+  test("filters impossible lifecycle and counter combinations", () => {
+    const base = {
+      id: "run_1",
+      itemId: "item_1",
+      actorId: "alpha",
+      harness: "codex",
+      model: null,
+      externalRunId: null,
+      repository: null,
+      branch: null,
+      worktree: null,
+      status: "running",
+      childAgentCount: 0,
+      toolCallCount: 1,
+      startedAt: "2026-07-25T00:00:00.000Z",
+      lastHeartbeatAt: "2026-07-25T00:01:00.000Z",
+      endedAt: null,
+      outcome: null,
+    };
+    const payload = (run: Record<string, unknown>) => ({
+      item: { id: "item_1" },
+      events: [],
+      artifacts: [],
+      runs: [run],
+    });
+    expect(readItemDetail(payload({ ...base, endedAt: "2026-07-25T00:02:00.000Z" }), "item_1").runs)
+      .toEqual([]);
+    expect(readItemDetail(payload({ ...base, status: "succeeded" }), "item_1").runs)
+      .toEqual([]);
+    expect(readItemDetail(payload({ ...base, childAgentCount: -1 }), "item_1").runs)
+      .toEqual([]);
+    expect(readItemDetail(payload({ ...base, lastHeartbeatAt: "2026-07-24T23:59:00.000Z" }), "item_1").runs)
+      .toEqual([]);
   });
 });
 
