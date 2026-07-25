@@ -7,6 +7,11 @@ import type {
 } from "./completion-continuation-contracts.js";
 import type { ContinuationLedger } from "./continuation-contracts.js";
 import type { EditContinuationInput } from "./continuation-edit.js";
+import type { ContinuationSupervisorLedger } from "./continuation-supervisor-contracts.js";
+import type {
+  QueueContinuationForSupervisorInput,
+  RunContinuationSupervisorPolicyInput,
+} from "./continuation-supervisor.js";
 import type {
   ListContinuationsInput,
   ProposeContinuationInput,
@@ -37,7 +42,12 @@ export interface ConvexWorkLedgerOptions {
   workspace?: string;
 }
 
-export class ConvexWorkLedger implements WorkLedger, ContinuationLedger, CompletionContinuationLedger {
+export class ConvexWorkLedger implements
+  WorkLedger,
+  ContinuationLedger,
+  CompletionContinuationLedger,
+  ContinuationSupervisorLedger
+{
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
@@ -145,6 +155,25 @@ export class ConvexWorkLedger implements WorkLedger, ContinuationLedger, Complet
       convexApi.continuations.edit,
       this.args(input),
     ) as Awaited<ReturnType<ContinuationLedger["editContinuation"]>>;
+  }
+
+  async queueContinuationForSupervisor(input: QueueContinuationForSupervisorInput) {
+    await this.getContinuation(input.id);
+    return await this.client.mutation(
+      convexApi.continuationSupervisor.queue,
+      this.args(input),
+    ) as Awaited<ReturnType<ContinuationSupervisorLedger["queueContinuationForSupervisor"]>>;
+  }
+
+  async runContinuationSupervisorPolicy(input: RunContinuationSupervisorPolicyInput) {
+    await Promise.all([
+      this.listContinuations({ status: "proposed", deliveryMode: "supervisor" }),
+      this.listContinuations({ status: "deferred", deliveryMode: "supervisor" }),
+    ]);
+    return await this.client.mutation(
+      convexApi.continuationSupervisor.runPolicy,
+      this.args(input),
+    ) as Awaited<ReturnType<ContinuationSupervisorLedger["runContinuationSupervisorPolicy"]>>;
   }
 
   private args(input: object): Record<string, unknown> {

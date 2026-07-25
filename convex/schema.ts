@@ -45,6 +45,18 @@ const runStatus = v.union(
   v.literal("cancelled"),
 );
 
+const queuedRunStatus = v.union(
+  v.literal("queued"),
+  v.literal("starting"),
+  v.literal("running"),
+  v.literal("waiting"),
+  v.literal("blocked"),
+  v.literal("succeeded"),
+  v.literal("failed"),
+  v.literal("cancelled"),
+  v.literal("abandoned"),
+);
+
 const dependencyKind = v.union(
   v.literal("blocks"),
   v.literal("depends_on"),
@@ -205,6 +217,39 @@ export default defineSchema({
     .index("by_project_status", ["projectId", "status", "lastHeartbeatAt"])
     .index("by_actor_status", ["actorId", "status", "lastHeartbeatAt"]),
 
+  queuedRuns: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    itemId: v.id("items"),
+    externalId: v.string(),
+    actorId: v.id("actors"),
+    actorExternalId: v.string(),
+    runnerType: v.string(),
+    runnerProfile: v.string(),
+    externalRunId: v.optional(v.string()),
+    status: queuedRunStatus,
+    generation: v.number(),
+    leaseGeneration: v.number(),
+    leaseOwnerExternalId: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    lastHeartbeatAt: v.optional(v.number()),
+    checkpoint: v.optional(v.string()),
+    outcome: v.optional(v.string()),
+    continuationRef: v.optional(v.string()),
+    usage: v.any(),
+    retryAttempt: v.number(),
+    maxAttempts: v.number(),
+    retryBackoffSeconds: v.number(),
+    nextRetryAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+  })
+    .index("by_workspace_external", ["workspaceId", "externalId"])
+    .index("by_item_status", ["itemId", "status", "createdAt"])
+    .index("by_project_status", ["projectId", "status", "updatedAt"]),
+
   dependencies: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
@@ -259,6 +304,16 @@ export default defineSchema({
     continuationExternalId: v.string(),
     idempotencyKey: v.string(),
     command: continuationCommand,
+    request: v.any(),
+    result: v.any(),
+    createdAt: v.number(),
+  }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
+
+  continuationSupervisorCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    continuationId: v.id("continuations"),
+    continuationExternalId: v.string(),
+    idempotencyKey: v.string(),
     request: v.any(),
     result: v.any(),
     createdAt: v.number(),

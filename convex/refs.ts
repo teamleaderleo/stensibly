@@ -40,6 +40,10 @@ export const convexApi = {
     resolve: mutationRef("continuations:resolve"),
     edit: mutationRef("continuationEdits:edit"),
   },
+  continuationSupervisor: {
+    queue: mutationRef("continuationSupervisor:queue"),
+    runPolicy: mutationRef("continuationSupervisor:runPolicy"),
+  },
   runs: {
     start: mutationRef("runs:start"),
     heartbeat: mutationRef("runs:heartbeat"),
