@@ -222,6 +222,7 @@ describe("Convex ledger", () => {
       workspace,
       project: "scrapbook",
       limit: 10,
+      now: Date.now(),
     }) as any;
     expect(brief.counts.total).toBe(2);
     expect(brief.activeRuns).toHaveLength(1);
