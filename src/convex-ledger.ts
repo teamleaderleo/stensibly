@@ -158,6 +158,7 @@ export class ConvexWorkLedger implements
   }
 
   async queueContinuationForSupervisor(input: QueueContinuationForSupervisorInput) {
+    await this.getContinuation(input.id);
     return await this.client.mutation(
       convexApi.continuationSupervisor.queue,
       this.args(input),
@@ -165,6 +166,10 @@ export class ConvexWorkLedger implements
   }
 
   async runContinuationSupervisorPolicy(input: RunContinuationSupervisorPolicyInput) {
+    await Promise.all([
+      this.listContinuations({ status: "proposed", deliveryMode: "supervisor" }),
+      this.listContinuations({ status: "deferred", deliveryMode: "supervisor" }),
+    ]);
     return await this.client.mutation(
       convexApi.continuationSupervisor.runPolicy,
       this.args(input),
