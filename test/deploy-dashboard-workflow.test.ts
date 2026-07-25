@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { dashboardAssets } from "../src/verify-dashboard.ts";
 
 const workflowPath = new URL("../.github/workflows/deploy-dashboard.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
@@ -80,12 +81,11 @@ describe("production dashboard deployment workflow", () => {
       .toBeLessThan(position("Promote verified deployment"));
   });
 
-  test("requires staged asset markers and rejects token-shaped content before promotion", () => {
+  test("keeps staged asset checks aligned with the production verifier", () => {
     expect(workflow).toContain("asset_specs=(");
-    expect(workflow).toContain('"/app.js|DEFAULT_ENDPOINT"');
-    expect(workflow).toContain('"/item-progress-controller.js|installProgressController"');
-    expect(workflow).toContain('"/item-block-controller.js|installBlockController"');
-    expect(workflow).toContain('"/item-complete-controller.js|installCompleteController"');
+    for (const asset of dashboardAssets) {
+      expect(workflow).toContain(`"${asset.path}|${asset.marker}"`);
+    }
     expect(workflow).toContain('"/board-filter-controller.js|installBoardFilterController"');
     expect(workflow).toContain('"/board-filter.css|.board-filter-panel"');
     expect(workflow).toContain('"/project-brief-controller.js|installProjectBriefController"');

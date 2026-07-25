@@ -3,7 +3,7 @@ interface DashboardVerificationOptions {
   htmlFile?: string;
 }
 
-interface AssetExpectation {
+export interface DashboardAssetExpectation {
   path: string;
   contentType: RegExp;
   marker: string;
@@ -13,14 +13,14 @@ const DEFAULT_URL = "https://www.stensibly.com";
 const REQUEST_TIMEOUT_MS = 15_000;
 const TOKEN_PATTERN = /stn\.tok_[A-Za-z0-9._-]+/i;
 
-const assets: AssetExpectation[] = [
+export const dashboardAssets: readonly DashboardAssetExpectation[] = [
   { path: "/styles.css", contentType: /text\/css/i, marker: ":root" },
   { path: "/app.js", contentType: /(text|application)\/javascript/i, marker: "DEFAULT_ENDPOINT" },
   { path: "/item-claim.css", contentType: /text\/css/i, marker: ".detail-claim" },
   { path: "/item-claim.js", contentType: /(text|application)\/javascript/i, marker: "validateClaimInput" },
   { path: "/item-progress-controller.js", contentType: /(text|application)\/javascript/i, marker: "installProgressController" },
   { path: "/item-block-controller.js", contentType: /(text|application)\/javascript/i, marker: "installBlockController" },
-  { path: "/item-complete-controller.js", contentType: /(text|application)\/javascript/i, marker: "installCompletionController" },
+  { path: "/item-complete-controller.js", contentType: /(text|application)\/javascript/i, marker: "installCompleteController" },
   { path: "/favicon.svg", contentType: /image\/svg\+xml/i, marker: "<svg" },
 ];
 
@@ -45,10 +45,11 @@ export async function verifyDashboardUrl(url: string): Promise<void> {
   const origin = normalizeOrigin(url);
   const html = await fetchText(origin + "/", /text\/html/i);
   verifyDashboardHtml(html);
-  for (const asset of assets) {
-    const body = await fetchText(origin + asset.path, asset.contentType);
+  for (const asset of dashboardAssets) {
+    const assetUrl = origin + asset.path;
+    const body = await fetchText(assetUrl, asset.contentType);
     if (!body.includes(asset.marker)) {
-      throw new Error(`${asset.path} is missing its expected marker`);
+      throw new Error(`${safeUrl(assetUrl)} is missing expected marker ${JSON.stringify(asset.marker)}`);
     }
     if (TOKEN_PATTERN.test(body)) throw new Error(`${asset.path} contains a token-shaped value`);
   }
