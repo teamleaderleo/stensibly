@@ -46,14 +46,25 @@ import type {
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
-import { listWorkRuns } from "./runs.js";
+import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
+import { claimRunnerWork } from "./runner-queue.js";
+import {
+  getWorkRun,
+  heartbeatWorkRun,
+  listWorkRuns,
+  transitionWorkRun,
+  type HeartbeatWorkRunInput,
+  type ListWorkRunsInput,
+  type TransitionWorkRunInput,
+} from "./runs.js";
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
 export class SqliteWorkLedger implements
   WorkLedger,
   CompletionContinuationLedger,
-  ContinuationSupervisorLedger
+  ContinuationSupervisorLedger,
+  RunnerLedger
 {
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
@@ -197,5 +208,25 @@ export class SqliteWorkLedger implements
 
   async runContinuationSupervisorPolicy(input: RunContinuationSupervisorPolicyInput) {
     return runContinuationSupervisorPolicy(this.store, input);
+  }
+
+  async claimRunnerWork(input: ClaimRunnerWorkInput) {
+    return claimRunnerWork(this.store, input);
+  }
+
+  async getRun(id: string) {
+    return getWorkRun(this.store, id);
+  }
+
+  async listRuns(input: ListWorkRunsInput = {}) {
+    return listWorkRuns(this.store, input);
+  }
+
+  async heartbeatRun(input: HeartbeatWorkRunInput) {
+    return heartbeatWorkRun(this.store, input);
+  }
+
+  async transitionRun(input: TransitionWorkRunInput) {
+    return transitionWorkRun(this.store, input);
   }
 }
