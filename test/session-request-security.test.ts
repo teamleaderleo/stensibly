@@ -61,7 +61,17 @@ describe("browser-session request security", () => {
   });
 
   test("rejects missing, opaque, malformed, and unapproved origins", () => {
-    for (const origin of [undefined, null, "", "null", "not-a-url"]) {
+    for (const origin of [
+      undefined,
+      null,
+      "",
+      "null",
+      "not-a-url",
+      "https://stensibly.app/path",
+      "https://stensibly.app?query=yes",
+      "https://stensibly.app#fragment",
+      "https://user:password@stensibly.app",
+    ]) {
       expect(evaluateSessionRequestSecurity({
         method: "POST",
         authenticationMode: "session",
@@ -99,6 +109,10 @@ describe("browser-session request security", () => {
     )).toBe("https://stensibly.app");
     expect(resolveCredentialedCorsOrigin(
       "https://stensibly.app.evil.example",
+      allowedOrigins,
+    )).toBeNull();
+    expect(resolveCredentialedCorsOrigin(
+      "https://stensibly.app/path",
       allowedOrigins,
     )).toBeNull();
     expect(resolveCredentialedCorsOrigin("null", allowedOrigins)).toBeNull();
