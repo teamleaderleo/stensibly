@@ -53,6 +53,7 @@ type OAuthScope = Infer<typeof oauthScope>;
 type AccountId = GenericId<"accounts">;
 
 const MAX_CLIENT_REDIRECT_URIS = 20;
+const MAX_CLIENTS_PER_WORKSPACE = 1_000;
 const MAX_CODE_LIFETIME_MS = 10 * 60 * 1000;
 const MAX_REFRESH_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -77,6 +78,13 @@ export const registerClient = mutation({
       .withIndex("by_external_id", (q) => q.eq("externalId", clientId))
       .unique();
     if (existing) throw new Error(`OAuth client ${clientId} already exists`);
+    const clients = await ctx.db
+      .query("mcpOAuthClients")
+      .withIndex("by_workspace_created", (q) => q.eq("workspaceId", workspace._id))
+      .take(MAX_CLIENTS_PER_WORKSPACE);
+    if (clients.length >= MAX_CLIENTS_PER_WORKSPACE) {
+      throw new Error("OAuth client registration limit reached for this workspace");
+    }
     const now = Date.now();
     const id = await ctx.db.insert("mcpOAuthClients", {
       workspaceId: workspace._id,
@@ -199,9 +207,15 @@ export const exchangeAuthorizationCode = mutation({
       || code.clientExternalId !== args.clientId.trim()
       || code.redirectUri !== normalizeRedirectUri(args.redirectUri)
       || code.codeChallenge !== assertCodeChallenge(args.codeChallenge)
-    ) return null;
+    ) {
+      await ctx.db.delete(code._id);
+      return null;
+    }
     const principal = await readAccountPrincipal(ctx, workspace._id, workspaceSlug, code.accountId);
-    if (!principal) return null;
+    if (!principal) {
+      await ctx.db.delete(code._id);
+      return null;
+    }
     const allowedScopes = authorisedScopes(code.scopes, principal.scopes);
     if (!allowedScopes) {
       await ctx.db.delete(code._id);
