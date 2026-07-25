@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { dashboardAssets } from "../src/verify-dashboard.ts";
 
 const workflowPath = new URL("../.github/workflows/deploy-dashboard.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
@@ -86,21 +85,26 @@ describe("production dashboard deployment workflow", () => {
       .toBeLessThan(position("Promote verified deployment"));
   });
 
-  test("keeps staged asset checks aligned with the production verifier", () => {
-    expect(workflow).toContain("asset_specs=(");
-    for (const asset of dashboardAssets) {
-      expect(workflow).toContain(`"${asset.path}|${asset.marker}"`);
-    }
-    expect(workflow).toContain('"/board-filter-controller.js|installBoardFilterController"');
-    expect(workflow).toContain('"/board-filter.css|.board-filter-panel"');
-    expect(workflow).toContain('"/project-brief-controller.js|installProjectBriefController"');
-    expect(workflow).toContain('"/project-brief.css|.project-brief-dialog"');
-    expect(workflow).toContain('"/actor-activity-controller.js|installActorActivityController"');
-    expect(workflow).toContain('"/actor-activity.css|.actor-activity-dialog"');
+  test("keeps staged asset and MIME checks aligned with the production verifier", () => {
+    expect(workflow).toContain("bun src/dashboard-assets.ts > /tmp/dashboard-assets.json");
+    expect(workflow).toContain("jq --exit-status");
+    expect(workflow).toContain('.kind == "css" or .kind == "javascript" or .kind == "svg"');
+    expect(workflow).toContain('.contentTypes | type == "array"');
+    expect(workflow).toContain("all(.contentTypes[]; type == \"string\"");
+    expect(workflow).toContain("while IFS=$'\\t' read -r asset kind allowed_content_types marker; do");
+    expect(workflow).toContain("--write-out '%{content_type}\\n'");
+    expect(workflow).toContain('media_type="${content_type%%;*}"');
+    expect(workflow).toContain("grep --fixed-strings --ignore-case --line-regexp --quiet");
+    expect(workflow).toContain("returned an unexpected content type for ${kind}");
+    expect(workflow).toContain(
+      "jq -r '.[] | [.path, .kind, (.contentTypes | join(\",\")), .marker] | @tsv'",
+    );
+    expect(workflow).not.toContain("asset_specs=(");
+    expect(workflow).not.toContain("all(.[ ]; false)");
     expect(workflow).toContain("grep --fixed-strings --quiet");
     expect(workflow).toContain("title=Staged dashboard verification failed");
     expect(workflow).toContain("stn\\.tok_[A-Za-z0-9._-]+");
-    expect(position("asset_specs=("))
+    expect(position("bun src/dashboard-assets.ts"))
       .toBeLessThan(position("Promote verified deployment"));
   });
 

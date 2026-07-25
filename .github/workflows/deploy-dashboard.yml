@@ -204,36 +204,48 @@ jobs:
           fi
           echo "::endgroup::"
 
-          asset_specs=(
-            "/styles.css|:root"
-            "/app.js|DEFAULT_ENDPOINT"
-            "/item-claim.css|.detail-claim"
-            "/item-claim.js|validateClaimInput"
-            "/item-progress-controller.js|installProgressController"
-            "/item-block-controller.js|installBlockController"
-            "/item-complete-controller.js|installCompleteController"
-            "/board-filter-controller.js|installBoardFilterController"
-            "/board-filter.css|.board-filter-panel"
-            "/project-brief-controller.js|installProjectBriefController"
-            "/project-brief.css|.project-brief-dialog"
-            "/actor-activity-controller.js|installActorActivityController"
-            "/actor-activity.css|.actor-activity-dialog"
-            "/favicon.svg|<svg"
-          )
-          for spec in "${asset_specs[@]}"; do
-            asset="${spec%%|*}"
-            marker="${spec#*|}"
+          bun src/dashboard-assets.ts > /tmp/dashboard-assets.json
+          jq --exit-status '
+            type == "array"
+            and length > 0
+            and all(.[];
+              (.path | type == "string")
+              and (.path | test("^/[A-Za-z0-9._/-]+$"))
+              and (.kind == "css" or .kind == "javascript" or .kind == "svg")
+              and (.contentTypes | type == "array")
+              and (.contentTypes | length > 0)
+              and all(.contentTypes[]; type == "string" and test("^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"))
+              and (.marker | type == "string")
+              and (.marker | length > 0)
+              and (.marker | test("[\\t\\r\\n]") | not)
+            )
+          ' /tmp/dashboard-assets.json > /dev/null
+
+          while IFS=$'\t' read -r asset kind allowed_content_types marker; do
             output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
             echo "::group::[vercel-cli] staged asset ${asset}"
-            if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
-              --deployment "${DEPLOYMENT_URL}" \
-              --fail --silent --show-error \
-              --output "${output}"; then
+            if ! content_type="$(
+              npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
+                --deployment "${DEPLOYMENT_URL}" \
+                --fail --silent --show-error \
+                --output "${output}" \
+                --write-out '%{content_type}\n'
+            )"; then
               echo "::endgroup::"
               echo "::error title=Staged dashboard verification failed::Failed to fetch staged asset ${asset}."
               exit 1
             fi
             echo "::endgroup::"
+            content_type="$(printf '%s\n' "${content_type}" | tr -d '\r' | tail -n 1 | cut -c1-160)"
+            media_type="${content_type%%;*}"
+            media_type="$(printf '%s' "${media_type}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [ -z "${media_type}" ] || ! printf '%s\n' "${allowed_content_types}" \
+              | tr ',' '\n' \
+              | grep --fixed-strings --ignore-case --line-regexp --quiet -- "${media_type}"; then
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} returned an unexpected content type for ${kind}."
+              echo "Staged asset ${asset} returned unexpected content type ${content_type:-<missing>}; allowed: ${allowed_content_types}." >&2
+              exit 1
+            fi
             if [ ! -s "${output}" ]; then
               echo "::error title=Staged dashboard verification failed::Staged asset ${asset} is empty."
               exit 1
@@ -246,7 +258,7 @@ jobs:
               echo "::error title=Staged dashboard verification failed::Staged asset ${asset} contains a token-shaped value."
               exit 1
             fi
-          done
+          done < <(jq -r '.[] | [.path, .kind, (.contentTypes | join(",")), .marker] | @tsv' /tmp/dashboard-assets.json)
 
       - name: Promote verified deployment
         id: promote
