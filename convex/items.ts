@@ -20,6 +20,7 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import { publicItemReservations } from "./lib/reservationVisibility";
 import { mutation, query } from "./lib/server";
 import {
   actorValidator,
@@ -223,6 +224,7 @@ export const get = query({
         : undefined;
       return typeof dependencyId === "string" && visibleDependencyIds.has(dependencyId);
     });
+    const reservations = await publicItemReservations(ctx, item, workspace._id);
 
     return {
       item: await publicItem(ctx, item),
@@ -233,6 +235,7 @@ export const get = query({
       })),
       runs: runs.map((run) => ({ ...publicRun(run), itemId: item.externalId })),
       dependencies,
+      reservations,
     };
   },
 });
