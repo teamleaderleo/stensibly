@@ -1,11 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  requireRunnerTransitionAuthority,
+  runAuthorityFence,
+  runnerAuthorityCommands,
+} from "./authority-fence.js";
 import { getRunnerContextPacket } from "./context-packets.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
 import { runnerLedger, type RunnerConcurrencyPolicy } from "./runner-contracts.js";
-import { runCommands, runStatuses } from "./runs.js";
+import { runStatuses } from "./runs.js";
 import { actorSchema } from "./schemas.js";
 
 export interface RunnerMcpServerOptions {
@@ -25,8 +30,9 @@ export function createRunnerMcpServer(
     {
       instructions: [
         "This endpoint is for runner processes, not general ledger clients.",
-        "Claim one queued or retry-eligible run, then use the returned generation and lease generation for every guarded mutation.",
+        "Claim one queued or retry-eligible run, then use the returned authority fence, generation, and lease generation for every guarded mutation.",
         "Move a claimed run from starting to running, heartbeat before the lease expires, and finish it with a terminal transition.",
+        "Retry admission, blocked-run reassignment, and cancellation remain server- or supervisor-owned operations.",
         "The returned context packet is bounded and redacted; durable item state remains authoritative.",
         "Global and project concurrency limits are server-owned policy and cannot be changed by a runner call.",
       ].join(" "),
@@ -36,7 +42,7 @@ export function createRunnerMcpServer(
   server.registerTool(
     "claim_runner_work",
     {
-      description: "Atomically claim and start the oldest matching queued or retry-eligible run when server-owned global and project capacity are available, transfer its item lease to this runner, and return its bounded context packet.",
+      description: "Atomically claim and start the oldest matching queued or retry-eligible run when server-owned global and project capacity are available, transfer its item lease to this runner, and return its authority fence and bounded context packet.",
       inputSchema: {
         actor: actorSchema,
         runnerType: z.string().trim().min(1).max(80),
@@ -53,8 +59,11 @@ export function createRunnerMcpServer(
     async ({ maxContextCharacters, ...input }) => asToolResult(async () => {
       const run = await runs.claimRunnerWork({ ...input, concurrency });
       if (!run) return null;
+      const authorityFence = runAuthorityFence(run);
+      if (!authorityFence) throw new Error("Claimed run did not return an authority fence");
       return {
         run,
+        authorityFence,
         item: (await ledger.getItem(run.itemId)).item,
         context: await getRunnerContextPacket(ledger, run.itemId, {
           maxCharacters: maxContextCharacters,
@@ -101,7 +110,7 @@ export function createRunnerMcpServer(
   server.registerTool(
     "heartbeat_runner_run",
     {
-      description: "Renew a live runner lease and publish a bounded checkpoint and cumulative usage counters without advancing run generation.",
+      description: "Renew a live runner authority lease and publish a bounded checkpoint and cumulative usage counters without advancing run generation.",
       inputSchema: {
         id: z.string().trim().min(1).max(240),
         actor: actorSchema,
@@ -120,11 +129,11 @@ export function createRunnerMcpServer(
   server.registerTool(
     "transition_runner_run",
     {
-      description: "Apply a generation- and lease-guarded run transition such as run, wait, block, resume, succeed, fail, retry, or cancel.",
+      description: "Apply a generation- and authority-fence-guarded transition under the current runner lease. Retry admission, blocked-run reassignment, and cancellation are not runner operations.",
       inputSchema: {
         id: z.string().trim().min(1).max(240),
         actor: actorSchema,
-        command: z.enum(runCommands),
+        command: z.enum(runnerAuthorityCommands),
         expectedGeneration: z.number().int().min(1),
         expectedLeaseGeneration: z.number().int().min(1),
         leaseSeconds: z.number().int().min(30).max(86_400).default(900),
@@ -136,7 +145,11 @@ export function createRunnerMcpServer(
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async (input) => asToolResult(() => runs.transitionRun(input)),
+    async (input) => asToolResult(async () => {
+      const current = await runs.getRun(input.id);
+      requireRunnerTransitionAuthority(current, input.command);
+      return await runs.transitionRun(input);
+    }),
   );
 
   return server;
