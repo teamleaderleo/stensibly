@@ -16,6 +16,7 @@ import {
   safeArtifactHref,
   safeRequestId,
 } from './item-detail.js';
+import { reservationSection } from './item-reservations.js';
 
 export function createItemDetailController({
   board,
@@ -206,6 +207,7 @@ export function createItemDetailController({
     fragment.append(
       itemOverview(item, detail.events),
       dependencySection(detail.dependencies),
+      reservationSection(detail.reservations),
       claimSection(item),
       eventSection(detail.events),
       artifactSection(detail.artifacts),
