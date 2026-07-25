@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { dispatchNextWork } from "../src/dispatcher.ts";
-import { StensiblyStore } from "../src/store.ts";
+import { ConflictError, StensiblyStore } from "../src/store.ts";
 
 const supervisor = {
   id: "service:supervisor",
@@ -63,6 +63,32 @@ describe("exact-item supervisor dispatch", () => {
         itemId: exact.id,
         idempotencyKey: "dispatch-unavailable",
       }, now)).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rejects idempotency key reuse with a different exact item", () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const first = createItem(store, "First target", 10);
+      const second = createItem(store, "Second target", 10);
+      dispatchNextWork(store, {
+        actor: supervisor,
+        runnerType: "generic-mcp",
+        runnerProfile: "codex-default",
+        itemId: first.id,
+        idempotencyKey: "dispatch-replay",
+      }, now);
+
+      expect(() => dispatchNextWork(store, {
+        actor: supervisor,
+        runnerType: "generic-mcp",
+        runnerProfile: "codex-default",
+        itemId: second.id,
+        idempotencyKey: "dispatch-replay",
+      }, now)).toThrow(ConflictError);
+      expect(store.getItem(second.id).status).toBe("ready");
     } finally {
       store.close();
     }
