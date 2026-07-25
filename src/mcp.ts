@@ -26,7 +26,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
         "Start with get_brief when entering an existing project.",
         "List relevant work before claiming it.",
-        "Claims are temporary leases; renew active work and release work you abandon.",
+        "Claims are temporary fenced leases; use the returned claimGeneration for renewal or release.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
@@ -151,7 +151,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "claim_work",
     {
-      description: "Atomically claim an item for a limited lease. A competing live claim returns an error.",
+      description: "Atomically claim an item for a limited fenced lease. A competing live claim returns an error.",
       inputSchema: claimSchema(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -161,8 +161,11 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "renew_claim",
     {
-      description: "Extend a live claim held by the same actor.",
-      inputSchema: claimSchema(),
+      description: "Extend a live claim held by the same actor and current claim generation.",
+      inputSchema: {
+        ...claimSchema(),
+        expectedClaimGeneration: claimGenerationSchema(),
+      },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.renewClaim(input)),
@@ -219,8 +222,11 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "release_work",
     {
-      description: "Release an item currently claimed by this actor and return it to ready work.",
-      inputSchema: actorActionSchema(),
+      description: "Release an item held by this actor and exact claim generation, then return it to ready work.",
+      inputSchema: {
+        ...actorActionSchema(),
+        expectedClaimGeneration: claimGenerationSchema(),
+      },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.releaseWork(input)),
@@ -306,4 +312,8 @@ function claimSchema() {
     ...actorActionSchema(),
     leaseSeconds: z.number().int().min(30).max(86_400).default(900),
   };
+}
+
+function claimGenerationSchema() {
+  return z.number().int().min(1);
 }
