@@ -233,7 +233,7 @@ export function runContinuationSupervisorPolicy(
     )
     .filter((proposal) => {
       if (!input.project) return true;
-      return store.getItem(proposal.sourceItemId).project === input.project;
+      return continuationTouchesOnlyProject(store, proposal, input.project);
     })
     .sort(policyOrder)
     .slice(0, input.limit);
@@ -324,6 +324,28 @@ function materializeAction(
     };
   }
   throw new ConflictError("Decision-request continuations cannot be supervisor-dispatched");
+}
+
+function continuationTouchesOnlyProject(
+  store: StensiblyStore,
+  continuation: ContinuationProposal,
+  project: string,
+): boolean {
+  try {
+    if (store.getItem(continuation.sourceItemId).project !== project) return false;
+    if (continuation.action.kind === "create_item") {
+      return continuation.action.project === project;
+    }
+    if (
+      continuation.action.kind === "resume_item"
+      || continuation.action.kind === "dispatch_item"
+    ) {
+      return store.getItem(continuation.action.itemId).project === project;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
