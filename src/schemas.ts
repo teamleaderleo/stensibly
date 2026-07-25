@@ -39,9 +39,17 @@ export const claimItemSchema = z.object({
   leaseSeconds: z.number().int().min(30).max(86_400).default(900),
 });
 
+export const renewClaimSchema = claimItemSchema.extend({
+  expectedClaimGeneration: z.number().int().min(1),
+});
+
 export const actorActionSchema = z.object({
   actor: actorSchema,
   summary: z.string().trim().max(10_000).optional(),
+});
+
+export const claimActionSchema = actorActionSchema.extend({
+  expectedClaimGeneration: z.number().int().min(1),
 });
 
 export const handoffItemSchema = z.object({
