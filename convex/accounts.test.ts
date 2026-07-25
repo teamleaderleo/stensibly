@@ -273,7 +273,7 @@ describe("Convex hosted accounts", () => {
       username: "leo",
       displayName: "Leo",
       email: "leo@example.com",
-    })).rejects.toThrow("Workspace membership is revoked");
+    })).rejects.toThrow("Account membership is unavailable");
 
     const expiringAccount = await upsertGithubAccount(t, {
       subject: "3003",
