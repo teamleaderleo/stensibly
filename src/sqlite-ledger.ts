@@ -242,14 +242,14 @@ export class SqliteWorkLedger implements
   async heartbeatRun(input: HeartbeatWorkRunInput) {
     reconcileStaleRunItems(this.store);
     const run = heartbeatWorkRun(this.store, input);
-    syncItemLeaseFromRun(this.store, run, new Date(), input.actor.id);
+    syncItemLeaseFromRun(this.store, run, new Date(run.updatedAt), input.actor.id);
     return run;
   }
 
   async transitionRun(input: TransitionWorkRunInput) {
     reconcileStaleRunItems(this.store);
     const run = transitionWorkRun(this.store, input);
-    syncItemLeaseFromRun(this.store, run, new Date(), input.actor.id);
+    syncItemLeaseFromRun(this.store, run, new Date(run.updatedAt), input.actor.id);
     return run;
   }
 }
