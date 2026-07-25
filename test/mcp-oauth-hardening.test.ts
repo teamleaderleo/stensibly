@@ -88,7 +88,7 @@ describe("MCP OAuth hardening", () => {
     expect(html).not.toContain("A refresh token keeps the connection active");
   });
 
-  test("rejects offline access for clients without the refresh grant", async () => {
+  test("redirects scope errors only after validating the client redirect", async () => {
     const service = new HardeningOAuthService();
     const app = createMcpOAuth(options(service));
     const authorize = new URL("/oauth/authorize", issuer);
@@ -99,13 +99,19 @@ describe("MCP OAuth hardening", () => {
     authorize.searchParams.set("code_challenge_method", "S256");
     authorize.searchParams.set("scope", "read offline_access");
     authorize.searchParams.set("resource", resource);
+    authorize.searchParams.set("state", "scope-state");
 
     const response = await app.request(authorize.toString());
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: "invalid_request",
-      error_description: "OAuth client is not registered for refresh tokens",
-    });
+    expect(response.status).toBe(302);
+    const callback = new URL(response.headers.get("location") ?? "");
+    expect(callback.origin + callback.pathname).toBe(redirectUri);
+    expect(callback.searchParams.get("error")).toBe("invalid_scope");
+    expect(callback.searchParams.get("state")).toBe("scope-state");
+
+    authorize.searchParams.set("client_id", "oauth_client_unknownxxxxx");
+    const unknownClient = await app.request(authorize.toString());
+    expect(unknownClient.status).toBe(400);
+    expect(await unknownClient.json()).toMatchObject({ error: "invalid_request" });
   });
 
   test("requires JSON registration and protects OAuth pages from framing", async () => {
