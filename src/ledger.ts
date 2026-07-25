@@ -7,6 +7,20 @@ import type {
   ItemStatus,
 } from "./store.js";
 
+export interface ItemReservation {
+  id: string;
+  resource: string;
+  mode: "exclusive" | "shared";
+  capacity: number;
+  units: number;
+  usedUnits: number;
+  availableUnits: number;
+  holderActorId: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ListWorkInput {
   project?: string;
   status?: ItemStatus;
@@ -80,6 +94,7 @@ export interface ItemDetail {
   artifacts: Artifact[];
   runs?: unknown[];
   dependencies?: unknown[];
+  reservations?: ItemReservation[];
 }
 
 export interface WorkLedger {
