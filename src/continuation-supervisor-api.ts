@@ -1,5 +1,9 @@
 import { type Context, type Hono } from "hono";
 import {
+  continuationAccessProjects,
+  supervisorPolicyAccessProjects,
+} from "./continuation-authorization.js";
+import {
   continuationLedger,
 } from "./continuation-contracts.js";
 import {
@@ -24,9 +28,10 @@ export function registerContinuationSupervisorApi(
     if (!supervisor || !continuations) return unavailable(context);
     const id = context.req.param("id");
     const current = await continuations.getContinuation(id);
-    const detail = await ledger.getItem(current.sourceItemId);
-    const denied = requireHttpAccess(context, "write", detail.item.project);
-    if (denied) return denied;
+    for (const project of await continuationAccessProjects(ledger, current)) {
+      const denied = requireHttpAccess(context, "write", project);
+      if (denied) return denied;
+    }
     const parsed = queueContinuationForSupervisorSchema.safeParse(
       await readJson(context.req.raw),
     );
@@ -43,7 +48,8 @@ export function registerContinuationSupervisorApi(
 
   app.post("/supervisor/continuations/policy", async (context) => {
     const supervisor = continuationSupervisorLedger(ledger);
-    if (!supervisor) return unavailable(context);
+    const continuations = continuationLedger(ledger);
+    if (!supervisor || !continuations) return unavailable(context);
     const parsed = runContinuationSupervisorPolicySchema.safeParse(
       await readJson(context.req.raw),
     );
@@ -55,8 +61,18 @@ export function registerContinuationSupervisorApi(
         code: "invalid_request",
       }, 400);
     }
-    const denied = requireHttpAccess(context, "write", parsed.data.project);
-    if (denied) return denied;
+    const scopeDenied = requireHttpAccess(context, "write", parsed.data.project);
+    if (scopeDenied) return scopeDenied;
+    for (
+      const project of await supervisorPolicyAccessProjects(
+        ledger,
+        continuations,
+        parsed.data.project,
+      )
+    ) {
+      const denied = requireHttpAccess(context, "write", project);
+      if (denied) return denied;
+    }
     return context.json({
       policy: await supervisor.runContinuationSupervisorPolicy(parsed.data),
     });
