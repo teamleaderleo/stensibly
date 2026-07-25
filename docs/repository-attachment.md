@@ -93,7 +93,7 @@ Exactly one fenced `stensibly` block contains strict JSON:
 ```
 ````
 
-JSON is used instead of a general YAML parser so the initial contract has one exact, portable grammar with duplicate and unknown-field rejection. The surrounding document remains ordinary Markdown.
+JSON is used instead of a general YAML parser so the initial contract has one exact, portable grammar. Unknown fields, duplicate array values, invalid identifiers, conflicting action classes, and unsafe concurrency values are rejected. The surrounding document remains ordinary Markdown.
 
 ### Durable human context
 
