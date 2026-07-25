@@ -137,6 +137,9 @@ function readReservation(value) {
   const usedUnits = nonNegativeInteger(value.usedUnits);
   const availableUnits = nonNegativeInteger(value.availableUnits);
   const holderActorId = textValue(value.holderActorId);
+  const expiresAt = textValue(value.expiresAt);
+  const createdAt = textValue(value.createdAt);
+  const updatedAt = textValue(value.updatedAt);
   if (
     !id
     || !resource
@@ -147,7 +150,11 @@ function readReservation(value) {
     || usedUnits === null
     || usedUnits < units
     || availableUnits === null
+    || availableUnits !== Math.max(0, capacity - usedUnits)
     || !holderActorId
+    || !expiresAt
+    || !createdAt
+    || !updatedAt
   ) return null;
   return {
     id,
@@ -158,9 +165,9 @@ function readReservation(value) {
     usedUnits,
     availableUnits,
     holderActorId,
-    expiresAt: textValue(value.expiresAt),
-    createdAt: textValue(value.createdAt),
-    updatedAt: textValue(value.updatedAt),
+    expiresAt,
+    createdAt,
+    updatedAt,
   };
 }
 
