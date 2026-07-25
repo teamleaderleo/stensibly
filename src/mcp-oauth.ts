@@ -30,7 +30,6 @@ import {
   redirectAuthorizationError,
   requiredForm,
   resolveHostedSession,
-  stringFormValue,
   validCodeVerifier,
   type AuthorizationRequest,
   type McpOAuthOptions,
@@ -69,7 +68,16 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
     }
     let body: unknown;
     try {
-      body = await context.req.json();
+      const raw = await context.req.text();
+      if (new TextEncoder().encode(raw).byteLength > MAX_REGISTRATION_BODY_BYTES) {
+        return oauthJsonError(
+          context,
+          413,
+          "invalid_client_metadata",
+          "Registration request is too large",
+        );
+      }
+      body = JSON.parse(raw);
     } catch {
       return oauthJsonError(
         context,
@@ -163,15 +171,19 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
     if (context.req.header("origin") !== normalized.issuer) {
       return oauthJsonError(context, 403, "access_denied", "Consent origin is not allowed");
     }
-    let form: FormData;
+    let form: URLSearchParams;
     try {
-      form = await context.req.raw.formData();
+      const raw = await context.req.text();
+      if (new TextEncoder().encode(raw).byteLength > MAX_REGISTRATION_BODY_BYTES) {
+        return oauthJsonError(context, 413, "invalid_request", "Consent request is too large");
+      }
+      form = new URLSearchParams(raw);
     } catch {
       return oauthJsonError(context, 400, "invalid_request", "Consent request is invalid");
     }
-    const payload = stringFormValue(form, "request");
-    const signature = stringFormValue(form, "signature");
-    const decision = stringFormValue(form, "decision");
+    const payload = requiredForm(form, "request");
+    const signature = requiredForm(form, "signature");
+    const decision = requiredForm(form, "decision");
     if (
       !payload
       || !signature
@@ -268,7 +280,11 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
       if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
         throw new Error("Token request must use application/x-www-form-urlencoded");
       }
-      form = new URLSearchParams(await context.req.text());
+      const raw = await context.req.text();
+      if (new TextEncoder().encode(raw).byteLength > MAX_REGISTRATION_BODY_BYTES) {
+        return oauthJsonError(context, 413, "invalid_request", "Token request is too large");
+      }
+      form = new URLSearchParams(raw);
     } catch (error) {
       return oauthJsonError(context, 400, "invalid_request", message(error));
     }
