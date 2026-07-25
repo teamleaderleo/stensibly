@@ -1,4 +1,8 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  continuationAccessProjects,
+  supervisorPolicyAccessProjects,
+} from "./continuation-authorization.js";
 import { continuationLedger } from "./continuation-contracts.js";
 import {
   principalCanAccessProject,
@@ -23,6 +27,7 @@ export interface McpHttpOptions {
 interface AccessRule {
   scope: "read" | "write";
   project?: string;
+  projects?: string[];
   requireProject?: boolean;
 }
 
@@ -180,15 +185,18 @@ async function authorizeMessage(
     );
   }
 
-  if (rule.project && !principalCanAccessProject(principal, rule.project)) {
-    return jsonRpcError(
-      403,
-      -32001,
-      `Token cannot access project ${rule.project}`,
-      requestId(payload),
-      {},
-      "authorization_failure",
-    );
+  const projects = rule.projects ?? (rule.project ? [rule.project] : []);
+  for (const project of projects) {
+    if (!principalCanAccessProject(principal, project)) {
+      return jsonRpcError(
+        403,
+        -32001,
+        `Token cannot access project ${project}`,
+        requestId(payload),
+        {},
+        "authorization_failure",
+      );
+    }
   }
 
   return null;
@@ -218,7 +226,6 @@ async function resolveAccessRule(
     toolName === "list_work"
     || toolName === "survey_workspace"
     || toolName === "list_continuation_inbox"
-    || toolName === "run_continuation_supervisor_policy"
   ) {
     const project = stringArgument(args, "project");
     return {
@@ -228,15 +235,55 @@ async function resolveAccessRule(
     };
   }
 
+  if (toolName === "run_continuation_supervisor_policy") {
+    const project = stringArgument(args, "project");
+    const continuations = continuationLedger(ledger);
+    if (!continuations) {
+      return {
+        scope,
+        ...(project ? { project } : {}),
+        requireProject: principal.projects !== null,
+      };
+    }
+    try {
+      return {
+        scope,
+        ...(project ? { project } : {}),
+        projects: await supervisorPolicyAccessProjects(ledger, continuations, project),
+        requireProject: principal.projects !== null,
+      };
+    } catch {
+      return {
+        scope,
+        ...(project ? { project } : {}),
+        requireProject: principal.projects !== null,
+      };
+    }
+  }
+
   if (toolName === "propose_continuation" || toolName === "list_continuations") {
     return await itemAccessRule(ledger, scope, stringArgument(args, "sourceItemId"));
+  }
+
+  if (toolName === "queue_continuation_for_supervisor") {
+    const id = stringArgument(args, "id");
+    const continuations = continuationLedger(ledger);
+    if (!id || !continuations) return { scope };
+    try {
+      const continuation = await continuations.getContinuation(id);
+      return {
+        scope,
+        projects: await continuationAccessProjects(ledger, continuation),
+      };
+    } catch {
+      return { scope };
+    }
   }
 
   if (
     toolName === "get_continuation"
     || toolName === "edit_continuation"
     || toolName === "resolve_continuation"
-    || toolName === "queue_continuation_for_supervisor"
   ) {
     const id = stringArgument(args, "id");
     const continuations = continuationLedger(ledger);
