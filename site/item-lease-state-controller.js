@@ -53,6 +53,15 @@ export function installLeaseStateController() {
   const detailState = document.querySelector('#item-detail-state');
   const announcer = document.querySelector('#item-detail-announcer');
   const contextPanel = document.querySelector('#session-context-panel');
+  const connectionTitle = document.querySelector('#connection-title');
+  const connectionState = document.querySelector('#connection-state');
+  const connectionError = document.querySelector('#connection-error');
+  const connectedSummary = document.querySelector('#connected-summary');
+  const connectedEndpoint = document.querySelector('#connected-endpoint');
+  const connectForm = document.querySelector('#connect-form');
+  const cancelConnection = document.querySelector('#cancel-connection');
+  const dashboard = document.querySelector('#dashboard');
+  const disconnected = document.querySelector('#disconnected-state');
   if (!board || !dialog || !body || !refreshButton || !contextPanel) return null;
 
   ensureStyles('stensibly-item-lease-state-styles', '/item-lease-state.css');
@@ -80,6 +89,31 @@ export function installLeaseStateController() {
     },
     onChanged: async () => {
       refreshButton.click();
+    },
+    reportConnectionIssue: (message) => {
+      if (
+        !connectionTitle
+        || !connectionState
+        || !connectionError
+        || !connectedSummary
+        || !connectedEndpoint
+        || !connectForm
+        || !cancelConnection
+        || !dashboard
+        || !disconnected
+      ) return;
+      const context = readContext();
+      connectionTitle.textContent = 'Connection needs attention';
+      connectForm.hidden = true;
+      connectedSummary.hidden = false;
+      cancelConnection.hidden = true;
+      connectedEndpoint.textContent = context.endpoint;
+      connectionError.textContent = redactCredentialText(message);
+      connectionError.hidden = false;
+      connectionState.textContent = 'retrying';
+      connectionState.classList.add('error');
+      dashboard.hidden = false;
+      disconnected.hidden = true;
     },
     setBusy: (busy, label = '') => {
       if (label && detailState) detailState.textContent = label;
@@ -163,7 +197,7 @@ export function installLeaseStateController() {
     try {
       renderLeaseState(body, item, context.actor);
       renderClaimAcquisitionState(body, item, context.actor);
-      renderLeaseRenewal(body, item);
+      renderLeaseRenewal(body, item, context);
       polishEmptyStates(body, item.status, context);
       restoreConflict(body, itemId, item.status);
       bindConflictClearing(body);
@@ -174,11 +208,24 @@ export function installLeaseStateController() {
     if (refreshConflict) queueMicrotask(() => refreshButton.click());
   }
 
-  function renderLeaseRenewal(root, item) {
-    findSection(root, 'Lease renewal')?.remove();
+  function renderLeaseRenewal(root, item, context) {
+    const fingerprint = [
+      item.id,
+      item.status,
+      item.claimedBy || '',
+      item.claimExpiresAt || '',
+      context.fingerprint,
+      String(Math.floor(Date.now() / 60_000)),
+    ].join('\u0000');
+    const existing = findSection(root, 'Lease renewal');
+    if (existing?.dataset.renewalFingerprint === fingerprint) return;
+
+    existing?.remove();
     const claimSection = findSection(root, 'Claim');
     if (!claimSection) return;
-    claimSection.after(renewal.section(item));
+    const section = renewal.section(item);
+    section.dataset.renewalFingerprint = fingerprint;
+    claimSection.after(section);
   }
 
   function restoreConflict(root, expectedItemId, status) {
