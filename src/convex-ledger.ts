@@ -59,7 +59,10 @@ export class ConvexWorkLedger implements
   }
 
   async getBrief(project: string, limit: number) {
-    return await this.client.query(convexApi.projects.brief, this.args({ project, limit }));
+    return await this.client.query(
+      convexApi.projects.brief,
+      this.args({ project, limit, now: Date.now() }),
+    );
   }
 
   async listWork(input: ListWorkInput = {}) {
