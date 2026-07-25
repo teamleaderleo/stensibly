@@ -1,0 +1,17 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "description": "Public product scope, lifecycle, and supported interfaces"
+    },
+    {
+      "path": "AGENTS.md",
+      "description": "Repository-specific implementation and automated review policy"
+    },
+    {
+      "path": "convex/_generated/ai/guidelines.md",
+      "description": "Required Convex API, schema, transaction, and authentication guidance",
+      "scope": ["convex/**"]
+    }
+  ]
+}
