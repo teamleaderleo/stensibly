@@ -167,10 +167,73 @@ describe("continuation supervisor dispatch", () => {
     ]);
   });
 
+  test("rejects stale generations and terminal rejected proposals without dispatch", async () => {
+    const source = await createItem("guard source", 60);
+    const staleTarget = await createItem("stale target", 50);
+    const stale = await ledger.proposeContinuation({
+      sourceItemId: source.id,
+      title: "Stale dispatch",
+      rationale: "The generation guard must win.",
+      instruction: "Queue only from the current generation.",
+      action: { kind: "dispatch_item", itemId: staleTarget.id },
+      actor: agent,
+      approvalMode: "human",
+      deliveryMode: "supervisor",
+    });
+
+    await expect(ledger.queueContinuationForSupervisor({
+      id: stale.id,
+      actor: human,
+      supervisor,
+      expectedGeneration: stale.generation + 1,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+    })).rejects.toThrow(ConflictError);
+    expect(await ledger.getContinuation(stale.id)).toMatchObject({
+      status: "proposed",
+      generation: stale.generation,
+    });
+    expect(store.getItem(staleTarget.id).status).toBe("ready");
+
+    const rejectedTarget = await createItem("rejected target", 40);
+    const rejectable = await ledger.proposeContinuation({
+      sourceItemId: source.id,
+      title: "Rejected dispatch",
+      rationale: "Rejected work stays human-owned.",
+      instruction: "Do not queue after rejection.",
+      action: { kind: "dispatch_item", itemId: rejectedTarget.id },
+      actor: agent,
+      approvalMode: "human",
+      deliveryMode: "supervisor",
+    });
+    const rejected = await ledger.resolveContinuation({
+      id: rejectable.id,
+      actor: human,
+      command: "reject",
+      expectedGeneration: rejectable.generation,
+      note: "Declined.",
+    });
+
+    await expect(ledger.queueContinuationForSupervisor({
+      id: rejected.id,
+      actor: human,
+      supervisor,
+      expectedGeneration: rejected.generation,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+    })).rejects.toThrow("cannot queue for supervisor while rejected");
+    expect(await ledger.getContinuation(rejected.id)).toMatchObject({
+      status: "rejected",
+      generation: rejected.generation,
+    });
+    expect(store.getItem(rejectedTarget.id).status).toBe("ready");
+  });
+
   test("runs automatic and notify policy while skipping human and decision work", async () => {
     const automaticTarget = await createItem("automatic target", 50, "alpha");
     const notifyTarget = await createItem("notify target", 40, "alpha");
     const humanTarget = await createItem("human target", 30, "alpha");
+    const crossProjectTarget = await createItem("cross-project target", 20, "beta");
     const source = await createItem("policy source", 60, "alpha");
 
     const automatic = await proposePolicy(
@@ -192,6 +255,11 @@ describe("continuation supervisor dispatch", () => {
       source.id,
       "automatic",
       { kind: "request_decision", decisionType: "human_review" },
+    );
+    const crossProject = await proposePolicy(
+      source.id,
+      "automatic",
+      { kind: "dispatch_item", itemId: crossProjectTarget.id },
     );
 
     const result = await ledger.runContinuationSupervisorPolicy({
@@ -215,6 +283,11 @@ describe("continuation supervisor dispatch", () => {
       }),
     ]);
     expect(store.getItem(humanTarget.id).status).toBe("ready");
+    expect(store.getItem(crossProjectTarget.id).status).toBe("ready");
+    expect(await ledger.getContinuation(crossProject.id)).toMatchObject({
+      status: "proposed",
+      generation: crossProject.generation,
+    });
     expect(store.listEvents(source.id).map((event) => event.type)).toContain(
       "continuation.supervisor_notified",
     );
