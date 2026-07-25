@@ -174,7 +174,7 @@ jobs:
             "/item-claim.js|validateClaimInput"
             "/item-progress-controller.js|installProgressController"
             "/item-block-controller.js|installBlockController"
-            "/item-complete-controller.js|installCompletionController"
+            "/item-complete-controller.js|installCompleteController"
             "/board-filter-controller.js|installBoardFilterController"
             "/board-filter.css|.board-filter-panel"
             "/project-brief-controller.js|installProjectBriefController"
@@ -187,12 +187,22 @@ jobs:
             asset="${spec%%|*}"
             marker="${spec#*|}"
             output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
-            npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
+            echo "Verifying staged asset ${asset}"
+            if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
               --deployment "${DEPLOYMENT_URL}" \
               --fail --silent --show-error \
-              --output "${output}"
-            test -s "${output}"
-            grep --fixed-strings --quiet -- "${marker}" "${output}"
+              --output "${output}"; then
+              echo "Failed to fetch staged asset ${asset}." >&2
+              exit 1
+            fi
+            if [ ! -s "${output}" ]; then
+              echo "Staged asset ${asset} is empty." >&2
+              exit 1
+            fi
+            if ! grep --fixed-strings --quiet -- "${marker}" "${output}"; then
+              echo "Staged asset ${asset} is missing expected marker: ${marker}" >&2
+              exit 1
+            fi
             if grep --extended-regexp --quiet 'stn\.tok_[A-Za-z0-9._-]+' "${output}"; then
               echo "Staged asset ${asset} contains a token-shaped value." >&2
               exit 1
