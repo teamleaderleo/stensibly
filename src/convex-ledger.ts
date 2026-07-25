@@ -25,6 +25,7 @@ import type {
   CompleteWorkInput,
   CreateWorkInput,
   HandoffWorkInput,
+  ItemReservation,
   ListWorkInput,
   RecordWorkEventInput,
   UnblockWorkInput,
@@ -70,7 +71,15 @@ export class ConvexWorkLedger implements
   }
 
   async getItem(id: string) {
-    return await this.client.query(convexApi.items.get, this.args({ id })) as Awaited<ReturnType<WorkLedger["getItem"]>>;
+    const now = Date.now();
+    const [detail, reservations] = await Promise.all([
+      this.client.query(convexApi.items.get, this.args({ id })) as Promise<Awaited<ReturnType<WorkLedger["getItem"]>>>,
+      this.client.query(
+        convexApi.itemReservations.list,
+        this.args({ itemId: id, now }),
+      ) as Promise<ItemReservation[]>,
+    ]);
+    return { ...detail, reservations };
   }
 
   async listArtifacts(id: string) {
