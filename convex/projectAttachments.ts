@@ -92,6 +92,13 @@ export const accept = mutation({
 
     const snapshotJson = assertText(args.snapshotJson, "Project attachment snapshot", 256_000);
     const sourcePath = assertText(args.sourcePath, "Source path", 4096);
+    assertSnapshotMetadata(
+      snapshotJson,
+      projectSlug,
+      snapshotSha256,
+      contentSha256,
+      sourcePath,
+    );
     const acceptedBy = assertText(args.acceptedBy, "Attachment importer", 240);
     const externalId = assertText(args.externalId, "Attachment id", 160);
     const duplicate = await ctx.db
@@ -126,6 +133,42 @@ function assertHash(value: string, label: string): string {
     throw new Error(`${label} must be a SHA-256 identifier`);
   }
   return normalized;
+}
+
+function assertSnapshotMetadata(
+  snapshotJson: string,
+  project: string,
+  snapshotSha256: string,
+  contentSha256: string,
+  sourcePath: string,
+): void {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(snapshotJson);
+  } catch {
+    throw new Error("Project attachment snapshot must be valid JSON");
+  }
+  if (!isRecord(decoded)) throw new Error("Project attachment snapshot must be an object");
+  if (
+    decoded.format !== "stensibly.project-attachment"
+    || decoded.schemaVersion !== 1
+    || decoded.snapshotSha256 !== snapshotSha256
+  ) {
+    throw new Error("Project attachment snapshot metadata does not match the import request");
+  }
+  const contract = isRecord(decoded.contract) ? decoded.contract : null;
+  const source = isRecord(decoded.source) ? decoded.source : null;
+  if (
+    contract?.project !== project
+    || source?.contentSha256 !== contentSha256
+    || source?.path !== sourcePath
+  ) {
+    throw new Error("Project attachment snapshot metadata does not match the import request");
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function publicRecord(
