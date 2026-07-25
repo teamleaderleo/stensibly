@@ -33,6 +33,7 @@ describe("MCP work surface", () => {
         "get_brief",
         "get_continuation",
         "get_item",
+        "get_runner_context",
         "handoff_work",
         "list_artifacts",
         "list_continuation_inbox",

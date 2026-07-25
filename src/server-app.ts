@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createApiV1 } from "./api-v1.js";
 import { createApp } from "./app.js";
+import { createContextPacketApi } from "./context-api.js";
 import { createCorsMiddleware } from "./cors.js";
 import type { HttpAuthOptions, StensiblyEnv } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
@@ -41,6 +42,7 @@ export function createServerApp(
   );
 
   app.route("/api/v1", createApiV1(authenticator, ledger, authOptions));
+  app.route("/api/v1", createContextPacketApi(authenticator, ledger, authOptions));
   app.route("/", createApp(store, authOptions));
   return app;
 }
