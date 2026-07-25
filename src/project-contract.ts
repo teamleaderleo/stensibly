@@ -24,11 +24,8 @@ const repositorySchema = z
   .min(3)
   .max(512)
   .refine(
-    (value) =>
-      /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
-      || /^https?:\/\/[^\s]+$/i.test(value)
-      || /^ssh:\/\/[^\s]+$/i.test(value),
-    "Use owner/repository or a canonical repository URL",
+    isCanonicalRepositoryIdentifier,
+    "Use owner/repository or a credential-free HTTP(S) or SSH repository URL",
   );
 
 const uniqueArray = <T extends z.ZodTypeAny>(schema: T, maximum: number) =>
@@ -133,7 +130,7 @@ export function compileProjectContract(
   markdown: string,
   sourcePath = PROJECT_CONTRACT_FILENAME,
 ): ProjectAttachmentSnapshot {
-  if (markdown.length > 256_000) {
+  if (new TextEncoder().encode(markdown).byteLength > 256_000) {
     throw new Error(`${PROJECT_CONTRACT_FILENAME} must not exceed 256 KB`);
   }
   if (markdown.includes("\0")) {
@@ -261,6 +258,25 @@ export function compareProjectAttachments(
     }
   }
 
+  if (previous.source.path !== next.source.path) {
+    changes.push({
+      field: "source.path",
+      kind: "changed",
+      before: previous.source.path,
+      after: next.source.path,
+      authorityEffect: "neutral",
+    });
+  }
+  if (previous.source.contentSha256 !== next.source.contentSha256) {
+    changes.push({
+      field: "source.contentSha256",
+      kind: "changed",
+      before: previous.source.contentSha256,
+      after: next.source.contentSha256,
+      authorityEffect: "neutral",
+    });
+  }
+
   return {
     from: previous.snapshotSha256,
     to: next.snapshotSha256,
@@ -285,8 +301,13 @@ export function normalizeRepositoryRemote(remote: string): string | null {
 
   try {
     const url = new URL(value);
+    const protocol = url.protocol.toLowerCase();
+    if (!new Set(["http:", "https:", "ssh:"]).has(protocol)) return null;
+    if (url.password || ((protocol === "http:" || protocol === "https:") && url.username)) {
+      return null;
+    }
     const path = stripGitSuffix(url.pathname.replace(/^\/+/, ""));
-    if (!path) return null;
+    if (!url.hostname || !path) return null;
     if (url.hostname.toLowerCase() === "github.com" && /^[^/]+\/[^/]+$/.test(path)) {
       return path;
     }
@@ -331,8 +352,17 @@ function parseContractBlock(markdown: string): unknown {
 
 function extractSection(markdown: string, heading: string): string {
   const lines = markdown.split("\n");
-  const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
-  if (start < 0) throw new Error(`${PROJECT_CONTRACT_FILENAME} is missing the \"${heading}\" section`);
+  const starts = lines
+    .map((line, index) => line.trim() === `## ${heading}` ? index : -1)
+    .filter((index) => index >= 0);
+  if (starts.length === 0) {
+    throw new Error(`${PROJECT_CONTRACT_FILENAME} is missing the \"${heading}\" section`);
+  }
+  if (starts.length > 1) {
+    throw new Error(`${PROJECT_CONTRACT_FILENAME} contains more than one \"${heading}\" section`);
+  }
+  const start = starts[0];
+  if (start === undefined) throw new Error(`Could not locate the \"${heading}\" section`);
   const body: string[] = [];
   for (let index = start + 1; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
@@ -359,6 +389,22 @@ function compareStringSets(
   }
   for (const value of [...before].filter((entry) => !after.has(entry)).sort()) {
     changes.push({ field, kind: "removed", before: value, after: null, authorityEffect: removedEffect });
+  }
+}
+
+function isCanonicalRepositoryIdentifier(value: string): boolean {
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    return true;
+  }
+  try {
+    const url = new URL(value);
+    const protocol = url.protocol.toLowerCase();
+    if (!new Set(["http:", "https:", "ssh:"]).has(protocol)) return false;
+    if (!url.hostname || !stripGitSuffix(url.pathname.replace(/^\/+/, ""))) return false;
+    if (url.password) return false;
+    return protocol === "ssh:" || !url.username;
+  } catch {
+    return false;
   }
 }
 
