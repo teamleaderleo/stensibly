@@ -313,8 +313,10 @@ async function readText(path: string): Promise<string> {
 
 function normalizeEndpoint(value: string): string {
   const url = new URL(value.trim());
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Attachment endpoint must use HTTP or HTTPS");
+  const localHttp = url.protocol === "http:"
+    && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+  if (url.protocol !== "https:" && !localHttp) {
+    throw new Error("Attachment endpoint must use HTTPS, except for local development");
   }
   if (url.username || url.password || url.hash || url.search) {
     throw new Error("Attachment endpoint cannot contain credentials, query parameters, or a fragment");
@@ -343,7 +345,7 @@ Usage:
 
 The init command detects remote.origin.url when --repository is omitted and derives the project slug from the repository name when --project is omitted.
 
-The import command compiles the repository document locally and sends the canonical snapshot to the authenticated Stensibly REST control plane. First import and later widening changes require --accept-authority-widening. The token is read only from STENSIBLY_TOKEN and is never printed.
+The import command compiles the repository document locally and sends the canonical snapshot to the authenticated Stensibly REST control plane. First import and later widening changes require --accept-authority-widening. The token is read only from STENSIBLY_TOKEN and is never printed. Production endpoints must use HTTPS; HTTP is limited to localhost development.
 
 STENSIBLY.md is authoring input. Agents should read the accepted attachment through REST or MCP. Neither the file nor the accepted snapshot is a credential, lease, approval, or live authority grant.`;
 }
