@@ -83,16 +83,19 @@ describe("browser-session request security", () => {
       });
     }
 
-    expect(evaluateSessionRequestSecurity({
+    const attackerOrigin = "https://www.stensibly.com.evil.example";
+    const rejected = evaluateSessionRequestSecurity({
       method: "POST",
       authenticationMode: "session",
-      origin: "https://www.stensibly.com.evil.example",
+      origin: attackerOrigin,
       allowedOrigins,
-    })).toEqual({
+    });
+    expect(rejected).toEqual({
       status: 403,
       code: "forbidden_origin",
-      error: "Origin is not allowed for browser-session writes: https://www.stensibly.com.evil.example",
+      error: "Origin is not allowed for browser-session writes",
     });
+    expect(JSON.stringify(rejected)).not.toContain(attackerOrigin);
 
     expect(evaluateSessionRequestSecurity({
       method: "POST",
