@@ -63,7 +63,7 @@ describe("repository project contracts", () => {
     ))).toThrow();
   });
 
-  test("requires durable narrative sections instead of accepting an opaque policy blob", () => {
+  test("requires exactly one durable narrative section for each field", () => {
     const markdown = renderProjectContract(baseContract, baseContext);
     expect(() => compileProjectContract(markdown.replace(
       "## Escalation\n\nEscalate missing authority, credentials, and ambiguous product decisions.\n",
@@ -73,9 +73,11 @@ describe("repository project contracts", () => {
       "## Goal\n\nMake durable human-agent coordination trustworthy.",
       "## Goal\n",
     ))).toThrow('"Goal" section must not be empty');
+    expect(() => compileProjectContract(`${markdown}\n## Goal\n\nA second goal.\n`))
+      .toThrow('more than one "Goal" section');
   });
 
-  test("detects permission widening separately from ordinary context edits", () => {
+  test("detects permission widening separately from ordinary context and source edits", () => {
     const previous = compileProjectContract(renderProjectContract(baseContract, baseContext));
     const widened = compileProjectContract(renderProjectContract({
       ...baseContract,
@@ -86,7 +88,7 @@ describe("repository project contracts", () => {
     }, {
       ...baseContext,
       goal: "Coordinate two repositories.",
-    }));
+    }), "config/STENSIBLY.md");
 
     const diff = compareProjectAttachments(previous, widened);
     expect(diff.widensAuthority).toBe(true);
@@ -96,6 +98,8 @@ describe("repository project contracts", () => {
       expect.objectContaining({ field: "approvalRequired", kind: "removed", authorityEffect: "widens" }),
       expect.objectContaining({ field: "concurrency.project", authorityEffect: "widens" }),
       expect.objectContaining({ field: "context.goal", authorityEffect: "neutral" }),
+      expect.objectContaining({ field: "source.path", authorityEffect: "neutral" }),
+      expect.objectContaining({ field: "source.contentSha256", authorityEffect: "neutral" }),
     ]));
   });
 
@@ -107,13 +111,19 @@ describe("repository project contracts", () => {
     expect(() => parseProjectAttachmentSnapshot(tampered)).toThrow("snapshot hash");
   });
 
-  test("normalizes common Git remotes and derives a project slug", () => {
+  test("normalizes common Git remotes without copying embedded credentials", () => {
     expect(normalizeRepositoryRemote("git@github.com:teamleaderleo/stensibly.git"))
       .toBe("teamleaderleo/stensibly");
     expect(normalizeRepositoryRemote("https://github.com/teamleaderleo/stensibly.git"))
       .toBe("teamleaderleo/stensibly");
     expect(normalizeRepositoryRemote("ssh://git@git.example.com/platform/Project.git"))
       .toBe("ssh://git@git.example.com/platform/Project");
+    expect(normalizeRepositoryRemote("https://token@github.com/teamleaderleo/stensibly.git"))
+      .toBeNull();
+    expect(normalizeRepositoryRemote("https://user:secret@example.com/project/repo.git"))
+      .toBeNull();
+    expect(normalizeRepositoryRemote("file:///tmp/repository.git"))
+      .toBeNull();
     expect(normalizeRepositoryRemote("not a repository"))
       .toBeNull();
     expect(projectSlugFromRepository("teamleaderleo/My_Project.git"))
