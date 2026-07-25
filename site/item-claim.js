@@ -65,6 +65,38 @@ export function describeClaim(item, actor, now = Date.now()) {
   return `Held by ${owner} until ${new Date(parsed).toLocaleString()}.`;
 }
 
+export function leaseRenewalAvailability(item, actor, now = Date.now()) {
+  if (!actor || typeof actor !== 'object') {
+    return { available: false, message: 'Choose an active session actor before renewing a lease.' };
+  }
+  if (!item || typeof item !== 'object') {
+    return { available: false, message: 'Lease renewal state is unavailable.' };
+  }
+  const status = typeof item.status === 'string' ? item.status.trim() : '';
+  const claimant = typeof item.claimedBy === 'string' ? item.claimedBy.trim() : '';
+  const expiry = typeof item.claimExpiresAt === 'string' ? item.claimExpiresAt.trim() : '';
+  if (status !== 'active' || !claimant) {
+    return { available: false, message: 'Only an active claimed item has a renewable lease.' };
+  }
+  if (claimant !== actor.id) {
+    return { available: false, message: `Only the current holder (${claimant}) can renew this lease.` };
+  }
+  if (!expiry) {
+    return { available: false, message: 'The current lease has no reported expiry and cannot be renewed from the dashboard.' };
+  }
+  const parsed = Date.parse(expiry);
+  if (Number.isNaN(parsed)) {
+    return { available: false, message: 'The current lease expiry is invalid and cannot be renewed from the dashboard.' };
+  }
+  if (parsed <= now) {
+    return { available: false, message: 'The reported lease has expired. Refresh to let the server reconcile the claim before taking another action.' };
+  }
+  return {
+    available: true,
+    message: `Current lease ends ${new Date(parsed).toLocaleString()}. Renewal starts a fresh duration from server time.`,
+  };
+}
+
 function requiredString(value, message, maxLength) {
   const output = typeof value === 'string' ? value.trim() : '';
   if (!output) throw new TypeError(message);
