@@ -22,12 +22,32 @@ export interface ItemReservationPayload {
   updatedAt: string;
 }
 
+export interface ItemRunPayload {
+  id: string;
+  itemId: string;
+  actorId: string;
+  harness: string;
+  model: string | null;
+  externalRunId: string | null;
+  repository: string | null;
+  branch: string | null;
+  worktree: string | null;
+  status: "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  childAgentCount: number | null;
+  toolCallCount: number | null;
+  startedAt: string;
+  lastHeartbeatAt: string;
+  endedAt: string | null;
+  outcome: string | null;
+}
+
 export interface ItemDetailPayload {
   item: Record<string, unknown>;
   events: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;
   dependencies: ItemDependencyPayload[];
   reservations: ItemReservationPayload[];
+  runs: ItemRunPayload[];
 }
 
 export interface PayloadEntry {
@@ -46,6 +66,8 @@ export function dependencyRelationship(dependency: Partial<ItemDependencyPayload
 export function dependencyBlocksCurrent(dependency: Partial<ItemDependencyPayload>): boolean;
 export function reservationCapacityLabel(reservation: Partial<ItemReservationPayload>): string;
 export function reservationIsFull(reservation: Partial<ItemReservationPayload>): boolean;
+export function runIsActive(run: Partial<ItemRunPayload>): boolean;
+export function runStatusLabel(run: Partial<ItemRunPayload>): string;
 export function safeArtifactHref(value: unknown): string | null;
 export function payloadEntries(payload: unknown, maxLength?: number, maxEntries?: number): PayloadEntry[];
 export function safeRequestId(value: unknown, activeToken?: string): string | null;
