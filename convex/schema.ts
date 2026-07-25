@@ -98,6 +98,12 @@ const continuationCommand = v.union(
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
 const reservationStatus = v.union(v.literal("active"), v.literal("released"), v.literal("expired"));
 const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
+const accountRole = v.union(
+  v.literal("owner"),
+  v.literal("admin"),
+  v.literal("member"),
+  v.literal("viewer"),
+);
 
 export default defineSchema({
   workspaces: defineTable({
@@ -131,6 +137,59 @@ export default defineSchema({
   })
     .index("by_workspace_external", ["workspaceId", "externalId"])
     .index("by_workspace_updated", ["workspaceId", "updatedAt"]),
+
+  accounts: defineTable({
+    externalId: v.string(),
+    displayName: v.string(),
+    primaryEmail: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    defaultActorExternalId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    disabledAt: v.optional(v.number()),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_primary_email", ["primaryEmail"]),
+
+  accountIdentities: defineTable({
+    accountId: v.id("accounts"),
+    provider: v.string(),
+    subject: v.string(),
+    username: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerified: v.boolean(),
+    avatarUrl: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_provider_subject", ["provider", "subject"])
+    .index("by_account_provider", ["accountId", "provider"]),
+
+  workspaceMemberships: defineTable({
+    workspaceId: v.id("workspaces"),
+    accountId: v.id("accounts"),
+    role: accountRole,
+    projects: v.optional(v.array(v.string())),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_account_workspace", ["accountId", "workspaceId"])
+    .index("by_workspace_role", ["workspaceId", "role"]),
+
+  browserSessions: defineTable({
+    accountId: v.id("accounts"),
+    externalId: v.string(),
+    secretHash: v.string(),
+    userAgent: v.optional(v.string()),
+    createdAt: v.number(),
+    lastSeenAt: v.number(),
+    expiresAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_account_created", ["accountId", "createdAt"])
+    .index("by_expiry", ["expiresAt"]),
 
   items: defineTable({
     workspaceId: v.id("workspaces"),
