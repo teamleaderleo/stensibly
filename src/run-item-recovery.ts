@@ -123,7 +123,6 @@ export function syncItemLeaseFromRun(
             SET status = 'active',
                 claimed_by = ?1,
                 claim_expires_at = ?2,
-                version = version + 1,
                 updated_at = ?3
             WHERE id = ?4 AND status = 'ready' AND claimed_by IS NULL
           `)
@@ -135,7 +134,6 @@ export function syncItemLeaseFromRun(
           .query(`
             UPDATE items
             SET claim_expires_at = ?1,
-                version = version + 1,
                 updated_at = ?2
             WHERE id = ?3
               AND status = 'active'
@@ -147,9 +145,7 @@ export function syncItemLeaseFromRun(
       return;
     }
 
-    if (releaseItemClaim(store, run.itemId, releaseActorId, timestamp)) {
-      touchItem(store, run.itemId, timestamp);
-    }
+    releaseItemClaim(store, run.itemId, releaseActorId, timestamp);
   });
   transaction();
 }
