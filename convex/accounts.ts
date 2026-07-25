@@ -1,4 +1,5 @@
 import { v, type GenericId } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import {
   assertOptionalText,
   assertText,
@@ -20,6 +21,84 @@ const accountRole = v.union(
   v.literal("viewer"),
 );
 
+const accountScope = v.union(
+  v.literal("read"),
+  v.literal("write"),
+  v.literal("admin"),
+);
+
+const nullableString = v.union(v.string(), v.null());
+const nullableProjects = v.union(v.array(v.string()), v.null());
+
+const publicAccountValidator = v.object({
+  id: v.string(),
+  displayName: v.string(),
+  primaryEmail: nullableString,
+  avatarUrl: nullableString,
+  defaultActorId: nullableString,
+  createdAt: v.string(),
+  updatedAt: v.string(),
+  disabledAt: nullableString,
+});
+
+const publicIdentityValidator = v.object({
+  provider: v.string(),
+  subject: v.string(),
+  username: nullableString,
+  email: nullableString,
+  emailVerified: v.boolean(),
+  avatarUrl: nullableString,
+  createdAt: v.string(),
+  updatedAt: v.string(),
+});
+
+const publicMembershipValidator = v.object({
+  workspace: v.string(),
+  role: accountRole,
+  projects: nullableProjects,
+  createdAt: v.string(),
+  updatedAt: v.string(),
+  revokedAt: nullableString,
+});
+
+const publicSessionValidator = v.object({
+  id: v.string(),
+  userAgent: nullableString,
+  createdAt: v.string(),
+  lastSeenAt: v.string(),
+  expiresAt: v.string(),
+  revokedAt: nullableString,
+});
+
+const accountContextValidator = v.object({
+  account: publicAccountValidator,
+  identity: publicIdentityValidator,
+  membership: publicMembershipValidator,
+});
+
+const authenticatedSessionValidator = v.union(
+  v.null(),
+  v.object({
+    session: publicSessionValidator,
+    account: publicAccountValidator,
+    membership: publicMembershipValidator,
+    principal: v.object({
+      type: v.literal("account"),
+      accountId: v.string(),
+      name: v.string(),
+      workspace: v.string(),
+      role: accountRole,
+      scopes: v.array(accountScope),
+      projects: nullableProjects,
+    }),
+    capabilities: v.object({
+      read: v.boolean(),
+      write: v.boolean(),
+      admin: v.boolean(),
+    }),
+  }),
+);
+
 type AccountRole = "owner" | "admin" | "member" | "viewer";
 type AccountScope = "read" | "write" | "admin";
 type AccountId = GenericId<"accounts">;
@@ -39,7 +118,7 @@ export const upsertProviderIdentity = mutation({
     bootstrapRole: accountRole,
     projects: v.optional(v.array(v.string())),
   },
-  returns: v.any(),
+  returns: accountContextValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspaceSlug = normalizeWorkspace(args.workspace);
@@ -150,7 +229,7 @@ export const createSession = mutation({
     expiresAt: v.number(),
     userAgent: v.optional(v.string()),
   },
-  returns: v.any(),
+  returns: publicSessionValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
@@ -186,7 +265,7 @@ export const authenticateSession = query({
     id: v.string(),
     secretHash: v.string(),
   },
-  returns: v.any(),
+  returns: authenticatedSessionValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const sessionContext = await findActiveSessionContext(
@@ -203,7 +282,7 @@ export const authenticateSession = query({
       account: publicAccount(sessionContext.account),
       membership: publicMembership(sessionContext.membership, sessionContext.workspace.slug),
       principal: {
-        type: "account",
+        type: "account" as const,
         accountId: sessionContext.account.externalId,
         name: sessionContext.account.displayName,
         workspace: sessionContext.workspace.slug,
@@ -226,7 +305,7 @@ export const touchSession = mutation({
     id: v.string(),
     secretHash: v.string(),
   },
-  returns: v.any(),
+  returns: v.union(v.null(), publicSessionValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const sessionContext = await findActiveSessionContext(
@@ -250,7 +329,7 @@ export const rotateSession = mutation({
     nextSecretHash: v.string(),
     expiresAt: v.number(),
   },
-  returns: v.any(),
+  returns: v.union(v.null(), publicSessionValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const sessionContext = await findActiveSessionContext(
@@ -277,7 +356,7 @@ export const revokeSession = mutation({
     accountId: v.string(),
     id: v.string(),
   },
-  returns: v.any(),
+  returns: v.union(v.null(), publicSessionValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
@@ -302,7 +381,7 @@ export const listSessions = query({
     ...serviceArgs,
     accountId: v.string(),
   },
-  returns: v.any(),
+  returns: v.array(publicSessionValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
@@ -322,7 +401,7 @@ export const setDefaultActor = mutation({
     accountId: v.string(),
     actorId: v.optional(v.string()),
   },
-  returns: v.any(),
+  returns: publicAccountValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const accountContext = await findActiveAccountMembership(ctx, args.workspace, args.accountId);
@@ -508,7 +587,7 @@ function scopesForRole(role: AccountRole): AccountScope[] {
   return ["read"];
 }
 
-function publicAccount(account: any) {
+function publicAccount(account: Doc<"accounts">) {
   return {
     id: account.externalId,
     displayName: account.displayName,
@@ -521,7 +600,7 @@ function publicAccount(account: any) {
   };
 }
 
-function publicIdentity(identity: any) {
+function publicIdentity(identity: Doc<"accountIdentities">) {
   return {
     provider: identity.provider,
     subject: identity.subject,
@@ -534,7 +613,7 @@ function publicIdentity(identity: any) {
   };
 }
 
-function publicMembership(membership: any, workspace: string) {
+function publicMembership(membership: Doc<"workspaceMemberships">, workspace: string) {
   return {
     workspace,
     role: membership.role,
@@ -545,7 +624,7 @@ function publicMembership(membership: any, workspace: string) {
   };
 }
 
-function publicSession(session: any) {
+function publicSession(session: Doc<"browserSessions">) {
   return {
     id: session.externalId,
     userAgent: session.userAgent ?? null,
@@ -556,7 +635,12 @@ function publicSession(session: any) {
   };
 }
 
-function publicAccountContext(account: any, identity: any, membership: any, workspace: string) {
+function publicAccountContext(
+  account: Doc<"accounts">,
+  identity: Doc<"accountIdentities">,
+  membership: Doc<"workspaceMemberships">,
+  workspace: string,
+) {
   return {
     account: publicAccount(account),
     identity: publicIdentity(identity),
