@@ -51,6 +51,8 @@ const writeTools = new Set([
   "propose_continuation",
   "edit_continuation",
   "resolve_continuation",
+  "queue_continuation_for_supervisor",
+  "run_continuation_supervisor_policy",
 ]);
 
 const itemTools = new Set([
@@ -216,6 +218,7 @@ async function resolveAccessRule(
     toolName === "list_work"
     || toolName === "survey_workspace"
     || toolName === "list_continuation_inbox"
+    || toolName === "run_continuation_supervisor_policy"
   ) {
     const project = stringArgument(args, "project");
     return {
@@ -233,6 +236,7 @@ async function resolveAccessRule(
     toolName === "get_continuation"
     || toolName === "edit_continuation"
     || toolName === "resolve_continuation"
+    || toolName === "queue_continuation_for_supervisor"
   ) {
     const id = stringArgument(args, "id");
     const continuations = continuationLedger(ledger);
