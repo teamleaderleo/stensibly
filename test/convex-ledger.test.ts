@@ -157,7 +157,10 @@ describe("Convex work ledger", () => {
       "mutation:continuations:get",
       "mutation:continuationEdits:edit",
       "mutation:continuations:resolve",
+      "mutation:continuations:get",
       "mutation:continuationSupervisor:queue",
+      "mutation:continuations:list",
+      "mutation:continuations:list",
       "mutation:continuationSupervisor:runPolicy",
     ]);
 
@@ -186,7 +189,8 @@ describe("Convex work ledger", () => {
       instruction: "Review and record the decision.",
       idempotencyKey: "continuation-edit-1",
     });
-    expect(client.calls[20]?.args).toMatchObject({
+    expect(client.calls[20]?.args).toMatchObject({ id: "cont_1" });
+    expect(client.calls[21]?.args).toMatchObject({
       id: "cont_1",
       expectedGeneration: 3,
       runnerType: "generic-mcp",
@@ -194,7 +198,15 @@ describe("Convex work ledger", () => {
       leaseSeconds: 900,
       idempotencyKey: "continuation-queue-1",
     });
-    expect(client.calls[21]?.args).toMatchObject({
+    expect(client.calls[22]?.args).toMatchObject({
+      status: "proposed",
+      deliveryMode: "supervisor",
+    });
+    expect(client.calls[23]?.args).toMatchObject({
+      status: "deferred",
+      deliveryMode: "supervisor",
+    });
+    expect(client.calls[24]?.args).toMatchObject({
       project: "scrapbook",
       limit: 8,
     });
