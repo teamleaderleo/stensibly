@@ -125,7 +125,7 @@ describe("Convex MCP OAuth authority", () => {
       workspace: "other",
       clientId: client.clientId,
       id: codeId("workspace"),
-      refreshId: refreshId("other") ,
+      refreshId: refreshId("other"),
     })).toBeNull();
     expect(await exchangeCode(t, {
       clientId: client.clientId,
@@ -308,13 +308,13 @@ async function setMembershipRole(
   targetWorkspace: string,
   role: "owner" | "admin" | "member" | "viewer",
 ) {
-  await t.run(async (ctx) => {
-    const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q) => q.eq("slug", targetWorkspace)).unique();
-    const account = await ctx.db.query("accounts").withIndex("by_external_id", (q) => q.eq("externalId", accountExternalId)).unique();
+  await t.run(async (ctx: any) => {
+    const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q: any) => q.eq("slug", targetWorkspace)).unique();
+    const account = await ctx.db.query("accounts").withIndex("by_external_id", (q: any) => q.eq("externalId", accountExternalId)).unique();
     if (!ws || !account) throw new Error("Test account disappeared");
     const membership = await ctx.db
       .query("workspaceMemberships")
-      .withIndex("by_account_workspace", (q) => q.eq("accountId", account._id).eq("workspaceId", ws._id))
+      .withIndex("by_account_workspace", (q: any) => q.eq("accountId", account._id).eq("workspaceId", ws._id))
       .unique();
     if (!membership) throw new Error("Test membership disappeared");
     await ctx.db.patch(membership._id, { role });
