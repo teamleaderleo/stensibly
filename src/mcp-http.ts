@@ -36,6 +36,7 @@ const readTools = new Set([
   "survey_workspace",
   "list_work",
   "get_item",
+  "get_runner_context",
   "list_artifacts",
   "get_continuation",
   "list_continuations",
@@ -62,6 +63,7 @@ const writeTools = new Set([
 
 const itemTools = new Set([
   "get_item",
+  "get_runner_context",
   "list_artifacts",
   "attach_artifact",
   "claim_work",
@@ -365,22 +367,17 @@ function jsonRpcError(
   code: number,
   message: string,
   id: unknown,
-  extraHeaders: Record<string, string> = {},
-  failureCategory: FailureCategory = "mcp_failure",
+  headers: Record<string, string> = {},
+  category?: FailureCategory,
 ): Response {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      error: { code, message },
-      id,
-    }),
-    {
-      status,
-      headers: {
-        "content-type": "application/json",
-        [FAILURE_CATEGORY_HEADER]: failureCategory,
-        ...extraHeaders,
-      },
-    },
-  );
+  const responseHeaders = new Headers({ "content-type": "application/json", ...headers });
+  if (category) responseHeaders.set(FAILURE_CATEGORY_HEADER, category);
+  return new Response(JSON.stringify({
+    jsonrpc: "2.0",
+    error: { code, message },
+    id,
+  }), {
+    status,
+    headers: responseHeaders,
+  });
 }
