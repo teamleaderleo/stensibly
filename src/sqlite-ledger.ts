@@ -97,6 +97,8 @@ export class SqliteWorkLedger implements
       events: this.store.listEvents(id),
       artifacts: listArtifacts(this.store, id),
       runs: listWorkRuns(this.store, { itemId: id }),
+      dependencies: [],
+      reservations: [],
     };
   }
 
@@ -114,7 +116,7 @@ export class SqliteWorkLedger implements
       uri: input.uri,
       metadata: input.metadata,
       ...(input.mimeType ? { mimeType: input.mimeType } : {}),
-      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      ...(input.idempotencyKey ? { idempotencyKey } : {}),
     });
     if (!replay) touchItemActivity(this.store, input.id, artifact.createdAt);
     return artifact;
