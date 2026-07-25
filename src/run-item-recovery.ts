@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { WorkRun, WorkRunStatus } from "./runs.js";
+import {
+  ensureRunSchema,
+  type WorkRun,
+  type WorkRunStatus,
+} from "./runs.js";
 import { StensiblyStore } from "./store.js";
 
 interface StaleRunRow {
@@ -23,6 +27,7 @@ export function reconcileStaleRunItems(
   store: StensiblyStore,
   now = new Date(),
 ): string[] {
+  ensureRunSchema(store);
   const timestamp = validDate(now).toISOString();
   const transaction = store.db.transaction(() => {
     const rows = store.db
@@ -71,7 +76,12 @@ export function reconcileStaleRunItems(
         );
       if (result.changes !== 1) continue;
 
-      releaseItemClaim(store, current.item_id, current.actor_id, timestamp);
+      const itemClaimReleased = releaseItemClaim(
+        store,
+        current.item_id,
+        current.actor_id,
+        timestamp,
+      );
       appendEvent(store, {
         itemId: current.item_id,
         type: "run.abandoned",
@@ -81,7 +91,7 @@ export function reconcileStaleRunItems(
           generation: nextGeneration,
           leaseGeneration: current.lease_generation,
           reason: queued ? "queue_lease_expired" : "lease_expired",
-          itemClaimReleased: true,
+          itemClaimReleased,
         },
         now: timestamp,
       });
@@ -98,6 +108,7 @@ export function syncItemLeaseFromRun(
   store: StensiblyStore,
   run: WorkRun,
   now = new Date(),
+  releaseActorId = run.actorId,
 ): void {
   const timestamp = validDate(now).toISOString();
   const transaction = store.db.transaction(() => {
@@ -124,14 +135,19 @@ export function syncItemLeaseFromRun(
             SET claim_expires_at = ?1,
                 version = version + 1,
                 updated_at = ?2
-            WHERE id = ?3 AND status = 'active' AND claimed_by = ?4
+            WHERE id = ?3
+              AND status = 'active'
+              AND claimed_by = ?4
+              AND (claim_expires_at IS NULL OR claim_expires_at <> ?1)
           `)
           .run(run.leaseExpiresAt, timestamp, run.itemId, run.leaseOwnerId);
       }
       return;
     }
 
-    releaseItemClaim(store, run.itemId, run.actorId, timestamp);
+    if (releaseItemClaim(store, run.itemId, releaseActorId, timestamp)) {
+      touchItem(store, run.itemId, timestamp);
+    }
   });
   transaction();
 }
@@ -141,18 +157,18 @@ function releaseItemClaim(
   itemId: string,
   actorId: string,
   timestamp: string,
-): void {
-  store.db
+): boolean {
+  const result = store.db
     .query(`
       UPDATE items
       SET status = 'ready',
           claimed_by = NULL,
           claim_expires_at = NULL,
-          version = version + 1,
           updated_at = ?1
       WHERE id = ?2 AND status = 'active' AND claimed_by = ?3
     `)
     .run(timestamp, itemId, actorId);
+  return result.changes === 1;
 }
 
 function appendEvent(
