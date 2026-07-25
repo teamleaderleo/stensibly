@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  serializeDashboardAssets,
-  type DashboardAssetKind,
-} from "../src/dashboard-assets.ts";
+import { serializeDashboardAssets } from "../src/dashboard-assets.ts";
 import {
   dashboardAssets,
   formatGitHubErrorAnnotation,
@@ -53,6 +50,7 @@ describe("dashboard asset verification contract", () => {
     for (const asset of dashboardAssets) {
       const source = await Bun.file(new URL(`../site${asset.path}`, import.meta.url)).text();
       expect(source, `${asset.path} should contain ${asset.marker}`).toContain(asset.marker);
+      expect(asset.contentTypes.length).toBeGreaterThan(0);
     }
   });
 
@@ -65,7 +63,7 @@ describe("dashboard asset verification contract", () => {
       new URL("../.github/workflows/deploy-dashboard.yml", import.meta.url),
     ).text();
     expect(workflow).toContain("bun src/dashboard-assets.ts");
-    expect(workflow).toContain("jq -r '.[] | [.path, .marker] | @tsv'");
+    expect(workflow).toContain("jq -r '.[] | [.path, .kind, (.contentTypes | join(\",\")), .marker] | @tsv'");
     expect(workflow).not.toContain("asset_specs=(");
   });
 });
@@ -84,6 +82,13 @@ describe("dashboard URL verification", () => {
     globalThis.fetch = mockFetch(badType);
     await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow("content type");
 
+    const badAssetType = fullFixtures();
+    badAssetType.set("/styles.css", [":root {}", "text/plain"]);
+    globalThis.fetch = mockFetch(badAssetType);
+    await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow(
+      "https://www.stensibly.com/styles.css returned unexpected content type text/plain",
+    );
+
     const missingMarker = fullFixtures();
     missingMarker.set("/app.js", ["console.log('wrong bundle')", "text/javascript"]);
     globalThis.fetch = mockFetch(missingMarker);
@@ -99,20 +104,9 @@ describe("dashboard URL verification", () => {
 function fullFixtures(): Map<string, [string, string]> {
   const fixtures = new Map<string, [string, string]>([["/", [validHtml, "text/html"]]]);
   for (const asset of dashboardAssets) {
-    fixtures.set(asset.path, [asset.marker, fixtureContentType(asset.kind)]);
+    fixtures.set(asset.path, [asset.marker, asset.contentTypes[0]]);
   }
   return fixtures;
-}
-
-function fixtureContentType(kind: DashboardAssetKind): string {
-  switch (kind) {
-    case "css":
-      return "text/css";
-    case "javascript":
-      return "application/javascript";
-    case "svg":
-      return "image/svg+xml";
-  }
 }
 
 function mockFetch(fixtures: Map<string, [string, string]>): typeof fetch {
