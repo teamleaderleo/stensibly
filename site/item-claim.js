@@ -6,7 +6,6 @@ import './item-block-controller.js';
 import './item-complete-controller.js';
 import './item-handoff-controller.js';
 import './item-handoff-history-controller.js';
-import './item-lease-state-controller.js';
 import { createIdempotencyTracker } from './item-create.js';
 import { validateActor } from './session-context.js';
 
@@ -107,4 +106,8 @@ function requiredString(value, message, maxLength) {
 
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+if (typeof document !== 'undefined') {
+  queueMicrotask(() => void import('./item-lease-state-controller.js'));
 }
