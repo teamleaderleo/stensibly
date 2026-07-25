@@ -160,5 +160,9 @@ describe("repository project contracts", () => {
       .toBeNull();
     expect(projectSlugFromRepository("teamleaderleo/My_Project.git"))
       .toBe("my_project");
+    expect(() => projectSlugFromRepository("https://github.com/teamleaderleo/stensibly.git?token=secret"))
+      .toThrow("Cannot derive a project slug");
+    expect(() => projectSlugFromRepository("git@git.example.com:platform/Project.git#secret"))
+      .toThrow("Cannot derive a project slug");
   });
 });
