@@ -30,7 +30,7 @@ export function registerProjectAttachmentTools(
       return {
         project,
         attachment: await attachments.getProjectAttachment(project),
-        authorityNotice: "The accepted attachment declares project policy and context. Live claims, run leases, approvals, and operation authority remain server-owned state.",
+        authorityNotice: "The accepted attachment is not a live authority grant. Live claims, run leases, approvals, and operation authority remain server-owned state.",
       };
     }),
   );
