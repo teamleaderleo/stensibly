@@ -175,6 +175,7 @@ export function dispatchNextWork(
         SET status = 'active',
             claimed_by = ?1,
             claim_expires_at = ?2,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
@@ -200,6 +201,7 @@ export function dispatchNextWork(
       throw new ConflictError("Dispatch candidate changed before it could be claimed");
     }
 
+    const item = store.getItem(candidate.id);
     const runId = `run_${randomUUID()}`;
     store.db
       .query(`
@@ -241,6 +243,7 @@ export function dispatchNextWork(
       payload: {
         leaseSeconds: input.leaseSeconds,
         expiresAt: leaseExpiresAt,
+        generation: item.claimGeneration,
         source: "supervisor_dispatch",
       },
       now: timestamp,
@@ -263,7 +266,7 @@ export function dispatchNextWork(
     });
 
     const result: DispatchResult = {
-      item: store.getItem(candidate.id),
+      item,
       run: mapRun(getRunRow(store, runId)),
     };
     storeDispatchReplay(store, input.idempotencyKey, requestJson, result, timestamp);
@@ -371,6 +374,50 @@ function reconciliationSummary(
   };
 }
 
+function normalizeSurveyInput(input: SurveyDispatchInput) {
+  return {
+    project: optionalProject(input.project),
+    limit: boundedInteger(input.limit ?? 25, "Survey limit", 1, 100),
+  };
+}
+
+function normalizeDispatchInput(input: DispatchNextWorkInput) {
+  const actor = actorSchema.parse(input.actor);
+  return {
+    actor,
+    runnerType: requiredText(input.runnerType, "Runner type", 80),
+    runnerProfile: requiredText(input.runnerProfile, "Runner profile", 160),
+    project: optionalProject(input.project),
+    itemId: optionalText(input.itemId, "Item ID", 240),
+    externalRunId: optionalText(input.externalRunId, "External run ID", 240),
+    continuationRef: optionalText(input.continuationRef, "Continuation reference", 500),
+    leaseSeconds: boundedInteger(input.leaseSeconds ?? 900, "Lease seconds", 30, 86_400),
+    maxAttempts: boundedInteger(input.maxAttempts ?? 3, "Maximum attempts", 1, 100),
+    retryBackoffSeconds: boundedInteger(
+      input.retryBackoffSeconds ?? 60,
+      "Retry backoff seconds",
+      1,
+      86_400,
+    ),
+    idempotencyKey: optionalText(input.idempotencyKey, "Idempotency key", 240),
+  };
+}
+
+function dispatchRequest(input: ReturnType<typeof normalizeDispatchInput>) {
+  return {
+    actor: input.actor,
+    runnerType: input.runnerType,
+    runnerProfile: input.runnerProfile,
+    project: input.project ?? null,
+    itemId: input.itemId ?? null,
+    externalRunId: input.externalRunId ?? null,
+    continuationRef: input.continuationRef ?? null,
+    leaseSeconds: input.leaseSeconds,
+    maxAttempts: input.maxAttempts,
+    retryBackoffSeconds: input.retryBackoffSeconds,
+  };
+}
+
 function storeDispatchReplay(
   store: StensiblyStore,
   idempotencyKey: string | undefined,
@@ -393,11 +440,40 @@ function getRunRow(store: StensiblyStore, id: string): RunRow {
   return row;
 }
 
+function mapRun(row: RunRow): WorkRun {
+  return {
+    id: row.id,
+    itemId: row.item_id,
+    actorId: row.actor_id,
+    runnerType: row.runner_type,
+    runnerProfile: row.runner_profile,
+    externalRunId: row.external_run_id,
+    status: row.status,
+    generation: row.generation,
+    leaseGeneration: row.lease_generation,
+    leaseOwnerId: row.lease_owner_id,
+    leaseExpiresAt: row.lease_expires_at,
+    lastHeartbeatAt: row.last_heartbeat_at,
+    checkpoint: row.checkpoint,
+    outcome: row.outcome,
+    continuationRef: row.continuation_ref,
+    usage: JSON.parse(row.usage_json) as WorkRun["usage"],
+    retryAttempt: row.retry_attempt,
+    maxAttempts: row.max_attempts,
+    retryBackoffSeconds: row.retry_backoff_seconds,
+    nextRetryAt: row.next_retry_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+  };
+}
+
 function appendDispatchEvent(
   store: StensiblyStore,
   input: {
     itemId: string;
-    actorId: string;
+    actorId: string | null;
     type: string;
     payload: Record<string, unknown>;
     now: string;
@@ -418,9 +494,7 @@ function appendDispatchEvent(
     );
 }
 
-function upsertActor(store: StensiblyStore, rawActor: ActorInput, now: string): ActorInput {
-  const actor = actorSchema.parse(rawActor);
-  if (actor.kind === "human") throw new TypeError("Supervisor dispatch actor must be an agent or service");
+function upsertActor(store: StensiblyStore, actor: ActorInput, now: string): void {
   store.db
     .query(`
       INSERT INTO actors (id, name, kind, updated_at)
@@ -431,134 +505,51 @@ function upsertActor(store: StensiblyStore, rawActor: ActorInput, now: string): 
         updated_at = excluded.updated_at
     `)
     .run(actor.id, actor.name, actor.kind, now);
-  return actor;
 }
 
-function normalizeSurveyInput(raw: SurveyDispatchInput): { project?: string; limit: number } {
-  const project = optionalProject(raw.project);
-  return {
-    ...(project ? { project } : {}),
-    limit: positiveInteger(raw.limit ?? 20, "Candidate limit", 100),
-  };
-}
-
-function normalizeDispatchInput(raw: DispatchNextWorkInput) {
-  const actor = actorSchema.parse(raw.actor);
-  if (actor.kind === "human") throw new TypeError("Supervisor dispatch actor must be an agent or service");
-  const project = optionalProject(raw.project);
-  const itemId = optionalText(raw.itemId, "Item ID", 240);
-  const externalRunId = optionalText(raw.externalRunId, "External run ID", 240);
-  const continuationRef = optionalText(raw.continuationRef, "Continuation reference", 500);
-  const idempotencyKey = optionalText(raw.idempotencyKey, "Idempotency key", 240);
-  return {
-    actor,
-    runnerType: requiredText(raw.runnerType, "Runner type", 80),
-    runnerProfile: requiredText(raw.runnerProfile, "Runner profile", 160),
-    ...(project ? { project } : {}),
-    ...(itemId ? { itemId } : {}),
-    ...(externalRunId ? { externalRunId } : {}),
-    ...(continuationRef ? { continuationRef } : {}),
-    leaseSeconds: positiveInteger(raw.leaseSeconds ?? 900, "Lease seconds", 86_400, 30),
-    maxAttempts: positiveInteger(raw.maxAttempts ?? 3, "Maximum attempts", 20),
-    retryBackoffSeconds: positiveInteger(raw.retryBackoffSeconds ?? 60, "Retry backoff seconds", 86_400, 0),
-    ...(idempotencyKey ? { idempotencyKey } : {}),
-  };
-}
-
-function dispatchRequest(input: ReturnType<typeof normalizeDispatchInput>) {
-  return {
-    actor: input.actor,
-    runnerType: input.runnerType,
-    runnerProfile: input.runnerProfile,
-    project: input.project ?? null,
-    itemId: input.itemId ?? null,
-    externalRunId: input.externalRunId ?? null,
-    continuationRef: input.continuationRef ?? null,
-    leaseSeconds: input.leaseSeconds,
-    maxAttempts: input.maxAttempts,
-    retryBackoffSeconds: input.retryBackoffSeconds,
-  };
-}
-
-function mapRun(row: RunRow): WorkRun {
-  return {
-    id: row.id,
-    itemId: row.item_id,
-    actorId: row.actor_id,
-    runnerType: row.runner_type,
-    runnerProfile: row.runner_profile,
-    externalRunId: row.external_run_id,
-    status: row.status,
-    generation: row.generation,
-    leaseGeneration: row.lease_generation,
-    leaseOwnerId: row.lease_owner_id,
-    leaseExpiresAt: row.lease_expires_at,
-    lastHeartbeatAt: row.last_heartbeat_at,
-    checkpoint: row.checkpoint,
-    outcome: row.outcome,
-    continuationRef: row.continuation_ref,
-    usage: parseUsage(row.usage_json),
-    retryAttempt: row.retry_attempt,
-    maxAttempts: row.max_attempts,
-    retryBackoffSeconds: row.retry_backoff_seconds,
-    nextRetryAt: row.next_retry_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    startedAt: row.started_at,
-    endedAt: row.ended_at,
-  };
-}
-
-function parseUsage(json: string): WorkRun["usage"] {
-  const value = JSON.parse(json) as unknown;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const output: WorkRun["usage"] = {};
-  for (const key of ["inputTokens", "outputTokens", "toolCalls", "childAgents"] as const) {
-    const entry = (value as Record<string, unknown>)[key];
-    if (Number.isInteger(entry) && Number(entry) >= 0) output[key] = Number(entry);
+function requiredText(value: string, label: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) {
+    throw new TypeError(`${label} must be between 1 and ${maxLength} characters`);
   }
-  return output;
+  return normalized;
 }
 
-function optionalProject(value: unknown): string | undefined {
-  const project = optionalText(value, "Project", 80);
-  if (!project) return undefined;
-  if (!/^[a-z0-9][a-z0-9-_]*$/.test(project)) throw new TypeError("Project must be a lowercase slug");
-  return project;
+function optionalText(
+  value: string | undefined,
+  label: string,
+  maxLength: number,
+): string | undefined {
+  if (value === undefined) return undefined;
+  return requiredText(value, label, maxLength);
 }
 
-function addSeconds(now: Date, seconds: number): string {
-  return new Date(now.getTime() + seconds * 1000).toISOString();
+function optionalProject(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim();
+  if (!/^[a-z0-9][a-z0-9-_]*$/.test(normalized) || normalized.length > 80) {
+    throw new TypeError("Project must be a lowercase slug up to 80 characters");
+  }
+  return normalized;
+}
+
+function boundedInteger(
+  value: number,
+  label: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new RangeError(`${label} must be between ${minimum} and ${maximum}`);
+  }
+  return value;
 }
 
 function isoNow(value: Date): string {
-  if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new TypeError("Current time must be a valid date");
+  if (Number.isNaN(value.getTime())) throw new TypeError("Time must be a valid date");
   return value.toISOString();
 }
 
-function requiredText(value: unknown, label: string, maxLength: number): string {
-  const output = typeof value === "string" ? value.trim() : "";
-  if (!output) throw new TypeError(`${label} is required`);
-  if (output.length > maxLength) throw new TypeError(`${label} may contain at most ${maxLength} characters`);
-  return output;
-}
-
-function optionalText(value: unknown, label: string, maxLength: number): string | undefined {
-  const output = typeof value === "string" ? value.trim() : "";
-  if (!output) return undefined;
-  if (output.length > maxLength) throw new TypeError(`${label} may contain at most ${maxLength} characters`);
-  return output;
-}
-
-function positiveInteger(
-  value: unknown,
-  label: string,
-  maximum = Number.MAX_SAFE_INTEGER,
-  minimum = 1,
-): number {
-  const output = Number(value);
-  if (!Number.isInteger(output) || output < minimum || output > maximum) {
-    throw new TypeError(`${label} must be a whole number from ${minimum} to ${maximum}`);
-  }
-  return output;
+function addSeconds(value: Date, seconds: number): string {
+  return new Date(value.getTime() + seconds * 1_000).toISOString();
 }
