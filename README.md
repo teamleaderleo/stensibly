@@ -1,8 +1,14 @@
 # Stensibly
 
-**A vendor-neutral coordination ledger for humans, agents, scripts, and services.**
+**A responsibility and authority ledger for human-agent work.**
 
 Stensibly records shared coordination facts: what needs doing, who is responsible, what is blocked, what evidence exists, and what happens next. The server owns this shared state. Agent frameworks remain optional clients.
+
+The collaborative board is the simplest projection of that state. The broader product governs which actor may perform which work, under which current authority grant, with which obligations, resources, limits, and escalation rules.
+
+> **The board shows the work. The ledger governs who may do it.**
+
+See [the product model](docs/product-model.md) for the distinction between a collaborative task board, a responsibility ledger, and a governed execution control plane.
 
 External systems continue to own source code, files, deployments, CI output, and private agent execution. Stensibly stores references and coordination history instead of copying those systems into the ledger.
 
@@ -12,14 +18,14 @@ The running hosted path is:
 
 | Surface | Endpoint | Role |
 | --- | --- | --- |
-| Dashboard | `https://www.stensibly.com` | Static, read-only browser board |
+| Dashboard | `https://www.stensibly.com` | Static browser board and item-detail client |
 | REST v1 and remote MCP | `https://api.stensibly.com` | Official authenticated API |
 | Worker fallback | `https://stensibly-api.leoli-082000.workers.dev` | Direct Worker endpoint during rollout and diagnosis |
-| System of record | Convex | Workspaces, projects, actors, items, events, artifacts, runs, dependencies, reservations, and API-token hashes |
+| System of record | Convex | Workspaces, projects, actors, items, events, artifacts, runs, dependencies, reservations, accounts, sessions, and API-token hashes |
 
-The Cloudflare Worker authenticates public API tokens, enforces workspace and project scopes, and calls Convex with a private service secret. The browser never receives that service secret.
+The Cloudflare Worker authenticates public API tokens and hosted browser sessions, enforces workspace and project scopes, and calls Convex with a private service secret. The browser never receives that service secret.
 
-The dashboard currently polls REST v1. It stores the selected endpoint in `localStorage` and a user-supplied read token in `sessionStorage`. The token disappears when the browser session ends and is never rendered after connection.
+The dashboard currently polls REST v1. Manual endpoint and token connection remains available for self-hosted use and diagnostics. The token is kept in `sessionStorage`, disappears when the browser session ends, and is never rendered after connection.
 
 ### Verify the hosted path
 
@@ -52,13 +58,16 @@ See [docs/operations.md](docs/operations.md) for deployment, verification, logs,
 
 ### Hosted Convex mode
 
-This is the production path. Convex owns shared state and API-token authority. Cloudflare Workers exposes REST v1 and Streamable HTTP MCP. The static Vercel site is a client of that API.
+This is the production path. Convex owns shared state and authentication authority. Cloudflare Workers exposes REST v1 and Streamable HTTP MCP. The static Vercel site is a client of that API.
 
 Hosted clients should use:
 
 - `/api/v1` for REST
 - `/mcp` for remote MCP
-- Bearer authentication for both surfaces
+- Bearer authentication for machine clients and advanced browser connection
+- the hosted browser session for supported human REST access
+
+MCP remains bearer-only.
 
 ### Local SQLite compatibility mode
 
@@ -208,16 +217,20 @@ export STENSIBLY_WORKSPACE=default
 ## Core rules
 
 1. Work belongs to a workspace and project, independent of any agent runtime.
-2. Project briefs report shared ledger state without generating prose.
-3. Claims are renewable, expiring leases.
-4. Handoffs carry a summary and an explicit next action.
-5. Blocking work records a reason and releases ownership.
-6. Meaningful changes append events.
-7. Artifacts remain references with explicit provenance.
-8. API tokens store hashed secrets and carry explicit scopes.
-9. Workspace and project boundaries are enforced by the server.
-10. Writes support idempotency keys.
-11. The server performs no model calls.
+2. The board is a projection; server-owned ledger state remains authoritative.
+3. Assignment does not by itself grant permission to act.
+4. Claims and run leases are renewable, expiring authority grants.
+5. Stale or superseded authority must fail closed rather than fall back to actor identity.
+6. Responsibility survives process and conversation loss through durable next actions, evidence, events, outcomes, blockers, and handoffs.
+7. Handoffs carry a summary and an explicit next action.
+8. Blocking work records a reason and releases ownership.
+9. Meaningful changes append events.
+10. Artifacts remain references with explicit provenance.
+11. API tokens store hashed secrets and carry explicit scopes.
+12. Workspace and project boundaries are enforced by the server.
+13. Writes support idempotency keys; idempotency does not replace authority fencing.
+14. Invariant reconciliation and semantic project decisions are separate policy classes.
+15. The server performs no model calls.
 
 ## Development checks
 
@@ -229,25 +242,31 @@ bun run test:convex
 bun run worker:check
 ```
 
-The Convex test suite runs in memory and covers competing claims, idempotent commands, scheduled lease expiry, timer races, artifacts, handoffs, dependencies, runs, reservations, tokens, and project briefs.
+The Convex test suite runs in memory and covers competing claims, idempotent commands, scheduled lease expiry, timer races, artifacts, handoffs, dependencies, runs, reservations, tokens, sessions, and project briefs.
 
-## Current release boundary
+## Current product boundary
 
-The hosted read path is live: Convex state, API-token authority, Cloudflare Worker, REST v1, remote MCP, custom API domain, static dashboard, and read-only verification.
+The hosted coordination foundation is live: Convex state, API-token and browser-session authentication, Cloudflare Worker, REST v1, remote MCP, custom API domain, and static dashboard.
 
-The next product slice is one complete write workflow in the dashboard:
+The dashboard can inspect shared item state, history, dependencies, reservation capacity, and recent agent runs. The ledger contains early dispatcher, continuation, reservation, run-lifecycle, reconciliation, and authority-fencing mechanics.
 
-- create an item
-- inspect item detail and history
-- claim work
-- record progress
-- block and unblock
-- complete the item
+Stensibly is ready for a guarded single-project pilot as a durable coordination system. It is not yet ready for unattended, multi-project autonomy or irreversible external effects.
 
-That loop should prove human and agent coordination before broader dependency, reservation, and agent-run interfaces are added.
+The next product work should prove the authority-and-responsibility distinction in execution:
+
+1. complete end-to-end claim and run fencing;
+2. make current authority, outstanding responsibility, and approval state legible;
+3. dogfood one real project with one supervisor and one runner at concurrency one;
+4. add durable command inbox/outbox semantics before unattended retries;
+5. add one production-quality runner adapter and a bounded long-lived supervisor;
+6. keep merges, deployments, messages, provider changes, spending, and other consequential effects behind durable human approval until workflow and compensation semantics exist.
+
+See [issue #214](https://github.com/teamleaderleo/stensibly/issues/214) for the guarded pilot boundary.
 
 ## Documentation
 
+- [Product model: authority and responsibility](docs/product-model.md)
+- [Distributed coordination correctness](docs/coordination-correctness.md)
 - [Architecture](docs/architecture.md)
 - [Hosted operations](docs/operations.md)
 - [Cloudflare deployment](docs/cloudflare-deployment.md)
