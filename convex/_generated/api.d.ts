@@ -10,6 +10,10 @@
 
 import type * as artifacts from "../artifacts.js";
 import type * as claims from "../claims.js";
+import type * as completionContinuations from "../completionContinuations.js";
+import type * as continuationEdits from "../continuationEdits.js";
+import type * as continuationSupervisor from "../continuationSupervisor.js";
+import type * as continuations from "../continuations.js";
 import type * as dependencies from "../dependencies.js";
 import type * as events from "../events.js";
 import type * as items from "../items.js";
@@ -34,6 +38,10 @@ import type {
 declare const fullApi: ApiFromModules<{
   artifacts: typeof artifacts;
   claims: typeof claims;
+  completionContinuations: typeof completionContinuations;
+  continuationEdits: typeof continuationEdits;
+  continuationSupervisor: typeof continuationSupervisor;
+  continuations: typeof continuations;
   dependencies: typeof dependencies;
   events: typeof events;
   items: typeof items;
