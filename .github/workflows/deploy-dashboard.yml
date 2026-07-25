@@ -163,7 +163,6 @@ jobs:
         run: |
           npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
             --deployment "${DEPLOYMENT_URL}" \
-            --token="${VERCEL_TOKEN}" \
             --fail --silent --show-error \
             > /tmp/dashboard-index.html
           bun run verify:dashboard -- --html-file /tmp/dashboard-index.html
@@ -190,7 +189,6 @@ jobs:
             output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
             npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
               --deployment "${DEPLOYMENT_URL}" \
-              --token="${VERCEL_TOKEN}" \
               --fail --silent --show-error \
               --output "${output}"
             test -s "${output}"
