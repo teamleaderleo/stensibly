@@ -325,7 +325,7 @@ export function normalizeRepositoryRemote(remote: string): string | null {
 
 export function projectSlugFromRepository(repository: string): string {
   const normalized = normalizeRepositoryRemote(repository);
-  if (!normalized) throw new Error(`Cannot derive a project slug from repository: ${repository}`);
+  if (!normalized) throw new Error("Cannot derive a project slug from repository identifier");
   const candidate = stripGitSuffix(normalized.split("/").filter(Boolean).at(-1) ?? "");
   const slug = candidate
     .toLowerCase()
