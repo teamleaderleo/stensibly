@@ -64,6 +64,16 @@ describe("Convex hosted accounts", () => {
       projects: ["scrapbook"],
     });
 
+    await expect(upsertGithubAccount(t, {
+      subject: "1001",
+      username: "teamleaderleo",
+      displayName: "Leo Updated",
+      email: "leo@example.com",
+      role: "owner",
+      projects: ["another-project"],
+      workspace: "other",
+    })).rejects.toThrow("Account membership is unavailable");
+
     const sameEmailDifferentSubject = await upsertGithubAccount(t, {
       subject: "2002",
       username: "another-leo",
