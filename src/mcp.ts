@@ -9,6 +9,7 @@ import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
+import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
 import {
   actorSchema,
   itemKinds,
@@ -24,7 +25,8 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Stensibly is a shared scrapbook for work in motion.",
         "Use survey_workspace for centralized triage and repeat polling across projects.",
         "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
-        "Start with get_brief when entering an existing project.",
+        "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
+        "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
@@ -271,6 +273,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
     }),
   );
 
+  registerProjectAttachmentTools(server, ledger);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
   return server;
