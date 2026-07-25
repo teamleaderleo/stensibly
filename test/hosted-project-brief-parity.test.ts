@@ -55,11 +55,11 @@ afterEach(() => {
 
 describe("hosted project brief gateway parity", () => {
   test("passes trusted time and returns a dashboard-compatible public contract", async () => {
-    let capturedArgs: Record<string, unknown> | null = null;
+    const captured: { args?: Record<string, unknown> } = {};
     const ledger = new ConvexWorkLedger({
       client: {
         query: async (_reference, args) => {
-          capturedArgs = args;
+          captured.args = args;
           return fixture;
         },
         mutation: async () => {
@@ -73,6 +73,8 @@ describe("hosted project brief gateway parity", () => {
     const before = Date.now();
     const brief = await ledger.getBrief("scrapbook", 10);
     const after = Date.now();
+    const capturedArgs = captured.args;
+    if (!capturedArgs) throw new Error("Convex query arguments were not captured");
 
     expect(brief).toBe(fixture);
     expect(capturedArgs).toMatchObject({
@@ -81,9 +83,9 @@ describe("hosted project brief gateway parity", () => {
       project: "scrapbook",
       limit: 10,
     });
-    expect(capturedArgs?.now).toBeNumber();
-    expect(capturedArgs!.now as number).toBeGreaterThanOrEqual(before);
-    expect(capturedArgs!.now as number).toBeLessThanOrEqual(after);
+    expect(capturedArgs.now).toBeNumber();
+    expect(capturedArgs.now as number).toBeGreaterThanOrEqual(before);
+    expect(capturedArgs.now as number).toBeLessThanOrEqual(after);
     expect(readProjectBrief({ brief }, "scrapbook")).toMatchObject({
       project: "scrapbook",
       counts: fixture.counts,
