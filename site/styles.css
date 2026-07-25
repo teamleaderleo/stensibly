@@ -161,16 +161,17 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .detail-copy { margin-top: .8rem; padding-top: .75rem; border-top: 1px solid #2a2a31; }
 .detail-copy h4 { margin: 0; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; }
 .detail-copy p { margin: .35rem 0 0; color: #c3c3cb; font-size: .8rem; line-height: 1.5; white-space: pre-wrap; }
-.detail-dependency-summary { margin: 0 0 .65rem; padding: .62rem .68rem; border: 1px solid rgba(255,154,118,.35); border-radius: .55rem; color: #ffc0aa; background: rgba(255,154,118,.08); font-size: .72rem; line-height: 1.4; }
-.detail-dependencies, .detail-events, .detail-artifacts { display: grid; gap: .6rem; margin: 0; padding: 0; list-style: none; }
-.detail-dependency, .detail-event, .detail-artifact { padding: .72rem; border: 1px solid #303038; border-radius: .62rem; background: #111114; }
-.detail-dependency { display: grid; gap: .3rem; }
-.detail-dependency-blocking { border-color: rgba(255,154,118,.55); box-shadow: inset .15rem 0 0 var(--blocked); }
-.detail-dependency-head, .detail-event-head { display: flex; justify-content: space-between; gap: .8rem; }
-.detail-dependency-head strong, .detail-event-head strong, .detail-artifact strong { font-size: .76rem; }
-.detail-dependency-status, .detail-dependency-meta, .detail-event-head time, .detail-event-actor, .detail-artifact-meta { color: var(--muted); font: .64rem ui-monospace, SFMono-Regular, Menlo, monospace; }
-.detail-dependency-target { margin: .1rem 0 0; color: #d2d2d8; font-size: .8rem; line-height: 1.4; }
-.detail-dependency code { overflow-wrap: anywhere; color: #c3c3cb; font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.detail-dependency-summary, .detail-reservation-summary { margin: 0 0 .65rem; padding: .62rem .68rem; border: 1px solid rgba(255,154,118,.35); border-radius: .55rem; color: #ffc0aa; background: rgba(255,154,118,.08); font-size: .72rem; line-height: 1.4; }
+.detail-dependencies, .detail-reservations, .detail-events, .detail-artifacts { display: grid; gap: .6rem; margin: 0; padding: 0; list-style: none; }
+.detail-dependency, .detail-reservation, .detail-event, .detail-artifact { padding: .72rem; border: 1px solid #303038; border-radius: .62rem; background: #111114; }
+.detail-dependency, .detail-reservation { display: grid; gap: .3rem; }
+.detail-dependency-blocking, .detail-reservation-full { border-color: rgba(255,154,118,.55); box-shadow: inset .15rem 0 0 var(--blocked); }
+.detail-dependency-head, .detail-reservation-head, .detail-event-head { display: flex; justify-content: space-between; gap: .8rem; }
+.detail-dependency-head strong, .detail-reservation-head strong, .detail-event-head strong, .detail-artifact strong { font-size: .76rem; }
+.detail-dependency-status, .detail-dependency-meta, .detail-reservation-mode, .detail-reservation-meta, .detail-event-head time, .detail-event-actor, .detail-artifact-meta { color: var(--muted); font: .64rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.detail-dependency-target, .detail-reservation-holder, .detail-reservation-capacity { margin: .1rem 0 0; color: #d2d2d8; font-size: .8rem; line-height: 1.4; }
+.detail-reservation-capacity { color: var(--ready); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem; }
+.detail-dependency code, .detail-reservation code { overflow-wrap: anywhere; color: #c3c3cb; font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .detail-event-actor { margin: .3rem 0 .55rem; }
 .detail-artifact { display: grid; gap: .35rem; }
 .detail-artifact-link, .detail-artifact code { overflow-wrap: anywhere; font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace; }
