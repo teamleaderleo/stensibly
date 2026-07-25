@@ -1,4 +1,4 @@
-import { v, type GenericId } from "convex/values";
+import { v, type GenericId, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
   assertOptionalText,
@@ -13,13 +13,7 @@ import {
 } from "./lib/domain";
 import { mutation, query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
-
-const accountRole = v.union(
-  v.literal("owner"),
-  v.literal("admin"),
-  v.literal("member"),
-  v.literal("viewer"),
-);
+import { accountRole } from "./schema";
 
 const accountScope = v.union(
   v.literal("read"),
@@ -99,11 +93,12 @@ const authenticatedSessionValidator = v.union(
   }),
 );
 
-type AccountRole = "owner" | "admin" | "member" | "viewer";
+type AccountRole = Infer<typeof accountRole>;
 type AccountScope = "read" | "write" | "admin";
 type AccountId = GenericId<"accounts">;
 
 const MAX_SESSION_SECONDS = 60 * 60 * 24 * 90;
+const MAX_LISTED_SESSIONS = 100;
 
 export const upsertProviderIdentity = mutation({
   args: {
@@ -264,6 +259,7 @@ export const authenticateSession = query({
     ...serviceArgs,
     id: v.string(),
     secretHash: v.string(),
+    now: v.number(),
   },
   returns: authenticatedSessionValidator,
   handler: async (ctx, args) => {
@@ -273,6 +269,7 @@ export const authenticateSession = query({
       args.workspace,
       args.id,
       args.secretHash,
+      assertTimestamp(args.now, "Authentication time"),
     );
     if (!sessionContext) return null;
 
@@ -308,16 +305,17 @@ export const touchSession = mutation({
   returns: v.union(v.null(), publicSessionValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
+    const now = Date.now();
     const sessionContext = await findActiveSessionContext(
       ctx,
       args.workspace,
       args.id,
       args.secretHash,
+      now,
     );
     if (!sessionContext) return null;
-    const lastSeenAt = Date.now();
-    await ctx.db.patch(sessionContext.session._id, { lastSeenAt });
-    return publicSession({ ...sessionContext.session, lastSeenAt });
+    await ctx.db.patch(sessionContext.session._id, { lastSeenAt: now });
+    return publicSession({ ...sessionContext.session, lastSeenAt: now });
   },
 });
 
@@ -332,14 +330,15 @@ export const rotateSession = mutation({
   returns: v.union(v.null(), publicSessionValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
+    const now = Date.now();
     const sessionContext = await findActiveSessionContext(
       ctx,
       args.workspace,
       args.id,
       args.secretHash,
+      now,
     );
     if (!sessionContext) return null;
-    const now = Date.now();
     const patch = {
       secretHash: assertHash(args.nextSecretHash),
       expiresAt: assertSessionExpiry(args.expiresAt, now),
@@ -390,7 +389,7 @@ export const listSessions = query({
       .query("browserSessions")
       .withIndex("by_account_created", (q) => q.eq("accountId", accountContext.account._id))
       .order("desc")
-      .collect();
+      .take(MAX_LISTED_SESSIONS);
     return sessions.map(publicSession);
   },
 });
@@ -489,6 +488,7 @@ async function findActiveSessionContext(
   workspaceValue: string | undefined,
   id: string,
   secretHashValue: string,
+  now: number,
 ) {
   const externalId = readCredentialId(id);
   const secretHash = readHash(secretHashValue);
@@ -500,7 +500,7 @@ async function findActiveSessionContext(
   if (
     !session ||
     session.revokedAt !== undefined ||
-    session.expiresAt <= Date.now() ||
+    session.expiresAt <= now ||
     session.secretHash !== secretHash
   ) {
     return null;
@@ -572,6 +572,13 @@ function assertHash(value: string): string {
 function readHash(value: string): string | null {
   const normalized = value.trim().toLowerCase();
   return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+function assertTimestamp(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a finite non-negative timestamp`);
+  }
+  return Math.floor(value);
 }
 
 function assertSessionExpiry(value: number, now: number): number {
