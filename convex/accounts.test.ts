@@ -11,13 +11,15 @@ beforeEach(() => {
 });
 
 describe("Convex hosted accounts", () => {
-  test("reuses provider subjects while refusing to merge accounts by email", async () => {
+  test("reuses provider subjects without email merging or membership escalation", async () => {
     const t = convexTest(schema, modules);
     const first = await upsertGithubAccount(t, {
       subject: "1001",
       username: "leo",
       displayName: "Leo",
       email: "LEO@example.com",
+      role: "viewer",
+      projects: ["scrapbook"],
     });
     expect(first).toMatchObject({
       account: {
@@ -32,8 +34,8 @@ describe("Convex hosted accounts", () => {
       },
       membership: {
         workspace: "test",
-        role: "owner",
-        projects: null,
+        role: "viewer",
+        projects: ["scrapbook"],
         revokedAt: null,
       },
     });
@@ -42,11 +44,25 @@ describe("Convex hosted accounts", () => {
       subject: "1001",
       username: "teamleaderleo",
       displayName: "Leo Updated",
-      email: "leo@example.com",
+      email: undefined,
+      emailVerified: true,
+      role: "owner",
+      projects: ["another-project"],
     });
     expect(repeated.account.id).toBe(first.account.id);
-    expect(repeated.account.displayName).toBe("Leo Updated");
-    expect(repeated.identity.username).toBe("teamleaderleo");
+    expect(repeated.account).toMatchObject({
+      displayName: "Leo Updated",
+      primaryEmail: "leo@example.com",
+    });
+    expect(repeated.identity).toMatchObject({
+      username: "teamleaderleo",
+      email: null,
+      emailVerified: false,
+    });
+    expect(repeated.membership).toMatchObject({
+      role: "viewer",
+      projects: ["scrapbook"],
+    });
 
     const sameEmailDifferentSubject = await upsertGithubAccount(t, {
       subject: "2002",
@@ -57,7 +73,7 @@ describe("Convex hosted accounts", () => {
     expect(sameEmailDifferentSubject.account.id).not.toBe(first.account.id);
   });
 
-  test("creates, authenticates, rotates, lists, and revokes hashed browser sessions", async () => {
+  test("creates, authenticates, rotates, lists, and account-bounds browser sessions", async () => {
     const t = convexTest(schema, modules);
     const accountContext = await upsertGithubAccount(t, {
       subject: "1001",
@@ -67,19 +83,21 @@ describe("Convex hosted accounts", () => {
       role: "member",
       projects: ["scrapbook"],
     });
+    const otherAccount = await upsertGithubAccount(t, {
+      subject: "2002",
+      username: "other",
+      displayName: "Other",
+      email: "other@example.com",
+      role: "viewer",
+    });
     const firstHash = "a".repeat(64);
     const nextHash = "b".repeat(64);
-    const expiresAt = Date.now() + 60_000;
 
-    const created = await t.mutation(convexApi.accounts.createSession, {
-      serviceSecret,
-      workspace: "test",
-      accountId: accountContext.account.id,
+    const created = await createBrowserSession(t, accountContext.account.id, {
       id: "ses_1234567890abcdef",
       secretHash: firstHash,
-      expiresAt,
       userAgent: "Stensibly test browser",
-    }) as any;
+    });
     expect(created).toMatchObject({
       id: "ses_1234567890abcdef",
       userAgent: "Stensibly test browser",
@@ -87,12 +105,7 @@ describe("Convex hosted accounts", () => {
     });
     expect(JSON.stringify(created)).not.toContain(firstHash);
 
-    const authenticated = await t.query(convexApi.accounts.authenticateSession, {
-      serviceSecret,
-      workspace: "test",
-      id: created.id,
-      secretHash: firstHash,
-    }) as any;
+    const authenticated = await authenticateBrowserSession(t, created.id, firstHash);
     expect(authenticated).toMatchObject({
       account: { id: accountContext.account.id, displayName: "Leo" },
       membership: { role: "member", projects: ["scrapbook"] },
@@ -107,13 +120,8 @@ describe("Convex hosted accounts", () => {
       capabilities: { read: true, write: true, admin: false },
     });
 
-    const wrongHash = await t.query(convexApi.accounts.authenticateSession, {
-      serviceSecret,
-      workspace: "test",
-      id: created.id,
-      secretHash: "c".repeat(64),
-    });
-    expect(wrongHash).toBeNull();
+    expect(await authenticateBrowserSession(t, created.id, "invalid-hash")).toBeNull();
+    expect(await authenticateBrowserSession(t, created.id, "c".repeat(64))).toBeNull();
 
     const rotated = await t.mutation(convexApi.accounts.rotateSession, {
       serviceSecret,
@@ -124,14 +132,7 @@ describe("Convex hosted accounts", () => {
       expiresAt: Date.now() + 120_000,
     }) as any;
     expect(rotated.id).toBe(created.id);
-
-    const oldSecret = await t.query(convexApi.accounts.authenticateSession, {
-      serviceSecret,
-      workspace: "test",
-      id: created.id,
-      secretHash: firstHash,
-    });
-    expect(oldSecret).toBeNull();
+    expect(await authenticateBrowserSession(t, created.id, firstHash)).toBeNull();
 
     const touched = await t.mutation(convexApi.accounts.touchSession, {
       serviceSecret,
@@ -157,20 +158,133 @@ describe("Convex hosted accounts", () => {
     }) as any;
     expect(updatedAccount.defaultActorId).toBe("leo");
 
+    const crossAccountRevocation = await t.mutation(convexApi.accounts.revokeSession, {
+      serviceSecret,
+      workspace: "test",
+      accountId: otherAccount.account.id,
+      id: created.id,
+    });
+    expect(crossAccountRevocation).toBeNull();
+    expect(await authenticateBrowserSession(t, created.id, nextHash)).not.toBeNull();
+
     const revoked = await t.mutation(convexApi.accounts.revokeSession, {
       serviceSecret,
       workspace: "test",
+      accountId: accountContext.account.id,
       id: created.id,
     }) as any;
     expect(revoked.revokedAt).not.toBeNull();
+    expect(await authenticateBrowserSession(t, created.id, nextHash)).toBeNull();
+  });
 
-    const afterRevocation = await t.query(convexApi.accounts.authenticateSession, {
+  test("fails closed for missing memberships, disabled accounts, revoked memberships, and expiry", async () => {
+    const t = convexTest(schema, modules);
+    const accountContext = await upsertGithubAccount(t, {
+      subject: "1001",
+      username: "leo",
+      displayName: "Leo",
+      email: "leo@example.com",
+      role: "member",
+    });
+    const secretHash = "d".repeat(64);
+
+    await expect(createBrowserSession(t, accountContext.account.id, {
+      id: "ses_wrong_workspace",
+      secretHash,
+      workspace: "other",
+    })).rejects.toThrow("Account membership is unavailable");
+
+    const created = await createBrowserSession(t, accountContext.account.id, {
+      id: "ses_fail_closed",
+      secretHash,
+    });
+
+    await t.run(async (ctx) => {
+      const account = await ctx.db
+        .query("accounts")
+        .withIndex("by_external_id", (q) => q.eq("externalId", accountContext.account.id))
+        .unique();
+      if (!account) throw new Error("Test account disappeared");
+      await ctx.db.patch(account._id, { disabledAt: Date.now() });
+    });
+
+    expect(await authenticateBrowserSession(t, created.id, secretHash)).toBeNull();
+    expect(await t.mutation(convexApi.accounts.touchSession, {
       serviceSecret,
       workspace: "test",
       id: created.id,
-      secretHash: nextHash,
+      secretHash,
+    })).toBeNull();
+    expect(await t.mutation(convexApi.accounts.rotateSession, {
+      serviceSecret,
+      workspace: "test",
+      id: created.id,
+      secretHash,
+      nextSecretHash: "e".repeat(64),
+      expiresAt: Date.now() + 60_000,
+    })).toBeNull();
+    expect(await t.query(convexApi.accounts.listSessions, {
+      serviceSecret,
+      workspace: "test",
+      accountId: accountContext.account.id,
+    })).toEqual([]);
+
+    await t.run(async (ctx) => {
+      const account = await ctx.db
+        .query("accounts")
+        .withIndex("by_external_id", (q) => q.eq("externalId", accountContext.account.id))
+        .unique();
+      if (!account) throw new Error("Test account disappeared");
+      await ctx.db.patch(account._id, { disabledAt: undefined });
+      const workspace = await ctx.db
+        .query("workspaces")
+        .withIndex("by_slug", (q) => q.eq("slug", "test"))
+        .unique();
+      if (!workspace) throw new Error("Test workspace disappeared");
+      const membership = await ctx.db
+        .query("workspaceMemberships")
+        .withIndex("by_account_workspace", (q) =>
+          q.eq("accountId", account._id).eq("workspaceId", workspace._id),
+        )
+        .unique();
+      if (!membership) throw new Error("Test membership disappeared");
+      await ctx.db.patch(membership._id, { revokedAt: Date.now() });
     });
-    expect(afterRevocation).toBeNull();
+
+    expect(await authenticateBrowserSession(t, created.id, secretHash)).toBeNull();
+    await expect(t.mutation(convexApi.accounts.setDefaultActor, {
+      serviceSecret,
+      workspace: "test",
+      accountId: accountContext.account.id,
+      actorId: "leo",
+    })).rejects.toThrow("Account membership is unavailable");
+    await expect(upsertGithubAccount(t, {
+      subject: "1001",
+      username: "leo",
+      displayName: "Leo",
+      email: "leo@example.com",
+    })).rejects.toThrow("Workspace membership is revoked");
+
+    const expiringAccount = await upsertGithubAccount(t, {
+      subject: "3003",
+      username: "expired",
+      displayName: "Expired",
+      email: "expired@example.com",
+      role: "viewer",
+    });
+    const expiringSession = await createBrowserSession(t, expiringAccount.account.id, {
+      id: "ses_expired",
+      secretHash: "f".repeat(64),
+    });
+    await t.run(async (ctx) => {
+      const session = await ctx.db
+        .query("browserSessions")
+        .withIndex("by_external_id", (q) => q.eq("externalId", expiringSession.id))
+        .unique();
+      if (!session) throw new Error("Test session disappeared");
+      await ctx.db.patch(session._id, { expiresAt: Date.now() - 1 });
+    });
+    expect(await authenticateBrowserSession(t, expiringSession.id, "f".repeat(64))).toBeNull();
   });
 });
 
@@ -180,22 +294,58 @@ async function upsertGithubAccount(
     subject: string;
     username: string;
     displayName: string;
-    email: string;
+    email?: string;
+    emailVerified?: boolean;
     role?: "owner" | "admin" | "member" | "viewer";
     projects?: string[];
+    workspace?: string;
   },
 ) {
   return await t.mutation(convexApi.accounts.upsertProviderIdentity, {
     serviceSecret,
-    workspace: "test",
+    workspace: input.workspace ?? "test",
     provider: "github",
     subject: input.subject,
     username: input.username,
     displayName: input.displayName,
     email: input.email,
-    emailVerified: true,
+    emailVerified: input.emailVerified ?? true,
     avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
     bootstrapRole: input.role ?? "owner",
     projects: input.projects,
+  }) as any;
+}
+
+async function createBrowserSession(
+  t: ReturnType<typeof convexTest>,
+  accountId: string,
+  input: {
+    id: string;
+    secretHash: string;
+    userAgent?: string;
+    workspace?: string;
+  },
+) {
+  return await t.mutation(convexApi.accounts.createSession, {
+    serviceSecret,
+    workspace: input.workspace ?? "test",
+    accountId,
+    id: input.id,
+    secretHash: input.secretHash,
+    expiresAt: Date.now() + 60_000,
+    userAgent: input.userAgent,
+  }) as any;
+}
+
+async function authenticateBrowserSession(
+  t: ReturnType<typeof convexTest>,
+  id: string,
+  secretHash: string,
+) {
+  return await t.query(convexApi.accounts.authenticateSession, {
+    serviceSecret,
+    workspace: "test",
+    id,
+    secretHash,
   }) as any;
 }
