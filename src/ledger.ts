@@ -38,6 +38,27 @@ export interface ItemReservation {
   updatedAt: string;
 }
 
+export type RunStatus = "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+
+export interface ItemRun {
+  id: string;
+  itemId: string;
+  actorId: string;
+  harness: string;
+  model: string | null;
+  externalRunId: string | null;
+  repository: string | null;
+  branch: string | null;
+  worktree: string | null;
+  status: RunStatus;
+  childAgentCount: number | null;
+  toolCallCount: number | null;
+  startedAt: string;
+  lastHeartbeatAt: string;
+  endedAt: string | null;
+  outcome: string | null;
+}
+
 export interface ListWorkInput {
   project?: string;
   status?: ItemStatus;
@@ -109,7 +130,7 @@ export interface ItemDetail {
   item: Item;
   events: ItemEvent[];
   artifacts: Artifact[];
-  runs?: unknown[];
+  runs?: ItemRun[];
   dependencies?: ItemDependency[];
   reservations?: ItemReservation[];
 }
