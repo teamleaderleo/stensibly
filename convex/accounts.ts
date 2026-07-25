@@ -42,8 +42,7 @@ export const upsertProviderIdentity = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const workspace = await ensureWorkspace(ctx, normalizeWorkspace(args.workspace));
-    if (!workspace) throw new Error("Failed to create workspace");
+    const workspaceSlug = normalizeWorkspace(args.workspace);
 
     const provider = normalizeProvider(args.provider);
     const subject = assertText(args.subject, "Provider subject", 240);
@@ -68,6 +67,13 @@ export const upsertProviderIdentity = mutation({
         throw new Error("Account is unavailable");
       }
 
+      const accountContext = await findActiveMembershipForAccount(
+        ctx,
+        workspaceSlug,
+        account._id,
+      );
+      if (!accountContext) throw new Error("Account membership is unavailable");
+
       const identityPatch = {
         username,
         email,
@@ -87,20 +93,16 @@ export const upsertProviderIdentity = mutation({
       if (avatarUrl !== undefined) accountPatch.avatarUrl = avatarUrl;
       await ctx.db.patch(account._id, accountPatch);
 
-      const membership = await ensureActiveMembership(ctx, {
-        workspaceId: workspace._id,
-        accountId: account._id,
-        role: args.bootstrapRole,
-        projects,
-        now,
-      });
       return publicAccountContext(
         { ...account, ...accountPatch },
         { ...existingIdentity, ...identityPatch },
-        membership,
-        workspace.slug,
+        accountContext.membership,
+        accountContext.workspace.slug,
       );
     }
+
+    const workspace = await ensureWorkspace(ctx, workspaceSlug);
+    if (!workspace) throw new Error("Failed to create workspace");
 
     const accountId = await ctx.db.insert("accounts", {
       externalId: "pending",
