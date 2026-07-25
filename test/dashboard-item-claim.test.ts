@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createClaimIdempotencyTracker,
   describeClaim,
+  leaseRenewalAvailability,
   readClaimedItem,
   validateClaimInput,
 } from "../site/item-claim.js";
@@ -89,5 +90,45 @@ describe("dashboard claim descriptions", () => {
       .toContain("has expired");
     expect(describeClaim({ claimedBy: "other", claimExpiresAt: "bad" }, actor, now))
       .toContain("expiry is invalid");
+  });
+});
+
+describe("dashboard lease renewal availability", () => {
+  const now = Date.parse("2026-07-25T00:00:00.000Z");
+
+  test("allows only the active holder with a live reported expiry", () => {
+    expect(leaseRenewalAvailability({
+      status: "active",
+      claimedBy: "agent-1",
+      claimExpiresAt: "2026-07-25T01:00:00.000Z",
+    }, actor, now)).toMatchObject({ available: true });
+    expect(leaseRenewalAvailability({
+      status: "active",
+      claimedBy: "agent-1",
+      claimExpiresAt: "2026-07-25T01:00:00.000Z",
+    }, actor, now).message).toContain("server time");
+  });
+
+  test("explains actor, holder, state, and expiry rejection", () => {
+    expect(leaseRenewalAvailability({}, null, now).message).toContain("active session actor");
+    expect(leaseRenewalAvailability({ status: "ready", claimedBy: null }, actor, now).message)
+      .toContain("active claimed item");
+    expect(leaseRenewalAvailability({
+      status: "active",
+      claimedBy: "other",
+      claimExpiresAt: "2026-07-25T01:00:00.000Z",
+    }, actor, now).message).toContain("Only the current holder");
+    expect(leaseRenewalAvailability({ status: "active", claimedBy: "agent-1" }, actor, now).message)
+      .toContain("no reported expiry");
+    expect(leaseRenewalAvailability({
+      status: "active",
+      claimedBy: "agent-1",
+      claimExpiresAt: "bad",
+    }, actor, now).message).toContain("expiry is invalid");
+    expect(leaseRenewalAvailability({
+      status: "active",
+      claimedBy: "agent-1",
+      claimExpiresAt: "2026-07-24T23:59:00.000Z",
+    }, actor, now).message).toContain("has expired");
   });
 });
