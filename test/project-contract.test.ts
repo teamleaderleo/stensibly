@@ -160,9 +160,21 @@ describe("repository project contracts", () => {
       .toBeNull();
     expect(projectSlugFromRepository("teamleaderleo/My_Project.git"))
       .toBe("my_project");
-    expect(() => projectSlugFromRepository("https://github.com/teamleaderleo/stensibly.git?token=secret"))
-      .toThrow("Cannot derive a project slug");
-    expect(() => projectSlugFromRepository("git@git.example.com:platform/Project.git#secret"))
-      .toThrow("Cannot derive a project slug");
+
+    const secret = "slug-secret";
+    for (const repository of [
+      `https://github.com/teamleaderleo/stensibly.git?token=${secret}`,
+      `git@git.example.com:platform/Project.git#${secret}`,
+    ]) {
+      let caught: unknown;
+      try {
+        projectSlugFromRepository(repository);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(String(caught)).toContain("Cannot derive a project slug");
+      expect(String(caught)).not.toContain(secret);
+    }
   });
 });
