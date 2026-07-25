@@ -147,6 +147,8 @@ describe("runner concurrency limits", () => {
         actor: runnerA,
         runnerType: "generic-mcp",
         runnerProfile: "default",
+        project: "alpha",
+        runId: alphaFirst.id,
         concurrency,
       }, new Date("2026-07-25T12:00:10.000Z"));
       expect(first?.id).toBe(alphaFirst.id);
@@ -230,26 +232,15 @@ describe("runner concurrency limits", () => {
     }
   });
 
-  test("rejects invalid configured limits before serving tools", () => {
+  test("rejects invalid configured limits at server construction", () => {
     const store = new StensiblyStore(":memory:");
     try {
       expect(() => createServerApp(store, {
         runnerMcp: { concurrency: { globalLimit: 0, projectLimit: 1 } },
-      })).not.toThrow();
-      const app = createServerApp(store, {
-        runnerMcp: { concurrency: { globalLimit: 0, projectLimit: 1 } },
-      });
-      const token = createApiToken(store, {
-        name: "Invalid policy test",
-        scopes: ["read", "write"],
-        projects: null,
-      });
-      return runnerRequest(app, token.token, toolCall(3, "claim_runner_work", {
-        actor: runnerA,
-        runnerType: "generic-mcp",
-        runnerProfile: "default",
-        project: "alpha",
-      })).then((response) => expect(response.status).toBe(500));
+      })).toThrow("Global runner concurrency limit must be a whole number from 1 to 1000");
+      expect(() => createServerApp(store, {
+        runnerMcp: { concurrency: { globalLimit: 1, projectLimit: 1.5 } },
+      })).toThrow("Project runner concurrency limit must be a whole number from 1 to 1000");
     } finally {
       store.close();
     }
