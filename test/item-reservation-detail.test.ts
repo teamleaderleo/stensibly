@@ -6,10 +6,10 @@ import { StensiblyStore } from "../src/store.ts";
 const item = {
   id: "item_1",
   project: "scrapbook",
-  kind: "task",
+  kind: "task" as const,
   title: "Use the benchmark pool",
   summary: null,
-  status: "ready",
+  status: "ready" as const,
   priority: 50,
   nextAction: null,
   claimedBy: null,
@@ -61,6 +61,11 @@ describe("item reservation detail composition", () => {
     const before = Date.now();
     const detail = await ledger.getItem(item.id);
     const after = Date.now();
+    const itemCall = calls[0];
+    const reservationCall = calls[1];
+    if (!itemCall || !reservationCall) {
+      throw new Error("Expected both item and reservation queries");
+    }
 
     expect(detail).toEqual({
       item,
@@ -71,18 +76,18 @@ describe("item reservation detail composition", () => {
       reservations,
     });
     expect(calls).toHaveLength(2);
-    expect(calls[0]).toMatchObject({
+    expect(itemCall).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
       id: item.id,
     });
-    expect(calls[1]).toMatchObject({
+    expect(reservationCall).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
       itemId: item.id,
     });
-    expect(calls[1].now as number).toBeGreaterThanOrEqual(before);
-    expect(calls[1].now as number).toBeLessThanOrEqual(after);
+    expect(reservationCall.now as number).toBeGreaterThanOrEqual(before);
+    expect(reservationCall.now as number).toBeLessThanOrEqual(after);
   });
 
   test("keeps local REST item detail explicit and compatible", async () => {
