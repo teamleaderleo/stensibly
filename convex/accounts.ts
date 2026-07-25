@@ -17,6 +17,9 @@ const accountRole = v.union(
   v.literal("viewer"),
 );
 
+type AccountRole = "owner" | "admin" | "member" | "viewer";
+type AccountScope = "read" | "write" | "admin";
+
 const MAX_SESSION_SECONDS = 60 * 60 * 24 * 90;
 
 export const upsertProviderIdentity = mutation({
@@ -164,7 +167,7 @@ export const createSession = mutation({
     });
     const session = await ctx.db.get("browserSessions", sessionId);
     if (!session) throw new Error("Created session disappeared");
-    return publicSession(session, true);
+    return publicSession(session);
   },
 });
 
@@ -205,7 +208,7 @@ export const authenticateSession = query({
 
     const scopes = scopesForRole(membership.role);
     return {
-      session: publicSession(session, false),
+      session: publicSession(session),
       account: publicAccount(account),
       membership: publicMembership(membership, workspace.slug),
       principal: {
@@ -239,7 +242,7 @@ export const touchSession = mutation({
     if (!session) return null;
     const lastSeenAt = Date.now();
     await ctx.db.patch(session._id, { lastSeenAt });
-    return publicSession({ ...session, lastSeenAt }, false);
+    return publicSession({ ...session, lastSeenAt });
   },
 });
 
@@ -263,7 +266,7 @@ export const rotateSession = mutation({
       lastSeenAt: now,
     };
     await ctx.db.patch(session._id, patch);
-    return publicSession({ ...session, ...patch }, false);
+    return publicSession({ ...session, ...patch });
   },
 });
 
@@ -282,7 +285,7 @@ export const revokeSession = mutation({
     if (!session) return null;
     const revokedAt = session.revokedAt ?? Date.now();
     if (session.revokedAt === undefined) await ctx.db.patch(session._id, { revokedAt });
-    return publicSession({ ...session, revokedAt }, false);
+    return publicSession({ ...session, revokedAt });
   },
 });
 
@@ -301,7 +304,7 @@ export const listSessions = query({
       .withIndex("by_account_created", (q) => q.eq("accountId", account._id))
       .order("desc")
       .collect();
-    return sessions.map((session) => publicSession(session, false));
+    return sessions.map(publicSession);
   },
 });
 
@@ -328,7 +331,7 @@ async function ensureActiveMembership(
   input: {
     workspaceId: any;
     accountId: any;
-    role: "owner" | "admin" | "member" | "viewer";
+    role: AccountRole;
     projects: string[] | undefined;
     now: number;
   },
@@ -439,10 +442,10 @@ function assertSessionExpiry(value: number, now: number): number {
   return Math.floor(value);
 }
 
-function scopesForRole(role: "owner" | "admin" | "member" | "viewer") {
-  if (role === "owner" || role === "admin") return ["read", "write", "admin"] as const;
-  if (role === "member") return ["read", "write"] as const;
-  return ["read"] as const;
+function scopesForRole(role: AccountRole): AccountScope[] {
+  if (role === "owner" || role === "admin") return ["read", "write", "admin"];
+  if (role === "member") return ["read", "write"];
+  return ["read"];
 }
 
 function publicAccount(account: any) {
@@ -482,11 +485,11 @@ function publicMembership(membership: any, workspace: string) {
   };
 }
 
-function publicSession(session: any, includeCreated: boolean) {
+function publicSession(session: any) {
   return {
     id: session.externalId,
     userAgent: session.userAgent ?? null,
-    createdAt: includeCreated ? new Date(session.createdAt).toISOString() : new Date(session.createdAt).toISOString(),
+    createdAt: new Date(session.createdAt).toISOString(),
     lastSeenAt: new Date(session.lastSeenAt).toISOString(),
     expiresAt: new Date(session.expiresAt).toISOString(),
     revokedAt: session.revokedAt === undefined ? null : new Date(session.revokedAt).toISOString(),
