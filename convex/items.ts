@@ -20,7 +20,7 @@ import {
   upsertActor,
 } from "./lib/domain";
 import { publicItemReservations } from "./lib/reservationVisibility";
-import { publicItemRuns } from "./lib/runVisibility";
+import { loadItemRuns, publicItemRuns } from "./lib/runVisibility";
 import { mutation, query } from "./lib/server";
 import {
   actorValidator,
@@ -185,10 +185,7 @@ export const get = query({
         .query("artifacts")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
         .collect(),
-      ctx.db
-        .query("runs")
-        .withIndex("by_item_status", (q) => q.eq("itemId", item._id))
-        .collect(),
+      loadItemRuns(ctx, item._id),
       ctx.db
         .query("dependencies")
         .withIndex("by_from_kind", (q) => q.eq("fromItemId", item._id))
