@@ -49,7 +49,7 @@ export const acquire = mutation({
     let item = await getItemByExternalId(ctx, workspace._id, args.id);
     item = await expireClaimIfNeeded(ctx, item, now);
 
-    if (!['ready', 'active'].includes(item.status)) {
+    if (!["ready", "active"].includes(item.status)) {
       throw new Error("Item is unavailable");
     }
     if (
@@ -99,6 +99,7 @@ export const renew = mutation({
     id: v.string(),
     actor: actorValidator,
     leaseSeconds: v.number(),
+    expectedClaimGeneration: v.number(),
     idempotencyKey: v.optional(v.string()),
   },
   returns: v.any(),
@@ -118,6 +119,7 @@ export const renew = mutation({
       return await publicItem(ctx, item);
     }
 
+    const expectedClaimGeneration = claimGeneration(args.expectedClaimGeneration);
     const actor = await upsertActor(ctx, workspace._id, args.actor);
     if (!actor) throw new Error("Failed to create actor");
     const leaseSeconds = assertLeaseSeconds(args.leaseSeconds);
@@ -127,10 +129,13 @@ export const renew = mutation({
     if (
       item.status !== "active" ||
       item.claimedByExternalId !== actor.externalId ||
+      item.claimGeneration !== expectedClaimGeneration ||
       item.claimExpiresAt === undefined ||
       item.claimExpiresAt <= now
     ) {
-      throw new Error("Only the current claimant can renew a live claim");
+      throw new Error(
+        "Only the current claimant with the current claim generation can renew a live claim",
+      );
     }
 
     const expiresAt = now + leaseSeconds * 1_000;
@@ -148,7 +153,12 @@ export const renew = mutation({
       actorId: actor._id,
       actorExternalId: actor.externalId,
       type: "claim.renewed",
-      payload: { leaseSeconds, expiresAt: new Date(expiresAt).toISOString(), generation },
+      payload: {
+        leaseSeconds,
+        expiresAt: new Date(expiresAt).toISOString(),
+        generation: expectedClaimGeneration,
+        nextGeneration: generation,
+      },
       idempotencyKey: args.idempotencyKey,
       createdAt: now,
     });
@@ -167,6 +177,7 @@ export const release = mutation({
     ...serviceArgs,
     id: v.string(),
     actor: actorValidator,
+    expectedClaimGeneration: v.number(),
     idempotencyKey: v.optional(v.string()),
   },
   returns: v.any(),
@@ -186,21 +197,29 @@ export const release = mutation({
       return await publicItem(ctx, item);
     }
 
+    const expectedClaimGeneration = claimGeneration(args.expectedClaimGeneration);
     const actor = await upsertActor(ctx, workspace._id, args.actor);
     if (!actor) throw new Error("Failed to create actor");
     const now = Date.now();
     let item = await getItemByExternalId(ctx, workspace._id, args.id);
     item = await expireClaimIfNeeded(ctx, item, now);
-    if (item.status !== "active" || item.claimedByExternalId !== actor.externalId) {
-      throw new Error("Only the current claimant can release this item");
+    if (
+      item.status !== "active" ||
+      item.claimedByExternalId !== actor.externalId ||
+      item.claimGeneration !== expectedClaimGeneration
+    ) {
+      throw new Error(
+        "Only the current claimant with the current claim generation can release this item",
+      );
     }
 
+    const nextGeneration = item.claimGeneration + 1;
     await ctx.db.patch(item._id, {
       status: "ready",
       claimedByActorId: undefined,
       claimedByExternalId: undefined,
       claimExpiresAt: undefined,
-      claimGeneration: item.claimGeneration + 1,
+      claimGeneration: nextGeneration,
       version: item.version + 1,
       updatedAt: now,
     });
@@ -211,7 +230,10 @@ export const release = mutation({
       actorId: actor._id,
       actorExternalId: actor.externalId,
       type: "claim.released",
-      payload: {},
+      payload: {
+        generation: expectedClaimGeneration,
+        nextGeneration,
+      },
       idempotencyKey: args.idempotencyKey,
       createdAt: now,
     });
@@ -242,12 +264,13 @@ export const expireScheduled = internalMutation({
 
     const previousClaimant = item.claimedByExternalId;
     const expiredAt = item.claimExpiresAt;
+    const nextGeneration = item.claimGeneration + 1;
     await ctx.db.patch(item._id, {
       status: "ready",
       claimedByActorId: undefined,
       claimedByExternalId: undefined,
       claimExpiresAt: undefined,
-      claimGeneration: item.claimGeneration + 1,
+      claimGeneration: nextGeneration,
       version: item.version + 1,
       updatedAt: now,
     });
@@ -260,9 +283,17 @@ export const expireScheduled = internalMutation({
         previousClaimant,
         expiredAt: new Date(expiredAt).toISOString(),
         generation: args.generation,
+        nextGeneration,
       },
       createdAt: now,
     });
     return null;
   },
 });
+
+function claimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error("Expected claim generation must be a positive integer");
+  }
+  return value;
+}
