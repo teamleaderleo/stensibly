@@ -9,6 +9,10 @@ import {
   handleMcpHttpRequest,
   type McpHttpOptions,
 } from "./mcp-http.js";
+import {
+  handleRunnerMcpHttpRequest,
+  type RunnerMcpHttpOptions,
+} from "./runner-mcp-http.js";
 import { SqliteWorkLedger } from "./sqlite-ledger.js";
 import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import { StensiblyStore } from "./store.js";
@@ -17,6 +21,7 @@ import type { ApiTokenAuthenticator } from "./token-provider.js";
 export interface ServerAppOptions {
   httpAuth?: HttpAuthOptions;
   mcp?: Omit<McpHttpOptions, "ledger" | "authenticator">;
+  runnerMcp?: Omit<RunnerMcpHttpOptions, "ledger" | "authenticator">;
   ledger?: WorkLedger;
   authenticator?: ApiTokenAuthenticator;
   corsOrigins?: string[];
@@ -36,6 +41,13 @@ export function createServerApp(
   app.all("/mcp", (context) =>
     handleMcpHttpRequest(context.req.raw, {
       ...options.mcp,
+      ledger,
+      authenticator,
+    }),
+  );
+  app.all("/runner/mcp", (context) =>
+    handleRunnerMcpHttpRequest(context.req.raw, {
+      ...options.runnerMcp,
       ledger,
       authenticator,
     }),
