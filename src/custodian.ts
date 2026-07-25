@@ -1,10 +1,13 @@
-import { inspectScrapbook, reportHasFindings } from "./custodian-report.js";
+import { runCustodianPolicy, type CustodianMode } from "./custodian-policy.js";
+import { reportHasFindings } from "./custodian-report.js";
 import { StensiblyStore } from "./store.js";
 
 interface CliOptions {
   project?: string;
   staleDays: number;
   expiringWithinMinutes: number;
+  mode: CustodianMode;
+  maxActions: number;
   failOnFindings: boolean;
   showHelp: boolean;
 }
@@ -17,13 +20,15 @@ try {
     const databasePath = Bun.env.STENSIBLY_DB ?? "stensibly.sqlite";
     const store = new StensiblyStore(databasePath);
     try {
-      const report = inspectScrapbook(store, {
+      const result = runCustodianPolicy(store, {
         ...(options.project ? { project: options.project } : {}),
         staleDays: options.staleDays,
         expiringWithinMinutes: options.expiringWithinMinutes,
+        mode: options.mode,
+        maxActions: options.maxActions,
       });
-      console.log(JSON.stringify(report, null, 2));
-      if (options.failOnFindings && reportHasFindings(report)) process.exitCode = 2;
+      console.log(JSON.stringify(result, null, 2));
+      if (options.failOnFindings && reportHasFindings(result.report)) process.exitCode = 2;
     } finally {
       store.close();
     }
@@ -37,9 +42,12 @@ function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     staleDays: 7,
     expiringWithinMinutes: 5,
+    mode: "observe",
+    maxActions: 100,
     failOnFindings: false,
     showHelp: false,
   };
+  let explicitMode = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -66,11 +74,33 @@ function parseArgs(args: string[]): CliOptions {
       );
       continue;
     }
+    if (argument === "--max-actions") {
+      options.maxActions = parseInteger(
+        requireValue(args, ++index, "--max-actions"),
+        "--max-actions",
+      );
+      continue;
+    }
+    if (argument === "--mode") {
+      if (explicitMode) throw new Error("Choose only one custodian mode");
+      options.mode = parseMode(requireValue(args, ++index, "--mode"));
+      explicitMode = true;
+      continue;
+    }
+    if (argument === "--dry-run" || argument === "--apply") {
+      if (explicitMode) throw new Error("Choose only one custodian mode");
+      options.mode = argument === "--dry-run" ? "dry-run" : "apply";
+      explicitMode = true;
+      continue;
+    }
     throw new Error(`Unknown argument: ${argument}`);
   }
 
   if (options.project && !/^[a-z0-9][a-z0-9-_]*$/.test(options.project)) {
     throw new Error("--project must be a lowercase project slug");
+  }
+  if (options.maxActions < 0 || options.maxActions > 10_000) {
+    throw new Error("--max-actions must be between 0 and 10000");
   }
   return options;
 }
@@ -87,19 +117,45 @@ function parseNumber(value: string, flag: string): number {
   return parsed;
 }
 
+function parseInteger(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) throw new Error(`${flag} requires a whole number`);
+  return parsed;
+}
+
+function parseMode(value: string): CustodianMode {
+  if (value === "observe" || value === "dry-run" || value === "apply") return value;
+  throw new Error("--mode must be observe, dry-run, or apply");
+}
+
 function usage(): string {
   return `Stensibly custodian
 
 Usage:
   bun run custodian [options]
 
+Modes:
+  observe (default)           Read-only findings and eligible-action reporting
+  dry-run                     Read-only exact action plan
+  apply                       Apply bounded invariant reconciliation only
+
 Options:
-  --project <slug>          Inspect one project
-  --stale-days <days>       Flag ready or blocked work older than this (default: 7)
-  --expiring-within <mins>  Flag live claims expiring within this window (default: 5)
-  --fail-on-findings        Exit with status 2 when the report contains findings
-  --help                    Show this help
+  --mode <mode>               observe, dry-run, or apply
+  --dry-run                   Alias for --mode dry-run
+  --apply                     Alias for --mode apply
+  --max-actions <count>       Maximum expired claims to reconcile (default: 100)
+  --project <slug>            Inspect and apply within one project only
+  --stale-days <days>         Flag ready or blocked work older than this (default: 7)
+  --expiring-within <mins>    Flag live claims expiring within this window (default: 5)
+  --fail-on-findings          Exit with status 2 when the report contains findings
+  --help                      Show this help
+
+Automation policy:
+  - elapsed claims: eligible for bounded reconciliation in apply mode
+  - expiring claims: notify only
+  - missing next actions, stale work, and duplicate titles: report only
+  - semantic transitions such as block, unblock, complete, or reassignment: disabled
 
 Environment:
-  STENSIBLY_DB              SQLite database path (default: stensibly.sqlite)`;
+  STENSIBLY_DB                SQLite database path (default: stensibly.sqlite)`;
 }
