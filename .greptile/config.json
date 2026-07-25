@@ -1,0 +1,12 @@
+{
+  "strictness": 3,
+  "commentTypes": ["logic"],
+  "labels": ["deep-review"],
+  "disabledLabels": ["review-exempt"],
+  "includeBranches": ["main"],
+  "triggerOnUpdates": false,
+  "statusCheck": true,
+  "statusCommentsEnabled": false,
+  "fixWithAI": false,
+  "hideFooter": true
+}
