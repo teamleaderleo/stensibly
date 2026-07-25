@@ -204,25 +204,14 @@ jobs:
           fi
           echo "::endgroup::"
 
-          asset_specs=(
-            "/styles.css|:root"
-            "/app.js|DEFAULT_ENDPOINT"
-            "/item-claim.css|.detail-claim"
-            "/item-claim.js|validateClaimInput"
-            "/item-progress-controller.js|installProgressController"
-            "/item-block-controller.js|installBlockController"
-            "/item-complete-controller.js|installCompleteController"
-            "/board-filter-controller.js|installBoardFilterController"
-            "/board-filter.css|.board-filter-panel"
-            "/project-brief-controller.js|installProjectBriefController"
-            "/project-brief.css|.project-brief-dialog"
-            "/actor-activity-controller.js|installActorActivityController"
-            "/actor-activity.css|.actor-activity-dialog"
-            "/favicon.svg|<svg"
-          )
-          for spec in "${asset_specs[@]}"; do
-            asset="${spec%%|*}"
-            marker="${spec#*|}"
+          bun src/dashboard-assets.ts > /tmp/dashboard-assets.json
+          jq --exit-status '
+            type == "array"
+            and length > 0
+            and all(.[]; (.path | type == "string") and (.marker | type == "string"))
+          ' /tmp/dashboard-assets.json > /dev/null
+
+          while IFS=$'\t' read -r asset marker; do
             output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
             echo "::group::[vercel-cli] staged asset ${asset}"
             if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
@@ -246,7 +235,7 @@ jobs:
               echo "::error title=Staged dashboard verification failed::Staged asset ${asset} contains a token-shaped value."
               exit 1
             fi
-          done
+          done < <(jq -r '.[] | [.path, .marker] | @tsv' /tmp/dashboard-assets.json)
 
       - name: Promote verified deployment
         id: promote
