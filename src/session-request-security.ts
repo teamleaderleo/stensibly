@@ -19,7 +19,8 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * Browser-session writes rely on an exact approved Origin check as their CSRF
  * boundary. Explicit bearer-token clients retain their current origin-agnostic
  * behavior, and read-only session requests remain usable for same-site
- * navigation and session restoration.
+ * navigation and session restoration. Rejections use fixed messages rather
+ * than reflecting an untrusted Origin value into the response.
  */
 export function evaluateSessionRequestSecurity(
   input: SessionRequestSecurityInput,
