@@ -127,9 +127,9 @@ export function normalizeOptions(options: McpOAuthOptions): NormalizedMcpOAuthOp
 
 export function parseClientRegistration(value: unknown) {
   if (!isRecord(value)) throw new Error("Registration request must be an object");
-  const clientName = typeof value.client_name === "string" && value.client_name.trim()
-    ? value.client_name.trim().slice(0, 160)
-    : "MCP client";
+  const clientName = value.client_name === undefined
+    ? "MCP client"
+    : boundedString(value.client_name, 160, "client_name");
   const redirectUris = stringArray(value.redirect_uris, "redirect_uris").map(normalizeRedirectUri);
   if (!redirectUris.length || redirectUris.length > 20) {
     throw new Error("redirect_uris must contain 1-20 values");
@@ -174,6 +174,9 @@ export async function parseAuthorizationRequest(
   }
   if (!client || !client.redirectUris.includes(redirectUri)) {
     throw new Error("OAuth client or redirect URI is invalid");
+  }
+  if (scopes.includes("offline_access") && !client.grantTypes.includes("refresh_token")) {
+    throw new Error("OAuth client is not registered for refresh tokens");
   }
   const issuedAt = options.now();
   return {
@@ -283,11 +286,14 @@ export function consentPage(input: {
     : input.projects.length
       ? `Projects: ${input.projects.map(escapeHtml).join(", ")}`
       : "No projects";
+  const offlineText = input.scopes.includes("offline_access")
+    ? '<p class="muted">A refresh token keeps the connection active until it is revoked or expires.</p>'
+    : "";
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Authorise Stensibly</title><style>
 body{font:16px/1.5 system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 20px;color:#171717}main{border:1px solid #ddd;border-radius:16px;padding:28px}button{font:inherit;padding:10px 16px;border-radius:10px;border:1px solid #aaa;cursor:pointer}.approve{background:#171717;color:white;border-color:#171717}.actions{display:flex;gap:10px;margin-top:24px}.muted{color:#666}</style></head>
-<body><main><h1>Authorise ${escapeHtml(input.clientName)}</h1><p>Signed in as <strong>${escapeHtml(input.accountName)}</strong>.</p><p>This client is requesting:</p><ul>${scopeItems}</ul><p class="muted">${escapeHtml(projectText)}</p><p class="muted">A refresh token keeps the connection active until it is revoked or expires.</p>
+<body><main><h1>Authorise ${escapeHtml(input.clientName)}</h1><p>Signed in as <strong>${escapeHtml(input.accountName)}</strong>.</p><p>This client is requesting:</p><ul>${scopeItems}</ul><p class="muted">${escapeHtml(projectText)}</p>${offlineText}
 <form method="post" action="/oauth/consent"><input type="hidden" name="request" value="${escapeHtml(input.payload)}"><input type="hidden" name="signature" value="${escapeHtml(input.signature)}"><div class="actions"><button class="approve" name="decision" value="approve">Authorise</button><button name="decision" value="deny">Cancel</button></div></form></main></body></html>`;
 }
 
