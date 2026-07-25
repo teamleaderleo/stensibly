@@ -10,6 +10,14 @@ reviews:
   review_status: false
   review_details: false
 
+  finishing_touches:
+    docstrings:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
   auto_review:
     enabled: true
     auto_incremental_review: true
@@ -21,6 +29,12 @@ reviews:
       - "[skip review]"
 
   path_instructions:
+    - path: "**/*.{ts,js}"
+      instructions: |
+        Do not request docstrings or comments that merely restate names, types, parameters, or implementation.
+        Treat missing docstrings alone as non-actionable.
+        Request documentation only for a public or external contract, a non-obvious security or lifecycle invariant, a wire format, a compatibility constraint, or behavior that cannot be understood reliably from the code and tests.
+
     - path: "src/cloudflare-worker.ts"
       instructions: |
         Review this as a public authentication and authorization boundary.
