@@ -54,6 +54,16 @@ export const convexApi = {
     add: mutationRef("dependencies:add"),
     list: queryRef("dependencies:list"),
   },
+  accounts: {
+    upsertProviderIdentity: mutationRef("accounts:upsertProviderIdentity"),
+    createSession: mutationRef("accounts:createSession"),
+    authenticateSession: queryRef("accounts:authenticateSession"),
+    touchSession: mutationRef("accounts:touchSession"),
+    rotateSession: mutationRef("accounts:rotateSession"),
+    revokeSession: mutationRef("accounts:revokeSession"),
+    listSessions: queryRef("accounts:listSessions"),
+    setDefaultActor: mutationRef("accounts:setDefaultActor"),
+  },
   tokens: {
     register: mutationRef("tokens:register"),
     authenticate: queryRef("tokens:authenticate"),
