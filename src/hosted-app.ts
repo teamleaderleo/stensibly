@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createApiV1 } from "./api-v1.js";
-import { createConvexWorkLedgerFromEnv, type ConvexWorkLedger } from "./convex-ledger.js";
+import type { ConvexWorkLedger } from "./convex-ledger.js";
+import { createConvexProjectAttachmentLedgerFromEnv } from "./project-attachment-convex-ledger.js";
 import { createCorsMiddleware } from "./cors.js";
 import {
   ConvexHostedAccountService,
@@ -113,7 +114,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
 export function createHostedAppFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): Hono<StensiblyEnv> {
-  const ledger = createConvexWorkLedgerFromEnv(env);
+  const ledger = createConvexProjectAttachmentLedgerFromEnv(env);
   const authenticator = new ConvexTokenProvider({
     client: ledger.client,
     serviceSecret: ledger.serviceSecret,
