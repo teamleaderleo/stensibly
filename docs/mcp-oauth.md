@@ -19,7 +19,7 @@ The first release intentionally has a narrow account boundary:
 - each identity maps to an existing Stensibly account and workspace membership;
 - membership role determines the maximum grantable scopes;
 - membership project restrictions are copied into the OAuth grant;
-- there is no public registration, organisation mapping, or tenant creation.
+- there is no public account registration, organisation mapping, or tenant creation.
 
 ## Protocol surface
 
@@ -57,6 +57,8 @@ The Worker accepts these JWTs only on `/mcp`. REST continues to use existing API
 Authorization codes and refresh tokens are opaque credentials. Convex stores only their SHA-256 hashes and metadata.
 
 - authorization codes are single-use and short-lived;
+- a failed code redemption invalidates that code;
+- refresh tokens are issued only when `offline_access` is approved;
 - refresh tokens rotate on every exchange;
 - replaying a consumed refresh token revokes its token family;
 - account disablement, membership revocation, or role downgrade prevents future code and refresh exchanges;
@@ -94,6 +96,8 @@ STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS=600
 STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS=300
 STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS=2592000
 ```
+
+The signed consent payload expires after **600 seconds**. That short browser handoff lifetime is fixed in code rather than operator-configurable, so a stale consent page must restart the authorization flow.
 
 Store `GITHUB_OAUTH_CLIENT_SECRET` and `STENSIBLY_OAUTH_SIGNING_SECRET` as encrypted Worker secrets. The GitHub client ID and non-secret policy values may be Worker variables. Never place any of these credentials in the static dashboard, repository files, URLs, issue comments, or pasted logs.
 
