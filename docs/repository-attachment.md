@@ -2,25 +2,25 @@
 
 Stensibly uses `STENSIBLY.md` as repository-authored input for a project attachment. The file is deliberately not the runtime interface for agents.
 
-The intended flow is:
+The flow is:
 
 ```text
 repository/STENSIBLY.md
         |
-        | bun run attach compile
+        | bun run attach compile / import
         v
 canonical hashed attachment snapshot
         |
-        | explicit reviewed API import (next slice)
+        | authenticated admin review
         v
-Stensibly project attachment
+append-only accepted project attachment
         |
-        +--> REST
-        +--> MCP
+        +--> REST project attachment read
+        +--> MCP get_project_attachment
         +--> dashboard and supervisor policy views
 ```
 
-Agents should normally enter a project through Stensibly REST or MCP, read the project brief and imported attachment, and then use server-owned work, claim, run, approval, and event contracts. They should not repeatedly parse arbitrary repository Markdown as if it were live coordination state.
+Agents should normally enter a project through Stensibly REST or MCP, read the project brief and accepted attachment, and then use server-owned work, claim, run, approval, and event contracts. They should not repeatedly parse arbitrary repository Markdown as if it were live coordination state.
 
 ## Initialise a repository
 
@@ -153,25 +153,84 @@ Widening changes currently include:
 
 Context, checks, tags, and related-project edits are reported but do not themselves grant authority.
 
-This classification is intended to support an explicit reviewed import. It is not a substitute for server-side authorization.
+This classification supports an explicit reviewed import. It is not a substitute for server-side authorization.
+
+## Import the reviewed attachment
+
+Use an admin-scoped token for the target project:
+
+```bash
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run attach import --accept-authority-widening
+```
+
+The import command:
+
+1. compiles and validates `STENSIBLY.md` locally;
+2. reads the current Git commit with `git rev-parse HEAD` unless `--source-revision` is supplied;
+3. sends the canonical snapshot to the configured REST endpoint;
+4. records the accepted snapshot, repository revision, importer label, and acceptance time;
+5. never accepts the raw token as a command-line argument and never prints it.
+
+The first accepted attachment establishes the project policy surface, so it is classified as widening and requires `--accept-authority-widening`. Later neutral or narrowing changes do not require the flag. Later widening changes require it again.
+
+Use another endpoint when needed:
+
+```bash
+STENSIBLY_ENDPOINT=http://localhost:3000 \
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run attach import --accept-authority-widening
+```
+
+The server uses compare-and-swap against the current accepted snapshot. If another reviewer accepts a newer revision while an import is being prepared, the stale import fails and must be reviewed again.
+
+## Read the accepted attachment
+
+REST:
+
+```bash
+curl "$STENSIBLY_ENDPOINT/api/v1/projects/example-project/attachment" \
+  -H "authorization: Bearer $STENSIBLY_TOKEN"
+```
+
+MCP:
+
+```text
+get_project_attachment({ project: "example-project" })
+```
+
+The MCP server instructs agents to read the project brief first and then the accepted attachment. Read access follows the same project allowlist as the rest of the ledger. Import is intentionally REST/admin-only in this slice; ordinary agents cannot rewrite policy through MCP.
+
+Accepted records are append-only. The read projection returns the current record, including:
+
+- the exact validated snapshot;
+- source path and repository revision;
+- source and snapshot hashes;
+- a redacted kind-qualified importer display name;
+- whether that acceptance widened declared authority;
+- the acceptance timestamp.
+
+Raw token IDs, account IDs, secrets, and credentials are not returned.
 
 ## Security boundary
 
-Neither `STENSIBLY.md` nor its compiled snapshot is:
+Neither `STENSIBLY.md` nor its compiled or accepted snapshot is:
 
 - a credential;
 - an API token;
 - a claim or run lease;
 - a fencing generation;
-- a human approval;
+- a human approval for an external effect;
 - proof that an external effect occurred;
 - permission for a supervisor to widen its own scope.
 
-A repository branch can propose policy. It cannot silently change the authority of an already running supervisor. The next implementation slice will store approved snapshots in the server and expose the accepted revision through REST and MCP. Live holder, generation, expiry, command, approval, and execution state remain server-owned.
+A repository branch can propose policy. It cannot silently change the authority of an already running supervisor. Live holder, generation, expiry, command, approval, and execution state remain server-owned.
+
+The accepted attachment is a reviewed input to future selection and explanation policy. It does not by itself authorize a runner to merge, deploy, message, spend, change a provider, or perform any other consequential action.
 
 ## Discovery policy
 
-The first convention is intentionally narrow:
+The convention is intentionally narrow:
 
 1. use a path explicitly supplied to the command;
 2. otherwise use root `STENSIBLY.md`;

@@ -46,6 +46,15 @@ import type {
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
+import type {
+  AcceptProjectAttachmentInput,
+  ProjectAttachmentLedger,
+} from "./project-attachment-ledger.js";
+import {
+  acceptSqliteProjectAttachment,
+  ensureProjectAttachmentSchema,
+  getSqliteProjectAttachment,
+} from "./project-attachments-sqlite.js";
 import {
   reconcileStaleRunItems,
   syncItemLeaseFromRun,
@@ -68,19 +77,29 @@ export class SqliteWorkLedger implements
   WorkLedger,
   CompletionContinuationLedger,
   ContinuationSupervisorLedger,
-  RunnerLedger
+  RunnerLedger,
+  ProjectAttachmentLedger
 {
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
     ensureContinuationSchema(store);
     ensureCompletionContinuationSchema(store);
     ensureContinuationSupervisorSchema(store);
+    ensureProjectAttachmentSchema(store);
   }
 
   async getBrief(project: string, limit: number) {
     reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return getProjectBrief(this.store, project, limit);
+  }
+
+  async getProjectAttachment(project: string) {
+    return getSqliteProjectAttachment(this.store, project);
+  }
+
+  async acceptProjectAttachment(input: AcceptProjectAttachmentInput) {
+    return acceptSqliteProjectAttachment(this.store, input);
   }
 
   async listWork(input: ListWorkInput = {}) {

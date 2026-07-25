@@ -33,6 +33,7 @@ interface AccessRule {
 
 const readTools = new Set([
   "get_brief",
+  "get_project_attachment",
   "survey_workspace",
   "list_work",
   "get_item",
@@ -217,7 +218,11 @@ async function resolveAccessRule(
   args: Record<string, unknown>,
   scope: "read" | "write",
 ): Promise<AccessRule> {
-  if (toolName === "get_brief" || toolName === "create_item") {
+  if (
+    toolName === "get_brief"
+    || toolName === "get_project_attachment"
+    || toolName === "create_item"
+  ) {
     return {
       scope,
       project: stringArgument(args, "project"),

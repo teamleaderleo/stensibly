@@ -8,6 +8,10 @@ export const convexApi = {
     list: queryRef("projects:list"),
     brief: queryRef("projects:brief"),
   },
+  projectAttachments: {
+    getCurrent: queryRef("projectAttachments:getCurrent"),
+    accept: mutationRef("projectAttachments:accept"),
+  },
   items: {
     create: mutationRef("items:create"),
     list: queryRef("items:list"),

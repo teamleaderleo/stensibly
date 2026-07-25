@@ -147,14 +147,17 @@ export function createHttpAuthMiddleware(
 
 export function requireHttpAccess(
   context: Context<StensiblyEnv>,
-  required: "read" | "write",
+  required: TokenScope,
   project?: string,
 ): Response | null {
   const principal = context.get("principal");
   if (!principal) return null;
 
   const label = principal.kind === "account" ? "Account" : "Token";
-  if (!principalHasScope(principal, required)) {
+  const hasRequiredScope = required === "admin"
+    ? principal.scopes.includes("admin")
+    : principalHasScope(principal, required);
+  if (!hasRequiredScope) {
     context.header(FAILURE_CATEGORY_HEADER, "authorization_failure");
     return context.json({ error: `${label} requires ${required} scope` }, 403);
   }

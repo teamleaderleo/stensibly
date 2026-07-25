@@ -132,6 +132,23 @@ export default defineSchema({
     .index("by_external_id", ["externalId"])
     .index("by_workspace_slug", ["workspaceId", "slug"]),
 
+  projectAttachments: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    snapshotJson: v.string(),
+    snapshotSha256: v.string(),
+    contentSha256: v.string(),
+    sourcePath: v.string(),
+    sourceRevision: v.string(),
+    acceptedBy: v.string(),
+    authorityWidening: v.boolean(),
+    acceptedAt: v.number(),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_project_created", ["projectId", "acceptedAt"])
+    .index("by_project_snapshot", ["projectId", "snapshotSha256", "acceptedAt"]),
+
   actors: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
