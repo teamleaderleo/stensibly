@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 const html = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
 const app = await Bun.file(new URL("../site/app.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-detail-controller.js", import.meta.url)).text();
+const reservations = await Bun.file(new URL("../site/item-reservations.js", import.meta.url)).text();
 const styles = await Bun.file(new URL("../site/styles.css", import.meta.url)).text();
 
 describe("dashboard item detail integration", () => {
@@ -22,7 +23,10 @@ describe("dashboard item detail integration", () => {
     expect(controller).toContain("textContent");
     expect(controller).toContain("safeArtifactHref");
     expect(controller).toContain("noreferrer noopener");
+    expect(reservations).toContain("document.createElement");
+    expect(reservations).toContain("textContent");
     expect(controller).not.toContain("innerHTML");
+    expect(reservations).not.toContain("innerHTML");
   });
 
   test("renders dependency links and unresolved blockers from item detail", () => {
@@ -32,6 +36,17 @@ describe("dashboard item detail integration", () => {
     expect(controller).toContain("unresolved");
     expect(styles).toContain(".detail-dependencies");
     expect(styles).toContain(".detail-dependency-blocking");
+  });
+
+  test("renders item reservations with aggregate capacity and expiry", () => {
+    expect(controller).toContain("reservationSection(detail.reservations)");
+    expect(controller).toContain("from './item-reservations.js'");
+    expect(reservations).toContain("reservationCapacityLabel");
+    expect(reservations).toContain("this item reserves");
+    expect(reservations).toContain("no remaining capacity");
+    expect(reservations).toContain("expires");
+    expect(styles).toContain(".detail-reservations");
+    expect(styles).toContain(".detail-reservation-full");
   });
 
   test("guards stale responses and supports close, retry, and focus restoration", () => {
