@@ -17,6 +17,9 @@ export const convexApi = {
     block: mutationRef("items:block"),
     unblock: mutationRef("items:unblock"),
   },
+  itemReservations: {
+    list: queryRef("itemReservations:list"),
+  },
   completionContinuations: {
     complete: mutationRef("completionContinuations:complete"),
   },
