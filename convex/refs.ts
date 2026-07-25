@@ -64,6 +64,10 @@ export const convexApi = {
     listSessions: queryRef("accounts:listSessions"),
     setDefaultActor: mutationRef("accounts:setDefaultActor"),
   },
+  oauthStates: {
+    create: mutationRef("oauthStates:create"),
+    consume: mutationRef("oauthStates:consume"),
+  },
   tokens: {
     register: mutationRef("tokens:register"),
     authenticate: queryRef("tokens:authenticate"),

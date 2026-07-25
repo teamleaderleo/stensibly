@@ -191,6 +191,18 @@ export default defineSchema({
     .index("by_account_created", ["accountId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
+  oauthStates: defineTable({
+    workspaceId: v.id("workspaces"),
+    externalId: v.string(),
+    secretHash: v.string(),
+    pkceVerifierHash: v.string(),
+    returnTo: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_expiry", ["expiresAt"]),
+
   items: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
