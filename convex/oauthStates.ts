@@ -1,4 +1,3 @@
-import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
   assertText,
@@ -147,7 +146,10 @@ function assertReturnTo(value: string): string {
   return parsed.toString();
 }
 
-function publicState(state: Doc<"oauthStates">, consumedAt?: number) {
+function publicState(
+  state: { externalId: string; returnTo: string; createdAt: number; expiresAt: number },
+  consumedAt?: number,
+) {
   return {
     id: state.externalId,
     returnTo: state.returnTo,
