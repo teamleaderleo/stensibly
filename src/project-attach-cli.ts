@@ -128,7 +128,7 @@ async function initCommand(args: string[]): Promise<void> {
     repositories: snapshot.contract.repositories,
     contentSha256: snapshot.source.contentSha256,
     snapshotSha256: snapshot.snapshotSha256,
-    next: `Review ${path}, then run bun run attach import --accept-authority-widening`,
+    next: `Review ${path}, set an admin-scoped STENSIBLY_TOKEN, then run bun run attach import --accept-authority-widening`,
   }, null, 2));
 }
 
@@ -264,12 +264,23 @@ async function importCommand(args: string[]): Promise<void> {
   const record = isRecord(payload) && isRecord(payload.attachment)
     ? payload.attachment
     : null;
+  if (
+    !record
+    || typeof record.id !== "string"
+    || !record.id.trim()
+    || record.project !== snapshot.contract.project
+    || record.sourceRevision !== revision
+    || !isRecord(record.snapshot)
+    || record.snapshot.snapshotSha256 !== snapshot.snapshotSha256
+  ) {
+    throw new Error("Attachment import returned an invalid success response");
+  }
   console.log(JSON.stringify({
     project: snapshot.contract.project,
     endpoint: normalizedEndpoint,
     sourceRevision: revision,
     snapshotSha256: snapshot.snapshotSha256,
-    acceptedAttachmentId: record && typeof record.id === "string" ? record.id : null,
+    acceptedAttachmentId: record.id,
     replayed: isRecord(payload) && payload.replayed === true,
     authorityWideningAcknowledged: acceptAuthorityWidening,
     note: "Agents should now read the accepted attachment through REST or get_project_attachment over MCP. The attachment is not live execution authority.",
