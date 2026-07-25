@@ -11,7 +11,7 @@ import {
   HttpGitHubOAuthClient,
   type HostedAuthOptions,
 } from "./hosted-auth.js";
-import type { StensiblyEnv } from "./http-auth.js";
+import type { HostedSessionHttpAuthOptions, StensiblyEnv } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
 import { handleMcpHttpRequest } from "./mcp-http.js";
 import {
@@ -35,6 +35,8 @@ export interface HostedAppOptions {
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
   const allowedOrigins = options.allowedOrigins ?? [];
+  const sessionOrigins = options.hostedAuth?.allowedReturnOrigins ?? [];
+  const hostedSession = hostedSessionOptions(options.hostedAuth);
 
   app.onError((_error, context) => {
     const category = failureCategoryForPath(context.req.path);
@@ -45,7 +47,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     }, 500);
   });
 
-  app.use("/api/*", createCorsMiddleware(allowedOrigins));
+  app.use("/api/*", createCorsMiddleware(allowedOrigins, sessionOrigins));
   app.get("/health", (context) => context.json({
     ok: true,
     service: "stensibly",
@@ -66,6 +68,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     createApiV1(options.authenticator, options.ledger, {
       required: true,
       workspace: options.workspace ?? null,
+      ...(hostedSession ? { hostedSession } : {}),
     }),
   );
   app.notFound((context) => context.json({
@@ -92,6 +95,17 @@ export function createHostedAppFromEnv(
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
     hostedAuth: hostedAuthFromEnv(ledger, env),
   });
+}
+
+function hostedSessionOptions(
+  hostedAuth: HostedAuthOptions | undefined,
+): HostedSessionHttpAuthOptions | undefined {
+  if (!hostedAuth) return undefined;
+  return {
+    accountService: hostedAuth.accountService,
+    allowedOrigins: hostedAuth.allowedReturnOrigins,
+    ...(hostedAuth.now ? { now: hostedAuth.now } : {}),
+  };
 }
 
 function hostedAuthFromEnv(
