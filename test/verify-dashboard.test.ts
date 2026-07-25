@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   dashboardAssets,
+  formatGitHubErrorAnnotation,
   verifyDashboardHtml,
   verifyDashboardUrl,
 } from "../src/verify-dashboard.ts";
@@ -32,6 +33,14 @@ describe("dashboard HTML verification", () => {
   test("rejects missing UI markers and token-shaped values", () => {
     expect(() => verifyDashboardHtml(validHtml.replace('id="dashboard"', 'id="missing"'))).toThrow("dashboard");
     expect(() => verifyDashboardHtml(validHtml + "stn.tok_deadbeef.secret")).toThrow("token-shaped");
+  });
+});
+
+describe("GitHub dashboard verification annotations", () => {
+  test("escapes workflow command data without hiding the diagnostic", () => {
+    expect(formatGitHubErrorAnnotation("asset failed 100%\nnext line")).toBe(
+      "::error title=Dashboard verification failed::asset failed 100%25%0Anext line",
+    );
   });
 });
 

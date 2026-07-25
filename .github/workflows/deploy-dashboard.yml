@@ -23,11 +23,12 @@ jobs:
       - name: Require main branch
         run: |
           if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error title=Invalid deployment ref::Dashboard production deployments must run from main."
             echo "Dashboard production deployments must run from main." >&2
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: oven-sh/setup-bun@v2
 
@@ -47,10 +48,24 @@ jobs:
         run: bun run worker:check
 
       - name: Validate dashboard source shell
-        run: bun run verify:dashboard -- --html-file site/index.html
+        run: bun run verify:dashboard -- --html-file site/index.html --github-annotation
 
       - name: Reject committed Vercel link state
         run: test ! -e .vercel
+
+      - name: Record candidate rejection
+        if: ${{ failure() }}
+        run: |
+          {
+            echo "## Dashboard production deployment report"
+            echo
+            echo "**Production state:** unchanged."
+            echo
+            echo "Candidate validation failed before production credentials were used or a Vercel deployment was created."
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- next step: inspect the failed candidate-validation step and its annotation"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   deploy:
     name: Stage, verify, and promote dashboard
@@ -67,11 +82,12 @@ jobs:
       - name: Require main branch
         run: |
           if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error title=Invalid deployment ref::Dashboard production deployments must run from main."
             echo "Dashboard production deployments must run from main." >&2
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: oven-sh/setup-bun@v2
 
@@ -79,10 +95,12 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Validate required Vercel secrets
+        id: secrets
         run: |
           missing=0
           for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
             if [ -z "${!name:-}" ]; then
+              echo "::error title=Missing production secret::${name} is not configured in the production environment."
               echo "Missing production environment secret: ${name}" >&2
               missing=1
             fi
@@ -90,6 +108,7 @@ jobs:
           exit "${missing}"
 
       - name: Require the stensibly Vercel project
+        id: project
         run: |
           project_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_ORG_ID}"
           if ! curl --fail --silent --show-error \
@@ -103,15 +122,18 @@ jobs:
           project_name="$(jq -r '.name // empty' /tmp/vercel-project.json)"
           root_directory="$(jq -r '.rootDirectory // empty' /tmp/vercel-project.json)"
           if [ "${project_name}" != "${EXPECTED_VERCEL_PROJECT}" ]; then
+            echo "::error title=Wrong Vercel project::VERCEL_PROJECT_ID must reference the existing ${EXPECTED_VERCEL_PROJECT} dashboard project."
             echo "VERCEL_PROJECT_ID must reference the existing ${EXPECTED_VERCEL_PROJECT} dashboard project." >&2
             exit 1
           fi
           if [ "${root_directory}" != "site" ]; then
+            echo "::error title=Wrong Vercel Root Directory::The ${EXPECTED_VERCEL_PROJECT} project Root Directory must be site; observed ${root_directory:-<empty>}."
             echo "The ${EXPECTED_VERCEL_PROJECT} project Root Directory must be site." >&2
             exit 1
           fi
 
       - name: Pull production project settings
+        id: pull_settings
         run: >-
           npx --yes vercel@${VERCEL_CLI_VERSION} pull
           --yes
@@ -119,6 +141,7 @@ jobs:
           --token="${VERCEL_TOKEN}"
 
       - name: Validate linked project IDs
+        id: linked_project
         run: |
           jq --exit-status \
             --arg project "${VERCEL_PROJECT_ID}" \
@@ -127,12 +150,14 @@ jobs:
             .vercel/project.json > /dev/null
 
       - name: Build production artifacts
+        id: build
         run: >-
           npx --yes vercel@${VERCEL_CLI_VERSION} build
           --prod
           --token="${VERCEL_TOKEN}"
 
       - name: Validate build output
+        id: build_output
         run: |
           test -f .vercel/output/config.json
           test -d .vercel/output/static
@@ -151,21 +176,33 @@ jobs:
           case "${deployment_url}" in
             https://*.vercel.app) ;;
             *)
+              echo "::error title=Staged deployment failed::Vercel did not return a valid staged deployment URL."
               echo "Vercel did not return a valid staged deployment URL." >&2
               exit 1
               ;;
           esac
           echo "deployment_url=${deployment_url}" >> "${GITHUB_OUTPUT}"
+          echo "::notice title=Staged dashboard created::A production-targeted deployment was created without changing the production domain."
 
       - name: Verify staged deployment
+        id: staged_verify
         env:
           DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
         run: |
-          npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
+          echo "::group::[stensibly-verifier] staged dashboard HTML"
+          if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
             --deployment "${DEPLOYMENT_URL}" \
             --fail --silent --show-error \
-            > /tmp/dashboard-index.html
-          bun run verify:dashboard -- --html-file /tmp/dashboard-index.html
+            > /tmp/dashboard-index.html; then
+            echo "::endgroup::"
+            echo "::error title=Staged dashboard verification failed::Failed to fetch / from the staged deployment."
+            exit 1
+          fi
+          if ! bun run verify:dashboard -- --html-file /tmp/dashboard-index.html --github-annotation; then
+            echo "::endgroup::"
+            exit 1
+          fi
+          echo "::endgroup::"
 
           asset_specs=(
             "/styles.css|:root"
@@ -187,29 +224,32 @@ jobs:
             asset="${spec%%|*}"
             marker="${spec#*|}"
             output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
-            echo "Verifying staged asset ${asset}"
+            echo "::group::[vercel-cli] staged asset ${asset}"
             if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
               --deployment "${DEPLOYMENT_URL}" \
               --fail --silent --show-error \
               --output "${output}"; then
-              echo "Failed to fetch staged asset ${asset}." >&2
+              echo "::endgroup::"
+              echo "::error title=Staged dashboard verification failed::Failed to fetch staged asset ${asset}."
               exit 1
             fi
+            echo "::endgroup::"
             if [ ! -s "${output}" ]; then
-              echo "Staged asset ${asset} is empty." >&2
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} is empty."
               exit 1
             fi
             if ! grep --fixed-strings --quiet -- "${marker}" "${output}"; then
-              echo "Staged asset ${asset} is missing expected marker: ${marker}" >&2
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} is missing expected marker ${marker}."
               exit 1
             fi
             if grep --extended-regexp --quiet 'stn\.tok_[A-Za-z0-9._-]+' "${output}"; then
-              echo "Staged asset ${asset} contains a token-shaped value." >&2
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} contains a token-shaped value."
               exit 1
             fi
           done
 
       - name: Promote verified deployment
+        id: promote
         env:
           DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
         run: >-
@@ -220,28 +260,97 @@ jobs:
           --token="${VERCEL_TOKEN}"
 
       - name: Verify production dashboard
+        id: production_verify
         run: |
           for attempt in 1 2 3; do
-            if bun run verify:dashboard -- --url "${DASHBOARD_URL}"; then
+            verify_args=(--url "${DASHBOARD_URL}")
+            if [ "${attempt}" -eq 3 ]; then
+              verify_args+=(--github-annotation)
+            fi
+
+            echo "::group::[stensibly-verifier] production verification attempt ${attempt}/3"
+            if bun run verify:dashboard -- "${verify_args[@]}"; then
+              echo "::endgroup::"
               exit 0
             fi
+            echo "::endgroup::"
+
             if [ "${attempt}" -lt 3 ]; then
-              sleep $((attempt * 10))
+              delay=$((attempt * 10))
+              echo "[deployment] verification attempt ${attempt}/3 failed; retrying in ${delay} seconds"
+              sleep "${delay}"
             fi
           done
-          echo "Production dashboard verification failed after promotion. Use an explicit Vercel rollback decision." >&2
+          echo "::error title=Post-promotion dashboard verification failed::The production domain did not pass verification after three attempts. Promotion completed; inspect the precise verifier annotation and Vercel deployment before deciding whether to roll back."
+          echo "Production dashboard verification failed after promotion. The deployment was promoted; inspect the verifier error and Vercel deployment before deciding whether rollback is appropriate." >&2
           exit 1
 
-      - name: Record deployment summary
+      - name: Record deployment report
+        if: ${{ always() }}
         env:
+          SECRETS_OUTCOME: ${{ steps.secrets.outcome }}
+          PROJECT_OUTCOME: ${{ steps.project.outcome }}
+          PULL_SETTINGS_OUTCOME: ${{ steps.pull_settings.outcome }}
+          LINKED_PROJECT_OUTCOME: ${{ steps.linked_project.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          BUILD_OUTPUT_OUTCOME: ${{ steps.build_output.outcome }}
+          STAGE_OUTCOME: ${{ steps.stage.outcome }}
+          STAGED_VERIFY_OUTCOME: ${{ steps.staged_verify.outcome }}
+          PROMOTE_OUTCOME: ${{ steps.promote.outcome }}
+          PRODUCTION_VERIFY_OUTCOME: ${{ steps.production_verify.outcome }}
           DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
         run: |
+          display_outcome() {
+            case "${1:-}" in
+              success) printf 'passed' ;;
+              failure) printf 'failed' ;;
+              cancelled) printf 'cancelled' ;;
+              skipped|'') printf 'not run' ;;
+              *) printf '%s' "$1" ;;
+            esac
+          }
+
+          if [ "${PROMOTE_OUTCOME:-}" = "success" ]; then
+            if [ "${PRODUCTION_VERIFY_OUTCOME:-}" = "success" ]; then
+              production_state="changed and verified"
+              guidance="The staged deployment was promoted and the production domain passed verification."
+            else
+              production_state="changed; post-promotion verification did not pass"
+              guidance="Promotion completed. Inspect the verifier annotation and Vercel deployment before making an explicit rollback decision."
+            fi
+          elif [ "${STAGE_OUTCOME:-}" = "success" ]; then
+            production_state="unchanged"
+            guidance="A staged deployment was created but was not promoted. Production remains on its previous deployment."
+          else
+            production_state="unchanged"
+            guidance="No staged deployment was promoted. Production remains on its previous deployment."
+          fi
+
           {
-            echo "## Dashboard production deployment"
+            echo "## Dashboard production deployment report"
+            echo
+            echo "**Production state:** ${production_state}."
+            echo
+            echo "${guidance}"
+            echo
+            echo "| Phase | Outcome |"
+            echo "| --- | --- |"
+            echo "| Candidate validation | passed |"
+            echo "| Production secrets | $(display_outcome "${SECRETS_OUTCOME}") |"
+            echo "| Vercel project validation | $(display_outcome "${PROJECT_OUTCOME}") |"
+            echo "| Pull project settings | $(display_outcome "${PULL_SETTINGS_OUTCOME}") |"
+            echo "| Linked project validation | $(display_outcome "${LINKED_PROJECT_OUTCOME}") |"
+            echo "| Production build | $(display_outcome "${BUILD_OUTCOME}") |"
+            echo "| Build output validation | $(display_outcome "${BUILD_OUTPUT_OUTCOME}") |"
+            echo "| Staged deployment | $(display_outcome "${STAGE_OUTCOME}") |"
+            echo "| Staged verification | $(display_outcome "${STAGED_VERIFY_OUTCOME}") |"
+            echo "| Promotion | $(display_outcome "${PROMOTE_OUTCOME}") |"
+            echo "| Production verification | $(display_outcome "${PRODUCTION_VERIFY_OUTCOME}") |"
             echo
             echo "- commit: \`${GITHUB_SHA}\`"
-            echo "- verified staged deployment: ${DEPLOYMENT_URL}"
-            echo "- promoted production domain: ${DASHBOARD_URL}"
             echo "- project: ${EXPECTED_VERCEL_PROJECT}"
-            echo "- result: staged and production verification passed"
+            echo "- production domain: ${DASHBOARD_URL}"
+            if [[ "${DEPLOYMENT_URL:-}" == https://*.vercel.app ]]; then
+              echo "- staged deployment: ${DEPLOYMENT_URL} (no bypass credentials included)"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"

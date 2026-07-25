@@ -34,7 +34,11 @@ describe("production dashboard deployment workflow", () => {
     expect(candidate).toContain("bun run typecheck");
     expect(candidate).toContain("bun run test");
     expect(candidate).toContain("bun run test:convex");
-    expect(candidate).toContain("bun run verify:dashboard -- --html-file site/index.html");
+    expect(candidate).toContain(
+      "bun run verify:dashboard -- --html-file site/index.html --github-annotation",
+    );
+    expect(candidate).toContain("name: Record candidate rejection");
+    expect(candidate).toContain("Candidate validation failed before production credentials were used");
   });
 
   test("uses a pinned Vercel CLI and only dashboard deployment secrets", () => {
@@ -61,6 +65,7 @@ describe("production dashboard deployment workflow", () => {
       .toBeLessThan(position("Pull production project settings"));
     expect(workflow).toContain(".vercel/project.json");
     expect(workflow).toContain(".projectId == $project and .orgId == $org");
+    expect(workflow).toContain("title=Wrong Vercel Root Directory");
     expect(workflow).not.toContain("stensibly-api");
   });
 
@@ -93,21 +98,43 @@ describe("production dashboard deployment workflow", () => {
     expect(workflow).toContain('"/actor-activity-controller.js|installActorActivityController"');
     expect(workflow).toContain('"/actor-activity.css|.actor-activity-dialog"');
     expect(workflow).toContain("grep --fixed-strings --quiet");
-    expect(workflow).toContain("Staged asset ${asset} is missing expected marker: ${marker}");
-    expect(workflow).toContain("Failed to fetch staged asset ${asset}.");
+    expect(workflow).toContain("title=Staged dashboard verification failed");
     expect(workflow).toContain("stn\\.tok_[A-Za-z0-9._-]+");
     expect(position("asset_specs=("))
       .toBeLessThan(position("Promote verified deployment"));
   });
 
-  test("verifies production with retries and records rollback-safe diagnostics", () => {
-    expect(workflow).toContain("https://www.stensibly.com");
-    expect(workflow).toContain("for attempt in 1 2 3");
-    expect(workflow).toContain("bun run verify:dashboard -- --url");
-    expect(workflow).toContain("Use an explicit Vercel rollback decision");
-    expect(workflow).toContain("verified staged deployment");
-    expect(workflow).toContain("promoted production domain");
-    expect(position("Promote verified deployment"))
-      .toBeLessThan(position("Verify production dashboard"));
+  test("labels retries and emits the precise verifier annotation on the final attempt", () => {
+    expect(workflow).toContain("production verification attempt ${attempt}/3");
+    expect(workflow).toContain('verify_args+=(--github-annotation)');
+    expect(workflow).toContain("retrying in ${delay} seconds");
+    expect(workflow).toContain("title=Post-promotion dashboard verification failed");
+    expect(workflow).toContain("Promotion completed");
+    expect(workflow).not.toContain("Use an explicit Vercel rollback decision");
+  });
+
+  test("always records phase outcomes and whether production changed", () => {
+    expect(workflow).toContain("name: Record deployment report");
+    expect(workflow).toContain("if: ${{ always() }}");
+    for (const id of [
+      "id: secrets",
+      "id: project",
+      "id: pull_settings",
+      "id: linked_project",
+      "id: build",
+      "id: build_output",
+      "id: stage",
+      "id: staged_verify",
+      "id: promote",
+      "id: production_verify",
+    ]) {
+      expect(workflow).toContain(id);
+    }
+    expect(workflow).toContain("**Production state:** ${production_state}.");
+    expect(workflow).toContain("changed and verified");
+    expect(workflow).toContain("changed; post-promotion verification did not pass");
+    expect(workflow).toContain("A staged deployment was created but was not promoted");
+    expect(workflow).toContain("| Production verification |");
+    expect(workflow).toContain("no bypass credentials included");
   });
 });
