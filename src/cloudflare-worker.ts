@@ -7,6 +7,13 @@ export interface CloudflareBindings extends Record<string, string | undefined> {
   STENSIBLY_WORKSPACE?: string;
   STENSIBLY_ALLOWED_ORIGINS?: string;
   STENSIBLY_ALLOWED_HOSTS?: string;
+  GITHUB_OAUTH_CLIENT_ID?: string;
+  GITHUB_OAUTH_CLIENT_SECRET?: string;
+  STENSIBLY_AUTH_ORIGIN?: string;
+  STENSIBLY_AUTH_RETURN_ORIGINS?: string;
+  STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS?: string;
+  STENSIBLY_AUTH_BOOTSTRAP_ROLE?: string;
+  STENSIBLY_SESSION_MAX_AGE_SECONDS?: string;
 }
 
 const worker = {
