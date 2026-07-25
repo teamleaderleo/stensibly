@@ -15,6 +15,13 @@ import type { HostedSessionHttpAuthOptions, StensiblyEnv } from "./http-auth.js"
 import type { WorkLedger } from "./ledger.js";
 import { handleMcpHttpRequest } from "./mcp-http.js";
 import {
+  createMcpOAuth,
+  createMcpOAuthAuthenticator,
+  mcpOAuthChallenge,
+  type McpOAuthOptions,
+} from "./mcp-oauth.js";
+import { ConvexMcpOAuthService } from "./mcp-oauth-service.js";
+import {
   ConvexTokenProvider,
   type ApiTokenAuthenticator,
 } from "./token-provider.js";
@@ -30,6 +37,7 @@ export interface HostedAppOptions {
   allowedOrigins?: string[];
   allowedHosts?: string[];
   hostedAuth?: HostedAuthOptions;
+  mcpOAuth?: McpOAuthOptions;
 }
 
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
@@ -37,6 +45,10 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   const allowedOrigins = options.allowedOrigins ?? [];
   const sessionOrigins = options.hostedAuth?.allowedReturnOrigins ?? [];
   const hostedSession = hostedSessionOptions(options.hostedAuth);
+  const mcpAuthenticator = options.mcpOAuth
+    ? createMcpOAuthAuthenticator(options.authenticator, options.mcpOAuth)
+    : options.authenticator;
+  const oauthChallenge = options.mcpOAuth ? mcpOAuthChallenge(options.mcpOAuth) : null;
 
   app.onError((_error, context) => {
     const category = failureCategoryForPath(context.req.path);
@@ -52,17 +64,28 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     ok: true,
     service: "stensibly",
     backend: "convex",
-    surfaces: options.hostedAuth ? ["api-v1", "mcp", "auth"] : ["api-v1", "mcp"],
+    surfaces: hostedSurfaces(options),
   }));
   if (options.hostedAuth) app.route("/auth", createHostedAuth(options.hostedAuth));
-  app.all("/mcp", (context) =>
-    handleMcpHttpRequest(context.req.raw, {
+  if (options.mcpOAuth) app.route("/", createMcpOAuth(options.mcpOAuth));
+  app.all("/mcp", async (context) => {
+    const response = await handleMcpHttpRequest(context.req.raw, {
       ledger: options.ledger,
-      authenticator: options.authenticator,
+      authenticator: mcpAuthenticator,
       allowedOrigins,
       allowedHosts: options.allowedHosts,
-    }),
-  );
+    });
+    if (oauthChallenge && response.status === 401) {
+      const headers = new Headers(response.headers);
+      headers.set("WWW-Authenticate", oauthChallenge);
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    }
+    return response;
+  });
   app.route(
     "/api/v1",
     createApiV1(options.authenticator, options.ledger, {
@@ -87,13 +110,15 @@ export function createHostedAppFromEnv(
     serviceSecret: ledger.serviceSecret,
     workspace: ledger.workspace,
   });
+  const hostedAuth = hostedAuthFromEnv(ledger, env);
   return createHostedApp({
     ledger,
     authenticator,
     workspace: ledger.workspace,
     allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
-    hostedAuth: hostedAuthFromEnv(ledger, env),
+    hostedAuth,
+    mcpOAuth: mcpOAuthFromEnv(ledger, hostedAuth, env),
   });
 }
 
@@ -144,7 +169,7 @@ function hostedAuthFromEnv(
     githubClient: new HttpGitHubOAuthClient({ clientId, clientSecret }),
     githubClientId: clientId,
     authOrigin,
-    allowedReturnOrigins: returnOrigins,
+    allowedReturnOrigins: [...new Set([...returnOrigins, authOrigin])],
     allowedGitHubSubjects,
     bootstrapRole: parseAccountRole(env.STENSIBLY_AUTH_BOOTSTRAP_ROLE),
     sessionMaxAgeSeconds: parseOptionalInteger(
@@ -154,9 +179,65 @@ function hostedAuthFromEnv(
   };
 }
 
+function mcpOAuthFromEnv(
+  ledger: ConvexWorkLedger,
+  hostedAuth: HostedAuthOptions | undefined,
+  env: Record<string, string | undefined>,
+): McpOAuthOptions | undefined {
+  const signingSecret = trimmed(env.STENSIBLY_OAUTH_SIGNING_SECRET);
+  const configured = Boolean(
+    signingSecret
+    || env.STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS
+    || env.STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS
+    || env.STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS
+  );
+  if (!configured) return undefined;
+  if (!hostedAuth || !signingSecret) {
+    throw new Error("MCP OAuth requires hosted GitHub auth and STENSIBLY_OAUTH_SIGNING_SECRET");
+  }
+  const issuer = hostedAuth.authOrigin;
+  return {
+    service: new ConvexMcpOAuthService({
+      client: ledger.client,
+      serviceSecret: ledger.serviceSecret,
+      workspace: ledger.workspace,
+    }),
+    accountService: hostedAuth.accountService,
+    issuer,
+    resource: `${issuer}/mcp`,
+    signingSecret,
+    workspace: ledger.workspace,
+    accessTokenSeconds: parseOptionalInteger(
+      env.STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS,
+      "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS",
+    ),
+    authorizationCodeSeconds: parseOptionalInteger(
+      env.STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS,
+      "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS",
+    ),
+    refreshTokenSeconds: parseOptionalInteger(
+      env.STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS,
+      "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS",
+    ),
+  };
+}
+
+function hostedSurfaces(options: HostedAppOptions): string[] {
+  const surfaces = ["api-v1", "mcp"];
+  if (options.hostedAuth) surfaces.push("auth");
+  if (options.mcpOAuth) surfaces.push("oauth");
+  return surfaces;
+}
+
 function failureCategoryForPath(path: string): FailureCategory {
   if (path === "/mcp") return "mcp_failure";
-  if (path === "/auth" || path.startsWith("/auth/")) return "auth_failure";
+  if (
+    path === "/auth"
+    || path.startsWith("/auth/")
+    || path === "/oauth"
+    || path.startsWith("/oauth/")
+    || path.startsWith("/.well-known/oauth-")
+  ) return "auth_failure";
   if (path === "/api/v1" || path.startsWith("/api/v1/")) {
     return "convex_failure";
   }
