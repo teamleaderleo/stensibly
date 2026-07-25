@@ -31,7 +31,8 @@ export interface ClaimWorkInput {
 }
 
 export interface RenewClaimInput extends ClaimWorkInput {
-  expectedClaimGeneration: number;
+  /** Required by current server implementations; optional here for source-compatible clients. */
+  expectedClaimGeneration?: number;
 }
 
 export interface ActorActionInput {
@@ -41,7 +42,8 @@ export interface ActorActionInput {
 }
 
 export interface ClaimActionInput extends ActorActionInput {
-  expectedClaimGeneration: number;
+  /** Required by current server implementations; optional here for source-compatible clients. */
+  expectedClaimGeneration?: number;
 }
 
 export interface CompleteWorkInput extends ActorActionInput {
