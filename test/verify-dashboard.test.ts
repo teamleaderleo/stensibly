@@ -49,7 +49,7 @@ describe("GitHub dashboard verification annotations", () => {
 });
 
 describe("dashboard asset verification contract", () => {
-  test("matches the markers in every checked-in dashboard asset", async () => {
+  test("matches the markers in every canonical verification asset", async () => {
     for (const asset of dashboardAssets) {
       const source = await Bun.file(new URL(`../site${asset.path}`, import.meta.url)).text();
       expect(source, `${asset.path} should contain ${asset.marker}`).toContain(asset.marker);
@@ -71,7 +71,7 @@ describe("dashboard asset verification contract", () => {
 });
 
 describe("dashboard URL verification", () => {
-  test("checks the HTML and complete static module graph", async () => {
+  test("checks the HTML and canonical deployment-verification asset set", async () => {
     globalThis.fetch = mockFetch(fullFixtures());
 
     await expect(verifyDashboardUrl("https://www.stensibly.com")).resolves.toBeUndefined();
