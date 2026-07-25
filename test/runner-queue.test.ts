@@ -90,6 +90,48 @@ describe("generic runner queue", () => {
     }
   });
 
+  test("does not steal an active item held indefinitely by an unrelated actor", () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const item = createItem(store);
+      const queued = dispatch(store, item.id);
+      const protectedActor = {
+        id: "agent:protected",
+        name: "Protected Runner",
+        kind: "agent" as const,
+      };
+      store.db
+        .query(`
+          INSERT INTO actors (id, name, kind, updated_at)
+          VALUES (?1, ?2, ?3, ?4)
+        `)
+        .run(protectedActor.id, protectedActor.name, protectedActor.kind, baseTime.toISOString());
+      store.db
+        .query(`
+          UPDATE items
+          SET status = 'active', claimed_by = ?1, claim_expires_at = NULL
+          WHERE id = ?2
+        `)
+        .run(protectedActor.id, item.id);
+
+      expect(() => claimRunnerWork(store, {
+        actor: runner,
+        runnerType: "generic-mcp",
+        runnerProfile: "codex-default",
+        runId: queued.run.id,
+      }, new Date("2026-07-25T12:00:10.000Z"))).toThrow(
+        "actively claimed by another actor",
+      );
+      expect(store.getItem(item.id)).toMatchObject({
+        status: "active",
+        claimedBy: protectedActor.id,
+        claimExpiresAt: null,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   test("claims retry-eligible failures only after their bounded backoff", () => {
     const store = new StensiblyStore(":memory:");
     try {
