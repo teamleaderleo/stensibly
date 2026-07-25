@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 
 const claimHelper = await Bun.file(new URL("../site/item-claim.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-lease-state-controller.js", import.meta.url)).text();
+const renewal = await Bun.file(new URL("../site/item-lease-renewal.js", import.meta.url)).text();
 const helper = await Bun.file(new URL("../site/item-lease-state.js", import.meta.url)).text();
 const styles = await Bun.file(new URL("../site/item-lease-state.css", import.meta.url)).text();
 
 describe("dashboard lease edge-state integration", () => {
-  test("loads as an isolated item-detail side effect", () => {
-    expect(claimHelper).toContain("import './item-lease-state-controller.js'");
+  test("loads after claim helpers initialize as an isolated item-detail side effect", () => {
+    expect(claimHelper).toContain("queueMicrotask(() => void import('./item-lease-state-controller.js'))");
+    expect(claimHelper).not.toContain("import './item-lease-state-controller.js'");
     expect(controller).toContain("if (typeof document !== 'undefined') installLeaseStateController()");
     expect(controller).toContain("MutationObserver");
     expect(controller).toContain("setInterval");
@@ -23,6 +25,24 @@ describe("dashboard lease edge-state integration", () => {
     expect(controller).toContain("readRenderedItem");
     expect(controller).toContain("classifyLease(item)");
     expect(controller).toContain("describeLease(item, actor)");
+    expect(controller).toContain("latestRenderedClaimExpiry");
+  });
+
+  test("renders a dedicated holder-only renewal section", () => {
+    expect(controller).toContain("createLeaseRenewalController");
+    expect(controller).toContain("renderClaimAcquisitionState");
+    expect(controller).toContain("form.hidden = Boolean(liveClaim)");
+    expect(controller).toContain("renderLeaseRenewal");
+    expect(controller).toContain("section.dataset.renewalFingerprint = fingerprint");
+    expect(renewal).toContain("leaseRenewalAvailability(item, actor)");
+    expect(renewal).toContain("/renew`");
+  });
+
+  test("preserves retry state while the lease context is unchanged", () => {
+    expect(controller).toContain("existing?.dataset.renewalFingerprint === fingerprint");
+    expect(controller).toContain("String(Math.floor(Date.now() / 60_000))");
+    expect(renewal).toContain("retry available");
+    expect(renewal).toContain("idempotency.keyFor(renewal)");
   });
 
   test("refreshes conflicts while preserving the form and same action key", () => {
@@ -33,6 +53,7 @@ describe("dashboard lease edge-state integration", () => {
     expect(controller).toContain("refreshButton.click()");
     expect(controller).toContain("error.textContent = conflict.message");
     expect(controller).toContain("state.textContent = 'conflict'");
+    expect(controller).toContain("name: 'renewal'");
     expect(controller).not.toContain("idempotency.reset");
   });
 
@@ -41,6 +62,7 @@ describe("dashboard lease edge-state integration", () => {
     expect(controller).toContain("contextFingerprint = next");
     expect(controller).toContain("form.addEventListener('input'");
     expect(controller).toContain("conflict.status !== item.status");
+    expect(controller).toContain("renewal.syncContext()");
     expect(controller).toContain("conflict = null");
   });
 
@@ -56,9 +78,11 @@ describe("dashboard lease edge-state integration", () => {
     expect(controller).toContain("sessionStorage.getItem(ACTOR_STORAGE_KEY)");
     expect(controller).toContain("sessionStorage.getItem(TOKEN_STORAGE_KEY)");
     expect(controller).toContain("localStorage.getItem(ENDPOINT_STORAGE_KEY)");
+    expect(controller).toContain("connectionError.textContent = redactCredentialText(message)");
     expect(controller).toContain("redactCredentialText");
     expect(controller).not.toContain("innerHTML");
     expect(controller).not.toContain("STENSIBLY_SERVICE_SECRET");
+    expect(renewal).not.toContain("STENSIBLY_SERVICE_SECRET");
   });
 
   test("loads responsive urgency styling", () => {
