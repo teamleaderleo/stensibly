@@ -9,6 +9,7 @@ import {
   handleMcpHttpRequest,
   type McpHttpOptions,
 } from "./mcp-http.js";
+import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
 import {
   handleRunnerMcpHttpRequest,
   type RunnerMcpHttpOptions,
@@ -35,6 +36,10 @@ export function createServerApp(
   const ledger = options.ledger ?? new SqliteWorkLedger(store);
   const authenticator = options.authenticator ?? new SqliteTokenProvider(store);
   const authOptions = options.httpAuth ?? { required: false };
+  const runnerMcpOptions = {
+    ...options.runnerMcp,
+    concurrency: normalizeRunnerConcurrencyPolicy(options.runnerMcp?.concurrency),
+  };
 
   app.use("/api/*", createCorsMiddleware(options.corsOrigins ?? []));
 
@@ -47,7 +52,7 @@ export function createServerApp(
   );
   app.all("/runner/mcp", (context) =>
     handleRunnerMcpHttpRequest(context.req.raw, {
-      ...options.runnerMcp,
+      ...runnerMcpOptions,
       ledger,
       authenticator,
     }),
