@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("work lifecycle", () => {
-  test("claims are exclusive until released", () => {
+  test("claims are exclusive and stale generations cannot release newer authority", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -27,15 +27,34 @@ describe("work lifecycle", () => {
     const claimed = store.claimItem(item.id, browserAgent, 900);
     expect(claimed.status).toBe("active");
     expect(claimed.claimedBy).toBe(browserAgent.id);
+    expect(claimed.claimGeneration).toBe(1);
 
     expect(() => store.claimItem(item.id, leo, 900)).toThrow(ConflictError);
 
-    const released = store.releaseItem(item.id, browserAgent);
+    const released = store.releaseItem(
+      item.id,
+      browserAgent,
+      claimed.claimGeneration,
+    );
     expect(released.status).toBe("ready");
     expect(released.claimedBy).toBeNull();
+    expect(released.claimGeneration).toBe(2);
 
-    const reclaimed = store.claimItem(item.id, leo, 900);
-    expect(reclaimed.claimedBy).toBe(leo.id);
+    const reclaimed = store.claimItem(item.id, browserAgent, 900);
+    expect(reclaimed.claimedBy).toBe(browserAgent.id);
+    expect(reclaimed.claimGeneration).toBe(3);
+    expect(() => store.releaseItem(
+      item.id,
+      browserAgent,
+      claimed.claimGeneration,
+    )).toThrow(ConflictError);
+
+    const currentRelease = store.releaseItem(
+      item.id,
+      browserAgent,
+      reclaimed.claimGeneration,
+    );
+    expect(currentRelease.claimGeneration).toBe(4);
   });
 
   test("completion clears the lease and records history", () => {
