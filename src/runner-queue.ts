@@ -95,7 +95,6 @@ export function claimRunnerWork(
             claimed_by IS NULL
             OR claimed_by = ?1
             OR claimed_by = ?5
-            OR claim_expires_at IS NULL
             OR claim_expires_at <= ?3
           )
       `)
