@@ -90,12 +90,11 @@ export function buildRunnerContextPacket(
   const options = normalizeOptions(rawOptions);
   const protectedEvents = detail.events.filter((event) => protectedEventPattern.test(event.type));
   const protectedIds = new Set(protectedEvents.map((event) => event.id));
-  const ordinaryRecent = detail.events
-    .filter((event) => !protectedIds.has(event.id))
-    .slice(-options.maxEvents);
+  const ordinaryLimit = Math.max(0, options.maxEvents - protectedEvents.length);
+  const ordinaryEvents = detail.events.filter((event) => !protectedIds.has(event.id));
+  const ordinaryRecent = ordinaryLimit === 0 ? [] : ordinaryEvents.slice(-ordinaryLimit);
   let events = [...protectedEvents, ...ordinaryRecent]
     .sort(compareCreated)
-    .slice(-Math.max(options.maxEvents, protectedEvents.length))
     .map((event) => normalizeEvent(event, protectedIds.has(event.id)));
 
   let artifacts = detail.artifacts
@@ -188,10 +187,11 @@ function assemblePacket(
     ],
     omitted: { ...omitted },
   };
-  return {
-    ...base,
-    characterCount: JSON.stringify(base).length,
-  };
+  let packet = { ...base, characterCount: 0 };
+  let characterCount = JSON.stringify(packet).length;
+  packet = { ...base, characterCount };
+  characterCount = JSON.stringify(packet).length;
+  return { ...base, characterCount };
 }
 
 function normalizeOptions(options: RunnerContextPacketOptions): NormalizedOptions {
