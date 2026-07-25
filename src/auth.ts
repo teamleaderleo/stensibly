@@ -5,29 +5,23 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { StensiblyStore } from "./store.js";
+import {
+  tokenScopes,
+  type AuthorizationPrincipal,
+  type CreatedToken,
+  type TokenPrincipal,
+  type TokenRecord,
+  type TokenScope,
+} from "./token-contracts.js";
 
-export const tokenScopes = ["read", "write", "admin"] as const;
-export type TokenScope = (typeof tokenScopes)[number];
-
-export interface TokenRecord {
-  id: string;
-  name: string;
-  scopes: TokenScope[];
-  projects: string[] | null;
-  createdAt: string;
-  revokedAt: string | null;
-}
-
-export interface CreatedToken extends TokenRecord {
-  token: string;
-}
-
-export interface TokenPrincipal {
-  tokenId: string;
-  name: string;
-  scopes: TokenScope[];
-  projects: string[] | null;
-}
+export { tokenScopes } from "./token-contracts.js";
+export type {
+  AuthorizationPrincipal,
+  CreatedToken,
+  TokenPrincipal,
+  TokenRecord,
+  TokenScope,
+} from "./token-contracts.js";
 
 interface TokenRow {
   id: string;
@@ -144,14 +138,14 @@ export function revokeApiToken(store: StensiblyStore, id: string): TokenRecord {
 }
 
 export function principalHasScope(
-  principal: TokenPrincipal,
+  principal: AuthorizationPrincipal,
   required: "read" | "write",
 ): boolean {
   return principal.scopes.includes("admin") || principal.scopes.includes(required);
 }
 
 export function principalCanAccessProject(
-  principal: TokenPrincipal,
+  principal: AuthorizationPrincipal,
   project: string,
 ): boolean {
   return principal.projects === null || principal.projects.includes(project);
@@ -159,7 +153,7 @@ export function principalCanAccessProject(
 
 export function filterItemsForPrincipal<
   T extends { project: string },
->(principal: TokenPrincipal, items: T[]): T[] {
+>(principal: AuthorizationPrincipal, items: T[]): T[] {
   if (principal.projects === null) return items;
   const allowed = new Set(principal.projects);
   return items.filter((item) => allowed.has(item.project));

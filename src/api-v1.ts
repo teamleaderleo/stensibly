@@ -70,19 +70,32 @@ export function createApiV1(
       context.header("WWW-Authenticate", "Bearer");
       context.header(FAILURE_CATEGORY_HEADER, "auth_failure");
       return context.json({
-        error: "A valid Bearer token is required",
+        error: options.hostedSession
+          ? "A valid Bearer token or hosted session is required"
+          : "A valid Bearer token is required",
         code: "unauthorized",
       }, 401);
     }
 
-    return context.json({
-      principal: {
-        kind: "api_token",
+    const publicPrincipal = principal.kind === "account"
+      ? {
+        kind: "account" as const,
+        name: principal.name,
+        workspace: principal.workspace,
+        role: principal.role,
+        scopes: [...principal.scopes],
+        projects: principal.projects === null ? null : [...principal.projects],
+      }
+      : {
+        kind: "api_token" as const,
         name: principal.name,
         workspace: options.workspace ?? null,
         scopes: [...principal.scopes],
         projects: principal.projects === null ? null : [...principal.projects],
-      },
+      };
+
+    return context.json({
+      principal: publicPrincipal,
       capabilities: {
         read: principalHasScope(principal, "read"),
         write: principalHasScope(principal, "write"),
