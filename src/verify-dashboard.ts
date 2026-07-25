@@ -39,7 +39,7 @@ export async function verifyDashboardUrl(url: string): Promise<void> {
   verifyDashboardHtml(html);
   for (const asset of dashboardAssets) {
     const assetUrl = origin + asset.path;
-    const body = await fetchText(assetUrl, dashboardAssetContentType(asset.kind));
+    const body = await fetchText(assetUrl, dashboardAssetContentType(asset));
     if (!body.includes(asset.marker)) {
       throw new Error(`${safeUrl(assetUrl)} is missing expected marker ${JSON.stringify(asset.marker)}`);
     }
