@@ -12,20 +12,21 @@ import {
 
 describe("dashboard item detail response", () => {
   test("accepts matching item collections and filters malformed entries", () => {
+    const validDependency = {
+      id: "dep_1",
+      direction: "outgoing" as const,
+      kind: "depends_on" as const,
+      itemId: "item_2",
+      title: "Finish the API",
+      status: "active",
+      createdAt: "2026-07-25T00:00:00.000Z",
+    };
     const payload = {
       item: { id: "item_1", title: "Inspect me" },
       events: [{ id: "evt_1" }, null, "bad"],
       artifacts: [{ id: "art_1" }, []],
       dependencies: [
-        {
-          id: "dep_1",
-          direction: "outgoing",
-          kind: "depends_on",
-          itemId: "item_2",
-          title: "Finish the API",
-          status: "active",
-          createdAt: "2026-07-25T00:00:00.000Z",
-        },
+        validDependency,
         null,
         { direction: "sideways", kind: "depends_on", itemId: "item_3" },
       ],
@@ -35,7 +36,7 @@ describe("dashboard item detail response", () => {
       item: payload.item,
       events: [{ id: "evt_1" }],
       artifacts: [{ id: "art_1" }],
-      dependencies: [payload.dependencies[0]],
+      dependencies: [validDependency],
     });
   });
 
