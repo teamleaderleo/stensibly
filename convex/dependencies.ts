@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { readVisibleDependencies } from "./lib/dependencyVisibility";
 import {
   appendEvent,
   findWorkspace,
@@ -11,8 +12,27 @@ import { mutation, query } from "./lib/server";
 import {
   actorValidator,
   dependencyKindValidator,
+  itemStatusValidator,
   serviceArgs,
 } from "./lib/validators";
+
+const createdDependencyValidator = v.object({
+  id: v.string(),
+  fromItemId: v.string(),
+  toItemId: v.string(),
+  kind: dependencyKindValidator,
+  createdAt: v.string(),
+});
+
+const visibleDependencyValidator = v.object({
+  id: v.string(),
+  direction: v.union(v.literal("outgoing"), v.literal("incoming")),
+  kind: dependencyKindValidator,
+  itemId: v.string(),
+  title: v.string(),
+  status: itemStatusValidator,
+  createdAt: v.string(),
+});
 
 export const add = mutation({
   args: {
@@ -22,7 +42,7 @@ export const add = mutation({
     kind: dependencyKindValidator,
     actor: actorValidator,
   },
-  returns: v.any(),
+  returns: createdDependencyValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
@@ -30,6 +50,9 @@ export const add = mutation({
     const from = await getItemByExternalId(ctx, workspace._id, args.fromItemId);
     const to = await getItemByExternalId(ctx, workspace._id, args.toItemId);
     if (from._id === to._id) throw new Error("An item cannot depend on itself");
+    if (from.projectId !== to.projectId) {
+      throw new Error("Dependencies must stay within one project");
+    }
     const actor = await upsertActor(ctx, workspace._id, args.actor);
     if (!actor) throw new Error("Failed to create actor");
 
@@ -85,43 +108,12 @@ export const add = mutation({
 
 export const list = query({
   args: { ...serviceArgs, itemId: v.string() },
-  returns: v.any(),
+  returns: v.array(visibleDependencyValidator),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error(`Item ${args.itemId} does not exist`);
     const item = await getItemByExternalId(ctx, workspace._id, args.itemId);
-    const [outgoing, incoming] = await Promise.all([
-      ctx.db
-        .query("dependencies")
-        .withIndex("by_from_kind", (q) => q.eq("fromItemId", item._id))
-        .collect(),
-      ctx.db
-        .query("dependencies")
-        .withIndex("by_to_kind", (q) => q.eq("toItemId", item._id))
-        .collect(),
-    ]);
-    const output = [];
-    for (const dependency of outgoing) {
-      const target = await ctx.db.get("items", dependency.toItemId);
-      output.push({
-        id: String(dependency._id),
-        direction: "outgoing",
-        kind: dependency.kind,
-        itemId: target?.externalId ?? String(dependency.toItemId),
-        createdAt: new Date(dependency.createdAt).toISOString(),
-      });
-    }
-    for (const dependency of incoming) {
-      const source = await ctx.db.get("items", dependency.fromItemId);
-      output.push({
-        id: String(dependency._id),
-        direction: "incoming",
-        kind: dependency.kind,
-        itemId: source?.externalId ?? String(dependency.fromItemId),
-        createdAt: new Date(dependency.createdAt).toISOString(),
-      });
-    }
-    return output;
+    return await readVisibleDependencies(ctx, item);
   },
 });
