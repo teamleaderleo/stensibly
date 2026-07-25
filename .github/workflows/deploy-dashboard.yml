@@ -210,3 +210,149 @@ jobs:
             and length > 0
             and all(.[ ]; false)
           ' /tmp/dashboard-assets.json > /dev/null
+
+          while IFS=$'\t' read -r asset kind allowed_content_types marker; do
+            output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
+            echo "::group::[vercel-cli] staged asset ${asset}"
+            if ! content_type="$(
+              npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
+                --deployment "${DEPLOYMENT_URL}" \
+                --fail --silent --show-error \
+                --output "${output}" \
+                --write-out '%{content_type}\n'
+            )"; then
+              echo "::endgroup::"
+              echo "::error title=Staged dashboard verification failed::Failed to fetch staged asset ${asset}."
+              exit 1
+            fi
+            echo "::endgroup::"
+            content_type="$(printf '%s\n' "${content_type}" | tr -d '\r' | tail -n 1 | cut -c1-160)"
+            media_type="${content_type%%;*}"
+            media_type="$(printf '%s' "${media_type}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [ -z "${media_type}" ] || ! printf '%s\n' "${allowed_content_types}" \
+              | tr ',' '\n' \
+              | grep --fixed-strings --ignore-case --line-regexp --quiet -- "${media_type}"; then
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} returned an unexpected content type for ${kind}."
+              echo "Staged asset ${asset} returned unexpected content type ${content_type:-<missing>}; allowed: ${allowed_content_types}." >&2
+              exit 1
+            fi
+            if [ ! -s "${output}" ]; then
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} is empty."
+              exit 1
+            fi
+            if ! grep --fixed-strings --quiet -- "${marker}" "${output}"; then
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} is missing expected marker ${marker}."
+              exit 1
+            fi
+            if grep --extended-regexp --quiet 'stn\.tok_[A-Za-z0-9._-]+' "${output}"; then
+              echo "::error title=Staged dashboard verification failed::Staged asset ${asset} contains a token-shaped value."
+              exit 1
+            fi
+          done < <(jq -r '.[] | [.path, .kind, (.contentTypes | join(",")), .marker] | @tsv' /tmp/dashboard-assets.json)
+
+      - name: Promote verified deployment
+        id: promote
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: >-
+          npx --yes vercel@${VERCEL_CLI_VERSION} promote
+          "${DEPLOYMENT_URL}"
+          --yes
+          --timeout=5m
+          --token="${VERCEL_TOKEN}"
+
+      - name: Verify production dashboard
+        id: production_verify
+        run: |
+          for attempt in 1 2 3; do
+            verify_args=(--url "${DASHBOARD_URL}")
+            if [ "${attempt}" -eq 3 ]; then
+              verify_args+=(--github-annotation)
+            fi
+
+            echo "::group::[stensibly-verifier] production verification attempt ${attempt}/3"
+            if bun run verify:dashboard -- "${verify_args[@]}"; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+
+            if [ "${attempt}" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "[deployment] verification attempt ${attempt}/3 failed; retrying in ${delay} seconds"
+              sleep "${delay}"
+            fi
+          done
+          echo "::error title=Post-promotion dashboard verification failed::The production domain did not pass verification after three attempts. Promotion completed; inspect the precise verifier annotation and Vercel deployment before deciding whether to roll back."
+          echo "Production dashboard verification failed after promotion. The deployment was promoted; inspect the verifier error and Vercel deployment before deciding whether rollback is appropriate." >&2
+          exit 1
+
+      - name: Record deployment report
+        if: ${{ always() }}
+        env:
+          SECRETS_OUTCOME: ${{ steps.secrets.outcome }}
+          PROJECT_OUTCOME: ${{ steps.project.outcome }}
+          PULL_SETTINGS_OUTCOME: ${{ steps.pull_settings.outcome }}
+          LINKED_PROJECT_OUTCOME: ${{ steps.linked_project.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          BUILD_OUTPUT_OUTCOME: ${{ steps.build_output.outcome }}
+          STAGE_OUTCOME: ${{ steps.stage.outcome }}
+          STAGED_VERIFY_OUTCOME: ${{ steps.staged_verify.outcome }}
+          PROMOTE_OUTCOME: ${{ steps.promote.outcome }}
+          PRODUCTION_VERIFY_OUTCOME: ${{ steps.production_verify.outcome }}
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: |
+          display_outcome() {
+            case "${1:-}" in
+              success) printf 'passed' ;;
+              failure) printf 'failed' ;;
+              cancelled) printf 'cancelled' ;;
+              skipped|'') printf 'not run' ;;
+              *) printf '%s' "$1" ;;
+            esac
+          }
+
+          if [ "${PROMOTE_OUTCOME:-}" = "success" ]; then
+            if [ "${PRODUCTION_VERIFY_OUTCOME:-}" = "success" ]; then
+              production_state="changed and verified"
+              guidance="The staged deployment was promoted and the production domain passed verification."
+            else
+              production_state="changed; post-promotion verification did not pass"
+              guidance="Promotion completed. Inspect the verifier annotation and Vercel deployment before making an explicit rollback decision."
+            fi
+          elif [ "${STAGE_OUTCOME:-}" = "success" ]; then
+            production_state="unchanged"
+            guidance="A staged deployment was created but was not promoted. Production remains on its previous deployment."
+          else
+            production_state="unchanged"
+            guidance="No staged deployment was promoted. Production remains on its previous deployment."
+          fi
+
+          {
+            echo "## Dashboard production deployment report"
+            echo
+            echo "**Production state:** ${production_state}."
+            echo
+            echo "${guidance}"
+            echo
+            echo "| Phase | Outcome |"
+            echo "| --- | --- |"
+            echo "| Candidate validation | passed |"
+            echo "| Production secrets | $(display_outcome "${SECRETS_OUTCOME}") |"
+            echo "| Vercel project validation | $(display_outcome "${PROJECT_OUTCOME}") |"
+            echo "| Pull project settings | $(display_outcome "${PULL_SETTINGS_OUTCOME}") |"
+            echo "| Linked project validation | $(display_outcome "${LINKED_PROJECT_OUTCOME}") |"
+            echo "| Production build | $(display_outcome "${BUILD_OUTCOME}") |"
+            echo "| Build output validation | $(display_outcome "${BUILD_OUTPUT_OUTCOME}") |"
+            echo "| Staged deployment | $(display_outcome "${STAGE_OUTCOME}") |"
+            echo "| Staged verification | $(display_outcome "${STAGED_VERIFY_OUTCOME}") |"
+            echo "| Promotion | $(display_outcome "${PROMOTE_OUTCOME}") |"
+            echo "| Production verification | $(display_outcome "${PRODUCTION_VERIFY_OUTCOME}") |"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- project: ${EXPECTED_VERCEL_PROJECT}"
+            echo "- production domain: ${DASHBOARD_URL}"
+            if [[ "${DEPLOYMENT_URL:-}" == https://*.vercel.app ]]; then
+              echo "- staged deployment: ${DEPLOYMENT_URL} (no bypass credentials included)"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
