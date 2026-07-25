@@ -6,6 +6,7 @@ interface ExpiredClaimRow {
   id: string;
   claimed_by: string;
   claim_expires_at: string;
+  claim_generation: number;
 }
 
 interface IdempotentEventRow {
@@ -17,7 +18,7 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
   const transaction = store.db.transaction(() => {
     const candidates = store.db
       .query<ExpiredClaimRow, [string]>(`
-        SELECT id, claimed_by, claim_expires_at
+        SELECT id, claimed_by, claim_expires_at, claim_generation
         FROM items
         WHERE status = 'active'
           AND claimed_by IS NOT NULL
@@ -34,15 +35,23 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
           SET status = 'ready',
               claimed_by = NULL,
               claim_expires_at = NULL,
+              claim_generation = claim_generation + 1,
               version = version + 1,
               updated_at = ?1
           WHERE id = ?2
             AND status = 'active'
             AND claimed_by = ?3
             AND claim_expires_at = ?4
+            AND claim_generation = ?5
             AND claim_expires_at <= ?1
         `)
-        .run(nowIso, claim.id, claim.claimed_by, claim.claim_expires_at);
+        .run(
+          nowIso,
+          claim.id,
+          claim.claimed_by,
+          claim.claim_expires_at,
+          claim.claim_generation,
+        );
 
       if (result.changes !== 1) continue;
 
@@ -58,6 +67,8 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
           JSON.stringify({
             previousClaimant: claim.claimed_by,
             expiredAt: claim.claim_expires_at,
+            generation: claim.claim_generation,
+            nextGeneration: claim.claim_generation + 1,
           }),
           nowIso,
         );
@@ -76,10 +87,14 @@ export function renewClaim(
   id: string,
   actor: ActorInput,
   leaseSeconds: number,
+  expectedClaimGeneration: number,
   idempotencyKey?: string,
 ): Item {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30 || leaseSeconds > 86_400) {
     throw new RangeError("Lease must be between 30 and 86400 seconds");
+  }
+  if (!Number.isInteger(expectedClaimGeneration) || expectedClaimGeneration < 1) {
+    throw new RangeError("Expected claim generation must be a positive integer");
   }
 
   if (idempotencyKey) {
@@ -114,20 +129,25 @@ export function renewClaim(
       .query(`
         UPDATE items
         SET claim_expires_at = ?1,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?2
         WHERE id = ?3
           AND status = 'active'
           AND claimed_by = ?4
+          AND claim_generation = ?5
           AND claim_expires_at IS NOT NULL
           AND claim_expires_at > ?2
       `)
-      .run(expiresAt, nowIso, id, actor.id);
+      .run(expiresAt, nowIso, id, actor.id, expectedClaimGeneration);
 
     if (result.changes !== 1) {
-      throw new ConflictError("Only the current claimant can renew a live claim");
+      throw new ConflictError(
+        "Only the current claimant with the current claim generation can renew a live claim",
+      );
     }
 
+    const nextGeneration = expectedClaimGeneration + 1;
     store.db
       .query(`
         INSERT INTO events (
@@ -138,7 +158,12 @@ export function renewClaim(
         `evt_${randomUUID()}`,
         id,
         actor.id,
-        JSON.stringify({ leaseSeconds, expiresAt }),
+        JSON.stringify({
+          leaseSeconds,
+          expiresAt,
+          generation: expectedClaimGeneration,
+          nextGeneration,
+        }),
         idempotencyKey ?? null,
         nowIso,
       );
