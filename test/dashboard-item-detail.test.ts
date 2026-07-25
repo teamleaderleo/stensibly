@@ -6,6 +6,8 @@ import {
   payloadEntries,
   readItemDetail,
   redactCredentialText,
+  reservationCapacityLabel,
+  reservationIsFull,
   safeArtifactHref,
   safeRequestId,
 } from "../site/item-detail.js";
@@ -21,6 +23,19 @@ describe("dashboard item detail response", () => {
       status: "active",
       createdAt: "2026-07-25T00:00:00.000Z",
     };
+    const validReservation = {
+      id: "res_1",
+      resource: "gpu:benchmark-pool",
+      mode: "shared" as const,
+      capacity: 5,
+      units: 2,
+      usedUnits: 4,
+      availableUnits: 1,
+      holderActorId: "alpha",
+      expiresAt: "2026-07-25T01:00:00.000Z",
+      createdAt: "2026-07-25T00:00:00.000Z",
+      updatedAt: "2026-07-25T00:30:00.000Z",
+    };
     const payload = {
       item: { id: "item_1", title: "Inspect me" },
       events: [{ id: "evt_1" }, null, "bad"],
@@ -30,6 +45,11 @@ describe("dashboard item detail response", () => {
         null,
         { direction: "sideways", kind: "depends_on", itemId: "item_3" },
       ],
+      reservations: [
+        validReservation,
+        null,
+        { id: "res_bad", resource: "gpu", mode: "shared", capacity: 2, units: 3 },
+      ],
     };
 
     expect(readItemDetail(payload, "item_1")).toEqual({
@@ -37,12 +57,19 @@ describe("dashboard item detail response", () => {
       events: [{ id: "evt_1" }],
       artifacts: [{ id: "art_1" }],
       dependencies: [validDependency],
+      reservations: [validReservation],
     });
   });
 
-  test("keeps compatibility with item detail responses that predate dependency visibility", () => {
+  test("keeps compatibility with item detail responses that predate coordination visibility", () => {
     expect(readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [] }, "item_1"))
-      .toEqual({ item: { id: "item_1" }, events: [], artifacts: [], dependencies: [] });
+      .toEqual({
+        item: { id: "item_1" },
+        events: [],
+        artifacts: [],
+        dependencies: [],
+        reservations: [],
+      });
   });
 
   test("rejects malformed and mismatched responses", () => {
@@ -53,6 +80,8 @@ describe("dashboard item detail response", () => {
     expect(() => readItemDetail({ item: { id: "item_1" }, events: [] })).toThrow("missing events or artifacts");
     expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], dependencies: {} }))
       .toThrow("incompatible dependencies");
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], reservations: {} }))
+      .toThrow("incompatible reservations");
   });
 });
 
@@ -71,6 +100,24 @@ describe("dashboard dependency relationships", () => {
     expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "depends_on", status: "done" })).toBe(false);
     expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "blocks", status: "active" })).toBe(false);
     expect(dependencyBlocksCurrent({ direction: "outgoing", kind: "depends_on", status: "" })).toBe(false);
+  });
+});
+
+describe("dashboard reservation capacity", () => {
+  test("describes live usage and remaining capacity", () => {
+    expect(reservationCapacityLabel({ capacity: 5, usedUnits: 4, availableUnits: 1 }))
+      .toBe("4 of 5 units used · 1 available");
+    expect(reservationCapacityLabel({ capacity: 1, usedUnits: 1, availableUnits: 0 }))
+      .toBe("1 of 1 units used · 0 available");
+    expect(reservationCapacityLabel({ capacity: 0, usedUnits: 0, availableUnits: 0 }))
+      .toBe("Capacity unavailable");
+  });
+
+  test("marks only validated zero-availability snapshots as full", () => {
+    expect(reservationIsFull({ availableUnits: 0 })).toBe(true);
+    expect(reservationIsFull({ availableUnits: 1 })).toBe(false);
+    expect(reservationIsFull({ availableUnits: -1 })).toBe(false);
+    expect(reservationIsFull({})).toBe(false);
   });
 });
 
