@@ -164,10 +164,19 @@ async function resolveProject(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string | undefined> {
-  if (toolName === "claim_runner_work" || toolName === "list_runner_runs") {
-    return stringArgument(args, "project");
+  if (toolName === "list_runner_runs") return stringArgument(args, "project");
+  if (toolName === "claim_runner_work") {
+    const explicit = stringArgument(args, "project");
+    if (explicit) return explicit;
+    return runProject(ledger, stringArgument(args, "runId"));
   }
-  const id = stringArgument(args, "id");
+  return runProject(ledger, stringArgument(args, "id"));
+}
+
+async function runProject(
+  ledger: WorkLedger,
+  id: string | undefined,
+): Promise<string | undefined> {
   const runs = runnerLedger(ledger);
   if (!id || !runs) return undefined;
   try {
