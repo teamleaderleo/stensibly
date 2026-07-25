@@ -4,6 +4,7 @@ import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface ExpiredClaimRow {
   id: string;
+  project: string;
   claimed_by: string;
   claim_expires_at: string;
 }
@@ -12,20 +13,82 @@ interface IdempotentEventRow {
   item_id: string;
 }
 
-export function expireClaims(store: StensiblyStore, now = new Date()): string[] {
+export interface ClaimExpiryAudit {
+  source: string;
+  policyVersion?: string;
+  mode?: string;
+}
+
+export function expireClaims(
+  store: StensiblyStore,
+  now = new Date(),
+  options: { project?: string; audit?: ClaimExpiryAudit } = {},
+): string[] {
   const nowIso = now.toISOString();
-  const transaction = store.db.transaction(() => {
-    const candidates = store.db
-      .query<ExpiredClaimRow, [string]>(`
-        SELECT id, claimed_by, claim_expires_at
+  const candidates = options.project
+    ? store.db
+        .query<ExpiredClaimRow, [string, string]>(`
+          SELECT id, project, claimed_by, claim_expires_at
+          FROM items
+          WHERE status = 'active'
+            AND claimed_by IS NOT NULL
+            AND claim_expires_at IS NOT NULL
+            AND claim_expires_at <= ?1
+            AND project = ?2
+          ORDER BY claim_expires_at ASC, id ASC
+        `)
+        .all(nowIso, options.project)
+    : store.db
+        .query<ExpiredClaimRow, [string]>(`
+          SELECT id, project, claimed_by, claim_expires_at
+          FROM items
+          WHERE status = 'active'
+            AND claimed_by IS NOT NULL
+            AND claim_expires_at IS NOT NULL
+            AND claim_expires_at <= ?1
+          ORDER BY claim_expires_at ASC, id ASC
+        `)
+        .all(nowIso);
+  return expireClaimRows(store, candidates, now, options.audit);
+}
+
+export function expireClaimIds(
+  store: StensiblyStore,
+  ids: string[],
+  now = new Date(),
+  audit?: ClaimExpiryAudit,
+): string[] {
+  const uniqueIds = [...new Set(ids)];
+  const candidates: ExpiredClaimRow[] = [];
+  for (const id of uniqueIds) {
+    const claim = store.db
+      .query<ExpiredClaimRow, [string, string]>(`
+        SELECT id, project, claimed_by, claim_expires_at
         FROM items
-        WHERE status = 'active'
+        WHERE id = ?1
+          AND status = 'active'
           AND claimed_by IS NOT NULL
           AND claim_expires_at IS NOT NULL
-          AND claim_expires_at <= ?1
+          AND claim_expires_at <= ?2
       `)
-      .all(nowIso);
+      .get(id, now.toISOString());
+    if (claim) candidates.push(claim);
+  }
+  candidates.sort((left, right) =>
+    left.claim_expires_at.localeCompare(right.claim_expires_at)
+    || left.id.localeCompare(right.id),
+  );
+  return expireClaimRows(store, candidates, now, audit);
+}
 
+function expireClaimRows(
+  store: StensiblyStore,
+  candidates: ExpiredClaimRow[],
+  now: Date,
+  audit?: ClaimExpiryAudit,
+): string[] {
+  const nowIso = now.toISOString();
+  const transaction = store.db.transaction(() => {
     const expiredIds: string[] = [];
     for (const claim of candidates) {
       const result = store.db
@@ -58,16 +121,15 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
           JSON.stringify({
             previousClaimant: claim.claimed_by,
             expiredAt: claim.claim_expires_at,
+            ...(audit ? { automation: audit } : {}),
           }),
           nowIso,
         );
 
       expiredIds.push(claim.id);
     }
-
     return expiredIds;
   });
-
   return transaction();
 }
 
