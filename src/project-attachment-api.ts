@@ -104,7 +104,6 @@ export function registerProjectAttachmentApi(
 }
 
 function importerIdentity(principal: HttpPrincipal): string {
-  return principal.kind === "account"
-    ? `account:${principal.accountId}`
-    : `token:${principal.tokenId}`;
+  const kind = principal.kind === "account" ? "account" : "token";
+  return `${kind}:${principal.name}`;
 }
