@@ -118,7 +118,7 @@ describe("run item recovery", () => {
     }
   });
 
-  test("releases terminal work and recovers retry queues by their actual lease owner", async () => {
+  test("projects failed work, retries it, and recovers by the actual lease owner", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const item = createItem(store);
@@ -142,7 +142,9 @@ describe("run item recovery", () => {
       });
       expect(failed.status).toBe("failed");
       expect(store.getItem(item.id)).toMatchObject({
-        status: "ready",
+        status: "blocked",
+        summary: "Transient execution failure.",
+        nextAction: `Retry is eligible after ${failed.nextRetryAt}.`,
         claimedBy: null,
         claimExpiresAt: null,
       });
