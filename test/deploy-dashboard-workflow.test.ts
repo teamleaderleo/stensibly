@@ -82,17 +82,19 @@ describe("production dashboard deployment workflow", () => {
 
   test("requires staged asset markers and rejects token-shaped content before promotion", () => {
     expect(workflow).toContain("asset_specs=(");
-    expect(workflow).toContain('\"/app.js|DEFAULT_ENDPOINT\"');
-    expect(workflow).toContain('\"/item-progress-controller.js|installProgressController\"');
-    expect(workflow).toContain('\"/item-block-controller.js|installBlockController\"');
-    expect(workflow).toContain('\"/item-complete-controller.js|installCompletionController\"');
-    expect(workflow).toContain('\"/board-filter-controller.js|installBoardFilterController\"');
-    expect(workflow).toContain('\"/board-filter.css|.board-filter-panel\"');
-    expect(workflow).toContain('\"/project-brief-controller.js|installProjectBriefController\"');
-    expect(workflow).toContain('\"/project-brief.css|.project-brief-dialog\"');
-    expect(workflow).toContain('\"/actor-activity-controller.js|installActorActivityController\"');
-    expect(workflow).toContain('\"/actor-activity.css|.actor-activity-dialog\"');
+    expect(workflow).toContain('"/app.js|DEFAULT_ENDPOINT"');
+    expect(workflow).toContain('"/item-progress-controller.js|installProgressController"');
+    expect(workflow).toContain('"/item-block-controller.js|installBlockController"');
+    expect(workflow).toContain('"/item-complete-controller.js|installCompleteController"');
+    expect(workflow).toContain('"/board-filter-controller.js|installBoardFilterController"');
+    expect(workflow).toContain('"/board-filter.css|.board-filter-panel"');
+    expect(workflow).toContain('"/project-brief-controller.js|installProjectBriefController"');
+    expect(workflow).toContain('"/project-brief.css|.project-brief-dialog"');
+    expect(workflow).toContain('"/actor-activity-controller.js|installActorActivityController"');
+    expect(workflow).toContain('"/actor-activity.css|.actor-activity-dialog"');
     expect(workflow).toContain("grep --fixed-strings --quiet");
+    expect(workflow).toContain("Staged asset ${asset} is missing expected marker: ${marker}");
+    expect(workflow).toContain("Failed to fetch staged asset ${asset}.");
     expect(workflow).toContain("stn\\.tok_[A-Za-z0-9._-]+");
     expect(position("asset_specs=("))
       .toBeLessThan(position("Promote verified deployment"));
