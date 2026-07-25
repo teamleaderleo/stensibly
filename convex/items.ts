@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { expireClaimIfNeeded, liveClaimHeldByOther } from "./lib/claimState";
 import {
+  filterVisibleDependencyEvents,
+  readVisibleDependencies,
+} from "./lib/dependencyVisibility";
+import {
   appendEvent,
   assertOptionalText,
   assertPriority,
@@ -175,7 +179,7 @@ export const get = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
-    const [events, artifacts, runs, outgoing, incoming] = await Promise.all([
+    const [events, artifacts, runs, dependencies] = await Promise.all([
       ctx.db
         .query("events")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
@@ -188,33 +192,21 @@ export const get = query({
         .query("runs")
         .withIndex("by_item_status", (q) => q.eq("itemId", item._id))
         .collect(),
-      ctx.db
-        .query("dependencies")
-        .withIndex("by_from_kind", (q) => q.eq("fromItemId", item._id))
-        .collect(),
-      ctx.db
-        .query("dependencies")
-        .withIndex("by_to_kind", (q) => q.eq("toItemId", item._id))
-        .collect(),
+      readVisibleDependencies(ctx, item),
     ]);
-
-    const dependencies = [];
-    for (const dependency of [...outgoing, ...incoming]) {
-      const otherId = dependency.fromItemId === item._id
-        ? dependency.toItemId
-        : dependency.fromItemId;
-      const other = await ctx.db.get("items", otherId);
-      dependencies.push({
-        direction: dependency.fromItemId === item._id ? "outgoing" : "incoming",
-        kind: dependency.kind,
-        itemId: other?.externalId ?? String(otherId),
-        createdAt: new Date(dependency.createdAt).toISOString(),
-      });
-    }
+    const visibleEvents = await filterVisibleDependencyEvents(
+      ctx,
+      item,
+      events,
+      dependencies,
+    );
 
     return {
       item: await publicItem(ctx, item),
-      events: events.map((event) => ({ ...publicEvent(event), itemId: item.externalId })),
+      events: visibleEvents.map((event) => ({
+        ...publicEvent(event),
+        itemId: item.externalId,
+      })),
       artifacts: artifacts.map((artifact) => ({
         ...publicArtifact(artifact),
         itemId: item.externalId,
@@ -276,7 +268,11 @@ export const unblock = mutation({
   handler: async (ctx, args) => transition(ctx, args, "unblock"),
 });
 
-async function transition(ctx: any, args: any, operation: "complete" | "handoff" | "block" | "unblock") {
+async function transition(
+  ctx: any,
+  args: any,
+  operation: "complete" | "handoff" | "block" | "unblock",
+) {
   requireServiceSecret(args.serviceSecret);
   const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
   if (!workspace) throw new Error(`Item ${args.id} does not exist`);
@@ -330,7 +326,9 @@ async function transition(ctx: any, args: any, operation: "complete" | "handoff"
     payload = {
       summary,
       nextAction,
-      ...(args.toActorId ? { toActorId: assertText(args.toActorId, "Target actor", 120) } : {}),
+      ...(args.toActorId
+        ? { toActorId: assertText(args.toActorId, "Target actor", 120) }
+        : {}),
     };
   } else if (operation === "block") {
     if (!["ready", "active"].includes(item.status)) {
@@ -338,7 +336,11 @@ async function transition(ctx: any, args: any, operation: "complete" | "handoff"
     }
     const reason = assertText(args.reason, "Reason", 10_000);
     const nextAction = assertOptionalText(args.nextAction, "Next action", 2_000);
-    patch = { status: "blocked", summary: reason, nextAction: nextAction ?? item.nextAction };
+    patch = {
+      status: "blocked",
+      summary: reason,
+      nextAction: nextAction ?? item.nextAction,
+    };
     payload = { reason, ...(nextAction ? { nextAction } : {}) };
   } else {
     if (item.status !== "blocked") throw new Error("Only blocked work can be unblocked");
