@@ -16,6 +16,7 @@ describe("workspace survey", () => {
         priority: 70,
         claimedBy: "chat-1",
         claimExpiresAt: "2026-07-25T12:05:00.000Z",
+        claimGeneration: 2,
       }),
       item({
         id: "active-expired",
@@ -24,6 +25,7 @@ describe("workspace survey", () => {
         priority: 80,
         claimedBy: "chat-2",
         claimExpiresAt: "2026-07-25T11:59:00.000Z",
+        claimGeneration: 4,
       }),
       item({ id: "blocked", project: "stensibly", status: "blocked", priority: 60 }),
       item({ id: "done", project: "renderprove", status: "done", priority: 50 }),
@@ -67,6 +69,7 @@ describe("workspace survey", () => {
       status: "active",
       claimedBy: "chat-1",
       claimExpiresAt: "2026-07-25T12:30:00.000Z",
+      claimGeneration: 1,
     })];
 
     const first = buildWorkspaceSurvey(items, {
@@ -121,6 +124,7 @@ function item(overrides: Partial<Item> & Pick<Item, "id" | "project" | "status">
     nextAction: overrides.nextAction ?? "Continue the work.",
     claimedBy: overrides.claimedBy ?? null,
     claimExpiresAt: overrides.claimExpiresAt ?? null,
+    claimGeneration: overrides.claimGeneration ?? 0,
     version: overrides.version ?? 1,
     createdAt: overrides.createdAt ?? "2026-07-25T10:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-07-25T11:00:00.000Z",
