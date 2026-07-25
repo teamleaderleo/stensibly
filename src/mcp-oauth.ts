@@ -46,6 +46,11 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
     context.header("Cache-Control", "no-store");
     context.header("Referrer-Policy", "no-referrer");
     context.header("X-Content-Type-Options", "nosniff");
+    context.header("X-Frame-Options", "DENY");
+    context.header(
+      "Content-Security-Policy",
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    );
     await next();
   });
 
@@ -64,6 +69,15 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
         413,
         "invalid_client_metadata",
         "Registration request is too large",
+      );
+    }
+    const contentType = context.req.header("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      return oauthJsonError(
+        context,
+        400,
+        "invalid_client_metadata",
+        "Registration request must use application/json",
       );
     }
     let body: unknown;
@@ -402,7 +416,12 @@ async function exchangeAuthorizationCode(
       "Authorization code exchange failed",
     );
   }
-  return await tokenResponse(context, grant, refresh.raw, options);
+  return await tokenResponse(
+    context,
+    grant,
+    grant.scopes.includes("offline_access") ? refresh.raw : null,
+    options,
+  );
 }
 
 async function exchangeRefreshToken(
@@ -458,14 +477,15 @@ async function exchangeRefreshToken(
 async function tokenResponse(
   context: Context<StensiblyEnv>,
   grant: McpOAuthGrant,
-  refreshToken: string,
+  refreshToken: string | null,
   options: NormalizedMcpOAuthOptions,
 ) {
-  return context.json({
+  const payload: Record<string, string | number> = {
     access_token: await createAccessToken(grant, options),
     token_type: "Bearer",
     expires_in: options.accessTokenSeconds,
-    refresh_token: refreshToken,
     scope: grant.scopes.join(" "),
-  });
+  };
+  if (refreshToken) payload.refresh_token = refreshToken;
+  return context.json(payload);
 }
