@@ -33,6 +33,7 @@ function dispatch(
   store: StensiblyStore,
   itemId: string,
   idempotencyKey: string,
+  now = baseTime,
 ) {
   return dispatchNextWork(store, {
     actor: supervisor,
@@ -41,7 +42,7 @@ function dispatch(
     itemId,
     leaseSeconds: 900,
     idempotencyKey,
-  }, baseTime)!.run;
+  }, now)!.run;
 }
 
 function finishStartingRun(store: StensiblyStore, run: WorkRun, actor = runnerA): WorkRun {
@@ -186,15 +187,18 @@ describe("runner concurrency limits", () => {
   test("keeps concurrency server-owned on the remote runner endpoint", async () => {
     const store = new StensiblyStore(":memory:");
     try {
+      const remoteNow = new Date();
       dispatch(
         store,
         createItem(store, "alpha", "First remote work").id,
         "dispatch-remote-first",
+        remoteNow,
       );
       dispatch(
         store,
         createItem(store, "beta", "Second remote work").id,
         "dispatch-remote-second",
+        remoteNow,
       );
       const token = createApiToken(store, {
         name: "Workspace runner",
