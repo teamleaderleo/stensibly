@@ -187,11 +187,12 @@ function assemblePacket(
     ],
     omitted: { ...omitted },
   };
-  let packet = { ...base, characterCount: 0 };
-  let characterCount = JSON.stringify(packet).length;
-  packet = { ...base, characterCount };
-  characterCount = JSON.stringify(packet).length;
-  return { ...base, characterCount };
+  let characterCount = 0;
+  while (true) {
+    const next = JSON.stringify({ ...base, characterCount }).length;
+    if (next === characterCount) return { ...base, characterCount };
+    characterCount = next;
+  }
 }
 
 function normalizeOptions(options: RunnerContextPacketOptions): NormalizedOptions {
