@@ -63,6 +63,28 @@ describe("repository project contracts", () => {
     ))).toThrow();
   });
 
+  test("rejects credential-bearing repository identifiers before snapshot creation", () => {
+    const markdown = renderProjectContract(baseContract, baseContext);
+    const secret = "s3cr3t-value";
+    const repositories = [
+      `https://github.com/teamleaderleo/stensibly.git?token=${secret}`,
+      `https://github.com/teamleaderleo/stensibly.git#${secret}`,
+      `ssh://git@git.example.com/platform/stensibly.git?token=${secret}`,
+      `ssh://git@git.example.com/platform/stensibly.git#${secret}`,
+    ];
+
+    for (const repository of repositories) {
+      let caught: unknown;
+      try {
+        compileProjectContract(markdown.replace("teamleaderleo/stensibly", repository));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(String(caught)).not.toContain(secret);
+    }
+  });
+
   test("requires exactly one durable narrative section for each field", () => {
     const markdown = renderProjectContract(baseContract, baseContext);
     expect(() => compileProjectContract(markdown.replace(
@@ -122,11 +144,37 @@ describe("repository project contracts", () => {
       .toBeNull();
     expect(normalizeRepositoryRemote("https://user:secret@example.com/project/repo.git"))
       .toBeNull();
+    expect(normalizeRepositoryRemote("https://github.com/teamleaderleo/stensibly.git?token=secret"))
+      .toBeNull();
+    expect(normalizeRepositoryRemote("https://github.com/teamleaderleo/stensibly.git#secret"))
+      .toBeNull();
+    expect(normalizeRepositoryRemote("ssh://git@git.example.com/platform/Project.git?token=secret"))
+      .toBeNull();
+    expect(normalizeRepositoryRemote("git@git.example.com:platform/Project.git?token=secret"))
+      .toBeNull();
+    expect(normalizeRepositoryRemote("git@git.example.com:platform/Project.git#secret"))
+      .toBeNull();
     expect(normalizeRepositoryRemote("file:///tmp/repository.git"))
       .toBeNull();
     expect(normalizeRepositoryRemote("not a repository"))
       .toBeNull();
     expect(projectSlugFromRepository("teamleaderleo/My_Project.git"))
       .toBe("my_project");
+
+    const secret = "slug-secret";
+    for (const repository of [
+      `https://github.com/teamleaderleo/stensibly.git?token=${secret}`,
+      `git@git.example.com:platform/Project.git#${secret}`,
+    ]) {
+      let caught: unknown;
+      try {
+        projectSlugFromRepository(repository);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(String(caught)).toContain("Cannot derive a project slug");
+      expect(String(caught)).not.toContain(secret);
+    }
   });
 });

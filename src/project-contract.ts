@@ -293,7 +293,9 @@ export function normalizeRepositoryRemote(remote: string): string | null {
   if (scp) {
     const user = scp[1];
     const host = scp[2]?.toLowerCase();
-    const path = stripGitSuffix(scp[3] ?? "");
+    const rawPath = scp[3] ?? "";
+    if (/[?#]/.test(rawPath)) return null;
+    const path = stripGitSuffix(rawPath);
     if (!user || !host || !path) return null;
     if (host === "github.com" && /^[^/]+\/[^/]+$/.test(path)) return path;
     return `ssh://${user}@${host}/${path}`;
@@ -303,6 +305,7 @@ export function normalizeRepositoryRemote(remote: string): string | null {
     const url = new URL(value);
     const protocol = url.protocol.toLowerCase();
     if (!new Set(["http:", "https:", "ssh:"]).has(protocol)) return null;
+    if (url.search || url.hash) return null;
     if (url.password || ((protocol === "http:" || protocol === "https:") && url.username)) {
       return null;
     }
@@ -312,8 +315,6 @@ export function normalizeRepositoryRemote(remote: string): string | null {
       return path;
     }
     url.pathname = `/${path}`;
-    url.hash = "";
-    url.search = "";
     return url.toString().replace(/\/$/, "");
   } catch {
     return /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
@@ -324,9 +325,8 @@ export function normalizeRepositoryRemote(remote: string): string | null {
 
 export function projectSlugFromRepository(repository: string): string {
   const normalized = normalizeRepositoryRemote(repository);
-  if (!normalized) throw new Error(`Cannot derive a project slug from repository: ${repository}`);
-  const withoutQuery = normalized.split(/[?#]/, 1)[0] ?? normalized;
-  const candidate = stripGitSuffix(withoutQuery.split("/").filter(Boolean).at(-1) ?? "");
+  if (!normalized) throw new Error("Cannot derive a project slug from repository identifier");
+  const candidate = stripGitSuffix(normalized.split("/").filter(Boolean).at(-1) ?? "");
   const slug = candidate
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
@@ -400,6 +400,7 @@ function isCanonicalRepositoryIdentifier(value: string): boolean {
     const url = new URL(value);
     const protocol = url.protocol.toLowerCase();
     if (!new Set(["http:", "https:", "ssh:"]).has(protocol)) return false;
+    if (url.search || url.hash) return false;
     if (!url.hostname || !stripGitSuffix(url.pathname.replace(/^\/+/, ""))) return false;
     if (url.password) return false;
     return protocol === "ssh:" || !url.username;
