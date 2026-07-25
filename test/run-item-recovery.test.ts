@@ -59,7 +59,10 @@ describe("run item recovery", () => {
         claimedBy: null,
         claimExpiresAt: null,
       });
-      const event = store.listEvents(item.id).findLast((entry) => entry.type === "run.abandoned");
+      const event = store.listEvents(item.id)
+        .slice()
+        .reverse()
+        .find((entry) => entry.type === "run.abandoned");
       expect(event?.payload).toMatchObject({
         runId: queued.run.id,
         fromStatus: "queued",
@@ -176,7 +179,10 @@ describe("run item recovery", () => {
         claimedBy: null,
         claimExpiresAt: null,
       });
-      const event = store.listEvents(item.id).findLast((entry) => entry.type === "run.abandoned");
+      const event = store.listEvents(item.id)
+        .slice()
+        .reverse()
+        .find((entry) => entry.type === "run.abandoned");
       expect(event?.payload).toMatchObject({
         runId: retried.id,
         itemClaimReleased: true,
