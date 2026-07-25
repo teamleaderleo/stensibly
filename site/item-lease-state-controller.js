@@ -214,7 +214,7 @@ export function installLeaseStateController() {
       item.status,
       item.claimedBy || '',
       item.claimExpiresAt || '',
-      context.fingerprint,
+      context.renderFingerprint,
       String(Math.floor(Date.now() / 60_000)),
     ].join('\u0000');
     const existing = findSection(root, 'Lease renewal');
@@ -320,7 +320,11 @@ function renderClaimAcquisitionState(body, item, actor) {
   const form = section?.querySelector('.detail-claim-form');
   if (!(section instanceof HTMLElement) || !(form instanceof HTMLFormElement)) return;
   section.querySelector('.detail-claim-renewal-note')?.remove();
-  const liveClaim = item.status === 'active' && item.claimedBy;
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit instanceof HTMLButtonElement) submit.textContent = 'claim item';
+
+  const lease = classifyLease(item);
+  const liveClaim = item.status === 'active' && item.claimedBy && lease.state !== 'expired';
   form.hidden = Boolean(liveClaim);
   if (!liveClaim) return;
 
@@ -399,7 +403,8 @@ function readContext() {
     canWrite,
     endpoint,
     token,
-    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token ? 'token' : 'no-token'}\u0000${actorFingerprint}`,
+    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token}\u0000${actorFingerprint}`,
+    renderFingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token ? 'token' : 'no-token'}\u0000${actorFingerprint}`,
   };
 }
 
