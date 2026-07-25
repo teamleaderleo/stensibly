@@ -229,7 +229,7 @@ describe("project attachment REST and MCP", () => {
     expect(visible.status).toBe(200);
     const visibleText = await visible.text();
     expect(visibleText).toContain("stensibly.project-attachment");
-    expect(visibleText).toContain("not a live authority grant");
+    expect(visibleText).toContain("remain server-owned state");
 
     const hidden = await app.request("/mcp", {
       method: "POST",
