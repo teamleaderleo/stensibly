@@ -21,6 +21,27 @@ export interface ItemReservation {
   updatedAt: string;
 }
 
+export type ItemRunStatus = "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+
+export interface ItemRun {
+  id: string;
+  itemId: string;
+  actorId: string;
+  harness: string;
+  model: string | null;
+  externalRunId: string | null;
+  repository: string | null;
+  branch: string | null;
+  worktree: string | null;
+  status: ItemRunStatus;
+  childAgentCount: number | null;
+  toolCallCount: number | null;
+  startedAt: string;
+  lastHeartbeatAt: string;
+  endedAt: string | null;
+  outcome: string | null;
+}
+
 export interface ListWorkInput {
   project?: string;
   status?: ItemStatus;

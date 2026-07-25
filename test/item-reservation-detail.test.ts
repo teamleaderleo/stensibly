@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { getFunctionName, type FunctionReference } from "convex/server";
 import { ConvexWorkLedger } from "../src/convex-ledger.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
@@ -26,9 +27,9 @@ afterEach(() => {
   store = null;
 });
 
-describe("item reservation detail composition", () => {
-  test("combines canonical item detail with a trusted-time reservation query", async () => {
-    const calls: Array<Record<string, unknown>> = [];
+describe("hosted item detail composition", () => {
+  test("combines bounded canonical detail with the reservation query", async () => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const reservations = [{
       id: "res_1",
       resource: "gpu:benchmark-pool",
@@ -42,13 +43,34 @@ describe("item reservation detail composition", () => {
       createdAt: "2026-07-25T12:00:00.000Z",
       updatedAt: "2026-07-25T12:00:00.000Z",
     }];
+    const runs = [{
+      id: "run_1",
+      itemId: item.id,
+      actorId: "alpha",
+      harness: "codex",
+      model: "gpt-5.6",
+      externalRunId: null,
+      repository: "teamleaderleo/stensibly",
+      branch: "feat/agent-run-visibility-v2",
+      worktree: null,
+      status: "running" as const,
+      childAgentCount: 2,
+      toolCallCount: 14,
+      startedAt: "2026-07-25T12:00:00.000Z",
+      lastHeartbeatAt: "2026-07-25T12:01:00.000Z",
+      endedAt: null,
+      outcome: null,
+    }];
     const ledger = new ConvexWorkLedger({
       client: {
-        query: async (_reference, args) => {
-          calls.push(args);
-          return calls.length === 1
-            ? { item, events: [], artifacts: [], runs: [], dependencies: [] }
-            : reservations;
+        query: async (reference: FunctionReference<"query">, args) => {
+          const name = getFunctionName(reference);
+          calls.push({ name, args });
+          if (name === "items:get") {
+            return { item, events: [], artifacts: [], runs, dependencies: [] };
+          }
+          if (name === "itemReservations:list") return reservations;
+          throw new Error(`Unexpected query ${name}`);
         },
         mutation: async () => {
           throw new Error("not used");
@@ -61,33 +83,33 @@ describe("item reservation detail composition", () => {
     const before = Date.now();
     const detail = await ledger.getItem(item.id);
     const after = Date.now();
-    const itemCall = calls[0];
-    const reservationCall = calls[1];
-    if (!itemCall || !reservationCall) {
-      throw new Error("Expected both item and reservation queries");
-    }
 
     expect(detail).toEqual({
       item,
       events: [],
       artifacts: [],
-      runs: [],
       dependencies: [],
       reservations,
+      runs,
     });
-    expect(calls).toHaveLength(2);
-    expect(itemCall).toMatchObject({
+    expect(calls.map((call) => call.name)).toEqual([
+      "items:get",
+      "itemReservations:list",
+    ]);
+    const itemCall = calls.find((call) => call.name === "items:get")!;
+    const reservationCall = calls.find((call) => call.name === "itemReservations:list")!;
+    expect(itemCall.args).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
       id: item.id,
     });
-    expect(reservationCall).toMatchObject({
+    expect(reservationCall.args).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
       itemId: item.id,
     });
-    expect(reservationCall.now as number).toBeGreaterThanOrEqual(before);
-    expect(reservationCall.now as number).toBeLessThanOrEqual(after);
+    expect(reservationCall.args.now as number).toBeGreaterThanOrEqual(before);
+    expect(reservationCall.args.now as number).toBeLessThanOrEqual(after);
   });
 
   test("keeps local REST item detail explicit and compatible", async () => {
@@ -106,6 +128,7 @@ describe("item reservation detail composition", () => {
     expect(await response.json()).toMatchObject({
       dependencies: [],
       reservations: [],
+      runs: [],
     });
   });
 });

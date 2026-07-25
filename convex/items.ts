@@ -19,11 +19,11 @@ import {
   publicArtifact,
   publicEvent,
   publicItem,
-  publicRun,
   requireMatchingIdempotency,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import { readPublicItemRuns } from "./lib/runVisibility";
 import { mutation, query } from "./lib/server";
 import {
   actorValidator,
@@ -188,10 +188,7 @@ export const get = query({
         .query("artifacts")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
         .collect(),
-      ctx.db
-        .query("runs")
-        .withIndex("by_item_status", (q) => q.eq("itemId", item._id))
-        .collect(),
+      readPublicItemRuns(ctx, item),
       readVisibleDependencies(ctx, item),
     ]);
     const visibleEvents = await filterVisibleDependencyEvents(
@@ -211,7 +208,7 @@ export const get = query({
         ...publicArtifact(artifact),
         itemId: item.externalId,
       })),
-      runs: runs.map((run) => ({ ...publicRun(run), itemId: item.externalId })),
+      runs,
       dependencies,
     };
   },

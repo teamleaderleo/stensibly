@@ -20,6 +20,9 @@ export const convexApi = {
   itemReservations: {
     list: queryRef("itemReservations:list"),
   },
+  itemRuns: {
+    list: queryRef("itemRuns:list"),
+  },
   completionContinuations: {
     complete: mutationRef("completionContinuations:complete"),
   },
