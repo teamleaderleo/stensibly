@@ -14,8 +14,8 @@ beforeEach(() => {
 
 afterEach(() => store.close());
 
-describe("local item reservation compatibility", () => {
-  test("returns an explicit empty reservation collection", async () => {
+describe("local item coordination compatibility", () => {
+  test("returns explicit empty coordination collections", async () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -29,8 +29,10 @@ describe("local item reservation compatibility", () => {
     const detail = await response.json() as {
       dependencies: unknown[];
       reservations: unknown[];
+      runs: unknown[];
     };
     expect(detail.dependencies).toEqual([]);
     expect(detail.reservations).toEqual([]);
+    expect(detail.runs).toEqual([]);
   });
 });
