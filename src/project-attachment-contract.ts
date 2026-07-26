@@ -56,6 +56,7 @@ export interface CanonicalProjectAttachmentContract {
   concurrency: { project: number; global: number };
   autonomousActions: ProjectAttachmentAction[];
   approvalRequired: ProjectAttachmentAction[];
+  /** Ordered opaque verification-profile identifiers; never executable command text. */
   checks: string[];
   body: ProjectAttachmentBody;
 }
@@ -129,6 +130,7 @@ export function parseProjectAttachmentContract(
 ): ProjectAttachmentParseResult {
   const errors: Errors = [];
   const normalized = content.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+
   if (new TextEncoder().encode(normalized).byteLength > MAX_BYTES) {
     error(errors, "document_too_large", "$", `${PROJECT_ATTACHMENT_FILENAME} exceeds 128 KB`);
   }
@@ -148,6 +150,7 @@ export function parseProjectAttachmentContract(
   if (!raw || !body || !source || errors.length) return failed(errors);
   const contract = canonicalize(raw, body, errors);
   if (!contract || errors.length) return failed(errors);
+
   return {
     ok: true,
     value: { contract, source, digestInput: projectAttachmentDigestInput(contract) },
@@ -197,23 +200,11 @@ export function compareProjectAttachmentContracts(
 ): ProjectAttachmentContractDiff {
   const repositories = setChange(previous.repositories, proposed.repositories);
   const runnerProfiles = setChange(previous.runnerProfiles, proposed.runnerProfiles);
-  const autonomousActions = setChange(
-    previous.autonomousActions,
-    proposed.autonomousActions,
-  );
-  const approvalRequired = setChange(
-    previous.approvalRequired,
-    proposed.approvalRequired,
-  );
+  const autonomousActions = setChange(previous.autonomousActions, proposed.autonomousActions);
+  const approvalRequired = setChange(previous.approvalRequired, proposed.approvalRequired);
   const checks = setChange(previous.checks, proposed.checks, true);
-  const projectConcurrency = numberChange(
-    previous.concurrency.project,
-    proposed.concurrency.project,
-  );
-  const globalConcurrency = numberChange(
-    previous.concurrency.global,
-    proposed.concurrency.global,
-  );
+  const projectConcurrency = numberChange(previous.concurrency.project, proposed.concurrency.project);
+  const globalConcurrency = numberChange(previous.concurrency.global, proposed.concurrency.global);
   const versionIncompatible = previous.version !== proposed.version;
   const projectChanged = previous.project !== proposed.project;
   const bodyChanged = JSON.stringify(previous.body) !== JSON.stringify(proposed.body);
@@ -223,8 +214,8 @@ export function compareProjectAttachmentContracts(
     ...runnerProfiles.added.map((value) => `runner profile added: ${value}`),
     ...autonomousActions.added.map((value) => `autonomous action added: ${value}`),
     ...approvalRequired.removed.map((value) => `approval requirement removed: ${value}`),
-    ...checks.removed.map((value) => `verification command removed: ${value}`),
-    ...(checks.orderChanged ? ["verification command order changed"] : []),
+    ...checks.removed.map((value) => `verification profile removed: ${value}`),
+    ...(checks.orderChanged ? ["verification profile order changed"] : []),
     ...(projectConcurrency === "increased" ? ["project concurrency increased"] : []),
     ...(globalConcurrency === "increased" ? ["global concurrency increased"] : []),
     ...(projectChanged ? ["project identity changed"] : []),
@@ -235,7 +226,7 @@ export function compareProjectAttachmentContracts(
     ...runnerProfiles.removed.map((value) => `runner profile removed: ${value}`),
     ...autonomousActions.removed.map((value) => `autonomous action removed: ${value}`),
     ...approvalRequired.added.map((value) => `approval requirement added: ${value}`),
-    ...checks.added.map((value) => `verification command added: ${value}`),
+    ...checks.added.map((value) => `verification profile added: ${value}`),
     ...(projectConcurrency === "decreased" ? ["project concurrency decreased"] : []),
     ...(globalConcurrency === "decreased" ? ["global concurrency decreased"] : []),
   ];
@@ -286,6 +277,7 @@ function parseFrontMatter(lines: string[], errors: Errors): RawFrontMatter | nul
   const result: RawFrontMatter = {};
   const seen = new Set<string>();
   let index = 0;
+
   while (index < lines.length) {
     const line = lines[index] ?? "";
     if (!line.trim()) {
@@ -303,6 +295,7 @@ function parseFrontMatter(lines: string[], errors: Errors): RawFrontMatter | nul
       index += 1;
       continue;
     }
+
     const rawKey = match[1] ?? "";
     const key = rawKey.toLowerCase().replace(/-/g, "_");
     if (seen.has(key)) {
@@ -342,6 +335,7 @@ function parseFrontMatter(lines: string[], errors: Errors): RawFrontMatter | nul
     }
     index += 1;
   }
+
   return errors.some((item) => item.code === "malformed_front_matter") ? null : result;
 }
 
@@ -353,6 +347,7 @@ function parseConcurrency(
   const value: Record<string, string> = {};
   const seen = new Set<string>();
   let index = start;
+
   while (index < lines.length) {
     const line = lines[index] ?? "";
     if (!line.trim()) {
@@ -382,6 +377,7 @@ function parseConcurrency(
     }
     index += 1;
   }
+
   return { value, next: index };
 }
 
@@ -393,6 +389,7 @@ function parseList(
 ): { values: string[]; next: number } {
   const values: string[] = [];
   let index = start;
+
   while (index < lines.length) {
     const line = lines[index] ?? "";
     if (!line.trim()) {
@@ -409,6 +406,7 @@ function parseList(
     values.push(scalar(match[1] ?? "", `front_matter.${key}[${values.length}]`, errors));
     index += 1;
   }
+
   return { values, next: index };
 }
 
@@ -445,6 +443,7 @@ function parseBody(input: string, errors: Errors): ProjectAttachmentBody | null 
   const lines = input.split("\n");
   const found: Array<{ heading: string; index: number }> = [];
   let fence: { character: "`" | "~"; length: number } | null = null;
+
   for (const [index, line] of lines.entries()) {
     const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     const run = delimiter?.[1] ?? "";
@@ -470,6 +469,7 @@ function parseBody(input: string, errors: Errors): ProjectAttachmentBody | null 
     }
     found.push({ heading, index });
   }
+
   for (const heading of BODY_HEADINGS) {
     const count = found.filter((entry) => entry.heading === heading).length;
     if (count === 0) {
@@ -512,6 +512,7 @@ function parseBody(input: string, errors: Errors): ProjectAttachmentBody | null 
     sections[key] = text;
   }
   if (errors.length) return null;
+
   return {
     goal: sections.goal ?? "",
     boundaries: sections.boundaries ?? "",
@@ -554,7 +555,7 @@ function canonicalize(
     raw.approval_required ?? [], "front_matter.approval_required", errors,
   );
   const checks = list(
-    raw.checks ?? [], command, "front_matter.checks", 1, 24, errors, false,
+    raw.checks ?? [], checkProfile, "front_matter.checks", 1, 24, errors, false,
   );
   const projectConcurrency = integer(
     raw.concurrency?.project ?? "", 1, 16, "front_matter.concurrency.project", errors,
@@ -569,6 +570,7 @@ function canonicalize(
   ) {
     error(errors, "invalid_value", "front_matter.concurrency.project", "Project concurrency cannot exceed global concurrency");
   }
+
   const approvalSet = new Set(approvalRequired);
   for (const action of REQUIRED_APPROVAL_ACTIONS) {
     if (!approvalSet.has(action)) {
@@ -579,6 +581,7 @@ function canonicalize(
   if (overlap.length) {
     error(errors, "invalid_value", "front_matter.autonomous_actions", `Actions cannot be both autonomous and approval-required: ${overlap.join(", ")}`);
   }
+
   if (
     errors.length ||
     version === null ||
@@ -588,6 +591,7 @@ function canonicalize(
   ) {
     return null;
   }
+
   return {
     version: PROJECT_ATTACHMENT_VERSION,
     project,
@@ -608,6 +612,7 @@ function normalizeSource(
   const path = sourcePath(input.path);
   const repo = input.repository === undefined ? undefined : repository(input.repository);
   const revision = input.revision === undefined ? undefined : simple(input.revision, 200);
+
   if (!path || secretShaped(input.path)) {
     error(
       errors,
@@ -623,6 +628,7 @@ function normalizeSource(
     error(errors, "invalid_value", "source.revision", "Source revision must be bounded credential-free text");
   }
   if (errors.length || !path) return null;
+
   return {
     path,
     ...(repo ? { repository: repo } : {}),
@@ -674,23 +680,11 @@ function namedIdentifier(value: string): string | null {
     : null;
 }
 
-function command(value: string): string | null {
-  const normalized = simple(value, 240)?.replace(/\s+/g, " ");
-  if (
-    !normalized ||
-    secretShaped(normalized) ||
-    /[;&|`<>]|\$\(|\$\{|\\\s*$/.test(normalized)
-  ) {
-    return null;
-  }
-  if (
-    /^[A-Za-z_][A-Za-z0-9_]*=/.test(normalized) ||
-    !/^[A-Za-z0-9_./:@%+=,* -]+$/.test(normalized)
-  ) {
-    return null;
-  }
-  const executable = normalized.split(" ")[0] ?? "";
-  return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(executable) ? normalized : null;
+function checkProfile(value: string): string | null {
+  const normalized = simple(value, 64)?.toLowerCase();
+  return normalized && /^[a-z0-9][a-z0-9._-]*$/.test(normalized)
+    ? normalized
+    : null;
 }
 
 function simple(value: string, maximum: number): string | null {
