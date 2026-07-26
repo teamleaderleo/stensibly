@@ -55,6 +55,7 @@ const publicItemValidator = v.object({
   nextAction: nullableString,
   claimedBy: nullableString,
   claimExpiresAt: nullableString,
+  claimGeneration: v.number(),
   version: v.number(),
   createdAt: v.string(),
   updatedAt: v.string(),

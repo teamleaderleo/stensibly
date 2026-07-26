@@ -18,9 +18,9 @@ import type {
   ResolveContinuationInput,
 } from "./continuations.js";
 import type {
-  ActorActionInput,
   AttachWorkArtifactInput,
   BlockWorkInput,
+  ClaimActionInput,
   ClaimWorkInput,
   CompleteWorkInput,
   CreateWorkInput,
@@ -28,6 +28,7 @@ import type {
   ItemReservation,
   ListWorkInput,
   RecordWorkEventInput,
+  RenewClaimInput,
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
@@ -98,7 +99,7 @@ export class ConvexWorkLedger implements
     return await this.client.mutation(convexApi.claims.acquire, this.args(input)) as Awaited<ReturnType<WorkLedger["claimWork"]>>;
   }
 
-  async renewClaim(input: ClaimWorkInput) {
+  async renewClaim(input: RenewClaimInput) {
     return await this.client.mutation(convexApi.claims.renew, this.args(input)) as Awaited<ReturnType<WorkLedger["renewClaim"]>>;
   }
 
@@ -114,7 +115,7 @@ export class ConvexWorkLedger implements
     return await this.client.mutation(convexApi.items.unblock, this.args(input)) as Awaited<ReturnType<WorkLedger["unblockWork"]>>;
   }
 
-  async releaseWork(input: ActorActionInput) {
+  async releaseWork(input: ClaimActionInput) {
     return await this.client.mutation(convexApi.claims.release, this.args(input)) as Awaited<ReturnType<WorkLedger["releaseWork"]>>;
   }
 

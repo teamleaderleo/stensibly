@@ -53,7 +53,7 @@ describe("claim leases", () => {
     });
   });
 
-  test("only the live claimant can renew a lease and renewal advances generation", () => {
+  test("only the live claimant with current generation can renew a lease", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -62,14 +62,41 @@ describe("claim leases", () => {
       actor: leo,
     });
     const claimed = store.claimItem(item.id, browserAgent, 60);
-    const renewed = renewClaim(store, item.id, browserAgent, 3600, "renew-1");
+    const renewed = renewClaim(
+      store,
+      item.id,
+      browserAgent,
+      3600,
+      claimed.claimGeneration,
+      "renew-1",
+    );
 
     expect(new Date(renewed.claimExpiresAt ?? 0).getTime()).toBeGreaterThan(
       new Date(claimed.claimExpiresAt ?? 0).getTime(),
     );
     expect(renewed.claimGeneration).toBe(claimed.claimGeneration + 1);
-    expect(renewClaim(store, item.id, browserAgent, 3600, "renew-1")).toEqual(renewed);
-    expect(() => renewClaim(store, item.id, leo, 3600)).toThrow(ConflictError);
+    expect(renewClaim(
+      store,
+      item.id,
+      browserAgent,
+      3600,
+      claimed.claimGeneration,
+      "renew-1",
+    )).toEqual(renewed);
+    expect(() => renewClaim(
+      store,
+      item.id,
+      browserAgent,
+      3600,
+      claimed.claimGeneration,
+    )).toThrow(ConflictError);
+    expect(() => renewClaim(
+      store,
+      item.id,
+      leo,
+      3600,
+      renewed.claimGeneration,
+    )).toThrow(ConflictError);
     expect(store.listEvents(item.id).map((event) => event.type)).toEqual([
       "item.created",
       "claim.created",

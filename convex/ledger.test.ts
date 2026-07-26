@@ -104,13 +104,13 @@ describe("Convex ledger", () => {
     const t = convexTest(schema, modules);
     const item = await createItem(t, "Outlive an obsolete timer");
 
-    await t.mutation(convexApi.claims.acquire, {
+    const claimed = await t.mutation(convexApi.claims.acquire, {
       serviceSecret: secret,
       workspace,
       id: item.id,
       actor: alpha,
       leaseSeconds: 30,
-    });
+    }) as any;
     await vi.advanceTimersByTimeAsync(10_000);
     await t.mutation(convexApi.claims.renew, {
       serviceSecret: secret,
@@ -118,6 +118,7 @@ describe("Convex ledger", () => {
       id: item.id,
       actor: alpha,
       leaseSeconds: 60,
+      expectedClaimGeneration: claimed.claimGeneration,
     });
 
     await vi.advanceTimersByTimeAsync(25_000);
@@ -139,6 +140,76 @@ describe("Convex ledger", () => {
     expect(expired.item.status).toBe("ready");
     expect(expired.events.filter((event: any) => event.type === "claim.expired")).toHaveLength(1);
     vi.useRealTimers();
+  });
+
+  test("same-actor stale generations cannot renew or release hosted claims", async () => {
+    const t = convexTest(schema, modules);
+    const item = await createItem(t, "Fence recycled actor identity");
+    const claimed = await t.mutation(convexApi.claims.acquire, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      leaseSeconds: 900,
+    }) as any;
+    const renewed = await t.mutation(convexApi.claims.renew, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      leaseSeconds: 1800,
+      expectedClaimGeneration: claimed.claimGeneration,
+    }) as any;
+
+    await expect(t.mutation(convexApi.claims.renew, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      leaseSeconds: 1800,
+      expectedClaimGeneration: claimed.claimGeneration,
+    })).rejects.toThrow(/current claim generation/);
+    await expect(t.mutation(convexApi.claims.release, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: claimed.claimGeneration,
+    })).rejects.toThrow(/current claim generation/);
+
+    const released = await t.mutation(convexApi.claims.release, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: renewed.claimGeneration,
+      idempotencyKey: "release-current-generation",
+    }) as any;
+    expect(released).toMatchObject({ status: "ready", claimGeneration: renewed.claimGeneration + 1 });
+    expect(await t.mutation(convexApi.claims.release, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: renewed.claimGeneration,
+      idempotencyKey: "release-current-generation",
+    })).toEqual(released);
+
+    const reclaimed = await t.mutation(convexApi.claims.acquire, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      leaseSeconds: 900,
+    }) as any;
+    expect(reclaimed.claimGeneration).toBe(released.claimGeneration + 1);
+    await expect(t.mutation(convexApi.claims.release, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: renewed.claimGeneration,
+    })).rejects.toThrow(/current claim generation/);
   });
 
   test("shared reservations enforce capacity independently from work claims", async () => {

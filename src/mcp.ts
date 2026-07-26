@@ -29,6 +29,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
+        "Use the current claim generation returned by the server when renewing or releasing work.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
@@ -163,8 +164,8 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "renew_claim",
     {
-      description: "Extend a live claim held by the same actor.",
-      inputSchema: claimSchema(),
+      description: "Extend a live claim held by the same actor using the current server-returned claim generation.",
+      inputSchema: renewClaimInputSchema(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.renewClaim(input)),
@@ -221,8 +222,8 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "release_work",
     {
-      description: "Release an item currently claimed by this actor and return it to ready work.",
-      inputSchema: actorActionSchema(),
+      description: "Release an item currently claimed by this actor using the current server-returned claim generation.",
+      inputSchema: claimActionSchema(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.releaseWork(input)),
@@ -296,6 +297,10 @@ function idempotencySchema() {
   return z.string().trim().min(1).max(240).optional();
 }
 
+function expectedClaimGenerationSchema() {
+  return z.number().int().min(1);
+}
+
 function actorActionSchema() {
   return {
     id: idSchema(),
@@ -304,9 +309,23 @@ function actorActionSchema() {
   };
 }
 
+function claimActionSchema() {
+  return {
+    ...actorActionSchema(),
+    expectedClaimGeneration: expectedClaimGenerationSchema(),
+  };
+}
+
 function claimSchema() {
   return {
     ...actorActionSchema(),
+    leaseSeconds: z.number().int().min(30).max(86_400).default(900),
+  };
+}
+
+function renewClaimInputSchema() {
+  return {
+    ...claimActionSchema(),
     leaseSeconds: z.number().int().min(30).max(86_400).default(900),
   };
 }

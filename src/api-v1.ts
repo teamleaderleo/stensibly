@@ -19,13 +19,14 @@ import {
 import type { WorkLedger } from "./ledger.js";
 import { registerProjectAttachmentApi } from "./project-attachment-api.js";
 import {
-  actorActionSchema,
   blockItemSchema,
+  claimActionSchema,
   claimItemSchema,
   createItemSchema,
   handoffItemSchema,
   itemStatuses,
   recordEventSchema,
+  renewClaimSchema,
   unblockItemSchema,
 } from "./schemas.js";
 import type { ItemStatus } from "./store.js";
@@ -196,7 +197,7 @@ export function createApiV1(
     const detail = await ledger.getItem(id);
     const denied = requireHttpAccess(context, "write", detail.item.project);
     if (denied) return denied;
-    const parsed = claimItemSchema.safeParse(await readJson(context.req.raw));
+    const parsed = renewClaimSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     return context.json({ item: await ledger.renewClaim(actionInput(context, id, parsed.data)) });
   });
@@ -236,7 +237,7 @@ export function createApiV1(
     const detail = await ledger.getItem(id);
     const denied = requireHttpAccess(context, "write", detail.item.project);
     if (denied) return denied;
-    const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
+    const parsed = claimActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     return context.json({ item: await ledger.releaseWork(actionInput(context, id, parsed.data)) });
   });
