@@ -8,7 +8,8 @@ const declaration = await Bun.file(new URL("../site/item-handoff.d.ts", import.m
 const styles = await Bun.file(new URL("../site/item-handoff.css", import.meta.url)).text();
 
 describe("dashboard handoff integration", () => {
-  test("loads the action and readable history as isolated side effects", () => {
+  test("loads the action, generation sidecar, and readable history as isolated side effects", () => {
+    expect(claimHelper).toContain("import './item-semantic-generation-controller.js'");
     expect(claimHelper).toContain("import './item-handoff-controller.js'");
     expect(claimHelper).toContain("import './item-handoff-history-controller.js'");
     expect(controller).toContain("if (typeof document !== 'undefined') installHandoffController()");
@@ -17,11 +18,14 @@ describe("dashboard handoff integration", () => {
     expect(historyController).toContain("handoffEventLabel");
   });
 
-  test("uses the exact idempotent REST handoff contract", () => {
+  test("uses the exact idempotent fenced REST handoff contract", () => {
+    expect(controller).toContain("readSemanticClaimGeneration(body, itemId)");
     expect(controller).toContain("/api/v1/items/${encodeURIComponent(input.id)}/handoff");
     expect(controller).toContain("method: 'POST'");
+    expect(controller).toContain("signal: AbortSignal.timeout(15_000)");
     expect(controller).toContain("'idempotency-key': idempotencyKey");
     expect(controller).toContain("actor: input.actor");
+    expect(controller).toContain("expectedClaimGeneration: input.expectedClaimGeneration");
     expect(controller).toContain("summary: input.summary");
     expect(controller).toContain("nextAction: input.nextAction");
     expect(controller).toContain("...(input.toActorId ? { toActorId: input.toActorId } : {})");
@@ -36,14 +40,16 @@ describe("dashboard handoff integration", () => {
     expect(controller).toContain("routing context only; it does not claim the item");
     expect(helper).toContain("status !== 'ready'");
     expect(helper).toContain("item.claimedBy !== null || item.claimExpiresAt !== null");
+    expect(helper).toContain("item.claimGeneration !== previousGeneration + 1");
   });
 
-  test("gates on session-only write context and current actor", () => {
+  test("gates on session-only write context, current actor, and current generation", () => {
     expect(controller).toContain("sessionStorage.getItem(ACTOR_STORAGE_KEY)");
     expect(controller).toContain("sessionStorage.getItem(TOKEN_STORAGE_KEY)");
     expect(controller).toContain("localStorage.getItem(ENDPOINT_STORAGE_KEY)");
     expect(controller).toContain("panel?.dataset.mode === 'write'");
-    expect(controller).toContain("validateHandoffInput(itemId, summary.value, nextAction.value, toActorId.value, context.actor)");
+    expect(controller).toContain("context.actor");
+    expect(controller).toContain("readSemanticClaimGeneration(body, itemId)");
     expect(controller).not.toContain("STENSIBLY_SERVICE_SECRET");
   });
 
@@ -53,6 +59,8 @@ describe("dashboard handoff integration", () => {
     expect(controller).toContain("stateForStatusChange(currentStatus, formState)");
     expect(controller).toContain("['conflict', 'retry available'].includes(previous.phase)");
     expect(controller).toContain("appendStoredError(section)");
+    expect(controller).toContain("readContext().fingerprint === expectedContext");
+    expect(controller).toContain("tokenDiscriminator(token)");
     expect(controller).toContain("gate.invalidate()");
     expect(controller).toContain("idempotency.reset()");
   });
@@ -68,6 +76,7 @@ describe("dashboard handoff integration", () => {
     expect(controller).toContain("formatValidationIssues");
     expect(controller).toContain("safeRequestId");
     expect(controller).toContain("response.status === 409");
+    expect(controller).toContain("holder, and claim generation");
     expect(controller).toContain("Retry the unchanged form to reuse the same idempotency key");
     expect(controller).toContain("boardRefreshButton.click()");
     expect(controller).toContain("refreshButton.click()");
@@ -77,6 +86,7 @@ describe("dashboard handoff integration", () => {
 
   test("keeps the type and responsive presentation contracts in sync", () => {
     expect(declaration).toContain("action: 'handoff'");
+    expect(declaration).toContain("expectedClaimGeneration: number");
     expect(declaration).toContain("toActorId?: string");
     expect(controller).toContain("/item-handoff.css");
     expect(styles).toContain(".detail-handoff-form");
