@@ -5,6 +5,7 @@ export const LEASE_RENEW_OPERATION = 'renew';
 
 const authorityStates = new Set(['unclaimed', 'live', 'expiring', 'expired', 'superseded']);
 const authoritySources = new Set(['claim', 'dispatcher', 'none']);
+const credentialShape = /stn\.tok_/i;
 
 export function readRenewalAuthority(payload, expectedItemId = '') {
   if (!isRecord(payload) || !isRecord(payload.item)) {
@@ -194,7 +195,7 @@ function operationList(value) {
       !operation
       || operation.length > 80
       || /[\u0000-\u001f\u007f]/.test(operation)
-      || /stn\.tok_/i.test(operation)
+      || hasCredentialShape(operation)
     ) return null;
     operations.push(operation);
   }
@@ -205,7 +206,7 @@ function nullableSafeString(value, maxLength) {
   if (value === null) return null;
   if (typeof value !== 'string') return undefined;
   const output = value.trim();
-  if (!output || output.length > maxLength || /stn\.tok_/i.test(output)) return undefined;
+  if (!output || output.length > maxLength || hasCredentialShape(output)) return undefined;
   return output;
 }
 
@@ -218,9 +219,13 @@ function nullableTimestamp(value) {
 function requiredString(value, message, maxLength) {
   const output = typeof value === 'string' ? value.trim() : '';
   if (!output) throw new TypeError(message);
-  if (/stn\.tok_/i.test(output)) throw new TypeError('Credential-shaped values are not valid renewal fields.');
+  if (hasCredentialShape(output)) throw new TypeError('Credential-shaped values are not valid renewal fields.');
   if (output.length > maxLength) throw new TypeError(`${message.replace(/\.$/, '')} (maximum ${maxLength} characters).`);
   return output;
+}
+
+function hasCredentialShape(value) {
+  return credentialShape.test(value);
 }
 
 function nonNegativeInteger(value) {
