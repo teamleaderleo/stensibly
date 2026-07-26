@@ -1,5 +1,6 @@
 import { runCustodianPolicy, type CustodianMode } from "./custodian-policy.js";
 import { reportHasFindings } from "./custodian-report.js";
+import { validateOptionalProjectScope } from "./project-scope.js";
 import { StensiblyStore } from "./store.js";
 
 export interface CustodianCliOptions {
@@ -73,9 +74,8 @@ export function parseCustodianArgs(args: string[]): CustodianCliOptions {
     throw new Error(`Unknown argument: ${argument}`);
   }
 
-  if (options.project && !/^[a-z0-9][a-z0-9-_]*$/.test(options.project)) {
-    throw new Error("--project must be a lowercase project slug");
-  }
+  const project = validateOptionalProjectScope(options.project, "--project");
+  if (project !== undefined) options.project = project;
   if (options.maxActions < 0 || options.maxActions > 10_000) {
     throw new Error("--max-actions must be between 0 and 10000");
   }
@@ -126,7 +126,7 @@ function main(): void {
     const store = new StensiblyStore(databasePath);
     try {
       const result = runCustodianPolicy(store, {
-        ...(options.project ? { project: options.project } : {}),
+        ...(options.project === undefined ? {} : { project: options.project }),
         staleDays: options.staleDays,
         expiringWithinMinutes: options.expiringWithinMinutes,
         mode: options.mode,
