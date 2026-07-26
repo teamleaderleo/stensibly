@@ -1,3 +1,4 @@
+import { validateOptionalProjectScope } from "./project-scope.js";
 import { StensiblyStore, type Item, type ItemKind, type ItemStatus } from "./store.js";
 
 export interface CustodianItem {
@@ -67,8 +68,9 @@ export function inspectScrapbook(
     throw new RangeError("expiringWithinMinutes must be between 0 and 10080");
   }
 
+  const project = validateOptionalProjectScope(options.project);
   const now = options.now ?? new Date();
-  const items = store.listItems(options.project ? { project: options.project } : {});
+  const items = store.listItems(project === undefined ? {} : { project });
   const staleCutoff = now.getTime() - staleDays * 24 * 60 * 60 * 1000;
   const expiringCutoff = now.getTime() + expiringWithinMinutes * 60 * 1000;
 
@@ -121,7 +123,7 @@ export function inspectScrapbook(
 
   return {
     generatedAt: now.toISOString(),
-    scope: { project: options.project ?? null },
+    scope: { project: project ?? null },
     settings: { staleDays, expiringWithinMinutes },
     summary: {
       expiredClaims: expiredClaims.length,
