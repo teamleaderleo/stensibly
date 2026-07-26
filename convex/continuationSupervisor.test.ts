@@ -13,6 +13,39 @@ const supervisor = {
   name: "Supervisor",
   kind: "service" as const,
 };
+const executionEnvelope = {
+  schemaVersion: 1 as const,
+  objective: "Dispatch the exact hosted continuation",
+  scopeClass: "segmented" as const,
+  estimate: {
+    lowMinutes: 20,
+    likelyMinutes: 40,
+    highMinutes: 70,
+    confidence: 0.6,
+  },
+  budget: {
+    expectedMessages: 3,
+    expectedToolCalls: 25,
+    expectedReviewMinutes: 8,
+  },
+  boundaries: {
+    softCheckpointMinutes: 50,
+    forcedHandoffMinutes: 75,
+    hardRecoveryMinutes: 90,
+  },
+  completion: {
+    requiredOutputs: ["implementation", "tests"],
+    verificationRequired: true,
+    continuationStateRequired: true,
+    acceptanceChecks: ["targeted checks pass"],
+  },
+  durableState: {
+    accessClass: "project" as const,
+    retentionClass: "standard" as const,
+    redactionRequired: true,
+    deleteAfter: null,
+  },
+};
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", secret);
@@ -41,6 +74,7 @@ describe("Convex continuation supervisor", () => {
       leaseSeconds: 900,
       maxAttempts: 4,
       retryBackoffSeconds: 30,
+      executionEnvelope,
       idempotencyKey: "hosted-supervisor-queue-1",
     };
 
@@ -69,6 +103,8 @@ describe("Convex continuation supervisor", () => {
         retryAttempt: 0,
         maxAttempts: 4,
         retryBackoffSeconds: 30,
+        executionEnvelope,
+        executionRecords: [],
       },
       createdItemId: null,
       notificationRecommended: false,
@@ -78,6 +114,13 @@ describe("Convex continuation supervisor", () => {
     await expect(t.mutation(convexApi.continuationSupervisor.queue, {
       ...input,
       runnerProfile: "changed-replay",
+    })).rejects.toThrow("different continuation supervisor request");
+    await expect(t.mutation(convexApi.continuationSupervisor.queue, {
+      ...input,
+      executionEnvelope: {
+        ...executionEnvelope,
+        objective: "Changed replay objective",
+      },
     })).rejects.toThrow("different continuation supervisor request");
 
     const targetDetail = await t.query(convexApi.items.get, {
@@ -89,6 +132,9 @@ describe("Convex continuation supervisor", () => {
       "claim.created",
       "run.queued",
     ]));
+    expect(targetDetail.events.some((event: any) =>
+      event.type === `run.execution_envelope:${result.run.id}`
+    )).toBe(true);
     expect(targetDetail.runs).toEqual([]);
   });
 
@@ -182,6 +228,10 @@ describe("Convex continuation supervisor", () => {
       priority: source.priority,
       status: "active",
     });
+    expect(created.run.executionEnvelope).toMatchObject({
+      schemaVersion: 1,
+      objective: expect.stringContaining(createProposal.id),
+    });
 
     const automaticTarget = await createItem(t, "Automatic target", "alpha", 50);
     const notifyTarget = await createItem(t, "Notify target", "alpha", 40);
@@ -217,6 +267,9 @@ describe("Convex continuation supervisor", () => {
       automatic.id,
       notify.id,
     ].sort());
+    expect(policy.dispatched.every((entry: any) =>
+      entry.run.executionEnvelope?.schemaVersion === 1
+    )).toBe(true);
     expect(policy.dispatched.find((entry: any) => entry.continuation.id === notify.id))
       .toMatchObject({ notificationRecommended: true });
     expect(policy.skipped).toEqual([
