@@ -34,7 +34,7 @@ const worker = {
         const admissionRejection = await enforceOAuthRegistrationAdmission(
           observedRequest,
           {
-            enabled: Boolean(env.STENSIBLY_OAUTH_SIGNING_SECRET?.trim()),
+            enabled: oauthConfigurationPresent(env),
             rateLimiter: env.OAUTH_REGISTRATION_RATE_LIMITER,
             allowedRedirectOrigins: env.STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS,
           },
@@ -48,6 +48,15 @@ const worker = {
 };
 
 export default worker;
+
+function oauthConfigurationPresent(env: CloudflareBindings): boolean {
+  return Boolean(
+    env.STENSIBLY_OAUTH_SIGNING_SECRET?.trim()
+    || env.STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS?.trim()
+    || env.STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS?.trim()
+    || env.STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS?.trim()
+  );
+}
 
 function stringEnvironment(env: CloudflareBindings): Record<string, string | undefined> {
   return {
