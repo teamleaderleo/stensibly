@@ -1,10 +1,21 @@
 import { createIdempotencyTracker } from './item-create.js';
 import { validateActor } from './session-context.js';
 
-export function validateHandoffInput(itemId, summary, nextAction, toActorId, actor) {
+export function validateHandoffInput(
+  itemId,
+  summary,
+  nextAction,
+  toActorId,
+  actor,
+  expectedClaimGeneration,
+) {
   const id = requiredString(itemId, 'Item ID is required.', 240);
   if (!actor || typeof actor !== 'object') {
     throw new TypeError('Choose an active session actor before handing off work.');
+  }
+  const generation = positiveInteger(expectedClaimGeneration);
+  if (generation === null) {
+    throw new TypeError('Refresh item detail to load the current claim generation before handing off work.');
   }
   const handoffSummary = requiredString(summary, 'Handoff summary is required.', 10_000);
   const handoffNextAction = requiredString(nextAction, 'Handoff next action is required.', 2_000);
@@ -13,6 +24,7 @@ export function validateHandoffInput(itemId, summary, nextAction, toActorId, act
     id,
     actor: validateActor(actor),
     action: 'handoff',
+    expectedClaimGeneration: generation,
     summary: handoffSummary,
     nextAction: handoffNextAction,
     ...(targetActorId ? { toActorId: targetActorId } : {}),
@@ -36,6 +48,10 @@ export function readHandedOffItem(payload, expected = {}) {
   if (!Number.isInteger(item.version) || item.version < 1) {
     throw new TypeError('The handed-off item returned an invalid version.');
   }
+  const previousGeneration = positiveInteger(expected.expectedClaimGeneration);
+  if (previousGeneration === null || item.claimGeneration !== previousGeneration + 1) {
+    throw new TypeError('The handed-off item did not advance the claim generation exactly once.');
+  }
   const summary = requiredString(item.summary, 'The handed-off item is missing summary.', 10_000);
   const nextAction = requiredString(item.nextAction, 'The handed-off item is missing next action.', 2_000);
   if (expected.summary && summary !== expected.summary) {
@@ -44,7 +60,14 @@ export function readHandedOffItem(payload, expected = {}) {
   if (expected.nextAction && nextAction !== expected.nextAction) {
     throw new TypeError('The endpoint returned a different handoff next action.');
   }
-  return { id, status, summary, nextAction, version: item.version };
+  return {
+    id,
+    status,
+    summary,
+    nextAction,
+    claimGeneration: item.claimGeneration,
+    version: item.version,
+  };
 }
 
 export function createHandoffIdempotencyTracker(generateKey) {
@@ -74,6 +97,10 @@ function optionalString(value, maxLength, label) {
   rejectCredential(output);
   if (output.length > maxLength) throw new TypeError(`${label} may contain at most ${maxLength} characters.`);
   return output;
+}
+
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function rejectCredential(value) {
