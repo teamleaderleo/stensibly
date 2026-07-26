@@ -8,7 +8,7 @@ import { StensiblyStore } from "../src/store.ts";
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
 
 type CompletionResult = {
-  item: { status: string; summary: string };
+  item: { status: string; summary: string; claimGeneration: number };
   continuations: Array<{ status: string; sourceItemId: string }>;
 };
 
@@ -36,6 +36,7 @@ describe("atomic MCP completion continuations", () => {
       const input = {
         id: item.id,
         actor: agent,
+        expectedClaimGeneration: item.claimGeneration,
         summary: "Completed with an atomic proposal.",
         continuations: [{
           title: "Review the completed MCP work",
@@ -51,6 +52,7 @@ describe("atomic MCP completion continuations", () => {
       expect(result.item).toMatchObject({
         status: "done",
         summary: "Completed with an atomic proposal.",
+        claimGeneration: item.claimGeneration + 1,
       });
       expect(result.continuations).toHaveLength(1);
       expect(result.continuations[0]).toMatchObject({
