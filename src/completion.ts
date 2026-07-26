@@ -5,7 +5,9 @@ import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface ReplayRow {
   item_id: string;
+  actor_id: string | null;
   type: string;
+  payload_json: string;
 }
 
 export function completeWork(store: StensiblyStore, input: CompleteWorkInput): Item {
@@ -60,11 +62,7 @@ export function completeWork(store: StensiblyStore, input: CompleteWorkInput): I
         `evt_${randomUUID()}`,
         input.id,
         input.actor.id,
-        JSON.stringify({
-          ...(input.summary ? { summary: input.summary } : {}),
-          generation: expectedGeneration,
-          nextGeneration,
-        }),
+        JSON.stringify(completionPayload(input)),
         input.idempotencyKey ?? null,
         now,
       );
@@ -79,16 +77,28 @@ function findReplay(store: StensiblyStore, input: CompleteWorkInput): Item | nul
   if (!input.idempotencyKey) return null;
   const existing = store.db
     .query<ReplayRow, [string]>(`
-      SELECT item_id, type
+      SELECT item_id, actor_id, type, payload_json
       FROM events
       WHERE idempotency_key = ?1
     `)
     .get(input.idempotencyKey);
   if (!existing) return null;
-  if (existing.item_id !== input.id || existing.type !== "item.completed") {
-    throw new ConflictError("Idempotency key already belongs to another operation");
+  const exact = existing.item_id === input.id
+    && existing.actor_id === input.actor.id
+    && existing.type === "item.completed"
+    && stableJson(JSON.parse(existing.payload_json)) === stableJson(completionPayload(input));
+  if (!exact) {
+    throw new ConflictError("Idempotency key was already used for a different completion request");
   }
   return store.getItem(existing.item_id);
+}
+
+function completionPayload(input: CompleteWorkInput): Record<string, unknown> {
+  return {
+    ...(input.summary ? { summary: input.summary } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
 }
 
 function claimGeneration(value: number): number {
@@ -113,4 +123,21 @@ function upsertActor(
         updated_at = excluded.updated_at
     `)
     .run(actor.id, actor.name, actor.kind, now);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
+  }
+  return value;
 }
