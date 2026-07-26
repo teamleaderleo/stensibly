@@ -24,8 +24,19 @@ export function handoffWork(
 ): Item {
   const payload = handoffPayload(input);
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  const replay = replayTransition(
+    store,
+    input.id,
+    input.actor.id,
+    input.idempotencyKey,
+    "work.handed_off",
+    payload,
+  );
+  if (replay) return replay;
+
+  expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const existing = findIdempotentItem(
+    const concurrentReplay = findIdempotentItem(
       store,
       input.id,
       input.actor.id,
@@ -33,9 +44,8 @@ export function handoffWork(
       "work.handed_off",
       payload,
     );
-    if (existing) return existing;
+    if (concurrentReplay) return concurrentReplay;
 
-    expireClaims(store);
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -99,8 +109,19 @@ export function blockWork(
 ): Item {
   const payload = blockPayload(input);
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  const replay = replayTransition(
+    store,
+    input.id,
+    input.actor.id,
+    input.idempotencyKey,
+    "work.blocked",
+    payload,
+  );
+  if (replay) return replay;
+
+  expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const existing = findIdempotentItem(
+    const concurrentReplay = findIdempotentItem(
       store,
       input.id,
       input.actor.id,
@@ -108,9 +129,8 @@ export function blockWork(
       "work.blocked",
       payload,
     );
-    if (existing) return existing;
+    if (concurrentReplay) return concurrentReplay;
 
-    expireClaims(store);
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -173,8 +193,19 @@ export function unblockWork(
 ): Item {
   const payload = unblockPayload(input);
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  const replay = replayTransition(
+    store,
+    input.id,
+    input.actor.id,
+    input.idempotencyKey,
+    "work.unblocked",
+    payload,
+  );
+  if (replay) return replay;
+
+  expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const existing = findIdempotentItem(
+    const concurrentReplay = findIdempotentItem(
       store,
       input.id,
       input.actor.id,
@@ -182,9 +213,8 @@ export function unblockWork(
       "work.unblocked",
       payload,
     );
-    if (existing) return existing;
+    if (concurrentReplay) return concurrentReplay;
 
-    expireClaims(store);
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -231,6 +261,25 @@ export function unblockWork(
   });
 
   return transaction();
+}
+
+function replayTransition(
+  store: StensiblyStore,
+  itemId: string,
+  actorId: string,
+  idempotencyKey: string | undefined,
+  expectedType: string,
+  expectedPayload: Record<string, unknown>,
+): Item | null {
+  if (!idempotencyKey) return null;
+  return store.db.transaction(() => findIdempotentItem(
+    store,
+    itemId,
+    actorId,
+    idempotencyKey,
+    expectedType,
+    expectedPayload,
+  ))();
 }
 
 function findIdempotentItem(
