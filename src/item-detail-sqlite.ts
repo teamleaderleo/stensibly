@@ -76,7 +76,7 @@ export function readBoundedItemEvents(
       SELECT id, item_id, actor_id, type, payload_json, created_at
       FROM events
       WHERE item_id = ?1
-      ORDER BY created_at DESC, id DESC
+      ORDER BY created_at DESC, rowid DESC
       LIMIT ?2
     `)
     .all(itemId, normalizedLimit)
@@ -95,7 +95,7 @@ export function readLatestItemEvent(
       SELECT id, item_id, actor_id, type, payload_json, created_at
       FROM events
       WHERE item_id = ?1 AND type = ?2
-      ORDER BY created_at DESC, id DESC
+      ORDER BY created_at DESC, rowid DESC
       LIMIT 1
     `)
     .get(itemId, type);
@@ -115,7 +115,7 @@ export function readBoundedItemArtifacts(
       SELECT *
       FROM artifacts
       WHERE item_id = ?1
-      ORDER BY created_at DESC, id DESC
+      ORDER BY created_at DESC, rowid DESC
       LIMIT ?2
     `)
     .all(itemId, normalizedLimit)
@@ -136,7 +136,7 @@ export function readBoundedItemRuns(
       SELECT *
       FROM work_runs
       WHERE item_id = ?1
-      ORDER BY created_at DESC, id DESC
+      ORDER BY created_at DESC, rowid DESC
       LIMIT ?2
     `)
     .all(itemId, normalizedLimit)
