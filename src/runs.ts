@@ -1,4 +1,5 @@
 import * as Core from "./runs-core.js";
+import { compatibilityExecutionEnvelope } from "./execution-envelope-default.js";
 import type { ActorInput } from "./schemas.js";
 import type { StensiblyStore } from "./store.js";
 import type { ExecutionActual, ExecutionEnvelope } from "./execution-envelope.js";
@@ -32,7 +33,7 @@ export type WorkRun = Core.WorkRun & {
 export interface CreateWorkRunInput
   extends Omit<Core.CreateWorkRunInput, "actor"> {
   actor: ActorInput;
-  executionEnvelope: ExecutionEnvelope;
+  executionEnvelope?: ExecutionEnvelope;
 }
 
 export interface TransitionWorkRunInput extends Core.TransitionWorkRunInput {
@@ -50,7 +51,12 @@ export function createWorkRun(
   now = new Date(),
 ): WorkRun {
   ensureRunSchema(store);
-  const envelope = requiredExecutionEnvelope(rawInput.executionEnvelope);
+  const envelope = requiredExecutionEnvelope(
+    rawInput.executionEnvelope
+      ?? compatibilityExecutionEnvelope(
+        `Execute work item ${rawInput.itemId} with runner profile ${rawInput.runnerProfile}`,
+      ),
+  );
   const { executionEnvelope: _executionEnvelope, ...coreInput } = rawInput;
   const transaction = store.db.transaction(() => {
     assertEnvelopeIdempotency(
@@ -73,9 +79,13 @@ export function createWorkRun(
   return transaction();
 }
 
-export function getWorkRun(store: StensiblyStore, id: string): WorkRun {
+export function getWorkRun(
+  store: StensiblyStore,
+  id: string,
+  now = new Date(),
+): WorkRun {
   ensureRunSchema(store);
-  return hydrateWorkRun(store, Core.getWorkRun(store, id));
+  return hydrateWorkRun(store, Core.getWorkRun(store, id, now));
 }
 
 export function listWorkRuns(
