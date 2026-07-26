@@ -10,7 +10,9 @@ const workspace = "test";
 const resource = "https://api.stensibly.com/mcp";
 const redirectUri = "https://chatgpt.com/connector/oauth/callback";
 const codeChallenge = "a".repeat(43);
-const familyLifetimeMs = 90 * 24 * 60 * 60 * 1000;
+const dayMs = 24 * 60 * 60 * 1000;
+const maxFamilyLifetimeMs = 90 * dayMs;
+const acceptedFamilyLifetimeMs = 30 * dayMs;
 const cleanupRefreshFamily = makeFunctionReference<"mutation">(
   "mcpOAuth:cleanupRefreshFamilyScheduled",
 );
@@ -20,18 +22,18 @@ beforeEach(() => {
 });
 
 describe("OAuth refresh-family lifetime and cleanup", () => {
-  test("keeps one deadline through a long chain and replays revoke the newest leaf", async () => {
+  test("keeps the accepted root deadline through a long chain and deduplicates replay cleanup", async () => {
     const t = convexTest(schema, modules);
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     try {
-      const { clientId, rootId } = await createFamily(t, "longchain", familyLifetimeMs);
-      const familyExpiresAt = base + familyLifetimeMs;
+      const { clientId, rootId } = await createFamily(t, "longchain");
+      const familyExpiresAt = base + acceptedFamilyLifetimeMs;
       let currentId = rootId;
       let currentHash = hashFor(0);
 
       for (let index = 1; index <= 125; index += 1) {
-        const now = base + index * 12 * 60 * 60 * 1000;
+        const now = base + index * 4 * 60 * 60 * 1000;
         clock.mockReturnValue(now);
         const nextId = refreshId(`chain${index.toString().padStart(8, "0")}`);
         const nextHash = hashFor(index);
@@ -41,7 +43,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
           secretHash: currentHash,
           nextId,
           nextSecretHash: nextHash,
-          nextExpiresAt: now + familyLifetimeMs,
+          nextExpiresAt: now + maxFamilyLifetimeMs,
         })).toMatchObject({ status: "ok" });
         currentId = nextId;
         currentHash = nextHash;
@@ -49,74 +51,102 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
 
       const family = await readFamily(t, rootId);
       expect(family).toHaveLength(126);
+      expect(family.every((token: any) => token.familyExpiresAt === familyExpiresAt)).toBe(true);
       expect(family.every((token: any) => token.expiresAt === familyExpiresAt)).toBe(true);
+      const initialRoot = family[0];
+      expect(initialRoot.cleanupScheduledAt).toBe(familyExpiresAt);
+      expect(initialRoot.cleanupScheduleGeneration).toBe(1);
 
-      clock.mockReturnValue(base + 70 * 24 * 60 * 60 * 1000);
-      expect(await rotate(t, {
-        clientId,
-        id: rootId,
-        secretHash: hashFor(0),
-        nextId: refreshId("replaytarget"),
-        nextSecretHash: "e".repeat(64),
-        nextExpiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      })).toEqual({ status: "replayed" });
+      clock.mockReturnValue(base + 25 * dayMs);
+      for (let replay = 0; replay < 3; replay += 1) {
+        expect(await rotate(t, {
+          clientId,
+          id: rootId,
+          secretHash: hashFor(0),
+          nextId: refreshId(`replay${replay.toString().padStart(6, "0")}`),
+          nextSecretHash: "e".repeat(64),
+          nextExpiresAt: Date.now() + dayMs,
+        })).toEqual({ status: "replayed" });
+      }
 
       const replayedFamily = await readFamily(t, rootId);
       expect(replayedFamily).toHaveLength(126);
       expect(replayedFamily.at(-1)?.externalId).toBe(currentId);
       expect(replayedFamily.at(-1)?.revokedAt).toBeDefined();
+      expect(replayedFamily[0].cleanupScheduledAt).toBe(familyExpiresAt);
+      expect(replayedFamily[0].cleanupScheduleGeneration).toBe(1);
 
       clock.mockReturnValue(familyExpiresAt - 1);
-      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+      expect(await cleanup(t, rootId, familyExpiresAt, 1)).toEqual({
         status: "retained",
         retainedRows: 100,
         cleanedRows: 0,
         hasMore: true,
       });
+      const rescheduledRoot = await readRoot(t, rootId);
+      expect(rescheduledRoot?.cleanupScheduledAt).toBe(familyExpiresAt);
+      expect(rescheduledRoot?.cleanupScheduleGeneration).toBe(2);
+
+      expect(await cleanup(t, rootId, familyExpiresAt, 1)).toMatchObject({
+        status: "retained",
+        cleanedRows: 0,
+      });
+      const afterStaleRetry = await readRoot(t, rootId);
+      expect(afterStaleRetry?.cleanupScheduleGeneration).toBe(2);
       expect(await readFamily(t, rootId)).toHaveLength(126);
     } finally {
       clock.mockRestore();
     }
   });
 
-  test("cleans expired families in bounded continuation batches", async () => {
+  test("cleans only after the family deadline in bounded batches", async () => {
     const t = convexTest(schema, modules);
     const base = Date.parse("2026-02-01T00:00:00.000Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     try {
-      const { clientId, rootId } = await createFamily(t, "cleanup", familyLifetimeMs);
-      const familyExpiresAt = base + familyLifetimeMs;
+      const { clientId, rootId } = await createFamily(t, "cleanup");
+      const familyExpiresAt = base + acceptedFamilyLifetimeMs;
       await insertConsumedHistory(t, rootId, clientId, 205, base + 1, familyExpiresAt);
 
       clock.mockReturnValue(familyExpiresAt - 1);
-      expect(await cleanup(t, rootId, familyExpiresAt)).toMatchObject({
+      expect(await cleanup(t, rootId, familyExpiresAt, 1)).toEqual({
         status: "retained",
+        retainedRows: 100,
         cleanedRows: 0,
         hasMore: true,
       });
       expect(await readFamily(t, rootId)).toHaveLength(206);
+      expect((await readRoot(t, rootId))?.cleanupScheduleGeneration).toBe(2);
 
       clock.mockReturnValue(familyExpiresAt);
-      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+      expect(await rotate(t, {
+        clientId,
+        id: rootId,
+        secretHash: hashFor(0),
+        nextId: refreshId("afterdeadline"),
+        nextSecretHash: "f".repeat(64),
+        nextExpiresAt: familyExpiresAt + dayMs,
+      })).toEqual({ status: "invalid" });
+      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
         status: "cleaned",
         retainedRows: 0,
         cleanedRows: 100,
         hasMore: true,
       });
-      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
         status: "cleaned",
         retainedRows: 0,
         cleanedRows: 100,
         hasMore: true,
       });
-      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
         status: "cleaned",
         retainedRows: 0,
         cleanedRows: 6,
         hasMore: false,
       });
       expect(await readFamily(t, rootId)).toHaveLength(0);
-      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
         status: "missing",
         retainedRows: 0,
         cleanedRows: 0,
@@ -127,7 +157,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
     }
   });
 
-  test("fails closed for legacy rolling expiry and missing-root families", async () => {
+  test("fails closed for legacy and malformed family records", async () => {
     const t = convexTest(schema, modules);
     const base = Date.parse("2026-03-01T00:00:00.000Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
@@ -136,12 +166,14 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
       const legacyRootId = refreshId("legacyroot");
       const legacyLeafId = refreshId("legacyleaf");
       await t.run(async (ctx: any) => {
-        const rootCreatedAt = base - familyLifetimeMs - 1;
+        const rootCreatedAt = base - 40 * dayMs;
         await ctx.db.insert("mcpOAuthRefreshTokens", {
           workspaceId,
           accountId: accountDbId,
           externalId: legacyRootId,
           familyExternalId: legacyRootId,
+          familyExpiresAt: base + maxFamilyLifetimeMs,
+          cleanupScheduleGeneration: -7,
           secretHash: hashFor(0),
           clientExternalId: clientId,
           scopes: ["read", "offline_access"],
@@ -161,7 +193,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
           scopes: ["read", "offline_access"],
           resource,
           createdAt: base - 60_000,
-          expiresAt: base + 30 * 24 * 60 * 60 * 1000,
+          expiresAt: base + acceptedFamilyLifetimeMs,
         });
       });
 
@@ -171,9 +203,18 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
         secretHash: "c".repeat(64),
         nextId: refreshId("legacyextended"),
         nextSecretHash: "d".repeat(64),
-        nextExpiresAt: base + 30 * 24 * 60 * 60 * 1000,
+        nextExpiresAt: base + acceptedFamilyLifetimeMs,
       })).toEqual({ status: "invalid" });
-      expect((await readFamily(t, legacyRootId)).at(-1)?.revokedAt).toBeDefined();
+      const legacyFamily = await readFamily(t, legacyRootId);
+      expect(legacyFamily.at(-1)?.revokedAt).toBeDefined();
+      expect(legacyFamily[0].familyExpiresAt).toBe(base - 1);
+      expect(legacyFamily[0].cleanupScheduledAt).toBe(base - 1);
+      expect(legacyFamily[0].cleanupScheduleGeneration).toBe(1);
+      expect(await cleanup(t, legacyRootId, base - 1, 1)).toMatchObject({
+        status: "cleaned",
+        cleanedRows: 2,
+        hasMore: false,
+      });
 
       const missingRootId = refreshId("missingroot");
       const oldId = refreshId("missingold");
@@ -197,6 +238,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
           accountId: accountDbId,
           externalId: leafId,
           familyExternalId: missingRootId,
+          familyExpiresAt: base + maxFamilyLifetimeMs,
           secretHash: "9".repeat(64),
           clientExternalId: clientId,
           scopes: ["read", "offline_access"],
@@ -217,10 +259,14 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
       })).toEqual({ status: "replayed" });
       expect((await readFamily(t, missingRootId)).at(-1)?.revokedAt).toBeDefined();
 
-      const fallbackExpiry = base + familyLifetimeMs;
-      expect((await cleanup(t, missingRootId, fallbackExpiry)).status).toBe("retained");
-      clock.mockReturnValue(fallbackExpiry);
-      expect(await cleanup(t, missingRootId, fallbackExpiry)).toMatchObject({
+      expect(await cleanup(t, missingRootId, base + maxFamilyLifetimeMs, 0)).toEqual({
+        status: "retained",
+        retainedRows: 2,
+        cleanedRows: 0,
+        hasMore: false,
+      });
+      clock.mockReturnValue(base + 60_000);
+      expect(await cleanup(t, missingRootId, base + maxFamilyLifetimeMs, 0)).toMatchObject({
         status: "cleaned",
         cleanedRows: 2,
         hasMore: false,
@@ -231,11 +277,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
   });
 });
 
-async function createFamily(
-  t: ReturnType<typeof convexTest>,
-  label: string,
-  refreshLifetimeMs: number,
-) {
+async function createFamily(t: ReturnType<typeof convexTest>, label: string) {
   const fixture = await setup(t, label);
   const code = codeId(label);
   const rootId = refreshId(`${label}root`);
@@ -262,7 +304,7 @@ async function createFamily(
     codeChallenge,
     refreshId: rootId,
     refreshSecretHash: hashFor(0),
-    refreshExpiresAt: Date.now() + refreshLifetimeMs,
+    refreshExpiresAt: Date.now() + acceptedFamilyLifetimeMs,
   });
   return { clientId: fixture.clientId, rootId };
 }
@@ -312,11 +354,24 @@ async function rotate(t: ReturnType<typeof convexTest>, input: Record<string, un
   }) as any;
 }
 
-async function cleanup(t: ReturnType<typeof convexTest>, familyExternalId: string, familyExpiresAt: number) {
+async function cleanup(
+  t: ReturnType<typeof convexTest>,
+  familyExternalId: string,
+  familyExpiresAt: number,
+  scheduleGeneration: number,
+) {
   return await t.mutation(cleanupRefreshFamily as any, {
     familyExternalId,
     familyExpiresAt,
+    scheduleGeneration,
   }) as any;
+}
+
+async function readRoot(t: ReturnType<typeof convexTest>, familyExternalId: string) {
+  return await t.run(async (ctx: any) => await ctx.db
+    .query("mcpOAuthRefreshTokens")
+    .withIndex("by_external_id", (q: any) => q.eq("externalId", familyExternalId))
+    .unique());
 }
 
 async function readFamily(t: ReturnType<typeof convexTest>, familyExternalId: string) {
@@ -333,7 +388,7 @@ async function insertConsumedHistory(
   clientIdValue: string,
   count: number,
   createdAt: number,
-  expiresAt: number,
+  familyExpiresAt: number,
 ) {
   await t.run(async (ctx: any) => {
     const root = await ctx.db.query("mcpOAuthRefreshTokens")
@@ -345,12 +400,13 @@ async function insertConsumedHistory(
         accountId: root.accountId,
         externalId: refreshId(`history${index.toString().padStart(5, "0")}`),
         familyExternalId: rootId,
+        familyExpiresAt,
         secretHash: "d".repeat(64),
         clientExternalId: clientIdValue,
         scopes: root.scopes,
         resource: root.resource,
         createdAt: createdAt + index,
-        expiresAt,
+        expiresAt: familyExpiresAt,
         consumedAt: createdAt + index + 1,
       });
     }
