@@ -1,21 +1,23 @@
 import { createIdempotencyTracker } from './item-create.js';
 import { validateActor } from './session-context.js';
 
-export function validateBlockInput(itemId, reason, nextAction, actor) {
+export function validateBlockInput(itemId, reason, nextAction, actor, expectedClaimGeneration) {
   return {
     id: requiredString(itemId, 'Item ID is required.', 240),
     actor: requireActor(actor),
     action: 'block',
+    expectedClaimGeneration: requireGeneration(expectedClaimGeneration),
     reason: requiredString(reason, 'Block reason is required.', 10_000),
     ...optionalField('nextAction', nextAction, 2_000, 'Next action'),
   };
 }
 
-export function validateUnblockInput(itemId, nextAction, actor) {
+export function validateUnblockInput(itemId, nextAction, actor, expectedClaimGeneration) {
   return {
     id: requiredString(itemId, 'Item ID is required.', 240),
     actor: requireActor(actor),
     action: 'unblock',
+    expectedClaimGeneration: requireGeneration(expectedClaimGeneration),
     ...optionalField('nextAction', nextAction, 2_000, 'Next action'),
   };
 }
@@ -36,6 +38,10 @@ export function readTransitionItem(payload, expected) {
   if (!Number.isInteger(item.version) || item.version < 1) {
     throw new TypeError('The transitioned item returned an invalid version.');
   }
+  const previousGeneration = nonNegativeInteger(expected.expectedClaimGeneration);
+  if (previousGeneration === null || item.claimGeneration !== previousGeneration + 1) {
+    throw new TypeError('The transitioned item did not advance the claim generation exactly once.');
+  }
 
   if (expected.action === 'block') {
     if (status !== 'blocked') throw new TypeError('The item did not become blocked.');
@@ -48,7 +54,14 @@ export function readTransitionItem(payload, expected) {
   if (expected.nextAction && nextAction !== expected.nextAction) {
     throw new TypeError('The endpoint returned a different next action.');
   }
-  return { id, status, summary, nextAction, version: item.version };
+  return {
+    id,
+    status,
+    summary,
+    nextAction,
+    claimGeneration: item.claimGeneration,
+    version: item.version,
+  };
 }
 
 export function createTransitionIdempotencyTracker(generateKey) {
@@ -66,6 +79,14 @@ function requireActor(actor) {
     throw new TypeError('Choose an active session actor before changing work state.');
   }
   return validateActor(actor);
+}
+
+function requireGeneration(value) {
+  const generation = nonNegativeInteger(value);
+  if (generation === null) {
+    throw new TypeError('Refresh item detail to load the current claim generation before changing work state.');
+  }
+  return generation;
 }
 
 function optionalField(name, value, maxLength, label) {
@@ -95,6 +116,10 @@ function nullableString(value, maxLength, label) {
   rejectCredential(output);
   if (output.length > maxLength) throw new TypeError(`The transitioned item returned an invalid ${label.toLowerCase()}.`);
   return output || null;
+}
+
+function nonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function rejectCredential(value) {

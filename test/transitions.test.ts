@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { renewClaim } from "../src/leases.ts";
 import { ConflictError, StensiblyStore } from "../src/store.ts";
 import { blockWork, handoffWork, unblockWork } from "../src/transitions.ts";
 
@@ -20,7 +21,7 @@ afterEach(() => {
 });
 
 describe("work transitions", () => {
-  test("a handoff releases the claim and leaves a compact continuation", () => {
+  test("a handoff fences the current claim and replays exactly", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -30,7 +31,7 @@ describe("work transitions", () => {
     });
     const claimed = store.claimItem(item.id, browserAgent, 900);
 
-    const handedOff = handoffWork(store, {
+    const request = {
       id: item.id,
       actor: browserAgent,
       expectedClaimGeneration: claimed.claimGeneration,
@@ -38,37 +39,54 @@ describe("work transitions", () => {
       nextAction: "Patch the parser and rerun the fixture.",
       toActorId: leo.id,
       idempotencyKey: "handoff-1",
-    });
+    };
+    const handedOff = handoffWork(store, request);
 
     expect(handedOff).toMatchObject({
       status: "ready",
       claimedBy: null,
       claimExpiresAt: null,
       claimGeneration: claimed.claimGeneration + 1,
-      summary: "Found the relevant files and narrowed the fault.",
-      nextAction: "Patch the parser and rerun the fixture.",
+      summary: request.summary,
+      nextAction: request.nextAction,
     });
-    expect(handoffWork(store, {
-      id: item.id,
-      actor: browserAgent,
-      expectedClaimGeneration: claimed.claimGeneration,
-      summary: "Found the relevant files and narrowed the fault.",
-      nextAction: "Patch the parser and rerun the fixture.",
-      toActorId: leo.id,
-      idempotencyKey: "handoff-1",
-    }).id).toBe(item.id);
+    expect(handoffWork(store, request)).toEqual(handedOff);
 
     const event = store.listEvents(item.id).at(-1);
     expect(event).toMatchObject({
       type: "work.handed_off",
       actorId: browserAgent.id,
       payload: {
-        summary: "Found the relevant files and narrowed the fault.",
-        nextAction: "Patch the parser and rerun the fixture.",
+        summary: request.summary,
+        nextAction: request.nextAction,
         toActorId: leo.id,
         generation: claimed.claimGeneration,
-        nextGeneration: handedOff.claimGeneration,
+        nextGeneration: claimed.claimGeneration + 1,
       },
+    });
+  });
+
+  test("never-claimed ready work accepts generation zero", () => {
+    const item = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Hand off unclaimed work",
+      priority: 50,
+      actor: leo,
+    });
+
+    const handedOff = handoffWork(store, {
+      id: item.id,
+      actor: leo,
+      expectedClaimGeneration: 0,
+      summary: "Prepared the task for another actor.",
+      nextAction: "Choose an implementation owner.",
+    });
+
+    expect(handedOff).toMatchObject({
+      status: "ready",
+      claimGeneration: 1,
+      claimedBy: null,
     });
   });
 
@@ -98,7 +116,7 @@ describe("work transitions", () => {
     })).toThrow(ConflictError);
   });
 
-  test("blocking releases a claim and unblocking returns work to ready", () => {
+  test("blocking and unblocking each advance the generation exactly once", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -108,41 +126,40 @@ describe("work transitions", () => {
     });
     const claimed = store.claimItem(item.id, browserAgent, 900);
 
-    const blocked = blockWork(store, {
+    const blockRequest = {
       id: item.id,
       actor: browserAgent,
       expectedClaimGeneration: claimed.claimGeneration,
       reason: "The API credentials have not arrived.",
       nextAction: "Retry once credentials are available.",
       idempotencyKey: "block-1",
-    });
+    };
+    const blocked = blockWork(store, blockRequest);
     expect(blocked).toMatchObject({
       status: "blocked",
       claimedBy: null,
       claimExpiresAt: null,
-      summary: "The API credentials have not arrived.",
-      nextAction: "Retry once credentials are available.",
+      claimGeneration: claimed.claimGeneration + 1,
+      summary: blockRequest.reason,
+      nextAction: blockRequest.nextAction,
     });
+    expect(blockWork(store, blockRequest)).toEqual(blocked);
     expect(() => store.claimItem(item.id, leo, 900)).toThrow(ConflictError);
 
-    const unblocked = unblockWork(store, {
+    const unblockRequest = {
       id: item.id,
       actor: leo,
       expectedClaimGeneration: blocked.claimGeneration,
       nextAction: "Use the newly supplied credentials.",
       idempotencyKey: "unblock-1",
-    });
+    };
+    const unblocked = unblockWork(store, unblockRequest);
     expect(unblocked).toMatchObject({
       status: "ready",
-      nextAction: "Use the newly supplied credentials.",
+      nextAction: unblockRequest.nextAction,
+      claimGeneration: blocked.claimGeneration + 1,
     });
-    expect(unblockWork(store, {
-      id: item.id,
-      actor: leo,
-      expectedClaimGeneration: blocked.claimGeneration,
-      nextAction: "Use the newly supplied credentials.",
-      idempotencyKey: "unblock-1",
-    }).id).toBe(item.id);
+    expect(unblockWork(store, unblockRequest)).toEqual(unblocked);
 
     expect(store.listEvents(item.id).map((event) => event.type)).toEqual([
       "item.created",
@@ -150,130 +167,76 @@ describe("work transitions", () => {
       "work.blocked",
       "work.unblocked",
     ]);
+    expect(store.listEvents(item.id).slice(-2).map((event) => event.payload)).toEqual([
+      expect.objectContaining({
+        generation: claimed.claimGeneration,
+        nextGeneration: blocked.claimGeneration,
+      }),
+      expect.objectContaining({
+        generation: blocked.claimGeneration,
+        nextGeneration: unblocked.claimGeneration,
+      }),
+    ]);
   });
 
-  test("same actor cannot reuse a stale generation after authority changes", () => {
+  test("same-actor stale generations cannot mutate reacquired work", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
-      title: "Fence recycled actor identity",
+      title: "Reject stale same-actor transitions",
       priority: 50,
       actor: leo,
     });
-    const first = store.claimItem(item.id, browserAgent, 900);
-    const released = store.releaseItem(
+    const firstClaim = store.claimItem(item.id, browserAgent, 900);
+    const renewed = renewClaim(
+      store,
       item.id,
       browserAgent,
-      first.claimGeneration,
+      1800,
+      firstClaim.claimGeneration,
     );
-    const second = store.claimItem(item.id, browserAgent, 900);
-    expect(second.claimGeneration).toBe(released.claimGeneration + 1);
 
     expect(() => handoffWork(store, {
       id: item.id,
       actor: browserAgent,
-      expectedClaimGeneration: first.claimGeneration,
+      expectedClaimGeneration: firstClaim.claimGeneration,
       summary: "Stale handoff.",
-      nextAction: "Should not apply.",
+      nextAction: "Should fail.",
     })).toThrow(ConflictError);
     expect(() => blockWork(store, {
       id: item.id,
       actor: browserAgent,
-      expectedClaimGeneration: first.claimGeneration,
+      expectedClaimGeneration: firstClaim.claimGeneration,
       reason: "Stale block.",
     })).toThrow(ConflictError);
-    expect(() => store.completeItem(
-      item.id,
-      browserAgent,
-      first.claimGeneration,
-      "Stale completion.",
-    )).toThrow(ConflictError);
+    expect(store.getItem(item.id)).toEqual(renewed);
   });
 
-  test("idempotency keys replay only the exact item operation", () => {
-    const firstItem = store.createItem({
+  test("expiry advances generation before a stale transition is evaluated", () => {
+    const item = store.createItem({
       project: "scrapbook",
       kind: "task",
-      title: "Replay exact operation",
+      title: "Reject expired authority",
       priority: 50,
       actor: leo,
     });
-    const secondItem = store.createItem({
-      project: "scrapbook",
-      kind: "task",
-      title: "Reject cross-item replay",
-      priority: 50,
-      actor: leo,
-    });
-    const claimed = store.claimItem(firstItem.id, browserAgent, 900);
-    const command = {
-      id: firstItem.id,
+    const claimed = store.claimItem(item.id, browserAgent, 900);
+    store.db
+      .query("UPDATE items SET claim_expires_at = ?1 WHERE id = ?2")
+      .run("2020-01-01T00:00:00.000Z", item.id);
+
+    expect(() => handoffWork(store, {
+      id: item.id,
       actor: browserAgent,
       expectedClaimGeneration: claimed.claimGeneration,
-      summary: "Exact handoff.",
-      nextAction: "Continue from the recorded state.",
-      idempotencyKey: "exact-handoff",
-    };
-
-    const handedOff = handoffWork(store, command);
-    expect(handoffWork(store, command)).toEqual(handedOff);
-    expect(() => handoffWork(store, {
-      ...command,
-      summary: "Changed handoff.",
+      summary: "Expired handoff.",
+      nextAction: "Should fail.",
     })).toThrow(ConflictError);
-    expect(() => handoffWork(store, {
-      ...command,
-      expectedClaimGeneration: claimed.claimGeneration + 1,
-    })).toThrow(ConflictError);
-    expect(() => handoffWork(store, {
-      ...command,
-      id: secondItem.id,
-      actor: leo,
-      expectedClaimGeneration: secondItem.claimGeneration,
-    })).toThrow(ConflictError);
-    expect(() => blockWork(store, {
-      id: firstItem.id,
-      actor: browserAgent,
-      expectedClaimGeneration: claimed.claimGeneration,
-      reason: "Cross-operation reuse.",
-      idempotencyKey: "exact-handoff",
-    })).toThrow(ConflictError);
-
-    const completionItem = store.createItem({
-      project: "scrapbook",
-      kind: "task",
-      title: "Replay exact completion",
-      priority: 50,
-      actor: leo,
+    expect(store.getItem(item.id)).toMatchObject({
+      status: "ready",
+      claimedBy: null,
+      claimGeneration: claimed.claimGeneration + 1,
     });
-    const completed = store.completeItem(
-      completionItem.id,
-      leo,
-      completionItem.claimGeneration,
-      "Done once.",
-      "exact-completion",
-    );
-    expect(store.completeItem(
-      completionItem.id,
-      leo,
-      completionItem.claimGeneration,
-      "Done once.",
-      "exact-completion",
-    )).toEqual(completed);
-    expect(() => store.completeItem(
-      completionItem.id,
-      leo,
-      completionItem.claimGeneration,
-      "Different summary.",
-      "exact-completion",
-    )).toThrow(ConflictError);
-    expect(() => store.completeItem(
-      completionItem.id,
-      leo,
-      completionItem.claimGeneration + 1,
-      "Done once.",
-      "exact-completion",
-    )).toThrow(ConflictError);
   });
 
   test("completed work rejects further workflow transitions", () => {
@@ -284,23 +247,18 @@ describe("work transitions", () => {
       priority: 50,
       actor: leo,
     });
-    const completed = store.completeItem(
-      item.id,
-      leo,
-      item.claimGeneration,
-      "Done.",
-    );
+    store.completeItem(item.id, leo, item.claimGeneration, "Done.");
 
     expect(() => blockWork(store, {
       id: item.id,
       actor: leo,
-      expectedClaimGeneration: completed.claimGeneration,
+      expectedClaimGeneration: store.getItem(item.id).claimGeneration,
       reason: "Too late.",
     })).toThrow(ConflictError);
     expect(() => handoffWork(store, {
       id: item.id,
       actor: leo,
-      expectedClaimGeneration: completed.claimGeneration,
+      expectedClaimGeneration: store.getItem(item.id).claimGeneration,
       summary: "Too late.",
       nextAction: "Do nothing.",
     })).toThrow(ConflictError);

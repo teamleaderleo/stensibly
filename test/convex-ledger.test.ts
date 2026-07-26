@@ -59,7 +59,12 @@ describe("Convex work ledger", () => {
 
     await ledger.getBrief("scrapbook", 12);
     await ledger.listWork({ project: "scrapbook", status: "ready" });
-    await ledger.getItem("item_1");
+    const detail = await ledger.getItem("item_1");
+    expect(detail.control.authority).toMatchObject({
+      state: "unclaimed",
+      generation: 0,
+      source: "none",
+    });
     await ledger.createItem({
       project: "scrapbook",
       kind: "task",
@@ -182,7 +187,7 @@ describe("Convex work ledger", () => {
     expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
       "query:projects:brief",
       "query:items:list",
-      "query:items:get",
+      "query:itemControl:get",
       "query:itemReservations:list",
       "mutation:items:create",
       "mutation:claims:acquire",
@@ -220,7 +225,10 @@ describe("Convex work ledger", () => {
       limit: 12,
       now: expect.any(Number),
     });
-    expect(client.one("query", "items:get").args).toMatchObject({ id: "item_1" });
+    expect(client.one("query", "itemControl:get").args).toMatchObject({
+      id: "item_1",
+      now: expect.any(Number),
+    });
     expect(client.one("query", "itemReservations:list").args).toMatchObject({
       itemId: "item_1",
       now: expect.any(Number),
@@ -306,9 +314,30 @@ function fixture(name: string): unknown {
   ) {
     return [];
   }
-  if (name === "items:get") {
+  if (name === "itemControl:get") {
     return {
       item: item(),
+      control: {
+        schemaVersion: 1,
+        authority: {
+          state: "unclaimed",
+          holderActorId: null,
+          generation: 0,
+          expiresAt: null,
+          source: "none",
+          allowedOperations: ["claim", "complete", "handoff", "block"],
+          approvalRequiredOperations: [],
+          unavailableReasons: {},
+        },
+        responsibility: {
+          actorId: null,
+          summary: null,
+          nextAction: null,
+          heartbeatExpectedAt: null,
+          evidenceRequired: [],
+          escalationState: "none",
+        },
+      },
       events: [],
       artifacts: [],
       runs: [],

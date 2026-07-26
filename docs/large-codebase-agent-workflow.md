@@ -1,488 +1,311 @@
-# Large-codebase human-agent workflow
+# Human-agent investigation playbook
 
-This playbook describes a practical way to coordinate human and agent work on investigations that span a large repository, long context, several branches, expensive validation, and public issue or pull-request preparation.
+Use this playbook for long repository investigations with several work lanes, expensive validation, and possible public publication.
 
-It is based on lessons from a real multi-agent code investigation, but it is intentionally general. The same structure can be used by one person switching roles over time or by several agents working in parallel.
+Sources from [#246](https://github.com/teamleaderleo/stensibly/issues/246):
 
-The goal is not maximum process. The goal is to make the human coordinator increasingly hands-off without losing correctness, provenance, scope control, or editorial judgement.
+- [Agent 1 — implementation and integration](https://github.com/teamleaderleo/stensibly/issues/246#issuecomment-5081855675)
+- [Agent 2 — reproduction, acceptance, and validation](https://github.com/teamleaderleo/stensibly/issues/246#issuecomment-5081854767)
+- [Agent 3 — independent review and coordination support](https://github.com/teamleaderleo/stensibly/issues/246#issuecomment-5081854691)
+- [Agent 4 — history, privacy, related work, and publication](https://github.com/teamleaderleo/stensibly/issues/246#issuecomment-5081855098)
 
-## Core principle
+The comments remain authoritative for lane-specific evidence and disagreement. This document keeps the reusable guidance.
 
-Treat the investigation and the final submission as two different products.
+## Two tracks
 
-### Investigation archive
+**Investigation track:** preserve negative proof, hypotheses, prototypes, decisions, exact commands and refs, lane reports, reviews, and unresolved claims.
 
-The archive preserves how understanding developed:
+**Clean-submission track:** build the smallest reviewable candidate from current upstream with focused code and tests, concise history, repository-native checks, bounded public claims, and privacy-reviewed copy.
 
-- baseline and negative reproduction;
-- intermediate branches and commits;
-- rejected prototypes;
-- decision and confidence logs;
-- exact test commands and named trees;
-- reviews and handoffs;
-- unresolved hypotheses;
-- retrospective observations.
+Keep investigation files, logs, handoffs, and rejected prototypes out of the clean candidate. Plan both tracks before production implementation.
 
-This history is useful for later debugging, design questions, follow-up work, and workflow improvement.
+## Two completion gates
 
-### Clean submission
+### Correctness-complete
 
-The final issue or pull request should contain only what its audience needs:
+- failure reproduced, or confidence explicitly weaker;
+- source of truth, ownership, contract, and non-goals written;
+- focused checks pass on an exact tested ref;
+- failures, skips, and unrun broader suites classified separately;
+- independent verdict names one exact comparison;
+- unresolved hypotheses remain outside the correctness claim.
 
-- the smallest coherent production change;
-- focused tests;
-- concise, reviewable history;
-- bounded validation claims;
-- clear problem and non-goals;
-- no coordination notes, agent handoffs, private logs, or prototype ancestry.
+### Submission-complete
 
-Do not destroy useful investigation history merely to make the submission clean. Build a separate clean candidate from the reviewed net effect.
+- candidate based on current upstream and semantically equivalent to the reviewed result;
+- repository-native checks run, with deviations approved;
+- `tested_ref`, `published_ref`, and `reviewed_comparison` explicit;
+- changed paths and final diff inspection recorded;
+- related work refreshed for publication;
+- issue/PR copy and publication sequence approved by a human.
 
-## Two definitions of done
+Correctness can be complete while submission remains open.
 
-Track these independently.
+## Artifact 1: investigation-start template
 
-### Correctness done
-
-- the failure is reproduced;
-- the ownership and behavioural model is understood;
-- the chosen contract and non-goals are explicit;
-- the implementation is tested;
-- the exact tested tree is identified;
-- the final net diff has independent review;
-- unsupported hypotheses remain labelled as such.
-
-### Submission done
-
-- the candidate is based on current upstream;
-- investigation-only history and files are absent;
-- repository-native formatting, linting, and agreed tests have run;
-- final repository inspection is recorded;
-- issue and pull-request wording has human review;
-- related work is refreshed;
-- publication sequencing is approved;
-- public links are cross-referenced.
-
-A project can be correctness-done while submission work remains open. Naming the distinction prevents premature publication.
-
-## Phase 0: create the work map
-
-Before parallel implementation starts, record:
-
-```text
+```yaml
 project:
-problem_statement:
-baseline_sha:
-upstream_target:
+repository:
 repository_visibility:
-confirmed_facts:
-hypotheses:
+upstream_target:
+baseline_sha:
+working_directory:
+
+problem_statement:
+observed_evidence:
 selected_contract:
 non_goals:
-branch_map:
-lane_owners:
-required_tooling:
-validation_plan:
-clean_candidate_plan:
-publication_gate:
+
+claims:
+  - claim:
+    confidence: reproduced | validated_fix | static_mechanism | hypothesis | ruled_out | deferred
+    evidence_ref:
+    test_obligation:
+    public_wording_allowed:
+
+tracks:
+  investigation_ref:
+  clean_candidate_ref:
+  clean_candidate_plan:
+
+lanes:
+  - owner:
+    responsibility:
+    file_fence:
+    non_goals:
+    mutation_authority:
+    completion_trigger:
+
+preflight:
+  instruction_files:
+  repository_commands:
+  required_and_optional_tools:
+  validation_environment:
+  services_credentials_resources:
+  approved_fallbacks:
+
+human_approval:
+  - contract_or_scope_change
+  - merge
+  - deployment
+  - external_publication
+  - privacy_decision
+  - destructive_cleanup
 ```
 
-In Stensibly, these should become durable project and item facts rather than remaining only in chat.
+Label feasibility prototypes as disposable. Preserve the smallest negative reproduction as immutable evidence.
 
-Recommended initial work items:
+## Contract-first acceptance
 
-1. reproduce the failure;
-2. investigate ownership and intended behaviour;
-3. implement the narrow fix;
-4. define and implement acceptance tests;
-5. perform static review;
-6. run named-tree validation;
-7. prepare issue and pull-request drafts;
-8. reconstruct the clean candidate;
-9. perform final reconvene and publication review;
-10. write the retrospective.
+Write each case before assertions:
 
-## Phase 1: preserve an immutable negative proof
-
-Create the smallest safe reproduction that demonstrates the defect and cleans up after itself.
-
-Prefer one dedicated commit or artifact whose purpose is only to prove baseline behaviour. Avoid rewriting it while positive acceptance tests evolve, unless the test never actually reproduced what it claimed.
-
-Record:
-
-- exact baseline SHA;
-- platform and relevant constraints;
-- exact command;
-- result;
-- cleanup behaviour;
-- what the test proves;
-- what it does not prove.
-
-This prevents implementation work from erasing the original evidence.
-
-## Phase 2: maintain a claims ledger
-
-Every material statement should have an explicit confidence state.
-
-Suggested states:
-
-- `reproduced`;
-- `validated_fix`;
-- `statically_confirmed_mechanism`;
-- `high_confidence_hypothesis`;
-- `weak_hypothesis`;
-- `ruled_out`;
-- `deferred_product_decision`.
-
-Suggested record:
-
-```text
-claim:
-state:
-evidence:
-files_or_symbols:
-owner:
-test_obligation:
-public_wording_allowed:
-next_action:
+```yaml
+case:
+precondition_and_actor:
+event_sequence:
+source_of_truth:
+observable_invariants:
+explicit_non_requirements:
+cleanup_postcondition:
+allowed_skips:
 ```
 
-Do not let a plausible static path silently become a public bug claim. A reproduced bug requires executable evidence of the claimed failure mode.
+Strict assertions should protect a user-visible, compatibility, ownership, or safety property. Avoid incidental wording, whitespace, timing, truncation excerpts, or generated IDs unless the contract requires them.
 
-## Phase 3: write the contract before assertions
+## Work lanes
 
-Before implementation or acceptance tests harden, write the expected behaviour in plain language.
+For multi-agent work, use a small accountable set: implementation, acceptance/runtime validation, independent review, publication/history/privacy, and human coordination. Each lane gets a bounded file fence and owns its evidence.
 
-A useful contract includes:
+For solo work, use timed role changes: investigate, write the contract, implement, test adversarially, pause or reset context, review one exact comparison, then prepare publication copy. Usually one research branch, one candidate branch, checkpoint commits, one decision log, and one validation record are enough.
 
-- source of truth;
-- ownership identity;
-- trigger boundary;
-- filtering rules;
-- ordering rules;
-- output placement;
-- compatibility requirements;
-- explicit non-goals.
+## Current state versus evidence
 
-Tests should assert independent invariants rather than one brittle string or snapshot when several components have separate meaning.
+Keep one current-state view containing active refs, owners, gate states, blockers, next actions, and requested human decisions.
 
-Example:
+Keep detailed evidence in lane-owned records. Avoid copying commands, SHAs, test-case lists, placeholders, and status prose across several files. Branch names alone never establish what was tested, published, or reviewed.
 
-- assert the completion line is first;
-- assert each expected identifier appears once;
-- assert identifiers are ordered;
-- assert the timing line follows the inserted warning;
-- assert unrelated identifiers are absent.
+## Artifact 2: standard agent handoff
 
-## Phase 4: separate implementation and acceptance ownership
-
-The implementer should not be the only person defining, executing, and interpreting acceptance.
-
-A useful lane split is:
-
-- **implementation owner:** smallest compatible production change;
-- **acceptance owner:** negative proof, adversarial cases, runtime execution;
-- **review owner:** ownership model, net diff, scope control;
-- **publication owner:** history, related work, privacy, issue and pull-request copy;
-- **human coordinator:** authority, sequencing, escalation, publication, and final editorial judgement.
-
-For solo work, use the same split as sequential hats rather than simultaneous roles:
-
-1. investigator;
-2. designer;
-3. implementer;
-4. adversarial tester;
-5. reviewer;
-6. release editor.
-
-Do not wear all six hats in one uninterrupted pass.
-
-## Phase 5: use one canonical status projection
-
-A coordination board should contain current state and next actions only.
-
-Other documents have different roles:
-
-- **decision log:** durable design decisions and rejected alternatives;
-- **per-lane report:** detailed evidence owned by one lane;
-- **test log:** exact commands, trees, results, skips, and infrastructure events;
-- **review file:** immutable verdict for one named comparison;
-- **retrospective:** workflow learning after correctness is complete.
-
-Avoid copying the same evidence into every file. Repetition creates stale-text risk.
-
-Every meaningful handoff should name who updates the canonical status projection.
-
-## Standard handoff schema
-
-```text
+```yaml
 lane:
-branch_or_item:
+owner:
+scope:
+non_goals:
+
+repository:
 base_sha:
+starting_ref:
 head_sha:
+published_ref:
+reviewed_comparison:
 worktree_state:
 changed_files:
+
 commands_run:
 results:
-skips_or_flakes:
+skips_flakes_retries:
+infrastructure_events:
+cleanup_result:
+
 confirmed_findings:
-hypotheses:
-open_risks:
+unresolved_claims:
+confidence_changes:
+scope_or_contract_deviations:
+
 next_owner:
 next_action:
-requested_decision:
+requested_human_decision:
+canonical_status_updated_by:
 ```
 
-A handoff is incomplete without a concrete next owner and next action.
+Keep the handoff to one screen and link detailed evidence.
 
-## Phase 6: review before expensive validation
+## Validation rules
 
-Perform a preliminary static review before long builds or platform-specific tests.
+Preflight must confirm checkout, repository instructions, exact refs, repository-native commands and target kinds, tool availability, platform/services/resources, mutation authority, publication capability, and approved fallbacks.
 
-Check:
+A fallback is equivalent only when it preserves target kind, features, environment, serialisation, cleanup, and failure semantics. A test-name filter does not prove equivalent build scope.
 
-- contract alignment;
-- ownership identity and source of truth;
-- exact filtering and isolation;
-- lifecycle-policy expansion;
-- public schema or protocol changes;
-- identifier coupling;
-- output placement and truncation boundaries;
-- unnecessary file spread;
-- missing cleanup or race coverage.
+Classify outcomes: implementation/assertion defect, acceptance-contract defect, formatter mutation, compile/link failure, resource failure, runner/service failure, platform skip, cleanup failure, publication failure, or broader validation unrun.
 
-Call this preliminary review, not final sign-off.
+## Artifact 3: named-tree validation record
 
-## Phase 7: validate a named tree
+```yaml
+record_id:
+repository:
+baseline_sha:
+starting_ref:
+tested_ref:
+published_ref:
+tree_before_mutation:
+tree_after_mutation:
+dirty_before:
+dirty_after:
 
-A passing command is not sufficient unless the tested tree is unambiguous.
+environment:
+  platform_architecture:
+  tool_versions:
+  missing_capabilities:
+  approved_deviations:
+  resource_limits:
 
-Record before and after formatting or fixes:
+commands:
+  - command:
+    target_kind: library | named_integration | package | workspace | repository_profile
+    selector_environment_concurrency:
+    started_ended:
+    exit_status_counts:
+    skips_retries_flakes:
+    failure_stage_and_class:
+    claim_supported:
 
-```text
-base_sha=
-branch=
-worktree_sha_before=
-worktree_dirty_before=
-tool_availability=
-formatter_command=
-worktree_sha_after=
-worktree_dirty_after=
+final_checks:
+  changed_path_allowlist:
+  status_short:
+  diff_check:
+  baseline_diff_summary:
+  cleanup_result:
+
+review:
+  comparison:
+  reviewer:
+  verdict:
+  invalidation_triggers:
 ```
 
-For every validation command, record:
+Capture identity before and after every mutating formatter or fixer. A green local tree needs a durable ref before handoff. Review verdicts expire when their comparison changes.
 
-```text
-command:
-selection_scope:
-result:
-duration:
-skips:
-flakes_or_retries:
-infrastructure_events:
-claim_supported:
+## Artifact 4: branch and artifact manifest
+
+```yaml
+repository:
+current_upstream_sha:
+updated_at:
+
+artifacts:
+  - name:
+    kind: reproduction | prototype | implementation | acceptance | candidate | validation | review | publication
+    owner:
+    branch_or_ref:
+    head_sha:
+    parent_or_baseline:
+    purpose:
+    owned_paths:
+    visibility: local | public_fork | upstream
+    audience: investigation | submission
+    movement: immutable | owner_may_advance | human_approval
+    tested: yes | no | partial
+    published: yes | no
+    reviewed_comparison:
+    sensitivity:
+    stale_when:
 ```
 
-Keep these categories separate:
+Monitoring should read this manifest instead of a hard-coded branch list.
 
-- compile or typecheck;
-- focused unit tests;
-- integration or acceptance tests;
-- repository-native lint and formatting;
-- platform skips;
-- infrastructure failure;
-- broader workspace validation not run.
+## Review and publication sequence
 
-If formatting changes files, commit or otherwise identify the resulting tree before expensive validation.
+1. Before expensive validation, review contract alignment, ownership, isolation, output placement, cleanup, policy expansion, protocol changes, and file spread.
+2. Validate an exact tree and publish or durably identify it.
+3. Review the final baseline-to-head comparison.
+4. Build the clean candidate from current upstream and verify semantic equivalence.
+5. Run repository-native submission checks.
+6. Refresh related work and privacy-review public copy.
+7. Seek human publication approval.
 
-## Environment capability check
+Clean-candidate work can expose submission defects without reopening settled correctness review.
 
-Run this before validation becomes critical:
+Treat public forks and research branches as public. “Unpublished upstream” describes publication state, not privacy.
 
-- repository wrapper commands available;
-- language toolchains present;
-- platform or sandbox constraints known;
-- test runner and linker capacity adequate;
-- required credentials or services available;
-- branch and upstream state confirmed.
-
-Install required tools early or explicitly record a deviation. Do not discover missing repository tooling only after correctness work is complete.
-
-## Phase 8: publish or identify the exact tested tree
-
-A local passing tree is not the final artifact.
-
-After validation:
-
-1. publish or uniquely identify the exact tested tree;
-2. compare it with the pre-validation head;
-3. verify formatting or fix-up commits are semantically narrow;
-4. run final net-diff review against the baseline or upstream target;
-5. record the verdict for that exact comparison.
-
-## Phase 9: prepare public materials independently
-
-The publication owner should verify:
-
-- the issue describes the actual defect rather than intended behaviour;
-- root-cause claims match their confidence state;
-- validation claims are bounded;
-- non-goals are explicit;
-- related issues are current and accurately distinguished;
-- private or machine-specific material is absent;
-- the proposed pull request is one coherent stage;
-- follow-up hypotheses are not bundled into the current patch.
-
-“Unpublished upstream” does not mean private. Treat public forks and research branches as publicly accessible.
-
-## Phase 10: reconstruct the clean candidate
-
-Create a separate candidate from current upstream main.
-
-The candidate should:
-
-- preserve the reviewed semantic net effect;
-- exclude research and coordination Markdown;
-- exclude rejected prototypes and investigation merges;
-- use one or two logical commits;
-- record upstream divergence and conflict resolution;
-- run repository-native checks;
-- produce a final clean comparison;
-- receive equivalence review against the tested investigation head.
-
-Do not force-push the provenance archive merely to create this candidate.
-
-## Final reconvene
-
-Reconvene when correctness is complete and again when the clean candidate exists.
-
-Each lane should answer the same questions:
-
-1. Is the clean candidate semantically equivalent to the reviewed tree?
-2. Is the scope still narrow, with no late policy expansion?
-3. Which commands actually ran, and what passed, failed, skipped, flaked, or was not run?
-4. Is the commit sequence concise and reviewable?
-5. Does the issue describe the defect accurately?
-6. Does the pull request explain implementation and behavioural boundaries without overselling validation?
-7. Is public copy privacy-safe?
-8. Are related issues and newer fixes still current?
-9. Is the publication sequence still appropriate?
-10. Which findings remain hypotheses or deferred product decisions?
+Human approval remains required for merge, deployment, external publication, publication sequence, privacy wording, permission expansion, semantic changes during reconstruction, policy expansion, destructive cleanup, and promotion of a hypothesis into a public bug claim.
 
 ## Reconvene triggers
 
-Do not wait for confusion to accumulate. Reconvene when:
+Reconvene when the contract changes; a test invalidates an assumption; a test contract is corrected; a fallback changes target scope; cleanup fails; tested and published refs differ; a reviewed comparison changes; the candidate is created or rebased; related work changes; public copy becomes ready; or correctness completes while submission remains open.
 
-- the selected design changes;
-- a test invalidates an assumption;
-- the tested tree differs from the published tree;
-- a new related issue or upstream fix appears;
-- formatting or cleanup creates a new candidate tree;
-- publication copy becomes ready;
-- a rebase or reconstruction starts;
-- correctness becomes complete while submission remains open.
+## Retrospective synthesis
 
-## Retrospective protocol
+### Repeated lessons
 
-At the end of a substantial project, each lane should independently report:
+All four lanes supported:
 
-- what it owned;
-- what it learned technically;
-- what worked well;
-- what created avoidable delay or ambiguity;
-- which handoff or evidence was most useful;
-- which claim remained uncertain;
-- what tooling or Stensibly support would have helped;
-- one process change to adopt next time;
-- one practice to stop or simplify;
-- one follow-up that should remain separate.
+- exact SHAs and comparisons for tested, published, and reviewed artifacts;
+- contract-first acceptance and immutable negative proof;
+- separate investigation and clean-submission tracks;
+- one current-state view plus durable lane evidence;
+- early preflight and typed validation scope;
+- human authority over publication, privacy, merge, deployment, policy expansion, and cleanup;
+- lighter solo records while preserving role changes and exact-comparison review.
 
-Collect these as separate comments or artifacts first. Synthesize only after independent contributions exist, so the coordinator does not bias everyone toward one narrative.
+### Disagreements and competing recommendations
 
-## How this maps to Stensibly
+- **Candidate commits:** Agent 1 preferred separate implementation and acceptance commits. The shared guidance allows one or two logical commits. The human coordinator chooses after considering review cost and repository convention.
+- **Patch 2 and Patch 3:** Agent 1 described them as labels for follow-up families. Agent 3 kept their original status unresolved pending confirmation from the discussion owner. Preserve both statements until a human records the decision.
+- **Ceremony:** multi-agent work benefits from lane branches and explicit ownership; solo work benefits from fewer branches and timed role changes. The gates remain the same.
+- **Automation:** every lane proposed richer records or triggers while warning against converting every observation into a feature.
 
-Stensibly should hold coordination facts and references, not copy source repositories or execution logs wholesale.
+### Unresolved claims and confidence
 
-Recommended mapping:
+| Claim | Confidence | Next step |
+| --- | --- | --- |
+| Delayed cross-turn dispatch can produce the suspected failure | High-confidence static mechanism; unreproduced | Separate executable reproduction and ownership contract |
+| Patch 2 and Patch 3 were concrete original proposals | Disputed | Human coordinator or original owner decision |
+| Broad-validation linker deaths were OOM/resource failures | Strong inference; resource telemetry absent | Capture memory and target-scope telemetry in a future reproduction |
+| Full workspace suite and full repository formatter passed | Unsupported | Run and record them on a clean candidate when required |
+| A clean candidate is submission-ready | Separate submission question | Sync upstream, validate, inspect, and obtain human approval |
 
-- **project:** the investigation or feature;
-- **items:** reproduction, design, implementation, acceptance, review, publication, cleanup, retrospective;
-- **claims:** current responsibility and time-bounded authority;
-- **events:** meaningful state transitions and validation results;
-- **artifacts:** branch, commit, comparison, report, issue draft, test log, and review references;
-- **dependencies:** implementation blocked by contract, publication blocked by clean candidate, and similar relationships;
-- **handoffs:** summary plus explicit next action and next owner;
-- **human approval:** publication, broad validation, consequential external effects, and scope expansion.
+### Adopt, stop, simplify, postpone
 
-The board should be a projection of this durable ledger rather than the only copy of project state.
+**Adopt:** two tracks and gates; contract-first acceptance; explicit artifact roles; named-tree validation; comparison-bound review; a branch/artifact manifest; independent retrospective comments before synthesis.
 
-## Candidate Stensibly improvements
+**Stop:** copied evidence; branch-name validation claims; undeclared generic fallbacks; promotion of static findings into reproduced claims; a lane for every small question.
 
-These ideas should be evaluated separately from any current feature patch.
+**Simplify:** one current-state view; one-screen handoffs; a small lane set; fewer solo branches with explicit role checkpoints.
 
-### Branch and artifact manifest
+**Postpone:** lifecycle, shutdown, wake-up, remote termination, hidden-subagent, stale-bookkeeping, and crash-recovery policy until each has bounded executable evidence.
 
-Maintain one project-level manifest of:
+## Product follow-up bar
 
-- repository and upstream refs;
-- archive branches;
-- clean candidate branch;
-- key commits and comparisons;
-- sensitivity or publication status;
-- branch-monitoring scope.
+Create a Stensibly implementation issue only when it has retrospective evidence, a bounded problem and goal, explicit non-goals, testable acceptance criteria, an overlap check, an owner/file fence, and a validation plan.
 
-This can drive monitoring automatically instead of relying on a manually hard-coded branch list.
-
-### Claims ledger
-
-Represent important technical claims with confidence state, evidence, owner, and test obligation.
-
-This would make the distinction between reproduced failures and high-confidence hypotheses visible on the board.
-
-### Named-tree validation record
-
-Provide a standard artifact or command that records:
-
-- SHA and dirty state;
-- tool availability;
-- formatter and fixer effects;
-- commands and selection scope;
-- results and duration;
-- skips, retries, and infrastructure events;
-- final SHA and diff check.
-
-### Canonical-status ownership
-
-Every handoff should update one server-owned current-state projection or explicitly assign that update to another actor.
-
-This reduces stale coordination documents.
-
-### Retrospective workflow
-
-Support one retrospective item with independent per-actor contributions, followed by a synthesis step and optional conversion of accepted ideas into new backlog items.
-
-### Automatic reconvene suggestions
-
-Suggest a reconvene when:
-
-- several lanes complete;
-- a tested artifact changes identity;
-- the clean candidate is created;
-- publication dependencies are nearly clear;
-- conflicting claims or stale status are detected.
-
-### Correctness and submission gates
-
-Model these as separate project milestones so that a technically green patch is not treated as publication-ready.
-
-## Minimal solo version
-
-For smaller or solo work, keep the structure lightweight:
-
-- `work-status.md` or one Stensibly project brief for current state;
-- `decision-log.md` for durable reasoning;
-- `test-log.md` for exact commands and trees;
-- one retrospective item after completion;
-- one clean candidate separate from the scratch branch.
-
-The value comes from role separation and named evidence, not from document volume.
+Broad ideas here remain design inputs. Existing execution-trace and authority tracks already cover parts of claims, evidence, responsibility, and handoff modelling, so any new issue begins with an overlap check.

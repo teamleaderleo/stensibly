@@ -283,6 +283,9 @@ async function transition(
     block: "work.blocked",
     unblock: "work.unblocked",
   }[operation];
+  const expectedGeneration = currentClaimGeneration(args.expectedClaimGeneration);
+  const actorExternalId = assertText(args.actor.id, "Actor id", 120);
+  const expectedPayload = semanticTransitionPayload(args, operation, expectedGeneration);
   const existing = await requireMatchingIdempotency(
     ctx,
     workspace._id,
@@ -292,24 +295,29 @@ async function transition(
   if (existing) {
     const item = await ctx.db.get("items", existing.itemId);
     if (!item) throw new Error("Idempotent item no longer exists");
+    requireSameSemanticTransitionRequest(
+      existing,
+      item,
+      args.id,
+      actorExternalId,
+      expectedPayload,
+    );
     return await publicItem(ctx, item);
   }
 
-  const expectedGeneration = itemGeneration(args.expectedClaimGeneration);
   const actor = await upsertActor(ctx, workspace._id, args.actor);
   if (!actor) throw new Error("Failed to create actor");
   const now = Date.now();
   let item = await getItemByExternalId(ctx, workspace._id, args.id);
   item = await expireClaimIfNeeded(ctx, item, now);
   if (item.claimGeneration !== expectedGeneration) {
-    throw new Error("Item claim generation changed");
+    throw new Error("Claim generation changed; refresh the item before retrying");
   }
   if (liveClaimHeldByOther(item, actor.externalId, now)) {
     throw new Error("Work is held by another actor");
   }
 
   let patch: Record<string, unknown>;
-  let payload: Record<string, unknown>;
   if (operation === "complete") {
     if (item.status === "done" || item.status === "archived") {
       throw new Error("Item is already complete or archived");
@@ -320,7 +328,6 @@ async function transition(
       summary: summary ?? item.summary,
       nextAction: undefined,
     };
-    payload = summary ? { summary } : {};
   } else if (operation === "handoff") {
     if (!["ready", "active", "blocked"].includes(item.status)) {
       throw new Error("Work is complete or archived");
@@ -328,13 +335,6 @@ async function transition(
     const summary = assertText(args.summary, "Summary", 10_000);
     const nextAction = assertText(args.nextAction, "Next action", 2_000);
     patch = { status: "ready", summary, nextAction };
-    payload = {
-      summary,
-      nextAction,
-      ...(args.toActorId
-        ? { toActorId: assertText(args.toActorId, "Target actor", 120) }
-        : {}),
-    };
   } else if (operation === "block") {
     if (!["ready", "active"].includes(item.status)) {
       throw new Error("Work is already blocked, complete, or archived");
@@ -346,15 +346,13 @@ async function transition(
       summary: reason,
       nextAction: nextAction ?? item.nextAction,
     };
-    payload = { reason, ...(nextAction ? { nextAction } : {}) };
   } else {
     if (item.status !== "blocked") throw new Error("Only blocked work can be unblocked");
     const nextAction = assertOptionalText(args.nextAction, "Next action", 2_000);
     patch = { status: "ready", nextAction: nextAction ?? item.nextAction };
-    payload = nextAction ? { nextAction } : {};
   }
 
-  const nextGeneration = item.claimGeneration + 1;
+  const nextGeneration = expectedGeneration + 1;
   const commonPatch = {
     claimedByActorId: undefined,
     claimedByExternalId: undefined,
@@ -371,11 +369,7 @@ async function transition(
     actorId: actor._id,
     actorExternalId: actor.externalId,
     type: eventType,
-    payload: {
-      ...payload,
-      generation: item.claimGeneration,
-      nextGeneration,
-    },
+    payload: expectedPayload,
     idempotencyKey: args.idempotencyKey,
     createdAt: now,
   });
@@ -384,9 +378,77 @@ async function transition(
   return await publicItem(ctx, updated);
 }
 
-function itemGeneration(value: number): number {
+function semanticTransitionPayload(
+  args: any,
+  operation: "complete" | "handoff" | "block" | "unblock",
+  expectedGeneration: number,
+): Record<string, unknown> {
+  const generation = {
+    generation: expectedGeneration,
+    nextGeneration: expectedGeneration + 1,
+  };
+  if (operation === "complete") {
+    const summary = assertOptionalText(args.summary, "Summary", 10_000);
+    return { ...(summary ? { summary } : {}), ...generation };
+  }
+  if (operation === "handoff") {
+    const summary = assertText(args.summary, "Summary", 10_000);
+    const nextAction = assertText(args.nextAction, "Next action", 2_000);
+    return {
+      summary,
+      nextAction,
+      ...(args.toActorId
+        ? { toActorId: assertText(args.toActorId, "Target actor", 120) }
+        : {}),
+      ...generation,
+    };
+  }
+  if (operation === "block") {
+    const reason = assertText(args.reason, "Reason", 10_000);
+    const nextAction = assertOptionalText(args.nextAction, "Next action", 2_000);
+    return { reason, ...(nextAction ? { nextAction } : {}), ...generation };
+  }
+  const nextAction = assertOptionalText(args.nextAction, "Next action", 2_000);
+  return { ...(nextAction ? { nextAction } : {}), ...generation };
+}
+
+function requireSameSemanticTransitionRequest(
+  existing: any,
+  item: any,
+  requestedItemId: string,
+  requestedActorId: string,
+  requestedPayload: Record<string, unknown>,
+): void {
+  const exact = item.externalId === requestedItemId
+    && existing.actorExternalId === requestedActorId
+    && stableJson(existing.payload) === stableJson(requestedPayload);
+  if (!exact) {
+    throw new Error(
+      "Idempotency key was already used for a different semantic transition request",
+    );
+  }
+}
+
+function currentClaimGeneration(value: number): number {
   if (!Number.isInteger(value) || value < 0) {
     throw new Error("Expected claim generation must be a non-negative integer");
+  }
+  return value;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
   }
   return value;
 }

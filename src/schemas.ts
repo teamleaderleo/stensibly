@@ -39,27 +39,30 @@ export const claimItemSchema = z.object({
   leaseSeconds: z.number().int().min(30).max(86_400).default(900),
 });
 
-const expectedLiveClaimGenerationSchema = z.number().int().min(1);
-export const expectedItemGenerationSchema = z.number().int().min(0);
+const positiveClaimGenerationSchema = z.number().int().min(1);
+const currentClaimGenerationSchema = z.number().int().min(0);
 
 export const renewClaimSchema = claimItemSchema.extend({
-  expectedClaimGeneration: expectedLiveClaimGenerationSchema,
+  expectedClaimGeneration: positiveClaimGenerationSchema,
 });
 
 export const claimActionSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedLiveClaimGenerationSchema,
+  expectedClaimGeneration: positiveClaimGenerationSchema,
 });
 
 export const actorActionSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedItemGenerationSchema,
   summary: z.string().trim().max(10_000).optional(),
+});
+
+export const completeItemSchema = actorActionSchema.extend({
+  expectedClaimGeneration: currentClaimGenerationSchema,
 });
 
 export const handoffItemSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedItemGenerationSchema,
+  expectedClaimGeneration: currentClaimGenerationSchema,
   summary: z.string().trim().min(1).max(10_000),
   nextAction: z.string().trim().min(1).max(2_000),
   toActorId: z.string().trim().min(1).max(120).optional(),
@@ -67,14 +70,14 @@ export const handoffItemSchema = z.object({
 
 export const blockItemSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedItemGenerationSchema,
+  expectedClaimGeneration: currentClaimGenerationSchema,
   reason: z.string().trim().min(1).max(10_000),
   nextAction: z.string().trim().min(1).max(2_000).optional(),
 });
 
 export const unblockItemSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedItemGenerationSchema,
+  expectedClaimGeneration: currentClaimGenerationSchema,
   nextAction: z.string().trim().min(1).max(2_000).optional(),
 });
 

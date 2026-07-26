@@ -1,4 +1,5 @@
 import type { Artifact, ArtifactKind } from "./artifacts.js";
+import type { ItemControlView } from "./item-control.js";
 import type { ActorInput } from "./schemas.js";
 import type {
   Item,
@@ -119,6 +120,7 @@ export interface AttachWorkArtifactInput {
 
 export interface ItemDetail {
   item: Item;
+  control: ItemControlView;
   events: ItemEvent[];
   artifacts: Artifact[];
   runs?: unknown[];

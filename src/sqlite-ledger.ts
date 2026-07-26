@@ -7,6 +7,7 @@ import {
   completeWorkWithContinuations,
   ensureCompletionContinuationSchema,
 } from "./completion-continuations.js";
+import { completeWork as completeFencedWork } from "./completion.js";
 import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
 import {
@@ -31,6 +32,13 @@ import {
   type ProposeContinuationInput,
   type ResolveContinuationInput,
 } from "./continuations.js";
+import {
+  readBoundedItemArtifacts,
+  readBoundedItemEvents,
+  readBoundedItemRuns,
+  readLatestItemEvent,
+} from "./item-detail-sqlite.js";
+import { projectItemControl } from "./item-control.js";
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
@@ -110,13 +118,21 @@ export class SqliteWorkLedger implements
   }
 
   async getItem(id: string) {
-    reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
+    const now = new Date();
+    const item = this.store.getItem(id);
+    const events = readBoundedItemEvents(this.store, id);
+    const artifacts = readBoundedItemArtifacts(this.store, id);
+    const runs = readBoundedItemRuns(this.store, id);
+    const controlEvents = [
+      readLatestItemEvent(this.store, id, "claim.created"),
+      readLatestItemEvent(this.store, id, "work.handed_off"),
+    ].filter((event) => event !== null);
     return {
-      item: this.store.getItem(id),
-      events: this.store.listEvents(id),
-      artifacts: listArtifacts(this.store, id),
-      runs: listWorkRuns(this.store, { itemId: id }),
+      item,
+      control: projectItemControl({ item, runs, events: controlEvents, now }),
+      events,
+      artifacts,
+      runs,
       dependencies: [],
       reservations: [],
     };
@@ -209,19 +225,11 @@ export class SqliteWorkLedger implements
 
   async completeWork(input: CompleteWorkInput) {
     reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
-    return this.store.completeItem(
-      input.id,
-      input.actor,
-      input.expectedClaimGeneration,
-      input.summary,
-      input.idempotencyKey,
-    );
+    return completeFencedWork(this.store, input);
   }
 
   async completeWorkWithContinuations(input: CompleteWithContinuationsInput) {
     reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
     return completeWorkWithContinuations(this.store, input);
   }
 
