@@ -19,11 +19,23 @@ function parse(content = fixture) {
 }
 
 describe("repository attachment contract", () => {
-  test("parses the version 1 example into a deterministic canonical projection", () => {
+  test("parses equivalent version 1 input into one deterministic canonical projection", () => {
     const first = parse();
-    const second = parse(fixture.replace("\n\n# Project contract", "\r\n\r\n# Project contract"));
+    const newlineEquivalent = parse(
+      fixture.replace("\n\n# Project contract", "\r\n\r\n# Project contract"),
+    );
+    const setOrderEquivalent = parse(fixture
+      .replace(
+        "  - inspect\n  - propose\n  - create_draft_pr",
+        "  - create_draft_pr\n  - inspect\n  - propose",
+      )
+      .replace(
+        "  - merge\n  - deploy\n  - external_message\n  - provider_change\n  - broad_permission_change",
+        "  - provider_change\n  - broad_permission_change\n  - deploy\n  - merge\n  - external_message",
+      ));
 
-    expect(first).toEqual(second);
+    expect(first).toEqual(newlineEquivalent);
+    expect(first.digestInput).toBe(setOrderEquivalent.digestInput);
     expect(first.contract).toMatchObject({
       version: 1,
       project: "example-project",
@@ -31,6 +43,7 @@ describe("repository attachment contract", () => {
       runnerProfiles: ["codex-default"],
       concurrency: { project: 1, global: 1 },
     });
+    expect(first.source.repository).toBe("example-owner/example-repository");
     expect(first.digestInput).toBe(projectAttachmentDigestInput(first.contract));
     expect(JSON.parse(first.digestInput)).toEqual(first.contract);
   });
@@ -44,11 +57,12 @@ describe("repository attachment contract", () => {
     });
   });
 
-  test("fails closed for missing or malformed front matter and returns no partial result", () => {
+  test("fails closed for malformed input and returns no partial result", () => {
     for (const content of [
       fixture.replace(/^---\n/, ""),
       fixture.replace("---\n\n# Project contract", "\n# Project contract"),
       fixture.replace("version: 1", "version: 2"),
+      fixture.replace("## Escalation\n\nEscalate permission widening, ambiguous scope, missing capabilities, and consequential actions.\n", ""),
     ]) {
       const result = parseProjectAttachmentContract(content);
       expect(result.ok).toBe(false);
@@ -59,7 +73,7 @@ describe("repository attachment contract", () => {
     }
   });
 
-  test("rejects unknown and duplicate keys after normalisation", () => {
+  test("rejects unknown keys and duplicates after normalisation", () => {
     const unknown = parseProjectAttachmentContract(fixture.replace(
       "project: example-project",
       "project: example-project\nunknown_policy: true",
@@ -71,14 +85,25 @@ describe("repository attachment contract", () => {
       ]));
     }
 
-    const duplicate = parseProjectAttachmentContract(fixture.replace(
+    const duplicateKey = parseProjectAttachmentContract(fixture.replace(
       "runner_profiles:",
       "runner-profiles:\n  - codex-default\nrunner_profiles:",
     ));
-    expect(duplicate.ok).toBe(false);
-    if (!duplicate.ok) {
-      expect(duplicate.errors).toEqual(expect.arrayContaining([
+    expect(duplicateKey.ok).toBe(false);
+    if (!duplicateKey.ok) {
+      expect(duplicateKey.errors).toEqual(expect.arrayContaining([
         expect.objectContaining({ code: "duplicate_key" }),
+      ]));
+    }
+
+    const duplicateValue = parseProjectAttachmentContract(fixture.replace(
+      "  - Example-Owner/Example-Repository",
+      "  - Example-Owner/Example-Repository\n  - example-owner/example-repository",
+    ));
+    expect(duplicateValue.ok).toBe(false);
+    if (!duplicateValue.ok) {
+      expect(duplicateValue.errors).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "duplicate_value" }),
       ]));
     }
   });
