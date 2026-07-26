@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { assertPromiseWakeupModelConfig, checkPromiseWakeupModel } from "../model/promise-wakeup/check.ts";
-import { apply, initial, stateKey, type Action, type State } from "../model/promise-wakeup/domain.ts";
+import { actions, apply, initial, stateKey, type Action, type Bounds, type State } from "../model/promise-wakeup/domain.ts";
+import { hasWakeupPath } from "../model/promise-wakeup/properties.ts";
 
 const config = assertPromiseWakeupModelConfig(
   JSON.parse(readFileSync(new URL("../model/promise-wakeup/config.json", import.meta.url), "utf8")) as unknown,
@@ -33,8 +34,8 @@ const expectedInvariants = [
 const expectedLiveness = [
   "consumed_generation_never_becomes_consumable_after_restart",
   "current_consumable_wakeup_has_consume_path",
-  "current_ready_wakeup_has_consume_or_escalate_path",
   "expired_pending_promise_reconcilable",
+  "satisfied_current_promise_has_consume_or_escalate_path",
   "satisfied_current_promise_has_wakeup",
 ] as const;
 
@@ -59,6 +60,7 @@ describe("bounded promise/wakeup lifecycle", () => {
     expect(Object.values(report.invariants).every((value) => value === "passed")).toBe(true);
     expect(Object.keys(report.boundedLiveness).sort()).toEqual([...expectedLiveness].sort());
     expect(Object.values(report.boundedLiveness).every((value) => value === "passed")).toBe(true);
+    expect(report.negativeControls).toHaveLength(3);
 
     const controls = Object.fromEntries(report.negativeControls.map((control) => [control.kind, control]));
     const identity = controls.identity_only_generation;
@@ -100,6 +102,22 @@ describe("bounded promise/wakeup lifecycle", () => {
     expect(race!.state.promiseDeadline!).toBeLessThanOrEqual(race!.state.time);
     expect(race?.weakOutcome).toContain("conflicting terminal outcomes");
     expect(report.negativeControls.every((control) => control.reachable)).toBe(true);
+  });
+
+  test("consume-only liveness fails when consume is disabled but escalation remains", () => {
+    const created = transition(initial, { kind: "create", supervisor: "supervisor-a" });
+    const satisfied = transition(created, {
+      kind: "promise", supervisor: "supervisor-a", command: "satisfy", expectedGeneration: 1,
+    });
+    const wakeup = satisfied.wakeups[0];
+    expect(wakeup).toBeDefined();
+
+    const withoutConsume = (state: State, bounds: Bounds): Action[] =>
+      actions(state, bounds).filter((action) => action.kind !== "consume");
+
+    expect(hasWakeupPath(satisfied, wakeup!, options, new Set(["consumed"]))).toBe(true);
+    expect(hasWakeupPath(satisfied, wakeup!, options, new Set(["consumed"]), withoutConsume)).toBe(false);
+    expect(hasWakeupPath(satisfied, wakeup!, options, new Set(["consumed", "escalated"]), withoutConsume)).toBe(true);
   });
 
   test("makes every claimed transition guard mutation-sensitive", () => {
