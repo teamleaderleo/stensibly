@@ -9,8 +9,19 @@
   "minify": true,
   "vars": {
     "STENSIBLY_WORKSPACE": "default",
-    "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app"
+    "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app",
+    "STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS": "https://chatgpt.com"
   },
+  "ratelimits": [
+    {
+      "name": "OAUTH_REGISTRATION_RATE_LIMITER",
+      "namespace_id": "25201",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ],
   "secrets": {
     "required": ["CONVEX_URL", "STENSIBLY_SERVICE_SECRET"]
   }
