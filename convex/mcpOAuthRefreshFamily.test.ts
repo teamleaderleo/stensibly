@@ -103,8 +103,18 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
         cleanedRows: 100,
         hasMore: true,
       });
-      await t.finishInProgressScheduledFunctions();
-      await t.finishInProgressScheduledFunctions();
+      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+        status: "cleaned",
+        retainedRows: 0,
+        cleanedRows: 100,
+        hasMore: true,
+      });
+      expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
+        status: "cleaned",
+        retainedRows: 0,
+        cleanedRows: 6,
+        hasMore: false,
+      });
       expect(await readFamily(t, rootId)).toHaveLength(0);
       expect(await cleanup(t, rootId, familyExpiresAt)).toEqual({
         status: "missing",
