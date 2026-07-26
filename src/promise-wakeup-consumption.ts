@@ -180,11 +180,16 @@ export function listPromiseWakeupConsumptions(
   }
   return store.db
     .query<ConsumptionRow, [string | null, string | null, number]>(`
-      SELECT *
-      FROM promise_wakeup_consumptions
-      WHERE (?1 IS NULL OR run_id = ?1)
-        AND (?2 IS NULL OR dispatch_command_id = ?2)
-      ORDER BY consumed_at ASC, wakeup_id ASC
+      SELECT consumption.*
+      FROM promise_wakeup_consumptions consumption
+      JOIN promise_wakeups wakeup
+        ON wakeup.id = consumption.wakeup_id
+      WHERE (?1 IS NULL OR consumption.run_id = ?1)
+        AND (?2 IS NULL OR consumption.dispatch_command_id = ?2)
+      ORDER BY
+        consumption.consumed_at ASC,
+        wakeup.created_at ASC,
+        wakeup.id ASC
       LIMIT ?3
     `)
     .all(input.runId ?? null, input.dispatchCommandId ?? null, limit)
