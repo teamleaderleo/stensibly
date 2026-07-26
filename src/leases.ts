@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validateOptionalProjectScope } from "./project-scope.js";
 import type { ActorInput } from "./schemas.js";
 import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
@@ -43,12 +44,13 @@ export function expireClaims(
   now = new Date(),
   options: ExpireClaimsOptions = {},
 ): string[] {
+  const project = validateOptionalProjectScope(options.project);
   const limit = validateExpiryLimit(options.limit);
   const nowIso = now.toISOString();
   const transaction = store.db.transaction(() => {
     const candidates = options.expectedClaims
-      ? expectedRows(options.expectedClaims, options.project, limit)
-      : selectExpiredRows(store, nowIso, options.project, limit);
+      ? expectedRows(options.expectedClaims, project, limit)
+      : selectExpiredRows(store, nowIso, project, limit);
 
     const expiredIds: string[] = [];
     for (const claim of candidates) {
@@ -226,10 +228,11 @@ function expectedRows(
   for (const claim of expectedClaims) {
     if (seen.has(claim.id)) continue;
     seen.add(claim.id);
-    if (project && claim.project !== project) continue;
+    const claimProject = validateOptionalProjectScope(claim.project, "Expected claim project");
+    if (project !== undefined && claimProject !== project) continue;
     rows.push({
       id: claim.id,
-      project_id: claim.project,
+      project_id: claimProject,
       claimed_by: claim.claimedBy,
       claim_expires_at: claim.claimExpiresAt,
       claim_generation: claim.claimGeneration,
@@ -246,9 +249,10 @@ function selectExpiredRows(
   project: string | undefined,
   limit: number | undefined,
 ): ExpiredClaimRow[] {
-  const rows = project
+  const sqlLimit = limit ?? null;
+  return project !== undefined
     ? store.db
-        .query<ExpiredClaimRow, [string, string]>(`
+        .query<ExpiredClaimRow, [string, string, number | null]>(`
           SELECT id, project_id, claimed_by, claim_expires_at, claim_generation, version
           FROM items
           WHERE status = 'active'
@@ -257,10 +261,11 @@ function selectExpiredRows(
             AND claim_expires_at <= ?1
             AND project_id = ?2
           ORDER BY claim_expires_at ASC, id ASC
+          LIMIT COALESCE(?3, -1)
         `)
-        .all(nowIso, project)
+        .all(nowIso, project, sqlLimit)
     : store.db
-        .query<ExpiredClaimRow, [string]>(`
+        .query<ExpiredClaimRow, [string, number | null]>(`
           SELECT id, project_id, claimed_by, claim_expires_at, claim_generation, version
           FROM items
           WHERE status = 'active'
@@ -268,7 +273,7 @@ function selectExpiredRows(
             AND claim_expires_at IS NOT NULL
             AND claim_expires_at <= ?1
           ORDER BY claim_expires_at ASC, id ASC
+          LIMIT COALESCE(?2, -1)
         `)
-        .all(nowIso);
-  return limit === undefined ? rows : rows.slice(0, limit);
+        .all(nowIso, sqlLimit);
 }
