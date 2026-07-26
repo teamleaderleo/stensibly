@@ -146,6 +146,7 @@ describe("hosted item control detail", () => {
       toActorId: agent.id,
     }) as any;
     const hidden = await createItem(t, "Private detail", human, "private-project");
+    const activityStart = Date.now() + 1_000;
     await t.run(async (ctx) => {
       const items = await ctx.db.query("items").collect();
       const item = items.find((entry) => entry.externalId === visible.id);
@@ -163,7 +164,7 @@ describe("hosted item control detail", () => {
           actorExternalId: actor.externalId,
           type: "progress.recorded",
           payload: { index },
-          createdAt: now + index,
+          createdAt: activityStart + index,
         });
       }
       await ctx.db.insert("events", {
@@ -175,11 +176,11 @@ describe("hosted item control detail", () => {
         actorExternalId: actor.externalId,
         type: "progress.recorded",
         payload: { secret: "private-project-value" },
-        createdAt: now + 500,
+        createdAt: activityStart + 500,
       });
     });
 
-    const result = await detail(t, visible.id, now + 1_000);
+    const result = await detail(t, visible.id, activityStart + 1_000);
     expect(result.events).toHaveLength(100);
     expect(result.events.at(-1)?.payload).toEqual({ index: 119 });
     expect(result.control.authority.generation).toBe(handedOff.claimGeneration);
