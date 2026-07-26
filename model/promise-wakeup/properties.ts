@@ -7,12 +7,14 @@ export const invariantNames = [
   "coherent_promise_state", "exact_promise_generation_fences_commands",
   "one_wakeup_per_promise_generation", "duplicate_delivery_at_most_one_effect",
   "terminal_promise_outcomes_exclusive", "consume_exact_consumer_generation",
-  "consume_idempotent", "stale_wakeup_cannot_wake_new_consumer",
-  "consumed_marker_survives_restart", "terminal_consumer_not_regressed",
-  "project_identity_preserved",
+  "consume_exact_run_generation", "complete_exact_consumer_generation",
+  "complete_exact_run_generation", "consume_idempotent",
+  "stale_wakeup_cannot_wake_new_consumer", "consumed_marker_survives_restart",
+  "terminal_consumer_not_regressed", "project_identity_preserved",
 ] as const;
 export const livenessNames = [
   "expired_pending_promise_reconcilable",
+  "current_consumable_wakeup_has_consume_path",
   "current_ready_wakeup_has_consume_or_escalate_path",
   "satisfied_current_promise_has_wakeup",
   "consumed_generation_never_becomes_consumable_after_restart",
@@ -24,18 +26,20 @@ export interface Counterexample {
 }
 export interface Observations {
   sawCoherentPromise: boolean; sawOlderPromiseProbe: boolean; sawDuplicateTransition: boolean;
-  sawTerminalPromise: boolean; sawWrongConsumerProbe: boolean; sawConsumedWakeup: boolean;
-  sawStaleWakeup: boolean; sawRestartWithConsumed: boolean; sawTerminalConsumer: boolean;
-  sawExpiredPending: boolean; sawReadyWakeup: boolean; sawSatisfied: boolean;
-  sawWakeupRecord: boolean;
+  sawTerminalPromise: boolean; sawWrongConsumerProbe: boolean; sawStaleRunConsumeProbe: boolean;
+  sawWrongCompleteConsumerProbe: boolean; sawStaleRunCompleteProbe: boolean;
+  sawConsumedWakeup: boolean; sawStaleWakeup: boolean; sawRestartWithConsumed: boolean;
+  sawTerminalConsumer: boolean; sawExpiredPending: boolean; sawReadyWakeup: boolean;
+  sawConsumableReadyWakeup: boolean; sawSatisfied: boolean; sawWakeupRecord: boolean;
 }
 export function observations(): Observations {
   return {
     sawCoherentPromise: false, sawOlderPromiseProbe: false, sawDuplicateTransition: false,
-    sawTerminalPromise: false, sawWrongConsumerProbe: false, sawConsumedWakeup: false,
-    sawStaleWakeup: false, sawRestartWithConsumed: false, sawTerminalConsumer: false,
-    sawExpiredPending: false, sawReadyWakeup: false, sawSatisfied: false,
-    sawWakeupRecord: false,
+    sawTerminalPromise: false, sawWrongConsumerProbe: false, sawStaleRunConsumeProbe: false,
+    sawWrongCompleteConsumerProbe: false, sawStaleRunCompleteProbe: false,
+    sawConsumedWakeup: false, sawStaleWakeup: false, sawRestartWithConsumed: false,
+    sawTerminalConsumer: false, sawExpiredPending: false, sawReadyWakeup: false,
+    sawConsumableReadyWakeup: false, sawSatisfied: false, sawWakeupRecord: false,
   };
 }
 
@@ -82,17 +86,41 @@ export function probeFences(state: State, seen: Observations): void {
     seen.sawOlderPromiseProbe = true;
   }
   for (const wakeup of state.wakeups.filter((entry) => entry.status === "ready")) {
-    const wrongConsumer = wakeup.consumerGeneration === 1 ? 2 : 1;
-    for (const runner of runners) {
-      same(state, apply(state, { kind: "consume", runner, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wrongConsumer, expectedRunGeneration: state.consumerRunGeneration }), "wrong consumer generation consume");
+    if (
+      wakeup.promiseGeneration === state.promiseGeneration
+      && wakeup.consumerGeneration !== state.consumerGeneration
+    ) {
+      for (const runner of runners) {
+        same(state, apply(state, { kind: "consume", runner, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: state.consumerRunGeneration }), "stale consumer generation consume");
+      }
+      seen.sawWrongConsumerProbe = true;
     }
-    seen.sawWrongConsumerProbe = true;
+    if (
+      wakeup.promiseGeneration === state.promiseGeneration
+      && wakeup.consumerGeneration === state.consumerGeneration
+      && state.consumerRunGeneration > 0
+    ) {
+      for (const runner of runners) {
+        same(state, apply(state, { kind: "consume", runner, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: state.consumerRunGeneration - 1 }), "stale run generation consume");
+      }
+      seen.sawStaleRunConsumeProbe = true;
+    }
     if (wakeup.promiseGeneration !== state.promiseGeneration || wakeup.consumerGeneration !== state.consumerGeneration) {
       for (const runner of runners) {
         same(state, apply(state, { kind: "consume", runner, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: state.consumerRunGeneration }), "stale wakeup consume");
       }
       seen.sawStaleWakeup = true;
     }
+  }
+  if (state.consumerStatus === "active") {
+    const wrongConsumer = state.consumerGeneration === 1 ? 2 : 1;
+    const staleRun = state.consumerRunGeneration - 1;
+    for (const runner of runners) {
+      same(state, apply(state, { kind: "complete-consumer", runner, expectedConsumerGeneration: wrongConsumer, expectedRunGeneration: state.consumerRunGeneration }), "wrong consumer generation completion");
+      same(state, apply(state, { kind: "complete-consumer", runner, expectedConsumerGeneration: state.consumerGeneration, expectedRunGeneration: staleRun }), "stale run generation completion");
+    }
+    seen.sawWrongCompleteConsumerProbe = true;
+    seen.sawStaleRunCompleteProbe = true;
   }
   for (const wakeup of state.wakeups.filter((entry) => entry.status === "consumed")) {
     same(state, apply(state, { kind: "consume", runner: wakeup.consumedByRunner ?? runners[0]!, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: wakeup.consumedByRunGeneration ?? state.consumerRunGeneration }), "consumed wakeup replay");
@@ -119,8 +147,12 @@ export function checkLiveness(states: State[], bounds: Bounds, seen: Observation
       seen.sawSatisfied = true;
     }
     for (const wakeup of state.wakeups.filter((entry) => entry.status === "ready" && entry.promiseGeneration === state.promiseGeneration && entry.consumerGeneration === state.consumerGeneration)) {
-      check(hasResolutionPath(state, wakeup, bounds), "current ready wakeup has no bounded consume or escalate path", state);
+      check(hasWakeupPath(state, wakeup, bounds, new Set(["consumed", "escalated"])), "current ready wakeup has no bounded consume or escalate path", state);
       seen.sawReadyWakeup = true;
+      if (state.promiseStatus === "satisfied" && state.consumerStatus !== "terminal") {
+        check(hasWakeupPath(state, wakeup, bounds, new Set(["consumed"])), "current consumable wakeup has no bounded consume path", state);
+        seen.sawConsumableReadyWakeup = true;
+      }
     }
     if (state.restarted) for (const wakeup of state.wakeups.filter((entry) => entry.status === "consumed")) {
       same(state, apply(state, { kind: "consume", runner: wakeup.consumedByRunner ?? runners[0]!, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: wakeup.consumedByRunGeneration ?? state.consumerRunGeneration }), "consumed wakeup after restart");
@@ -129,12 +161,17 @@ export function checkLiveness(states: State[], bounds: Bounds, seen: Observation
   }
 }
 
-function hasResolutionPath(start: State, target: WakeupRecord, bounds: Bounds): boolean {
+function hasWakeupPath(
+  start: State,
+  target: WakeupRecord,
+  bounds: Bounds,
+  acceptedStatuses: ReadonlySet<WakeupRecord["status"]>,
+): boolean {
   const queue: Array<{ state: State; depth: number }> = [{ state: start, depth: 0 }];
   const visited = new Set<string>([stateKey(start)]);
   for (let cursor = 0; cursor < queue.length; cursor += 1) {
     const node = queue[cursor]!;
-    if (wakeupResolved(node.state, target)) return true;
+    if (wakeupReached(node.state, target, acceptedStatuses)) return true;
     if (node.depth >= bounds.recoveryHorizonTicks) continue;
     for (const action of actions(node.state, bounds)) {
       const next = apply(node.state, action);
@@ -148,11 +185,15 @@ function hasResolutionPath(start: State, target: WakeupRecord, bounds: Bounds): 
   return false;
 }
 
-function wakeupResolved(state: State, target: WakeupRecord): boolean {
+function wakeupReached(
+  state: State,
+  target: WakeupRecord,
+  acceptedStatuses: ReadonlySet<WakeupRecord["status"]>,
+): boolean {
   return state.wakeups.some((entry) =>
     entry.promiseGeneration === target.promiseGeneration
     && entry.consumerGeneration === target.consumerGeneration
-    && (entry.status === "consumed" || entry.status === "escalated")
+    && acceptedStatuses.has(entry.status)
   );
 }
 
@@ -163,6 +204,9 @@ export function finish(seen: Observations): { invariants: Record<InvariantName, 
   if (seen.sawDuplicateTransition) i.add("duplicate_delivery_at_most_one_effect");
   if (seen.sawTerminalPromise) i.add("terminal_promise_outcomes_exclusive");
   if (seen.sawWrongConsumerProbe) i.add("consume_exact_consumer_generation");
+  if (seen.sawStaleRunConsumeProbe) i.add("consume_exact_run_generation");
+  if (seen.sawWrongCompleteConsumerProbe) i.add("complete_exact_consumer_generation");
+  if (seen.sawStaleRunCompleteProbe) i.add("complete_exact_run_generation");
   if (seen.sawConsumedWakeup) i.add("consume_idempotent");
   if (seen.sawStaleWakeup) i.add("stale_wakeup_cannot_wake_new_consumer");
   if (seen.sawRestartWithConsumed) i.add("consumed_marker_survives_restart");
@@ -172,6 +216,7 @@ export function finish(seen: Observations): { invariants: Record<InvariantName, 
     i.add("project_identity_preserved");
   }
   if (seen.sawExpiredPending) l.add("expired_pending_promise_reconcilable");
+  if (seen.sawConsumableReadyWakeup) l.add("current_consumable_wakeup_has_consume_path");
   if (seen.sawReadyWakeup) l.add("current_ready_wakeup_has_consume_or_escalate_path");
   if (seen.sawSatisfied) l.add("satisfied_current_promise_has_wakeup");
   if (seen.sawRestartWithConsumed) l.add("consumed_generation_never_becomes_consumable_after_restart");
