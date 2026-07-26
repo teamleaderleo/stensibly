@@ -277,7 +277,7 @@ export const finish = mutation({
     const item = await ctx.db.get("items", run.itemId);
     if (!item) throw new Error("Run item no longer exists");
     const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
-    await appendExecutionActualEvent(ctx, {
+    const appendedActual = await appendExecutionActualEvent(ctx, {
       workspaceId: run.workspaceId,
       projectId: run.projectId,
       itemId: run.itemId,
@@ -311,18 +311,7 @@ export const finish = mutation({
     if (!updated) throw new Error("Finished run disappeared");
     return await publicHostedRun(ctx, updated, item.externalId, {
       executionEnvelope: execution.executionEnvelope,
-      executionRecords: [
-        ...execution.executionRecords,
-        {
-          id: "pending",
-          runId: run.externalId,
-          runGeneration: 1,
-          leaseGeneration: 1,
-          transition: `finish:${input.status}`,
-          actual: input.executionActual,
-          createdAt: new Date(now).toISOString(),
-        },
-      ],
+      executionRecords: [...execution.executionRecords, appendedActual],
     });
   },
 });
