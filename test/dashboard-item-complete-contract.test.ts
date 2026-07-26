@@ -3,24 +3,33 @@ import { describe, expect, test } from "bun:test";
 const claimHelper = await Bun.file(new URL("../site/item-claim.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-complete-controller.js", import.meta.url)).text();
 const helper = await Bun.file(new URL("../site/item-complete.js", import.meta.url)).text();
+const generationController = await Bun.file(
+  new URL("../site/item-semantic-generation-controller.js", import.meta.url),
+).text();
 const styles = await Bun.file(new URL("../site/item-complete.css", import.meta.url)).text();
 
 describe("dashboard completion integration", () => {
-  test("loads as an isolated item-detail side effect", () => {
+  test("loads as an isolated item-detail side effect beside the generation sidecar", () => {
+    expect(claimHelper).toContain("import './item-semantic-generation-controller.js'");
     expect(claimHelper).toContain("import './item-complete-controller.js'");
     expect(controller).toContain("if (typeof document !== 'undefined') installCompleteController()");
     expect(controller).toContain("MutationObserver");
     expect(controller).toContain("findEventSection");
     expect(controller).toContain("item-complete-section");
+    expect(generationController).toContain("claimGeneration");
   });
 
-  test("uses the exact completion REST contract", () => {
+  test("uses the exact fenced completion REST contract", () => {
     expect(helper).toContain("action: 'complete'");
+    expect(helper).toContain("expectedClaimGeneration");
+    expect(controller).toContain("readSemanticClaimGeneration(body, itemId)");
     expect(controller).toContain("encodeURIComponent(input.id)");
     expect(controller).toContain("/complete`");
     expect(controller).toContain("method: 'POST'");
+    expect(controller).toContain("signal: AbortSignal.timeout(15_000)");
     expect(controller).toContain("'idempotency-key': idempotencyKey");
     expect(controller).toContain("actor: input.actor");
+    expect(controller).toContain("expectedClaimGeneration: input.expectedClaimGeneration");
     expect(controller).toContain("...(input.summary ? { summary: input.summary } : {})");
     expect(controller).not.toContain("/block`");
     expect(controller).not.toContain("/unblock`");
@@ -41,6 +50,7 @@ describe("dashboard completion integration", () => {
     expect(controller).toContain("bodyObserver.observe");
     expect(controller).toContain("contextObserver.observe");
     expect(controller).toContain("readContext().fingerprint === expectedContext");
+    expect(controller).toContain("tokenDiscriminator(token)");
     expect(controller).toContain("idempotency.reset()");
     expect(controller).toContain("summary: formState.summary");
   });
@@ -53,11 +63,13 @@ describe("dashboard completion integration", () => {
     expect(controller).toContain("form:not(.detail-complete-form)");
   });
 
-  test("validates the safe completion response and refreshes board plus detail", () => {
+  test("validates exact generation advancement and refreshes board plus detail", () => {
     expect(helper).toContain("status !== 'done'");
     expect(helper).toContain("item.claimedBy !== null || item.claimExpiresAt !== null");
+    expect(helper).toContain("item.claimGeneration !== previousGeneration + 1");
     expect(helper).toContain("Number.isInteger(item.version)");
     expect(controller).toContain("readCompletedItem");
+    expect(controller).toContain("expectedClaimGeneration: input.expectedClaimGeneration");
     expect(controller).toContain("boardRefreshButton.click()");
     expect(controller).toContain("refreshButton.click()");
   });
@@ -66,6 +78,7 @@ describe("dashboard completion integration", () => {
     expect(controller).toContain("formatValidationIssues");
     expect(controller).toContain("safeRequestId");
     expect(controller).toContain("response.status === 409");
+    expect(controller).toContain("holder, and claim generation");
     expect(controller).toContain("Retry the unchanged form to reuse the same idempotency key");
     expect(controller).toContain("redactCredentialText");
     expect(controller).not.toContain("innerHTML");
