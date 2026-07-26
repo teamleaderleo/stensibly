@@ -31,7 +31,9 @@ describe("REST API v1", () => {
     }), 201);
     expect(created.item.status).toBe("ready");
 
-    const claimed = await json<{ item: { status: string; claimedBy: string } }>(app.request(
+    const claimed = await json<{
+      item: { status: string; claimedBy: string; claimGeneration: number };
+    }>(app.request(
       `/api/v1/items/${encodeURIComponent(created.item.id)}/claim`,
       {
         method: "POST",
@@ -62,7 +64,11 @@ describe("REST API v1", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ actor: agent, summary: "The versioned API works." }),
+        body: JSON.stringify({
+          actor: agent,
+          expectedClaimGeneration: claimed.item.claimGeneration,
+          summary: "The versioned API works.",
+        }),
       },
     ));
     expect(completed.item).toMatchObject({ status: "done", summary: "The versioned API works." });

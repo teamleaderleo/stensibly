@@ -196,6 +196,7 @@ export function createApp(
     const item = handoffWork(store, {
       id,
       actor: parsed.data.actor,
+      expectedClaimGeneration: parsed.data.expectedClaimGeneration,
       summary: parsed.data.summary,
       nextAction: parsed.data.nextAction,
       ...(parsed.data.toActorId ? { toActorId: parsed.data.toActorId } : {}),
@@ -216,6 +217,7 @@ export function createApp(
     const item = blockWork(store, {
       id,
       actor: parsed.data.actor,
+      expectedClaimGeneration: parsed.data.expectedClaimGeneration,
       reason: parsed.data.reason,
       ...(parsed.data.nextAction ? { nextAction: parsed.data.nextAction } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -235,6 +237,7 @@ export function createApp(
     const item = unblockWork(store, {
       id,
       actor: parsed.data.actor,
+      expectedClaimGeneration: parsed.data.expectedClaimGeneration,
       ...(parsed.data.nextAction ? { nextAction: parsed.data.nextAction } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
@@ -271,6 +274,7 @@ export function createApp(
     const item = store.completeItem(
       id,
       parsed.data.actor,
+      parsed.data.expectedClaimGeneration,
       parsed.data.summary,
       context.req.header("Idempotency-Key"),
     );

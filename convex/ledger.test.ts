@@ -58,6 +58,7 @@ describe("Convex ledger", () => {
       workspace,
       id: created.id,
       actor: alpha,
+      expectedClaimGeneration: claimed.claimGeneration,
       summary: "The core is in place.",
       nextAction: "Review and complete it.",
       toActorId: beta.id,
@@ -66,18 +67,19 @@ describe("Convex ledger", () => {
     expect(handedOff.status).toBe("ready");
     expect(handedOff.claimedBy).toBeNull();
 
-    await t.mutation(convexApi.claims.acquire, {
+    const betaClaim = await t.mutation(convexApi.claims.acquire, {
       serviceSecret: secret,
       workspace,
       id: created.id,
       actor: beta,
       leaseSeconds: 900,
-    });
+    }) as any;
     const completed = await t.mutation(convexApi.items.complete, {
       serviceSecret: secret,
       workspace,
       id: created.id,
       actor: beta,
+      expectedClaimGeneration: betaClaim.claimGeneration,
       summary: "Reviewed and survived.",
       idempotencyKey: "complete-1",
     }) as any;

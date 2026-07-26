@@ -175,6 +175,7 @@ export function dispatchNextWork(
         SET status = 'active',
             claimed_by = ?1,
             claim_expires_at = ?2,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
@@ -200,6 +201,7 @@ export function dispatchNextWork(
       throw new ConflictError("Dispatch candidate changed before it could be claimed");
     }
 
+    const item = store.getItem(candidate.id);
     const runId = `run_${randomUUID()}`;
     store.db
       .query(`
@@ -241,6 +243,7 @@ export function dispatchNextWork(
       payload: {
         leaseSeconds: input.leaseSeconds,
         expiresAt: leaseExpiresAt,
+        generation: item.claimGeneration,
         source: "supervisor_dispatch",
       },
       now: timestamp,
@@ -263,7 +266,7 @@ export function dispatchNextWork(
     });
 
     const result: DispatchResult = {
-      item: store.getItem(candidate.id),
+      item,
       run: mapRun(getRunRow(store, runId)),
     };
     storeDispatchReplay(store, input.idempotencyKey, requestJson, result, timestamp);
@@ -352,12 +355,16 @@ function mapCandidate(row: CandidateRow): DispatchCandidate {
     readyPromiseWakeups: wakeups,
     explanation: [
       wakeups > 0
-        ? `${wakeups} durable promise wakeup${wakeups === 1 ? "" : "s"} ready`
+        ? `${wakeups} durable promise wakeup${wakesSuffix(wakeups)} ready`
         : "ready work without a promise wakeup",
       `priority ${row.priority}`,
       `created ${row.created_at}`,
     ],
   };
+}
+
+function wakesSuffix(count: number): string {
+  return count === 1 ? "" : "s";
 }
 
 function reconciliationSummary(

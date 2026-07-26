@@ -16,18 +16,19 @@ describe("Convex completion parity", () => {
   test("completion preserves or replaces summary, clears next action and lease, and replays once", async () => {
     const t = convexTest(schema, modules);
     const preserved = await createItem(t, "Preserve the final summary", "Original summary", "This must disappear");
-    await t.mutation(convexApi.claims.acquire, {
+    const claimed = await t.mutation(convexApi.claims.acquire, {
       serviceSecret: secret,
       workspace,
       id: preserved.id,
       actor,
       leaseSeconds: 900,
-    });
+    }) as any;
     const completed = await t.mutation(convexApi.items.complete, {
       serviceSecret: secret,
       workspace,
       id: preserved.id,
       actor,
+      expectedClaimGeneration: claimed.claimGeneration,
       idempotencyKey: "complete-preserve",
     }) as any;
     expect(completed).toMatchObject({
@@ -43,6 +44,7 @@ describe("Convex completion parity", () => {
       workspace,
       id: preserved.id,
       actor,
+      expectedClaimGeneration: claimed.claimGeneration,
       idempotencyKey: "complete-preserve",
     }) as any;
     expect(replayed.version).toBe(completedVersion);
@@ -60,6 +62,7 @@ describe("Convex completion parity", () => {
       workspace,
       id: replaced.id,
       actor,
+      expectedClaimGeneration: replaced.claimGeneration,
       summary: "Completed with evidence",
       idempotencyKey: "complete-replace",
     }) as any;

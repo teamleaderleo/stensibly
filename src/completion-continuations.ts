@@ -26,6 +26,7 @@ export function completeWorkWithContinuations(
   const id = requiredText(rawInput.id, "Item ID", 240);
   const parsed = completeWithContinuationsSchema.parse({
     actor: rawInput.actor,
+    expectedClaimGeneration: rawInput.expectedClaimGeneration,
     summary: rawInput.summary,
     continuations: rawInput.continuations,
   });
@@ -37,6 +38,7 @@ export function completeWorkWithContinuations(
   const request = {
     id,
     actor: parsed.actor,
+    expectedClaimGeneration: parsed.expectedClaimGeneration,
     summary: parsed.summary ?? null,
     continuations: parsed.continuations ?? [],
   };
@@ -75,6 +77,7 @@ export function completeWorkWithContinuations(
     const item = store.completeItem(
       id,
       parsed.actor,
+      parsed.expectedClaimGeneration,
       parsed.summary,
       idempotencyKey,
     );

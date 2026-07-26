@@ -213,6 +213,7 @@ export class SqliteWorkLedger implements
     return this.store.completeItem(
       input.id,
       input.actor,
+      input.expectedClaimGeneration,
       input.summary,
       input.idempotencyKey,
     );

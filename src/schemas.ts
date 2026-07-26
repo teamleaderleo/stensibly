@@ -39,24 +39,27 @@ export const claimItemSchema = z.object({
   leaseSeconds: z.number().int().min(30).max(86_400).default(900),
 });
 
-const expectedClaimGenerationSchema = z.number().int().min(1);
+const expectedLiveClaimGenerationSchema = z.number().int().min(1);
+export const expectedItemGenerationSchema = z.number().int().min(0);
 
 export const renewClaimSchema = claimItemSchema.extend({
-  expectedClaimGeneration: expectedClaimGenerationSchema,
+  expectedClaimGeneration: expectedLiveClaimGenerationSchema,
 });
 
 export const claimActionSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedClaimGenerationSchema,
+  expectedClaimGeneration: expectedLiveClaimGenerationSchema,
 });
 
 export const actorActionSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedItemGenerationSchema,
   summary: z.string().trim().max(10_000).optional(),
 });
 
 export const handoffItemSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedItemGenerationSchema,
   summary: z.string().trim().min(1).max(10_000),
   nextAction: z.string().trim().min(1).max(2_000),
   toActorId: z.string().trim().min(1).max(120).optional(),
@@ -64,12 +67,14 @@ export const handoffItemSchema = z.object({
 
 export const blockItemSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedItemGenerationSchema,
   reason: z.string().trim().min(1).max(10_000),
   nextAction: z.string().trim().min(1).max(2_000).optional(),
 });
 
 export const unblockItemSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedItemGenerationSchema,
   nextAction: z.string().trim().min(1).max(2_000).optional(),
 });
 

@@ -51,6 +51,7 @@ describe("project briefs", () => {
     blockWork(store, {
       id: blocked.id,
       actor: leo,
+      expectedClaimGeneration: blocked.claimGeneration,
       reason: "Waiting for a deployment target.",
       nextAction: "Choose a host.",
     });
@@ -71,7 +72,12 @@ describe("project briefs", () => {
       priority: 30,
       actor: browserAgent,
     });
-    store.completeItem(finding.id, browserAgent, "Confirmed through the web and MCP processes.");
+    store.completeItem(
+      finding.id,
+      browserAgent,
+      finding.claimGeneration,
+      "Confirmed through the web and MCP processes.",
+    );
 
     attachArtifact(store, {
       itemId: active.id,

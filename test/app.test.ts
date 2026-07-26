@@ -42,6 +42,7 @@ describe("REST work transitions", () => {
       body: JSON.stringify({ actor: browserAgent, leaseSeconds: 900 }),
     });
     expect(claimResponse.status).toBe(200);
+    const claimed = await readItem(claimResponse);
 
     const handoffResponse = await app.request(`/api/items/${created.id}/handoff`, {
       method: "POST",
@@ -51,13 +52,15 @@ describe("REST work transitions", () => {
       },
       body: JSON.stringify({
         actor: browserAgent,
+        expectedClaimGeneration: claimed.claimGeneration,
         summary: "The endpoint works.",
         nextAction: "Review the result.",
         toActorId: leo.id,
       }),
     });
     expect(handoffResponse.status).toBe(200);
-    expect(await readItem(handoffResponse)).toMatchObject({
+    const handedOff = await readItem(handoffResponse);
+    expect(handedOff).toMatchObject({
       status: "ready",
       summary: "The endpoint works.",
       nextAction: "Review the result.",
@@ -69,12 +72,14 @@ describe("REST work transitions", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         actor: leo,
+        expectedClaimGeneration: handedOff.claimGeneration,
         reason: "Waiting for a review.",
         nextAction: "Continue after review.",
       }),
     });
     expect(blockResponse.status).toBe(200);
-    expect(await readItem(blockResponse)).toMatchObject({
+    const blocked = await readItem(blockResponse);
+    expect(blocked).toMatchObject({
       status: "blocked",
       summary: "Waiting for a review.",
     });
@@ -91,6 +96,7 @@ describe("REST work transitions", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         actor: leo,
+        expectedClaimGeneration: blocked.claimGeneration,
         nextAction: "The review landed; continue.",
       }),
     });
@@ -197,6 +203,7 @@ async function readItem(response: Response): Promise<{
   summary: string | null;
   nextAction: string | null;
   claimedBy: string | null;
+  claimGeneration: number;
 }> {
   const body = await response.json() as {
     item: {
@@ -205,6 +212,7 @@ async function readItem(response: Response): Promise<{
       summary: string | null;
       nextAction: string | null;
       claimedBy: string | null;
+      claimGeneration: number;
     };
   };
   return body.item;

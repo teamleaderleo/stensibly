@@ -21,6 +21,7 @@ describe("Convex atomic completion continuations", () => {
       workspace,
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "The hosted implementation is complete.",
       continuations: [
         {
@@ -99,6 +100,7 @@ describe("Convex atomic completion continuations", () => {
       workspace,
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "This must remain invisible.",
       continuations: [
         {
@@ -154,6 +156,7 @@ describe("Convex atomic completion continuations", () => {
       workspace,
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       continuations: [],
       idempotencyKey: "shared-operation-key",
     })).rejects.toThrow("another operation");

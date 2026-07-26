@@ -36,6 +36,7 @@ describe("atomic MCP completion continuations", () => {
       const input = {
         id: item.id,
         actor: agent,
+        expectedClaimGeneration: item.claimGeneration,
         summary: "Completed with an atomic proposal.",
         continuations: [{
           title: "Review the completed MCP work",

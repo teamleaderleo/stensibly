@@ -26,11 +26,12 @@ describe("atomic completion continuations", () => {
       priority: 70,
       actor: agent,
     });
-    await ledger.claimWork({ id: item.id, actor: agent, leaseSeconds: 900 });
+    const claimed = await ledger.claimWork({ id: item.id, actor: agent, leaseSeconds: 900 });
 
     const input = {
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: claimed.claimGeneration,
       summary: "The implementation is complete.",
       continuations: [
         {
@@ -94,6 +95,7 @@ describe("atomic completion continuations", () => {
     await expect(ledger.completeWorkWithContinuations({
       id: item.id,
       actor: leo,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "This must be rolled back.",
       continuations: [
         {
@@ -134,6 +136,7 @@ describe("atomic completion continuations", () => {
     });
     const body = {
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "Completed through the existing endpoint.",
       continuations: [{
         title: "Review the REST completion",

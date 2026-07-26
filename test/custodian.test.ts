@@ -84,6 +84,7 @@ describe("custodian report", () => {
     blockWork(store, {
       id: staleBlocked.id,
       actor: leo,
+      expectedClaimGeneration: staleBlocked.claimGeneration,
       reason: "Waiting on a system that may never arrive.",
       nextAction: "Confirm whether the dependency still exists.",
     });
@@ -115,7 +116,12 @@ describe("custodian report", () => {
       priority: 100,
       actor: leo,
     });
-    store.completeItem(completedDuplicate.id, leo, "Already answered once.");
+    store.completeItem(
+      completedDuplicate.id,
+      leo,
+      completedDuplicate.claimGeneration,
+      "Already answered once.",
+    );
 
     const expiredSnapshot = store.getItem(expired.id);
     const report = inspectScrapbook(store, {
