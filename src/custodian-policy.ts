@@ -10,7 +10,9 @@ import { StensiblyStore } from "./store.js";
 export const CUSTODIAN_POLICY_ID = "conservative-custodian";
 export const CUSTODIAN_POLICY_VERSION = "2026-07-26.v2";
 
-export type CustodianMode = "observe" | "dry-run" | "apply";
+const CUSTODIAN_MODES = ["observe", "dry-run", "apply"] as const;
+
+export type CustodianMode = (typeof CUSTODIAN_MODES)[number];
 export type CustodianActionStatus = "reported" | "planned" | "applied" | "skipped";
 
 export interface CustodianPolicy {
@@ -80,7 +82,7 @@ export function runCustodianPolicy(
   dependencies: CustodianPolicyDependencies = defaultDependencies,
 ): CustodianPolicyResult {
   const mode = options.mode ?? "observe";
-  if (!( ["observe", "dry-run", "apply"] as const).includes(mode)) {
+  if (!CUSTODIAN_MODES.includes(mode)) {
     throw new RangeError("mode must be observe, dry-run, or apply");
   }
   const maxActions = options.maxActions ?? 100;
