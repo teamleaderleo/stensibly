@@ -22,8 +22,8 @@ approval_required:
   - destructive_cleanup
   - spend
 checks:
-  - bun run typecheck
-  - bun test
+  - typecheck
+  - unit-tests
 ---
 
 # Project contract
@@ -38,7 +38,7 @@ Keep live authority, credentials, approvals, and execution state server-owned.
 
 ## Evidence and handoff expectations
 
-Record the exact head, changed files, commands, results, and requested decision.
+Record the exact head, changed files, verification profiles, results, and requested decision.
 
 ## Escalation
 
