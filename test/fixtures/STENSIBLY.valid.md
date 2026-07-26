@@ -18,6 +18,9 @@ approval_required:
   - external_message
   - provider_change
   - broad_permission_change
+  - credential_change
+  - destructive_cleanup
+  - spend
 checks:
   - bun run typecheck
   - bun test
