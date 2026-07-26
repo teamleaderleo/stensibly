@@ -73,6 +73,7 @@ import {
   type ListWorkRunsInput,
   type TransitionWorkRunInput,
 } from "./runs.js";
+import { readBoundedSqliteItemDetail } from "./sqlite-item-detail.js";
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
@@ -115,14 +116,7 @@ export class SqliteWorkLedger implements
     const now = new Date();
     reconcileStaleRunItems(this.store, now);
     expireClaims(this.store, now);
-    const detail = {
-      item: this.store.getItem(id),
-      events: this.store.listEvents(id),
-      artifacts: listArtifacts(this.store, id),
-      runs: listWorkRuns(this.store, { itemId: id }),
-      dependencies: [],
-      reservations: [],
-    };
+    const detail = readBoundedSqliteItemDetail(this.store, id, now);
     return {
       ...detail,
       control: buildItemControlView(detail, { now }),
