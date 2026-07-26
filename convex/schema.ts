@@ -233,11 +233,17 @@ export default defineSchema({
     tokenEndpointAuthMethod: v.literal("none"),
     grantTypes: v.array(v.string()),
     responseTypes: v.array(v.string()),
+    lifecycleState: v.optional(v.union(v.literal("unused"), v.literal("used"))),
+    unusedExpiresAt: v.optional(v.number()),
+    firstUsedAt: v.optional(v.number()),
+    cleanupScheduledAt: v.optional(v.number()),
+    cleanupScheduleGeneration: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
-    .index("by_workspace_created", ["workspaceId", "createdAt"]),
+    .index("by_workspace_created", ["workspaceId", "createdAt"])
+    .index("by_workspace_lifecycle_expiry", ["workspaceId", "lifecycleState", "unusedExpiresAt"]),
 
   mcpOAuthCodes: defineTable({
     workspaceId: v.id("workspaces"),
@@ -253,7 +259,8 @@ export default defineSchema({
     expiresAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
-    .index("by_expiry", ["expiresAt"]),
+    .index("by_expiry", ["expiresAt"])
+    .index("by_workspace_client_created", ["workspaceId", "clientExternalId", "createdAt"]),
 
   mcpOAuthRefreshTokens: defineTable({
     workspaceId: v.id("workspaces"),
@@ -276,6 +283,7 @@ export default defineSchema({
     .index("by_external_id", ["externalId"])
     .index("by_family_created", ["familyExternalId", "createdAt"])
     .index("by_workspace_family_created", ["workspaceId", "familyExternalId", "createdAt"])
+    .index("by_workspace_client_created", ["workspaceId", "clientExternalId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
   items: defineTable({
