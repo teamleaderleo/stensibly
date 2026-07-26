@@ -37,6 +37,9 @@ approval_required:
   - external_message
   - provider_change
   - broad_permission_change
+  - credential_change
+  - destructive_cleanup
+  - spend
 checks:
   - bun run typecheck
   - bun test
@@ -64,7 +67,7 @@ checks:
 - `runner_profiles` contains bounded lowercase identifiers.
 - project concurrency is 1–16, global concurrency is 1–64, and project concurrency cannot exceed global concurrency.
 - action identifiers come from the exported version 1 allowlist.
-- `merge`, `deploy`, `external_message`, `provider_change`, and `broad_permission_change` must remain approval-required.
+- `merge`, `deploy`, `external_message`, `provider_change`, `broad_permission_change`, `credential_change`, `destructive_cleanup`, and `spend` must remain approval-required.
 - one action cannot be both autonomous and approval-required.
 - checks are bounded single commands. Shell chaining, interpolation, redirection, environment assignment, continuations, and credential-shaped values fail.
 - the complete document is bounded to 128 KB and rejects tabs, control characters, private keys, tokens, passwords, and other explicit secret-shaped content.
@@ -74,7 +77,7 @@ The canonical projection sorts set-like lists and normalises newlines, identifie
 
 ## Markdown body
 
-Version 1 requires exactly four level-two sections in this order: Goal, Boundaries, Evidence and handoff expectations, and Escalation. Their bounded text is preserved for display. Prose never creates permissions, verification commands, approval records, or live authority.
+Version 1 requires exactly four level-two sections in this order: Goal, Boundaries, Evidence and handoff expectations, and Escalation. Their bounded text is preserved for display. Prose never creates permissions, verification commands, approval records, or live authority. Ordinary Markdown content, including horizontal rules, stays body text after the first closing front-matter delimiter.
 
 ## Dry-run comparison
 
