@@ -117,6 +117,9 @@ function workerRunId(value: string): string {
 }
 
 function reviewedCommit(value: string): string {
+  if (unsafeTextPattern.test(value)) {
+    throw new RangeError("Reviewed revision contains unsupported control characters");
+  }
   const normalized = value.trim();
   if (!revisionPattern.test(normalized)) {
     throw new RangeError("Reviewed revision must be 7 to 64 hexadecimal characters");
