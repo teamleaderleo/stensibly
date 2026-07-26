@@ -11,6 +11,7 @@ export const continuationDraftSchema = proposeContinuationSchema.omit({ actor: t
 
 export const completeWithContinuationsSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: z.number().int().min(1),
   summary: z.string().trim().max(10_000).optional(),
   continuations: z.array(continuationDraftSchema).max(20).optional(),
 });
@@ -20,6 +21,7 @@ export type ContinuationDraft = z.input<typeof continuationDraftSchema>;
 export interface CompleteWithContinuationsInput {
   id: string;
   actor: z.input<typeof actorSchema>;
+  expectedClaimGeneration: number;
   summary?: string;
   continuations: ContinuationDraft[];
   idempotencyKey?: string;
