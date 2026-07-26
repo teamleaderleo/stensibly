@@ -127,6 +127,48 @@ describe("repository attachment contract", () => {
     }
   });
 
+  test("validates decoded JSON scalars before field normalisation", () => {
+    const encodedSecretCases = [
+      fixture.replace(
+        "project: example-project",
+        String.raw`project: "sk-\u0061bcdefghijkl"`,
+      ),
+      fixture.replace(
+        "  - codex-default",
+        String.raw`  - "sk-\u0061bcdefghijkl"`,
+      ),
+    ];
+    for (const content of encodedSecretCases) {
+      const result = parseProjectAttachmentContract(content);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors).toEqual(expect.arrayContaining([
+          expect.objectContaining({ code: "secret_shaped_value" }),
+        ]));
+      }
+    }
+
+    for (const escaped of [String.raw`\u000a`, String.raw`\t`, String.raw`\u0001`]) {
+      const result = parseProjectAttachmentContract(
+        fixture.replace("  - bun test", `  - "bun test${escaped}"`),
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors).toEqual(expect.arrayContaining([
+          expect.objectContaining({ code: "control_character" }),
+        ]));
+      }
+    }
+
+    const ordinary = parse(fixture
+      .replace("project: example-project", 'project: "example-project"')
+      .replace("  - codex-default", '  - "codex-default"')
+      .replace("  - bun test", '  - "bun test"'));
+    expect(ordinary.contract.project).toBe("example-project");
+    expect(ordinary.contract.runnerProfiles).toEqual(["codex-default"]);
+    expect(ordinary.contract.checks).toEqual(["bun run typecheck", "bun test"]);
+  });
+
   test("rejects invalid actions, concurrency, missing consequential approvals, and overlap", () => {
     expect(parseProjectAttachmentContract(
       fixture.replace("  - propose", "  - arbitrary_shell"),
@@ -154,6 +196,46 @@ describe("repository attachment contract", () => {
     expect(diff.bodyChanged).toBe(true);
     expect(diff.bodyOnly).toBe(true);
     expect(diff.widensPermissions).toBe(false);
+  });
+
+  test("keeps level-two headings inside backtick fences as inert display text", () => {
+    const fencedGoal = [
+      "Deliver a bounded repository change with reviewable evidence.",
+      "",
+      "````markdown",
+      "## Boundaries",
+      "```",
+      "~~~",
+      "## Escalation",
+      "````",
+    ].join("\n");
+    const parsed = parse(fixture.replace(
+      "Deliver a bounded repository change with reviewable evidence.",
+      fencedGoal,
+    ));
+
+    expect(parsed.contract.body.goal).toBe(fencedGoal);
+    expect(parsed.contract.body.boundaries).toContain("Keep live authority");
+  });
+
+  test("keeps level-two headings inside tilde fences as inert display text", () => {
+    const fencedBoundaries = [
+      "Keep live authority, credentials, approvals, and execution state server-owned.",
+      "",
+      "~~~~text",
+      "## Evidence and handoff expectations",
+      "~~~",
+      "```",
+      "## Goal",
+      "~~~~",
+    ].join("\n");
+    const parsed = parse(fixture.replace(
+      "Keep live authority, credentials, approvals, and execution state server-owned.",
+      fencedBoundaries,
+    ));
+
+    expect(parsed.contract.body.boundaries).toBe(fencedBoundaries);
+    expect(parsed.contract.body.evidenceAndHandoff).toContain("Record the exact head");
   });
 
   test("classifies widening, narrowing, command changes, and version incompatibility", () => {
