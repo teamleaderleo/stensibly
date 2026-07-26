@@ -2,284 +2,207 @@
 
 ## Status
 
-This document records a proposed orchestration policy for Stensibly. It is a product and execution design, not a claim that every mechanism described here already exists.
+This document proposes an orchestration policy for Stensibly. It defines product and execution contracts; it does not imply that every mechanism already exists.
 
-The policy sits above the current run, continuation, checkpoint, runner-adapter, and portfolio work. It defines how those pieces should combine when one person supervises many long-running agent tasks across several projects.
+Related work includes #45, #47, #49, #50, #51, #69, #157, and #180.
 
-Related work:
+## Governing principles
 
-- [#45 — Build the supervisory orchestration loop](https://github.com/teamleaderleo/stensibly/issues/45)
-- [#47 — Add a durable supervisor dispatcher and run lifecycle](https://github.com/teamleaderleo/stensibly/issues/47)
-- [#49 — Add active context packets and historical retention](https://github.com/teamleaderleo/stensibly/issues/49)
-- [#50 — Add runner adapters for Hermes, OpenClaw, Codex, and generic MCP agents](https://github.com/teamleaderleo/stensibly/issues/50)
-- [#51 — Add portfolio goals and cross-project supervision](https://github.com/teamleaderleo/stensibly/issues/51)
-- [#69 — Add durable continuation proposals and human-approved resume flows](https://github.com/teamleaderleo/stensibly/issues/69)
-- [#157 — Define retry, deadline, and escalation budgets as first-class policy](https://github.com/teamleaderleo/stensibly/issues/157)
-- [#180 — Define run checkpoint consistency and resume ownership](https://github.com/teamleaderleo/stensibly/issues/180)
+1. Keep shared-context groups small.
+2. Permit broad portfolio parallelism only when work remains independently verifiable.
+3. Treat human review and decisions as separate capacity constraints.
+4. Persist enough state to resume without reconstructing a chat.
+5. Fence every ownership transfer, recovery, and write-producing continuation.
+6. Preserve evidence for estimates, decisions, verification, and policy actions.
+7. Store only authorised, sanitised durable content.
 
-## Governing idea
+A project may remain active for months. A task group should form around one objective, produce a durable result or continuation package, and dissolve.
 
-> Keep shared-context groups small, permit broad portfolio parallelism, and throttle completed work according to human review capacity.
+Stensibly should distinguish:
 
-A project may remain alive for months. A task group should form around one objective, leave a durable result, and dissolve. An individual agent turn should have an explicit execution envelope, checkpoints, and a recovery path.
-
-Stensibly should distinguish three different counts:
-
-1. **Portfolio projects** — every project retained in the ledger.
-2. **Foreground projects** — projects receiving active human attention.
-3. **Live task groups** — work currently executing or producing a near-term review obligation.
+- **portfolio projects** — every retained project;
+- **foreground projects** — projects receiving active human attention;
+- **live task groups** — groups consuming execution or near-term review capacity;
+- **review-ready items** — completed results waiting for human evaluation.
 
 “Ongoing” means resumable. “Running” means consuming execution, message, tool, review, or decision capacity.
 
-## Per-message execution envelopes
+## Canonical execution envelope
 
-Every substantial agent turn should receive an execution envelope before work begins.
-
-An envelope should record:
-
-- objective;
-- scope class;
-- required outputs;
-- expected duration range;
-- estimate confidence;
-- soft-checkpoint boundary;
-- forced-handoff boundary;
-- hard-recovery boundary;
-- completion conditions;
-- verification requirements;
-- continuation-state requirements;
-- estimated review effort;
-- expected message and tool budget.
-
-Example:
+Every substantial turn should receive one versioned execution envelope before work begins. This is the canonical field layout for policy, storage, runner adapters, and examples.
 
 ```yaml
-objective: "Implement and test the account settings flow"
-scope_class: segmented
+execution_envelope:
+  schema_version: 1
+  objective: "Implement and test the account settings flow"
+  scope_class: segmented
 
-estimate:
-  low_minutes: 35
-  likely_minutes: 65
-  high_minutes: 95
-  confidence: 0.58
+  estimate:
+    low_minutes: 35
+    likely_minutes: 65
+    high_minutes: 95
+    confidence: 0.58
 
-execution:
-  soft_checkpoint_minutes: 75
-  forced_handoff_minutes: 105
-  hard_recovery_minutes: 120
-  expected_messages: 3
-  expected_review_minutes: 12
+  budget:
+    expected_messages: 3
+    expected_tool_calls: 40
+    expected_review_minutes: 12
 
-completion:
-  required_outputs:
-    - working implementation
-    - tests
-    - changed-file summary
-  verification_required: true
-  continuation_state_required: true
+  boundaries:
+    soft_checkpoint_minutes: 75
+    forced_handoff_minutes: 105
+    hard_recovery_minutes: 120
+
+  completion:
+    required_outputs:
+      - working implementation
+      - tests
+      - changed-file summary
+    verification_required: true
+    continuation_state_required: true
+    acceptance_checks:
+      - targeted tests pass
+      - changed files match the declared scope
+
+  durable_state:
+    access_class: project
+    retention_class: standard
+    redaction_required: true
+    delete_after: null
 ```
 
-Duration should be a range. A single number hides uncertainty and encourages false precision.
+Duration uses a range because a single number hides uncertainty. `low_minutes <= likely_minutes <= high_minutes` must hold. Budget values are forecasts, not permission to consume the full amount.
 
-### Task classes
+### Scope classes
 
-- **Atomic** — intended to complete in one turn.
-- **Segmented** — several independently useful phases.
-- **Exploratory** — discovery first, revised plan second.
-- **Long-running** — expected to cross one or more checkpoints.
-- **Portfolio** — coordinates work across projects.
-- **Review** — verifies, compares, or integrates earlier outputs.
+- **atomic** — intended to complete in one turn;
+- **segmented** — several independently useful phases;
+- **exploratory** — discovery first, revised plan second;
+- **long-running** — expected to cross checkpoints;
+- **portfolio** — coordinates work across projects;
+- **review** — verifies, compares, or integrates prior outputs.
 
-The useful decomposition unit is the smallest independently verifiable result.
+The preferred decomposition unit is the smallest independently verifiable result.
 
 ## Task success
 
-Elapsed time alone gives a weak success signal. Stensibly should preserve separate result dimensions:
+Retain separate success dimensions:
 
 1. **Outcome** — the requested result exists.
-2. **Scope** — the run stayed within its intended boundary or recorded an approved expansion.
-3. **Calibration** — actual duration and effort fit the estimated range.
-4. **Continuity** — a later turn can resume from durable state.
-5. **Verification** — important claims, tests, and artifacts were checked.
-6. **User value** — the work advanced the project, clarified the problem, produced learning, or created a useful artifact.
-7. **Review cost** — the result arrived in a form the human could evaluate without reconstructing the run.
+2. **Scope** — work stayed within its boundary or recorded an approved expansion.
+3. **Calibration** — actual effort is compared with the estimate.
+4. **Continuity** — durable state permits a later turn to resume.
+5. **Verification** — important claims and artifacts were checked.
+6. **User value** — the work advanced the project or clarified the problem.
+7. **Review cost** — the result can be evaluated without reconstructing the run.
+8. **Policy compliance** — authority, privacy, and retention controls were followed.
 
-These dimensions should remain inspectable. Some may become hard gates for consequential work.
+These dimensions remain inspectable even when only some are hard gates.
 
-A long task can succeed with strong output and a clean handoff. A shorter task can fail through ambiguity, missing evidence, or an unusable continuation state.
-
-## Checkpoint, handoff, and recovery boundaries
+## Checkpoint, handoff, and recovery
 
 ### Soft checkpoint
 
-Before the risky tail of a long run, record:
+Before the risky tail of a run, record:
 
-- completed work;
-- remaining work;
-- current blockers;
+- completed and remaining work;
+- blockers and unresolved decisions;
 - changed files or artifacts;
-- tests run and results;
-- latest verified state;
+- tests and results;
+- latest verified repository state;
 - next exact action;
-- revised completion estimate;
-- confidence that the current turn can finish.
+- revised estimate and confidence;
+- current run and fence generation.
 
-The run may continue.
+The current worker may continue while its authority remains live.
 
 ### Forced handoff
 
-Near the upper execution bound, bias toward one of two outcomes:
-
-1. finish the smallest coherent deliverable; or
-2. produce a continuation package.
-
-This gives the worker a legitimate exit point before it spends the remaining turn searching for a perfect stopping point.
+Near the upper execution bound, finish the smallest coherent deliverable or produce a continuation package containing the accepted checkpoint, evidence, remaining work, and exact next action.
 
 ### Hard recovery
 
-At the hard cap, create or queue a recovery turn from the latest accepted checkpoint.
+Recovery is an ownership transfer, not a second concurrent worker.
 
-A recovery prompt should require the new worker to verify current repository and artifact state before continuing. Recovery must preserve the original objective, completed work, remaining work, known failures, decisions, evidence, and next action.
+1. Compare-and-swap the run from its current holder and generation into a new recovery generation.
+2. If the compare-and-swap fails, do not queue a replacement; another authority change already won.
+3. On success, invalidate the prior worker credential and generation.
+4. Require every subsequent state write, artifact registration, and commit association to carry the live generation.
+5. Reject stale writes from the previous worker.
+6. Only then queue recovery from the latest accepted checkpoint.
 
-Checkpoint selection and resume authority remain governed by the run-generation rules in #180.
+The replacement must verify current repository and artifact state before continuing. Checkpoint selection and resume authority remain governed by #180.
 
-## Execution ledger and estimate calibration
+## Execution records and estimate calibration
 
-For each task, retain both estimate and actual execution facts.
+Store the envelope unchanged and append actual results rather than rewriting the original estimate.
 
 ```yaml
-task_category: implementation
+execution_record:
+  envelope_ref: env_123
 
-estimate:
-  minutes: [40, 70]
-  confidence: 0.62
-  expected_files: 6
-  expected_messages: 3
+  actual:
+    minutes: 84
+    files_changed: 14
+    messages_consumed: 4
+    tool_calls: 47
+    interruptions: 1
 
-actual:
-  minutes: 84
-  files_changed: 14
-  messages_consumed: 4
-  tool_calls: 47
-  interruptions: 1
+  result:
+    completed: true
+    user_accepted: true
+    continuation_needed: false
 
-result:
-  completed: true
-  user_accepted: true
-  continuation_needed: false
-
-estimate_error_reasons:
-  - hidden dependency
-  - broader test failures
+  estimate_error_reasons:
+    - hidden dependency
+    - broader test failures
 ```
 
-Candidate calibration inputs include:
+Calibration inputs may include task class, repository familiarity, file count, test duration, dependency count, group size, external research, prior failures, runner profile, tool calls, review cycles, and user interventions.
 
-- task category;
-- repository size and familiarity;
-- expected and actual files changed;
-- test-suite duration;
-- dependency count;
-- group size;
-- external research;
-- prior failures;
-- runner profile;
-- tool-call count;
-- review cycles;
-- user interventions.
-
-Calibration should eventually recommend:
-
-- duration range;
-- confidence;
-- task class;
-- checkpoint timing;
-- group size;
-- review effort;
-- likely failure modes.
+Calibration should recommend an estimate range, confidence, checkpoint timing, group size, review effort, and likely failure modes. Recommendations must retain their evidence and sample size.
 
 ## Detecting low progress
 
-Elapsed time becomes useful when combined with evidence of progress.
+Candidate signals include:
 
-Candidate signals:
-
-- repeated reads or searches over the same material;
-- repeated reproduction of the same failure;
+- repeated reads over the same material;
+- repeated reproduction of one failure;
 - continuously expanding file scope;
-- repeated reversal of the same decision;
-- remaining-work estimates staying flat;
-- tool-call volume rising while verified completion stays unchanged;
-- long periods without an accepted checkpoint or artifact;
+- repeated reversal of one decision;
+- flat remaining-work estimates;
+- rising tool volume without verified completion;
+- long periods without an accepted checkpoint;
 - conflicting claims between checkpoints.
 
-A simple derived signal is:
+A derived signal may be recorded as:
 
 ```text
-progress_velocity =
-  verified_completion_gained
-  / elapsed_execution_time
+progress_velocity = verified_completion_gained / elapsed_execution_time
 ```
 
-A sustained drop can trigger reassessment, scope reduction, independent review, checkpointing, handoff, or recovery.
-
-The trigger should preserve its evidence and remain explainable.
+A sustained drop can trigger reassessment, scope reduction, independent review, checkpointing, handoff, or fenced recovery. The trigger must preserve its evidence and remain explainable.
 
 ## Temporary task groups
 
-A task group is a small, temporary team formed around one shared deliverable.
+A task group is a small team formed around one shared deliverable.
 
-Suggested defaults:
+Suggested starting sizes:
 
-- **2 agents** — builder and reviewer.
-- **3 agents** — discovery, execution, synthesis.
-- **4 agents** — lead, implementer, tester, reviewer.
-- **5 agents** — lead, three specialists, integrator.
-- **6 agents** — suitable when the work divides cleanly.
-- **Above 6** — split into cells with a coordinator or liaison.
+- **2** — builder and reviewer;
+- **3** — discovery, execution, synthesis;
+- **4** — lead, implementer, tester, reviewer;
+- **5** — lead, specialists, integrator;
+- **6** — only when work divides cleanly;
+- **above 6** — split into cells with explicit integration ownership.
 
-The important count is the number of agents that must understand and reconcile one another’s work.
+Each group requires one objective, explicit roles, one output per member, one integration owner, recorded disagreements, a continuation package, and a dissolution condition.
 
-Independent searches can run as a broad batch. Shared editing, joint design, and mutual revision require a compact shared context.
+Independent research can use a broad batch. Shared editing and joint design require a compact shared context.
 
-Each group should have:
+## Portfolio, execution, and review limits
 
-- one objective;
-- explicit member roles;
-- one output per member;
-- one shared deliverable;
-- an integration owner;
-- recorded disagreements;
-- a continuation package;
-- a dissolution condition.
-
-Example:
-
-```yaml
-objective: "Produce one tested implementation"
-
-members:
-  - role: lead
-    output: plan and final synthesis
-  - role: implementer
-    output: code changes
-  - role: tester
-    output: tests and failure report
-  - role: reviewer
-    output: independent defect review
-
-completion:
-  shared_artifact_required: true
-  unresolved_disagreements_recorded: true
-  continuation_package_required: true
-  dissolve_after_completion: true
-```
-
-Task groups are execution units. Projects and their histories remain durable after the group dissolves.
-
-## Portfolio and foreground limits
-
-A useful starting policy:
+Initial policy defaults:
 
 ```yaml
 portfolio:
@@ -299,15 +222,13 @@ review:
   high_decision_item_cap: 1
 ```
 
-These are initial defaults and future calibration targets.
-
-Parked projects retain goals, next actions, dependencies, evidence, and continuation packets. Promotion into the foreground should be explicit and explainable.
+These values are experiment defaults, not universal limits. Promotion into the foreground should be explicit and explainable. Parked projects retain goals, dependencies, evidence, next actions, and continuation packets.
 
 ## Message and interaction budgets
 
-Message capacity is a portfolio resource. It should be budgeted alongside runner concurrency, tool use, review effort, and human decisions.
+Message capacity is a portfolio resource alongside runner concurrency, tool use, review effort, and human decisions.
 
-Budget classes:
+Budget classes remain independently attributable:
 
 - foreground project work;
 - background exploration;
@@ -316,60 +237,52 @@ Budget classes:
 - spontaneous human conversation;
 - untouched reserve.
 
-Example:
-
 ```yaml
 rolling_window:
   observed_maximum_messages: 160
   usable_messages: 128
 
 allocation:
-  foreground_projects: 96
-  background_exploration: 16
-  review_and_recovery: 16
-  untouched_reserve: 32
+  foreground_projects: 80
+  background_exploration: 12
+  review_and_integration: 16
+  recovery_and_retries: 8
+  spontaneous_human_conversation: 12
+
+untouched_reserve: 32
 ```
 
-The observed maximum is an input, not a promise. The scheduler should adapt to real platform behaviour and avoid exhausting the full envelope during normal operation.
-
-Unused project allowance can return to a shared pool. Budgets should operate over rolling windows and record overruns with reasons.
+The observed maximum is an input, not a platform promise. The scheduler should adapt to observed behaviour, preserve the reserve, and record overruns by class and reason.
 
 ## Completion fan-in
 
-Many long-running tasks can execute concurrently because one launch message may occupy a worker for a long period. The human bottleneck appears when several results finish together.
+Execution capacity and review capacity are separate controls. Stensibly should track expected completion time, confidence, review effort, decision burden, human dependency, artifact size, and unresolved questions.
 
-Stensibly should track:
+Completed work beyond the review cap enters `completed_awaiting_review`. Scheduling should stagger likely completion times where practical.
 
-- expected completion time;
-- estimate confidence;
-- review effort;
-- decision burden;
-- dependency on human input;
-- artifact size;
-- unresolved questions.
+## Runner durable-state contract
 
-Completed work beyond the review cap should enter `completed_awaiting_review`. Scheduling should stagger likely completion times where practical.
+Chat sessions are disposable execution contexts. Durable state belongs in Stensibly and should preserve:
 
-Execution capacity and review capacity are separate controls.
-
-## Codex and ChatGPT runner implications
-
-Codex and ChatGPT chats should be treated as disposable execution contexts with durable state outside the chat.
-
-A runner adapter should preserve:
-
-- session or thread reference where the host permits it;
+- runner and session references where permitted;
 - objective and execution envelope;
-- current run and fence generation;
+- live run and fence generation;
 - accepted checkpoints;
-- artifacts and commit references;
-- tests and verification evidence;
-- next action;
-- continuation instruction;
-- message-budget consumption;
-- review estimate.
+- sanitised artifact and commit references;
+- verification evidence;
+- next action and continuation instruction;
+- budget consumption and review estimate.
 
-A chat ending, timing out, becoming unavailable, or reaching a platform limit should create a recoverable run state instead of an orphaned project state.
+Before durable storage, every imported transcript, attachment, artifact, or generated summary must pass:
+
+1. **authorization** — the actor may persist it into the target project;
+2. **sanitization** — secrets, credentials, unrelated personal data, and disallowed content are removed;
+3. **access classification** — readers are explicitly bounded;
+4. **retention classification** — a retention period or durable exception is recorded;
+5. **deletion handling** — removal propagates to derived indexes and cached copies where required;
+6. **provenance** — source, timestamp, digest, and transformation history are retained.
+
+Raw chat history should remain ephemeral by default. A run ending, timing out, or reaching a host limit should create recoverable state rather than orphaning project work.
 
 ## Recommended initial defaults
 
@@ -396,23 +309,22 @@ message_budget:
 execution:
   duration_ranges: true
   long_task_checkpoints: true
+  fenced_recovery: true
   continuation_packages: true
   stagger_expected_completions: true
 ```
 
-These defaults should begin as policy, then become evidence-backed recommendations.
+These defaults should begin as explicit policy and become evidence-backed recommendations.
 
-## Open questions
+## Open decisions
 
-- Which success dimensions should become hard gates?
-- How should completion percentage be estimated?
-- Which checkpoint fields belong in canonical records?
-- Which work can continue speculatively after authority loss?
-- How should group integration responsibility be fenced?
-- How should message budgets adapt to changing platform limits?
-- How should the scheduler estimate review effort?
-- Which tasks benefit from parallel workers?
-- Which tasks benefit from sequential handoffs?
-- How should useful exploration be distinguished from drift?
-- How should unfinished tasks age and return to the foreground?
-- Which chat-history content requires redaction before analysis?
+- Which success dimensions become hard gates?
+- How is verified completion estimated?
+- Which checkpoint fields become canonical records?
+- Which work may continue after authority loss?
+- How is group integration ownership fenced?
+- How should budgets adapt to changing host limits?
+- How is review effort estimated?
+- Which tasks benefit from parallel workers versus sequential handoffs?
+- How is useful exploration distinguished from drift?
+- How should unfinished work age and return to the foreground?
