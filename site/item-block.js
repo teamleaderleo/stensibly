@@ -38,7 +38,7 @@ export function readTransitionItem(payload, expected) {
   if (!Number.isInteger(item.version) || item.version < 1) {
     throw new TypeError('The transitioned item returned an invalid version.');
   }
-  const previousGeneration = positiveInteger(expected.expectedClaimGeneration);
+  const previousGeneration = nonNegativeInteger(expected.expectedClaimGeneration);
   if (previousGeneration === null || item.claimGeneration !== previousGeneration + 1) {
     throw new TypeError('The transitioned item did not advance the claim generation exactly once.');
   }
@@ -82,7 +82,7 @@ function requireActor(actor) {
 }
 
 function requireGeneration(value) {
-  const generation = positiveInteger(value);
+  const generation = nonNegativeInteger(value);
   if (generation === null) {
     throw new TypeError('Refresh item detail to load the current claim generation before changing work state.');
   }
@@ -118,8 +118,8 @@ function nullableString(value, maxLength, label) {
   return output || null;
 }
 
-function positiveInteger(value) {
-  return Number.isInteger(value) && value > 0 ? value : null;
+function nonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function rejectCredential(value) {
