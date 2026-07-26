@@ -106,21 +106,23 @@ export async function appendExecutionEnvelopeEvent(
     createdAt: number;
   },
 ): Promise<void> {
+  const runId = boundedRunId(input.runId);
+  const envelope = parseExecutionEnvelope(input.envelope);
   await appendEvent(ctx, {
     workspaceId: input.workspaceId,
     projectId: input.projectId,
     itemId: input.itemId,
     actorId: input.actorId,
     actorExternalId: input.actorExternalId,
-    type: executionEnvelopeEventType(input.runId),
+    type: executionEnvelopeEventType(runId),
     payload: {
-      runId: input.runId,
-      generation: input.runGeneration,
-      leaseGeneration: input.leaseGeneration,
+      runId,
+      generation: positiveInteger(input.runGeneration, "Run generation"),
+      leaseGeneration: positiveInteger(input.leaseGeneration, "Lease generation"),
       envelopeSchemaVersion: EXECUTION_ENVELOPE_SCHEMA_VERSION,
-      envelope: input.envelope,
+      envelope,
     },
-    createdAt: input.createdAt,
+    createdAt: validTimestamp(input.createdAt, "Execution envelope creation time"),
   });
 }
 
@@ -139,73 +141,120 @@ export async function appendExecutionActualEvent(
     actual: ExecutionActual;
     createdAt: number;
   },
-): Promise<void> {
-  await appendEvent(ctx, {
+): Promise<HostedExecutionRecord> {
+  const runId = boundedRunId(input.runId);
+  const runGeneration = positiveInteger(input.runGeneration, "Run generation");
+  const leaseGeneration = positiveInteger(input.leaseGeneration, "Lease generation");
+  const transition = requiredText(input.transition, "Execution transition", 160);
+  const actual = parseExecutionActual(input.actual);
+  const createdAt = validTimestamp(input.createdAt, "Execution result creation time");
+  const event = await appendEvent(ctx, {
     workspaceId: input.workspaceId,
     projectId: input.projectId,
     itemId: input.itemId,
     actorId: input.actorId,
     actorExternalId: input.actorExternalId,
-    type: executionActualEventType(input.runId),
+    type: executionActualEventType(runId),
     payload: {
-      runId: input.runId,
-      generation: input.runGeneration,
-      leaseGeneration: input.leaseGeneration,
-      transition: input.transition,
-      actual: input.actual,
+      runId,
+      generation: runGeneration,
+      leaseGeneration,
+      transition,
+      actual,
     },
-    createdAt: input.createdAt,
+    createdAt,
   });
+  return {
+    id: event.id,
+    runId,
+    runGeneration,
+    leaseGeneration,
+    transition,
+    actual,
+    createdAt: new Date(createdAt).toISOString(),
+  };
 }
 
 export async function readHostedRunExecution(
   ctx: any,
   itemId: any,
-  runId: string,
+  rawRunId: string,
 ): Promise<{
   executionEnvelope: ExecutionEnvelope | null;
   executionRecords: HostedExecutionRecord[];
 }> {
-  const [envelopeEvent, actualEvents] = await Promise.all([
+  const runId = boundedRunId(rawRunId);
+  const [envelopeEvents, actualEvents] = await Promise.all([
     ctx.db
       .query("events")
       .withIndex("by_item_type_created", (q: any) =>
         q.eq("itemId", itemId).eq("type", executionEnvelopeEventType(runId))
       )
-      .order("desc")
-      .first(),
+      .order("asc")
+      .take(2),
     ctx.db
       .query("events")
       .withIndex("by_item_type_created", (q: any) =>
         q.eq("itemId", itemId).eq("type", executionActualEventType(runId))
       )
       .order("asc")
-      .take(100),
+      .take(101),
   ]);
-  const envelopePayload = record(envelopeEvent?.payload);
-  const executionEnvelope = envelopePayload?.envelope === undefined
+  if (envelopeEvents.length > 1) {
+    throw new Error("Run has conflicting execution-envelope history");
+  }
+  if (actualEvents.length > 100) {
+    throw new Error("Run execution-result history exceeds the bounded projection");
+  }
+
+  const envelopeEvent = envelopeEvents[0];
+  const executionEnvelope = envelopeEvent === undefined
     ? null
-    : parseExecutionEnvelope(envelopePayload.envelope);
-  const executionRecords = actualEvents.map((event: any) => {
-    const payload = record(event.payload);
-    if (!payload || payload.runId !== runId) {
-      throw new Error("Stored execution record does not match its run");
-    }
-    return {
-      id: event.externalId,
-      runId,
-      runGeneration: positiveInteger(payload.generation, "Run generation"),
-      leaseGeneration: positiveInteger(payload.leaseGeneration, "Lease generation"),
-      transition: requiredText(payload.transition, "Execution transition"),
-      actual: parseExecutionActual(payload.actual),
-      createdAt: new Date(event.createdAt).toISOString(),
-    };
-  });
+    : parseEnvelopeEvent(envelopeEvent, runId);
+  const executionRecords = actualEvents.map((event: any) =>
+    parseActualEvent(event, runId)
+  );
   return { executionEnvelope, executionRecords };
 }
 
 export function sameCanonical(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
+function parseEnvelopeEvent(event: any, runId: string): ExecutionEnvelope {
+  const payload = record(event?.payload);
+  if (!payload || payload.runId !== runId) {
+    throw new Error("Stored execution envelope does not match its run");
+  }
+  positiveInteger(payload.generation, "Run generation");
+  positiveInteger(payload.leaseGeneration, "Lease generation");
+  if (payload.envelopeSchemaVersion !== EXECUTION_ENVELOPE_SCHEMA_VERSION) {
+    throw new Error("Stored execution envelope schema version is unsupported");
+  }
+  const envelope = parseExecutionEnvelope(payload.envelope);
+  if (envelope.schemaVersion !== payload.envelopeSchemaVersion) {
+    throw new Error("Stored execution envelope schema metadata is inconsistent");
+  }
+  validTimestamp(event.createdAt, "Stored execution envelope creation time");
+  return envelope;
+}
+
+function parseActualEvent(event: any, runId: string): HostedExecutionRecord {
+  const payload = record(event?.payload);
+  if (!payload || payload.runId !== runId) {
+    throw new Error("Stored execution record does not match its run");
+  }
+  return {
+    id: requiredText(event.externalId, "Execution record ID", 240),
+    runId,
+    runGeneration: positiveInteger(payload.generation, "Run generation"),
+    leaseGeneration: positiveInteger(payload.leaseGeneration, "Lease generation"),
+    transition: requiredText(payload.transition, "Execution transition", 160),
+    actual: parseExecutionActual(payload.actual),
+    createdAt: new Date(
+      validTimestamp(event.createdAt, "Stored execution result creation time"),
+    ).toISOString(),
+  };
 }
 
 function executionEnvelopeEventType(runId: string): string {
@@ -217,7 +266,7 @@ function executionActualEventType(runId: string): string {
 }
 
 function boundedRunId(value: string): string {
-  const output = value.trim();
+  const output = typeof value === "string" ? value.trim() : "";
   if (!output || output.length > 180 || /[\u0000-\u001f\u007f]/.test(output)) {
     throw new TypeError("Run id is invalid for execution records");
   }
@@ -231,11 +280,26 @@ function positiveInteger(value: unknown, label: string): number {
   return value;
 }
 
-function requiredText(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new TypeError(`${label} is required`);
+function validTimestamp(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be a non-negative integer timestamp`);
   }
-  return value.trim();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new TypeError(`${label} is invalid`);
+  return value;
+}
+
+function requiredText(
+  value: unknown,
+  label: string,
+  maximum: number,
+): string {
+  const output = typeof value === "string" ? value.trim() : "";
+  if (!output) throw new TypeError(`${label} is required`);
+  if (output.length > maximum) {
+    throw new TypeError(`${label} may contain at most ${maximum} characters`);
+  }
+  return output;
 }
 
 function canonicalJson(value: unknown): unknown {
