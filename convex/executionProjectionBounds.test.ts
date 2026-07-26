@@ -100,7 +100,13 @@ describe("hosted execution projection bounds", () => {
       now: 3_000,
     }) as any;
     expect(detail.events).toHaveLength(100);
-    expect(detail.events.every((event: any) => event.type === "work.progressed")).toBe(true);
+    expect(detail.events.filter((event: any) => event.type === "work.progressed"))
+      .toHaveLength(99);
+    expect(detail.events.some((event: any) => event.type === "item.created")).toBe(true);
+    expect(detail.events.some((event: any) =>
+      event.type.startsWith("run.execution_envelope:")
+      || event.type.startsWith("run.execution_actual:")
+    )).toBe(false);
   });
 });
 
