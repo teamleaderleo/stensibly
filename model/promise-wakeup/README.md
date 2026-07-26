@@ -31,10 +31,10 @@ Within the declared finite bounds, the accepted model requires:
 - mutually exclusive promise terminal outcomes;
 - terminal consumer state not to regress;
 - project identity on every wakeup link;
-- an enabled one-step consume or escalation path for each current ready wakeup;
+- a consume or escalation path within `recoveryHorizonTicks` for each current ready wakeup;
 - an enabled reconciliation action for each expired pending promise.
 
-The liveness statements are bounded enabled-action checks. They do not claim unbounded fairness, scheduler guarantees, or proof of the complete production protocol.
+The ready-wakeup liveness check performs a bounded search over enabled model transitions. These checks do not claim unbounded fairness, scheduler guarantees, or proof of the complete production protocol.
 
 ## Negative controls
 
@@ -44,7 +44,7 @@ The report retains shortest reachable traces for three deliberately weaker rules
 2. duplicate consumption without a durable consumed marker;
 3. late satisfaction racing deadline reconciliation without terminal and generation compare-and-set.
 
-These are counterexamples to weak rules, not accepted model transitions.
+Each control includes the reachable witness state and an explicit description of the weak-rule violation. These are counterexamples to weak rules, not accepted model transitions.
 
 ## Production mapping
 
