@@ -4,6 +4,7 @@ import {
   buildRunnerContextPacket,
   getRunnerContextPacket,
 } from "../src/context-packets.ts";
+import { projectItemControl } from "../src/item-control.ts";
 import { createWorkRun } from "../src/runs.ts";
 import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
@@ -113,6 +114,7 @@ describe("runner context packets", () => {
     });
     const detail = {
       item,
+      control: projectItemControl({ item, now: generatedAt }),
       events: store.listEvents(item.id),
       artifacts: [],
       runs: [],
