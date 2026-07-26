@@ -157,8 +157,8 @@ function publicLegacyRun(
   return {
     ...publicRun(run),
     itemId,
-    generation: 1,
-    leaseGeneration: 1,
+    generation: execution.runGeneration ?? 1,
+    leaseGeneration: execution.leaseGeneration ?? 1,
     executionEnvelope: execution.executionEnvelope,
     executionRecords: execution.executionRecords,
   };
