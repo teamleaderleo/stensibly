@@ -116,7 +116,7 @@ describe("canonical item control projection", () => {
     expect(control.responsibility.actorId).toBe("agent:one");
   });
 
-  test("identifies dispatcher authority from one matching live run", () => {
+  test("identifies dispatcher authority from exact claim provenance and one matching live run", () => {
     const control = projectItemControl({
       item: item({
         status: "active",
@@ -131,10 +131,100 @@ describe("canonical item control projection", () => {
         leaseExpiresAt: "2026-07-26T12:10:00.000Z",
         lastHeartbeatAt: "2026-07-26T12:00:00.000Z",
       }],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { generation: 3, source: "supervisor_dispatch" },
+      }],
       now,
     });
     expect(control.authority.source).toBe("dispatcher");
     expect(control.responsibility.heartbeatExpectedAt).toBe("2026-07-26T12:10:00.000Z");
+  });
+
+  test("does not promote stale, unverifiable, or lease-less runs to dispatcher authority", () => {
+    const activeItem = item({
+      status: "active",
+      claimedBy: "service:supervisor",
+      claimExpiresAt: "2026-07-26T12:15:00.000Z",
+      claimGeneration: 4,
+    });
+    const matchingRun = {
+      actorId: "service:supervisor",
+      leaseOwnerId: "service:supervisor",
+      status: "running",
+      leaseExpiresAt: "2026-07-26T12:10:00.000Z",
+      lastHeartbeatAt: "2026-07-26T12:00:00.000Z",
+    };
+
+    const directClaimWithSameActorRun = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { generation: 4, source: "direct_claim" },
+      }],
+      now,
+    });
+    expect(directClaimWithSameActorRun.authority).toMatchObject({
+      state: "live",
+      source: "claim",
+      holderActorId: "service:supervisor",
+    });
+    expect(directClaimWithSameActorRun.responsibility.heartbeatExpectedAt).toBeNull();
+
+    const staleGeneration = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { generation: 3, source: "supervisor_dispatch" },
+      }],
+      now,
+    });
+    expect(staleGeneration.authority).toMatchObject({
+      state: "superseded",
+      source: "none",
+      holderActorId: null,
+    });
+
+    const missingGeneration = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { source: "supervisor_dispatch" },
+      }],
+      now,
+    });
+    expect(missingGeneration.authority.state).toBe("superseded");
+
+    const nullLease = projectItemControl({
+      item: activeItem,
+      runs: [{ ...matchingRun, leaseExpiresAt: null }],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { generation: 4, source: "supervisor_dispatch" },
+      }],
+      now,
+    });
+    expect(nullLease.authority.state).toBe("superseded");
+
+    const elapsedLease = projectItemControl({
+      item: activeItem,
+      runs: [{ ...matchingRun, leaseExpiresAt: "2026-07-26T11:59:59.000Z" }],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { generation: 4, source: "supervisor_dispatch" },
+      }],
+      now,
+    });
+    expect(elapsedLease.authority.state).toBe("superseded");
   });
 
   test("fails closed for conflicting runs and malformed authority fields", () => {
