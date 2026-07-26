@@ -364,9 +364,9 @@ async function rotate(
 }
 
 async function readFamily(t: ReturnType<typeof convexTest>, familyExternalId: string) {
-  return await t.run(async (ctx) => await ctx.db
+  return await t.run(async (ctx: any) => await ctx.db
     .query("mcpOAuthRefreshTokens")
-    .withIndex("by_family_created", (q) => q.eq("familyExternalId", familyExternalId))
+    .withIndex("by_family_created", (q: any) => q.eq("familyExternalId", familyExternalId))
     .order("asc")
     .collect());
 }
@@ -381,9 +381,9 @@ async function insertConsumedHistory(
     expiresAt: number;
   },
 ) {
-  await t.run(async (ctx) => {
+  await t.run(async (ctx: any) => {
     const root = await ctx.db.query("mcpOAuthRefreshTokens")
-      .withIndex("by_external_id", (q) => q.eq("externalId", input.rootId)).unique();
+      .withIndex("by_external_id", (q: any) => q.eq("externalId", input.rootId)).unique();
     if (!root) throw new Error("Refresh root disappeared");
     for (let index = 0; index < input.count; index += 1) {
       await ctx.db.insert("mcpOAuthRefreshTokens", {
