@@ -16,6 +16,8 @@ export const MAX_ITEM_DETAIL_EVENTS = 100;
 export const MAX_ITEM_DETAIL_ARTIFACTS = 100;
 export const MAX_ITEM_DETAIL_RUNS = 20;
 
+const indexedStores = new WeakSet<StensiblyStore>();
+
 interface EventRow {
   id: string;
   item_id: string;
@@ -88,6 +90,7 @@ export function readLatestItemEvent(
   itemId: string,
   type: string,
 ): ItemEvent | null {
+  ensureItemDetailIndexes(store);
   const row = store.db
     .query<EventRow, [string, string]>(`
       SELECT id, item_id, actor_id, type, payload_json, created_at
@@ -137,6 +140,15 @@ export function readBoundedItemRuns(
     `)
     .all(itemId, normalizedLimit)
     .map(mapRun);
+}
+
+function ensureItemDetailIndexes(store: StensiblyStore): void {
+  if (indexedStores.has(store)) return;
+  store.db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_events_item_type_created
+    ON events(item_id, type, created_at DESC)
+  `);
+  indexedStores.add(store);
 }
 
 function detailLimit(value: number, maximum: number, label: string): number {
