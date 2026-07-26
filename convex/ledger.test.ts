@@ -53,35 +53,47 @@ describe("Convex ledger", () => {
     }) as any;
     expect(artifact.kind).toBe("commit");
 
-    const handedOff = await t.mutation(convexApi.items.handoff, {
+    const handoffRequest = {
       serviceSecret: secret,
       workspace,
       id: created.id,
       actor: alpha,
+      expectedClaimGeneration: claimed.claimGeneration,
       summary: "The core is in place.",
       nextAction: "Review and complete it.",
       toActorId: beta.id,
       idempotencyKey: "handoff-1",
-    }) as any;
-    expect(handedOff.status).toBe("ready");
-    expect(handedOff.claimedBy).toBeNull();
+    };
+    const handedOff = await t.mutation(convexApi.items.handoff, handoffRequest) as any;
+    expect(handedOff).toMatchObject({
+      status: "ready",
+      claimedBy: null,
+      claimGeneration: claimed.claimGeneration + 1,
+    });
+    expect(await t.mutation(convexApi.items.handoff, handoffRequest)).toEqual(handedOff);
 
-    await t.mutation(convexApi.claims.acquire, {
+    const betaClaim = await t.mutation(convexApi.claims.acquire, {
       serviceSecret: secret,
       workspace,
       id: created.id,
       actor: beta,
       leaseSeconds: 900,
-    });
-    const completed = await t.mutation(convexApi.items.complete, {
+    }) as any;
+    const completeRequest = {
       serviceSecret: secret,
       workspace,
       id: created.id,
       actor: beta,
+      expectedClaimGeneration: betaClaim.claimGeneration,
       summary: "Reviewed and survived.",
       idempotencyKey: "complete-1",
-    }) as any;
-    expect(completed.status).toBe("done");
+    };
+    const completed = await t.mutation(convexApi.items.complete, completeRequest) as any;
+    expect(completed).toMatchObject({
+      status: "done",
+      claimGeneration: betaClaim.claimGeneration + 1,
+    });
+    expect(await t.mutation(convexApi.items.complete, completeRequest)).toEqual(completed);
 
     const detail = await t.query(convexApi.items.get, {
       serviceSecret: secret,
@@ -96,6 +108,16 @@ describe("Convex ledger", () => {
       "work.handed_off",
       "item.completed",
     ]));
+    expect(detail.events.find((event: any) => event.type === "work.handed_off")?.payload)
+      .toMatchObject({
+        generation: claimed.claimGeneration,
+        nextGeneration: handedOff.claimGeneration,
+      });
+    expect(detail.events.find((event: any) => event.type === "item.completed")?.payload)
+      .toMatchObject({
+        generation: betaClaim.claimGeneration,
+        nextGeneration: completed.claimGeneration,
+      });
   });
 
   test("renewal invalidates the old scheduled expiry", async () => {
@@ -210,6 +232,86 @@ describe("Convex ledger", () => {
       actor: alpha,
       expectedClaimGeneration: renewed.claimGeneration,
     })).rejects.toThrow(/current claim generation/);
+  });
+
+  test("same-actor stale generations cannot complete, hand off, block, or unblock hosted work", async () => {
+    const t = convexTest(schema, modules);
+    const item = await createItem(t, "Fence every semantic transition");
+    const claimed = await t.mutation(convexApi.claims.acquire, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      leaseSeconds: 900,
+    }) as any;
+    const renewed = await t.mutation(convexApi.claims.renew, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      leaseSeconds: 1800,
+      expectedClaimGeneration: claimed.claimGeneration,
+    }) as any;
+
+    await expect(t.mutation(convexApi.items.complete, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: claimed.claimGeneration,
+    })).rejects.toThrow(/Claim generation changed/);
+    await expect(t.mutation(convexApi.items.handoff, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: claimed.claimGeneration,
+      summary: "Stale handoff.",
+      nextAction: "Should fail.",
+    })).rejects.toThrow(/Claim generation changed/);
+    await expect(t.mutation(convexApi.items.block, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: claimed.claimGeneration,
+      reason: "Stale block.",
+    })).rejects.toThrow(/Claim generation changed/);
+
+    const blockRequest = {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: renewed.claimGeneration,
+      reason: "Wait for a decision.",
+      idempotencyKey: "block-current-generation",
+    };
+    const blocked = await t.mutation(convexApi.items.block, blockRequest) as any;
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      claimGeneration: renewed.claimGeneration + 1,
+    });
+    expect(await t.mutation(convexApi.items.block, blockRequest)).toEqual(blocked);
+
+    await expect(t.mutation(convexApi.items.unblock, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: renewed.claimGeneration,
+    })).rejects.toThrow(/Claim generation changed/);
+    const unblocked = await t.mutation(convexApi.items.unblock, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor: alpha,
+      expectedClaimGeneration: blocked.claimGeneration,
+    }) as any;
+    expect(unblocked).toMatchObject({
+      status: "ready",
+      claimGeneration: blocked.claimGeneration + 1,
+    });
   });
 
   test("shared reservations enforce capacity independently from work claims", async () => {
