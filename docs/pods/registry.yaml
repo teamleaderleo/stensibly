@@ -1,0 +1,51 @@
+schema: stensibly.pod-registry-bootstrap
+version: 1
+status: temporary-github-projection
+canonical_authority: false
+last_reviewed: 2026-07-27
+source_issues:
+  - 272
+  - 278
+  - 281
+  - 270
+
+pods:
+  - id: pod_foundry
+    display_name: Foundry
+    lifecycle_status: active
+    purpose: >-
+      Broad provisional pod for advancing Stensibly while retaining useful
+      context, practices, and lineage across ephemeral worker runs.
+    sponsor: human-operator
+    enrolment: open
+    membership_model: run-scoped-non-exclusive
+    scope:
+      projects:
+        - stensibly
+      repositories:
+        - teamleaderleo/stensibly
+    current_wave: W01
+    charter: docs/pods/foundry/charter.md
+    memory: docs/pods/foundry/memory.md
+    practices: docs/pods/foundry/practices.md
+    history: docs/pods/foundry/history.md
+    next_review: >-
+      After the W01 retrospective, or earlier when repeated work demonstrates
+      that a separate pod would materially reduce context or coordination cost.
+
+proposal_policy:
+  template: docs/pods/templates/pod-proposal.md
+  lifecycle_states:
+    - proposed
+    - trial
+    - active
+    - dormant
+    - dissolved
+  default_trial_required: true
+  human_approval_required_for:
+    - credentials
+    - spending
+    - production_authority
+    - permission_widening
+    - cross_project_scope
+    - durable_policy_changes
