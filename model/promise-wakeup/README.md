@@ -9,7 +9,7 @@ bun model/promise-wakeup/check.ts
 bun test test/promise-wakeup-model.test.ts
 ```
 
-The first command emits the bounded JSON report. The second runs the exact-count, negative-control, configuration, and guard-mutation regressions. The committed bounds are in `config.json`.
+The first command emits the bounded JSON report. The second runs the exact-count, negative-control, configuration, guard-mutation, and consume-disabled liveness regressions. The committed bounds are in `config.json`.
 
 ## Modelled state
 
@@ -17,7 +17,7 @@ The configured model contains one project, one promise producer, one waiting con
 
 It explores create, supersede, satisfy, miss, cancel, deadline reconciliation, consume, escalation, consumer-generation advance, consumer completion, duplicate delivery, reordered delivery, and restart.
 
-Superseding a promise creates a new exact generation. Old wakeups remain durable so stale-generation handling can be tested directly.
+Superseding a promise creates a new exact generation. Old wakeups remain durable so stale-generation handling can be tested directly. Explicit escalation targets the exact durable wakeup generation and does not activate a newer consumer generation.
 
 ## Accepted target contract
 
@@ -33,10 +33,10 @@ Within the declared finite bounds, the accepted model requires:
 - terminal consumer state not to regress;
 - project identity on every wakeup link;
 - a consume-only path within `recoveryHorizonTicks` for each current wakeup whose promise is satisfied and whose consumer is non-terminal;
-- a consume-or-explicit-escalation path within `recoveryHorizonTicks` for every current ready wakeup;
+- a consume-or-explicit-escalation path within `recoveryHorizonTicks` for each satisfied current promise's exact wakeup;
 - an enabled reconciliation action for each expired pending promise.
 
-Both ready-wakeup liveness checks perform bounded searches over enabled model transitions. The consume-only property cannot be discharged by escalation. These checks do not claim unbounded fairness, scheduler guarantees, or proof of the complete production protocol.
+The consume-only and satisfied-promise resolution checks perform separate bounded searches over enabled model transitions. The consume-only property cannot be discharged by escalation. These checks do not claim unbounded fairness, scheduler guarantees, or proof of the complete production protocol.
 
 ## Guard mutation matrix
 
@@ -53,6 +53,8 @@ The report retains shortest reachable traces for three deliberately weaker rules
 3. late satisfaction racing deadline reconciliation without terminal and generation compare-and-set.
 
 Each control includes the reachable witness state and an explicit description of the weak-rule violation. These are counterexamples to weak rules, not accepted model transitions.
+
+A focused liveness control removes every `consume` action while leaving explicit escalation enabled. Under that mutation, the consume-only search must fail while the consume-or-escalate search must still succeed. This prevents escalation from accidentally proving the separate consume-path requirement.
 
 ## Production mapping
 
