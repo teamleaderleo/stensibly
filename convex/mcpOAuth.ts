@@ -758,7 +758,7 @@ function resolveFamilyDeadline(
 ): number | null {
   const deadlines = tokens.map(refreshTokenFamilyExpiry);
   if (deadlines.some((deadline) => deadline === null)) return null;
-  const canonical = deadlines[0];
+  const canonical = deadlines[0] ?? null;
   if (canonical === null || deadlines.some((deadline) => deadline !== canonical)) return null;
   return canonical;
 }
