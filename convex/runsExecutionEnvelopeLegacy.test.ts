@@ -99,7 +99,11 @@ describe("Convex historical execution-envelope replay", () => {
     await expect(t.mutation(convexApi.runs.finish, {
       ...finishInput,
       executionActual: { toolCalls: 4 },
-    })).rejects.toThrow("cannot be retrofitted with execution actuals");
+    })).rejects.toThrow("cannot be retrofitted with versioned execution data");
+    await expect(t.mutation(convexApi.runs.finish, {
+      ...finishInput,
+      expectedGeneration: 1,
+    })).rejects.toThrow("cannot be retrofitted with versioned execution data");
   });
 });
 
