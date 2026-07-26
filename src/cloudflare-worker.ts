@@ -1,7 +1,11 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
+import {
+  enforceOAuthRegistrationAdmission,
+  type OAuthRegistrationRateLimiter,
+} from "./mcp-oauth-registration-admission.js";
 import { observeWorkerRequest } from "./worker-observability.js";
 
-export interface CloudflareBindings extends Record<string, string | undefined> {
+export interface CloudflareBindings {
   CONVEX_URL: string;
   STENSIBLY_SERVICE_SECRET: string;
   STENSIBLY_WORKSPACE?: string;
@@ -18,20 +22,53 @@ export interface CloudflareBindings extends Record<string, string | undefined> {
   STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS?: string;
   STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS?: string;
   STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS?: string;
+  STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS?: string;
+  OAUTH_REGISTRATION_RATE_LIMITER?: OAuthRegistrationRateLimiter;
 }
 
 const worker = {
   async fetch(request: Request, env: CloudflareBindings): Promise<Response> {
     return await observeWorkerRequest(
       request,
-      async (observedRequest) =>
-        await createHostedAppFromEnv(env).fetch(observedRequest),
+      async (observedRequest) => {
+        const admissionRejection = await enforceOAuthRegistrationAdmission(
+          observedRequest,
+          {
+            enabled: Boolean(env.STENSIBLY_OAUTH_SIGNING_SECRET?.trim()),
+            rateLimiter: env.OAUTH_REGISTRATION_RATE_LIMITER,
+            allowedRedirectOrigins: env.STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS,
+          },
+        );
+        if (admissionRejection) return admissionRejection;
+        return await createHostedAppFromEnv(stringEnvironment(env)).fetch(observedRequest);
+      },
       { allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS) },
     );
   },
 };
 
 export default worker;
+
+function stringEnvironment(env: CloudflareBindings): Record<string, string | undefined> {
+  return {
+    CONVEX_URL: env.CONVEX_URL,
+    STENSIBLY_SERVICE_SECRET: env.STENSIBLY_SERVICE_SECRET,
+    STENSIBLY_WORKSPACE: env.STENSIBLY_WORKSPACE,
+    STENSIBLY_ALLOWED_ORIGINS: env.STENSIBLY_ALLOWED_ORIGINS,
+    STENSIBLY_ALLOWED_HOSTS: env.STENSIBLY_ALLOWED_HOSTS,
+    GITHUB_OAUTH_CLIENT_ID: env.GITHUB_OAUTH_CLIENT_ID,
+    GITHUB_OAUTH_CLIENT_SECRET: env.GITHUB_OAUTH_CLIENT_SECRET,
+    STENSIBLY_AUTH_ORIGIN: env.STENSIBLY_AUTH_ORIGIN,
+    STENSIBLY_AUTH_RETURN_ORIGINS: env.STENSIBLY_AUTH_RETURN_ORIGINS,
+    STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS: env.STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS,
+    STENSIBLY_AUTH_BOOTSTRAP_ROLE: env.STENSIBLY_AUTH_BOOTSTRAP_ROLE,
+    STENSIBLY_SESSION_MAX_AGE_SECONDS: env.STENSIBLY_SESSION_MAX_AGE_SECONDS,
+    STENSIBLY_OAUTH_SIGNING_SECRET: env.STENSIBLY_OAUTH_SIGNING_SECRET,
+    STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS: env.STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS,
+    STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS: env.STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS,
+    STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS: env.STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS,
+  };
+}
 
 function splitList(value: string | undefined): string[] {
   if (!value) return [];
