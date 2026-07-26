@@ -38,7 +38,12 @@ function createItem(store: StensiblyStore, title = "promised work", project = "o
   });
 }
 
-function readyWakeup(store: StensiblyStore, itemId: string, sequence: number) {
+function readyWakeup(
+  store: StensiblyStore,
+  itemId: string,
+  sequence: number,
+  now = baseTime,
+) {
   const promise = createWorkPromise(store, {
     itemId,
     actor: agent,
@@ -46,14 +51,14 @@ function readyWakeup(store: StensiblyStore, itemId: string, sequence: number) {
     wakeCondition: { kind: "manual" },
     expectedCheckInAt: "2030-01-01T00:00:00.000Z",
     idempotencyKey: `promise-${sequence}`,
-  }, baseTime);
+  }, now);
   resolveWorkPromise(store, {
     id: promise.id,
     actor: supervisor,
     command: "satisfy",
     expectedGeneration: promise.generation,
     idempotencyKey: `satisfy-${sequence}`,
-  }, baseTime);
+  }, now);
   return promise;
 }
 
@@ -111,25 +116,80 @@ describe("exactly-once promise wakeup consumption", () => {
     }
   });
 
-  test("consumes a deterministic bounded set in created/id order", () => {
-    const store = new StensiblyStore(":memory:");
-    try {
-      const item = createItem(store);
-      for (let index = 0; index < 4; index += 1) readyWakeup(store, item.id, index);
-      surveyDispatch(store, {}, baseTime);
-      const expected = store.db
-        .query<{ id: string }, []>(
-          "SELECT id FROM promise_wakeups ORDER BY created_at ASC, id ASC",
-        )
-        .all()
-        .map((row) => row.id);
+  test("preserves deterministic created/id order in events, replay, and restart reads", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "stensibly-wakeup-order-"));
+    tempDirectories.push(directory);
+    const path = join(directory, "ledger.sqlite");
+    const expected = ["wake_z_earlier", "wake_a_later"];
+    let itemId = "";
+    let runId = "";
 
-      const result = dispatchNextWork(store, dispatchInput("deterministic", item.id), baseTime);
-      expect(result?.consumedPromiseWakeupIds).toEqual(expected);
-      expect(listPromiseWakeupConsumptions(store, { runId: result!.run.id })
+    const firstStore = new StensiblyStore(path);
+    try {
+      itemId = createItem(firstStore).id;
+      const earlier = readyWakeup(
+        firstStore,
+        itemId,
+        100,
+        new Date("2026-07-27T01:00:00.000Z"),
+      );
+      const later = readyWakeup(
+        firstStore,
+        itemId,
+        101,
+        new Date("2026-07-27T01:00:01.000Z"),
+      );
+      const rows = firstStore.db
+        .query<{ id: string; promise_id: string }, []>(
+          "SELECT id, promise_id FROM promise_wakeups",
+        )
+        .all();
+      const earlierId = rows.find((row) => row.promise_id === earlier.id)?.id;
+      const laterId = rows.find((row) => row.promise_id === later.id)?.id;
+      if (!earlierId || !laterId) throw new Error("Expected both wakeups");
+
+      firstStore.db.query("UPDATE promise_wakeups SET id = ?1 WHERE id = ?2")
+        .run(expected[0], earlierId);
+      firstStore.db.query("UPDATE promise_wakeups SET id = ?1 WHERE id = ?2")
+        .run(expected[1], laterId);
+
+      const result = dispatchNextWork(
+        firstStore,
+        dispatchInput("deterministic", itemId),
+        new Date("2026-07-27T01:00:02.000Z"),
+      );
+      if (!result) throw new Error("Expected deterministic dispatch");
+      runId = result.run.id;
+      expect(result.consumedPromiseWakeupIds).toEqual(expected);
+      expect(listPromiseWakeupConsumptions(firstStore, { runId })
         .map((entry) => entry.wakeupId)).toEqual(expected);
+      const queued = firstStore.listEvents(itemId).find((event) => event.type === "run.queued");
+      expect(queued?.payload).toMatchObject({
+        consumedPromiseWakeupIds: expected,
+      });
     } finally {
-      store.close();
+      firstStore.close();
+    }
+
+    const secondStore = new StensiblyStore(path);
+    try {
+      expect(listPromiseWakeupConsumptions(secondStore, { runId })
+        .map((entry) => entry.wakeupId)).toEqual(expected);
+      const replay = dispatchNextWork(
+        secondStore,
+        dispatchInput("deterministic", itemId),
+        new Date("2026-07-27T01:05:00.000Z"),
+      );
+      expect(replay).toMatchObject({
+        run: { id: runId },
+        consumedPromiseWakeupIds: expected,
+      });
+      const queued = secondStore.listEvents(itemId).find((event) => event.type === "run.queued");
+      expect(queued?.payload).toMatchObject({
+        consumedPromiseWakeupIds: expected,
+      });
+    } finally {
+      secondStore.close();
     }
   });
 
