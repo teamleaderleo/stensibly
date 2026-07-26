@@ -50,7 +50,12 @@ export const queue = mutation({
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await requiredWorkspace(ctx, args.workspace);
-    return await queueOne(ctx, workspace, normalizeQueueInput(args));
+    return await queueOne(
+      ctx,
+      workspace,
+      normalizeQueueInput(args),
+      args.executionEnvelope !== undefined,
+    );
   },
 });
 
@@ -142,7 +147,7 @@ export const runPolicy = mutation({
           ),
           idempotencyKey: `continuation-policy:${continuation.externalId}:${continuation.generation}`,
           policyMode: continuation.approvalMode,
-        }));
+        }, false));
       } catch (error) {
         result.skipped.push({
           id: continuation.externalId,
@@ -155,7 +160,12 @@ export const runPolicy = mutation({
   },
 });
 
-async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof normalizeQueueInput>) {
+async function queueOne(
+  ctx: any,
+  workspace: any,
+  input: ReturnType<typeof normalizeQueueInput>,
+  explicitEnvelope = false,
+) {
   const request = queueRequest(input);
   if (input.idempotencyKey) {
     const replay = await ctx.db
@@ -171,10 +181,21 @@ async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof norma
         );
       }
       const replayRequest = record(replay.request);
-      if (!replayRequest || replayRequest.executionEnvelope === undefined) {
-        throw new Error(
-          "Idempotency key belongs to a legacy continuation supervisor request without an execution envelope",
+      if (!replayRequest) {
+        throw new Error("Stored continuation supervisor request is incomplete");
+      }
+      if (replayRequest.executionEnvelope === undefined) {
+        if (explicitEnvelope) {
+          throw new Error(
+            "Historical continuation supervisor request cannot be retrofitted with an execution envelope",
+          );
+        }
+        requireSameRequest(
+          replay.request,
+          legacyQueueRequest(input),
+          "continuation supervisor request",
         );
+        return legacySupervisorReplay(replay.result);
       }
       requireSameRequest(replay.request, request, "continuation supervisor request");
       return replay.result;
@@ -642,6 +663,27 @@ function queueRequest(input: ReturnType<typeof normalizeQueueInput>) {
     retryBackoffSeconds: input.retryBackoffSeconds,
     executionEnvelope: input.executionEnvelope,
     policyMode: input.policyMode,
+  };
+}
+
+function legacyQueueRequest(input: ReturnType<typeof normalizeQueueInput>) {
+  const { executionEnvelope: _executionEnvelope, ...legacy } = queueRequest(input);
+  return legacy;
+}
+
+function legacySupervisorReplay(value: unknown) {
+  const result = record(value);
+  const run = record(result?.run);
+  if (!result || !run) {
+    throw new Error("Stored continuation supervisor result is incomplete");
+  }
+  return {
+    ...result,
+    run: {
+      ...run,
+      executionEnvelope: null,
+      executionRecords: [],
+    },
   };
 }
 
