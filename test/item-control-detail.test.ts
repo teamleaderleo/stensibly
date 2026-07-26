@@ -202,4 +202,24 @@ describe("local item control detail", () => {
     expect(detail.events[0]?.payload).toEqual({ index: 20 });
     expect(detail.events.at(-1)?.payload).toEqual({ index: 119 });
   });
+
+  test("indexes item-control provenance lookups", async () => {
+    const item = await ledger.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Index semantic provenance",
+      priority: 50,
+      actor: human,
+    });
+
+    await ledger.getItem(item.id);
+    const index = store.db
+      .query<{ name: string }, [string]>(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'index' AND name = ?1
+      `)
+      .get("idx_events_item_type_created");
+    expect(index?.name).toBe("idx_events_item_type_created");
+  });
 });
