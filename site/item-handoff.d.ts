@@ -30,9 +30,9 @@ export function validateHandoffInput(
 
 export function readHandedOffItem(
   payload: unknown,
-  expected?: {
+  expected: {
     id?: string;
-    expectedClaimGeneration?: number;
+    expectedClaimGeneration: number;
     summary?: string;
     nextAction?: string;
   },
