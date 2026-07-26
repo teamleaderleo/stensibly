@@ -34,6 +34,10 @@ interface EnvelopeIdentityRow {
   envelope_json: string;
 }
 
+interface ExistingKeyRow {
+  exists_flag: number;
+}
+
 interface ExecutionRecordRow {
   id: string;
   run_id: string;
@@ -80,7 +84,7 @@ export function ensureRunExecutionSchema(store: StensiblyStore): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_run_execution_records_run
-      ON run_execution_records(run_id, created_at, rowid);
+      ON run_execution_records(run_id, created_at);
   `);
   initializedStores.add(store);
 }
@@ -104,9 +108,25 @@ export function assertEnvelopeIdempotency(
       WHERE idempotency_key = ?1
     `)
     .get(idempotencyKey);
-  if (existing && existing.envelope_json !== executionEnvelopeJson(envelope)) {
+  if (existing) {
+    if (existing.envelope_json !== executionEnvelopeJson(envelope)) {
+      throw new ConflictError(
+        `Idempotency key was already used with a different ${label} execution envelope`,
+      );
+    }
+    return;
+  }
+  const legacy = store.db
+    .query<ExistingKeyRow, [string]>(`
+      SELECT 1 AS exists_flag
+      FROM work_runs
+      WHERE idempotency_key = ?1
+      LIMIT 1
+    `)
+    .get(idempotencyKey);
+  if (legacy) {
     throw new ConflictError(
-      `Idempotency key was already used with a different ${label} execution envelope`,
+      `Idempotency key belongs to a legacy ${label} without an execution envelope`,
     );
   }
 }
@@ -156,9 +176,25 @@ export function assertDispatchEnvelopeIdempotency(
       WHERE idempotency_key = ?1
     `)
     .get(idempotencyKey);
-  if (existing && existing.envelope_json !== executionEnvelopeJson(envelope)) {
+  if (existing) {
+    if (existing.envelope_json !== executionEnvelopeJson(envelope)) {
+      throw new ConflictError(
+        "Idempotency key was already used with a different dispatch execution envelope",
+      );
+    }
+    return;
+  }
+  const legacy = store.db
+    .query<ExistingKeyRow, [string]>(`
+      SELECT 1 AS exists_flag
+      FROM dispatcher_commands
+      WHERE idempotency_key = ?1
+      LIMIT 1
+    `)
+    .get(idempotencyKey);
+  if (legacy) {
     throw new ConflictError(
-      "Idempotency key was already used with a different dispatch execution envelope",
+      "Idempotency key belongs to a legacy dispatch without an execution envelope",
     );
   }
 }
