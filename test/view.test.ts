@@ -13,6 +13,7 @@ const baseItem: Item = {
   nextAction: "Open the page.",
   claimedBy: null,
   claimExpiresAt: null,
+  claimGeneration: 0,
   version: 1,
   createdAt: "2026-07-23T00:00:00.000Z",
   updatedAt: "2026-07-23T01:00:00.000Z",
@@ -30,6 +31,7 @@ describe("dashboard view", () => {
         status: "active",
         claimedBy: "coding-agent",
         claimExpiresAt: "2026-07-23T02:00:00.000Z",
+        claimGeneration: 1,
       },
       {
         ...baseItem,

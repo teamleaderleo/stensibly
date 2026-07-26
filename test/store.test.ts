@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("work lifecycle", () => {
-  test("claims are exclusive until released", () => {
+  test("claims are exclusive and advance generation when authority changes", () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
@@ -23,19 +23,32 @@ describe("work lifecycle", () => {
       priority: 50,
       actor: leo,
     });
+    expect(item.claimGeneration).toBe(0);
 
     const claimed = store.claimItem(item.id, browserAgent, 900);
     expect(claimed.status).toBe("active");
     expect(claimed.claimedBy).toBe(browserAgent.id);
+    expect(claimed.claimGeneration).toBe(1);
 
     expect(() => store.claimItem(item.id, leo, 900)).toThrow(ConflictError);
 
     const released = store.releaseItem(item.id, browserAgent);
     expect(released.status).toBe("ready");
     expect(released.claimedBy).toBeNull();
+    expect(released.claimGeneration).toBe(2);
 
     const reclaimed = store.claimItem(item.id, leo, 900);
     expect(reclaimed.claimedBy).toBe(leo.id);
+    expect(reclaimed.claimGeneration).toBe(3);
+
+    const events = store.listEvents(item.id);
+    expect(events.find((event) => event.type === "claim.created")?.payload).toMatchObject({
+      generation: 1,
+    });
+    expect(events.find((event) => event.type === "claim.released")?.payload).toEqual({
+      generation: 1,
+      nextGeneration: 2,
+    });
   });
 
   test("completion clears the lease and records history", () => {

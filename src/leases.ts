@@ -6,6 +6,7 @@ interface ExpiredClaimRow {
   id: string;
   claimed_by: string;
   claim_expires_at: string;
+  claim_generation: number;
 }
 
 interface IdempotentEventRow {
@@ -17,7 +18,7 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
   const transaction = store.db.transaction(() => {
     const candidates = store.db
       .query<ExpiredClaimRow, [string]>(`
-        SELECT id, claimed_by, claim_expires_at
+        SELECT id, claimed_by, claim_expires_at, claim_generation
         FROM items
         WHERE status = 'active'
           AND claimed_by IS NOT NULL
@@ -28,21 +29,31 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
 
     const expiredIds: string[] = [];
     for (const claim of candidates) {
+      const nextGeneration = claim.claim_generation + 1;
       const result = store.db
         .query(`
           UPDATE items
           SET status = 'ready',
               claimed_by = NULL,
               claim_expires_at = NULL,
+              claim_generation = ?1,
               version = version + 1,
-              updated_at = ?1
-          WHERE id = ?2
+              updated_at = ?2
+          WHERE id = ?3
             AND status = 'active'
-            AND claimed_by = ?3
-            AND claim_expires_at = ?4
-            AND claim_expires_at <= ?1
+            AND claimed_by = ?4
+            AND claim_expires_at = ?5
+            AND claim_generation = ?6
+            AND claim_expires_at <= ?2
         `)
-        .run(nowIso, claim.id, claim.claimed_by, claim.claim_expires_at);
+        .run(
+          nextGeneration,
+          nowIso,
+          claim.id,
+          claim.claimed_by,
+          claim.claim_expires_at,
+          claim.claim_generation,
+        );
 
       if (result.changes !== 1) continue;
 
@@ -58,6 +69,8 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
           JSON.stringify({
             previousClaimant: claim.claimed_by,
             expiredAt: claim.claim_expires_at,
+            generation: claim.claim_generation,
+            nextGeneration,
           }),
           nowIso,
         );
@@ -97,7 +110,7 @@ export function renewClaim(
   const expiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
 
   const transaction = store.db.transaction(() => {
-    store.getItem(id);
+    const current = store.getItem(id);
 
     store.db
       .query(`
@@ -110,19 +123,29 @@ export function renewClaim(
       `)
       .run(actor.id, actor.name, actor.kind, nowIso);
 
+    const nextGeneration = current.claimGeneration + 1;
     const result = store.db
       .query(`
         UPDATE items
         SET claim_expires_at = ?1,
+            claim_generation = ?2,
             version = version + 1,
-            updated_at = ?2
-        WHERE id = ?3
+            updated_at = ?3
+        WHERE id = ?4
           AND status = 'active'
-          AND claimed_by = ?4
+          AND claimed_by = ?5
+          AND claim_generation = ?6
           AND claim_expires_at IS NOT NULL
-          AND claim_expires_at > ?2
+          AND claim_expires_at > ?3
       `)
-      .run(expiresAt, nowIso, id, actor.id);
+      .run(
+        expiresAt,
+        nextGeneration,
+        nowIso,
+        id,
+        actor.id,
+        current.claimGeneration,
+      );
 
     if (result.changes !== 1) {
       throw new ConflictError("Only the current claimant can renew a live claim");
@@ -138,7 +161,12 @@ export function renewClaim(
         `evt_${randomUUID()}`,
         id,
         actor.id,
-        JSON.stringify({ leaseSeconds, expiresAt }),
+        JSON.stringify({
+          leaseSeconds,
+          expiresAt,
+          generation: current.claimGeneration,
+          nextGeneration,
+        }),
         idempotencyKey ?? null,
         nowIso,
       );
