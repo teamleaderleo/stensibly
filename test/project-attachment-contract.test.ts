@@ -30,8 +30,8 @@ describe("repository attachment contract", () => {
         "  - create_draft_pr\n  - inspect\n  - propose",
       )
       .replace(
-        "  - merge\n  - deploy\n  - external_message\n  - provider_change\n  - broad_permission_change",
-        "  - provider_change\n  - broad_permission_change\n  - deploy\n  - merge\n  - external_message",
+        "  - merge\n  - deploy\n  - external_message\n  - provider_change\n  - broad_permission_change\n  - credential_change\n  - destructive_cleanup\n  - spend",
+        "  - spend\n  - credential_change\n  - provider_change\n  - broad_permission_change\n  - deploy\n  - destructive_cleanup\n  - merge\n  - external_message",
       ));
 
     expect(first).toEqual(newlineEquivalent);
@@ -62,7 +62,10 @@ describe("repository attachment contract", () => {
       fixture.replace(/^---\n/, ""),
       fixture.replace("---\n\n# Project contract", "\n# Project contract"),
       fixture.replace("version: 1", "version: 2"),
-      fixture.replace("## Escalation\n\nEscalate permission widening, ambiguous scope, missing capabilities, and consequential actions.\n", ""),
+      fixture.replace(
+        "## Escalation\n\nEscalate permission widening, ambiguous scope, missing capabilities, and consequential actions.\n",
+        "",
+      ),
     ]) {
       const result = parseProjectAttachmentContract(content);
       expect(result.ok).toBe(false);
@@ -132,18 +135,18 @@ describe("repository attachment contract", () => {
       fixture.replace("  global: 1", "  global: 0"),
     ).ok).toBe(false);
     expect(parseProjectAttachmentContract(
-      fixture.replace("  - broad_permission_change\n", ""),
+      fixture.replace("  - spend\n", ""),
     ).ok).toBe(false);
     expect(parseProjectAttachmentContract(
       fixture.replace("  - create_draft_pr", "  - create_draft_pr\n  - merge"),
     ).ok).toBe(false);
   });
 
-  test("body prose never changes parsed permissions", () => {
+  test("body prose and horizontal rules never change parsed permissions", () => {
     const first = parse();
     const second = parse(fixture.replace(
       "Deliver a bounded repository change with reviewable evidence.",
-      "Merge and deploy are words in prose only; they grant no authority.",
+      "Merge and deploy are words in prose only; they grant no authority.\n\n---\n\nContinue safely.",
     ));
     expect(second.contract.autonomousActions).toEqual(first.contract.autonomousActions);
     expect(second.contract.approvalRequired).toEqual(first.contract.approvalRequired);
