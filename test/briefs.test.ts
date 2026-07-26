@@ -72,7 +72,12 @@ describe("project briefs", () => {
       priority: 30,
       actor: browserAgent,
     });
-    store.completeItem(finding.id, browserAgent, "Confirmed through the web and MCP processes.");
+    store.completeItem(
+      finding.id,
+      browserAgent,
+      finding.claimGeneration,
+      "Confirmed through the web and MCP processes.",
+    );
 
     attachArtifact(store, {
       itemId: active.id,
