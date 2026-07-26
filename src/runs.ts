@@ -1,8 +1,12 @@
 import * as Core from "./runs-core.js";
 import { compatibilityExecutionEnvelope } from "./execution-envelope-default.js";
+import {
+  parseExecutionActual,
+  type ExecutionActual,
+  type ExecutionEnvelope,
+} from "./execution-envelope.js";
+import { appendRunEnvelopeReference } from "./run-envelope-events.js";
 import type { ActorInput } from "./schemas.js";
-import type { StensiblyStore } from "./store.js";
-import type { ExecutionActual, ExecutionEnvelope } from "./execution-envelope.js";
 import {
   appendExecutionRecord,
   assertEnvelopeIdempotency,
@@ -11,9 +15,9 @@ import {
   hydrateWorkRun,
   hydrateWorkRuns,
   requiredExecutionEnvelope,
-  tagLatestRunEvent,
   type RunExecutionRecord,
 } from "./run-execution-store.js";
+import { ConflictError, type StensiblyStore } from "./store.js";
 
 export { runCommands, runStatuses } from "./runs-core.js";
 export type {
@@ -39,6 +43,25 @@ export interface CreateWorkRunInput
 export interface TransitionWorkRunInput extends Core.TransitionWorkRunInput {
   executionActual?: ExecutionActual;
 }
+
+interface ExecutionRecordReplayRow {
+  run_id: string;
+  run_generation: number;
+  lease_generation: number;
+  transition: string;
+  actual_json: string;
+}
+
+interface RunCommandReplayRow {
+  run_id: string;
+  command: string;
+}
+
+const actualRecordingCommands = new Set<Core.WorkRunCommand>([
+  "succeed",
+  "fail",
+  "cancel",
+]);
 
 export function ensureRunSchema(store: StensiblyStore): void {
   Core.ensureRunSchema(store);
@@ -73,7 +96,10 @@ export function createWorkRun(
       rawInput.idempotencyKey,
       run.createdAt,
     );
-    tagLatestRunEvent(store, { run, type: "run.queued" });
+    appendRunEnvelopeReference(store, {
+      run,
+      lifecycleEventType: "run.queued",
+    });
     return hydrateWorkRun(store, run);
   });
   return transaction();
@@ -113,7 +139,10 @@ export function heartbeatWorkRun(
   ensureRunSchema(store);
   const transaction = store.db.transaction(() => {
     const run = Core.heartbeatWorkRun(store, input, now);
-    tagLatestRunEvent(store, { run, type: "run.heartbeat" });
+    appendRunEnvelopeReference(store, {
+      run,
+      lifecycleEventType: "run.heartbeat",
+    });
     return hydrateWorkRun(store, run);
   });
   return transaction();
@@ -127,15 +156,23 @@ export function transitionWorkRun(
   ensureRunSchema(store);
   const { executionActual, ...coreInput } = rawInput;
   const transaction = store.db.transaction(() => {
+    const normalizedActual = validateExecutionActualReplay(
+      store,
+      coreInput,
+      executionActual,
+    );
     const run = Core.transitionWorkRun(store, coreInput, now);
     const eventType = coreInput.command === "retry"
       ? "run.retry_queued"
       : `run.${run.status}`;
-    tagLatestRunEvent(store, { run, type: eventType });
+    appendRunEnvelopeReference(store, {
+      run,
+      lifecycleEventType: eventType,
+    });
     appendExecutionRecord(store, {
       run,
       transition: coreInput.command,
-      actual: executionActual,
+      actual: normalizedActual,
       idempotencyKey: coreInput.idempotencyKey,
       createdAt: run.updatedAt,
     });
@@ -152,7 +189,11 @@ export function reconcileStaleRuns(
   const transaction = store.db.transaction(() => {
     const result = Core.reconcileStaleRuns(store, now);
     const abandoned = result.abandoned.map((run) => {
-      tagLatestRunEvent(store, { run, type: "run.abandoned" });
+      appendRunEnvelopeReference(store, {
+        run,
+        lifecycleEventType: "run.abandoned",
+        actorId: null,
+      });
       appendExecutionRecord(store, {
         run,
         transition: "abandon",
@@ -164,4 +205,57 @@ export function reconcileStaleRuns(
     return { abandoned };
   });
   return transaction();
+}
+
+function validateExecutionActualReplay(
+  store: StensiblyStore,
+  input: Core.TransitionWorkRunInput,
+  rawActual: ExecutionActual | undefined,
+): ExecutionActual | undefined {
+  if (!actualRecordingCommands.has(input.command)) {
+    if (rawActual !== undefined) {
+      throw new TypeError(
+        "Execution actuals may be recorded only for succeed, fail, or cancel transitions",
+      );
+    }
+    return undefined;
+  }
+
+  const actual = parseExecutionActual(rawActual);
+  if (!input.idempotencyKey) return actual;
+
+  const existing = store.db
+    .query<ExecutionRecordReplayRow, [string]>(`
+      SELECT run_id, run_generation, lease_generation, transition, actual_json
+      FROM run_execution_records
+      WHERE idempotency_key = ?1
+    `)
+    .get(input.idempotencyKey);
+  if (existing) {
+    const same = existing.run_id === input.id
+      && existing.run_generation === input.expectedGeneration + 1
+      && existing.lease_generation === input.expectedLeaseGeneration
+      && existing.transition === input.command
+      && existing.actual_json === JSON.stringify(actual);
+    if (!same) {
+      throw new ConflictError(
+        "Idempotency key was already used for a different execution result",
+      );
+    }
+    return actual;
+  }
+
+  const legacy = store.db
+    .query<RunCommandReplayRow, [string]>(`
+      SELECT run_id, command
+      FROM run_commands
+      WHERE idempotency_key = ?1
+    `)
+    .get(input.idempotencyKey);
+  if (legacy) {
+    throw new ConflictError(
+      "Idempotency key belongs to a legacy run command without an execution result",
+    );
+  }
+  return actual;
 }
