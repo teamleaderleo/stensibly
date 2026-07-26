@@ -223,7 +223,7 @@ describe("local run execution envelopes", () => {
     }
   });
 
-  test("does not retrofit actual results onto a legacy terminal replay", () => {
+  test("replays legacy terminal commands without adding envelope metadata or actuals", () => {
     const store = new StensiblyStore(":memory:");
     try {
       const item = createItem(store, "Legacy terminal replay");
@@ -256,17 +256,30 @@ describe("local run execution envelopes", () => {
         expectedLeaseGeneration: running.leaseGeneration,
         idempotencyKey: "legacy-terminal-command",
       };
-      transitionLegacyWorkRun(
+      const completed = transitionLegacyWorkRun(
         store,
         legacyCommand,
         new Date("2026-07-26T10:03:00.000Z"),
       );
+      const replayed = transitionWorkRun(
+        store,
+        legacyCommand,
+        new Date("2026-07-26T10:04:00.000Z"),
+      );
 
+      expect(replayed).toMatchObject({ id: completed.id, status: "succeeded" });
+      expect(getWorkRun(store, completed.id)).toMatchObject({
+        executionEnvelope: null,
+        executionRecords: [],
+      });
+      expect(store.listEvents(item.id).filter((event) =>
+        event.type === "run.envelope_reference"
+      )).toEqual([]);
       expect(() => transitionWorkRun(store, {
         ...legacyCommand,
         executionActual: { toolCalls: 9 },
-      }, new Date("2026-07-26T10:04:00.000Z"))).toThrow(
-        /legacy run command without an execution result/,
+      }, new Date("2026-07-26T10:05:00.000Z"))).toThrow(
+        /has no execution envelope/,
       );
     } finally {
       store.close();
