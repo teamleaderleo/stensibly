@@ -33,6 +33,7 @@ import {
   type ResolveContinuationInput,
 } from "./continuations.js";
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
+import { buildItemControlView } from "./item-control.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
   AttachWorkArtifactInput,
@@ -111,15 +112,20 @@ export class SqliteWorkLedger implements
   }
 
   async getItem(id: string) {
-    reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
-    return {
+    const now = new Date();
+    reconcileStaleRunItems(this.store, now);
+    expireClaims(this.store, now);
+    const detail = {
       item: this.store.getItem(id),
       events: this.store.listEvents(id),
       artifacts: listArtifacts(this.store, id),
       runs: listWorkRuns(this.store, { itemId: id }),
       dependencies: [],
       reservations: [],
+    };
+    return {
+      ...detail,
+      control: buildItemControlView(detail, { now }),
     };
   }
 
