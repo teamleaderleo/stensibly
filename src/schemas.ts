@@ -55,8 +55,13 @@ export const actorActionSchema = z.object({
   summary: z.string().trim().max(10_000).optional(),
 });
 
+export const completeItemSchema = actorActionSchema.extend({
+  expectedClaimGeneration: expectedClaimGenerationSchema,
+});
+
 export const handoffItemSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedClaimGenerationSchema,
   summary: z.string().trim().min(1).max(10_000),
   nextAction: z.string().trim().min(1).max(2_000),
   toActorId: z.string().trim().min(1).max(120).optional(),
@@ -64,12 +69,14 @@ export const handoffItemSchema = z.object({
 
 export const blockItemSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedClaimGenerationSchema,
   reason: z.string().trim().min(1).max(10_000),
   nextAction: z.string().trim().min(1).max(2_000).optional(),
 });
 
 export const unblockItemSchema = z.object({
   actor: actorSchema,
+  expectedClaimGeneration: expectedClaimGenerationSchema,
   nextAction: z.string().trim().min(1).max(2_000).optional(),
 });
 
