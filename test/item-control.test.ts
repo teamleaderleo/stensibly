@@ -5,6 +5,8 @@ import {
 } from "../src/item-control.ts";
 
 const now = new Date("2026-07-26T12:00:00.000Z");
+const dispatchExpiry = "2026-07-26T12:15:00.000Z";
+const dispatchCreatedAt = "2026-07-26T12:00:00.000Z";
 
 function item(overrides: Partial<ItemControlItemInput> = {}): ItemControlItemInput {
   return {
@@ -16,6 +18,48 @@ function item(overrides: Partial<ItemControlItemInput> = {}): ItemControlItemInp
     claimExpiresAt: null,
     claimGeneration: 0,
     ...overrides,
+  };
+}
+
+function dispatcherEvents(
+  generation: number | undefined,
+  runId = "run_current",
+  expiry = dispatchExpiry,
+) {
+  return [
+    {
+      actorId: "service:supervisor",
+      type: "claim.created",
+      payload: {
+        ...(generation === undefined ? {} : { generation }),
+        expiresAt: expiry,
+        source: "supervisor_dispatch",
+      },
+      createdAt: dispatchCreatedAt,
+    },
+    {
+      actorId: "service:supervisor",
+      type: "run.queued",
+      payload: {
+        runId,
+        generation: 1,
+        leaseGeneration: 1,
+        leaseExpiresAt: expiry,
+        source: "supervisor_dispatch",
+      },
+      createdAt: dispatchCreatedAt,
+    },
+  ];
+}
+
+function matchingRun(runId = "run_current", expiry: string | null = dispatchExpiry) {
+  return {
+    id: runId,
+    actorId: "service:supervisor",
+    leaseOwnerId: "service:supervisor",
+    status: "running",
+    leaseExpiresAt: expiry,
+    lastHeartbeatAt: dispatchCreatedAt,
   };
 }
 
@@ -116,25 +160,110 @@ describe("canonical item control projection", () => {
     expect(control.responsibility.actorId).toBe("agent:one");
   });
 
-  test("identifies dispatcher authority from one matching live run", () => {
+  test("identifies dispatcher authority from an exact durable claim/run pair", () => {
     const control = projectItemControl({
       item: item({
         status: "active",
         claimedBy: "service:supervisor",
-        claimExpiresAt: "2026-07-26T12:15:00.000Z",
+        claimExpiresAt: dispatchExpiry,
         claimGeneration: 3,
       }),
-      runs: [{
-        actorId: "service:supervisor",
-        leaseOwnerId: "service:supervisor",
-        status: "running",
-        leaseExpiresAt: "2026-07-26T12:10:00.000Z",
-        lastHeartbeatAt: "2026-07-26T12:00:00.000Z",
-      }],
+      runs: [matchingRun()],
+      events: dispatcherEvents(3),
       now,
     });
     expect(control.authority.source).toBe("dispatcher");
-    expect(control.responsibility.heartbeatExpectedAt).toBe("2026-07-26T12:10:00.000Z");
+    expect(control.responsibility.heartbeatExpectedAt).toBe(dispatchExpiry);
+  });
+
+  test("accepts hosted legacy generation omission only with the exact durable run pair", () => {
+    const control = projectItemControl({
+      item: item({
+        status: "active",
+        claimedBy: "service:supervisor",
+        claimExpiresAt: dispatchExpiry,
+        claimGeneration: 4,
+      }),
+      runs: [matchingRun()],
+      events: dispatcherEvents(undefined),
+      now,
+    });
+    expect(control.authority).toMatchObject({
+      state: "live",
+      source: "dispatcher",
+      holderActorId: "service:supervisor",
+    });
+  });
+
+  test("does not promote stale, wrong-run, unverifiable, or lease-less evidence", () => {
+    const activeItem = item({
+      status: "active",
+      claimedBy: "service:supervisor",
+      claimExpiresAt: dispatchExpiry,
+      claimGeneration: 4,
+    });
+
+    const directClaimWithSameActorRun = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun("run_old")],
+      events: [{
+        actorId: "service:supervisor",
+        type: "claim.created",
+        payload: { generation: 4, source: "direct_claim" },
+        createdAt: dispatchCreatedAt,
+      }],
+      now,
+    });
+    expect(directClaimWithSameActorRun.authority).toMatchObject({
+      state: "live",
+      source: "claim",
+      holderActorId: "service:supervisor",
+    });
+    expect(directClaimWithSameActorRun.responsibility.heartbeatExpectedAt).toBeNull();
+
+    const staleGeneration = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun()],
+      events: dispatcherEvents(3),
+      now,
+    });
+    expect(staleGeneration.authority).toMatchObject({
+      state: "superseded",
+      source: "none",
+      holderActorId: null,
+    });
+
+    const missingPair = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun()],
+      events: [dispatcherEvents(4)[0]!],
+      now,
+    });
+    expect(missingPair.authority.state).toBe("superseded");
+
+    const wrongRun = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun("run_stale")],
+      events: dispatcherEvents(4, "run_current"),
+      now,
+    });
+    expect(wrongRun.authority.state).toBe("superseded");
+
+    const nullLease = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun("run_current", null)],
+      events: dispatcherEvents(4),
+      now,
+    });
+    expect(nullLease.authority.state).toBe("superseded");
+
+    const elapsedLease = projectItemControl({
+      item: activeItem,
+      runs: [matchingRun("run_current", "2026-07-26T11:59:59.000Z")],
+      events: dispatcherEvents(4),
+      now,
+    });
+    expect(elapsedLease.authority.state).toBe("superseded");
   });
 
   test("fails closed for conflicting runs and malformed authority fields", () => {
@@ -142,12 +271,12 @@ describe("canonical item control projection", () => {
       item: item({
         status: "active",
         claimedBy: "service:supervisor",
-        claimExpiresAt: "2026-07-26T12:15:00.000Z",
+        claimExpiresAt: dispatchExpiry,
         claimGeneration: 3,
       }),
       runs: [
-        { actorId: "service:supervisor", status: "running" },
-        { actorId: "agent:other", status: "waiting" },
+        { id: "run_one", actorId: "service:supervisor", status: "running" },
+        { id: "run_two", actorId: "agent:other", status: "waiting" },
       ],
       now,
     });

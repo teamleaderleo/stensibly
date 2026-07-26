@@ -39,6 +39,7 @@ export const get = query({
     const [
       eventRows,
       latestClaimEvent,
+      latestQueuedEvent,
       latestHandoffEvent,
       artifactRows,
       runs,
@@ -62,6 +63,13 @@ export const get = query({
       ctx.db
         .query("events")
         .withIndex("by_item_type_created", (q) =>
+          q.eq("itemId", item._id).eq("type", "run.queued")
+        )
+        .order("desc")
+        .first(),
+      ctx.db
+        .query("events")
+        .withIndex("by_item_type_created", (q) =>
           q.eq("itemId", item._id).eq("type", "work.handed_off")
         )
         .order("desc")
@@ -79,6 +87,10 @@ export const get = query({
           .withIndex("by_item_status", (q) =>
             q.eq("itemId", item._id).eq("status", status)
           )
+          .filter((q) => q.or(
+            q.eq(q.field("leaseExpiresAt"), undefined),
+            q.gt(q.field("leaseExpiresAt"), args.now),
+          ))
           .order("desc")
           .take(MAX_RUNS_PER_LIVE_STATUS)
       )),
@@ -99,7 +111,7 @@ export const get = query({
       dependencies,
     );
     const publicItemValue = await publicItem(ctx, item);
-    const controlEvents = [latestClaimEvent, latestHandoffEvent]
+    const controlEvents = [latestClaimEvent, latestQueuedEvent, latestHandoffEvent]
       .filter((event) => event !== null)
       .map((event) => ({
         actorId: event.actorExternalId ?? null,
@@ -109,6 +121,7 @@ export const get = query({
       }));
     const controlRuns = [
       ...queuedGroups.flat().map((run) => ({
+        id: run.externalId,
         actorId: run.actorExternalId,
         leaseOwnerId: run.leaseOwnerExternalId ?? null,
         status: run.status,
@@ -120,6 +133,7 @@ export const get = query({
           : new Date(run.lastHeartbeatAt).toISOString(),
       })),
       ...legacyGroups.flat().map((run) => ({
+        id: run.externalId,
         actorId: run.actorExternalId,
         leaseOwnerId: run.actorExternalId,
         status: run.status,

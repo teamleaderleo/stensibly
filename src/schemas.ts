@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isReservedItemControlEventType } from "./item-control-events.js";
 
 export const itemKinds = [
   "task",
@@ -83,7 +84,16 @@ export const unblockItemSchema = z.object({
 
 export const recordEventSchema = z.object({
   actor: actorSchema.optional(),
-  type: z.string().trim().min(1).max(120).regex(/^[a-z0-9._-]+$/),
+  type: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .regex(/^[a-z0-9._-]+$/)
+    .refine(
+      (value) => !isReservedItemControlEventType(value),
+      "Event type is reserved for internal lifecycle writers",
+    ),
   payload: z.record(z.string(), z.unknown()).default({}),
 });
 
