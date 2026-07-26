@@ -2,6 +2,7 @@
 
 **Status:** active planning and execution focus  
 **Date established:** 2026-07-27  
+**Tracking issue:** #286  
 **Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
 
 This file is a compact current-focus projection. GitHub issues, pull requests,
@@ -111,7 +112,7 @@ After Lane A acceptance:
 5. complete a read-only test;
 6. complete one approved low-risk write;
 7. verify refresh or reconnect behaviour;
-8. attach evidence and close or update #220.
+8. attach evidence and close or update #220 and #286.
 
 ## Work-selection policy for this wave
 
