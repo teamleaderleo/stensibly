@@ -84,7 +84,7 @@ export function createWorkRun(
     if (isLegacyRunCreationReplay(store, rawInput.idempotencyKey)) {
       if (rawInput.executionEnvelope !== undefined) {
         throw new ConflictError(
-          "Historical run creation cannot be retrofitted with an execution envelope",
+          "Idempotency key belongs to a legacy run creation without an execution envelope; historical runs cannot be retrofitted",
         );
       }
       return hydrateWorkRun(store, Core.createWorkRun(store, coreInput, now));
