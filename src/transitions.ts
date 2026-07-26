@@ -7,15 +7,19 @@ interface IdempotentEventRow {
   item_id: string;
 }
 
+interface TransitionInput {
+  id: string;
+  actor: ActorInput;
+  expectedClaimGeneration: number;
+  idempotencyKey?: string;
+}
+
 export function handoffWork(
   store: StensiblyStore,
-  input: {
-    id: string;
-    actor: ActorInput;
+  input: TransitionInput & {
     summary: string;
     nextAction: string;
     toActorId?: string;
-    idempotencyKey?: string;
   },
 ): Item {
   expireClaims(store);
@@ -23,7 +27,8 @@ export function handoffWork(
   if (existing) return existing;
 
   const transaction = store.db.transaction(() => {
-    store.getItem(input.id);
+    const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
+    const current = store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
 
@@ -35,18 +40,30 @@ export function handoffWork(
             next_action = ?2,
             claimed_by = NULL,
             claim_expires_at = NULL,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
           AND status IN ('ready', 'active', 'blocked')
-          AND (claimed_by IS NULL OR claimed_by = ?5)
+          AND claim_generation = ?5
+          AND (claimed_by IS NULL OR claimed_by = ?6)
       `)
-      .run(input.summary, input.nextAction, now, input.id, input.actor.id);
+      .run(
+        input.summary,
+        input.nextAction,
+        now,
+        input.id,
+        expectedGeneration,
+        input.actor.id,
+      );
 
     if (result.changes !== 1) {
-      throw new ConflictError("Work is complete, archived, or held by another actor");
+      throw new ConflictError(
+        "Work is complete, archived, held by another actor, or the claim generation changed",
+      );
     }
 
+    const updated = store.getItem(input.id);
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
@@ -55,12 +72,14 @@ export function handoffWork(
         summary: input.summary,
         nextAction: input.nextAction,
         ...(input.toActorId ? { toActorId: input.toActorId } : {}),
+        generation: current.claimGeneration,
+        nextGeneration: updated.claimGeneration,
       },
       idempotencyKey: input.idempotencyKey,
       now,
     });
 
-    return store.getItem(input.id);
+    return updated;
   });
 
   return transaction();
@@ -68,12 +87,9 @@ export function handoffWork(
 
 export function blockWork(
   store: StensiblyStore,
-  input: {
-    id: string;
-    actor: ActorInput;
+  input: TransitionInput & {
     reason: string;
     nextAction?: string;
-    idempotencyKey?: string;
   },
 ): Item {
   expireClaims(store);
@@ -81,7 +97,8 @@ export function blockWork(
   if (existing) return existing;
 
   const transaction = store.db.transaction(() => {
-    store.getItem(input.id);
+    const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
+    const current = store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
 
@@ -93,18 +110,30 @@ export function blockWork(
             next_action = COALESCE(?2, next_action),
             claimed_by = NULL,
             claim_expires_at = NULL,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
           AND status IN ('ready', 'active')
-          AND (claimed_by IS NULL OR claimed_by = ?5)
+          AND claim_generation = ?5
+          AND (claimed_by IS NULL OR claimed_by = ?6)
       `)
-      .run(input.reason, input.nextAction ?? null, now, input.id, input.actor.id);
+      .run(
+        input.reason,
+        input.nextAction ?? null,
+        now,
+        input.id,
+        expectedGeneration,
+        input.actor.id,
+      );
 
     if (result.changes !== 1) {
-      throw new ConflictError("Work is already blocked, complete, archived, or held by another actor");
+      throw new ConflictError(
+        "Work is blocked, complete, archived, held by another actor, or the claim generation changed",
+      );
     }
 
+    const updated = store.getItem(input.id);
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
@@ -112,12 +141,14 @@ export function blockWork(
       payload: {
         reason: input.reason,
         ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+        generation: current.claimGeneration,
+        nextGeneration: updated.claimGeneration,
       },
       idempotencyKey: input.idempotencyKey,
       now,
     });
 
-    return store.getItem(input.id);
+    return updated;
   });
 
   return transaction();
@@ -125,19 +156,15 @@ export function blockWork(
 
 export function unblockWork(
   store: StensiblyStore,
-  input: {
-    id: string;
-    actor: ActorInput;
-    nextAction?: string;
-    idempotencyKey?: string;
-  },
+  input: TransitionInput & { nextAction?: string },
 ): Item {
   expireClaims(store);
   const existing = findIdempotentItem(store, input.idempotencyKey);
   if (existing) return existing;
 
   const transaction = store.db.transaction(() => {
-    store.getItem(input.id);
+    const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
+    const current = store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
 
@@ -148,26 +175,36 @@ export function unblockWork(
             next_action = COALESCE(?1, next_action),
             claimed_by = NULL,
             claim_expires_at = NULL,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?2
-        WHERE id = ?3 AND status = 'blocked'
+        WHERE id = ?3
+          AND status = 'blocked'
+          AND claim_generation = ?4
       `)
-      .run(input.nextAction ?? null, now, input.id);
+      .run(input.nextAction ?? null, now, input.id, expectedGeneration);
 
     if (result.changes !== 1) {
-      throw new ConflictError("Only blocked work can be unblocked");
+      throw new ConflictError(
+        "Only blocked work with the current claim generation can be unblocked",
+      );
     }
 
+    const updated = store.getItem(input.id);
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.unblocked",
-      payload: input.nextAction ? { nextAction: input.nextAction } : {},
+      payload: {
+        ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+        generation: current.claimGeneration,
+        nextGeneration: updated.claimGeneration,
+      },
       idempotencyKey: input.idempotencyKey,
       now,
     });
 
-    return store.getItem(input.id);
+    return updated;
   });
 
   return transaction();
@@ -225,4 +262,11 @@ function appendTransitionEvent(
       input.idempotencyKey ?? null,
       input.now,
     );
+}
+
+function itemGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError("Expected claim generation must be a non-negative integer");
+  }
+  return value;
 }
