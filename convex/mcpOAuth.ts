@@ -389,7 +389,7 @@ export const rotateRefreshToken = mutation({
 
 export const cleanupRefreshFamilyScheduled = internalMutation({
   args: {
-    workspaceId: v.id("workspaces"),
+    workspaceId: v.optional(v.id("workspaces")),
     familyExternalId: v.string(),
     familyExpiresAt: v.number(),
     scheduleGeneration: v.number(),
@@ -398,9 +398,25 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
   returns: refreshCleanupValidator,
   handler: async (ctx, args) => {
     const now = Date.now();
+    const root = await ctx.db
+      .query("mcpOAuthRefreshTokens")
+      .withIndex("by_external_id", (q) => q.eq("externalId", args.familyExternalId))
+      .unique();
+    // Old jobs can recover only a globally unique rooted family; rootless or
+    // ambiguous legacy calls remain fail-closed instead of guessing a workspace.
+    const legacyRoot = args.workspaceId === undefined
+      && root
+      && root.familyExternalId === args.familyExternalId
+      ? root
+      : null;
+    const workspaceId = args.workspaceId ?? legacyRoot?.workspaceId;
+    if (!workspaceId || (args.workspaceId === undefined && args.continuation)) {
+      return cleanupResult("missing", 0, 0, false);
+    }
+
     const oldestRows = await readRefreshFamilyRows(
       ctx,
-      args.workspaceId,
+      workspaceId,
       args.familyExternalId,
       "asc",
       REFRESH_CLEANUP_BATCH_SIZE + 1,
@@ -411,7 +427,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
     }
     const newestRow = await readRefreshFamilyEdge(
       ctx,
-      args.workspaceId,
+      workspaceId,
       args.familyExternalId,
       "desc",
     );
@@ -419,20 +435,22 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       return cleanupResult("missing", 0, 0, false);
     }
 
-    const root = await ctx.db
-      .query("mcpOAuthRefreshTokens")
-      .withIndex("by_external_id", (q) => q.eq("externalId", args.familyExternalId))
-      .unique();
     const validRoot = root
-      && root.workspaceId === args.workspaceId
+      && root.workspaceId === workspaceId
       && root.familyExternalId === args.familyExternalId
       ? root
       : null;
     const cleanupCoordinator = validRoot ?? oldestRow;
-    const matchingSchedule =
+    const matchingCurrentSchedule =
       isCurrentCleanupScheduleGeneration(args.scheduleGeneration)
       && cleanupCoordinator.cleanupScheduledAt === args.familyExpiresAt
       && cleanupCoordinator.cleanupScheduleGeneration === args.scheduleGeneration;
+    const matchingLegacySchedule =
+      args.workspaceId === undefined
+      && isLegacyCleanupScheduleGeneration(args.scheduleGeneration)
+      && cleanupCoordinator.cleanupScheduledAt === args.familyExpiresAt
+      && cleanupCoordinator.cleanupScheduleGeneration === args.scheduleGeneration;
+    const matchingSchedule = matchingCurrentSchedule || matchingLegacySchedule;
 
     if (!args.continuation && !matchingSchedule) {
       return cleanupResult(
@@ -453,8 +471,24 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
         ? args.familyExpiresAt
         : Math.min(validTimestamp(args.familyExpiresAt) ?? now, now);
 
+    if (matchingLegacySchedule) {
+      await ensureRefreshFamilyCleanupScheduled(
+        ctx,
+        cleanupCoordinator,
+        workspaceId,
+        args.familyExternalId,
+        canonicalFamilyExpiresAt,
+      );
+      return cleanupResult(
+        "retained",
+        Math.min(oldestRows.length, REFRESH_CLEANUP_BATCH_SIZE),
+        0,
+        oldestRows.length > REFRESH_CLEANUP_BATCH_SIZE,
+      );
+    }
+
     let coordinatorForScheduling = cleanupCoordinator;
-    if (!args.continuation && matchingSchedule) {
+    if (!args.continuation && matchingCurrentSchedule) {
       await ctx.db.patch(cleanupCoordinator._id, { cleanupScheduledAt: undefined });
       coordinatorForScheduling = { ...cleanupCoordinator, cleanupScheduledAt: undefined };
     }
@@ -463,7 +497,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       await ensureRefreshFamilyCleanupScheduled(
         ctx,
         coordinatorForScheduling,
-        args.workspaceId,
+        workspaceId,
         args.familyExternalId,
         canonicalFamilyExpiresAt,
       );
@@ -480,7 +514,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
     const hasMore = oldestRows.length > REFRESH_CLEANUP_BATCH_SIZE;
     if (hasMore) {
       await ctx.scheduler.runAfter(0, cleanupRefreshFamilyRef, {
-        workspaceId: args.workspaceId,
+        workspaceId,
         familyExternalId: args.familyExternalId,
         familyExpiresAt: canonicalFamilyExpiresAt,
         scheduleGeneration: args.scheduleGeneration,
@@ -795,6 +829,10 @@ function validTimestamp(value: number | undefined): number | null {
 // Current workspace-bound jobs use negative generations; the absolute value remains monotonic.
 function isCleanupScheduleGeneration(value: number | undefined): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value !== 0;
+}
+
+function isLegacyCleanupScheduleGeneration(value: number | undefined): boolean {
+  return isCleanupScheduleGeneration(value) && value > 0;
 }
 
 function isCurrentCleanupScheduleGeneration(value: number | undefined): boolean {
