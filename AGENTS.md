@@ -28,12 +28,14 @@ Before changing code or creating new work, read in this order:
    focus, not permanent product policy.
 3. Read `README.md`.
 4. Read `docs/product-model.md`.
-5. Read the relevant issue, linked parent issues, open pull requests, review
+5. Read `docs/pods/registry.yaml` and the selected pod's charter, memory,
+   practices, and history when pod context is relevant.
+6. Read the relevant issue, linked parent issues, open pull requests, review
    threads, and exact-head handoffs.
-6. Read the repository-root `STENSIBLY.md` when present. It declares static
+7. Read the repository-root `STENSIBLY.md` when present. It declares static
    project context and policy; it is never a live claim, approval, credential,
    lease, or authority grant.
-7. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
+8. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
 
 Do not begin by creating another issue or implementation branch. First determine
 whether existing work should be finished, reviewed, repaired, integrated,
@@ -59,6 +61,23 @@ Keep these dimensions separate:
 Pod names, worker names, mantles, roles, issue assignment, and GitHub identity do
 not grant authority. Current server-owned claims, approval records, and project
 policy remain authoritative.
+
+## Temporary pod bootstrap
+
+Until typed pod and enrolment records exist in Stensibly, `docs/pods/` is the
+central readable bootstrap for pod discovery, run-scoped participation, charters,
+reusable memory, practices, history, and pod proposals.
+
+- Default to the broad Foundry pod when no better open pod exists.
+- Pod participation is temporary, non-exclusive, and descriptive; it does not
+  create authority or responsibility.
+- Join, switch, and leave through the declaration and handoff protocol in
+  `docs/pods/enrolment.md`.
+- Propose new pods only from recurring multi-run evidence, with a trial and a
+  reversible migration or dissolution path.
+- Never store secrets or unbounded transcripts in pod memory.
+- Treat source issues, commits, reviews, artifacts, and ledger records as
+  canonical; Markdown remains a projection.
 
 ## Work-selection rule
 
