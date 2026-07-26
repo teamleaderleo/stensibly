@@ -78,6 +78,12 @@ export interface HostedExecutionRecord {
   createdAt: string;
 }
 
+interface HostedEnvelopeRecord {
+  envelope: ExecutionEnvelope;
+  runGeneration: number;
+  leaseGeneration: number;
+}
+
 export function normalizeExecutionEnvelope(
   value: unknown,
   fallbackObjective: string,
@@ -182,6 +188,8 @@ export async function readHostedRunExecution(
 ): Promise<{
   executionEnvelope: ExecutionEnvelope | null;
   executionRecords: HostedExecutionRecord[];
+  runGeneration: number | null;
+  leaseGeneration: number | null;
 }> {
   const runId = boundedRunId(rawRunId);
   const [envelopeEvents, actualEvents] = await Promise.all([
@@ -208,26 +216,33 @@ export async function readHostedRunExecution(
   }
 
   const envelopeEvent = envelopeEvents[0];
-  const executionEnvelope = envelopeEvent === undefined
+  const envelopeRecord = envelopeEvent === undefined
     ? null
     : parseEnvelopeEvent(envelopeEvent, runId);
   const executionRecords = actualEvents.map((event: any) =>
     parseActualEvent(event, runId)
   );
-  return { executionEnvelope, executionRecords };
+  validateExecutionRecordOrder(envelopeRecord, executionRecords);
+  const latest = executionRecords.at(-1);
+  return {
+    executionEnvelope: envelopeRecord?.envelope ?? null,
+    executionRecords,
+    runGeneration: latest?.runGeneration ?? envelopeRecord?.runGeneration ?? null,
+    leaseGeneration: latest?.leaseGeneration ?? envelopeRecord?.leaseGeneration ?? null,
+  };
 }
 
 export function sameCanonical(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
 }
 
-function parseEnvelopeEvent(event: any, runId: string): ExecutionEnvelope {
+function parseEnvelopeEvent(event: any, runId: string): HostedEnvelopeRecord {
   const payload = record(event?.payload);
   if (!payload || payload.runId !== runId) {
     throw new Error("Stored execution envelope does not match its run");
   }
-  positiveInteger(payload.generation, "Run generation");
-  positiveInteger(payload.leaseGeneration, "Lease generation");
+  const runGeneration = positiveInteger(payload.generation, "Run generation");
+  const leaseGeneration = positiveInteger(payload.leaseGeneration, "Lease generation");
   if (payload.envelopeSchemaVersion !== EXECUTION_ENVELOPE_SCHEMA_VERSION) {
     throw new Error("Stored execution envelope schema version is unsupported");
   }
@@ -236,7 +251,7 @@ function parseEnvelopeEvent(event: any, runId: string): ExecutionEnvelope {
     throw new Error("Stored execution envelope schema metadata is inconsistent");
   }
   validTimestamp(event.createdAt, "Stored execution envelope creation time");
-  return envelope;
+  return { envelope, runGeneration, leaseGeneration };
 }
 
 function parseActualEvent(event: any, runId: string): HostedExecutionRecord {
@@ -255,6 +270,24 @@ function parseActualEvent(event: any, runId: string): HostedExecutionRecord {
       validTimestamp(event.createdAt, "Stored execution result creation time"),
     ).toISOString(),
   };
+}
+
+function validateExecutionRecordOrder(
+  envelope: HostedEnvelopeRecord | null,
+  records: HostedExecutionRecord[],
+): void {
+  let previousGeneration = envelope?.runGeneration ?? 0;
+  let previousLeaseGeneration = envelope?.leaseGeneration ?? 0;
+  for (const record of records) {
+    if (record.runGeneration <= previousGeneration) {
+      throw new Error("Stored execution-result generations are not strictly increasing");
+    }
+    if (record.leaseGeneration < previousLeaseGeneration) {
+      throw new Error("Stored execution-result lease generations moved backwards");
+    }
+    previousGeneration = record.runGeneration;
+    previousLeaseGeneration = record.leaseGeneration;
+  }
 }
 
 function executionEnvelopeEventType(runId: string): string {
