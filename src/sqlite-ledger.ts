@@ -125,6 +125,7 @@ export class SqliteWorkLedger implements
     const runs = readBoundedItemRuns(this.store, id);
     const controlEvents = [
       readLatestItemEvent(this.store, id, "claim.created"),
+      readLatestItemEvent(this.store, id, "run.queued"),
       readLatestItemEvent(this.store, id, "work.handed_off"),
     ].filter((event) => event !== null);
     return {
