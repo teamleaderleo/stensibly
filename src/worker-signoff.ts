@@ -128,5 +128,7 @@ function reviewedCommit(value: string): string {
 }
 
 function escapeMarkdown(value: string): string {
-  return value.replace(/[\\`*_\[\]<>]/g, "\\$&");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/[\\`*_\[\]<>]/g, "\\$&");
 }
