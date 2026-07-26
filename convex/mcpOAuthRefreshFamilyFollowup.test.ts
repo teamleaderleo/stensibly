@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 
 describe("OAuth refresh-family follow-up hardening", () => {
-  test("wrong-client refresh attempts leave the family unchanged", async () => {
+  test("wrong-client refresh attempts leave the family unchanged and preserve correct rotation", async () => {
     const t = convexTest(schema, modules);
     const base = Date.parse("2026-04-01T00:00:00.000Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
@@ -28,25 +28,43 @@ describe("OAuth refresh-family follow-up hardening", () => {
       const before = await readByExternalId(t, rootId);
       expect(before).toBeTruthy();
 
-      const nextId = refreshId("wrongclientnext");
+      const rejectedNextId = refreshId("wrongclientnext");
       expect(await rotate(t, {
         clientId: "oauth_client_wrongclient00",
         id: rootId,
         secretHash: "0".repeat(64),
-        nextId,
+        nextId: rejectedNextId,
         nextSecretHash: "1".repeat(64),
         nextExpiresAt: base + 60_000,
       })).toEqual({ status: "invalid" });
 
       expect(await readByExternalId(t, rootId)).toEqual(before);
-      expect(await readByExternalId(t, nextId)).toBeNull();
+      expect(await readByExternalId(t, rejectedNextId)).toBeNull();
       expect(clientId).not.toBe("oauth_client_wrongclient00");
+
+      const acceptedNextId = refreshId("correctclientnext");
+      expect(await rotate(t, {
+        clientId,
+        id: rootId,
+        secretHash: "0".repeat(64),
+        nextId: acceptedNextId,
+        nextSecretHash: "5".repeat(64),
+        nextExpiresAt: base + 60_000,
+      })).toMatchObject({ status: "ok" });
+      expect(await readByExternalId(t, rootId)).toMatchObject({
+        consumedAt: base,
+        rotatedToExternalId: acceptedNextId,
+      });
+      expect(await readByExternalId(t, acceptedNextId)).toMatchObject({
+        externalId: acceptedNextId,
+        clientExternalId: clientId,
+      });
     } finally {
       clock.mockRestore();
     }
   });
 
-  test("rootless families persist a deduplicated cleanup schedule on the oldest survivor", async () => {
+  test("rootless families enrol once, recover early timers, and clean in bounded batches", async () => {
     const t = convexTest(schema, modules);
     const base = Date.parse("2026-05-01T00:00:00.000Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
@@ -72,6 +90,22 @@ describe("OAuth refresh-family follow-up hardening", () => {
           consumedAt: base + 1,
           rotatedToExternalId: leafId,
         });
+        for (let index = 0; index < 101; index += 1) {
+          const createdAt = base + 2 + index;
+          await ctx.db.insert("mcpOAuthRefreshTokens", {
+            workspaceId: fixture.workspaceId,
+            accountId: fixture.accountDbId,
+            externalId: refreshId(`rootlesshistory${index.toString().padStart(3, "0")}`),
+            familyExternalId,
+            secretHash: "6".repeat(64),
+            clientExternalId: fixture.clientId,
+            scopes: ["read", "offline_access"],
+            resource,
+            createdAt,
+            expiresAt: familyExpiresAt,
+            consumedAt: createdAt + 1,
+          });
+        }
         await ctx.db.insert("mcpOAuthRefreshTokens", {
           workspaceId: fixture.workspaceId,
           accountId: fixture.accountDbId,
@@ -82,7 +116,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
           clientExternalId: fixture.clientId,
           scopes: ["read", "offline_access"],
           resource,
-          createdAt: base + 2,
+          createdAt: base + 1_000,
           expiresAt: familyExpiresAt,
         });
       });
@@ -98,28 +132,48 @@ describe("OAuth refresh-family follow-up hardening", () => {
         })).toEqual({ status: "replayed" });
       }
 
-      const family = await readFamily(t, familyExternalId);
-      expect(family).toHaveLength(2);
-      expect(family[0]).toMatchObject({
+      const enrolledFamily = await readFamily(t, familyExternalId);
+      expect(enrolledFamily).toHaveLength(103);
+      expect(enrolledFamily[0]).toMatchObject({
         externalId: consumedId,
         familyExpiresAt,
         cleanupScheduledAt: familyExpiresAt,
         cleanupScheduleGeneration: 1,
       });
-      expect(family[1]).toMatchObject({
-        externalId: leafId,
+      expect(enrolledFamily.at(-1)).toMatchObject({ externalId: leafId });
+      expect(enrolledFamily.at(-1)?.revokedAt).toBeDefined();
+
+      clock.mockReturnValue(familyExpiresAt - 1);
+      expect(await cleanup(t, familyExternalId, familyExpiresAt, 1)).toEqual({
+        status: "retained",
+        retainedRows: 100,
+        cleanedRows: 0,
+        hasMore: true,
       });
-      expect(family[1].revokedAt).toBeDefined();
+      expect(await readByExternalId(t, consumedId)).toMatchObject({
+        cleanupScheduledAt: familyExpiresAt,
+        cleanupScheduleGeneration: 2,
+      });
+      expect(await cleanup(t, familyExternalId, familyExpiresAt, 1)).toMatchObject({
+        status: "retained",
+        cleanedRows: 0,
+      });
+      expect(await readByExternalId(t, consumedId)).toMatchObject({
+        cleanupScheduleGeneration: 2,
+      });
 
       clock.mockReturnValue(familyExpiresAt);
-      expect(await t.mutation(cleanupRefreshFamily, {
-        familyExternalId,
-        familyExpiresAt,
-        scheduleGeneration: 1,
-      })).toEqual({
+      expect(await cleanup(t, familyExternalId, familyExpiresAt, 2)).toEqual({
         status: "cleaned",
         retainedRows: 0,
-        cleanedRows: 2,
+        cleanedRows: 100,
+        hasMore: true,
+      });
+      expect(await readFamily(t, familyExternalId)).toHaveLength(3);
+      expect(await cleanup(t, familyExternalId, familyExpiresAt, 2)).toEqual({
+        status: "cleaned",
+        retainedRows: 0,
+        cleanedRows: 3,
         hasMore: false,
       });
       expect(await readFamily(t, familyExternalId)).toHaveLength(0);
@@ -203,6 +257,19 @@ async function rotate(t: ReturnType<typeof convexTest>, input: Record<string, un
     serviceSecret,
     workspace,
     ...input,
+  });
+}
+
+async function cleanup(
+  t: ReturnType<typeof convexTest>,
+  familyExternalId: string,
+  familyExpiresAt: number,
+  scheduleGeneration: number,
+) {
+  return await t.mutation(cleanupRefreshFamily, {
+    familyExternalId,
+    familyExpiresAt,
+    scheduleGeneration,
   });
 }
 
