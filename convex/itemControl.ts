@@ -35,12 +35,35 @@ export const get = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
-    const [eventRows, artifactRows, runs, dependencies, queuedGroups, legacyGroups] = await Promise.all([
+    const [
+      eventRows,
+      latestClaimEvent,
+      latestHandoffEvent,
+      artifactRows,
+      runs,
+      dependencies,
+      queuedGroups,
+      legacyGroups,
+    ] = await Promise.all([
       ctx.db
         .query("events")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
         .order("desc")
         .take(MAX_DETAIL_EVENTS),
+      ctx.db
+        .query("events")
+        .withIndex("by_item_type_created", (q) =>
+          q.eq("itemId", item._id).eq("type", "claim.created")
+        )
+        .order("desc")
+        .first(),
+      ctx.db
+        .query("events")
+        .withIndex("by_item_type_created", (q) =>
+          q.eq("itemId", item._id).eq("type", "work.handed_off")
+        )
+        .order("desc")
+        .first(),
       ctx.db
         .query("artifacts")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
@@ -74,8 +97,8 @@ export const get = query({
       dependencies,
     );
     const publicItemValue = await publicItem(ctx, item);
-    const controlEvents = [...eventRows]
-      .filter((event) => event.type === "claim.created" || event.type === "work.handed_off")
+    const controlEvents = [latestClaimEvent, latestHandoffEvent]
+      .filter((event) => event !== null)
       .map((event) => ({
         actorId: event.actorExternalId ?? null,
         type: event.type,
