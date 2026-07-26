@@ -78,7 +78,12 @@ export interface ProjectItemControlInput {
 
 const itemStatuses = new Set(["ready", "active", "blocked", "done", "archived"]);
 const liveRunStatuses = new Set(["queued", "starting", "running", "waiting"]);
-const credentialShape = /stn\.tok_/i;
+const sensitiveValuePatterns = [
+  /\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,
+  /\b(?:ghp|github_pat|sk|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/g,
+  /\bstn\.tok_[A-Za-z0-9._-]+\b/gi,
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,
+];
 
 export function projectItemControl(input: ProjectItemControlInput): ItemControlView {
   const now = timestamp(input.now ?? Date.now(), "Current time");
@@ -325,7 +330,7 @@ function timestamp(value: Date | string | number, label: string): number {
 }
 
 function generation(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function nullableActorId(value: unknown): { valid: boolean; value: string | null } {
@@ -335,7 +340,7 @@ function nullableActorId(value: unknown): { valid: boolean; value: string | null
   if (
     !output
     || output.length > 120
-    || credentialShape.test(output)
+    || redactText(output) !== output
     || /[\u0000-\u001f\u007f]/.test(output)
   ) {
     return { valid: false, value: null };
@@ -363,9 +368,18 @@ function nullableTimestamp(value: unknown): {
 function safeNullableText(value: unknown, maxLength: number): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") return null;
-  const output = value.trim().slice(0, maxLength);
-  if (!output) return null;
-  return credentialShape.test(output) ? "[REDACTED]" : output;
+  if (value === "") return "";
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return redactText(normalized).slice(0, maxLength);
+}
+
+function redactText(value: string): string {
+  let redacted = value.replace(/:\/\/([^/@:\s]+):([^/@\s]+)@/g, "://[REDACTED]@");
+  for (const pattern of sensitiveValuePatterns) {
+    redacted = redacted.replace(pattern, "[REDACTED]");
+  }
+  return redacted;
 }
 
 function text(value: unknown): string {
