@@ -19,10 +19,11 @@ describe("SQLite completion parity", () => {
         priority: 50,
         actor,
       });
-      await ledger.claimWork({ id: preserved.id, actor, leaseSeconds: 900 });
+      const claimed = await ledger.claimWork({ id: preserved.id, actor, leaseSeconds: 900 });
       const completed = await ledger.completeWork({
         id: preserved.id,
         actor,
+        expectedClaimGeneration: claimed.claimGeneration,
         idempotencyKey: "complete-preserve",
       });
       expect(completed).toMatchObject({
@@ -36,6 +37,7 @@ describe("SQLite completion parity", () => {
       const replayed = await ledger.completeWork({
         id: preserved.id,
         actor,
+        expectedClaimGeneration: claimed.claimGeneration,
         idempotencyKey: "complete-preserve",
       });
       expect(replayed.version).toBe(completedVersion);
@@ -54,6 +56,7 @@ describe("SQLite completion parity", () => {
       const replacedResult = await ledger.completeWork({
         id: replaced.id,
         actor,
+        expectedClaimGeneration: replaced.claimGeneration,
         summary: "Completed with evidence",
         idempotencyKey: "complete-replace",
       });
@@ -88,7 +91,10 @@ describe("SQLite completion parity", () => {
           "content-type": "application/json",
           "idempotency-key": "legacy-complete",
         },
-        body: JSON.stringify({ actor }),
+        body: JSON.stringify({
+          actor,
+          expectedClaimGeneration: item.claimGeneration,
+        }),
       });
       expect(response.status).toBe(200);
       const payload = await response.json() as any;
@@ -116,7 +122,13 @@ describe("SQLite completion parity", () => {
         priority: 50,
         actor,
       });
-      store.completeItem(item.id, actor, undefined, "old-complete");
+      store.completeItem(
+        item.id,
+        actor,
+        item.claimGeneration,
+        undefined,
+        "old-complete",
+      );
       store.db.query("UPDATE items SET next_action = ?1 WHERE id = ?2").run("Stale legacy value", item.id);
       const before = store.getItem(item.id);
       const eventCount = store.listEvents(item.id).length;
