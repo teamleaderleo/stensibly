@@ -12,9 +12,18 @@ import {
 import { ensureRunSchema } from "./runs.js";
 import type { StensiblyStore } from "./store.js";
 
-export type DispatchResult = Core.DispatchResult;
+export {
+  ensureDispatchSchema,
+  surveyDispatch,
+} from "./dispatcher-core.js";
+export type {
+  DispatchCandidate,
+  DispatchResult,
+  DispatchSurvey,
+  SurveyDispatchInput,
+} from "./dispatcher-core.js";
 
-export interface DispatchInput extends Core.DispatchInput {
+export interface DispatchInput extends Core.DispatchNextWorkInput {
   executionEnvelope: ExecutionEnvelope;
 }
 
@@ -22,7 +31,7 @@ export function dispatchNextWork(
   store: StensiblyStore,
   rawInput: DispatchInput,
   now = new Date(),
-): DispatchResult | null {
+): Core.DispatchResult | null {
   ensureRunSchema(store);
   ensureRunExecutionSchema(store);
   const envelope = requiredExecutionEnvelope(rawInput.executionEnvelope);
