@@ -17,6 +17,7 @@ import type {
   ProposeContinuationInput,
   ResolveContinuationInput,
 } from "./continuations.js";
+import { buildItemControlView } from "./item-control.js";
 import type {
   AttachWorkArtifactInput,
   BlockWorkInput,
@@ -25,6 +26,7 @@ import type {
   CompleteWorkInput,
   CreateWorkInput,
   HandoffWorkInput,
+  ItemDetail,
   ItemReservation,
   ListWorkInput,
   RecordWorkEventInput,
@@ -74,13 +76,17 @@ export class ConvexWorkLedger implements
   async getItem(id: string) {
     const now = Date.now();
     const [detail, reservations] = await Promise.all([
-      this.client.query(convexApi.items.get, this.args({ id })) as Promise<Awaited<ReturnType<WorkLedger["getItem"]>>>,
+      this.client.query(convexApi.items.get, this.args({ id })) as Promise<Omit<ItemDetail, "control" | "reservations">>,
       this.client.query(
         convexApi.itemReservations.list,
         this.args({ itemId: id, now }),
       ) as Promise<ItemReservation[]>,
     ]);
-    return { ...detail, reservations };
+    const projectedDetail = { ...detail, reservations };
+    return {
+      ...projectedDetail,
+      control: buildItemControlView(projectedDetail, { now: new Date(now) }),
+    };
   }
 
   async listArtifacts(id: string) {
@@ -165,7 +171,7 @@ export class ConvexWorkLedger implements
   async editContinuation(input: EditContinuationInput) {
     await this.getContinuation(input.id);
     return await this.client.mutation(
-      convexApi.continuations.edit,
+      convexApi.continuationEdits.edit,
       this.args(input),
     ) as Awaited<ReturnType<ContinuationLedger["editContinuation"]>>;
   }
