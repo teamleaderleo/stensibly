@@ -61,6 +61,38 @@ describe("custodian project scope boundaries", () => {
     expect(store.getItem(first.id).status).toBe("ready");
     expectClaimActive(second.id);
   });
+
+  test("repeated apply safely no-ops after reconciliation", () => {
+    const item = claimedItem("scrapbook", "2099-12-31T23:58:00.000Z");
+
+    const first = runCustodianPolicy(store, {
+      mode: "apply",
+      project: "scrapbook",
+      now,
+    });
+    const eventsAfterFirst = store.listEvents(item.id);
+    const second = runCustodianPolicy(store, {
+      mode: "apply",
+      project: "scrapbook",
+      now,
+    });
+
+    expect(first.actionSummary.applied).toBe(1);
+    expect(second.actionSummary).toEqual({
+      eligible: 0,
+      reported: 0,
+      planned: 0,
+      applied: 0,
+      skipped: 0,
+    });
+    expect(store.getItem(item.id)).toMatchObject({
+      status: "ready",
+      claimedBy: null,
+      claimExpiresAt: null,
+    });
+    expect(store.listEvents(item.id)).toEqual(eventsAfterFirst);
+    expect(eventsAfterFirst.filter((event) => event.type === "claim.expired")).toHaveLength(1);
+  });
 });
 
 function claimedItem(project: string, expiresAt: string) {
