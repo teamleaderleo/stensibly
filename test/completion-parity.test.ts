@@ -159,7 +159,13 @@ describe("SQLite completion parity", () => {
         priority: 50,
         actor,
       });
-      store.completeItem(item.id, actor, undefined, "old-complete");
+      store.completeItem(
+        item.id,
+        actor,
+        item.claimGeneration,
+        undefined,
+        "old-complete",
+      );
       store.db.query("UPDATE items SET next_action = ?1 WHERE id = ?2").run("Stale legacy value", item.id);
       const before = store.getItem(item.id);
       const eventCount = store.listEvents(item.id).length;
