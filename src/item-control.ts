@@ -21,7 +21,10 @@ export type ItemAuthorityState =
 export type ItemAuthoritySource = "claim" | "dispatcher" | "none";
 export type ItemEscalationState = "none" | "decision_required" | "blocked";
 
-type ClaimProvenance = "claim" | "dispatcher" | "unknown";
+type ClaimProvenance =
+  | { kind: "claim" }
+  | { kind: "dispatcher"; runId: string | null }
+  | { kind: "unknown" };
 
 export interface ItemControlItemInput {
   kind: unknown;
@@ -34,6 +37,7 @@ export interface ItemControlItemInput {
 }
 
 export interface ItemControlRunInput {
+  id?: unknown;
   actorId: unknown;
   leaseOwnerId?: unknown;
   status: unknown;
@@ -131,17 +135,27 @@ export function projectItemControl(input: ProjectItemControlInput): ItemControlV
     ) {
       holderActorId = holder.value;
       expiresAt = expiry.value;
-      const runAuthority = activeRunAuthority(runs, holderActorId, now);
       const claimProvenance = latestClaimProvenance(
         events,
         holderActorId,
         generationValue,
+        expiresAt,
       );
-      const dispatcherEvidence = claimProvenance === "dispatcher"
+      const expectedRunId = claimProvenance.kind === "dispatcher"
+        ? claimProvenance.runId
+        : null;
+      const runAuthority = activeRunAuthority(
+        runs,
+        holderActorId,
+        now,
+        expectedRunId,
+      );
+      const dispatcherEvidence = claimProvenance.kind === "dispatcher"
+        && expectedRunId !== null
         && runAuthority.kind === "matching";
-      const unverifiableDispatcher = claimProvenance === "dispatcher"
-        && runAuthority.kind !== "matching";
-      const unprovenLiveRun = claimProvenance === "unknown"
+      const unverifiableDispatcher = claimProvenance.kind === "dispatcher"
+        && !dispatcherEvidence;
+      const unprovenLiveRun = claimProvenance.kind === "unknown"
         && runAuthority.kind !== "none";
       source = dispatcherEvidence ? "dispatcher" : "claim";
 
@@ -210,26 +224,32 @@ function activeRunAuthority(
   runs: ItemControlRunInput[],
   holderActorId: string,
   now: number,
+  expectedRunId: string | null,
 ):
   | { kind: "none"; heartbeatExpectedAt: null }
   | { kind: "matching"; heartbeatExpectedAt: string }
   | { kind: "conflict"; heartbeatExpectedAt: null } {
-  const live: Array<{ owner: string | null; heartbeatExpectedAt: string | null }> = [];
+  const live: Array<{
+    id: string | null;
+    owner: string | null;
+    heartbeatExpectedAt: string | null;
+  }> = [];
   for (const run of runs) {
     const status = text(run.status);
     if (!liveRunStatuses.has(status)) continue;
     const owner = nullableActorId(run.leaseOwnerId ?? run.actorId);
     if (!owner.valid || owner.value === null) {
-      live.push({ owner: null, heartbeatExpectedAt: null });
+      live.push({ id: null, owner: null, heartbeatExpectedAt: null });
       continue;
     }
     const expiry = nullableTimestamp(run.leaseExpiresAt);
     if (!expiry.valid || expiry.value === null) {
-      live.push({ owner: null, heartbeatExpectedAt: null });
+      live.push({ id: null, owner: null, heartbeatExpectedAt: null });
       continue;
     }
     if (expiry.millis <= now) continue;
     live.push({
+      id: runId(run.id),
       owner: owner.value,
       heartbeatExpectedAt: expiry.value,
     });
@@ -240,6 +260,9 @@ function activeRunAuthority(
   }
   if (live.length > 1) return { kind: "conflict", heartbeatExpectedAt: null };
   if (live.length === 1) {
+    if (expectedRunId !== null && live[0]!.id !== expectedRunId) {
+      return { kind: "conflict", heartbeatExpectedAt: null };
+    }
     return { kind: "matching", heartbeatExpectedAt: live[0]!.heartbeatExpectedAt! };
   }
   return { kind: "none", heartbeatExpectedAt: null };
@@ -249,19 +272,55 @@ function latestClaimProvenance(
   events: ItemControlEventInput[],
   holderActorId: string,
   currentGeneration: number,
+  currentExpiry: string,
 ): ClaimProvenance {
-  for (const event of events) {
-    if (text(event.type) !== "claim.created") continue;
-    const actor = nullableActorId(event.actorId);
-    if (!actor.valid || actor.value !== holderActorId) return "unknown";
-    const payload = record(event.payload);
-    const eventGeneration = generation(payload?.generation);
-    if (eventGeneration !== currentGeneration) return "unknown";
-    return text(payload?.source) === "supervisor_dispatch"
-      ? "dispatcher"
-      : "claim";
+  const claimEvent = events.find((event) => text(event.type) === "claim.created");
+  if (!claimEvent) return { kind: "unknown" };
+  const actor = nullableActorId(claimEvent.actorId);
+  if (!actor.valid || actor.value !== holderActorId) return { kind: "unknown" };
+  const payload = record(claimEvent.payload);
+  const eventGeneration = generation(payload?.generation);
+  const source = text(payload?.source);
+  if (source !== "supervisor_dispatch") {
+    return eventGeneration === currentGeneration
+      ? { kind: "claim" }
+      : { kind: "unknown" };
   }
-  return "unknown";
+  if (eventGeneration !== null && eventGeneration !== currentGeneration) {
+    return { kind: "dispatcher", runId: null };
+  }
+
+  const claimExpiry = nullableTimestamp(payload?.expiresAt);
+  const claimCreatedAt = nullableTimestamp(claimEvent.createdAt);
+  if (
+    !claimExpiry.valid
+    || claimExpiry.value !== currentExpiry
+    || !claimCreatedAt.valid
+    || claimCreatedAt.value === null
+  ) {
+    return { kind: "dispatcher", runId: null };
+  }
+
+  for (const event of events) {
+    if (text(event.type) !== "run.queued") continue;
+    const queuedActor = nullableActorId(event.actorId);
+    if (!queuedActor.valid || queuedActor.value !== holderActorId) continue;
+    const queuedPayload = record(event.payload);
+    if (text(queuedPayload?.source) !== "supervisor_dispatch") continue;
+    const queuedExpiry = nullableTimestamp(queuedPayload?.leaseExpiresAt);
+    const queuedCreatedAt = nullableTimestamp(event.createdAt);
+    const queuedRunId = runId(queuedPayload?.runId);
+    if (
+      queuedRunId
+      && queuedExpiry.valid
+      && queuedExpiry.value === currentExpiry
+      && queuedCreatedAt.valid
+      && queuedCreatedAt.value === claimCreatedAt.value
+    ) {
+      return { kind: "dispatcher", runId: queuedRunId };
+    }
+  }
+  return { kind: "dispatcher", runId: null };
 }
 
 function responsibilityActor(input: {
@@ -362,6 +421,20 @@ function nullableActorId(value: unknown): { valid: boolean; value: string | null
     return { valid: false, value: null };
   }
   return { valid: true, value: output };
+}
+
+function runId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const output = value.trim();
+  if (
+    !output
+    || output.length > 240
+    || redactText(output) !== output
+    || /[\u0000-\u001f\u007f]/.test(output)
+  ) {
+    return null;
+  }
+  return output;
 }
 
 function nullableTimestamp(value: unknown): {
