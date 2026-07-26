@@ -47,6 +47,7 @@ describe("dashboard semantic generation sidecar", () => {
   test("exports a typed fail-closed generation reader", () => {
     expect(controller).toContain("export function readSemanticClaimGeneration");
     expect(controller).toContain("itemId !== expectedItemId");
+    expect(controller).toContain("typeof raw !== 'string' || !/^\\d+$/.test(raw)");
     expect(controller).toContain("Number.isInteger(generation) && generation >= 0");
     expect(declaration).toContain("expectedItemId?: string");
     expect(declaration).toContain("number | null");
