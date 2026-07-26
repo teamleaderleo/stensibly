@@ -7,6 +7,7 @@ import {
   completeWorkWithContinuations,
   ensureCompletionContinuationSchema,
 } from "./completion-continuations.js";
+import { completeWork as completeFencedWork } from "./completion.js";
 import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
 import {
@@ -209,18 +210,11 @@ export class SqliteWorkLedger implements
 
   async completeWork(input: CompleteWorkInput) {
     reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
-    return this.store.completeItem(
-      input.id,
-      input.actor,
-      input.summary,
-      input.idempotencyKey,
-    );
+    return completeFencedWork(this.store, input);
   }
 
   async completeWorkWithContinuations(input: CompleteWithContinuationsInput) {
     reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
     return completeWorkWithContinuations(this.store, input);
   }
 
@@ -259,25 +253,24 @@ export class SqliteWorkLedger implements
     return claimRunnerWork(this.store, input);
   }
 
-  async getRun(id: string) {
-    reconcileStaleRunItems(this.store);
+  async getWorkRun(id: string) {
     return getWorkRun(this.store, id);
   }
 
-  async listRuns(input: ListWorkRunsInput = {}) {
+  async listWorkRuns(input: ListWorkRunsInput = {}) {
     reconcileStaleRunItems(this.store);
     return listWorkRuns(this.store, input);
   }
 
-  async heartbeatRun(input: HeartbeatWorkRunInput) {
-    reconcileStaleRunItems(this.store);
-    const run = heartbeatWorkRun(this.store, input);
-    syncItemLeaseFromRun(this.store, run, new Date(run.updatedAt), input.actor.id);
-    return run;
+  async heartbeatWorkRun(input: HeartbeatWorkRunInput) {
+    return heartbeatWorkRun(this.store, input);
   }
 
-  async transitionRun(input: TransitionWorkRunInput) {
-    reconcileStaleRunItems(this.store);
+  async transitionWorkRun(input: TransitionWorkRunInput) {
     return transitionWorkRunWithItemProjection(this.store, input);
+  }
+
+  async syncItemLeaseFromRun(runId: string) {
+    return syncItemLeaseFromRun(this.store, runId);
   }
 }
