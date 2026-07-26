@@ -380,7 +380,8 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       .withIndex("by_family_created", (q) => q.eq("familyExternalId", args.familyExternalId))
       .order("asc")
       .take(REFRESH_CLEANUP_BATCH_SIZE + 1);
-    if (!oldestRows.length) {
+    const oldestRow = oldestRows[0];
+    if (!oldestRow) {
       return cleanupResult("missing", 0, 0, false);
     }
 
@@ -389,7 +390,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       .withIndex("by_external_id", (q) => q.eq("externalId", args.familyExternalId))
       .unique();
     const validRoot = root
-      && root.workspaceId === oldestRows[0].workspaceId
+      && root.workspaceId === oldestRow.workspaceId
       && root.familyExternalId === args.familyExternalId
       ? root
       : null;
@@ -397,7 +398,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       ? refreshTokenFamilyExpiry(validRoot)
       : minimumFamilyExpiry(
         args.familyExpiresAt,
-        refreshTokenFamilyExpiry(oldestRows[0]),
+        refreshTokenFamilyExpiry(oldestRow),
       );
 
     let rootForScheduling = validRoot;
