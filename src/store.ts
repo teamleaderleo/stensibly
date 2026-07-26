@@ -64,6 +64,13 @@ interface EventRow {
   created_at: string;
 }
 
+interface ExpectedReplayEvent {
+  itemId: string;
+  actorId: string | null;
+  type: string;
+  request: Record<string, unknown>;
+}
+
 export class ConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -327,7 +334,7 @@ export class StensiblyStore {
         if (existing) return this.getItem(existing.item_id);
       }
 
-      const expectedGeneration = claimGeneration(expectedClaimGeneration);
+      const expectedGeneration = liveClaimGeneration(expectedClaimGeneration);
       const current = this.getItem(id);
       const now = new Date().toISOString();
       this.upsertActor(actor, now);
@@ -375,16 +382,25 @@ export class StensiblyStore {
   completeItem(
     id: string,
     actor: ActorInput,
+    expectedClaimGeneration: number,
     summary?: string,
     idempotencyKey?: string,
   ): Item {
+    const expectedGeneration = itemGeneration(expectedClaimGeneration);
+    const request = {
+      expectedClaimGeneration: expectedGeneration,
+      summary: summary ?? null,
+    };
     const transaction = this.db.transaction(() => {
-      if (idempotencyKey) {
-        const existing = this.findIdempotentEvent(idempotencyKey);
-        if (existing) return this.getItem(existing.item_id);
-      }
+      const replay = this.replayItemEvent(idempotencyKey, {
+        itemId: id,
+        actorId: actor.id,
+        type: "item.completed",
+        request,
+      });
+      if (replay) return replay;
 
-      this.getItem(id);
+      const current = this.getItem(id);
       const now = new Date().toISOString();
       this.upsertActor(actor, now);
 
@@ -395,28 +411,38 @@ export class StensiblyStore {
               summary = COALESCE(?1, summary),
               claimed_by = NULL,
               claim_expires_at = NULL,
+              claim_generation = claim_generation + 1,
               version = version + 1,
               updated_at = ?2
           WHERE id = ?3
             AND status NOT IN ('done', 'archived')
-            AND (claimed_by IS NULL OR claimed_by = ?4)
+            AND claim_generation = ?4
+            AND (claimed_by IS NULL OR claimed_by = ?5)
         `)
-        .run(summary ?? null, now, id, actor.id);
+        .run(summary ?? null, now, id, expectedGeneration, actor.id);
 
       if (result.changes !== 1) {
-        throw new ConflictError("Item is complete, archived, or held by another actor");
+        throw new ConflictError(
+          "Item is complete, archived, held by another actor, or the claim generation changed",
+        );
       }
 
+      const completed = this.getItem(id);
       this.appendEvent({
         itemId: id,
         actorId: actor.id,
         type: "item.completed",
-        payload: summary ? { summary } : {},
+        payload: {
+          ...(summary ? { summary } : {}),
+          generation: current.claimGeneration,
+          nextGeneration: completed.claimGeneration,
+          request,
+        },
         idempotencyKey,
         now,
       });
 
-      return this.getItem(id);
+      return completed;
     });
 
     return transaction();
@@ -485,6 +511,17 @@ export class StensiblyStore {
     );
   }
 
+  private replayItemEvent(
+    key: string | undefined,
+    expected: ExpectedReplayEvent,
+  ): Item | null {
+    if (!key) return null;
+    const existing = this.findIdempotentEvent(key);
+    if (!existing) return null;
+    requireSameReplayEvent(existing, expected);
+    return this.getItem(existing.item_id);
+  }
+
   private appendEvent(input: {
     itemId: string;
     actorId: string | null;
@@ -521,9 +558,79 @@ export class StensiblyStore {
   }
 }
 
-function claimGeneration(value: number): number {
+function liveClaimGeneration(value: number): number {
   if (!Number.isInteger(value) || value < 1) {
     throw new RangeError("Expected claim generation must be a positive integer");
+  }
+  return value;
+}
+
+function itemGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError("Expected claim generation must be a non-negative integer");
+  }
+  return value;
+}
+
+function requireSameReplayEvent(
+  existing: EventRow,
+  expected: ExpectedReplayEvent,
+): void {
+  const payload = parseEventPayload(existing.payload_json);
+  const existingRequest = isRecord(payload.request)
+    ? payload.request
+    : legacyReplayRequest(existing.type, payload);
+  if (
+    existing.item_id !== expected.itemId
+    || existing.actor_id !== expected.actorId
+    || existing.type !== expected.type
+    || stableJson(existingRequest) !== stableJson(expected.request)
+  ) {
+    throw new ConflictError(
+      "Idempotency key was already used for a different item operation",
+    );
+  }
+}
+
+function legacyReplayRequest(
+  type: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  if (type === "item.completed") {
+    return {
+      expectedClaimGeneration: payload.generation,
+      summary: typeof payload.summary === "string" ? payload.summary : null,
+    };
+  }
+  return {};
+}
+
+function parseEventPayload(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
   }
   return value;
 }

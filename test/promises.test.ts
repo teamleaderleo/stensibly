@@ -209,7 +209,7 @@ describe("local work promises", () => {
       }, baseTime);
 
       store.recordEvent({ itemId: item.id, actor, type: "artifact.attached", payload: { label: "result" } });
-      store.completeItem(dependency.id, actor);
+      store.completeItem(dependency.id, actor, dependency.claimGeneration);
       const result = reconcileWorkPromises(store, new Date("2030-01-01T00:00:00.000Z"));
       expect(new Set(result.satisfied.map((entry) => entry.id))).toEqual(new Set([eventPromise.id, dependencyPromise.id]));
       expect(result.wakeups).toHaveLength(2);
