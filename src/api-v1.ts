@@ -264,6 +264,7 @@ export function createApiV1(
     return context.json({
       item: await ledger.completeWork(actionInput(context, id, {
         actor: parsed.data.actor,
+        expectedClaimGeneration: parsed.data.expectedClaimGeneration,
         ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
       })),
     });
