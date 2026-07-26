@@ -137,7 +137,7 @@ describe("canonical item control projection", () => {
     expect(control.responsibility.heartbeatExpectedAt).toBe("2026-07-26T12:10:00.000Z");
   });
 
-  test("fails closed for conflicting live runs and malformed legacy authority", () => {
+  test("fails closed for conflicting runs and malformed authority fields", () => {
     const conflicting = projectItemControl({
       item: item({
         status: "active",
@@ -159,7 +159,7 @@ describe("canonical item control projection", () => {
       allowedOperations: [],
     });
 
-    const malformed = projectItemControl({
+    const malformedActive = projectItemControl({
       item: item({
         status: "active",
         claimedBy: "agent:one",
@@ -168,9 +168,24 @@ describe("canonical item control projection", () => {
       }),
       now,
     });
-    expect(malformed.authority).toMatchObject({
+    expect(malformedActive.authority).toMatchObject({
       state: "superseded",
       generation: 0,
+      allowedOperations: [],
+    });
+
+    const malformedReady = projectItemControl({
+      item: item({
+        status: "ready",
+        claimedBy: 42,
+        claimExpiresAt: "not-a-timestamp",
+      }),
+      now,
+    });
+    expect(malformedReady.authority).toMatchObject({
+      state: "superseded",
+      holderActorId: null,
+      source: "none",
       allowedOperations: [],
     });
   });
