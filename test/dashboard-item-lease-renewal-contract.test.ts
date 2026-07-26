@@ -5,7 +5,6 @@ const renewal = await Bun.file(new URL("../site/item-lease-renewal.js", import.m
 const controller = await Bun.file(new URL("../site/item-lease-renewal-controller.js", import.meta.url)).text();
 const styles = await Bun.file(new URL("../site/item-claim.css", import.meta.url)).text();
 
-
 describe("dashboard holder-only lease renewal integration", () => {
   test("loads a dedicated controller and keeps acquisition separate", () => {
     expect(claim).toContain("import './item-lease-renewal-controller.js'");
@@ -22,16 +21,17 @@ describe("dashboard holder-only lease renewal integration", () => {
     expect(controller).toContain("readRenewalAuthority(payload, requestedItemId)");
     expect(renewal).toContain("payload.control.authority");
     expect(renewal).toContain("allowedOperations.includes(LEASE_RENEW_OPERATION)");
+    expect(renewal).toContain("approvalRequiredOperations.includes(LEASE_RENEW_OPERATION)");
     expect(renewal).toContain("holderActorId !== actor.id");
     expect(controller).not.toContain("claimExpiresAt: fields");
     expect(controller).not.toContain("claimedBy: fields");
   });
 
-  test("sends the exact expected claim generation and validates advancement", () => {
+  test("sends the exact expected claim generation and validates one transition", () => {
     expect(controller).toContain("expectedClaimGeneration: renewal.expectedClaimGeneration");
     expect(controller).toContain("authority.generation");
     expect(renewal).toContain("expectedClaimGeneration: generation");
-    expect(renewal).toContain("claimGeneration <= expectedPreviousGeneration");
+    expect(renewal).toContain("claimGeneration !== expectedPreviousGeneration + 1");
   });
 
   test("uses independent request generations, idempotency, and in-flight guards", () => {
@@ -41,6 +41,14 @@ describe("dashboard holder-only lease renewal integration", () => {
     expect(controller).toContain("if (submitButton.disabled || renewalInFlight) return");
     expect(controller).toContain("Retry the unchanged duration and generation to reuse the same idempotency key");
     expect(controller).toContain("renewalGate.isCurrent(requestId)");
+  });
+
+  test("invalidates projections and responses across context or detail replacement", () => {
+    expect(controller).toContain("const renewalSection = body.querySelector");
+    expect(controller).toContain("if (!renewalSection && !loading)");
+    expect(controller).toContain("requestedContextFingerprint === readContext().fingerprint");
+    expect(controller).toContain("fingerprint: `${canWrite ? 'write' : 'read'}\\u0000${endpoint}\\u0000${token}");
+    expect(controller).toContain("resetAll();");
   });
 
   test("handles conflicts, refresh guidance, redaction, and accessible errors", () => {
