@@ -21,18 +21,19 @@ them.
 
 ## Start here
 
-Before changing code or creating new work:
+Before changing code or creating new work, read in this order:
 
 1. Read this file.
-2. Read `README.md` and `docs/product-model.md`.
-3. Read `docs/current-wave.md` when it exists. Treat it as the current dogfood
+2. Read `docs/current-wave.md` when it exists. Treat it as the current dogfood
    focus, not permanent product policy.
-4. Read the relevant issue, linked parent issues, open pull requests, review
+3. Read `README.md`.
+4. Read `docs/product-model.md`.
+5. Read the relevant issue, linked parent issues, open pull requests, review
    threads, and exact-head handoffs.
-5. Read the repository-root `STENSIBLY.md` when present. It declares static
+6. Read the repository-root `STENSIBLY.md` when present. It declares static
    project context and policy; it is never a live claim, approval, credential,
    lease, or authority grant.
-6. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
+7. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
 
 Do not begin by creating another issue or implementation branch. First determine
 whether existing work should be finished, reviewed, repaired, integrated,

@@ -1,6 +1,6 @@
 # Current dogfood wave: Production MCP connection
 
-**Status:** active planning and execution focus  
+**Status:** active execution focus  
 **Date established:** 2026-07-27  
 **Tracking issue:** #286  
 **Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
@@ -19,7 +19,7 @@ The wave is complete only when a fresh ChatGPT conversation can:
 2. complete GitHub-backed Stensibly consent;
 3. scan the live MCP tools;
 4. call a bounded read tool such as `get_brief` or `survey_workspace`;
-5. perform one explicitly approved low-risk write;
+5. perform the predeclared, explicitly approved low-risk write below;
 6. leave a durable event or item proving the connection;
 7. reconnect through refresh-token flow or an equivalent verified renewal path;
 8. document rollback and operator recovery.
@@ -33,11 +33,27 @@ A successful code merge without the real ChatGPT flow is not wave completion.
   sign-off.
 - PR #256 already added Worker-side registration rate limiting and exact redirect
   origin gating.
-- PR #251 is adjacent refresh-family lifetime and cleanup hardening. Keep it
-  separate from #220's dynamic-client implementation and review it at an exact
-  revision before merge.
+- PR #251 is adjacent refresh-family lifetime and cleanup hardening. It remains a
+  draft and must stay separate from #220's dynamic-client implementation.
+- #289 owns the remaining dormant-legacy-family repair action for PR #251.
 - Production OAuth discovery remains absent until the OAuth configuration and
   signing secret are enabled on the deployed Worker.
+
+The intended dependency chain is:
+
+```text
+#251 repair owner
+→ independent #251 acceptance
+→ Lane A #220 implementation
+→ independent Lane A acceptance
+→ guarded rollout
+→ real ChatGPT read/write/reconnect evidence
+```
+
+Lane A and the #251 repair may proceed concurrently because they remain in
+separate code fences. Lane B may prepare both acceptance matrices while avoiding
+implementation ownership for the final revisions it accepts. Lane C may prepare
+rollout work but must not execute production enablement early.
 
 ## Lane A — Finish dynamic-client lifecycle
 
@@ -64,11 +80,24 @@ Required handoff:
 - unresolved risks;
 - deployment implications.
 
+## PR #251 repair ownership
+
+PR #251 retains its existing implementation owner until it reaches an exact-head
+handoff that closes #289.
+
+- Lane B reviews PR #251 and must not author the final repair it accepts.
+- If Lane B blocks the current head and the prior implementation owner is
+  unavailable, assign a separate temporary repair owner to #289.
+- After any repair, Lane B re-reviews the exact replacement head.
+- Keep PR #251's refresh-family code separate from Lane A's #220 dynamic-client
+  branch.
+
 ## Lane B — Independent acceptance
 
-This lane must be performed by a worker that did not author Lane A's final code.
+This lane must be performed by a worker that did not author the final code being
+accepted.
 
-Review:
+Review Lane A for:
 
 - storage exhaustion and ceiling recovery;
 - active-client deletion safety;
@@ -80,13 +109,13 @@ Review:
 - legacy compatibility;
 - exact production-gate acceptance.
 
-The verdict must name the exact reviewed revision and contain either:
+Independently review PR #251 for its declared refresh-family invariants and #289's
+dormant-legacy-family outcome.
+
+Every verdict must name the exact reviewed revision and contain either:
 
 - `accepted` with residual risks; or
 - `blocked` with demonstrated findings and required repairs.
-
-Also reconcile PR #251 independently. Do not merge its refresh-family changes
-into the #220 branch merely because both involve OAuth.
 
 ## Lane C — Guarded rollout and real ChatGPT verification
 
@@ -98,9 +127,19 @@ Prepare before enabling OAuth:
 - monitoring for registration rejection and client-count pressure;
 - one-command or one-step rollback by disabling OAuth configuration;
 - metadata and unauthenticated challenge checks;
-- a bounded test account and project.
+- a bounded test account and dedicated OAuth dogfood project.
 
-After Lane A acceptance:
+Execute production rollout only after:
+
+1. Lane A receives independent exact-head acceptance; and
+2. PR #251 is independently accepted and merged, or explicitly deferred through
+   a recorded production-risk decision approved by the human operator.
+
+The preferred production-complete path is to merge PR #251 after #289 is repaired
+and accepted. Deferral may support a deliberately bounded protocol experiment,
+but it does not count as production-complete without an explicit risk decision.
+
+Then:
 
 1. deploy Convex and Worker changes in the required order;
 2. enable the OAuth signing secret and hosted-auth configuration;
@@ -110,9 +149,23 @@ After Lane A acceptance:
    - unauthenticated `/mcp` returns a valid OAuth challenge;
 4. create or refresh the Stensibly ChatGPT app and scan tools;
 5. complete a read-only test;
-6. complete one approved low-risk write;
+6. perform the predeclared low-risk write below;
 7. verify refresh or reconnect behaviour;
 8. attach evidence and close or update #220 and #286.
+
+## Predeclared low-risk write
+
+Do not improvise the production write test.
+
+The authorised test action is:
+
+> Create one uniquely named test item in a dedicated OAuth dogfood project using
+> an explicit idempotency key and a human approval recorded immediately before
+> execution. Confirm the item appears through a subsequent bounded read.
+
+The test must not claim, complete, delete, merge, deploy, spend money, contact an
+external system, or mutate unrelated work. Record the project, item name,
+idempotency key reference, approval record, write result, and confirming read.
 
 ## Work-selection policy for this wave
 
@@ -134,11 +187,15 @@ A ChatGPT Project using this repository should direct fresh chats to read:
 
 1. `AGENTS.md`;
 2. `docs/current-wave.md`;
-3. `README.md` and `docs/product-model.md`;
-4. the relevant issue, PR, review threads, and exact-head handoff.
+3. `README.md`;
+4. `docs/product-model.md`;
+5. the relevant issue, linked parent issues, open pull requests, review threads,
+   and exact-head handoff;
+6. repository-root `STENSIBLY.md`, when present;
+7. `convex/_generated/ai/guidelines.md` before touching Convex.
 
-Fresh chats should be told to inspect existing work and select a useful
-non-conflicting action from this wave before proposing new roadmap work.
+Fresh chats should inspect existing work and select a useful non-conflicting
+action from this wave before proposing new roadmap work.
 
 ## Wave retrospective
 
