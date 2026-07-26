@@ -12,11 +12,14 @@ interface ReplayRow {
 
 export function completeWork(store: StensiblyStore, input: CompleteWorkInput): Item {
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
-  const transaction = store.db.transaction(() => {
-    const replay = findReplay(store, input);
-    if (replay) return replay;
+  const replay = replayTransaction(store, input);
+  if (replay) return replay;
 
-    expireClaims(store);
+  expireClaims(store);
+  const transaction = store.db.transaction(() => {
+    const concurrentReplay = findReplay(store, input);
+    if (concurrentReplay) return concurrentReplay;
+
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -70,6 +73,14 @@ export function completeWork(store: StensiblyStore, input: CompleteWorkInput): I
   });
 
   return transaction();
+}
+
+function replayTransaction(
+  store: StensiblyStore,
+  input: CompleteWorkInput,
+): Item | null {
+  if (!input.idempotencyKey) return null;
+  return store.db.transaction(() => findReplay(store, input))();
 }
 
 function findReplay(store: StensiblyStore, input: CompleteWorkInput): Item | null {
