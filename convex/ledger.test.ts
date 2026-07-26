@@ -385,6 +385,7 @@ describe("Convex ledger", () => {
       workspace,
       id: run.id,
       actorId: alpha.id,
+      expectedGeneration: run.generation,
       childAgentCount: 4,
       toolCallCount: 27,
     }) as any;
@@ -415,6 +416,7 @@ describe("Convex ledger", () => {
       workspace,
       id: run.id,
       actorId: alpha.id,
+      expectedGeneration: heartbeat.generation,
       status: "succeeded",
       outcome: "The API is ready for review.",
       childAgentCount: 4,

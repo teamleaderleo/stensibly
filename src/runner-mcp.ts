@@ -6,6 +6,7 @@ import {
   runnerAuthorityCommands,
 } from "./authority-fence.js";
 import { getRunnerContextPacket } from "./context-packets.js";
+import { executionActualSchema } from "./execution-envelope-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
@@ -129,7 +130,7 @@ export function createRunnerMcpServer(
   server.registerTool(
     "transition_runner_run",
     {
-      description: "Apply a generation- and authority-fence-guarded transition under the current runner lease. Retry admission, blocked-run reassignment, and cancellation are not runner operations.",
+      description: "Apply a generation- and authority-fence-guarded transition under the current runner lease. Terminal transitions may append bounded execution actuals without rewriting the original envelope. Retry admission, blocked-run reassignment, and cancellation are not runner operations.",
       inputSchema: {
         id: z.string().trim().min(1).max(240),
         actor: actorSchema,
@@ -141,6 +142,7 @@ export function createRunnerMcpServer(
         outcome: z.string().trim().min(1).max(10_000).optional(),
         continuationRef: z.string().trim().min(1).max(500).optional(),
         usage: usageSchema().optional(),
+        executionActual: executionActualSchema.optional(),
         idempotencyKey: z.string().trim().min(1).max(240).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },

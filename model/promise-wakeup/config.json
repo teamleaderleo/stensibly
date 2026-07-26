@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "maxDepth": 8,
+  "maxTime": 4,
+  "maxPromiseGeneration": 2,
+  "maxConsumerGeneration": 2,
+  "recoveryHorizonTicks": 2
+}

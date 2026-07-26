@@ -1,5 +1,6 @@
 import type { Doc } from "../_generated/dataModel";
 import type { QueryContext } from "./domain";
+import { isPrivateExecutionEventType } from "./executionEnvelope";
 
 export const MAX_ITEM_DEPENDENCIES = 500;
 
@@ -60,6 +61,7 @@ export async function filterVisibleDependencyEvents(
   const output: Doc<"events">[] = [];
 
   for (const event of events) {
+    if (isPrivateExecutionEventType(event.type)) continue;
     if (event.type !== "dependency.added") {
       output.push(event);
       continue;

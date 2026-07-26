@@ -13,6 +13,11 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import {
+  appendExecutionEnvelopeEvent,
+  executionEnvelopeValidator,
+  normalizeExecutionEnvelope,
+} from "./lib/executionEnvelope";
 import { mutation } from "./lib/server";
 import { actorValidator, serviceArgs } from "./lib/validators";
 
@@ -37,6 +42,7 @@ export const queue = mutation({
     leaseSeconds: v.optional(v.number()),
     maxAttempts: v.optional(v.number()),
     retryBackoffSeconds: v.optional(v.number()),
+    executionEnvelope: v.optional(executionEnvelopeValidator),
     idempotencyKey: v.optional(v.string()),
     policyMode: v.optional(policyModeValidator),
   },
@@ -44,7 +50,12 @@ export const queue = mutation({
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await requiredWorkspace(ctx, args.workspace);
-    return await queueOne(ctx, workspace, normalizeQueueInput(args));
+    return await queueOne(
+      ctx,
+      workspace,
+      normalizeQueueInput(args),
+      args.executionEnvelope !== undefined,
+    );
   },
 });
 
@@ -88,7 +99,7 @@ export const runPolicy = mutation({
 
     const candidates = [];
     for (const continuation of rows) {
-      if (!['automatic', 'notify'].includes(continuation.approvalMode)) continue;
+      if (!["automatic", "notify"].includes(continuation.approvalMode)) continue;
       if (isExpired(continuation, Date.now())) continue;
       if (
         input.project &&
@@ -130,9 +141,13 @@ export const runPolicy = mutation({
           leaseSeconds: input.leaseSeconds,
           maxAttempts: input.maxAttempts,
           retryBackoffSeconds: input.retryBackoffSeconds,
+          executionEnvelope: normalizeExecutionEnvelope(
+            undefined,
+            executionObjective(continuation.externalId, input.runnerProfile),
+          ),
           idempotencyKey: `continuation-policy:${continuation.externalId}:${continuation.generation}`,
           policyMode: continuation.approvalMode,
-        }));
+        }, false));
       } catch (error) {
         result.skipped.push({
           id: continuation.externalId,
@@ -145,7 +160,12 @@ export const runPolicy = mutation({
   },
 });
 
-async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof normalizeQueueInput>) {
+async function queueOne(
+  ctx: any,
+  workspace: any,
+  input: ReturnType<typeof normalizeQueueInput>,
+  explicitEnvelope = false,
+) {
   const request = queueRequest(input);
   if (input.idempotencyKey) {
     const replay = await ctx.db
@@ -160,6 +180,23 @@ async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof norma
           "Idempotency key was already used for a different continuation supervisor request",
         );
       }
+      const replayRequest = record(replay.request);
+      if (!replayRequest) {
+        throw new Error("Stored continuation supervisor request is incomplete");
+      }
+      if (replayRequest.executionEnvelope === undefined) {
+        if (explicitEnvelope) {
+          throw new Error(
+            "Historical continuation supervisor request cannot be retrofitted with an execution envelope",
+          );
+        }
+        requireSameRequest(
+          replay.request,
+          legacyQueueRequest(input),
+          "continuation supervisor request",
+        );
+        return legacySupervisorReplay(replay.result);
+      }
       requireSameRequest(replay.request, request, "continuation supervisor request");
       return replay.result;
     }
@@ -168,7 +205,7 @@ async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof norma
   let continuation = await getContinuation(ctx, workspace._id, input.id);
   const now = Date.now();
   if (isExpired(continuation, now)) {
-    throw new Error(`Continuation cannot queue for supervisor while expired`);
+    throw new Error("Continuation cannot queue for supervisor while expired");
   }
   if (continuation.generation !== input.expectedGeneration) {
     throw new Error(
@@ -342,6 +379,18 @@ async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof norma
   });
   const runExternalId = `run_${queuedRunId}`;
   await ctx.db.patch(queuedRunId, { externalId: runExternalId });
+  await appendExecutionEnvelopeEvent(ctx, {
+    workspaceId: workspace._id,
+    projectId: target.projectId,
+    itemId: target._id,
+    actorId: supervisor._id,
+    actorExternalId: supervisor.externalId,
+    runId: runExternalId,
+    runGeneration: 1,
+    leaseGeneration: 1,
+    envelope: input.executionEnvelope,
+    createdAt: now,
+  });
 
   await appendEvent(ctx, {
     workspaceId: workspace._id,
@@ -373,6 +422,7 @@ async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof norma
       runnerProfile,
       source: "supervisor_dispatch",
       readyPromiseWakeups: 0,
+      envelopeSchemaVersion: input.executionEnvelope.schemaVersion,
     },
     createdAt: now,
   });
@@ -441,7 +491,10 @@ async function queueOne(ctx: any, workspace: any, input: ReturnType<typeof norma
   const result = {
     continuation: publicContinuation(updatedContinuation),
     item: await publicItem(ctx, updatedTarget),
-    run: publicQueuedRun(queuedRun, updatedTarget.externalId),
+    run: publicQueuedRun(queuedRun, updatedTarget.externalId, {
+      executionEnvelope: input.executionEnvelope,
+      executionRecords: [],
+    }),
     createdItemId,
     notificationRecommended,
   };
@@ -553,13 +606,15 @@ async function touchCurrentItem(ctx: any, itemId: any, now: number) {
 }
 
 function normalizeQueueInput(input: any) {
+  const id = safeText(input.id, "Continuation ID", 240);
+  const runnerProfile = safeText(input.runnerProfile, "Runner profile", 160);
   return {
-    id: safeText(input.id, "Continuation ID", 240),
+    id,
     actor: normalizeActor(input.actor, "Approval actor"),
     supervisor: normalizeSupervisor(input.supervisor),
     expectedGeneration: positiveInteger(input.expectedGeneration, "Expected generation"),
     runnerType: safeText(input.runnerType, "Runner type", 80),
-    runnerProfile: safeText(input.runnerProfile, "Runner profile", 160),
+    runnerProfile,
     leaseSeconds: assertLeaseSeconds(input.leaseSeconds ?? 900),
     maxAttempts: positiveInteger(input.maxAttempts ?? 3, "Maximum attempts", 20),
     retryBackoffSeconds: positiveInteger(
@@ -567,6 +622,10 @@ function normalizeQueueInput(input: any) {
       "Retry backoff seconds",
       86_400,
       0,
+    ),
+    executionEnvelope: normalizeExecutionEnvelope(
+      input.executionEnvelope,
+      executionObjective(id, runnerProfile),
     ),
     idempotencyKey: safeOptionalText(input.idempotencyKey, "Idempotency key", 240),
     policyMode: input.policyMode ?? "human",
@@ -602,8 +661,34 @@ function queueRequest(input: ReturnType<typeof normalizeQueueInput>) {
     leaseSeconds: input.leaseSeconds,
     maxAttempts: input.maxAttempts,
     retryBackoffSeconds: input.retryBackoffSeconds,
+    executionEnvelope: input.executionEnvelope,
     policyMode: input.policyMode,
   };
+}
+
+function legacyQueueRequest(input: ReturnType<typeof normalizeQueueInput>) {
+  const { executionEnvelope: _executionEnvelope, ...legacy } = queueRequest(input);
+  return legacy;
+}
+
+function legacySupervisorReplay(value: unknown) {
+  const result = record(value);
+  const run = record(result?.run);
+  if (!result || !run) {
+    throw new Error("Stored continuation supervisor result is incomplete");
+  }
+  return {
+    ...result,
+    run: {
+      ...run,
+      executionEnvelope: null,
+      executionRecords: [],
+    },
+  };
+}
+
+function executionObjective(continuationId: string, runnerProfile: string): string {
+  return `Execute continuation ${continuationId} with runner profile ${runnerProfile}`;
 }
 
 function normalizeSupervisor(actor: any) {
@@ -675,7 +760,11 @@ function publicContinuation(continuation: any) {
   };
 }
 
-function publicQueuedRun(run: any, itemId: string) {
+function publicQueuedRun(
+  run: any,
+  itemId: string,
+  execution: { executionEnvelope: unknown; executionRecords: unknown[] },
+) {
   return {
     id: run.externalId,
     itemId,
@@ -707,6 +796,8 @@ function publicQueuedRun(run: any, itemId: string) {
     updatedAt: new Date(run.updatedAt).toISOString(),
     startedAt: run.startedAt === undefined ? null : new Date(run.startedAt).toISOString(),
     endedAt: run.endedAt === undefined ? null : new Date(run.endedAt).toISOString(),
+    executionEnvelope: execution.executionEnvelope,
+    executionRecords: execution.executionRecords,
   };
 }
 
@@ -732,7 +823,7 @@ function positiveInteger(
   maximum = Number.MAX_SAFE_INTEGER,
   minimum = 1,
 ) {
-  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
     throw new Error(`${label} must be a whole number from ${minimum} to ${maximum}`);
   }
   return value;
@@ -759,4 +850,10 @@ function canonicalJson(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
