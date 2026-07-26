@@ -38,6 +38,8 @@ import {
   readBoundedItemRuns,
   readLatestItemEvent,
 } from "./item-detail-sqlite.js";
+import { assertPublicRecordableItemEventType } from "./item-control-events.js";
+import { readItemControlRuns } from "./item-control-sqlite.js";
 import { projectItemControl } from "./item-control.js";
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
 import { expireClaims, renewClaim } from "./leases.js";
@@ -123,6 +125,7 @@ export class SqliteWorkLedger implements
     const events = readBoundedItemEvents(this.store, id);
     const artifacts = readBoundedItemArtifacts(this.store, id);
     const runs = readBoundedItemRuns(this.store, id);
+    const controlRuns = readItemControlRuns(this.store, id);
     const controlEvents = [
       readLatestItemEvent(this.store, id, "claim.created"),
       readLatestItemEvent(this.store, id, "run.queued"),
@@ -130,7 +133,7 @@ export class SqliteWorkLedger implements
     ].filter((event) => event !== null);
     return {
       item,
-      control: projectItemControl({ item, runs, events: controlEvents, now }),
+      control: projectItemControl({ item, runs: controlRuns, events: controlEvents, now }),
       events,
       artifacts,
       runs,
@@ -212,6 +215,7 @@ export class SqliteWorkLedger implements
   }
 
   async recordEvent(input: RecordWorkEventInput) {
+    assertPublicRecordableItemEventType(input.type);
     const replay = hasRecordedIdempotencyKey(this.store, input.idempotencyKey);
     const event = this.store.recordEvent({
       itemId: input.id,
