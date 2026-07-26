@@ -133,6 +133,8 @@ export const start = mutation({
     return await publicHostedRun(ctx, run, item.externalId, {
       executionEnvelope: input.executionEnvelope,
       executionRecords: [],
+      runGeneration: 1,
+      leaseGeneration: 1,
     });
   },
 });
@@ -142,6 +144,7 @@ export const heartbeat = mutation({
     ...serviceArgs,
     id: v.string(),
     actorId: v.string(),
+    expectedGeneration: v.optional(v.number()),
     status: v.optional(runStatusValidator),
     checkpoint: v.optional(v.string()),
     childAgentCount: v.optional(v.number()),
@@ -158,6 +161,12 @@ export const heartbeat = mutation({
     if (!["running", "waiting"].includes(run.status)) {
       throw new Error("Run is already finished");
     }
+    const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+    const generation = requireExpectedGeneration(
+      execution,
+      args.expectedGeneration,
+      "heartbeat",
+    );
     const now = Date.now();
     const checkpoint = assertOptionalText(args.checkpoint, "Checkpoint", 10_000);
     const patch: Record<string, unknown> = {
@@ -171,7 +180,6 @@ export const heartbeat = mutation({
       patch.toolCallCount = count(args.toolCallCount, "Tool call count");
     }
     await ctx.db.patch(run._id, patch);
-    const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
     await appendEvent(ctx, {
       workspaceId: run.workspaceId,
       projectId: run.projectId,
@@ -181,8 +189,8 @@ export const heartbeat = mutation({
       type: "run.heartbeat",
       payload: {
         runId: run.externalId,
-        generation: 1,
-        leaseGeneration: 1,
+        generation,
+        leaseGeneration: execution.leaseGeneration ?? 1,
         envelopeSchemaVersion: execution.executionEnvelope?.schemaVersion ?? null,
         status: args.status ?? run.status,
         ...(checkpoint ? { checkpoint } : {}),
@@ -212,6 +220,7 @@ export const finish = mutation({
     ...serviceArgs,
     id: v.string(),
     actorId: v.string(),
+    expectedGeneration: v.optional(v.number()),
     status: runStatusValidator,
     outcome: v.optional(v.string()),
     childAgentCount: v.optional(v.number()),
@@ -237,9 +246,9 @@ export const finish = mutation({
     if (existing) {
       const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
       if (execution.executionRecords.length === 0) {
-        if (input.executionActualProvided) {
+        if (input.executionActualProvided || input.expectedGenerationProvided) {
           throw new Error(
-            "Historical run finish cannot be retrofitted with execution actuals",
+            "Historical run finish cannot be retrofitted with versioned execution data",
           );
         }
         const current = await ctx.db.get("runs", run._id);
@@ -278,6 +287,13 @@ export const finish = mutation({
     if (!["running", "waiting"].includes(run.status)) {
       throw new Error("Run is already finished");
     }
+    const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+    const currentGeneration = requireExpectedGeneration(
+      execution,
+      input.expectedGeneration,
+      "finish",
+    );
+    const nextGeneration = currentGeneration + 1;
     const now = Date.now();
     const patch: Record<string, unknown> = {
       status: input.status,
@@ -294,7 +310,6 @@ export const finish = mutation({
     await ctx.db.patch(run._id, patch);
     const item = await ctx.db.get("items", run.itemId);
     if (!item) throw new Error("Run item no longer exists");
-    const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
     const appendedActual = await appendExecutionActualEvent(ctx, {
       workspaceId: run.workspaceId,
       projectId: run.projectId,
@@ -302,8 +317,8 @@ export const finish = mutation({
       actorId: run.actorId,
       actorExternalId: run.actorExternalId,
       runId: run.externalId,
-      runGeneration: 1,
-      leaseGeneration: 1,
+      runGeneration: nextGeneration,
+      leaseGeneration: execution.leaseGeneration ?? 1,
       transition: `finish:${input.status}`,
       actual: input.executionActual,
       createdAt: now,
@@ -317,8 +332,8 @@ export const finish = mutation({
       type: "run.finished",
       payload: {
         runId: run.externalId,
-        generation: 1,
-        leaseGeneration: 1,
+        generation: nextGeneration,
+        leaseGeneration: execution.leaseGeneration ?? 1,
         envelopeSchemaVersion: execution.executionEnvelope?.schemaVersion ?? null,
         request: finishRequest(input),
       },
@@ -330,6 +345,8 @@ export const finish = mutation({
     return await publicHostedRun(ctx, updated, item.externalId, {
       executionEnvelope: execution.executionEnvelope,
       executionRecords: [...execution.executionRecords, appendedActual],
+      runGeneration: nextGeneration,
+      leaseGeneration: execution.leaseGeneration ?? 1,
     });
   },
 });
@@ -416,8 +433,8 @@ async function publicHostedRun(
   return {
     ...publicRun(run),
     itemId,
-    generation: 1,
-    leaseGeneration: 1,
+    generation: execution.runGeneration ?? 1,
+    leaseGeneration: execution.leaseGeneration ?? 1,
     executionEnvelope: execution.executionEnvelope,
     executionRecords: execution.executionRecords,
   };
@@ -447,6 +464,10 @@ function normalizeStartInput(args: any) {
 function normalizeFinishInput(args: any) {
   return {
     actorId: assertText(args.actorId, "Actor id", 120),
+    expectedGenerationProvided: args.expectedGeneration !== undefined,
+    expectedGeneration: args.expectedGeneration === undefined
+      ? undefined
+      : positiveInteger(args.expectedGeneration, "Expected generation"),
     status: args.status as "succeeded" | "failed" | "cancelled",
     outcome: assertOptionalText(args.outcome, "Outcome", 10_000),
     childAgentCount: args.childAgentCount === undefined
@@ -478,12 +499,40 @@ function startRequest(input: ReturnType<typeof normalizeStartInput>) {
 function finishRequest(input: ReturnType<typeof normalizeFinishInput>) {
   return {
     actorId: input.actorId,
+    expectedGeneration: input.expectedGeneration ?? null,
     status: input.status,
     outcome: input.outcome ?? null,
     childAgentCount: input.childAgentCount ?? null,
     toolCallCount: input.toolCallCount ?? null,
     executionActual: input.executionActual,
   };
+}
+
+function requireExpectedGeneration(
+  execution: Awaited<ReturnType<typeof readHostedRunExecution>>,
+  expected: unknown,
+  operation: string,
+): number {
+  if (!execution.executionEnvelope) {
+    if (expected === undefined) return 1;
+    const legacyExpected = positiveInteger(expected, "Expected generation");
+    if (legacyExpected !== 1) {
+      throw new Error(`Run generation changed from ${legacyExpected} to 1`);
+    }
+    return 1;
+  }
+  const current = execution.runGeneration;
+  if (current === null) {
+    throw new Error("Versioned run has no current generation");
+  }
+  if (expected === undefined) {
+    throw new Error(`Expected generation is required to ${operation} a versioned run`);
+  }
+  const normalizedExpected = positiveInteger(expected, "Expected generation");
+  if (normalizedExpected !== current) {
+    throw new Error(`Run generation changed from ${normalizedExpected} to ${current}`);
+  }
+  return current;
 }
 
 function requireSameRequest(existing: unknown, requested: unknown, label: string): void {
@@ -496,6 +545,13 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return value;
 }
 
 function count(value: number, label: string): number {
