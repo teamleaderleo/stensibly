@@ -219,6 +219,7 @@ export const complete = mutation({
     ...serviceArgs,
     id: v.string(),
     actor: actorValidator,
+    expectedClaimGeneration: v.number(),
     summary: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
   },
@@ -231,6 +232,7 @@ export const handoff = mutation({
     ...serviceArgs,
     id: v.string(),
     actor: actorValidator,
+    expectedClaimGeneration: v.number(),
     summary: v.string(),
     nextAction: v.string(),
     toActorId: v.optional(v.string()),
@@ -245,6 +247,7 @@ export const block = mutation({
     ...serviceArgs,
     id: v.string(),
     actor: actorValidator,
+    expectedClaimGeneration: v.number(),
     reason: v.string(),
     nextAction: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
@@ -258,6 +261,7 @@ export const unblock = mutation({
     ...serviceArgs,
     id: v.string(),
     actor: actorValidator,
+    expectedClaimGeneration: v.number(),
     nextAction: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
   },
@@ -291,11 +295,15 @@ async function transition(
     return await publicItem(ctx, item);
   }
 
+  const expectedGeneration = currentClaimGeneration(args.expectedClaimGeneration);
   const actor = await upsertActor(ctx, workspace._id, args.actor);
   if (!actor) throw new Error("Failed to create actor");
   const now = Date.now();
   let item = await getItemByExternalId(ctx, workspace._id, args.id);
   item = await expireClaimIfNeeded(ctx, item, now);
+  if (item.claimGeneration !== expectedGeneration) {
+    throw new Error("Claim generation changed; refresh the item before retrying");
+  }
   if (liveClaimHeldByOther(item, actor.externalId, now)) {
     throw new Error("Work is held by another actor");
   }
@@ -346,11 +354,12 @@ async function transition(
     payload = nextAction ? { nextAction } : {};
   }
 
+  const nextGeneration = expectedGeneration + 1;
   const commonPatch = {
     claimedByActorId: undefined,
     claimedByExternalId: undefined,
     claimExpiresAt: undefined,
-    claimGeneration: item.claimGeneration + 1,
+    claimGeneration: nextGeneration,
     version: item.version + 1,
     updatedAt: now,
   };
@@ -362,11 +371,18 @@ async function transition(
     actorId: actor._id,
     actorExternalId: actor.externalId,
     type: eventType,
-    payload,
+    payload: { ...payload, generation: expectedGeneration, nextGeneration },
     idempotencyKey: args.idempotencyKey,
     createdAt: now,
   });
   const updated = await ctx.db.get("items", item._id);
   if (!updated) throw new Error("Updated item disappeared");
   return await publicItem(ctx, updated);
+}
+
+function currentClaimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error("Expected claim generation must be a non-negative integer");
+  }
+  return value;
 }
