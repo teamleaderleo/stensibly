@@ -26,10 +26,20 @@ drift-detection behaviour changes. Lane-specific detail is intentionally absent.
 ## Suggested fresh-chat prompt
 
 ```text
-Read the Stensibly repository entrypoint and current wave. Inspect existing issues,
-PRs, review findings, and handoffs. Select the highest-value non-conflicting action.
-State the wave, lane, expected output, overlapping work checked, and temporary
-stance before acting.
+Read the Stensibly repository entrypoint, current wave, and temporary pod registry.
+Inspect existing issues, PRs, review findings, and handoffs. Select the highest-value
+non-conflicting action. State the pod, wave, lane, expected output, overlapping work
+checked, and temporary stance before acting.
+```
+
+## Suggested pod-enrolment prompt
+
+```text
+Inspect docs/pods/registry.yaml. Join the most useful open pod for this run, or use
+Foundry by default. Read its charter, memory, practices, and history. Declare the
+run-scoped enrolment using docs/pods/enrolment.md, then continue the highest-value
+eligible work without treating pod affiliation as authority. Leave a handoff and
+any bounded provenance-rich memory contribution before departure.
 ```
 
 ## Suggested instruction-survey prompt
@@ -43,35 +53,23 @@ changes. Use docs/operating-instruction-lifecycle.md for any proposal and permit
 no-change result.
 ```
 
-## Suggested PR #251 repair prompt
-
-```text
-Take the repair-owner action in #289 for PR #251. Do not mix #220 dynamic-client
-work into this branch. Repair dormant legacy refresh-family cleanup so eventual
-bounded cleanup does not depend on future client traffic. Leave an exact-head
-handoff with scheduler/storage bounds, focused regressions, full checks, deployment
-ordering, residual risk, and a descriptive sign-off. Do not self-accept the result.
-```
-
 ## Suggested independent-review prompt
 
 ```text
 Act as an independent acceptance worker for the current Production MCP Connection
 wave. Do not implement the final revision you accept. Review the exact current head,
 verify the declared tests and security invariants, and leave an accepted or blocked
-verdict with exact evidence and a descriptive sign-off. Review Lane A and PR #251
-as separate code fences and require a separate repair owner after any blocking
-finding.
+verdict with exact evidence and a descriptive sign-off. Preserve separate code
+fences and require a different repair owner after any blocking finding.
 ```
 
 ## Suggested rollout prompt
 
 ```text
-Prepare the guarded Stensibly MCP OAuth rollout. Execute it only after Lane A has
-independent exact-head acceptance and PR #251 has independent acceptance and is
-merged, or the human operator records an explicit production-risk deferral. Verify
-discovery metadata, OAuth challenge headers, GitHub-backed consent, ChatGPT tool
-scanning, a bounded read, the predeclared dedicated-project low-risk write with an
-explicit idempotency key and immediate human approval, refresh or reconnect behaviour,
+Prepare the guarded Stensibly MCP OAuth rollout. Execute it only after the live
+current-wave gates have independent exact-head acceptance. Verify discovery
+metadata, OAuth challenge headers, GitHub-backed consent, ChatGPT tool scanning,
+a bounded read, the predeclared dedicated-project low-risk write with an explicit
+idempotency key and immediate human approval, refresh or reconnect behaviour,
 monitoring, and rollback. Record exact deployed revisions and evidence.
 ```
