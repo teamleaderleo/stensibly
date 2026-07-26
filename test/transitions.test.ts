@@ -190,6 +190,92 @@ describe("work transitions", () => {
     )).toThrow(ConflictError);
   });
 
+  test("idempotency keys replay only the exact item operation", () => {
+    const firstItem = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Replay exact operation",
+      priority: 50,
+      actor: leo,
+    });
+    const secondItem = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Reject cross-item replay",
+      priority: 50,
+      actor: leo,
+    });
+    const claimed = store.claimItem(firstItem.id, browserAgent, 900);
+    const command = {
+      id: firstItem.id,
+      actor: browserAgent,
+      expectedClaimGeneration: claimed.claimGeneration,
+      summary: "Exact handoff.",
+      nextAction: "Continue from the recorded state.",
+      idempotencyKey: "exact-handoff",
+    };
+
+    const handedOff = handoffWork(store, command);
+    expect(handoffWork(store, command)).toEqual(handedOff);
+    expect(() => handoffWork(store, {
+      ...command,
+      summary: "Changed handoff.",
+    })).toThrow(ConflictError);
+    expect(() => handoffWork(store, {
+      ...command,
+      expectedClaimGeneration: claimed.claimGeneration + 1,
+    })).toThrow(ConflictError);
+    expect(() => handoffWork(store, {
+      ...command,
+      id: secondItem.id,
+      actor: leo,
+      expectedClaimGeneration: secondItem.claimGeneration,
+    })).toThrow(ConflictError);
+    expect(() => blockWork(store, {
+      id: firstItem.id,
+      actor: browserAgent,
+      expectedClaimGeneration: claimed.claimGeneration,
+      reason: "Cross-operation reuse.",
+      idempotencyKey: "exact-handoff",
+    })).toThrow(ConflictError);
+
+    const completionItem = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Replay exact completion",
+      priority: 50,
+      actor: leo,
+    });
+    const completed = store.completeItem(
+      completionItem.id,
+      leo,
+      completionItem.claimGeneration,
+      "Done once.",
+      "exact-completion",
+    );
+    expect(store.completeItem(
+      completionItem.id,
+      leo,
+      completionItem.claimGeneration,
+      "Done once.",
+      "exact-completion",
+    )).toEqual(completed);
+    expect(() => store.completeItem(
+      completionItem.id,
+      leo,
+      completionItem.claimGeneration,
+      "Different summary.",
+      "exact-completion",
+    )).toThrow(ConflictError);
+    expect(() => store.completeItem(
+      completionItem.id,
+      leo,
+      completionItem.claimGeneration + 1,
+      "Done once.",
+      "exact-completion",
+    )).toThrow(ConflictError);
+  });
+
   test("completed work rejects further workflow transitions", () => {
     const item = store.createItem({
       project: "scrapbook",
