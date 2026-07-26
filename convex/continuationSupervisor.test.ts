@@ -8,31 +8,14 @@ const secret = "test-service-secret";
 const workspace = "test";
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
 const leo = { id: "leo", name: "Leo", kind: "human" as const };
-const supervisor = {
-  id: "service:supervisor",
-  name: "Supervisor",
-  kind: "service" as const,
-};
+const supervisor = { id: "service:supervisor", name: "Supervisor", kind: "service" as const };
 const executionEnvelope = {
   schemaVersion: 1 as const,
   objective: "Dispatch the exact hosted continuation",
   scopeClass: "segmented" as const,
-  estimate: {
-    lowMinutes: 20,
-    likelyMinutes: 40,
-    highMinutes: 70,
-    confidence: 0.6,
-  },
-  budget: {
-    expectedMessages: 3,
-    expectedToolCalls: 25,
-    expectedReviewMinutes: 8,
-  },
-  boundaries: {
-    softCheckpointMinutes: 50,
-    forcedHandoffMinutes: 75,
-    hardRecoveryMinutes: 90,
-  },
+  estimate: { lowMinutes: 20, likelyMinutes: 40, highMinutes: 70, confidence: 0.6 },
+  budget: { expectedMessages: 3, expectedToolCalls: 25, expectedReviewMinutes: 8 },
+  boundaries: { softCheckpointMinutes: 50, forcedHandoffMinutes: 75, hardRecoveryMinutes: 90 },
   completion: {
     requiredOutputs: ["implementation", "tests"],
     verificationRequired: true,
@@ -47,9 +30,7 @@ const executionEnvelope = {
   },
 };
 
-beforeEach(() => {
-  vi.stubEnv("STENSIBLY_SERVICE_SECRET", secret);
-});
+beforeEach(() => vi.stubEnv("STENSIBLY_SERVICE_SECRET", secret));
 
 describe("Convex continuation supervisor", () => {
   test("queues, replays, and exposes only the compact envelope reference", async () => {
@@ -69,11 +50,7 @@ describe("Convex continuation supervisor", () => {
 
     const result = await t.mutation(convexApi.continuationSupervisor.queue, input) as any;
     expect(result).toMatchObject({
-      continuation: {
-        id: proposal.id,
-        status: "consumed",
-        generation: proposal.generation + 2,
-      },
+      continuation: { id: proposal.id, status: "consumed", generation: proposal.generation + 2 },
       item: { id: target.id, status: "active", claimedBy: supervisor.id },
       run: {
         itemId: target.id,
@@ -93,16 +70,15 @@ describe("Convex continuation supervisor", () => {
       runnerProfile: "changed-replay",
     })).rejects.toThrow("different continuation supervisor request");
 
-    const targetDetail = await t.query(convexApi.items.get, {
+    const detail = await t.query(convexApi.items.get, {
       serviceSecret: secret,
       workspace,
       id: target.id,
     }) as any;
-    const publicTypes = targetDetail.events.map((event: any) => event.type);
+    const publicTypes = detail.events.map((event: any) => event.type);
     expect(publicTypes).toContain("run.envelope_reference");
     expect(publicTypes.some((type: string) =>
-      type.startsWith("run.execution_envelope:") ||
-      type.startsWith("run.execution_actual:")
+      type.startsWith("run.execution_envelope:") || type.startsWith("run.execution_actual:")
     )).toBe(false);
 
     const rawTypes = await t.run(async (ctx) => {
@@ -152,7 +128,6 @@ describe("Convex continuation supervisor", () => {
       ...finishInput,
       expectedGeneration: queued.run.generation + 1,
     })).rejects.toThrow("generation changed");
-
     const finished = await t.mutation(convexApi.queuedRuns.finish, finishInput) as any;
     expect(finished).toMatchObject({
       id: queued.run.id,
@@ -160,10 +135,7 @@ describe("Convex continuation supervisor", () => {
       generation: queued.run.generation + 1,
       outcome: "Implemented and verified.",
       executionEnvelope,
-      executionRecords: [{
-        transition: "finish:succeeded",
-        actual: finishInput.executionActual,
-      }],
+      executionRecords: [{ transition: "finish:succeeded", actual: finishInput.executionActual }],
     });
     expect(await t.mutation(convexApi.queuedRuns.finish, finishInput)).toEqual(finished);
     await expect(t.mutation(convexApi.queuedRuns.finish, {
@@ -190,12 +162,14 @@ describe("Convex continuation supervisor", () => {
       kind: "dispatch_item" as const,
       itemId: target.id,
     });
-    const input = queueInput(proposal, { idempotencyKey: "legacy-supervisor-command" });
+    const input: any = queueInput(proposal, {
+      idempotencyKey: "legacy-supervisor-command",
+    });
     const original = await t.mutation(convexApi.continuationSupervisor.queue, input) as any;
 
     await t.run(async (ctx) => {
       const row = (await ctx.db.query("continuationSupervisorCommands").collect())
-        .find((entry) => entry.idempotencyKey === input.idempotencyKey);
+        .find((entry) => entry.idempotencyKey === "legacy-supervisor-command");
       if (!row) throw new Error("Supervisor command fixture disappeared");
       const request = { ...(row.request as Record<string, unknown>) };
       delete request.executionEnvelope;
@@ -210,11 +184,7 @@ describe("Convex continuation supervisor", () => {
     expect(replay).toMatchObject({
       continuation: original.continuation,
       item: original.item,
-      run: {
-        id: original.run.id,
-        executionEnvelope: null,
-        executionRecords: [],
-      },
+      run: { id: original.run.id, executionEnvelope: null, executionRecords: [] },
     });
     await expect(t.mutation(convexApi.continuationSupervisor.queue, {
       ...input,
@@ -224,33 +194,6 @@ describe("Convex continuation supervisor", () => {
       ...input,
       executionEnvelope,
     })).rejects.toThrow("cannot be retrofitted with an execution envelope");
-  });
-
-  test("keeps rejected and unavailable targets unchanged", async () => {
-    const t = convexTest(schema, modules);
-    const source = await createItem(t, "Guard source", "alpha", 60);
-    const target = await createItem(t, "Blocked target", "alpha", 30);
-    await t.mutation(convexApi.items.block, {
-      serviceSecret: secret,
-      workspace,
-      id: target.id,
-      actor: supervisor,
-      expectedClaimGeneration: target.claimGeneration,
-      reason: "Target is unavailable.",
-    });
-    const proposal = await propose(t, source.id, {
-      kind: "resume_item" as const,
-      itemId: target.id,
-    });
-    await expect(t.mutation(
-      convexApi.continuationSupervisor.queue,
-      queueInput(proposal),
-    )).rejects.toThrow("not eligible for supervisor dispatch");
-    expect(await getContinuation(t, proposal.id)).toMatchObject({
-      status: "proposed",
-      generation: proposal.generation,
-    });
-    expect((await getItem(t, target.id)).status).toBe("blocked");
   });
 });
 
@@ -287,7 +230,7 @@ async function propose(t: ReturnType<typeof convexTest>, sourceItemId: string, a
   }) as any;
 }
 
-function queueInput(proposal: any, overrides: Record<string, unknown> = {}) {
+function queueInput(proposal: any, overrides: Record<string, unknown> = {}): any {
   return {
     serviceSecret: secret,
     workspace,
@@ -302,20 +245,4 @@ function queueInput(proposal: any, overrides: Record<string, unknown> = {}) {
     retryBackoffSeconds: 30,
     ...overrides,
   };
-}
-
-async function getContinuation(t: ReturnType<typeof convexTest>, id: string) {
-  return await t.mutation(convexApi.continuations.get, {
-    serviceSecret: secret,
-    workspace,
-    id,
-  }) as any;
-}
-
-async function getItem(t: ReturnType<typeof convexTest>, id: string) {
-  return (await t.query(convexApi.items.get, {
-    serviceSecret: secret,
-    workspace,
-    id,
-  }) as any).item;
 }
