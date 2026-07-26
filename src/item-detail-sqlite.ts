@@ -69,7 +69,6 @@ export function readBoundedItemEvents(
   itemId: string,
   limit = MAX_ITEM_DETAIL_EVENTS,
 ): ItemEvent[] {
-  store.getItem(itemId);
   const normalizedLimit = detailLimit(limit, MAX_ITEM_DETAIL_EVENTS, "Item event limit");
   return store.db
     .query<EventRow, [string, number]>(`
@@ -89,7 +88,6 @@ export function readLatestItemEvent(
   itemId: string,
   type: string,
 ): ItemEvent | null {
-  store.getItem(itemId);
   const row = store.db
     .query<EventRow, [string, string]>(`
       SELECT id, item_id, actor_id, type, payload_json, created_at
@@ -108,7 +106,6 @@ export function readBoundedItemArtifacts(
   limit = MAX_ITEM_DETAIL_ARTIFACTS,
 ): Artifact[] {
   ensureArtifactSchema(store);
-  store.getItem(itemId);
   const normalizedLimit = detailLimit(limit, MAX_ITEM_DETAIL_ARTIFACTS, "Item artifact limit");
   return store.db
     .query<ArtifactRow, [string, number]>(`
@@ -129,7 +126,6 @@ export function readBoundedItemRuns(
   limit = MAX_ITEM_DETAIL_RUNS,
 ): WorkRun[] {
   ensureRunSchema(store);
-  store.getItem(itemId);
   const normalizedLimit = detailLimit(limit, MAX_ITEM_DETAIL_RUNS, "Item run limit");
   return store.db
     .query<RunRow, [string, number]>(`
@@ -220,7 +216,9 @@ function usageJson(value: string): RunUsage {
   const output: RunUsage = {};
   for (const key of ["inputTokens", "outputTokens", "toolCalls", "childAgents"] as const) {
     const entry = parsed[key];
-    if (Number.isInteger(entry) && Number(entry) >= 0) output[key] = Number(entry);
+    if (typeof entry === "number" && Number.isInteger(entry) && entry >= 0) {
+      output[key] = entry;
+    }
   }
   return output;
 }
