@@ -72,6 +72,46 @@ describe("local item control detail", () => {
     expect(body.control).toEqual(active.control);
   });
 
+  test("projects elapsed local authority without reconciling the read", async () => {
+    const item = await ledger.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Show elapsed authority",
+      priority: 65,
+      actor: human,
+    });
+    const claimed = await ledger.claimWork({
+      id: item.id,
+      actor: agent,
+      leaseSeconds: 900,
+    });
+    store.db.query(`
+      UPDATE items
+      SET claim_expires_at = '2000-01-01T00:00:00.000Z'
+      WHERE id = ?1
+    `).run(item.id);
+
+    const detail = await ledger.getItem(item.id);
+    expect(detail.item).toMatchObject({
+      status: "active",
+      claimedBy: agent.id,
+      claimGeneration: claimed.claimGeneration,
+    });
+    expect(detail.control.authority).toMatchObject({
+      state: "expired",
+      holderActorId: agent.id,
+      generation: claimed.claimGeneration,
+      source: "claim",
+      allowedOperations: [],
+    });
+    expect(store.getItem(item.id)).toMatchObject({
+      status: "active",
+      claimedBy: agent.id,
+      claimGeneration: claimed.claimGeneration,
+    });
+    expect(store.listEvents(item.id).map((event) => event.type)).not.toContain("claim.expired");
+  });
+
   test("identifies dispatcher authority from the current bounded run", async () => {
     const item = await ledger.createItem({
       project: "scrapbook",
@@ -135,7 +175,7 @@ describe("local item control detail", () => {
     });
   });
 
-  test("bounds recent item history while keeping the newest records", async () => {
+  test("bounds same-millisecond history by insertion order", async () => {
     const item = await ledger.createItem({
       project: "scrapbook",
       kind: "task",
@@ -151,6 +191,11 @@ describe("local item control detail", () => {
         payload: { index },
       });
     }
+    store.db.query(`
+      UPDATE events
+      SET created_at = '2026-07-26T12:00:00.000Z'
+      WHERE item_id = ?1
+    `).run(item.id);
 
     const detail = await ledger.getItem(item.id);
     expect(detail.events).toHaveLength(100);
