@@ -6,6 +6,7 @@ import {
   type ExecutionActual,
   type ExecutionEnvelope,
 } from "./execution-envelope.js";
+import { MAX_EXECUTION_RECORDS_PER_RUN } from "./execution-record-limits.js";
 import type { WorkRun as CoreWorkRun } from "./runs-core.js";
 import { ConflictError, StensiblyStore } from "./store.js";
 
@@ -203,16 +204,20 @@ export function hydrateWorkRun(
   const executionEnvelope = envelopeRow
     ? parseExecutionEnvelope(JSON.parse(envelopeRow.envelope_json) as unknown)
     : null;
-  const executionRecords = store.db
-    .query<ExecutionRecordRow, [string]>(`
+  const rows = store.db
+    .query<ExecutionRecordRow, [string, number]>(`
       SELECT id, run_id, run_generation, lease_generation,
              transition, actual_json, created_at
       FROM run_execution_records
       WHERE run_id = ?1
       ORDER BY created_at ASC, rowid ASC
+      LIMIT ?2
     `)
-    .all(run.id)
-    .map(mapExecutionRecord);
+    .all(run.id, MAX_EXECUTION_RECORDS_PER_RUN + 1);
+  if (rows.length > MAX_EXECUTION_RECORDS_PER_RUN) {
+    throw new Error("Run execution-result history exceeds the bounded projection");
+  }
+  const executionRecords = rows.map(mapExecutionRecord);
   return { ...run, executionEnvelope, executionRecords };
 }
 
