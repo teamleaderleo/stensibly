@@ -5,7 +5,9 @@ import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface IdempotentEventRow {
   item_id: string;
+  actor_id: string | null;
   type: string;
+  payload_json: string;
 }
 
 export function handoffWork(
@@ -20,16 +22,18 @@ export function handoffWork(
     idempotencyKey?: string;
   },
 ): Item {
+  const payload = handoffPayload(input);
   const existing = findIdempotentItem(
     store,
     input.id,
+    input.actor.id,
     input.idempotencyKey,
     "work.handed_off",
+    payload,
   );
   if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
   expireClaims(store);
-  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
     store.getItem(input.id);
@@ -71,13 +75,7 @@ export function handoffWork(
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.handed_off",
-      payload: {
-        summary: input.summary,
-        nextAction: input.nextAction,
-        ...(input.toActorId ? { toActorId: input.toActorId } : {}),
-        generation: expectedGeneration,
-        nextGeneration,
-      },
+      payload,
       idempotencyKey: input.idempotencyKey,
       now,
     });
@@ -99,16 +97,18 @@ export function blockWork(
     idempotencyKey?: string;
   },
 ): Item {
+  const payload = blockPayload(input);
   const existing = findIdempotentItem(
     store,
     input.id,
+    input.actor.id,
     input.idempotencyKey,
     "work.blocked",
+    payload,
   );
   if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
   expireClaims(store);
-  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
     store.getItem(input.id);
@@ -150,12 +150,7 @@ export function blockWork(
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.blocked",
-      payload: {
-        reason: input.reason,
-        ...(input.nextAction ? { nextAction: input.nextAction } : {}),
-        generation: expectedGeneration,
-        nextGeneration,
-      },
+      payload,
       idempotencyKey: input.idempotencyKey,
       now,
     });
@@ -176,16 +171,18 @@ export function unblockWork(
     idempotencyKey?: string;
   },
 ): Item {
+  const payload = unblockPayload(input);
   const existing = findIdempotentItem(
     store,
     input.id,
+    input.actor.id,
     input.idempotencyKey,
     "work.unblocked",
+    payload,
   );
   if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
   expireClaims(store);
-  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
     store.getItem(input.id);
@@ -218,11 +215,7 @@ export function unblockWork(
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.unblocked",
-      payload: {
-        ...(input.nextAction ? { nextAction: input.nextAction } : {}),
-        generation: expectedGeneration,
-        nextGeneration,
-      },
+      payload,
       idempotencyKey: input.idempotencyKey,
       now,
     });
@@ -236,20 +229,65 @@ export function unblockWork(
 function findIdempotentItem(
   store: StensiblyStore,
   itemId: string,
+  actorId: string,
   idempotencyKey: string | undefined,
   expectedType: string,
+  expectedPayload: Record<string, unknown>,
 ): Item | null {
   if (!idempotencyKey) return null;
   const existing = store.db
     .query<IdempotentEventRow, [string]>(
-      "SELECT item_id, type FROM events WHERE idempotency_key = ?1",
+      "SELECT item_id, actor_id, type, payload_json FROM events WHERE idempotency_key = ?1",
     )
     .get(idempotencyKey);
   if (!existing) return null;
-  if (existing.item_id !== itemId || existing.type !== expectedType) {
-    throw new ConflictError("Idempotency key already belongs to another operation");
+  const exact = existing.item_id === itemId
+    && existing.actor_id === actorId
+    && existing.type === expectedType
+    && stableJson(JSON.parse(existing.payload_json)) === stableJson(expectedPayload);
+  if (!exact) {
+    throw new ConflictError("Idempotency key was already used for a different transition request");
   }
   return store.getItem(existing.item_id);
+}
+
+function handoffPayload(input: {
+  summary: string;
+  nextAction: string;
+  toActorId?: string;
+  expectedClaimGeneration: number;
+}): Record<string, unknown> {
+  return {
+    summary: input.summary,
+    nextAction: input.nextAction,
+    ...(input.toActorId ? { toActorId: input.toActorId } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
+}
+
+function blockPayload(input: {
+  reason: string;
+  nextAction?: string;
+  expectedClaimGeneration: number;
+}): Record<string, unknown> {
+  return {
+    reason: input.reason,
+    ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
+}
+
+function unblockPayload(input: {
+  nextAction?: string;
+  expectedClaimGeneration: number;
+}): Record<string, unknown> {
+  return {
+    ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
 }
 
 function claimGeneration(value: number): number {
@@ -298,4 +336,21 @@ function appendTransitionEvent(
       input.idempotencyKey ?? null,
       input.now,
     );
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
+  }
+  return value;
 }
