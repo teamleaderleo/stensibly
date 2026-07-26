@@ -5,6 +5,9 @@ import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface IdempotentEventRow {
   item_id: string;
+  actor_id: string | null;
+  type: string;
+  payload_json: string;
 }
 
 interface TransitionInput {
@@ -12,6 +15,13 @@ interface TransitionInput {
   actor: ActorInput;
   expectedClaimGeneration: number;
   idempotencyKey?: string;
+}
+
+interface ExpectedTransitionReplay {
+  itemId: string;
+  actorId: string;
+  type: string;
+  request: Record<string, unknown>;
 }
 
 export function handoffWork(
@@ -22,12 +32,23 @@ export function handoffWork(
     toActorId?: string;
   },
 ): Item {
-  expireClaims(store);
-  const existing = findIdempotentItem(store, input.idempotencyKey);
+  const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
+  const request = {
+    expectedClaimGeneration: expectedGeneration,
+    summary: input.summary,
+    nextAction: input.nextAction,
+    toActorId: input.toActorId ?? null,
+  };
+  const existing = findIdempotentItem(store, input.idempotencyKey, {
+    itemId: input.id,
+    actorId: input.actor.id,
+    type: "work.handed_off",
+    request,
+  });
   if (existing) return existing;
 
+  expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
     const current = store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -74,6 +95,7 @@ export function handoffWork(
         ...(input.toActorId ? { toActorId: input.toActorId } : {}),
         generation: current.claimGeneration,
         nextGeneration: updated.claimGeneration,
+        request,
       },
       idempotencyKey: input.idempotencyKey,
       now,
@@ -92,12 +114,22 @@ export function blockWork(
     nextAction?: string;
   },
 ): Item {
-  expireClaims(store);
-  const existing = findIdempotentItem(store, input.idempotencyKey);
+  const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
+  const request = {
+    expectedClaimGeneration: expectedGeneration,
+    reason: input.reason,
+    nextAction: input.nextAction ?? null,
+  };
+  const existing = findIdempotentItem(store, input.idempotencyKey, {
+    itemId: input.id,
+    actorId: input.actor.id,
+    type: "work.blocked",
+    request,
+  });
   if (existing) return existing;
 
+  expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
     const current = store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -143,6 +175,7 @@ export function blockWork(
         ...(input.nextAction ? { nextAction: input.nextAction } : {}),
         generation: current.claimGeneration,
         nextGeneration: updated.claimGeneration,
+        request,
       },
       idempotencyKey: input.idempotencyKey,
       now,
@@ -158,12 +191,21 @@ export function unblockWork(
   store: StensiblyStore,
   input: TransitionInput & { nextAction?: string },
 ): Item {
-  expireClaims(store);
-  const existing = findIdempotentItem(store, input.idempotencyKey);
+  const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
+  const request = {
+    expectedClaimGeneration: expectedGeneration,
+    nextAction: input.nextAction ?? null,
+  };
+  const existing = findIdempotentItem(store, input.idempotencyKey, {
+    itemId: input.id,
+    actorId: input.actor.id,
+    type: "work.unblocked",
+    request,
+  });
   if (existing) return existing;
 
+  expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
     const current = store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -199,6 +241,7 @@ export function unblockWork(
         ...(input.nextAction ? { nextAction: input.nextAction } : {}),
         generation: current.claimGeneration,
         nextGeneration: updated.claimGeneration,
+        request,
       },
       idempotencyKey: input.idempotencyKey,
       now,
@@ -213,14 +256,91 @@ export function unblockWork(
 function findIdempotentItem(
   store: StensiblyStore,
   idempotencyKey: string | undefined,
+  expected: ExpectedTransitionReplay,
 ): Item | null {
   if (!idempotencyKey) return null;
   const existing = store.db
-    .query<IdempotentEventRow, [string]>(
-      "SELECT item_id FROM events WHERE idempotency_key = ?1",
-    )
+    .query<IdempotentEventRow, [string]>(`
+      SELECT item_id, actor_id, type, payload_json
+      FROM events
+      WHERE idempotency_key = ?1
+    `)
     .get(idempotencyKey);
-  return existing ? store.getItem(existing.item_id) : null;
+  if (!existing) return null;
+
+  const payload = parsePayload(existing.payload_json);
+  const existingRequest = isRecord(payload.request)
+    ? payload.request
+    : legacyTransitionRequest(existing.type, payload);
+  if (
+    existing.item_id !== expected.itemId
+    || existing.actor_id !== expected.actorId
+    || existing.type !== expected.type
+    || stableJson(existingRequest) !== stableJson(expected.request)
+  ) {
+    throw new ConflictError(
+      "Idempotency key was already used for a different item operation",
+    );
+  }
+  return store.getItem(existing.item_id);
+}
+
+function legacyTransitionRequest(
+  type: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  if (type === "work.handed_off") {
+    return {
+      expectedClaimGeneration: payload.generation,
+      summary: payload.summary,
+      nextAction: payload.nextAction,
+      toActorId: typeof payload.toActorId === "string" ? payload.toActorId : null,
+    };
+  }
+  if (type === "work.blocked") {
+    return {
+      expectedClaimGeneration: payload.generation,
+      reason: payload.reason,
+      nextAction: typeof payload.nextAction === "string" ? payload.nextAction : null,
+    };
+  }
+  if (type === "work.unblocked") {
+    return {
+      expectedClaimGeneration: payload.generation,
+      nextAction: typeof payload.nextAction === "string" ? payload.nextAction : null,
+    };
+  }
+  return {};
+}
+
+function parsePayload(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
+  }
+  return value;
 }
 
 function upsertActor(store: StensiblyStore, actor: ActorInput, now: string): void {
