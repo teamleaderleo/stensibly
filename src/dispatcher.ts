@@ -1,4 +1,5 @@
 import * as Core from "./dispatcher-core.js";
+import { compatibilityExecutionEnvelope } from "./execution-envelope-default.js";
 import type { ExecutionEnvelope } from "./execution-envelope.js";
 import {
   assertDispatchEnvelopeIdempotency,
@@ -24,7 +25,7 @@ export type {
 } from "./dispatcher-core.js";
 
 export interface DispatchInput extends Core.DispatchNextWorkInput {
-  executionEnvelope: ExecutionEnvelope;
+  executionEnvelope?: ExecutionEnvelope;
 }
 
 export function dispatchNextWork(
@@ -34,7 +35,14 @@ export function dispatchNextWork(
 ): Core.DispatchResult | null {
   ensureRunSchema(store);
   ensureRunExecutionSchema(store);
-  const envelope = requiredExecutionEnvelope(rawInput.executionEnvelope);
+  const envelope = requiredExecutionEnvelope(
+    rawInput.executionEnvelope
+      ?? compatibilityExecutionEnvelope(
+        rawInput.itemId
+          ? `Dispatch work item ${rawInput.itemId} with runner profile ${rawInput.runnerProfile}`
+          : `Dispatch the next eligible item with runner profile ${rawInput.runnerProfile}`,
+      ),
+  );
   const { executionEnvelope: _executionEnvelope, ...coreInput } = rawInput;
   const transaction = store.db.transaction(() => {
     assertDispatchEnvelopeIdempotency(
