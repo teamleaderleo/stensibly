@@ -58,6 +58,10 @@ interface RunCommandReplayRow {
   command: string;
 }
 
+interface RunCreationReplayRow {
+  id: string;
+}
+
 const actualRecordingCommands = new Set<Core.WorkRunCommand>([
   "succeed",
   "fail",
@@ -75,14 +79,23 @@ export function createWorkRun(
   now = new Date(),
 ): WorkRun {
   ensureRunSchema(store);
-  const envelope = requiredExecutionEnvelope(
-    rawInput.executionEnvelope
-      ?? compatibilityExecutionEnvelope(
-        `Execute work item ${rawInput.itemId} with runner profile ${rawInput.runnerProfile}`,
-      ),
-  );
   const { executionEnvelope: _executionEnvelope, ...coreInput } = rawInput;
   const transaction = store.db.transaction(() => {
+    if (isLegacyRunCreationReplay(store, rawInput.idempotencyKey)) {
+      if (rawInput.executionEnvelope !== undefined) {
+        throw new ConflictError(
+          "Historical run creation cannot be retrofitted with an execution envelope",
+        );
+      }
+      return hydrateWorkRun(store, Core.createWorkRun(store, coreInput, now));
+    }
+
+    const envelope = requiredExecutionEnvelope(
+      rawInput.executionEnvelope
+        ?? compatibilityExecutionEnvelope(
+          `Execute work item ${rawInput.itemId} with runner profile ${rawInput.runnerProfile}`,
+        ),
+    );
     assertEnvelopeIdempotency(
       store,
       rawInput.idempotencyKey,
@@ -206,6 +219,22 @@ export function reconcileStaleRuns(
     return { abandoned };
   });
   return transaction();
+}
+
+function isLegacyRunCreationReplay(
+  store: StensiblyStore,
+  idempotencyKey: string | undefined,
+): boolean {
+  if (!idempotencyKey) return false;
+  const row = store.db
+    .query<RunCreationReplayRow, [string]>(`
+      SELECT id
+      FROM work_runs
+      WHERE idempotency_key = ?1
+      LIMIT 1
+    `)
+    .get(idempotencyKey);
+  return row ? !hasExecutionEnvelope(store, row.id) : false;
 }
 
 function validateExecutionActualReplay(
