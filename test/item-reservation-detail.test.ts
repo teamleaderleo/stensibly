@@ -21,6 +21,28 @@ const item = {
   updatedAt: "2026-07-25T12:00:00.000Z",
 };
 
+const control = {
+  schemaVersion: 1 as const,
+  authority: {
+    state: "unclaimed" as const,
+    holderActorId: null,
+    generation: 0,
+    expiresAt: null,
+    source: "none" as const,
+    allowedOperations: ["claim", "complete", "handoff", "block"] as const,
+    approvalRequiredOperations: [] as const,
+    unavailableReasons: {},
+  },
+  responsibility: {
+    actorId: null,
+    summary: null,
+    nextAction: null,
+    heartbeatExpectedAt: null,
+    evidenceRequired: [] as string[],
+    escalationState: "none" as const,
+  },
+};
+
 let store: StensiblyStore | null = null;
 
 afterEach(() => {
@@ -67,8 +89,8 @@ describe("hosted item detail composition", () => {
         query: async (reference: FunctionReference<"query">, args) => {
           const name = getFunctionName(reference);
           calls.push({ name, args });
-          if (name === "items:get") {
-            return { item, events: [], artifacts: [], runs, dependencies: [] };
+          if (name === "itemControl:get") {
+            return { item, control, events: [], artifacts: [], runs, dependencies: [] };
           }
           if (name === "itemReservations:list") return reservations;
           throw new Error(`Unexpected query ${name}`);
@@ -87,6 +109,7 @@ describe("hosted item detail composition", () => {
 
     expect(detail).toEqual({
       item,
+      control,
       events: [],
       artifacts: [],
       dependencies: [],
@@ -94,10 +117,10 @@ describe("hosted item detail composition", () => {
       runs,
     });
     expect(calls.map((call) => call.name)).toEqual([
-      "items:get",
+      "itemControl:get",
       "itemReservations:list",
     ]);
-    const itemCall = calls.find((call) => call.name === "items:get")!;
+    const itemCall = calls.find((call) => call.name === "itemControl:get")!;
     const reservationCall = calls.find((call) => call.name === "itemReservations:list")!;
     expect(itemCall.args).toMatchObject({
       serviceSecret: "service-secret",
@@ -109,8 +132,9 @@ describe("hosted item detail composition", () => {
       workspace: "default",
       itemId: item.id,
     });
-    expect(reservationCall.args.now as number).toBeGreaterThanOrEqual(before);
-    expect(reservationCall.args.now as number).toBeLessThanOrEqual(after);
+    expect(itemCall.args.now as number).toBeGreaterThanOrEqual(before);
+    expect(itemCall.args.now as number).toBeLessThanOrEqual(after);
+    expect(reservationCall.args.now).toBe(itemCall.args.now);
   });
 
   test("keeps local REST item detail explicit and compatible", async () => {
@@ -127,6 +151,10 @@ describe("hosted item detail composition", () => {
     const response = await app.request(`/api/v1/items/${encodeURIComponent(created.id)}`);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
+      control: {
+        schemaVersion: 1,
+        authority: { state: "unclaimed", generation: 0, source: "none" },
+      },
       dependencies: [],
       reservations: [],
       runs: [],
