@@ -69,7 +69,7 @@ export const get = query({
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
         .order("desc")
         .take(MAX_DETAIL_ARTIFACTS),
-      readPublicItemRuns(ctx, item),
+      readPublicItemRuns(ctx, item, undefined, true),
       readVisibleDependencies(ctx, item),
       Promise.all(queuedLiveStatuses.map(async (status) =>
         await ctx.db
