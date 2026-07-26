@@ -7,7 +7,13 @@ import {
   type ExecutionEnvelope,
 } from "../../src/execution-envelope";
 import { compatibilityExecutionEnvelope } from "../../src/execution-envelope-default";
+import { MAX_EXECUTION_RECORDS_PER_RUN } from "../../src/execution-record-limits";
 import { appendEvent } from "./domain";
+
+const EXECUTION_ENVELOPE_EVENT_PREFIX = "run.execution_envelope:";
+const EXECUTION_ACTUAL_EVENT_PREFIX = "run.execution_actual:";
+const EXECUTION_ENVELOPE_EVENT_UPPER_BOUND = "run.execution_envelope;";
+const EXECUTION_ACTUAL_EVENT_UPPER_BOUND = "run.execution_actual;";
 
 export const executionEnvelopeValidator = v.object({
   schemaVersion: v.literal(EXECUTION_ENVELOPE_SCHEMA_VERSION),
@@ -97,6 +103,27 @@ export function normalizeExecutionActual(value: unknown): ExecutionActual {
   return parseExecutionActual(value);
 }
 
+export function isPrivateExecutionEventType(value: unknown): boolean {
+  return typeof value === "string" && (
+    value.startsWith(EXECUTION_ENVELOPE_EVENT_PREFIX)
+    || value.startsWith(EXECUTION_ACTUAL_EVENT_PREFIX)
+  );
+}
+
+export function publicExecutionEventFilter(q: any): any {
+  const type = q.field("type");
+  return q.and(
+    q.or(
+      q.lt(type, EXECUTION_ENVELOPE_EVENT_PREFIX),
+      q.gte(type, EXECUTION_ENVELOPE_EVENT_UPPER_BOUND),
+    ),
+    q.or(
+      q.lt(type, EXECUTION_ACTUAL_EVENT_PREFIX),
+      q.gte(type, EXECUTION_ACTUAL_EVENT_UPPER_BOUND),
+    ),
+  );
+}
+
 export async function appendExecutionEnvelopeEvent(
   ctx: any,
   input: {
@@ -113,7 +140,10 @@ export async function appendExecutionEnvelopeEvent(
   },
 ): Promise<void> {
   const runId = boundedRunId(input.runId);
+  const runGeneration = positiveInteger(input.runGeneration, "Run generation");
+  const leaseGeneration = positiveInteger(input.leaseGeneration, "Lease generation");
   const envelope = parseExecutionEnvelope(input.envelope);
+  const createdAt = validTimestamp(input.createdAt, "Execution envelope creation time");
   await appendEvent(ctx, {
     workspaceId: input.workspaceId,
     projectId: input.projectId,
@@ -123,12 +153,30 @@ export async function appendExecutionEnvelopeEvent(
     type: executionEnvelopeEventType(runId),
     payload: {
       runId,
-      generation: positiveInteger(input.runGeneration, "Run generation"),
-      leaseGeneration: positiveInteger(input.leaseGeneration, "Lease generation"),
+      generation: runGeneration,
+      leaseGeneration,
       envelopeSchemaVersion: EXECUTION_ENVELOPE_SCHEMA_VERSION,
       envelope,
     },
-    createdAt: validTimestamp(input.createdAt, "Execution envelope creation time"),
+    createdAt,
+  });
+  await appendEvent(ctx, {
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+    itemId: input.itemId,
+    actorId: input.actorId,
+    actorExternalId: input.actorExternalId,
+    type: "run.envelope_reference",
+    payload: {
+      runId,
+      generation: runGeneration,
+      leaseGeneration,
+      envelopeSchemaVersion: EXECUTION_ENVELOPE_SCHEMA_VERSION,
+      lifecycleEventType: "run.created",
+      lifecycleEventCreatedAt: createdAt,
+    },
+    idempotencyKey: `run-envelope-ref:${runId}:${runGeneration}:${leaseGeneration}`,
+    createdAt,
   });
 }
 
@@ -206,12 +254,12 @@ export async function readHostedRunExecution(
         q.eq("itemId", itemId).eq("type", executionActualEventType(runId))
       )
       .order("asc")
-      .take(101),
+      .take(MAX_EXECUTION_RECORDS_PER_RUN + 1),
   ]);
   if (envelopeEvents.length > 1) {
     throw new Error("Run has conflicting execution-envelope history");
   }
-  if (actualEvents.length > 100) {
+  if (actualEvents.length > MAX_EXECUTION_RECORDS_PER_RUN) {
     throw new Error("Run execution-result history exceeds the bounded projection");
   }
 
@@ -278,24 +326,24 @@ function validateExecutionRecordOrder(
 ): void {
   let previousGeneration = envelope?.runGeneration ?? 0;
   let previousLeaseGeneration = envelope?.leaseGeneration ?? 0;
-  for (const record of records) {
-    if (record.runGeneration <= previousGeneration) {
+  for (const entry of records) {
+    if (entry.runGeneration <= previousGeneration) {
       throw new Error("Stored execution-result generations are not strictly increasing");
     }
-    if (record.leaseGeneration < previousLeaseGeneration) {
+    if (entry.leaseGeneration < previousLeaseGeneration) {
       throw new Error("Stored execution-result lease generations moved backwards");
     }
-    previousGeneration = record.runGeneration;
-    previousLeaseGeneration = record.leaseGeneration;
+    previousGeneration = entry.runGeneration;
+    previousLeaseGeneration = entry.leaseGeneration;
   }
 }
 
 function executionEnvelopeEventType(runId: string): string {
-  return `run.execution_envelope:${boundedRunId(runId)}`;
+  return `${EXECUTION_ENVELOPE_EVENT_PREFIX}${boundedRunId(runId)}`;
 }
 
 function executionActualEventType(runId: string): string {
-  return `run.execution_actual:${boundedRunId(runId)}`;
+  return `${EXECUTION_ACTUAL_EVENT_PREFIX}${boundedRunId(runId)}`;
 }
 
 function boundedRunId(value: string): string {
