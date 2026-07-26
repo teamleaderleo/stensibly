@@ -118,8 +118,6 @@ export class SqliteWorkLedger implements
   }
 
   async getItem(id: string) {
-    reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
     const now = new Date();
     const item = this.store.getItem(id);
     const events = readBoundedItemEvents(this.store, id);
