@@ -76,7 +76,9 @@ export function actions(state: State, bounds: Bounds): Action[] {
     out.push({ kind: "complete-consumer", runner, expectedConsumerGeneration: state.consumerGeneration, expectedRunGeneration: state.consumerRunGeneration });
     out.push({ kind: "consume", runner, expectedPromiseGeneration: state.promiseGeneration, expectedConsumerGeneration: state.consumerGeneration, expectedRunGeneration: state.consumerRunGeneration });
   }
-  out.push({ kind: "escalate", expectedPromiseGeneration: state.promiseGeneration, expectedConsumerGeneration: state.consumerGeneration });
+  for (const wakeup of state.wakeups.filter((entry) => entry.status === "ready")) {
+    out.push({ kind: "escalate", expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration });
+  }
   return out;
 }
 
