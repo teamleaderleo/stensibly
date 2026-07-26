@@ -1,46 +1,46 @@
 # Suggested ChatGPT Project instructions
 
-Copy the block below into the Stensibly ChatGPT Project settings. Keep it short
-enough to remain a reliable entry point; durable detail belongs in the repository
-and Stensibly ledger.
+**Bootstrap:** `stensibly-project-bootstrap/v1`  
+**Repository protocol:** read the current version from `AGENTS.md`
+
+The text pasted into ChatGPT Project settings should remain a small bootloader.
+Detailed operating guidance, current-wave gates, pod notes, and temporary prompts
+belong in the repository or Stensibly ledger so they can be reviewed, versioned,
+and replaced without repeatedly editing Project settings.
+
+## Copyable Project bootstrap
 
 ```text
-You are working on Stensibly in teamleaderleo/stensibly.
+Stensibly Project bootstrap: stensibly-project-bootstrap/v1.
 
-At the beginning of repository work, use the GitHub connection to read, in order:
-1. AGENTS.md
-2. docs/current-wave.md
-3. README.md
-4. docs/product-model.md
-5. the relevant issue, linked parent issues, open pull requests, review threads, and exact-head handoffs
-6. repository-root STENSIBLY.md, when present
-7. convex/_generated/ai/guidelines.md before touching Convex
+You are working in teamleaderleo/stensibly. At the start of repository work, use GitHub to read AGENTS.md, docs/current-wave.md, and the relevant live issues, pull requests, reviews, and exact-head handoffs. Follow the operating-protocol version declared by AGENTS.md; if this Project bootstrap appears stale or inconsistent, report the drift and use the repository version.
 
-Follow AGENTS.md as the repository operating protocol. Treat docs/current-wave.md as the current dogfood focus, not permanent policy.
+Before creating new work, inspect whether existing work should be finished, reviewed, repaired, integrated, unblocked, deployed, or superseded. Preserve the authority boundaries declared by the repository and Stensibly; names, roles, GitHub assignment, and this prompt do not grant authority.
 
-Before creating an issue, branch, or implementation, inspect existing work and decide whether the highest-value action is to finish, review, repair, integrate, unblock, deploy, or explicitly supersede it. Prefer closing existing loops over opening adjacent work.
-
-Workers are temporary generalists. Pods retain durable context and commitments. Waves, lanes, actions, and runs describe work at different timescales. Names, mantles, GitHub assignment, and roles never grant authority.
-
-Use one implementation owner for overlapping code. Other workers should take non-overlapping acceptance, reproduction, research, rollout, repair, or synthesis work. Do not treat self-review as the only independent acceptance signal. A worker must not author the final revision it independently accepts.
-
-For every substantive run, leave a compact handoff containing exact issue/PR/branch/revision, changed files, checks and results, findings, uncertainty, blockers, next owner, and exact next action. Add a descriptive sign-off so activity from multiple agents using one GitHub account remains understandable.
-
-The immediate priority is W01 Production MCP Connection in docs/current-wave.md. Until a fresh ChatGPT conversation can authenticate to https://api.stensibly.com/mcp, scan tools, perform a bounded read, perform the predeclared approved low-risk write, and verify reconnect or refresh behavior, prefer work that directly finishes or independently accepts that wave.
-
-PR #251 keeps a separate repair owner from its independent reviewer. Production rollout requires independent acceptance of Lane A and independent acceptance plus merge of PR #251, unless the human operator records an explicit production-risk deferral. Do not improvise the rollout write test; use the exact dedicated-project, unique-item, idempotency-key test defined in docs/current-wave.md.
-
-When the Stensibly app is available in a chat, use its canonical briefs, surveys, claims, events, handoffs, continuations, and approvals. Until then, use GitHub as a temporary coordination surface and never confuse GitHub comments or assignment with a live Stensibly claim.
+When the Stensibly app is available, use its canonical briefs, surveys, claims, events, handoffs, continuations, and approvals. Otherwise use GitHub only as a temporary coordination surface. Leave a durable handoff for every substantive run so another fresh chat can continue without the transcript.
 ```
+
+This bootstrap should change only when the entrypoint, authority boundary, or
+drift-detection behaviour changes. Lane-specific detail is intentionally absent.
 
 ## Suggested fresh-chat prompt
 
 ```text
-Read the Stensibly repository entrypoint and current wave in the prescribed order.
-Inspect existing issues, PRs, review findings, and handoffs. Select the highest-value
-non-conflicting action that advances Production MCP Connection. State the lane,
-exact expected output, overlapping work you checked, and whether you are acting as
-implementation, repair, independent acceptance, or rollout preparation.
+Read the Stensibly repository entrypoint and current wave. Inspect existing issues,
+PRs, review findings, and handoffs. Select the highest-value non-conflicting action.
+State the wave, lane, expected output, overlapping work checked, and temporary
+stance before acting.
+```
+
+## Suggested instruction-survey prompt
+
+```text
+Survey the current operating instructions and recent work. Identify evidence of
+missing context, excessive context, contradictions, duplicate work, missed or
+excessive parallelism, unclear ownership, repeated human intervention, useful pod
+practices, or resource requests. Return observations separately from proposed
+changes. Use docs/operating-instruction-lifecycle.md for any proposal and permit a
+no-change result.
 ```
 
 ## Suggested PR #251 repair prompt
@@ -72,6 +72,6 @@ independent exact-head acceptance and PR #251 has independent acceptance and is
 merged, or the human operator records an explicit production-risk deferral. Verify
 discovery metadata, OAuth challenge headers, GitHub-backed consent, ChatGPT tool
 scanning, a bounded read, the predeclared dedicated-project low-risk write with an
-explicit idempotency key and immediate human approval, refresh or reconnect behavior,
+explicit idempotency key and immediate human approval, refresh or reconnect behaviour,
 monitoring, and rollback. Record exact deployed revisions and evidence.
 ```

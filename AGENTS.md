@@ -14,6 +14,10 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
+**Operating protocol:** `stensibly-agent-ops/0.1.0`  
+**Status:** dogfood  
+**Change lifecycle:** `docs/operating-instruction-lifecycle.md`
+
 Stensibly is the durable coordination layer for a one-person, many-agent studio.
 Individual chats, processes, names, and model sessions are temporary. Work,
 authority, evidence, decisions, commitments, and reusable knowledge must survive
@@ -38,6 +42,10 @@ Before changing code or creating new work, read in this order:
 Do not begin by creating another issue or implementation branch. First determine
 whether existing work should be finished, reviewed, repaired, integrated,
 unblocked, or explicitly superseded.
+
+If a ChatGPT Project bootstrap names an older protocol version, follow the
+repository version and report the bootstrap drift. The pasted Project setting is
+an entry point, not the source of truth.
 
 ## Operating model
 
@@ -130,8 +138,14 @@ conflicting guidance, and a possible no-op result. Separate observations from
 recommendations.
 
 After meaningful work, record reusable findings and improvement proposals with
-provenance. Pod charters, prompts, practices, and mantles should evolve through
-versioned, reversible, evidence-backed changes rather than silent rewriting.
+provenance. Pod charters, prompts, practices, mantles, and this protocol should
+evolve through versioned, reversible, evidence-backed changes rather than silent
+rewriting.
+
+Use `docs/operating-instruction-lifecycle.md` when proposing more or less context,
+revised parallelism, pod tips, resource requests, audit repairs, or another change
+to how workers are instructed. Local pod notes may remain local; promotion into
+this shared protocol requires a reviewed proposal.
 
 ## Pull-request review workflow
 
