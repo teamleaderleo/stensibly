@@ -21,6 +21,8 @@ export type ItemAuthorityState =
 export type ItemAuthoritySource = "claim" | "dispatcher" | "none";
 export type ItemEscalationState = "none" | "decision_required" | "blocked";
 
+type ClaimProvenance = "claim" | "dispatcher" | "unknown";
+
 export interface ItemControlItemInput {
   kind: unknown;
   status: unknown;
@@ -130,12 +132,24 @@ export function projectItemControl(input: ProjectItemControlInput): ItemControlV
       holderActorId = holder.value;
       expiresAt = expiry.value;
       const runAuthority = activeRunAuthority(runs, holderActorId, now);
-      const claimSource = latestClaimSource(events, holderActorId, generationValue);
-      source = runAuthority.kind === "matching" || claimSource === "dispatcher"
-        ? "dispatcher"
-        : "claim";
+      const claimProvenance = latestClaimProvenance(
+        events,
+        holderActorId,
+        generationValue,
+      );
+      const dispatcherEvidence = claimProvenance === "dispatcher"
+        && runAuthority.kind === "matching";
+      const unverifiableDispatcher = claimProvenance === "dispatcher"
+        && runAuthority.kind !== "matching";
+      const unprovenLiveRun = claimProvenance === "unknown"
+        && runAuthority.kind !== "none";
+      source = dispatcherEvidence ? "dispatcher" : "claim";
 
-      if (runAuthority.kind === "conflict") {
+      if (
+        runAuthority.kind === "conflict"
+        || unverifiableDispatcher
+        || unprovenLiveRun
+      ) {
         state = "superseded";
       } else if (expiry.millis <= now) {
         state = "expired";
@@ -198,7 +212,7 @@ function activeRunAuthority(
   now: number,
 ):
   | { kind: "none"; heartbeatExpectedAt: null }
-  | { kind: "matching"; heartbeatExpectedAt: string | null }
+  | { kind: "matching"; heartbeatExpectedAt: string }
   | { kind: "conflict"; heartbeatExpectedAt: null } {
   const live: Array<{ owner: string | null; heartbeatExpectedAt: string | null }> = [];
   for (const run of runs) {
@@ -210,11 +224,11 @@ function activeRunAuthority(
       continue;
     }
     const expiry = nullableTimestamp(run.leaseExpiresAt);
-    if (!expiry.valid) {
+    if (!expiry.valid || expiry.value === null) {
       live.push({ owner: null, heartbeatExpectedAt: null });
       continue;
     }
-    if (expiry.value !== null && expiry.millis <= now) continue;
+    if (expiry.millis <= now) continue;
     live.push({
       owner: owner.value,
       heartbeatExpectedAt: expiry.value,
@@ -226,26 +240,28 @@ function activeRunAuthority(
   }
   if (live.length > 1) return { kind: "conflict", heartbeatExpectedAt: null };
   if (live.length === 1) {
-    return { kind: "matching", heartbeatExpectedAt: live[0]!.heartbeatExpectedAt };
+    return { kind: "matching", heartbeatExpectedAt: live[0]!.heartbeatExpectedAt! };
   }
   return { kind: "none", heartbeatExpectedAt: null };
 }
 
-function latestClaimSource(
+function latestClaimProvenance(
   events: ItemControlEventInput[],
   holderActorId: string,
   currentGeneration: number,
-): ItemAuthoritySource {
+): ClaimProvenance {
   for (const event of events) {
     if (text(event.type) !== "claim.created") continue;
     const actor = nullableActorId(event.actorId);
-    if (!actor.valid || actor.value !== holderActorId) return "claim";
+    if (!actor.valid || actor.value !== holderActorId) return "unknown";
     const payload = record(event.payload);
     const eventGeneration = generation(payload?.generation);
-    if (eventGeneration !== null && eventGeneration !== currentGeneration) return "claim";
-    return text(payload?.source) === "supervisor_dispatch" ? "dispatcher" : "claim";
+    if (eventGeneration !== currentGeneration) return "unknown";
+    return text(payload?.source) === "supervisor_dispatch"
+      ? "dispatcher"
+      : "claim";
   }
-  return "claim";
+  return "unknown";
 }
 
 function responsibilityActor(input: {
