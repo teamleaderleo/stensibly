@@ -51,6 +51,7 @@ describe("generic runner MCP endpoint", () => {
         generation: number;
         leaseGeneration: number;
         leaseOwnerId: string;
+        executionEnvelope: { schemaVersion: number };
       };
       item: { id: string; project: string; claimedBy: string };
       context: { item: { id: string }; characterCount: number };
@@ -59,6 +60,7 @@ describe("generic runner MCP endpoint", () => {
       id: alphaRunId,
       status: "starting",
       leaseOwnerId: runner.id,
+      executionEnvelope: { schemaVersion: 1 },
     });
     expect(claimed.item).toMatchObject({
       id: alphaItemId,
@@ -105,7 +107,22 @@ describe("generic runner MCP endpoint", () => {
       usage: { toolCalls: 4 },
     });
 
-    const succeeded = await readToolJson<{ status: string; outcome: string }>(
+    const executionActual = {
+      durationMinutes: 18.5,
+      messagesConsumed: 2,
+      toolCalls: 7,
+      filesChanged: 3,
+      reviewMinutes: 4,
+      estimateErrorReasons: ["fixture setup"],
+    };
+    const succeeded = await readToolJson<{
+      status: string;
+      outcome: string;
+      executionRecords: Array<{
+        transition: string;
+        actual: typeof executionActual;
+      }>;
+    }>(
       await runnerRequest(token.token, toolCall(4, "transition_runner_run", {
         id: claimed.run.id,
         actor: runner,
@@ -113,18 +130,33 @@ describe("generic runner MCP endpoint", () => {
         expectedGeneration: running.generation,
         expectedLeaseGeneration: running.leaseGeneration,
         outcome: "Runner protocol completed successfully.",
+        executionActual,
         idempotencyKey: "succeed-alpha",
       })),
     );
     expect(succeeded).toMatchObject({
       status: "succeeded",
       outcome: "Runner protocol completed successfully.",
+      executionRecords: [
+        {
+          transition: "succeed",
+          actual: executionActual,
+        },
+      ],
     });
 
-    const readBack = await readToolJson<{ id: string; status: string }>(
+    const readBack = await readToolJson<{
+      id: string;
+      status: string;
+      executionRecords: Array<{ actual: typeof executionActual }>;
+    }>(
       await runnerRequest(token.token, toolCall(5, "get_runner_run", { id: alphaRunId })),
     );
-    expect(readBack).toMatchObject({ id: alphaRunId, status: "succeeded" });
+    expect(readBack).toMatchObject({
+      id: alphaRunId,
+      status: "succeeded",
+      executionRecords: [{ actual: executionActual }],
+    });
   });
 
   test("enforces runner scopes and project allowlists before dispatch", async () => {
