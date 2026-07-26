@@ -138,6 +138,7 @@ describe("Convex continuation supervisor", () => {
       workspace,
       id: blockedTarget.id,
       actor: supervisor,
+      expectedClaimGeneration: blockedTarget.claimGeneration,
       reason: "Target is unavailable.",
     });
     const blocked = await propose(t, source.id, {
