@@ -67,6 +67,13 @@ describe("SQLite store migrations", () => {
           'legacy-agent', '2099-01-01T00:00:00.000Z', 4,
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
         );
+        INSERT INTO items (
+          id, project_id, kind, title, status, priority,
+          version, created_at, updated_at
+        ) VALUES (
+          'legacy-ready', 'scrapbook', 'task', 'Unclaimed legacy work', 'ready', 50,
+          1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        );
       `);
       legacy.close();
 
@@ -77,19 +84,24 @@ describe("SQLite store migrations", () => {
           status: "active",
           claimedBy: legacyAgent.id,
           claimExpiresAt: "2099-01-01T00:00:00.000Z",
-          claimGeneration: 0,
+          claimGeneration: 1,
           version: 4,
         });
+        expect(store.getItem("legacy-ready").claimGeneration).toBe(0);
 
         const columns = store.db
           .query<{ name: string }, []>("PRAGMA table_info(items)")
           .all();
         expect(columns.map((column) => column.name)).toContain("claim_generation");
 
-        const released = store.releaseItem("legacy-item", legacyAgent);
-        expect(released.claimGeneration).toBe(1);
+        const released = store.releaseItem(
+          "legacy-item",
+          legacyAgent,
+          migrated.claimGeneration,
+        );
+        expect(released.claimGeneration).toBe(2);
         const reclaimed = store.claimItem("legacy-item", legacyAgent, 900);
-        expect(reclaimed.claimGeneration).toBe(2);
+        expect(reclaimed.claimGeneration).toBe(3);
       } finally {
         store.close();
       }

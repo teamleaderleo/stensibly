@@ -31,8 +31,10 @@ describe("work lifecycle", () => {
     expect(claimed.claimGeneration).toBe(1);
 
     expect(() => store.claimItem(item.id, leo, 900)).toThrow(ConflictError);
+    expect(() => store.releaseItem(item.id, browserAgent, claimed.claimGeneration + 1))
+      .toThrow(ConflictError);
 
-    const released = store.releaseItem(item.id, browserAgent);
+    const released = store.releaseItem(item.id, browserAgent, claimed.claimGeneration);
     expect(released.status).toBe("ready");
     expect(released.claimedBy).toBeNull();
     expect(released.claimGeneration).toBe(2);
@@ -40,6 +42,8 @@ describe("work lifecycle", () => {
     const reclaimed = store.claimItem(item.id, leo, 900);
     expect(reclaimed.claimedBy).toBe(leo.id);
     expect(reclaimed.claimGeneration).toBe(3);
+
+    expect(() => store.releaseItem(item.id, leo, claimed.claimGeneration)).toThrow(ConflictError);
 
     const events = store.listEvents(item.id);
     expect(events.find((event) => event.type === "claim.created")?.payload).toMatchObject({
@@ -49,6 +53,32 @@ describe("work lifecycle", () => {
       generation: 1,
       nextGeneration: 2,
     });
+  });
+
+  test("release replays before evaluating superseded authority", () => {
+    const item = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Replay a release",
+      priority: 50,
+      actor: leo,
+    });
+    const claimed = store.claimItem(item.id, browserAgent, 900);
+    const released = store.releaseItem(
+      item.id,
+      browserAgent,
+      claimed.claimGeneration,
+      "release-1",
+    );
+
+    expect(store.releaseItem(
+      item.id,
+      browserAgent,
+      claimed.claimGeneration,
+      "release-1",
+    )).toEqual(released);
+    expect(store.listEvents(item.id).filter((event) => event.type === "claim.released"))
+      .toHaveLength(1);
   });
 
   test("completion clears the lease and records history", () => {

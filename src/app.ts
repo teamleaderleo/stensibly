@@ -16,11 +16,13 @@ import {
 import {
   actorActionSchema,
   blockItemSchema,
+  claimActionSchema,
   claimItemSchema,
   createItemSchema,
   handoffItemSchema,
   itemStatuses,
   recordEventSchema,
+  renewClaimSchema,
   unblockItemSchema,
 } from "./schemas.js";
 import { expireClaims, renewClaim } from "./leases.js";
@@ -169,13 +171,14 @@ export function createApp(
     const denied = requireHttpAccess(context, "write", existing.project);
     if (denied) return denied;
 
-    const parsed = claimItemSchema.safeParse(await readJson(context.req.raw));
+    const parsed = renewClaimSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     const item = renewClaim(
       store,
       id,
       parsed.data.actor,
       parsed.data.leaseSeconds,
+      parsed.data.expectedClaimGeneration,
       context.req.header("Idempotency-Key"),
     );
     return context.json({ item });
@@ -244,12 +247,13 @@ export function createApp(
     const denied = requireHttpAccess(context, "write", existing.project);
     if (denied) return denied;
 
-    const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
+    const parsed = claimActionSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
     expireClaims(store);
     const item = store.releaseItem(
       id,
       parsed.data.actor,
+      parsed.data.expectedClaimGeneration,
       context.req.header("Idempotency-Key"),
     );
     return context.json({ item });

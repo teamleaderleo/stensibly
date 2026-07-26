@@ -147,6 +147,7 @@ export class StensiblyStore {
     `);
 
     this.ensureItemClaimGenerationColumn();
+    this.normalizeLegacyActiveClaimGenerations();
   }
 
   private ensureItemClaimGenerationColumn(): void {
@@ -158,6 +159,16 @@ export class StensiblyStore {
     this.db.exec(
       "ALTER TABLE items ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0",
     );
+  }
+
+  private normalizeLegacyActiveClaimGenerations(): void {
+    this.db.exec(`
+      UPDATE items
+      SET claim_generation = 1
+      WHERE status = 'active'
+        AND claimed_by IS NOT NULL
+        AND claim_generation = 0
+    `);
   }
 
   listItems(filters: { project?: string; status?: ItemStatus } = {}): Item[] {
@@ -304,13 +315,19 @@ export class StensiblyStore {
     return transaction();
   }
 
-  releaseItem(id: string, actor: ActorInput, idempotencyKey?: string): Item {
+  releaseItem(
+    id: string,
+    actor: ActorInput,
+    expectedClaimGeneration: number,
+    idempotencyKey?: string,
+  ): Item {
     const transaction = this.db.transaction(() => {
       if (idempotencyKey) {
         const existing = this.findIdempotentEvent(idempotencyKey);
         if (existing) return this.getItem(existing.item_id);
       }
 
+      const expectedGeneration = claimGeneration(expectedClaimGeneration);
       const current = this.getItem(id);
       const now = new Date().toISOString();
       this.upsertActor(actor, now);
@@ -324,12 +341,16 @@ export class StensiblyStore {
               claim_generation = claim_generation + 1,
               version = version + 1,
               updated_at = ?1
-          WHERE id = ?2 AND claimed_by = ?3
+          WHERE id = ?2
+            AND claimed_by = ?3
+            AND claim_generation = ?4
         `)
-        .run(now, id, actor.id);
+        .run(now, id, actor.id, expectedGeneration);
 
       if (result.changes !== 1) {
-        throw new ConflictError("Only the current claimant can release this item");
+        throw new ConflictError(
+          "Only the current claimant with the current claim generation can release this item",
+        );
       }
 
       const released = this.getItem(id);
@@ -498,6 +519,13 @@ export class StensiblyStore {
       createdAt: input.now,
     };
   }
+}
+
+function claimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError("Expected claim generation must be a positive integer");
+  }
+  return value;
 }
 
 function mapItem(row: ItemRow): Item {
