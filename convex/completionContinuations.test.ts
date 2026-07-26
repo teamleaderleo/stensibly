@@ -13,7 +13,7 @@ beforeEach(() => {
 });
 
 describe("Convex atomic completion continuations", () => {
-  test("completes and proposes follow-ups exactly once", async () => {
+  test("completes at the current generation and proposes follow-ups exactly once", async () => {
     const t = convexTest(schema, modules);
     const item = await createItem(t, "Hosted atomic completion");
     const input = {
@@ -21,6 +21,7 @@ describe("Convex atomic completion continuations", () => {
       workspace,
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "The hosted implementation is complete.",
       continuations: [
         {
@@ -51,6 +52,7 @@ describe("Convex atomic completion continuations", () => {
       summary: input.summary,
       nextAction: null,
       claimedBy: null,
+      claimGeneration: item.claimGeneration + 1,
       version: item.version + 3,
     });
     expect(result.continuations).toHaveLength(2);
@@ -76,6 +78,10 @@ describe("Convex atomic completion continuations", () => {
       ...input,
       summary: "A changed replay.",
     })).rejects.toThrow("different completion request");
+    await expect(t.mutation(convexApi.completionContinuations.complete, {
+      ...input,
+      expectedClaimGeneration: result.item.claimGeneration,
+    })).rejects.toThrow("different completion request");
 
     const detail = await t.query(convexApi.items.get, {
       serviceSecret: secret,
@@ -88,6 +94,11 @@ describe("Convex atomic completion continuations", () => {
       "continuation.proposed",
       "continuation.proposed",
     ]);
+    expect(detail.events.find((event: any) => event.type === "item.completed")?.payload)
+      .toMatchObject({
+        generation: item.claimGeneration,
+        nextGeneration: result.item.claimGeneration,
+      });
   });
 
   test("rolls back completion and proposals when validation fails", async () => {
@@ -99,6 +110,7 @@ describe("Convex atomic completion continuations", () => {
       workspace,
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "This must remain invisible.",
       continuations: [
         {
@@ -126,6 +138,7 @@ describe("Convex atomic completion continuations", () => {
       status: "ready",
       summary: null,
       nextAction: "Finish the current unit.",
+      claimGeneration: item.claimGeneration,
       version: item.version,
     });
     expect(detail.events.map((event: any) => event.type)).toEqual(["item.created"]);
@@ -154,6 +167,7 @@ describe("Convex atomic completion continuations", () => {
       workspace,
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       continuations: [],
       idempotencyKey: "shared-operation-key",
     })).rejects.toThrow("another operation");
