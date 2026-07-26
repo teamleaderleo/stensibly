@@ -34,15 +34,16 @@ import {
 import { hasRecordedIdempotencyKey, touchItemActivity } from "./item-activity.js";
 import { expireClaims, renewClaim } from "./leases.js";
 import type {
-  ActorActionInput,
   AttachWorkArtifactInput,
   BlockWorkInput,
+  ClaimActionInput,
   ClaimWorkInput,
   CompleteWorkInput,
   CreateWorkInput,
   HandoffWorkInput,
   ListWorkInput,
   RecordWorkEventInput,
+  RenewClaimInput,
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
@@ -159,12 +160,13 @@ export class SqliteWorkLedger implements
     );
   }
 
-  async renewClaim(input: ClaimWorkInput) {
+  async renewClaim(input: RenewClaimInput) {
     return renewClaim(
       this.store,
       input.id,
       input.actor,
       input.leaseSeconds,
+      input.expectedClaimGeneration,
       input.idempotencyKey,
     );
   }
@@ -181,10 +183,15 @@ export class SqliteWorkLedger implements
     return unblockWork(this.store, input);
   }
 
-  async releaseWork(input: ActorActionInput) {
+  async releaseWork(input: ClaimActionInput) {
     reconcileStaleRunItems(this.store);
     expireClaims(this.store);
-    return this.store.releaseItem(input.id, input.actor, input.idempotencyKey);
+    return this.store.releaseItem(
+      input.id,
+      input.actor,
+      input.expectedClaimGeneration,
+      input.idempotencyKey,
+    );
   }
 
   async recordEvent(input: RecordWorkEventInput) {
