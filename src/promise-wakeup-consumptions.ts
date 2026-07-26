@@ -4,6 +4,11 @@ import { ConflictError, StensiblyStore } from "./store.js";
 
 export const MAX_PROMISE_WAKEUPS_PER_DISPATCH = 32;
 
+export type PromiseWakeupDispatchSource =
+  | "local"
+  | "legacy_unavailable"
+  | "hosted_unavailable";
+
 export interface PromiseWakeupConsumption {
   id: string;
   wakeupId: string;
@@ -14,6 +19,12 @@ export interface PromiseWakeupConsumption {
   dispatchCommandId: string;
   runId: string;
   consumedAt: string;
+}
+
+export interface PromiseWakeupDispatchReplay {
+  dispatchCommandId: string;
+  runId: string;
+  consumedPromiseWakeupIds: string[];
 }
 
 interface ReadyWakeupRow {
@@ -37,11 +48,22 @@ interface ConsumptionRow {
   consumed_at: string;
 }
 
+interface ReplayRow {
+  dispatch_command_id: string;
+  run_id: string;
+  wakeup_ids_json: string;
+}
+
+interface TableSqlRow {
+  sql: string | null;
+}
+
 const initializedStores = new WeakSet<StensiblyStore>();
 
 export function ensurePromiseWakeupConsumptionSchema(store: StensiblyStore): void {
   if (initializedStores.has(store)) return;
   ensurePromiseSchema(store);
+  migrateWakeupStateContract(store);
   store.db.exec(`
     CREATE TABLE IF NOT EXISTS promise_wakeup_consumptions (
       id TEXT PRIMARY KEY,
@@ -55,6 +77,14 @@ export function ensurePromiseWakeupConsumptionSchema(store: StensiblyStore): voi
       consumed_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS promise_wakeup_dispatch_results (
+      idempotency_key TEXT PRIMARY KEY,
+      dispatch_command_id TEXT NOT NULL UNIQUE,
+      run_id TEXT NOT NULL REFERENCES work_runs(id) ON DELETE CASCADE,
+      wakeup_ids_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_promise_wakeup_consumptions_dispatch
       ON promise_wakeup_consumptions(dispatch_command_id, consumed_at, wakeup_id);
     CREATE INDEX IF NOT EXISTS idx_promise_wakeup_consumptions_item
@@ -65,8 +95,8 @@ export function ensurePromiseWakeupConsumptionSchema(store: StensiblyStore): voi
 
 /**
  * Returns the deterministic exact-current unconsumed wakeup set plus one
- * overflow sentinel. Wakeups are immutable; consumption is represented only by
- * the append-only marker table.
+ * overflow sentinel. Wakeups remain durable after consumption; the state is a
+ * projection backed by the append-only marker table.
  */
 export function listDispatchablePromiseWakeups(
   store: StensiblyStore,
@@ -105,8 +135,8 @@ export function listDispatchablePromiseWakeups(
 
 /**
  * Consumes the exact deterministic set selected for a committed dispatch. This
- * function must be called inside the same SQLite transaction that creates the
- * run and stores dispatch replay evidence.
+ * function must run inside the same SQLite transaction that creates the run and
+ * stores dispatch replay evidence.
  */
 export function consumePromiseWakeupsForDispatch(
   store: StensiblyStore,
@@ -172,6 +202,18 @@ export function consumePromiseWakeupsForDispatch(
         `Promise wakeup ${wakeup.id} changed before dispatch consumption committed`,
       );
     }
+    const state = store.db
+      .query(`
+        UPDATE promise_wakeups
+        SET state = 'consumed'
+        WHERE id = ?1 AND state = 'ready'
+      `)
+      .run(wakeup.id);
+    if (state.changes !== 1) {
+      throw new ConflictError(
+        `Promise wakeup ${wakeup.id} changed before its consumed state committed`,
+      );
+    }
     const row = store.db
       .query<ConsumptionRow, [string]>(
         "SELECT * FROM promise_wakeup_consumptions WHERE id = ?1",
@@ -181,6 +223,89 @@ export function consumePromiseWakeupsForDispatch(
     consumed.push(mapConsumption(row));
   }
   return consumed;
+}
+
+export function recordPromiseWakeupDispatchReplay(
+  store: StensiblyStore,
+  input: {
+    idempotencyKey?: string;
+    dispatchCommandId: string;
+    runId: string;
+    consumedPromiseWakeupIds: string[];
+    createdAt: string;
+  },
+): void {
+  ensurePromiseWakeupConsumptionSchema(store);
+  if (!input.idempotencyKey) return;
+  store.db
+    .query(`
+      INSERT INTO promise_wakeup_dispatch_results (
+        idempotency_key, dispatch_command_id, run_id, wakeup_ids_json, created_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5)
+    `)
+    .run(
+      input.idempotencyKey,
+      input.dispatchCommandId,
+      input.runId,
+      JSON.stringify(input.consumedPromiseWakeupIds),
+      input.createdAt,
+    );
+}
+
+export function readPromiseWakeupDispatchReplay(
+  store: StensiblyStore,
+  idempotencyKey: string | undefined,
+): PromiseWakeupDispatchReplay | null {
+  ensurePromiseWakeupConsumptionSchema(store);
+  if (!idempotencyKey) return null;
+  const row = store.db
+    .query<ReplayRow, [string]>(`
+      SELECT dispatch_command_id, run_id, wakeup_ids_json
+      FROM promise_wakeup_dispatch_results
+      WHERE idempotency_key = ?1
+    `)
+    .get(idempotencyKey);
+  if (!row) return null;
+  const parsed = JSON.parse(row.wakeup_ids_json) as unknown;
+  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
+    throw new ConflictError("Stored promise wakeup dispatch replay is malformed");
+  }
+  return {
+    dispatchCommandId: row.dispatch_command_id,
+    runId: row.run_id,
+    consumedPromiseWakeupIds: parsed,
+  };
+}
+
+export function appendPromiseWakeupConsumptionEvent(
+  store: StensiblyStore,
+  input: {
+    itemId: string;
+    actorId: string;
+    dispatchCommandId: string;
+    runId: string;
+    consumedPromiseWakeupIds: string[];
+    createdAt: string;
+  },
+): void {
+  if (input.consumedPromiseWakeupIds.length === 0) return;
+  store.db
+    .query(`
+      INSERT INTO events (id, item_id, actor_id, type, payload_json, idempotency_key, created_at)
+      VALUES (?1, ?2, ?3, 'promise.wakeups_consumed', ?4, NULL, ?5)
+    `)
+    .run(
+      `event_${randomUUID()}`,
+      input.itemId,
+      input.actorId,
+      JSON.stringify({
+        dispatchCommandId: input.dispatchCommandId,
+        runId: input.runId,
+        wakeupIds: input.consumedPromiseWakeupIds,
+        count: input.consumedPromiseWakeupIds.length,
+      }),
+      input.createdAt,
+    );
 }
 
 export function listPromiseWakeupConsumptions(
@@ -200,6 +325,37 @@ export function listPromiseWakeupConsumptions(
     `)
     .all(itemId, dispatchCommandId)
     .map(mapConsumption);
+}
+
+function migrateWakeupStateContract(store: StensiblyStore): void {
+  const table = store.db
+    .query<TableSqlRow, []>(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'promise_wakeups'
+    `)
+    .get();
+  if (!table?.sql || !/CHECK\s*\(state\s*=\s*'ready'\)/i.test(table.sql)) return;
+
+  store.db.exec(`
+    DROP INDEX IF EXISTS idx_promise_wakeups_state_created;
+    ALTER TABLE promise_wakeups RENAME TO promise_wakeups_ready_legacy;
+    CREATE TABLE promise_wakeups (
+      id TEXT PRIMARY KEY,
+      promise_id TEXT NOT NULL REFERENCES work_promises(id) ON DELETE CASCADE,
+      promise_generation INTEGER NOT NULL,
+      item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      state TEXT NOT NULL CHECK (state IN ('ready', 'consumed')),
+      created_at TEXT NOT NULL,
+      UNIQUE (promise_id, promise_generation)
+    );
+    INSERT INTO promise_wakeups (
+      id, promise_id, promise_generation, item_id, state, created_at
+    )
+    SELECT id, promise_id, promise_generation, item_id, state, created_at
+    FROM promise_wakeups_ready_legacy;
+    DROP TABLE promise_wakeups_ready_legacy;
+    CREATE INDEX idx_promise_wakeups_state_created
+      ON promise_wakeups(state, created_at ASC);
+  `);
 }
 
 function mapWakeup(row: ReadyWakeupRow): PromiseWakeup {
