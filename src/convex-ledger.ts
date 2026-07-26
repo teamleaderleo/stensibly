@@ -82,11 +82,11 @@ export class ConvexWorkLedger implements
 
   async getItem(id: string): Promise<ItemDetail> {
     const now = Date.now();
+    const detailPromise = this.getHostedItemDetail(id, now);
     const reservationsPromise = this.client.query(
       convexApi.itemReservations.list,
       this.args({ itemId: id, now }),
     ) as Promise<ItemReservation[]>;
-    const detailPromise = this.getHostedItemDetail(id, now);
     const [detail, reservations] = await Promise.all([
       detailPromise,
       reservationsPromise,
