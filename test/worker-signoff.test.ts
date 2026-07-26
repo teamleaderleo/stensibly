@@ -104,6 +104,8 @@ describe("worker sign-off contract", () => {
       })).toThrow("Mantle version must be an integer from 1 to 9999");
     }
 
+    expect(() => buildWorkerSignoff({ ...baseInput, reviewedRevision: "8fd0c86\n" }))
+      .toThrow("Reviewed revision contains unsupported control characters");
     for (const reviewedRevision of ["abc123", "not-a-revision", "f".repeat(65)]) {
       expect(() => buildWorkerSignoff({ ...baseInput, reviewedRevision }))
         .toThrow("Reviewed revision must be 7 to 64 hexadecimal characters");
