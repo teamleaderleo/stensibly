@@ -4,6 +4,7 @@ import {
   buildRunnerContextPacket,
   getRunnerContextPacket,
 } from "../src/context-packets.ts";
+import { buildItemControlView } from "../src/item-control.ts";
 import { createWorkRun } from "../src/runs.ts";
 import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
@@ -111,7 +112,7 @@ describe("runner context packets", () => {
       priority: 50,
       actor: leo,
     });
-    const detail = {
+    const sourceDetail = {
       item,
       events: store.listEvents(item.id),
       artifacts: [],
@@ -122,6 +123,10 @@ describe("runner context packets", () => {
         itemId: "item_dependency",
         createdAt: "2026-07-25T10:00:00.000Z",
       }],
+    };
+    const detail = {
+      ...sourceDetail,
+      control: buildItemControlView(sourceDetail, { now: generatedAt }),
     };
 
     const first = buildRunnerContextPacket(detail, { now: generatedAt });
