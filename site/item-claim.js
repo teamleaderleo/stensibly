@@ -7,6 +7,7 @@ import './item-complete-controller.js';
 import './item-handoff-controller.js';
 import './item-handoff-history-controller.js';
 import './item-lease-state-controller.js';
+import './item-lease-renewal-controller.js';
 import { createIdempotencyTracker } from './item-create.js';
 import { validateActor } from './session-context.js';
 

@@ -78,6 +78,7 @@ describe("MCP work surface", () => {
         status: string;
         claimedBy: string;
         claimExpiresAt: string;
+        claimGeneration: number;
       }>(client, "claim_work", {
         id: created.id,
         actor: agent,
@@ -85,18 +86,23 @@ describe("MCP work surface", () => {
       });
       expect(claimed).toMatchObject({ status: "active", claimedBy: agent.id });
 
-      const renewed = await call<{ claimExpiresAt: string }>(
+      const renewed = await call<{
+        claimExpiresAt: string;
+        claimGeneration: number;
+      }>(
         client,
         "renew_claim",
         {
           id: created.id,
           actor: agent,
           leaseSeconds: 1800,
+          expectedClaimGeneration: claimed.claimGeneration,
         },
       );
       expect(Date.parse(renewed.claimExpiresAt)).toBeGreaterThan(
         Date.parse(claimed.claimExpiresAt),
       );
+      expect(renewed.claimGeneration).toBe(claimed.claimGeneration + 1);
 
       const competing = await client.callTool({
         name: "claim_work",

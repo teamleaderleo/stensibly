@@ -23,6 +23,7 @@ export interface Item {
   nextAction: string | null;
   claimedBy: string | null;
   claimExpiresAt: string | null;
+  claimGeneration: number;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -48,6 +49,7 @@ interface ItemRow {
   next_action: string | null;
   claimed_by: string | null;
   claim_expires_at: string | null;
+  claim_generation: number;
   version: number;
   created_at: string;
   updated_at: string;
@@ -117,6 +119,7 @@ export class StensiblyStore {
         next_action TEXT,
         claimed_by TEXT REFERENCES actors(id),
         claim_expires_at TEXT,
+        claim_generation INTEGER NOT NULL DEFAULT 0,
         version INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -141,6 +144,30 @@ export class StensiblyStore {
 
       CREATE INDEX IF NOT EXISTS idx_events_item_created
         ON events(item_id, created_at ASC);
+    `);
+
+    this.ensureItemClaimGenerationColumn();
+    this.normalizeLegacyActiveClaimGenerations();
+  }
+
+  private ensureItemClaimGenerationColumn(): void {
+    const columns = this.db
+      .query<{ name: string }, []>("PRAGMA table_info(items)")
+      .all();
+    if (columns.some((column) => column.name === "claim_generation")) return;
+
+    this.db.exec(
+      "ALTER TABLE items ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  private normalizeLegacyActiveClaimGenerations(): void {
+    this.db.exec(`
+      UPDATE items
+      SET claim_generation = 1
+      WHERE status = 'active'
+        AND claimed_by IS NOT NULL
+        AND claim_generation = 0
     `);
   }
 
@@ -254,6 +281,7 @@ export class StensiblyStore {
           SET status = 'active',
               claimed_by = ?1,
               claim_expires_at = ?2,
+              claim_generation = claim_generation + 1,
               version = version + 1,
               updated_at = ?3
           WHERE id = ?4
@@ -271,29 +299,36 @@ export class StensiblyStore {
         throw new ConflictError("Item is unavailable or held by another actor");
       }
 
+      const claimed = this.getItem(id);
       this.appendEvent({
         itemId: id,
         actorId: actor.id,
         type: "claim.created",
-        payload: { leaseSeconds, expiresAt },
+        payload: { leaseSeconds, expiresAt, generation: claimed.claimGeneration },
         idempotencyKey,
         now: nowIso,
       });
 
-      return this.getItem(id);
+      return claimed;
     });
 
     return transaction();
   }
 
-  releaseItem(id: string, actor: ActorInput, idempotencyKey?: string): Item {
+  releaseItem(
+    id: string,
+    actor: ActorInput,
+    expectedClaimGeneration: number,
+    idempotencyKey?: string,
+  ): Item {
     const transaction = this.db.transaction(() => {
       if (idempotencyKey) {
         const existing = this.findIdempotentEvent(idempotencyKey);
         if (existing) return this.getItem(existing.item_id);
       }
 
-      this.getItem(id);
+      const expectedGeneration = claimGeneration(expectedClaimGeneration);
+      const current = this.getItem(id);
       const now = new Date().toISOString();
       this.upsertActor(actor, now);
 
@@ -303,26 +338,35 @@ export class StensiblyStore {
           SET status = 'ready',
               claimed_by = NULL,
               claim_expires_at = NULL,
+              claim_generation = claim_generation + 1,
               version = version + 1,
               updated_at = ?1
-          WHERE id = ?2 AND claimed_by = ?3
+          WHERE id = ?2
+            AND claimed_by = ?3
+            AND claim_generation = ?4
         `)
-        .run(now, id, actor.id);
+        .run(now, id, actor.id, expectedGeneration);
 
       if (result.changes !== 1) {
-        throw new ConflictError("Only the current claimant can release this item");
+        throw new ConflictError(
+          "Only the current claimant with the current claim generation can release this item",
+        );
       }
 
+      const released = this.getItem(id);
       this.appendEvent({
         itemId: id,
         actorId: actor.id,
         type: "claim.released",
-        payload: {},
+        payload: {
+          generation: current.claimGeneration,
+          nextGeneration: released.claimGeneration,
+        },
         idempotencyKey,
         now,
       });
 
-      return this.getItem(id);
+      return released;
     });
 
     return transaction();
@@ -477,6 +521,13 @@ export class StensiblyStore {
   }
 }
 
+function claimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError("Expected claim generation must be a positive integer");
+  }
+  return value;
+}
+
 function mapItem(row: ItemRow): Item {
   return {
     id: row.id,
@@ -489,6 +540,7 @@ function mapItem(row: ItemRow): Item {
     nextAction: row.next_action,
     claimedBy: row.claimed_by,
     claimExpiresAt: row.claim_expires_at,
+    claimGeneration: row.claim_generation,
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

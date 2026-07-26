@@ -121,6 +121,7 @@ function item(overrides: Partial<Item> & Pick<Item, "id" | "project" | "status">
     nextAction: overrides.nextAction ?? "Continue the work.",
     claimedBy: overrides.claimedBy ?? null,
     claimExpiresAt: overrides.claimExpiresAt ?? null,
+    claimGeneration: overrides.claimGeneration ?? 0,
     version: overrides.version ?? 1,
     createdAt: overrides.createdAt ?? "2026-07-25T10:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-07-25T11:00:00.000Z",

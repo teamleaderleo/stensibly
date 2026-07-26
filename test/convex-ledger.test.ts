@@ -74,7 +74,12 @@ describe("Convex work ledger", () => {
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
     });
-    await ledger.renewClaim({ id: "item_1", actor, leaseSeconds: 1800 });
+    await ledger.renewClaim({
+      id: "item_1",
+      actor,
+      leaseSeconds: 1800,
+      expectedClaimGeneration: 7,
+    });
     await ledger.recordEvent({
       id: "item_1",
       actor,
@@ -97,7 +102,11 @@ describe("Convex work ledger", () => {
     });
     await ledger.blockWork({ id: "item_1", actor, reason: "Review pending." });
     await ledger.unblockWork({ id: "item_1", actor });
-    await ledger.releaseWork({ id: "item_1", actor });
+    await ledger.releaseWork({
+      id: "item_1",
+      actor,
+      expectedClaimGeneration: 8,
+    });
     await ledger.completeWork({ id: "item_1", actor, summary: "Done." });
     await ledger.completeWorkWithContinuations({
       id: "item_1",
@@ -204,6 +213,15 @@ describe("Convex work ledger", () => {
       id: "item_1",
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
+    });
+    expect(client.one("mutation", "claims:renew").args).toMatchObject({
+      id: "item_1",
+      leaseSeconds: 1800,
+      expectedClaimGeneration: 7,
+    });
+    expect(client.one("mutation", "claims:release").args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 8,
     });
     expect(client.one("mutation", "completionContinuations:complete").args)
       .toMatchObject({ id: "item_1", idempotencyKey: "complete-continuation-1" });
@@ -348,6 +366,7 @@ function item() {
     nextAction: null,
     claimedBy: null,
     claimExpiresAt: null,
+    claimGeneration: 0,
     version: 1,
     createdAt: now,
     updatedAt: now,
