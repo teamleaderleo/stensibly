@@ -6,6 +6,7 @@ import {
   runnerAuthorityCommands,
 } from "./authority-fence.js";
 import { getRunnerContextPacket } from "./context-packets.js";
+import { executionActualSchema } from "./execution-envelope-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
@@ -141,7 +142,7 @@ export function createRunnerMcpServer(
         outcome: z.string().trim().min(1).max(10_000).optional(),
         continuationRef: z.string().trim().min(1).max(500).optional(),
         usage: usageSchema().optional(),
-        executionActual: executionActualSchema().optional(),
+        executionActual: executionActualSchema.optional(),
         idempotencyKey: z.string().trim().min(1).max(240).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
@@ -172,17 +173,4 @@ function usageSchema() {
     toolCalls: z.number().int().min(0).optional(),
     childAgents: z.number().int().min(0).optional(),
   });
-}
-
-function executionActualSchema() {
-  return z.object({
-    durationMinutes: z.number().finite().min(0).max(525_600).optional(),
-    messagesConsumed: z.number().int().min(0).max(1_000_000).optional(),
-    toolCalls: z.number().int().min(0).max(1_000_000).optional(),
-    filesChanged: z.number().int().min(0).max(1_000_000).optional(),
-    reviewMinutes: z.number().finite().min(0).max(525_600).optional(),
-    estimateErrorReasons: z.array(
-      z.string().trim().min(1).max(500),
-    ).max(20).optional(),
-  }).strict();
 }
