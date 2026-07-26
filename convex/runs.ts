@@ -65,9 +65,12 @@ export const start = mutation({
       if (!run) throw new Error("Idempotent run no longer exists");
       const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
       if (!execution.executionEnvelope) {
-        throw new Error(
-          "Idempotency key belongs to a legacy run start without an execution envelope",
-        );
+        if (input.executionEnvelopeProvided) {
+          throw new Error(
+            "Historical run start cannot be retrofitted with an execution envelope",
+          );
+        }
+        return await publicHostedRun(ctx, run, input.itemId, execution);
       }
       requireSameRequest(payload?.request, startRequest(input), "run start request");
       return await publicHostedRun(ctx, run, input.itemId, execution);
@@ -232,9 +235,24 @@ export const finish = mutation({
       "run.finished",
     );
     if (existing) {
+      const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+      if (execution.executionRecords.length === 0) {
+        if (input.executionActualProvided) {
+          throw new Error(
+            "Historical run finish cannot be retrofitted with execution actuals",
+          );
+        }
+        const current = await ctx.db.get("runs", run._id);
+        const item = await ctx.db.get("items", run.itemId);
+        return await publicHostedRun(
+          ctx,
+          current ?? run,
+          item?.externalId ?? String(run.itemId),
+          execution,
+        );
+      }
       const payload = record(existing.payload);
       requireSameRequest(payload?.request, finishRequest(input), "run finish request");
-      const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
       const actual = execution.executionRecords.at(-1);
       if (
         !actual
@@ -242,7 +260,7 @@ export const finish = mutation({
         || !sameCanonical(actual.actual, input.executionActual)
       ) {
         throw new Error(
-          "Idempotency key belongs to a legacy or different run finish result",
+          "Idempotency key belongs to a different run finish result",
         );
       }
       const current = await ctx.db.get("runs", run._id);
@@ -417,6 +435,7 @@ function normalizeStartInput(args: any) {
     repository: assertOptionalText(args.repository, "Repository", 500),
     branch: assertOptionalText(args.branch, "Branch", 500),
     worktree: assertOptionalText(args.worktree, "Worktree", 1_000),
+    executionEnvelopeProvided: args.executionEnvelope !== undefined,
     executionEnvelope: normalizeExecutionEnvelope(
       args.executionEnvelope,
       `Execute work item ${itemId} with harness ${harness}`,
@@ -436,6 +455,7 @@ function normalizeFinishInput(args: any) {
     toolCallCount: args.toolCallCount === undefined
       ? undefined
       : count(args.toolCallCount, "Tool call count"),
+    executionActualProvided: args.executionActual !== undefined,
     executionActual: normalizeExecutionActual(args.executionActual),
     idempotencyKey: args.idempotencyKey as string | undefined,
   };
