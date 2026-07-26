@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { assertPublicRecordableItemEventType } from "../src/item-control-events";
 import {
   appendEvent,
   assertText,
@@ -30,6 +31,7 @@ export const record = mutation({
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const type = assertText(args.type, "Event type", 120);
     if (!/^[a-z0-9._-]+$/.test(type)) throw new Error("Event type contains invalid characters");
+    assertPublicRecordableItemEventType(type);
     const existing = await requireMatchingIdempotency(
       ctx,
       workspace._id,
