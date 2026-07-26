@@ -4,6 +4,7 @@ import {
   type ExpireClaimsOptions,
   type ExpectedExpiredClaim,
 } from "./leases.js";
+import { validateOptionalProjectScope } from "./project-scope.js";
 import { StensiblyStore } from "./store.js";
 
 export const CUSTODIAN_POLICY_ID = "conservative-custodian";
@@ -86,10 +87,11 @@ export function runCustodianPolicy(
   if (!Number.isInteger(maxActions) || maxActions < 0 || maxActions > 10_000) {
     throw new RangeError("maxActions must be a whole number between 0 and 10000");
   }
+  const project = validateOptionalProjectScope(options.project);
 
   const now = options.now ?? new Date();
   const report = inspectScrapbook(store, {
-    ...(options.project ? { project: options.project } : {}),
+    ...(project === undefined ? {} : { project }),
     ...(options.staleDays === undefined ? {} : { staleDays: options.staleDays }),
     ...(options.expiringWithinMinutes === undefined
       ? {}
@@ -115,7 +117,7 @@ export function runCustodianPolicy(
   const eligible = report.expiredClaims;
   const actions = mode === "observe"
     ? eligible.map((item) => toAction(item, "reported", null))
-    : executeBoundedMode(store, eligible, policy, now, options.project, dependencies);
+    : executeBoundedMode(store, eligible, policy, now, project, dependencies);
 
   return {
     generatedAt: now.toISOString(),
@@ -144,7 +146,7 @@ function executeBoundedMode(
   const overflow = eligible.slice(policy.maxActions);
   const appliedIds = policy.mode === "apply" && allowed.length > 0
     ? new Set(dependencies.expireClaims(store, now, {
-        ...(project ? { project } : {}),
+        ...(project === undefined ? {} : { project }),
         limit: policy.maxActions,
         expectedClaims: allowed.map(toExpectedClaim),
         audit: {
