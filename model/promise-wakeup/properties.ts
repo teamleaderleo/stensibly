@@ -1,6 +1,6 @@
 import {
   actions, apply, check, runners, same, stateKey, supervisors, terminalPromises,
-  type Bounds, type Node, type State, type WakeupRecord, type WeakRule,
+  type Action, type Bounds, type Node, type State, type WakeupRecord, type WeakRule,
 } from "./domain.ts";
 
 export const invariantNames = [
@@ -15,12 +15,13 @@ export const invariantNames = [
 export const livenessNames = [
   "expired_pending_promise_reconcilable",
   "current_consumable_wakeup_has_consume_path",
-  "current_ready_wakeup_has_consume_or_escalate_path",
+  "satisfied_current_promise_has_consume_or_escalate_path",
   "satisfied_current_promise_has_wakeup",
   "consumed_generation_never_becomes_consumable_after_restart",
 ] as const;
 export type InvariantName = typeof invariantNames[number];
 export type LivenessName = typeof livenessNames[number];
+export type ActionProvider = (state: State, bounds: Bounds) => Action[];
 export interface Counterexample {
   kind: WeakRule; reachable: true; trace: string[]; state: State; weakOutcome: string;
 }
@@ -29,8 +30,8 @@ export interface Observations {
   sawTerminalPromise: boolean; sawWrongConsumerProbe: boolean; sawStaleRunConsumeProbe: boolean;
   sawWrongCompleteConsumerProbe: boolean; sawStaleRunCompleteProbe: boolean;
   sawConsumedWakeup: boolean; sawStaleWakeup: boolean; sawRestartWithConsumed: boolean;
-  sawTerminalConsumer: boolean; sawExpiredPending: boolean; sawReadyWakeup: boolean;
-  sawConsumableReadyWakeup: boolean; sawSatisfied: boolean; sawWakeupRecord: boolean;
+  sawTerminalConsumer: boolean; sawExpiredPending: boolean; sawConsumableReadyWakeup: boolean;
+  sawSatisfied: boolean; sawSatisfiedResolution: boolean; sawWakeupRecord: boolean;
 }
 export function observations(): Observations {
   return {
@@ -38,8 +39,8 @@ export function observations(): Observations {
     sawTerminalPromise: false, sawWrongConsumerProbe: false, sawStaleRunConsumeProbe: false,
     sawWrongCompleteConsumerProbe: false, sawStaleRunCompleteProbe: false,
     sawConsumedWakeup: false, sawStaleWakeup: false, sawRestartWithConsumed: false,
-    sawTerminalConsumer: false, sawExpiredPending: false, sawReadyWakeup: false,
-    sawConsumableReadyWakeup: false, sawSatisfied: false, sawWakeupRecord: false,
+    sawTerminalConsumer: false, sawExpiredPending: false, sawConsumableReadyWakeup: false,
+    sawSatisfied: false, sawSatisfiedResolution: false, sawWakeupRecord: false,
   };
 }
 
@@ -64,7 +65,6 @@ export function checkState(state: State, seen: Observations): void {
     generations.add(wakeup.promiseGeneration);
     if (wakeup.status === "ready") {
       check(wakeup.consumedByRunGeneration === null && wakeup.consumedByRunner === null, "ready wakeup carries a consumed marker", state);
-      seen.sawReadyWakeup = true;
       if (wakeup.promiseGeneration !== state.promiseGeneration || wakeup.consumerGeneration !== state.consumerGeneration) seen.sawStaleWakeup = true;
     }
     if (wakeup.status === "consumed") {
@@ -143,16 +143,21 @@ export function checkLiveness(states: State[], bounds: Bounds, seen: Observation
       seen.sawExpiredPending = true;
     }
     if (state.promiseStatus === "satisfied") {
-      check(state.wakeups.some((wakeup) => wakeup.promiseGeneration === state.promiseGeneration), "satisfied current promise has no wakeup", state);
+      const wakeup = state.wakeups.find((entry) => entry.promiseGeneration === state.promiseGeneration);
+      check(wakeup !== undefined, "satisfied current promise has no wakeup", state);
       seen.sawSatisfied = true;
+      check(hasWakeupPath(state, wakeup, bounds, new Set(["consumed", "escalated"])), "satisfied current promise has no bounded consume or escalate path", state);
+      seen.sawSatisfiedResolution = true;
     }
-    for (const wakeup of state.wakeups.filter((entry) => entry.status === "ready" && entry.promiseGeneration === state.promiseGeneration && entry.consumerGeneration === state.consumerGeneration)) {
-      check(hasWakeupPath(state, wakeup, bounds, new Set(["consumed", "escalated"])), "current ready wakeup has no bounded consume or escalate path", state);
-      seen.sawReadyWakeup = true;
-      if (state.promiseStatus === "satisfied" && state.consumerStatus !== "terminal") {
-        check(hasWakeupPath(state, wakeup, bounds, new Set(["consumed"])), "current consumable wakeup has no bounded consume path", state);
-        seen.sawConsumableReadyWakeup = true;
-      }
+    for (const wakeup of state.wakeups.filter((entry) =>
+      entry.status === "ready"
+      && entry.promiseGeneration === state.promiseGeneration
+      && entry.consumerGeneration === state.consumerGeneration
+      && state.promiseStatus === "satisfied"
+      && state.consumerStatus !== "terminal"
+    )) {
+      check(hasWakeupPath(state, wakeup, bounds, new Set(["consumed"])), "current consumable wakeup has no bounded consume path", state);
+      seen.sawConsumableReadyWakeup = true;
     }
     if (state.restarted) for (const wakeup of state.wakeups.filter((entry) => entry.status === "consumed")) {
       same(state, apply(state, { kind: "consume", runner: wakeup.consumedByRunner ?? runners[0]!, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: wakeup.consumedByRunGeneration ?? state.consumerRunGeneration }), "consumed wakeup after restart");
@@ -161,11 +166,12 @@ export function checkLiveness(states: State[], bounds: Bounds, seen: Observation
   }
 }
 
-function hasWakeupPath(
+export function hasWakeupPath(
   start: State,
   target: WakeupRecord,
   bounds: Bounds,
   acceptedStatuses: ReadonlySet<WakeupRecord["status"]>,
+  actionProvider: ActionProvider = actions,
 ): boolean {
   const queue: Array<{ state: State; depth: number }> = [{ state: start, depth: 0 }];
   const visited = new Set<string>([stateKey(start)]);
@@ -173,7 +179,7 @@ function hasWakeupPath(
     const node = queue[cursor]!;
     if (wakeupReached(node.state, target, acceptedStatuses)) return true;
     if (node.depth >= bounds.recoveryHorizonTicks) continue;
-    for (const action of actions(node.state, bounds)) {
+    for (const action of actionProvider(node.state, bounds)) {
       const next = apply(node.state, action);
       if (next === node.state) continue;
       const key = stateKey(next);
@@ -217,7 +223,7 @@ export function finish(seen: Observations): { invariants: Record<InvariantName, 
   }
   if (seen.sawExpiredPending) l.add("expired_pending_promise_reconcilable");
   if (seen.sawConsumableReadyWakeup) l.add("current_consumable_wakeup_has_consume_path");
-  if (seen.sawReadyWakeup) l.add("current_ready_wakeup_has_consume_or_escalate_path");
+  if (seen.sawSatisfiedResolution) l.add("satisfied_current_promise_has_consume_or_escalate_path");
   if (seen.sawSatisfied) l.add("satisfied_current_promise_has_wakeup");
   if (seen.sawRestartWithConsumed) l.add("consumed_generation_never_becomes_consumable_after_restart");
   requireCoverage(invariantNames, i, "invariant"); requireCoverage(livenessNames, l, "bounded liveness");
