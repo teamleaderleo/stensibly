@@ -331,7 +331,17 @@ function scalar(raw: string, path: string, errors: Errors): string {
   if (value.startsWith('"') || value.endsWith('"')) {
     try {
       const parsed: unknown = JSON.parse(value);
-      if (typeof parsed === "string") return parsed;
+      if (typeof parsed === "string") {
+        if (/[\u0000-\u001F\u007F]/.test(parsed)) {
+          error(errors, "control_character", path, "Decoded values cannot contain tabs or control characters");
+          return "";
+        }
+        if (secretShaped(parsed)) {
+          error(errors, "secret_shaped_value", path, "Credential-shaped decoded values are forbidden");
+          return "";
+        }
+        return parsed;
+      }
     } catch { /* error below */ }
     error(errors, "invalid_value", path, "Double-quoted values must use valid JSON string escaping");
     return "";
@@ -346,7 +356,22 @@ function scalar(raw: string, path: string, errors: Errors): string {
 function parseBody(input: string, errors: Errors): ProjectAttachmentBody | null {
   const lines = input.split("\n");
   const found: Array<{ heading: string; index: number }> = [];
+  let fence: { character: "`" | "~"; length: number } | null = null;
   for (const [index, line] of lines.entries()) {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const run = delimiter?.[1] ?? "";
+    if (fence) {
+      if (
+        run[0] === fence.character &&
+        run.length >= fence.length &&
+        (delimiter?.[2] ?? "").trim() === ""
+      ) fence = null;
+      continue;
+    }
+    if (run) {
+      fence = { character: run[0] as "`" | "~", length: run.length };
+      continue;
+    }
     const match = /^##\s+(.+?)\s*$/.exec(line);
     if (!match) continue;
     const heading = match[1] ?? "";
