@@ -13,6 +13,8 @@ describe("dashboard holder-only lease renewal integration", () => {
     expect(controller).toContain("submit.textContent = 'claim item'");
     expect(controller).toContain("form.hidden = true");
     expect(controller).toContain("server-owned claim already exists");
+    expect(controller).toContain("readDetailField(body, 'Status') === 'active'");
+    expect(controller).not.toContain("/extend lease/i");
     expect(controller).toContain("/renew`");
     expect(controller).not.toContain("/claim`");
   });
@@ -34,20 +36,23 @@ describe("dashboard holder-only lease renewal integration", () => {
     expect(renewal).toContain("claimGeneration !== expectedPreviousGeneration + 1");
   });
 
-  test("uses independent request generations, idempotency, and in-flight guards", () => {
+  test("uses independent request generations, idempotency, deadlines, and in-flight guards", () => {
     expect(controller).toContain("const detailGate = createRequestGate()");
     expect(controller).toContain("const renewalGate = createRequestGate()");
     expect(controller).toContain("const idempotency = createLeaseRenewalIdempotencyTracker()");
     expect(controller).toContain("if (submitButton.disabled || renewalInFlight) return");
+    expect(controller).toContain("AbortSignal.timeout(REQUEST_TIMEOUT_MS)");
     expect(controller).toContain("Retry the unchanged duration and generation to reuse the same idempotency key");
     expect(controller).toContain("renewalGate.isCurrent(requestId)");
+    expect(controller).toContain("loading = false");
   });
 
   test("invalidates projections and responses across context or detail replacement", () => {
     expect(controller).toContain("const renewalSection = body.querySelector");
     expect(controller).toContain("if (!renewalSection && !loading)");
-    expect(controller).toContain("requestedContextFingerprint === readContext().fingerprint");
-    expect(controller).toContain("fingerprint: `${canWrite ? 'write' : 'read'}\\u0000${endpoint}\\u0000${token}");
+    expect(controller).toContain("requestedContextFingerprint === currentContext.fingerprint");
+    expect(controller).toContain("requestedToken === currentContext.token");
+    expect(controller).toContain("tokenDiscriminator(token)");
     expect(controller).toContain("resetAll();");
   });
 
@@ -56,6 +61,7 @@ describe("dashboard holder-only lease renewal integration", () => {
     expect(controller).toContain("The claim generation changed. Refresh detail");
     expect(controller).toContain("safeRequestId");
     expect(controller).toContain("redactCredentialText");
+    expect(controller).toContain("formatTimestamp(renewed.claimExpiresAt, context.token)");
     expect(controller).toContain("error.setAttribute('role', 'alert')");
     expect(controller).not.toContain("innerHTML");
     expect(controller).not.toContain("serviceSecret");
