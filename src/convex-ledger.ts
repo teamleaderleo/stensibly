@@ -76,7 +76,7 @@ export class ConvexWorkLedger implements
   async getItem(id: string) {
     const now = Date.now();
     const [detail, reservations] = await Promise.all([
-      this.client.query(convexApi.items.get, this.args({ id })) as Promise<Omit<ItemDetail, "control" | "reservations">>,
+      this.client.query(convexApi.itemDetails.get, this.args({ id })) as Promise<Omit<ItemDetail, "control" | "reservations">>,
       this.client.query(
         convexApi.itemReservations.list,
         this.args({ itemId: id, now }),
@@ -171,7 +171,7 @@ export class ConvexWorkLedger implements
   async editContinuation(input: EditContinuationInput) {
     await this.getContinuation(input.id);
     return await this.client.mutation(
-      convexApi.continuationEdits.edit,
+      convexApi.continuations.edit,
       this.args(input),
     ) as Awaited<ReturnType<ContinuationLedger["editContinuation"]>>;
   }
