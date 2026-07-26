@@ -124,6 +124,7 @@ export function renewClaim(
   id: string,
   actor: ActorInput,
   leaseSeconds: number,
+  expectedClaimGeneration: number,
   idempotencyKey?: string,
 ): Item {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30 || leaseSeconds > 86_400) {
@@ -139,13 +140,15 @@ export function renewClaim(
     if (existing) return store.getItem(existing.item_id);
   }
 
+  const expectedGeneration = claimGeneration(expectedClaimGeneration);
   const now = new Date();
   expireClaims(store, now);
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
+  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
-    const current = store.getItem(id);
+    store.getItem(id);
 
     store.db
       .query(`
@@ -158,7 +161,6 @@ export function renewClaim(
       `)
       .run(actor.id, actor.name, actor.kind, nowIso);
 
-    const nextGeneration = current.claimGeneration + 1;
     const result = store.db
       .query(`
         UPDATE items
@@ -179,11 +181,13 @@ export function renewClaim(
         nowIso,
         id,
         actor.id,
-        current.claimGeneration,
+        expectedGeneration,
       );
 
     if (result.changes !== 1) {
-      throw new ConflictError("Only the current claimant can renew a live claim");
+      throw new ConflictError(
+        "Only the current claimant with the current claim generation can renew a live claim",
+      );
     }
 
     store.db
@@ -199,7 +203,7 @@ export function renewClaim(
         JSON.stringify({
           leaseSeconds,
           expiresAt,
-          generation: current.claimGeneration,
+          generation: expectedGeneration,
           nextGeneration,
         }),
         idempotencyKey ?? null,
@@ -210,6 +214,13 @@ export function renewClaim(
   });
 
   return transaction();
+}
+
+function claimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError("Expected claim generation must be a positive integer");
+  }
+  return value;
 }
 
 function validateExpiryLimit(limit: number | undefined): number | undefined {
