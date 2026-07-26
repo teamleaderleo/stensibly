@@ -250,20 +250,28 @@ export const exchangeAuthorizationCode = mutation({
         MAX_REFRESH_LIFETIME_MS,
         "Refresh token",
       );
-      const familyExpiresAt = now + MAX_REFRESH_LIFETIME_MS;
+      const familyExpiresAt = refreshExpiresAt;
+      const cleanupScheduleGeneration = 1;
       await ctx.db.insert("mcpOAuthRefreshTokens", {
         workspaceId: workspace._id,
         accountId: code.accountId,
         externalId: refreshId,
         familyExternalId: refreshId,
+        familyExpiresAt,
+        cleanupScheduledAt: familyExpiresAt,
+        cleanupScheduleGeneration,
         secretHash: assertHash(args.refreshSecretHash),
         clientExternalId: code.clientExternalId,
         scopes: allowedScopes,
         resource: code.resource,
         createdAt: now,
-        expiresAt: Math.min(refreshExpiresAt, familyExpiresAt),
+        expiresAt: familyExpiresAt,
       });
-      await scheduleRefreshFamilyCleanup(ctx, refreshId, familyExpiresAt);
+      await ctx.scheduler.runAt(familyExpiresAt, cleanupRefreshFamilyRef, {
+        familyExternalId: refreshId,
+        familyExpiresAt,
+        scheduleGeneration: cleanupScheduleGeneration,
+      });
     }
 
     await ctx.db.delete(code._id);
@@ -298,10 +306,13 @@ export const rotateRefreshToken = mutation({
     if (!refresh || refresh.workspaceId !== workspace._id || refresh.secretHash !== secretHash) {
       return { status: "invalid" as const };
     }
-    const familyExpiresAt = await refreshFamilyExpiresAt(ctx, refresh);
+    const family = await readRefreshFamily(ctx, refresh);
+    const familyExpiresAt = family.familyExpiresAt;
+    if (family.root) {
+      await ensureRefreshFamilyCleanupScheduled(ctx, family.root, familyExpiresAt);
+    }
     if (refresh.consumedAt !== undefined || refresh.revokedAt !== undefined) {
       await revokeRefreshFamily(ctx, refresh.familyExternalId, now);
-      await scheduleRefreshFamilyCleanup(ctx, refresh.familyExternalId, familyExpiresAt);
       return { status: "replayed" as const };
     }
     if (
@@ -340,6 +351,7 @@ export const rotateRefreshToken = mutation({
       accountId: refresh.accountId,
       externalId: nextId,
       familyExternalId: refresh.familyExternalId,
+      familyExpiresAt,
       secretHash: assertHash(args.nextSecretHash),
       clientExternalId: refresh.clientExternalId,
       scopes,
@@ -358,6 +370,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
   args: {
     familyExternalId: v.string(),
     familyExpiresAt: v.number(),
+    scheduleGeneration: v.number(),
   },
   returns: refreshCleanupValidator,
   handler: async (ctx, args) => {
@@ -375,12 +388,35 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       .query("mcpOAuthRefreshTokens")
       .withIndex("by_external_id", (q) => q.eq("externalId", args.familyExternalId))
       .unique();
-    const canonicalFamilyExpiresAt = root && root.familyExternalId === args.familyExternalId
-      ? boundedFamilyExpiry(root.createdAt)
-      : Math.floor(args.familyExpiresAt);
+    const validRoot = root
+      && root.workspaceId === oldestRows[0].workspaceId
+      && root.familyExternalId === args.familyExternalId
+      ? root
+      : null;
+    const canonicalFamilyExpiresAt = validRoot
+      ? refreshTokenFamilyExpiry(validRoot)
+      : minimumFamilyExpiry(
+        args.familyExpiresAt,
+        refreshTokenFamilyExpiry(oldestRows[0]),
+      );
+
+    let rootForScheduling = validRoot;
+    if (
+      validRoot
+      && validRoot.cleanupScheduledAt === args.familyExpiresAt
+      && validRoot.cleanupScheduleGeneration === args.scheduleGeneration
+    ) {
+      await ctx.db.patch(validRoot._id, { cleanupScheduledAt: undefined });
+      rootForScheduling = { ...validRoot, cleanupScheduledAt: undefined };
+    }
+
     if (canonicalFamilyExpiresAt > now) {
-      if (args.familyExpiresAt !== canonicalFamilyExpiresAt) {
-        await scheduleRefreshFamilyCleanup(ctx, args.familyExternalId, canonicalFamilyExpiresAt);
+      if (rootForScheduling) {
+        await ensureRefreshFamilyCleanupScheduled(
+          ctx,
+          rootForScheduling,
+          canonicalFamilyExpiresAt,
+        );
       }
       return cleanupResult(
         "retained",
@@ -397,6 +433,7 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       await ctx.scheduler.runAfter(0, cleanupRefreshFamilyRef, {
         familyExternalId: args.familyExternalId,
         familyExpiresAt: canonicalFamilyExpiresAt,
+        scheduleGeneration: args.scheduleGeneration,
       });
     }
     return cleanupResult("cleaned", 0, rowsToDelete.length, hasMore);
@@ -599,39 +636,95 @@ async function deleteExpiredCodes(ctx: MutationContext, now: number): Promise<vo
   for (const code of expired) await ctx.db.delete(code._id);
 }
 
-async function refreshFamilyExpiresAt(
+async function readRefreshFamily(
   ctx: MutationContext,
   token: Doc<"mcpOAuthRefreshTokens">,
-): Promise<number> {
+): Promise<{
+  root: Doc<"mcpOAuthRefreshTokens"> | null;
+  familyExpiresAt: number;
+}> {
   const root = await ctx.db
     .query("mcpOAuthRefreshTokens")
     .withIndex("by_external_id", (q) => q.eq("externalId", token.familyExternalId))
     .unique();
-  if (root && root.familyExternalId === token.familyExternalId) {
-    return boundedFamilyExpiry(root.createdAt);
+  if (
+    root
+    && root.workspaceId === token.workspaceId
+    && root.familyExternalId === token.familyExternalId
+  ) {
+    return { root, familyExpiresAt: refreshTokenFamilyExpiry(root) };
   }
   const oldest = await ctx.db
     .query("mcpOAuthRefreshTokens")
     .withIndex("by_family_created", (q) => q.eq("familyExternalId", token.familyExternalId))
     .order("asc")
     .first();
-  return boundedFamilyExpiry(oldest?.createdAt ?? token.createdAt);
+  const fallback = oldest && oldest.workspaceId === token.workspaceId ? oldest : token;
+  return { root: null, familyExpiresAt: refreshTokenFamilyExpiry(fallback) };
+}
+
+function refreshTokenFamilyExpiry(token: Doc<"mcpOAuthRefreshTokens">): number {
+  return minimumFamilyExpiry(
+    token.familyExpiresAt,
+    token.expiresAt,
+    boundedFamilyExpiry(token.createdAt),
+  );
 }
 
 function boundedFamilyExpiry(createdAt: number): number {
   if (!Number.isFinite(createdAt) || createdAt < 0) return 0;
-  return Math.floor(createdAt) + MAX_REFRESH_LIFETIME_MS;
+  const expiresAt = Math.floor(createdAt) + MAX_REFRESH_LIFETIME_MS;
+  return Number.isSafeInteger(expiresAt) ? expiresAt : 0;
 }
 
-async function scheduleRefreshFamilyCleanup(
+function minimumFamilyExpiry(...values: (number | undefined)[]): number {
+  const valid = values
+    .filter((value): value is number => (
+      typeof value === "number"
+      && Number.isFinite(value)
+      && Number.isSafeInteger(value)
+      && value > 0
+    ))
+    .map((value) => Math.floor(value));
+  return valid.length ? Math.min(...valid) : 0;
+}
+
+async function ensureRefreshFamilyCleanupScheduled(
   ctx: MutationContext,
-  familyExternalId: string,
+  root: Doc<"mcpOAuthRefreshTokens">,
   familyExpiresAt: number,
 ): Promise<void> {
-  if (!Number.isFinite(familyExpiresAt)) return;
-  await ctx.scheduler.runAt(Math.max(Date.now(), Math.floor(familyExpiresAt)), cleanupRefreshFamilyRef, {
-    familyExternalId,
-    familyExpiresAt: Math.floor(familyExpiresAt),
+  if (
+    root.externalId !== root.familyExternalId
+    || !Number.isSafeInteger(familyExpiresAt)
+    || familyExpiresAt <= 0
+  ) {
+    return;
+  }
+  const currentGeneration = Number.isSafeInteger(root.cleanupScheduleGeneration)
+    && (root.cleanupScheduleGeneration ?? 0) > 0
+    ? root.cleanupScheduleGeneration ?? 0
+    : 0;
+  if (
+    root.familyExpiresAt === familyExpiresAt
+    && root.cleanupScheduledAt === familyExpiresAt
+    && currentGeneration > 0
+  ) {
+    return;
+  }
+  if (currentGeneration >= Number.MAX_SAFE_INTEGER) {
+    throw new Error("OAuth refresh cleanup generation is exhausted");
+  }
+  const scheduleGeneration = currentGeneration + 1;
+  await ctx.db.patch(root._id, {
+    familyExpiresAt,
+    cleanupScheduledAt: familyExpiresAt,
+    cleanupScheduleGeneration: scheduleGeneration,
+  });
+  await ctx.scheduler.runAt(Math.max(Date.now(), familyExpiresAt), cleanupRefreshFamilyRef, {
+    familyExternalId: root.familyExternalId,
+    familyExpiresAt,
+    scheduleGeneration,
   });
 }
 
