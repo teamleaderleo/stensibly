@@ -1,4 +1,3 @@
-import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { convexApi } from "./refs";
@@ -13,21 +12,18 @@ const codeChallenge = "a".repeat(43);
 const dayMs = 24 * 60 * 60 * 1000;
 const maxFamilyLifetimeMs = 90 * dayMs;
 const acceptedFamilyLifetimeMs = 30 * dayMs;
-const cleanupRefreshFamily = makeFunctionReference<"mutation">(
-  "mcpOAuth:cleanupRefreshFamilyScheduled",
-);
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
 });
 
-describe("OAuth refresh-family lifetime and cleanup", () => {
+describe("OAuth refresh-family lifetime", () => {
   test("keeps the accepted root deadline through a long chain and deduplicates replay cleanup", async () => {
     const t = convexTest(schema, modules);
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     try {
-      const { clientId, rootId } = await createFamily(t, "longchain");
+      const { clientId, rootId, workspaceId } = await createFamily(t, "longchain");
       const familyExpiresAt = base + acceptedFamilyLifetimeMs;
       let currentId = rootId;
       let currentHash = hashFor(0);
@@ -49,13 +45,23 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
         currentHash = nextHash;
       }
 
-      const family = await readFamily(t, rootId);
+      const family = await readFamily(t, workspaceId, rootId);
       expect(family).toHaveLength(126);
       expect(family.every((token: any) => token.familyExpiresAt === familyExpiresAt)).toBe(true);
       expect(family.every((token: any) => token.expiresAt === familyExpiresAt)).toBe(true);
-      const initialRoot = family[0];
-      expect(initialRoot.cleanupScheduledAt).toBe(familyExpiresAt);
-      expect(initialRoot.cleanupScheduleGeneration).toBe(1);
+      expect(family[0]).toMatchObject({
+        cleanupScheduledAt: familyExpiresAt,
+        cleanupScheduleGeneration: 1,
+      });
+
+      const issuanceJobs = await scheduledFunctions(t);
+      expect(issuanceJobs).toHaveLength(1);
+      expect(scheduledArgs(issuanceJobs[0])).toMatchObject({
+        workspaceId,
+        familyExternalId: rootId,
+        familyExpiresAt,
+        scheduleGeneration: 1,
+      });
 
       clock.mockReturnValue(base + 25 * dayMs);
       for (let replay = 0; replay < 3; replay += 1) {
@@ -69,208 +75,15 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
         })).toEqual({ status: "replayed" });
       }
 
-      const replayedFamily = await readFamily(t, rootId);
+      const replayedFamily = await readFamily(t, workspaceId, rootId);
       expect(replayedFamily).toHaveLength(126);
       expect(replayedFamily.at(-1)?.externalId).toBe(currentId);
       expect(replayedFamily.at(-1)?.revokedAt).toBeDefined();
-      expect(replayedFamily[0].cleanupScheduledAt).toBe(familyExpiresAt);
-      expect(replayedFamily[0].cleanupScheduleGeneration).toBe(1);
-
-      clock.mockReturnValue(familyExpiresAt - 1);
-      expect(await cleanup(t, rootId, familyExpiresAt, 1)).toEqual({
-        status: "retained",
-        retainedRows: 100,
-        cleanedRows: 0,
-        hasMore: true,
+      expect(replayedFamily[0]).toMatchObject({
+        cleanupScheduledAt: familyExpiresAt,
+        cleanupScheduleGeneration: 1,
       });
-      const rescheduledRoot = await readRoot(t, rootId);
-      expect(rescheduledRoot?.cleanupScheduledAt).toBe(familyExpiresAt);
-      expect(rescheduledRoot?.cleanupScheduleGeneration).toBe(2);
-
-      expect(await cleanup(t, rootId, familyExpiresAt, 1)).toMatchObject({
-        status: "retained",
-        cleanedRows: 0,
-      });
-      const afterStaleRetry = await readRoot(t, rootId);
-      expect(afterStaleRetry?.cleanupScheduleGeneration).toBe(2);
-      expect(await readFamily(t, rootId)).toHaveLength(126);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  test("cleans only after the family deadline in bounded batches", async () => {
-    const t = convexTest(schema, modules);
-    const base = Date.parse("2026-02-01T00:00:00.000Z");
-    const clock = vi.spyOn(Date, "now").mockReturnValue(base);
-    try {
-      const { clientId, rootId } = await createFamily(t, "cleanup");
-      const familyExpiresAt = base + acceptedFamilyLifetimeMs;
-      await insertConsumedHistory(t, rootId, clientId, 205, base + 1, familyExpiresAt);
-
-      clock.mockReturnValue(familyExpiresAt - 1);
-      expect(await cleanup(t, rootId, familyExpiresAt, 1)).toEqual({
-        status: "retained",
-        retainedRows: 100,
-        cleanedRows: 0,
-        hasMore: true,
-      });
-      expect(await readFamily(t, rootId)).toHaveLength(206);
-      expect((await readRoot(t, rootId))?.cleanupScheduleGeneration).toBe(2);
-
-      clock.mockReturnValue(familyExpiresAt);
-      expect(await rotate(t, {
-        clientId,
-        id: rootId,
-        secretHash: hashFor(0),
-        nextId: refreshId("afterdeadline"),
-        nextSecretHash: "f".repeat(64),
-        nextExpiresAt: familyExpiresAt + dayMs,
-      })).toEqual({ status: "invalid" });
-      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
-        status: "cleaned",
-        retainedRows: 0,
-        cleanedRows: 100,
-        hasMore: true,
-      });
-      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
-        status: "cleaned",
-        retainedRows: 0,
-        cleanedRows: 100,
-        hasMore: true,
-      });
-      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
-        status: "cleaned",
-        retainedRows: 0,
-        cleanedRows: 6,
-        hasMore: false,
-      });
-      expect(await readFamily(t, rootId)).toHaveLength(0);
-      expect(await cleanup(t, rootId, familyExpiresAt, 2)).toEqual({
-        status: "missing",
-        retainedRows: 0,
-        cleanedRows: 0,
-        hasMore: false,
-      });
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  test("fails closed for legacy and malformed family records", async () => {
-    const t = convexTest(schema, modules);
-    const base = Date.parse("2026-03-01T00:00:00.000Z");
-    const clock = vi.spyOn(Date, "now").mockReturnValue(base);
-    try {
-      const { accountId, accountDbId, clientId, workspaceId } = await setup(t, "legacy");
-      const legacyRootId = refreshId("legacyroot");
-      const legacyLeafId = refreshId("legacyleaf");
-      await t.run(async (ctx: any) => {
-        const rootCreatedAt = base - 40 * dayMs;
-        await ctx.db.insert("mcpOAuthRefreshTokens", {
-          workspaceId,
-          accountId: accountDbId,
-          externalId: legacyRootId,
-          familyExternalId: legacyRootId,
-          familyExpiresAt: base + maxFamilyLifetimeMs,
-          cleanupScheduleGeneration: -7,
-          secretHash: hashFor(0),
-          clientExternalId: clientId,
-          scopes: ["read", "offline_access"],
-          resource,
-          createdAt: rootCreatedAt,
-          expiresAt: base - 1,
-          consumedAt: rootCreatedAt + 1,
-          rotatedToExternalId: legacyLeafId,
-        });
-        await ctx.db.insert("mcpOAuthRefreshTokens", {
-          workspaceId,
-          accountId: accountDbId,
-          externalId: legacyLeafId,
-          familyExternalId: legacyRootId,
-          secretHash: "c".repeat(64),
-          clientExternalId: clientId,
-          scopes: ["read", "offline_access"],
-          resource,
-          createdAt: base - 60_000,
-          expiresAt: base + acceptedFamilyLifetimeMs,
-        });
-      });
-
-      expect(await rotate(t, {
-        clientId,
-        id: legacyLeafId,
-        secretHash: "c".repeat(64),
-        nextId: refreshId("legacyextended"),
-        nextSecretHash: "d".repeat(64),
-        nextExpiresAt: base + acceptedFamilyLifetimeMs,
-      })).toEqual({ status: "invalid" });
-      const legacyFamily = await readFamily(t, legacyRootId);
-      expect(legacyFamily.at(-1)?.revokedAt).toBeDefined();
-      expect(legacyFamily[0].familyExpiresAt).toBe(base - 1);
-      expect(legacyFamily[0].cleanupScheduledAt).toBe(base - 1);
-      expect(legacyFamily[0].cleanupScheduleGeneration).toBe(1);
-      expect(await cleanup(t, legacyRootId, base - 1, 1)).toMatchObject({
-        status: "cleaned",
-        cleanedRows: 2,
-        hasMore: false,
-      });
-
-      const missingRootId = refreshId("missingroot");
-      const oldId = refreshId("missingold");
-      const leafId = refreshId("missingleaf");
-      await t.run(async (ctx: any) => {
-        await ctx.db.insert("mcpOAuthRefreshTokens", {
-          workspaceId,
-          accountId: accountDbId,
-          externalId: oldId,
-          familyExternalId: missingRootId,
-          secretHash: "8".repeat(64),
-          clientExternalId: clientId,
-          scopes: ["read", "offline_access"],
-          resource,
-          createdAt: base,
-          expiresAt: base + 60_000,
-          consumedAt: base + 1,
-        });
-        await ctx.db.insert("mcpOAuthRefreshTokens", {
-          workspaceId,
-          accountId: accountDbId,
-          externalId: leafId,
-          familyExternalId: missingRootId,
-          familyExpiresAt: base + maxFamilyLifetimeMs,
-          secretHash: "9".repeat(64),
-          clientExternalId: clientId,
-          scopes: ["read", "offline_access"],
-          resource,
-          createdAt: base + 2,
-          expiresAt: base + 60_000,
-        });
-      });
-
-      expect(accountId).toBeTruthy();
-      expect(await rotate(t, {
-        clientId,
-        id: oldId,
-        secretHash: "8".repeat(64),
-        nextId: refreshId("missingreplay"),
-        nextSecretHash: "a".repeat(64),
-        nextExpiresAt: base + 60_000,
-      })).toEqual({ status: "replayed" });
-      expect((await readFamily(t, missingRootId)).at(-1)?.revokedAt).toBeDefined();
-
-      expect(await cleanup(t, missingRootId, base + maxFamilyLifetimeMs, 0)).toEqual({
-        status: "retained",
-        retainedRows: 2,
-        cleanedRows: 0,
-        hasMore: false,
-      });
-      clock.mockReturnValue(base + 60_000);
-      expect(await cleanup(t, missingRootId, base + maxFamilyLifetimeMs, 0)).toMatchObject({
-        status: "cleaned",
-        cleanedRows: 2,
-        hasMore: false,
-      });
+      expect(await scheduledFunctions(t)).toHaveLength(1);
     } finally {
       clock.mockRestore();
     }
@@ -279,7 +92,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
 
 async function createFamily(t: ReturnType<typeof convexTest>, label: string) {
   const fixture = await setup(t, label);
-  const code = codeId(label);
+  const authorizationCodeId = codeId(label);
   const rootId = refreshId(`${label}root`);
   await t.mutation(convexApi.mcpOAuth.createAuthorizationCode, {
     serviceSecret,
@@ -290,14 +103,14 @@ async function createFamily(t: ReturnType<typeof convexTest>, label: string) {
     codeChallenge,
     scopes: ["read", "offline_access"],
     resource,
-    id: code,
+    id: authorizationCodeId,
     secretHash: "a".repeat(64),
     expiresAt: Date.now() + 60_000,
   });
   await t.mutation(convexApi.mcpOAuth.exchangeAuthorizationCode, {
     serviceSecret,
     workspace,
-    id: code,
+    id: authorizationCodeId,
     secretHash: "a".repeat(64),
     clientId: fixture.clientId,
     redirectUri,
@@ -306,7 +119,7 @@ async function createFamily(t: ReturnType<typeof convexTest>, label: string) {
     refreshSecretHash: hashFor(0),
     refreshExpiresAt: Date.now() + acceptedFamilyLifetimeMs,
   });
-  return { clientId: fixture.clientId, rootId };
+  return { ...fixture, rootId };
 }
 
 async function setup(t: ReturnType<typeof convexTest>, label: string) {
@@ -354,63 +167,28 @@ async function rotate(t: ReturnType<typeof convexTest>, input: Record<string, un
   }) as any;
 }
 
-async function cleanup(
+async function readFamily(
   t: ReturnType<typeof convexTest>,
+  workspaceId: any,
   familyExternalId: string,
-  familyExpiresAt: number,
-  scheduleGeneration: number,
 ) {
-  return await t.mutation(cleanupRefreshFamily as any, {
-    familyExternalId,
-    familyExpiresAt,
-    scheduleGeneration,
-  }) as any;
-}
-
-async function readRoot(t: ReturnType<typeof convexTest>, familyExternalId: string) {
   return await t.run(async (ctx: any) => await ctx.db
     .query("mcpOAuthRefreshTokens")
-    .withIndex("by_external_id", (q: any) => q.eq("externalId", familyExternalId))
-    .unique());
-}
-
-async function readFamily(t: ReturnType<typeof convexTest>, familyExternalId: string) {
-  return await t.run(async (ctx: any) => await ctx.db
-    .query("mcpOAuthRefreshTokens")
-    .withIndex("by_family_created", (q: any) => q.eq("familyExternalId", familyExternalId))
+    .withIndex("by_workspace_family_created", (q: any) => q
+      .eq("workspaceId", workspaceId)
+      .eq("familyExternalId", familyExternalId))
     .order("asc")
     .collect());
 }
 
-async function insertConsumedHistory(
-  t: ReturnType<typeof convexTest>,
-  rootId: string,
-  clientIdValue: string,
-  count: number,
-  createdAt: number,
-  familyExpiresAt: number,
-) {
-  await t.run(async (ctx: any) => {
-    const root = await ctx.db.query("mcpOAuthRefreshTokens")
-      .withIndex("by_external_id", (q: any) => q.eq("externalId", rootId)).unique();
-    if (!root) throw new Error("Refresh root disappeared");
-    for (let index = 0; index < count; index += 1) {
-      await ctx.db.insert("mcpOAuthRefreshTokens", {
-        workspaceId: root.workspaceId,
-        accountId: root.accountId,
-        externalId: refreshId(`history${index.toString().padStart(5, "0")}`),
-        familyExternalId: rootId,
-        familyExpiresAt,
-        secretHash: "d".repeat(64),
-        clientExternalId: clientIdValue,
-        scopes: root.scopes,
-        resource: root.resource,
-        createdAt: createdAt + index,
-        expiresAt: familyExpiresAt,
-        consumedAt: createdAt + index + 1,
-      });
-    }
-  });
+async function scheduledFunctions(t: ReturnType<typeof convexTest>) {
+  return await t.run(async (ctx: any) => await ctx.db.system
+    .query("_scheduled_functions")
+    .collect());
+}
+
+function scheduledArgs(job: any): any {
+  return Array.isArray(job.args) ? job.args[0] : job.args;
 }
 
 function codeId(label: string): string {
