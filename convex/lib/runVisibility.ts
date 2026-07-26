@@ -31,8 +31,12 @@ export async function readPublicItemRuns(
   ctx: QueryContext,
   item: Doc<"items">,
   limit = MAX_VISIBLE_ITEM_RUNS,
+  includeQueued = false,
 ) {
   const normalizedLimit = normalizeLimit(limit);
+  if (!includeQueued) {
+    return await readPublicLegacyItemRuns(ctx, item, normalizedLimit);
+  }
   const [legacyGroups, queuedGroups] = await Promise.all([
     readLegacyGroups(ctx, item, normalizedLimit),
     Promise.all(queuedStatuses.map(async (status) =>
