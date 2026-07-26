@@ -1,4 +1,3 @@
-import { expireClaims } from "./leases.js";
 import { StensiblyStore, type Item, type ItemKind, type ItemStatus } from "./store.js";
 
 export interface CustodianItem {
@@ -11,6 +10,8 @@ export interface CustodianItem {
   nextAction: string | null;
   claimedBy: string | null;
   claimExpiresAt: string | null;
+  claimGeneration: number;
+  version: number;
   updatedAt: string;
 }
 
@@ -36,6 +37,7 @@ export interface CustodianReport {
     duplicateTitleGroups: number;
   };
   expiredClaimIds: string[];
+  expiredClaims: CustodianItem[];
   expiringClaims: CustodianItem[];
   missingNextActions: CustodianItem[];
   staleReady: CustodianItem[];
@@ -66,23 +68,27 @@ export function inspectScrapbook(
   }
 
   const now = options.now ?? new Date();
-  const allExpiredClaimIds = expireClaims(store, now);
-  const expiredClaimIds = options.project
-    ? allExpiredClaimIds.filter((id) => store.getItem(id).project === options.project)
-    : allExpiredClaimIds;
   const items = store.listItems(options.project ? { project: options.project } : {});
   const staleCutoff = now.getTime() - staleDays * 24 * 60 * 60 * 1000;
   const expiringCutoff = now.getTime() + expiringWithinMinutes * 60 * 1000;
+
+  const expiredClaims = items
+    .filter((item) => {
+      if (item.status !== "active" || !item.claimedBy || !item.claimExpiresAt) return false;
+      const expiry = new Date(item.claimExpiresAt).getTime();
+      return Number.isFinite(expiry) && expiry <= now.getTime();
+    })
+    .sort(claimExpiryFirst)
+    .map(toCustodianItem);
+  const expiredClaimIds = expiredClaims.map((item) => item.id);
 
   const expiringClaims = items
     .filter((item) => {
       if (item.status !== "active" || !item.claimExpiresAt) return false;
       const expiry = new Date(item.claimExpiresAt).getTime();
-      return expiry > now.getTime() && expiry <= expiringCutoff;
+      return Number.isFinite(expiry) && expiry > now.getTime() && expiry <= expiringCutoff;
     })
-    .sort((left, right) =>
-      (left.claimExpiresAt ?? "").localeCompare(right.claimExpiresAt ?? ""),
-    )
+    .sort(claimExpiryFirst)
     .map(toCustodianItem);
 
   const missingNextActions = items
@@ -118,7 +124,7 @@ export function inspectScrapbook(
     scope: { project: options.project ?? null },
     settings: { staleDays, expiringWithinMinutes },
     summary: {
-      expiredClaims: expiredClaimIds.length,
+      expiredClaims: expiredClaims.length,
       expiringClaims: expiringClaims.length,
       missingNextActions: missingNextActions.length,
       staleReady: staleReady.length,
@@ -126,6 +132,7 @@ export function inspectScrapbook(
       duplicateTitleGroups: duplicateTitleGroups.length,
     },
     expiredClaimIds,
+    expiredClaims,
     expiringClaims,
     missingNextActions,
     staleReady,
@@ -187,6 +194,11 @@ function oldestFirst(left: Item, right: Item): number {
   return left.updatedAt.localeCompare(right.updatedAt) || right.priority - left.priority;
 }
 
+function claimExpiryFirst(left: Item, right: Item): number {
+  return (left.claimExpiresAt ?? "").localeCompare(right.claimExpiresAt ?? "")
+    || left.id.localeCompare(right.id);
+}
+
 function toCustodianItem(item: Item): CustodianItem {
   return {
     id: item.id,
@@ -198,6 +210,8 @@ function toCustodianItem(item: Item): CustodianItem {
     nextAction: item.nextAction,
     claimedBy: item.claimedBy,
     claimExpiresAt: item.claimExpiresAt,
+    claimGeneration: item.claimGeneration,
+    version: item.version,
     updatedAt: item.updatedAt,
   };
 }
