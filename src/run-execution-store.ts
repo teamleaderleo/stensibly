@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  EXECUTION_ENVELOPE_SCHEMA_VERSION,
   executionEnvelopeJson,
   parseExecutionActual,
   parseExecutionEnvelope,
@@ -46,11 +45,6 @@ interface ExecutionRecordRow {
   transition: string;
   actual_json: string;
   created_at: string;
-}
-
-interface EventRow {
-  rowid: number;
-  payload_json: string;
 }
 
 const initializedStores = new WeakSet<StensiblyStore>();
@@ -160,43 +154,6 @@ export function bindExecutionEnvelope(
       ) VALUES (?1, ?2, ?3, ?4)
     `)
     .run(runId, envelopeJson, idempotencyKey ?? null, createdAt);
-}
-
-export function assertDispatchEnvelopeIdempotency(
-  store: StensiblyStore,
-  idempotencyKey: string | undefined,
-  envelope: ExecutionEnvelope,
-): void {
-  if (!idempotencyKey) return;
-  ensureRunExecutionSchema(store);
-  const existing = store.db
-    .query<EnvelopeRow, [string]>(`
-      SELECT envelope_json
-      FROM dispatch_execution_envelopes
-      WHERE idempotency_key = ?1
-    `)
-    .get(idempotencyKey);
-  if (existing) {
-    if (existing.envelope_json !== executionEnvelopeJson(envelope)) {
-      throw new ConflictError(
-        "Idempotency key was already used with a different dispatch execution envelope",
-      );
-    }
-    return;
-  }
-  const legacy = store.db
-    .query<ExistingKeyRow, [string]>(`
-      SELECT 1 AS exists_flag
-      FROM dispatcher_commands
-      WHERE idempotency_key = ?1
-      LIMIT 1
-    `)
-    .get(idempotencyKey);
-  if (legacy) {
-    throw new ConflictError(
-      "Idempotency key belongs to a legacy dispatch without an execution envelope",
-    );
-  }
 }
 
 export function recordDispatchEnvelopeIdempotency(
@@ -311,40 +268,6 @@ export function appendExecutionRecord(
     );
 }
 
-export function tagLatestRunEvent(
-  store: StensiblyStore,
-  input: {
-    run: CoreWorkRun;
-    type: string;
-  },
-): void {
-  ensureRunExecutionSchema(store);
-  const row = store.db
-    .query<EventRow, [string, string]>(`
-      SELECT rowid, payload_json
-      FROM events
-      WHERE item_id = ?1 AND type = ?2
-      ORDER BY rowid DESC
-      LIMIT 1
-    `)
-    .get(input.run.itemId, input.type);
-  if (!row) return;
-  const payload = parseRecord(row.payload_json);
-  if (payload.runId !== input.run.id) return;
-  store.db
-    .query("UPDATE events SET payload_json = ?1 WHERE rowid = ?2")
-    .run(
-      JSON.stringify({
-        ...payload,
-        runId: input.run.id,
-        generation: input.run.generation,
-        leaseGeneration: input.run.leaseGeneration,
-        envelopeSchemaVersion: EXECUTION_ENVELOPE_SCHEMA_VERSION,
-      }),
-      row.rowid,
-    );
-}
-
 function mapExecutionRecord(row: ExecutionRecordRow): RunExecutionRecord {
   return {
     id: row.id,
@@ -355,15 +278,4 @@ function mapExecutionRecord(row: ExecutionRecordRow): RunExecutionRecord {
     actual: parseExecutionActual(JSON.parse(row.actual_json) as unknown),
     createdAt: row.created_at,
   };
-}
-
-function parseRecord(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
 }
