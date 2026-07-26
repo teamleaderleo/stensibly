@@ -13,7 +13,7 @@ export function validateHandoffInput(
   if (!actor || typeof actor !== 'object') {
     throw new TypeError('Choose an active session actor before handing off work.');
   }
-  const generation = positiveInteger(expectedClaimGeneration);
+  const generation = nonNegativeInteger(expectedClaimGeneration);
   if (generation === null) {
     throw new TypeError('Refresh item detail to load the current claim generation before handing off work.');
   }
@@ -48,7 +48,7 @@ export function readHandedOffItem(payload, expected = {}) {
   if (!Number.isInteger(item.version) || item.version < 1) {
     throw new TypeError('The handed-off item returned an invalid version.');
   }
-  const previousGeneration = positiveInteger(expected.expectedClaimGeneration);
+  const previousGeneration = nonNegativeInteger(expected.expectedClaimGeneration);
   if (previousGeneration === null || item.claimGeneration !== previousGeneration + 1) {
     throw new TypeError('The handed-off item did not advance the claim generation exactly once.');
   }
@@ -99,8 +99,8 @@ function optionalString(value, maxLength, label) {
   return output;
 }
 
-function positiveInteger(value) {
-  return Number.isInteger(value) && value > 0 ? value : null;
+function nonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function rejectCredential(value) {
