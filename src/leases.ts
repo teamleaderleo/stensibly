@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { validateOptionalProjectScope } from "./project-scope.js";
+import {
+  validateOptionalProjectScope,
+  validateProjectScope,
+} from "./project-scope.js";
 import type { ActorInput } from "./schemas.js";
 import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
@@ -228,7 +231,7 @@ function expectedRows(
   for (const claim of expectedClaims) {
     if (seen.has(claim.id)) continue;
     seen.add(claim.id);
-    const claimProject = validateOptionalProjectScope(claim.project, "Expected claim project");
+    const claimProject = validateProjectScope(claim.project, "Expected claim project");
     if (project !== undefined && claimProject !== project) continue;
     rows.push({
       id: claim.id,
