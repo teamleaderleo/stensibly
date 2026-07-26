@@ -34,15 +34,7 @@ export async function readPublicItemRuns(
 ) {
   const normalizedLimit = normalizeLimit(limit);
   const [legacyGroups, queuedGroups] = await Promise.all([
-    Promise.all(legacyStatuses.map(async (status) =>
-      await ctx.db
-        .query("runs")
-        .withIndex("by_item_status", (q) =>
-          q.eq("itemId", item._id).eq("status", status),
-        )
-        .order("desc")
-        .take(normalizedLimit),
-    )),
+    readLegacyGroups(ctx, item, normalizedLimit),
     Promise.all(queuedStatuses.map(async (status) =>
       await ctx.db
         .query("queuedRuns")
@@ -67,16 +59,34 @@ export async function readPublicItemRuns(
       candidate.run.externalId,
     );
     return candidate.family === "legacy"
-      ? {
-          ...publicRun(candidate.run),
-          itemId: item.externalId,
-          generation: 1,
-          leaseGeneration: 1,
-          executionEnvelope: execution.executionEnvelope,
-          executionRecords: execution.executionRecords,
-        }
+      ? publicLegacyRun(candidate.run, item.externalId, execution)
       : publicQueuedRun(candidate.run, item.externalId, execution);
   }));
+}
+
+export async function readPublicLegacyItemRuns(
+  ctx: QueryContext,
+  item: Doc<"items">,
+  limit = MAX_VISIBLE_ITEM_RUNS,
+) {
+  const normalizedLimit = normalizeLimit(limit);
+  const groups = await readLegacyGroups(ctx, item, normalizedLimit);
+  const selected = groups
+    .flat()
+    .sort((left, right) =>
+      Number(activeStatuses.has(right.status)) - Number(activeStatuses.has(left.status))
+      || right.lastHeartbeatAt - left.lastHeartbeatAt
+      || right.startedAt - left.startedAt
+      || left.externalId.localeCompare(right.externalId),
+    )
+    .slice(0, normalizedLimit);
+  return await Promise.all(selected.map(async (run) =>
+    publicLegacyRun(
+      run,
+      item.externalId,
+      await readHostedRunExecution(ctx, item._id, run.externalId),
+    )
+  ));
 }
 
 export function publicItemRuns(
@@ -99,6 +109,22 @@ export function publicItemRuns(
     }));
 }
 
+async function readLegacyGroups(
+  ctx: QueryContext,
+  item: Doc<"items">,
+  limit: number,
+) {
+  return await Promise.all(legacyStatuses.map(async (status) =>
+    await ctx.db
+      .query("runs")
+      .withIndex("by_item_status", (q) =>
+        q.eq("itemId", item._id).eq("status", status),
+      )
+      .order("desc")
+      .take(limit),
+  ));
+}
+
 function compareCandidates(left: RunCandidate, right: RunCandidate): number {
   return Number(activeStatuses.has(right.run.status))
     - Number(activeStatuses.has(left.run.status))
@@ -117,6 +143,21 @@ function candidateCreatedAt(candidate: RunCandidate): number {
   return candidate.family === "legacy"
     ? candidate.run.startedAt
     : candidate.run.createdAt;
+}
+
+function publicLegacyRun(
+  run: Doc<"runs">,
+  itemId: string,
+  execution: Awaited<ReturnType<typeof readHostedRunExecution>>,
+) {
+  return {
+    ...publicRun(run),
+    itemId,
+    generation: 1,
+    leaseGeneration: 1,
+    executionEnvelope: execution.executionEnvelope,
+    executionRecords: execution.executionRecords,
+  };
 }
 
 function publicQueuedRun(
