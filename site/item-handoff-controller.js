@@ -7,6 +7,7 @@ import {
 import { describeHttpFailure } from './connection.js';
 import { formatValidationIssues } from './item-create.js';
 import { createRequestGate, redactCredentialText, safeRequestId } from './item-detail.js';
+import { readSemanticClaimGeneration } from './item-semantic-generation-controller.js';
 import { readStoredActor } from './session-context.js';
 
 const ACTOR_STORAGE_KEY = 'stensiblyActor';
@@ -248,7 +249,14 @@ export function installHandoffController() {
 
     let input;
     try {
-      input = validateHandoffInput(itemId, summary.value, nextAction.value, toActorId.value, context.actor);
+      input = validateHandoffInput(
+        itemId,
+        summary.value,
+        nextAction.value,
+        toActorId.value,
+        context.actor,
+        readSemanticClaimGeneration(body, itemId),
+      );
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : 'Handoff validation failed.', 'needs attention', 'ready');
       return;
@@ -278,6 +286,7 @@ export function installHandoffController() {
     try {
       response = await fetch(`${context.endpoint}/api/v1/items/${encodeURIComponent(input.id)}/handoff`, {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         headers: {
           authorization: `Bearer ${context.token}`,
           'content-type': 'application/json',
@@ -285,6 +294,7 @@ export function installHandoffController() {
         },
         body: JSON.stringify({
           actor: input.actor,
+          expectedClaimGeneration: input.expectedClaimGeneration,
           summary: input.summary,
           nextAction: input.nextAction,
           ...(input.toActorId ? { toActorId: input.toActorId } : {}),
@@ -306,7 +316,7 @@ export function installHandoffController() {
         ? 'This item no longer exists or is outside the token project boundary.'
         : failure.message;
       const conflictHint = response.status === 409
-        ? 'Refresh detail to inspect the current status and holder before retrying.'
+        ? 'Refresh detail to inspect the current status, holder, and claim generation before retrying.'
         : '';
       const message = [baseMessage, validation, conflictHint, serverRequestId ? `Request ID: ${serverRequestId}` : '']
         .filter(Boolean)
@@ -327,6 +337,7 @@ export function installHandoffController() {
     try {
       handedOff = readHandedOffItem(payload, {
         id: input.id,
+        expectedClaimGeneration: input.expectedClaimGeneration,
         summary: input.summary,
         nextAction: input.nextAction,
       });
@@ -406,8 +417,17 @@ function readContext() {
     canWrite,
     endpoint,
     token,
-    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token ? 'token' : 'no-token'}\u0000${actorFingerprint}`,
+    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${tokenDiscriminator(token)}\u0000${actorFingerprint}`,
   };
+}
+
+function tokenDiscriminator(token) {
+  if (!token) return 'no-token';
+  let hash = 0;
+  for (let index = 0; index < token.length; index += 1) {
+    hash = (Math.imul(hash, 31) + token.charCodeAt(index)) | 0;
+  }
+  return `token-${(hash >>> 0).toString(36)}`;
 }
 
 function readRenderedStatus(body) {

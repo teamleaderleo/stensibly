@@ -6,6 +6,7 @@ import {
 } from "./artifacts.js";
 import { filterItemsForPrincipal } from "./auth.js";
 import { getProjectBrief } from "./briefs.js";
+import { completeWork } from "./completion.js";
 import {
   createHttpAuthMiddleware,
   currentPrincipal,
@@ -14,10 +15,10 @@ import {
   type StensiblyEnv,
 } from "./http-auth.js";
 import {
-  actorActionSchema,
   blockItemSchema,
   claimActionSchema,
   claimItemSchema,
+  completeItemSchema,
   createItemSchema,
   handoffItemSchema,
   itemStatuses,
@@ -268,16 +269,17 @@ export function createApp(
     const denied = requireHttpAccess(context, "write", existing.project);
     if (denied) return denied;
 
-    const parsed = actorActionSchema.safeParse(await readJson(context.req.raw));
+    const parsed = completeItemSchema.safeParse(await readJson(context.req.raw));
     if (!parsed.success) return validationError(context, parsed.error.issues);
-    expireClaims(store);
-    const item = store.completeItem(
+    const item = completeWork(store, {
       id,
-      parsed.data.actor,
-      parsed.data.expectedClaimGeneration,
-      parsed.data.summary,
-      context.req.header("Idempotency-Key"),
-    );
+      actor: parsed.data.actor,
+      expectedClaimGeneration: parsed.data.expectedClaimGeneration,
+      ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
+      ...(context.req.header("Idempotency-Key")
+        ? { idempotencyKey: context.req.header("Idempotency-Key") }
+        : {}),
+    });
     return context.json({ item });
   });
 

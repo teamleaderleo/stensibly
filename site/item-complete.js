@@ -1,16 +1,21 @@
 import { createIdempotencyTracker } from './item-create.js';
 import { validateActor } from './session-context.js';
 
-export function validateCompleteInput(itemId, summary, actor) {
+export function validateCompleteInput(itemId, summary, actor, expectedClaimGeneration) {
   const id = requiredString(itemId, 'Item ID is required.', 240);
   if (!actor || typeof actor !== 'object') {
     throw new TypeError('Choose an active session actor before completing work.');
+  }
+  const generation = nonNegativeInteger(expectedClaimGeneration);
+  if (generation === null) {
+    throw new TypeError('Refresh item detail to load the current claim generation before completing work.');
   }
   const replacementSummary = optionalString(summary, 10_000, 'Completion summary');
   return {
     id,
     actor: validateActor(actor),
     action: 'complete',
+    expectedClaimGeneration: generation,
     ...(replacementSummary ? { summary: replacementSummary } : {}),
   };
 }
@@ -32,11 +37,21 @@ export function readCompletedItem(payload, expected = {}) {
   if (!Number.isInteger(item.version) || item.version < 1) {
     throw new TypeError('The completed item returned an invalid version.');
   }
+  const previousGeneration = nonNegativeInteger(expected.expectedClaimGeneration);
+  if (previousGeneration === null || item.claimGeneration !== previousGeneration + 1) {
+    throw new TypeError('The completed item did not advance the claim generation exactly once.');
+  }
   const summary = nullableString(item.summary, 10_000, 'summary');
   if (Object.prototype.hasOwnProperty.call(expected, 'summary') && summary !== expected.summary) {
     throw new TypeError('The endpoint returned a different completion summary.');
   }
-  return { id, status, summary, version: item.version };
+  return {
+    id,
+    status,
+    summary,
+    claimGeneration: item.claimGeneration,
+    version: item.version,
+  };
 }
 
 export function createCompleteIdempotencyTracker(generateKey) {
@@ -71,6 +86,10 @@ function nullableString(value, maxLength, label) {
   rejectCredential(output);
   if (output.length > maxLength) throw new TypeError(`The completed item returned an invalid ${label}.`);
   return output || null;
+}
+
+function nonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function rejectCredential(value) {

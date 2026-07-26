@@ -17,8 +17,10 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("REST API v1", () => {
-  test("runs the work lifecycle through the async ledger", async () => {
-    const created = await json<{ item: { id: string; status: string } }>(app.request("/api/v1/items", {
+  test("runs the generation-fenced work lifecycle through the async ledger", async () => {
+    const created = await json<{
+      item: { id: string; status: string; claimGeneration: number };
+    }>(app.request("/api/v1/items", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "v1-create" },
       body: JSON.stringify({
@@ -29,7 +31,7 @@ describe("REST API v1", () => {
         actor: leo,
       }),
     }), 201);
-    expect(created.item.status).toBe("ready");
+    expect(created.item).toMatchObject({ status: "ready", claimGeneration: 0 });
 
     const claimed = await json<{
       item: { status: string; claimedBy: string; claimGeneration: number };
@@ -59,7 +61,20 @@ describe("REST API v1", () => {
     ), 201);
     expect(artifact.artifact).toMatchObject({ kind: "commit", uri: "git:repo@v1" });
 
-    const completed = await json<{ item: { status: string; summary: string } }>(app.request(
+    const missingGeneration = await app.request(
+      `/api/v1/items/${encodeURIComponent(created.item.id)}/complete`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actor: agent, summary: "Missing generation." }),
+      },
+    );
+    expect(missingGeneration.status).toBe(400);
+    expect(await missingGeneration.json()).toMatchObject({ code: "invalid_request" });
+
+    const completed = await json<{
+      item: { status: string; summary: string; claimGeneration: number };
+    }>(app.request(
       `/api/v1/items/${encodeURIComponent(created.item.id)}/complete`,
       {
         method: "POST",
@@ -71,16 +86,25 @@ describe("REST API v1", () => {
         }),
       },
     ));
-    expect(completed.item).toMatchObject({ status: "done", summary: "The versioned API works." });
+    expect(completed.item).toMatchObject({
+      status: "done",
+      summary: "The versioned API works.",
+      claimGeneration: claimed.item.claimGeneration + 1,
+    });
 
     const detail = await json<{
       item: { status: string };
-      events: Array<{ type: string }>;
+      events: Array<{ type: string; payload: Record<string, unknown> }>;
       artifacts: Array<{ kind: string }>;
     }>(app.request(`/api/v1/items/${encodeURIComponent(created.item.id)}`));
     expect(detail.item.status).toBe("done");
     expect(detail.artifacts).toEqual([expect.objectContaining({ kind: "commit" })]);
     expect(detail.events.map((event) => event.type)).toContain("item.completed");
+    expect(detail.events.find((event) => event.type === "item.completed")?.payload)
+      .toMatchObject({
+        generation: claimed.item.claimGeneration,
+        nextGeneration: completed.item.claimGeneration,
+      });
 
     const legacy = await json<{ items: Array<{ id: string }> }>(app.request("/api/items"));
     expect(legacy.items.map((item) => item.id)).toContain(created.item.id);

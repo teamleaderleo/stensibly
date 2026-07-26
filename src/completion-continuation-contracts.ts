@@ -4,14 +4,14 @@ import {
   type ContinuationLedger,
 } from "./continuation-contracts.js";
 import type { ContinuationProposal } from "./continuations.js";
-import { actorSchema, expectedItemGenerationSchema } from "./schemas.js";
+import { actorSchema } from "./schemas.js";
 import type { Item } from "./store.js";
 
 export const continuationDraftSchema = proposeContinuationSchema.omit({ actor: true });
 
 export const completeWithContinuationsSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: expectedItemGenerationSchema,
+  expectedClaimGeneration: z.number().int().min(0),
   summary: z.string().trim().max(10_000).optional(),
   continuations: z.array(continuationDraftSchema).max(20).optional(),
 });

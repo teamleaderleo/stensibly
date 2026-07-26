@@ -8,6 +8,7 @@ import {
 import { describeHttpFailure } from './connection.js';
 import { formatValidationIssues } from './item-create.js';
 import { createRequestGate, redactCredentialText, safeRequestId } from './item-detail.js';
+import { readSemanticClaimGeneration } from './item-semantic-generation-controller.js';
 import { readStoredActor } from './session-context.js';
 
 const ACTOR_STORAGE_KEY = 'stensiblyActor';
@@ -247,11 +248,12 @@ export function installBlockController() {
       return;
     }
 
+    const generation = readSemanticClaimGeneration(body, itemId);
     let input;
     try {
       input = action === 'block'
-        ? validateBlockInput(itemId, reason?.value, nextAction.value, context.actor)
-        : validateUnblockInput(itemId, nextAction.value, context.actor);
+        ? validateBlockInput(itemId, reason?.value, nextAction.value, context.actor, generation)
+        : validateUnblockInput(itemId, nextAction.value, context.actor, generation);
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : 'Transition validation failed.', 'needs attention', 'ready');
       return;
@@ -280,10 +282,20 @@ export function installBlockController() {
     let response;
     try {
       const requestBody = action === 'block'
-        ? { actor: input.actor, reason: input.reason, ...(input.nextAction ? { nextAction: input.nextAction } : {}) }
-        : { actor: input.actor, ...(input.nextAction ? { nextAction: input.nextAction } : {}) };
+        ? {
+            actor: input.actor,
+            expectedClaimGeneration: input.expectedClaimGeneration,
+            reason: input.reason,
+            ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+          }
+        : {
+            actor: input.actor,
+            expectedClaimGeneration: input.expectedClaimGeneration,
+            ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+          };
       response = await fetch(`${context.endpoint}/api/v1/items/${encodeURIComponent(input.id)}/${action}`, {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         headers: {
           authorization: `Bearer ${context.token}`,
           'content-type': 'application/json',
@@ -307,7 +319,7 @@ export function installBlockController() {
         ? 'This item no longer exists or is outside the token project boundary.'
         : failure.message;
       const conflictHint = response.status === 409
-        ? 'Refresh detail to inspect the current status and holder before retrying.'
+        ? 'Refresh detail to inspect the current status, holder, and claim generation before retrying.'
         : '';
       const message = [baseMessage, validation, conflictHint, serverRequestId ? `Request ID: ${serverRequestId}` : '']
         .filter(Boolean)
@@ -389,8 +401,17 @@ function readContext() {
     canWrite,
     endpoint,
     token,
-    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token ? 'token' : 'no-token'}\u0000${actorFingerprint}`,
+    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${tokenDiscriminator(token)}\u0000${actorFingerprint}`,
   };
+}
+
+function tokenDiscriminator(token) {
+  if (!token) return 'no-token';
+  let hash = 0;
+  for (let index = 0; index < token.length; index += 1) {
+    hash = (Math.imul(hash, 31) + token.charCodeAt(index)) | 0;
+  }
+  return `token-${(hash >>> 0).toString(36)}`;
 }
 
 function readRenderedStatus(body) {

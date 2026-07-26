@@ -13,7 +13,7 @@ beforeEach(() => {
 });
 
 describe("Convex completion parity", () => {
-  test("completion preserves or replaces summary, clears next action and lease, and replays once", async () => {
+  test("completion advances generation, preserves or replaces summary, and replays once", async () => {
     const t = convexTest(schema, modules);
     const preserved = await createItem(t, "Preserve the final summary", "Original summary", "This must disappear");
     const claimed = await t.mutation(convexApi.claims.acquire, {
@@ -23,38 +23,35 @@ describe("Convex completion parity", () => {
       actor,
       leaseSeconds: 900,
     }) as any;
-    const completed = await t.mutation(convexApi.items.complete, {
+    const request = {
       serviceSecret: secret,
       workspace,
       id: preserved.id,
       actor,
       expectedClaimGeneration: claimed.claimGeneration,
       idempotencyKey: "complete-preserve",
-    }) as any;
+    };
+    const completed = await t.mutation(convexApi.items.complete, request) as any;
     expect(completed).toMatchObject({
       status: "done",
       summary: "Original summary",
       nextAction: null,
       claimedBy: null,
       claimExpiresAt: null,
+      claimGeneration: claimed.claimGeneration + 1,
     });
-    const completedVersion = completed.version;
-    const replayed = await t.mutation(convexApi.items.complete, {
-      serviceSecret: secret,
-      workspace,
-      id: preserved.id,
-      actor,
-      expectedClaimGeneration: claimed.claimGeneration,
-      idempotencyKey: "complete-preserve",
-    }) as any;
-    expect(replayed.version).toBe(completedVersion);
-    expect(replayed.nextAction).toBeNull();
+    expect(await t.mutation(convexApi.items.complete, request)).toEqual(completed);
     const preservedDetail = await t.query(convexApi.items.get, {
       serviceSecret: secret,
       workspace,
       id: preserved.id,
     }) as any;
     expect(preservedDetail.events.filter((event: any) => event.type === "item.completed")).toHaveLength(1);
+    expect(preservedDetail.events.find((event: any) => event.type === "item.completed")?.payload)
+      .toMatchObject({
+        generation: claimed.claimGeneration,
+        nextGeneration: completed.claimGeneration,
+      });
 
     const replaced = await createItem(t, "Replace the final summary", "Before completion", "Also disappears");
     const replacedResult = await t.mutation(convexApi.items.complete, {
@@ -72,6 +69,7 @@ describe("Convex completion parity", () => {
       nextAction: null,
       claimedBy: null,
       claimExpiresAt: null,
+      claimGeneration: 1,
     });
   });
 });

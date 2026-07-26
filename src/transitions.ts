@@ -10,46 +10,43 @@ interface IdempotentEventRow {
   payload_json: string;
 }
 
-interface TransitionInput {
-  id: string;
-  actor: ActorInput;
-  expectedClaimGeneration: number;
-  idempotencyKey?: string;
-}
-
-interface ExpectedTransitionReplay {
-  itemId: string;
-  actorId: string;
-  type: string;
-  request: Record<string, unknown>;
-}
-
 export function handoffWork(
   store: StensiblyStore,
-  input: TransitionInput & {
+  input: {
+    id: string;
+    actor: ActorInput;
+    expectedClaimGeneration: number;
     summary: string;
     nextAction: string;
     toActorId?: string;
+    idempotencyKey?: string;
   },
 ): Item {
-  const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
-  const request = {
-    expectedClaimGeneration: expectedGeneration,
-    summary: input.summary,
-    nextAction: input.nextAction,
-    toActorId: input.toActorId ?? null,
-  };
-  const existing = findIdempotentItem(store, input.idempotencyKey, {
-    itemId: input.id,
-    actorId: input.actor.id,
-    type: "work.handed_off",
-    request,
-  });
-  if (existing) return existing;
+  const payload = handoffPayload(input);
+  const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  const replay = replayTransition(
+    store,
+    input.id,
+    input.actor.id,
+    input.idempotencyKey,
+    "work.handed_off",
+    payload,
+  );
+  if (replay) return replay;
 
   expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const current = store.getItem(input.id);
+    const concurrentReplay = findIdempotentItem(
+      store,
+      input.id,
+      input.actor.id,
+      input.idempotencyKey,
+      "work.handed_off",
+      payload,
+    );
+    if (concurrentReplay) return concurrentReplay;
+
+    store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
 
@@ -84,24 +81,16 @@ export function handoffWork(
       );
     }
 
-    const updated = store.getItem(input.id);
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.handed_off",
-      payload: {
-        summary: input.summary,
-        nextAction: input.nextAction,
-        ...(input.toActorId ? { toActorId: input.toActorId } : {}),
-        generation: current.claimGeneration,
-        nextGeneration: updated.claimGeneration,
-        request,
-      },
+      payload,
       idempotencyKey: input.idempotencyKey,
       now,
     });
 
-    return updated;
+    return store.getItem(input.id);
   });
 
   return transaction();
@@ -109,28 +98,40 @@ export function handoffWork(
 
 export function blockWork(
   store: StensiblyStore,
-  input: TransitionInput & {
+  input: {
+    id: string;
+    actor: ActorInput;
+    expectedClaimGeneration: number;
     reason: string;
     nextAction?: string;
+    idempotencyKey?: string;
   },
 ): Item {
-  const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
-  const request = {
-    expectedClaimGeneration: expectedGeneration,
-    reason: input.reason,
-    nextAction: input.nextAction ?? null,
-  };
-  const existing = findIdempotentItem(store, input.idempotencyKey, {
-    itemId: input.id,
-    actorId: input.actor.id,
-    type: "work.blocked",
-    request,
-  });
-  if (existing) return existing;
+  const payload = blockPayload(input);
+  const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  const replay = replayTransition(
+    store,
+    input.id,
+    input.actor.id,
+    input.idempotencyKey,
+    "work.blocked",
+    payload,
+  );
+  if (replay) return replay;
 
   expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const current = store.getItem(input.id);
+    const concurrentReplay = findIdempotentItem(
+      store,
+      input.id,
+      input.actor.id,
+      input.idempotencyKey,
+      "work.blocked",
+      payload,
+    );
+    if (concurrentReplay) return concurrentReplay;
+
+    store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
 
@@ -161,27 +162,20 @@ export function blockWork(
 
     if (result.changes !== 1) {
       throw new ConflictError(
-        "Work is blocked, complete, archived, held by another actor, or the claim generation changed",
+        "Work is already blocked, complete, archived, held by another actor, or the claim generation changed",
       );
     }
 
-    const updated = store.getItem(input.id);
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.blocked",
-      payload: {
-        reason: input.reason,
-        ...(input.nextAction ? { nextAction: input.nextAction } : {}),
-        generation: current.claimGeneration,
-        nextGeneration: updated.claimGeneration,
-        request,
-      },
+      payload,
       idempotencyKey: input.idempotencyKey,
       now,
     });
 
-    return updated;
+    return store.getItem(input.id);
   });
 
   return transaction();
@@ -189,24 +183,39 @@ export function blockWork(
 
 export function unblockWork(
   store: StensiblyStore,
-  input: TransitionInput & { nextAction?: string },
+  input: {
+    id: string;
+    actor: ActorInput;
+    expectedClaimGeneration: number;
+    nextAction?: string;
+    idempotencyKey?: string;
+  },
 ): Item {
-  const expectedGeneration = itemGeneration(input.expectedClaimGeneration);
-  const request = {
-    expectedClaimGeneration: expectedGeneration,
-    nextAction: input.nextAction ?? null,
-  };
-  const existing = findIdempotentItem(store, input.idempotencyKey, {
-    itemId: input.id,
-    actorId: input.actor.id,
-    type: "work.unblocked",
-    request,
-  });
-  if (existing) return existing;
+  const payload = unblockPayload(input);
+  const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  const replay = replayTransition(
+    store,
+    input.id,
+    input.actor.id,
+    input.idempotencyKey,
+    "work.unblocked",
+    payload,
+  );
+  if (replay) return replay;
 
   expireClaims(store);
   const transaction = store.db.transaction(() => {
-    const current = store.getItem(input.id);
+    const concurrentReplay = findIdempotentItem(
+      store,
+      input.id,
+      input.actor.id,
+      input.idempotencyKey,
+      "work.unblocked",
+      payload,
+    );
+    if (concurrentReplay) return concurrentReplay;
+
+    store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
 
@@ -223,122 +232,123 @@ export function unblockWork(
         WHERE id = ?3
           AND status = 'blocked'
           AND claim_generation = ?4
+          AND (claimed_by IS NULL OR claimed_by = ?5)
       `)
-      .run(input.nextAction ?? null, now, input.id, expectedGeneration);
+      .run(
+        input.nextAction ?? null,
+        now,
+        input.id,
+        expectedGeneration,
+        input.actor.id,
+      );
 
     if (result.changes !== 1) {
       throw new ConflictError(
-        "Only blocked work with the current claim generation can be unblocked",
+        "Only blocked work at the current claim generation can be unblocked",
       );
     }
 
-    const updated = store.getItem(input.id);
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.unblocked",
-      payload: {
-        ...(input.nextAction ? { nextAction: input.nextAction } : {}),
-        generation: current.claimGeneration,
-        nextGeneration: updated.claimGeneration,
-        request,
-      },
+      payload,
       idempotencyKey: input.idempotencyKey,
       now,
     });
 
-    return updated;
+    return store.getItem(input.id);
   });
 
   return transaction();
 }
 
+function replayTransition(
+  store: StensiblyStore,
+  itemId: string,
+  actorId: string,
+  idempotencyKey: string | undefined,
+  expectedType: string,
+  expectedPayload: Record<string, unknown>,
+): Item | null {
+  if (!idempotencyKey) return null;
+  return store.db.transaction(() => findIdempotentItem(
+    store,
+    itemId,
+    actorId,
+    idempotencyKey,
+    expectedType,
+    expectedPayload,
+  ))();
+}
+
 function findIdempotentItem(
   store: StensiblyStore,
+  itemId: string,
+  actorId: string,
   idempotencyKey: string | undefined,
-  expected: ExpectedTransitionReplay,
+  expectedType: string,
+  expectedPayload: Record<string, unknown>,
 ): Item | null {
   if (!idempotencyKey) return null;
   const existing = store.db
-    .query<IdempotentEventRow, [string]>(`
-      SELECT item_id, actor_id, type, payload_json
-      FROM events
-      WHERE idempotency_key = ?1
-    `)
+    .query<IdempotentEventRow, [string]>(
+      "SELECT item_id, actor_id, type, payload_json FROM events WHERE idempotency_key = ?1",
+    )
     .get(idempotencyKey);
   if (!existing) return null;
-
-  const payload = parsePayload(existing.payload_json);
-  const existingRequest = isRecord(payload.request)
-    ? payload.request
-    : legacyTransitionRequest(existing.type, payload);
-  if (
-    existing.item_id !== expected.itemId
-    || existing.actor_id !== expected.actorId
-    || existing.type !== expected.type
-    || stableJson(existingRequest) !== stableJson(expected.request)
-  ) {
-    throw new ConflictError(
-      "Idempotency key was already used for a different item operation",
-    );
+  const exact = existing.item_id === itemId
+    && existing.actor_id === actorId
+    && existing.type === expectedType
+    && stableJson(JSON.parse(existing.payload_json)) === stableJson(expectedPayload);
+  if (!exact) {
+    throw new ConflictError("Idempotency key was already used for a different transition request");
   }
   return store.getItem(existing.item_id);
 }
 
-function legacyTransitionRequest(
-  type: string,
-  payload: Record<string, unknown>,
-): Record<string, unknown> {
-  if (type === "work.handed_off") {
-    return {
-      expectedClaimGeneration: payload.generation,
-      summary: payload.summary,
-      nextAction: payload.nextAction,
-      toActorId: typeof payload.toActorId === "string" ? payload.toActorId : null,
-    };
-  }
-  if (type === "work.blocked") {
-    return {
-      expectedClaimGeneration: payload.generation,
-      reason: payload.reason,
-      nextAction: typeof payload.nextAction === "string" ? payload.nextAction : null,
-    };
-  }
-  if (type === "work.unblocked") {
-    return {
-      expectedClaimGeneration: payload.generation,
-      nextAction: typeof payload.nextAction === "string" ? payload.nextAction : null,
-    };
-  }
-  return {};
+function handoffPayload(input: {
+  summary: string;
+  nextAction: string;
+  toActorId?: string;
+  expectedClaimGeneration: number;
+}): Record<string, unknown> {
+  return {
+    summary: input.summary,
+    nextAction: input.nextAction,
+    ...(input.toActorId ? { toActorId: input.toActorId } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
 }
 
-function parsePayload(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+function blockPayload(input: {
+  reason: string;
+  nextAction?: string;
+  expectedClaimGeneration: number;
+}): Record<string, unknown> {
+  return {
+    reason: input.reason,
+    ...(input.nextAction !== undefined ? { nextAction: input.nextAction } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+function unblockPayload(input: {
+  nextAction?: string;
+  expectedClaimGeneration: number;
+}): Record<string, unknown> {
+  return {
+    ...(input.nextAction !== undefined ? { nextAction: input.nextAction } : {}),
+    generation: input.expectedClaimGeneration,
+    nextGeneration: input.expectedClaimGeneration + 1,
+  };
 }
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(canonicalJson(value));
-}
-
-function canonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, canonicalJson(entry)]),
-    );
+function claimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError("Expected claim generation must be a non-negative integer");
   }
   return value;
 }
@@ -384,9 +394,19 @@ function appendTransitionEvent(
     );
 }
 
-function itemGeneration(value: number): number {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new RangeError("Expected claim generation must be a non-negative integer");
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
   }
   return value;
 }

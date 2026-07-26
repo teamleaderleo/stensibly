@@ -6,7 +6,8 @@ const helper = await Bun.file(new URL("../site/item-block.js", import.meta.url))
 const styles = await Bun.file(new URL("../site/item-block.css", import.meta.url)).text();
 
 describe("dashboard block and unblock integration", () => {
-  test("loads as an isolated item-detail sidecar", () => {
+  test("loads beside the shared semantic generation sidecar", () => {
+    expect(claimHelper).toContain("import './item-semantic-generation-controller.js'");
     expect(claimHelper).toContain("import './item-block-controller.js'");
     expect(controller).toContain("if (typeof document !== 'undefined') installBlockController()");
     expect(controller).toContain("MutationObserver");
@@ -15,15 +16,18 @@ describe("dashboard block and unblock integration", () => {
     expect(controller).not.toContain("/complete");
   });
 
-  test("uses the exact block and unblock REST contracts", () => {
+  test("uses the exact fenced block and unblock REST contracts", () => {
+    expect(controller).toContain("readSemanticClaimGeneration(body, itemId)");
     expect(controller).toContain("encodeURIComponent(input.id)");
     expect(controller).toContain("/${action}`");
     expect(controller).toContain("method: 'POST'");
+    expect(controller).toContain("signal: AbortSignal.timeout(15_000)");
     expect(controller).toContain("'idempotency-key': idempotencyKey");
-    expect(controller).toContain("{ actor: input.actor, reason: input.reason");
-    expect(controller).toContain("{ actor: input.actor, ...(input.nextAction");
+    expect(controller).toContain("expectedClaimGeneration: input.expectedClaimGeneration");
+    expect(controller).toContain("reason: input.reason");
     expect(helper).toContain("action: 'block'");
     expect(helper).toContain("action: 'unblock'");
+    expect(helper).toContain("expectedClaimGeneration");
   });
 
   test("explains destructive block effects and status-driven actions", () => {
@@ -34,11 +38,12 @@ describe("dashboard block and unblock integration", () => {
     expect(controller).toContain("readRenderedStatus(body)");
   });
 
-  test("uses the current actor at submit time and invalidates stale requests", () => {
-    expect(controller).toContain("validateBlockInput(itemId, reason?.value, nextAction.value, context.actor)");
-    expect(controller).toContain("validateUnblockInput(itemId, nextAction.value, context.actor)");
+  test("uses the current actor and generation at submit time and invalidates stale requests", () => {
+    expect(controller).toContain("const generation = readSemanticClaimGeneration(body, itemId)");
+    expect(controller).toContain("context.actor, generation");
     expect(controller).toContain("gate.isCurrent(requestId)");
     expect(controller).toContain("readContext().fingerprint === expectedContext");
+    expect(controller).toContain("tokenDiscriminator(token)");
     expect(controller).toContain("formState.mode === expectedAction");
   });
 
@@ -64,10 +69,12 @@ describe("dashboard block and unblock integration", () => {
     expect(controller).not.toContain("innerHTML");
   });
 
-  test("surfaces bounded errors and refreshes the server state after success", () => {
+  test("validates exact generation advancement and bounded conflict recovery", () => {
+    expect(helper).toContain("item.claimGeneration !== previousGeneration + 1");
     expect(controller).toContain("formatValidationIssues");
     expect(controller).toContain("safeRequestId");
     expect(controller).toContain("response.status === 409");
+    expect(controller).toContain("holder, and claim generation");
     expect(controller).toContain("Retry the unchanged form to reuse the same idempotency key");
     expect(controller).toContain("refreshButton.click()");
     expect(controller).toContain("redactCredentialText");

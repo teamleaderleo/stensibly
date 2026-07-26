@@ -91,7 +91,7 @@ export const complete = mutation({
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
 
     const id = safeText(args.id, "Item ID", 240);
-    const expectedGeneration = itemGeneration(args.expectedClaimGeneration);
+    const expectedGeneration = currentClaimGeneration(args.expectedClaimGeneration);
     const summary = assertOptionalText(args.summary, "Summary", 10_000);
     const actorRequest = publicActor(args.actor);
     const drafts = (args.continuations as ContinuationDraft[]).map((draft) =>
@@ -130,7 +130,7 @@ export const complete = mutation({
     let item = await getItemByExternalId(ctx, workspace._id, id);
     item = await expireClaimIfNeeded(ctx, item, now);
     if (item.claimGeneration !== expectedGeneration) {
-      throw new Error("Item claim generation changed");
+      throw new Error("Claim generation changed; refresh the item before retrying");
     }
     if (liveClaimHeldByOther(item, actor.externalId, now)) {
       throw new Error("Work is held by another actor");
@@ -139,7 +139,7 @@ export const complete = mutation({
       throw new Error("Item is already complete or archived");
     }
 
-    const nextGeneration = item.claimGeneration + 1;
+    const nextGeneration = expectedGeneration + 1;
     await ctx.db.patch(item._id, {
       status: "done",
       summary: summary ?? item.summary,
@@ -160,7 +160,7 @@ export const complete = mutation({
       type: "item.completed",
       payload: {
         ...(summary ? { summary } : {}),
-        generation: item.claimGeneration,
+        generation: expectedGeneration,
         nextGeneration,
       },
       idempotencyKey,
@@ -375,6 +375,13 @@ function normalizeTimestamp(value: string | undefined, label: string) {
   return parsed;
 }
 
+function currentClaimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error("Expected claim generation must be a non-negative integer");
+  }
+  return value;
+}
+
 function safeText(value: string, label: string, max: number) {
   const normalized = assertText(value, label, max);
   if (/stn\.tok_/i.test(normalized)) {
@@ -389,13 +396,6 @@ function safeOptionalText(value: string | undefined, label: string, max: number)
     throw new Error(`${label} cannot contain credential-shaped text`);
   }
   return normalized;
-}
-
-function itemGeneration(value: number): number {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error("Expected claim generation must be a non-negative integer");
-  }
-  return value;
 }
 
 function requireSameRequest(existing: unknown, requested: unknown, label: string) {

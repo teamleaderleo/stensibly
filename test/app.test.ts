@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("REST work transitions", () => {
-  test("hands off, blocks, and unblocks work", async () => {
+  test("hands off, blocks, and unblocks work at exact generations", async () => {
     const createdResponse = await app.request("/api/items", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -35,6 +35,7 @@ describe("REST work transitions", () => {
     });
     expect(createdResponse.status).toBe(201);
     const created = await readItem(createdResponse);
+    expect(created.claimGeneration).toBe(0);
 
     const claimResponse = await app.request(`/api/items/${created.id}/claim`, {
       method: "POST",
@@ -44,19 +45,31 @@ describe("REST work transitions", () => {
     expect(claimResponse.status).toBe(200);
     const claimed = await readItem(claimResponse);
 
+    const missingGeneration = await app.request(`/api/items/${created.id}/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: browserAgent,
+        summary: "Missing generation.",
+        nextAction: "Should fail.",
+      }),
+    });
+    expect(missingGeneration.status).toBe(400);
+
+    const handoffBody = {
+      actor: browserAgent,
+      expectedClaimGeneration: claimed.claimGeneration,
+      summary: "The endpoint works.",
+      nextAction: "Review the result.",
+      toActorId: leo.id,
+    };
     const handoffResponse = await app.request(`/api/items/${created.id}/handoff`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "idempotency-key": "rest-handoff-1",
       },
-      body: JSON.stringify({
-        actor: browserAgent,
-        expectedClaimGeneration: claimed.claimGeneration,
-        summary: "The endpoint works.",
-        nextAction: "Review the result.",
-        toActorId: leo.id,
-      }),
+      body: JSON.stringify(handoffBody),
     });
     expect(handoffResponse.status).toBe(200);
     const handedOff = await readItem(handoffResponse);
@@ -65,7 +78,18 @@ describe("REST work transitions", () => {
       summary: "The endpoint works.",
       nextAction: "Review the result.",
       claimedBy: null,
+      claimGeneration: claimed.claimGeneration + 1,
     });
+
+    const replay = await app.request(`/api/items/${created.id}/handoff`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "rest-handoff-1",
+      },
+      body: JSON.stringify(handoffBody),
+    });
+    expect(await readItem(replay)).toEqual(handedOff);
 
     const blockResponse = await app.request(`/api/items/${created.id}/block`, {
       method: "POST",
@@ -82,6 +106,7 @@ describe("REST work transitions", () => {
     expect(blocked).toMatchObject({
       status: "blocked",
       summary: "Waiting for a review.",
+      claimGeneration: handedOff.claimGeneration + 1,
     });
 
     const blockedClaim = await app.request(`/api/items/${created.id}/claim`, {
@@ -90,6 +115,16 @@ describe("REST work transitions", () => {
       body: JSON.stringify({ actor: browserAgent, leaseSeconds: 900 }),
     });
     expect(blockedClaim.status).toBe(409);
+
+    const staleUnblock = await app.request(`/api/items/${created.id}/unblock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: leo,
+        expectedClaimGeneration: handedOff.claimGeneration,
+      }),
+    });
+    expect(staleUnblock.status).toBe(409);
 
     const unblockResponse = await app.request(`/api/items/${created.id}/unblock`, {
       method: "POST",
@@ -101,15 +136,17 @@ describe("REST work transitions", () => {
       }),
     });
     expect(unblockResponse.status).toBe(200);
-    expect(await readItem(unblockResponse)).toMatchObject({
+    const unblocked = await readItem(unblockResponse);
+    expect(unblocked).toMatchObject({
       status: "ready",
       nextAction: "The review landed; continue.",
+      claimGeneration: blocked.claimGeneration + 1,
     });
 
     const detailResponse = await app.request(`/api/items/${created.id}`);
     expect(detailResponse.status).toBe(200);
     const detail = await detailResponse.json() as {
-      events: Array<{ type: string }>;
+      events: Array<{ type: string; payload: Record<string, unknown> }>;
       artifacts: unknown[];
     };
     expect(detail.artifacts).toEqual([]);
@@ -119,6 +156,20 @@ describe("REST work transitions", () => {
       "work.handed_off",
       "work.blocked",
       "work.unblocked",
+    ]);
+    expect(detail.events.slice(-3).map((event) => event.payload)).toEqual([
+      expect.objectContaining({
+        generation: claimed.claimGeneration,
+        nextGeneration: handedOff.claimGeneration,
+      }),
+      expect.objectContaining({
+        generation: handedOff.claimGeneration,
+        nextGeneration: blocked.claimGeneration,
+      }),
+      expect.objectContaining({
+        generation: blocked.claimGeneration,
+        nextGeneration: unblocked.claimGeneration,
+      }),
     ]);
   });
 
@@ -191,7 +242,11 @@ describe("REST work transitions", () => {
     const response = await app.request(`/api/items/${item.id}/handoff`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ actor: leo, summary: "Missing the next action." }),
+      body: JSON.stringify({
+        actor: leo,
+        expectedClaimGeneration: item.claimGeneration,
+        summary: "Missing the next action.",
+      }),
     });
     expect(response.status).toBe(400);
   });

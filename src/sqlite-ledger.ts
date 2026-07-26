@@ -7,6 +7,7 @@ import {
   completeWorkWithContinuations,
   ensureCompletionContinuationSchema,
 } from "./completion-continuations.js";
+import { completeWork as completeFencedWork } from "./completion.js";
 import { installSqliteCompletionParity } from "./completion-parity.js";
 import { getProjectBrief } from "./briefs.js";
 import {
@@ -209,19 +210,11 @@ export class SqliteWorkLedger implements
 
   async completeWork(input: CompleteWorkInput) {
     reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
-    return this.store.completeItem(
-      input.id,
-      input.actor,
-      input.expectedClaimGeneration,
-      input.summary,
-      input.idempotencyKey,
-    );
+    return completeFencedWork(this.store, input);
   }
 
   async completeWorkWithContinuations(input: CompleteWithContinuationsInput) {
     reconcileStaleRunItems(this.store);
-    expireClaims(this.store);
     return completeWorkWithContinuations(this.store, input);
   }
 

@@ -3,6 +3,7 @@ import type {
   CompleteWithContinuationsResult,
 } from "./completion-continuation-contracts.js";
 import { completeWithContinuationsSchema } from "./completion-continuation-contracts.js";
+import { completeWork } from "./completion.js";
 import {
   ensureContinuationSchema,
   proposeContinuation,
@@ -74,13 +75,13 @@ export function completeWorkWithContinuations(
       }
     }
 
-    const item = store.completeItem(
+    const item = completeWork(store, {
       id,
-      parsed.actor,
-      parsed.expectedClaimGeneration,
-      parsed.summary,
-      idempotencyKey,
-    );
+      actor: parsed.actor,
+      expectedClaimGeneration: parsed.expectedClaimGeneration,
+      ...(parsed.summary ? { summary: parsed.summary } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
     const continuations = (parsed.continuations ?? []).map((draft) =>
       proposeContinuation(store, {
         sourceItemId: id,
