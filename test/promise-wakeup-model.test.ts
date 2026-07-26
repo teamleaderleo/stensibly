@@ -61,12 +61,13 @@ describe("bounded promise/wakeup lifecycle", () => {
       "satisfy:supervisor-a:p1",
       "supersede:supervisor-a:p1",
     ]);
-    expect(identity?.state).toMatchObject({
-      promiseGeneration: 2,
-      promiseStatus: "pending",
-      consumerGeneration: 1,
-      wakeups: [expect.objectContaining({ promiseGeneration: 1, status: "ready" })],
-    });
+    expect(identity?.state.promiseGeneration).toBe(2);
+    expect(identity?.state.promiseStatus).toBe("pending");
+    expect(identity?.state.consumerGeneration).toBe(1);
+    const identityWakeup = identity?.state.wakeups[0];
+    expect(identityWakeup).toBeDefined();
+    expect(identityWakeup?.promiseGeneration).toBe(1);
+    expect(identityWakeup?.status).toBe("ready");
     expect(identity?.weakOutcome).toContain("consume wakeup generation 1 as current generation 2");
 
     const duplicate = controls.consume_without_marker;
