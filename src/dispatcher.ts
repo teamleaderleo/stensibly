@@ -34,6 +34,7 @@ export function dispatchNextWork(
   now = new Date(),
 ): Core.DispatchResult | null {
   ensureRunSchema(store);
+  Core.ensureDispatchSchema(store);
   ensureRunExecutionSchema(store);
   const envelope = requiredExecutionEnvelope(
     rawInput.executionEnvelope
