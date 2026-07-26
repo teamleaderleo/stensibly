@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe("Convex direct-run execution envelopes", () => {
-  test("persists, replays, projects, and completes one immutable envelope", async () => {
+  test("persists, fences, replays, projects, and completes one immutable envelope", async () => {
     const t = convexTest(schema, modules);
     const item = await t.mutation(convexApi.items.create, {
       serviceSecret: secret,
@@ -88,6 +88,37 @@ describe("Convex direct-run execution envelopes", () => {
       },
     })).rejects.toThrow("different run start request");
 
+    await expect(t.mutation(convexApi.runs.heartbeat, {
+      serviceSecret: secret,
+      workspace,
+      id: started.id,
+      actorId: actor.id,
+      checkpoint: "Missing the required fence.",
+    })).rejects.toThrow("Expected generation is required");
+    await expect(t.mutation(convexApi.runs.heartbeat, {
+      serviceSecret: secret,
+      workspace,
+      id: started.id,
+      actorId: actor.id,
+      expectedGeneration: 2,
+      checkpoint: "Stale checkpoint.",
+    })).rejects.toThrow("generation changed from 2 to 1");
+    const heartbeat = await t.mutation(convexApi.runs.heartbeat, {
+      serviceSecret: secret,
+      workspace,
+      id: started.id,
+      actorId: actor.id,
+      expectedGeneration: started.generation,
+      checkpoint: "Hosted checkpoint accepted.",
+      toolCallCount: 6,
+    }) as any;
+    expect(heartbeat).toMatchObject({
+      generation: 1,
+      leaseGeneration: 1,
+      status: "running",
+      toolCallCount: 6,
+    });
+
     const active = await t.query(convexApi.runs.listActive, {
       serviceSecret: secret,
       workspace,
@@ -96,6 +127,7 @@ describe("Convex direct-run execution envelopes", () => {
     expect(active).toEqual([
       expect.objectContaining({
         id: started.id,
+        generation: 1,
         executionEnvelope,
         executionRecords: [],
       }),
@@ -106,6 +138,7 @@ describe("Convex direct-run execution envelopes", () => {
       workspace,
       id: started.id,
       actorId: actor.id,
+      expectedGeneration: heartbeat.generation,
       status: "succeeded" as const,
       outcome: "Hosted direct run completed.",
       toolCallCount: 12,
@@ -119,13 +152,22 @@ describe("Convex direct-run execution envelopes", () => {
       },
       idempotencyKey: "hosted-direct-run-finish",
     };
+    await expect(t.mutation(convexApi.runs.finish, {
+      ...finishInput,
+      expectedGeneration: 2,
+      idempotencyKey: "hosted-direct-run-stale-finish",
+    })).rejects.toThrow("generation changed from 2 to 1");
     const finished = await t.mutation(convexApi.runs.finish, finishInput) as any;
-    expect(finished.executionEnvelope).toEqual(executionEnvelope);
+    expect(finished).toMatchObject({
+      generation: 2,
+      leaseGeneration: 1,
+      executionEnvelope,
+    });
     expect(finished.executionRecords).toEqual([
       expect.objectContaining({
         id: expect.stringMatching(/^evt_/),
         runId: started.id,
-        runGeneration: 1,
+        runGeneration: 2,
         leaseGeneration: 1,
         transition: "finish:succeeded",
         actual: finishInput.executionActual,
@@ -149,9 +191,11 @@ describe("Convex direct-run execution envelopes", () => {
       expect.objectContaining({
         id: started.id,
         status: "succeeded",
+        generation: 2,
         executionEnvelope,
         executionRecords: [
           expect.objectContaining({
+            runGeneration: 2,
             transition: "finish:succeeded",
             actual: finishInput.executionActual,
           }),
