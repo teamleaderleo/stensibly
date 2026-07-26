@@ -275,6 +275,7 @@ export default defineSchema({
   })
     .index("by_external_id", ["externalId"])
     .index("by_family_created", ["familyExternalId", "createdAt"])
+    .index("by_workspace_family_created", ["workspaceId", "familyExternalId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
   items: defineTable({
