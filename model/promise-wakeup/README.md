@@ -9,7 +9,7 @@ bun model/promise-wakeup/check.ts
 bun test test/promise-wakeup-model.test.ts
 ```
 
-The first command emits the bounded JSON report. The second runs the exact-count, negative-control, and configuration regressions. The committed bounds are in `config.json`.
+The first command emits the bounded JSON report. The second runs the exact-count, negative-control, configuration, and guard-mutation regressions. The committed bounds are in `config.json`.
 
 ## Modelled state
 
@@ -26,15 +26,23 @@ Within the declared finite bounds, the accepted model requires:
 - exact promise-generation fencing for terminal and reconciliation commands;
 - at most one semantic wakeup per promise generation;
 - exact promise, consumer, and run generations for consumption;
+- exact consumer and run generations for terminal consumer completion;
 - a durable consumed marker across duplicate delivery and restart;
 - stale wakeups to remain unable to activate a newer consumer generation;
 - mutually exclusive promise terminal outcomes;
 - terminal consumer state not to regress;
 - project identity on every wakeup link;
-- a consume or escalation path within `recoveryHorizonTicks` for each current ready wakeup;
+- a consume-only path within `recoveryHorizonTicks` for each current wakeup whose promise is satisfied and whose consumer is non-terminal;
+- a consume-or-explicit-escalation path within `recoveryHorizonTicks` for every current ready wakeup;
 - an enabled reconciliation action for each expired pending promise.
 
-The ready-wakeup liveness check performs a bounded search over enabled model transitions. These checks do not claim unbounded fairness, scheduler guarantees, or proof of the complete production protocol.
+Both ready-wakeup liveness checks perform bounded searches over enabled model transitions. The consume-only property cannot be discharged by escalation. These checks do not claim unbounded fairness, scheduler guarantees, or proof of the complete production protocol.
+
+## Guard mutation matrix
+
+The repository test pairs accepted transitions with rejected mutations for every claimed command guard. It covers current and stale promise generations, premature and stale reconciliation, current and stale consumer generations, current and stale run generations for both consumption and completion, duplicate consumption, terminal-consumer rejection, consumer-advance fencing, duplicate creation, and restart idempotency. Removing one of those guards changes a rejected transition or disables a positive control, so the regression fails rather than leaving the report unchanged.
+
+The explicit-state checker also probes stale run generations during reachable consumption and active-consumer completion states. A reported generation-fence property is emitted only after its corresponding rejection probe is exercised.
 
 ## Negative controls
 
