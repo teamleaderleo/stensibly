@@ -6,12 +6,22 @@ import {
   type ReconcileWorkPromisesResult,
 } from "./promises.js";
 import {
+  consumePromiseWakeupsForDispatch,
+  ensurePromiseWakeupConsumptionSchema,
+} from "./promise-wakeup-consumption.js";
+import {
   ensureRunSchema,
   listRetryEligibleRuns,
   reconcileStaleRuns,
   type WorkRun,
 } from "./runs.js";
-import { ConflictError, NotFoundError, StensiblyStore, type Item, type ItemKind, type ItemStatus } from "./store.js";
+import {
+  ConflictError,
+  NotFoundError,
+  StensiblyStore,
+  type Item,
+  type ItemKind,
+} from "./store.js";
 
 export interface DispatchCandidate {
   itemId: string;
@@ -56,6 +66,8 @@ export interface DispatchNextWorkInput {
 export interface DispatchResult {
   item: Item;
   run: WorkRun;
+  wakeupSource: "local";
+  consumedPromiseWakeupIds: string[];
 }
 
 interface CandidateRow {
@@ -152,7 +164,7 @@ export function dispatchNextWork(
         if (existing.request_json !== requestJson) {
           throw new ConflictError("Idempotency key was already used for a different dispatch request");
         }
-        return JSON.parse(existing.result_json) as DispatchResult | null;
+        return parseDispatchReplay(existing.result_json);
       }
     }
 
@@ -236,6 +248,16 @@ export function dispatchNextWork(
         timestamp,
       );
 
+    const dispatchCommandId = `dispatch:${runId}`;
+    const consumptions = consumePromiseWakeupsForDispatch(store, {
+      itemId: candidate.id,
+      project: candidate.project_id,
+      dispatchCommandId,
+      runId,
+      consumedAt: timestamp,
+    });
+    const consumedPromiseWakeupIds = consumptions.map((entry) => entry.wakeupId);
+
     appendDispatchEvent(store, {
       itemId: candidate.id,
       actorId: input.actor.id,
@@ -260,7 +282,9 @@ export function dispatchNextWork(
         runnerType: input.runnerType,
         runnerProfile: input.runnerProfile,
         source: "supervisor_dispatch",
-        readyPromiseWakeups: candidate.wakeup_count,
+        wakeupSource: "local",
+        readyPromiseWakeups: consumedPromiseWakeupIds.length,
+        consumedPromiseWakeupIds,
       },
       now: timestamp,
     });
@@ -268,6 +292,8 @@ export function dispatchNextWork(
     const result: DispatchResult = {
       item,
       run: mapRun(getRunRow(store, runId)),
+      wakeupSource: "local",
+      consumedPromiseWakeupIds,
     };
     storeDispatchReplay(store, input.idempotencyKey, requestJson, result, timestamp);
     return result;
@@ -280,6 +306,7 @@ export function ensureDispatchSchema(store: StensiblyStore): void {
   if (initializedStores.has(store)) return;
   ensurePromiseSchema(store);
   ensureRunSchema(store);
+  ensurePromiseWakeupConsumptionSchema(store);
   store.db.exec(`
     CREATE TABLE IF NOT EXISTS dispatch_commands (
       idempotency_key TEXT PRIMARY KEY,
@@ -304,40 +331,48 @@ function queryCandidates(
   return store.db
     .query<CandidateRow, [string | null, string | null, string, string | null, number]>(`
       SELECT
-        i.id,
-        i.project_id,
-        i.kind,
-        i.title,
-        i.priority,
-        i.created_at,
-        COUNT(DISTINCT w.id) AS wakeup_count
-      FROM items i
-      LEFT JOIN promise_wakeups w
-        ON w.item_id = i.id AND w.state = 'ready'
-      WHERE i.status = 'ready'
-        AND (?1 IS NULL OR i.project_id = ?1)
-        AND (?2 IS NULL OR i.id = ?2)
+        item.id,
+        item.project_id,
+        item.kind,
+        item.title,
+        item.priority,
+        item.created_at,
+        COALESCE(ready.wakeup_count, 0) AS wakeup_count
+      FROM items item
+      LEFT JOIN (
+        SELECT wakeup.item_id, COUNT(*) AS wakeup_count
+        FROM promise_wakeups wakeup
+        JOIN work_promises promise
+          ON promise.id = wakeup.promise_id
+         AND promise.item_id = wakeup.item_id
+         AND promise.generation = wakeup.promise_generation
+         AND promise.status = 'satisfied'
+        WHERE wakeup.state = 'ready'
+        GROUP BY wakeup.item_id
+      ) ready ON ready.item_id = item.id
+      WHERE item.status = 'ready'
+        AND (?1 IS NULL OR item.project_id = ?1)
+        AND (?2 IS NULL OR item.id = ?2)
         AND (
-          i.claimed_by IS NULL
-          OR i.claim_expires_at IS NULL
-          OR i.claim_expires_at <= ?3
-          OR (?4 IS NOT NULL AND i.claimed_by = ?4)
+          item.claimed_by IS NULL
+          OR item.claim_expires_at IS NULL
+          OR item.claim_expires_at <= ?3
+          OR (?4 IS NOT NULL AND item.claimed_by = ?4)
         )
         AND NOT EXISTS (
           SELECT 1
-          FROM work_runs r
-          WHERE r.item_id = i.id
+          FROM work_runs run
+          WHERE run.item_id = item.id
             AND (
-              r.status IN ('queued', 'starting', 'running', 'waiting', 'blocked')
-              OR (r.status = 'failed' AND r.next_retry_at IS NOT NULL)
+              run.status IN ('queued', 'starting', 'running', 'waiting', 'blocked')
+              OR (run.status = 'failed' AND run.next_retry_at IS NOT NULL)
             )
         )
-      GROUP BY i.id
       ORDER BY
-        CASE WHEN COUNT(DISTINCT w.id) > 0 THEN 0 ELSE 1 END,
-        i.priority DESC,
-        i.created_at ASC,
-        i.id ASC
+        CASE WHEN COALESCE(ready.wakeup_count, 0) > 0 THEN 0 ELSE 1 END,
+        item.priority DESC,
+        item.created_at ASC,
+        item.id ASC
       LIMIT ?5
     `)
     .all(input.project, input.itemId, input.now, input.actorId, input.limit);
@@ -392,6 +427,22 @@ function storeDispatchReplay(
       VALUES (?1, ?2, ?3, ?4)
     `)
     .run(idempotencyKey, requestJson, JSON.stringify(result), now);
+}
+
+function parseDispatchReplay(resultJson: string): DispatchResult | null {
+  const replay = JSON.parse(resultJson) as Partial<DispatchResult> | null;
+  if (!replay) return null;
+  if (!replay.item || !replay.run) {
+    throw new Error("Stored dispatch replay is malformed");
+  }
+  return {
+    item: replay.item,
+    run: replay.run,
+    wakeupSource: "local",
+    consumedPromiseWakeupIds: Array.isArray(replay.consumedPromiseWakeupIds)
+      ? replay.consumedPromiseWakeupIds.filter((entry): entry is string => typeof entry === "string")
+      : [],
+  };
 }
 
 function getRunRow(store: StensiblyStore, id: string): RunRow {
