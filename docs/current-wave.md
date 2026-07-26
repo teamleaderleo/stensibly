@@ -9,11 +9,7 @@
 **Current pod projection:** Foundry (`docs/pods/foundry/charter.md`)  
 **Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
 
-This file is a compact current-focus projection. GitHub issues, pull requests,
-exact revisions, deployed configuration, and Stensibly records remain canonical.
-Update or replace this file when the wave changes. Increment the wave revision
-when its gates, lanes, or accepted test effects change materially; do not reuse a
-revision after external review or execution has cited it.
+This file is a compact current-focus projection. GitHub issues, pull requests, exact revisions, deployed configuration, and Stensibly records remain canonical. Update or replace this file when the wave changes. Increment the wave revision when its gates, lanes, or accepted test effects change materially; do not reuse a revision after external review or execution has cited it.
 
 ## Wave
 
@@ -34,17 +30,11 @@ A successful code merge without the real ChatGPT flow is not wave completion.
 
 ## Current blocker chain
 
-- #220 owns the remaining dynamic-client lifecycle, capacity recovery,
-  idempotency policy, combined load verification, and final production-gate
-  sign-off.
-- PR #256 already added Worker-side registration rate limiting and exact redirect
-  origin gating.
-- PR #251 was independently accepted at exact head
-  `5735abda87eeeacaef442fc7655bf807a1f24d8f` and merged as
-  `ad65af47b7e1e3cbf65ec734a43d786cb311c421`. Its dormant legacy-family outcome
-  resolves #289's implementation gate.
-- Production OAuth discovery remains absent until the OAuth configuration and
-  signing secret are enabled on the deployed Worker.
+- #220 owns the remaining dynamic-client lifecycle, capacity recovery, idempotency policy, combined load verification, and final production-gate sign-off.
+- PR #256 already added Worker-side registration rate limiting and exact redirect-origin gating.
+- PR #251 was independently accepted at exact head `5735abda87eeeacaef442fc7655bf807a1f24d8f` and merged as `ad65af47b7e1e3cbf65ec734a43d786cb311c421`. Its dormant legacy-family outcome resolves #289's implementation gate.
+- PR #299 provides a mutation-free hosted OAuth metadata and challenge verifier for Lane C. It remains draft pending independent exact-head review and does not replace the real login, consent, tool-scan, read, write, or reconnect acceptance.
+- Production OAuth discovery remains absent until the OAuth configuration and signing secret are enabled on the deployed Worker.
 
 The remaining implementation and rollout chain is:
 
@@ -53,14 +43,11 @@ Lane A #220 implementation -> independent exact-head acceptance -> guarded rollo
                                                             -> real ChatGPT read/write/reconnect evidence
 ```
 
-Lane B may prepare the acceptance matrix while avoiding implementation ownership
-for the final revision it accepts. Lane C may prepare rollout work but must not
-execute production enablement until the remaining gate is satisfied.
+Lane B may prepare the acceptance matrix while avoiding implementation ownership for the final revision it accepts. Lane C may prepare rollout work but must not execute production enablement until the remaining gate is satisfied.
 
 ## Lane A — Finish dynamic-client lifecycle
 
-**Single implementation owner.** Do not open competing code branches against the
-same schema and registration mutations.
+**Single implementation owner.** Do not open competing code branches against the same schema and registration mutations.
 
 Deliver:
 
@@ -84,9 +71,7 @@ Required handoff:
 
 ## Completed adjacent refresh-family gate
 
-PR #251 remains a separate merged refresh-family hardening slice. Any regression
-or follow-up must preserve its exact accepted invariants and must not be silently
-folded into Lane A merely because both areas involve OAuth.
+PR #251 remains a separate merged refresh-family hardening slice. Any regression or follow-up must preserve its exact accepted invariants and must not be silently folded into Lane A merely because both areas involve OAuth.
 
 Its accepted contract includes:
 
@@ -99,8 +84,7 @@ Its accepted contract includes:
 
 ## Lane B — Independent acceptance
 
-This lane must be performed by a worker that did not author the final code being
-accepted.
+This lane must be performed by a worker that did not author the final code being accepted.
 
 Review Lane A for:
 
@@ -129,13 +113,11 @@ Prepare before enabling OAuth:
 - exact ChatGPT redirect-origin admission;
 - monitoring for registration rejection and client-count pressure;
 - one-command or one-step rollback by disabling OAuth configuration;
-- metadata and unauthenticated challenge checks;
+- metadata and unauthenticated challenge checks, using PR #299 after independent acceptance;
 - a bounded test account and dedicated OAuth dogfood project;
 - confirmation that the deployed Convex revision includes merged PR #251.
 
-Execute production rollout only after Lane A receives independent exact-head
-acceptance and the operator approves the consequential configuration and secret
-changes.
+Execute production rollout only after Lane A receives independent exact-head acceptance and the operator approves the consequential configuration and secret changes.
 
 Then:
 
@@ -157,47 +139,35 @@ Do not improvise the production write test.
 
 The authorised test action is:
 
-> Create one uniquely named test item in a dedicated OAuth dogfood project using
-> an explicit idempotency key and a human approval recorded immediately before
-> execution. Confirm the item appears through a subsequent bounded read.
+> Create one uniquely named test item in a dedicated OAuth dogfood project using an explicit idempotency key and a human approval recorded immediately before execution. Confirm the item appears through a subsequent bounded read.
 
-The test must not claim, complete, delete, merge, deploy, spend money, contact an
-external system, or mutate unrelated work. Record the project, item name,
-idempotency key reference, approval record, write result, and confirming read.
+The test must not claim, complete, delete, merge, deploy, spend money, contact an external system, or mutate unrelated work. Record the project, item name, idempotency key reference, approval record, write result, and confirming read.
 
 ## Pod context for this wave
 
-The temporary pod bootstrap uses Foundry as the broad default collective context.
-Workers may join it for a run through `docs/pods/enrolment.md`. This affiliation is
-descriptive only and does not replace W01 lanes, exact work ownership, independent
-acceptance, or operator approval.
+The temporary pod bootstrap uses Foundry as the broad default collective context. Workers may declare run-scoped pod participation through `docs/pods/enrolment.md`.
 
-Do not create another pod solely for one W01 lane. Propose a fork only if the wave
-retrospective shows recurring multi-run context or obligations that deserve
-separate continuity.
+A worker-enrolment request and a pod-participation declaration are different records: the former identifies a disposable worker session; the latter is descriptive collective context. Neither creates authority by itself.
+
+Pod participation does not replace W01 lanes, exact work ownership, independent acceptance, or operator approval.
+
+Do not create another pod solely for one W01 lane. Propose a fork only if the wave retrospective shows recurring multi-run context or obligations that deserve separate continuity.
 
 ## Work-selection policy for this wave
 
 Until the real connection works:
 
-1. finish or review the blocker chain before starting unrelated Stensibly
-   features;
+1. finish or review the blocker chain before starting unrelated Stensibly features;
 2. keep one implementation owner per overlapping subsystem;
-3. direct spare workers to acceptance, reproduction, rollout preparation,
-   documentation, or evidence reconciliation;
-4. convert long discussion into exact findings, decisions, patches, tests, or
-   handoffs;
-5. stop creating adjacent OAuth issues unless an independently buildable boundary
-   is demonstrated.
+3. direct spare workers to acceptance, reproduction, rollout preparation, documentation, or evidence reconciliation;
+4. convert long discussion into exact findings, decisions, patches, tests, or handoffs;
+5. stop creating adjacent OAuth issues unless an independently buildable boundary is demonstrated.
 
 ## Project-instruction prompt
 
-A ChatGPT Project using this repository should use the compact bootstrap in
-`docs/chatgpt-project-instructions.md`. The Project setting should not duplicate
-this wave's lanes, pod practices, or detailed gates.
+A ChatGPT Project using this repository should use the compact bootstrap in `docs/chatgpt-project-instructions.md`. The Project setting should not duplicate this wave's lanes, pod practices, or detailed gates.
 
-Fresh chats should inspect existing work and select a useful non-conflicting
-action from this wave before proposing new roadmap work.
+Fresh chats should inspect existing work and select a useful non-conflicting action from this wave before proposing new roadmap work.
 
 ## Wave retrospective
 
@@ -210,8 +180,7 @@ After connection succeeds, record:
 - whether more or less startup context would have helped;
 - missed or excessive parallelism;
 - useful pod notes or resource requests;
-- which pod, enrolment, memory, and lifecycle steps should become typed
-  Stensibly-enforced records;
+- which pod, participation, memory, and lifecycle steps should become typed Stensibly-enforced records;
 - whether Foundry should remain broad, fork, merge, enter dormancy, or be replaced;
 - what can be removed from these temporary files;
 - at least one accepted, rejected, or no-change instruction proposal under #293.
