@@ -114,7 +114,7 @@ describe("local run execution envelopes", () => {
         actor: runner,
         runnerType: "generic-mcp",
         runnerProfile: "codex-default",
-        leaseSeconds: 300,
+        leaseSeconds: 7_200,
         executionEnvelope: originalEnvelope,
       }, baseTime);
       const starting = transitionWorkRun(store, {
