@@ -4,28 +4,51 @@ import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface ExpiredClaimRow {
   id: string;
+  project_id: string;
   claimed_by: string;
   claim_expires_at: string;
   claim_generation: number;
+  version: number;
 }
 
 interface IdempotentEventRow {
   item_id: string;
 }
 
-export function expireClaims(store: StensiblyStore, now = new Date()): string[] {
+export interface ExpectedExpiredClaim {
+  id: string;
+  project: string;
+  claimedBy: string;
+  claimExpiresAt: string;
+  claimGeneration: number;
+  version: number;
+}
+
+export interface ClaimExpiryAutomationAudit {
+  source: string;
+  policy: string;
+  policyVersion: string;
+  mode: string;
+}
+
+export interface ExpireClaimsOptions {
+  project?: string;
+  limit?: number;
+  expectedClaims?: readonly ExpectedExpiredClaim[];
+  audit?: ClaimExpiryAutomationAudit;
+}
+
+export function expireClaims(
+  store: StensiblyStore,
+  now = new Date(),
+  options: ExpireClaimsOptions = {},
+): string[] {
+  const limit = validateExpiryLimit(options.limit);
   const nowIso = now.toISOString();
   const transaction = store.db.transaction(() => {
-    const candidates = store.db
-      .query<ExpiredClaimRow, [string]>(`
-        SELECT id, claimed_by, claim_expires_at, claim_generation
-        FROM items
-        WHERE status = 'active'
-          AND claimed_by IS NOT NULL
-          AND claim_expires_at IS NOT NULL
-          AND claim_expires_at <= ?1
-      `)
-      .all(nowIso);
+    const candidates = options.expectedClaims
+      ? expectedRows(options.expectedClaims, options.project, limit)
+      : selectExpiredRows(store, nowIso, options.project, limit);
 
     const expiredIds: string[] = [];
     for (const claim of candidates) {
@@ -40,19 +63,23 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
               version = version + 1,
               updated_at = ?2
           WHERE id = ?3
+            AND project_id = ?4
             AND status = 'active'
-            AND claimed_by = ?4
-            AND claim_expires_at = ?5
-            AND claim_generation = ?6
+            AND claimed_by = ?5
+            AND claim_expires_at = ?6
+            AND claim_generation = ?7
+            AND version = ?8
             AND claim_expires_at <= ?2
         `)
         .run(
           nextGeneration,
           nowIso,
           claim.id,
+          claim.project_id,
           claim.claimed_by,
           claim.claim_expires_at,
           claim.claim_generation,
+          claim.version,
         );
 
       if (result.changes !== 1) continue;
@@ -71,6 +98,9 @@ export function expireClaims(store: StensiblyStore, now = new Date()): string[] 
             expiredAt: claim.claim_expires_at,
             generation: claim.claim_generation,
             nextGeneration,
+            previousVersion: claim.version,
+            nextVersion: claim.version + 1,
+            ...(options.audit ? { automation: options.audit } : {}),
           }),
           nowIso,
         );
@@ -175,4 +205,70 @@ export function renewClaim(
   });
 
   return transaction();
+}
+
+function validateExpiryLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isInteger(limit) || limit < 0 || limit > 10_000) {
+    throw new RangeError("Claim expiry limit must be a whole number between 0 and 10000");
+  }
+  return limit;
+}
+
+function expectedRows(
+  expectedClaims: readonly ExpectedExpiredClaim[],
+  project: string | undefined,
+  limit: number | undefined,
+): ExpiredClaimRow[] {
+  if (limit === 0) return [];
+  const rows: ExpiredClaimRow[] = [];
+  const seen = new Set<string>();
+  for (const claim of expectedClaims) {
+    if (seen.has(claim.id)) continue;
+    seen.add(claim.id);
+    if (project && claim.project !== project) continue;
+    rows.push({
+      id: claim.id,
+      project_id: claim.project,
+      claimed_by: claim.claimedBy,
+      claim_expires_at: claim.claimExpiresAt,
+      claim_generation: claim.claimGeneration,
+      version: claim.version,
+    });
+    if (limit !== undefined && rows.length >= limit) break;
+  }
+  return rows;
+}
+
+function selectExpiredRows(
+  store: StensiblyStore,
+  nowIso: string,
+  project: string | undefined,
+  limit: number | undefined,
+): ExpiredClaimRow[] {
+  const rows = project
+    ? store.db
+        .query<ExpiredClaimRow, [string, string]>(`
+          SELECT id, project_id, claimed_by, claim_expires_at, claim_generation, version
+          FROM items
+          WHERE status = 'active'
+            AND claimed_by IS NOT NULL
+            AND claim_expires_at IS NOT NULL
+            AND claim_expires_at <= ?1
+            AND project_id = ?2
+          ORDER BY claim_expires_at ASC, id ASC
+        `)
+        .all(nowIso, project)
+    : store.db
+        .query<ExpiredClaimRow, [string]>(`
+          SELECT id, project_id, claimed_by, claim_expires_at, claim_generation, version
+          FROM items
+          WHERE status = 'active'
+            AND claimed_by IS NOT NULL
+            AND claim_expires_at IS NOT NULL
+            AND claim_expires_at <= ?1
+          ORDER BY claim_expires_at ASC, id ASC
+        `)
+        .all(nowIso);
+  return limit === undefined ? rows : rows.slice(0, limit);
 }
