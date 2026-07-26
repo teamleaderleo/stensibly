@@ -46,16 +46,30 @@ export function dispatchNextWork(
   ensureRunSchema(store);
   Core.ensureDispatchSchema(store);
   ensureRunExecutionSchema(store);
-  const envelope = requiredExecutionEnvelope(
-    rawInput.executionEnvelope
-      ?? compatibilityExecutionEnvelope(
-        rawInput.itemId
-          ? `Dispatch work item ${rawInput.itemId} with runner profile ${rawInput.runnerProfile}`
-          : `Dispatch the next eligible item with runner profile ${rawInput.runnerProfile}`,
-      ),
-  );
   const { executionEnvelope: _executionEnvelope, ...coreInput } = rawInput;
   const transaction = store.db.transaction(() => {
+    if (isLegacyDispatchReplay(store, rawInput.idempotencyKey)) {
+      if (rawInput.executionEnvelope !== undefined) {
+        throw new ConflictError(
+          "Historical dispatch cannot be retrofitted with an execution envelope",
+        );
+      }
+      const replay = Core.dispatchNextWork(store, coreInput, now);
+      if (!replay) return null;
+      return {
+        ...replay,
+        run: hydrateWorkRun(store, replay.run),
+      };
+    }
+
+    const envelope = requiredExecutionEnvelope(
+      rawInput.executionEnvelope
+        ?? compatibilityExecutionEnvelope(
+          rawInput.itemId
+            ? `Dispatch work item ${rawInput.itemId} with runner profile ${rawInput.runnerProfile}`
+            : `Dispatch the next eligible item with runner profile ${rawInput.runnerProfile}`,
+        ),
+    );
     assertDispatchEnvelopeIdempotency(
       store,
       rawInput.idempotencyKey,
@@ -101,25 +115,33 @@ function assertDispatchEnvelopeIdempotency(
       WHERE idempotency_key = ?1
     `)
     .get(idempotencyKey);
-  if (existing) {
-    if (existing.envelope_json !== executionEnvelopeJson(envelope)) {
-      throw new ConflictError(
-        "Idempotency key was already used with a different dispatch execution envelope",
-      );
-    }
-    return;
+  if (existing && existing.envelope_json !== executionEnvelopeJson(envelope)) {
+    throw new ConflictError(
+      "Idempotency key was already used with a different dispatch execution envelope",
+    );
   }
-  const legacy = store.db
+}
+
+function isLegacyDispatchReplay(
+  store: StensiblyStore,
+  idempotencyKey: string | undefined,
+): boolean {
+  if (!idempotencyKey) return false;
+  const envelope = store.db
+    .query<ExistingKeyRow, [string]>(`
+      SELECT 1 AS exists_flag
+      FROM dispatch_execution_envelopes
+      WHERE idempotency_key = ?1
+      LIMIT 1
+    `)
+    .get(idempotencyKey);
+  if (envelope) return false;
+  return store.db
     .query<ExistingKeyRow, [string]>(`
       SELECT 1 AS exists_flag
       FROM dispatch_commands
       WHERE idempotency_key = ?1
       LIMIT 1
     `)
-    .get(idempotencyKey);
-  if (legacy) {
-    throw new ConflictError(
-      "Idempotency key belongs to a legacy dispatch without an execution envelope",
-    );
-  }
+    .get(idempotencyKey) !== null;
 }
