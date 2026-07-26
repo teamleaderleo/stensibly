@@ -147,6 +147,7 @@ export class StensiblyStore {
     `);
 
     this.ensureItemClaimGenerationColumn();
+    this.normalizeLegacyActiveClaimGenerations();
   }
 
   private ensureItemClaimGenerationColumn(): void {
@@ -158,6 +159,16 @@ export class StensiblyStore {
     this.db.exec(
       "ALTER TABLE items ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0",
     );
+  }
+
+  private normalizeLegacyActiveClaimGenerations(): void {
+    this.db.exec(`
+      UPDATE items
+      SET claim_generation = 1
+      WHERE status = 'active'
+        AND claimed_by IS NOT NULL
+        AND claim_generation = 0
+    `);
   }
 
   listItems(filters: { project?: string; status?: ItemStatus } = {}): Item[] {
