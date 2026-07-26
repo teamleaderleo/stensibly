@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app.ts";
+import { renewClaim } from "../src/leases.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
-import { StensiblyStore } from "../src/store.ts";
+import { ConflictError, StensiblyStore } from "../src/store.ts";
 
 const actor = { id: "agent-1", name: "Agent One", kind: "agent" as const };
 
 describe("SQLite completion parity", () => {
-  test("completion preserves or replaces summary, clears next action and lease, and replays once", async () => {
+  test("completion advances generation, preserves or replaces summary, and replays once", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);
     try {
@@ -19,28 +20,29 @@ describe("SQLite completion parity", () => {
         priority: 50,
         actor,
       });
-      await ledger.claimWork({ id: preserved.id, actor, leaseSeconds: 900 });
-      const completed = await ledger.completeWork({
+      const claimed = await ledger.claimWork({ id: preserved.id, actor, leaseSeconds: 900 });
+      const request = {
         id: preserved.id,
         actor,
+        expectedClaimGeneration: claimed.claimGeneration,
         idempotencyKey: "complete-preserve",
-      });
+      };
+      const completed = await ledger.completeWork(request);
       expect(completed).toMatchObject({
         status: "done",
         summary: "Original summary",
         nextAction: null,
         claimedBy: null,
         claimExpiresAt: null,
+        claimGeneration: claimed.claimGeneration + 1,
       });
-      const completedVersion = completed.version;
-      const replayed = await ledger.completeWork({
-        id: preserved.id,
-        actor,
-        idempotencyKey: "complete-preserve",
+      expect(await ledger.completeWork(request)).toEqual(completed);
+      const detail = await ledger.getItem(preserved.id);
+      expect(detail.events.filter((event) => event.type === "item.completed")).toHaveLength(1);
+      expect(detail.events.at(-1)?.payload).toMatchObject({
+        generation: claimed.claimGeneration,
+        nextGeneration: completed.claimGeneration,
       });
-      expect(replayed.version).toBe(completedVersion);
-      expect(replayed.nextAction).toBeNull();
-      expect((await ledger.getItem(preserved.id)).events.filter((event) => event.type === "item.completed")).toHaveLength(1);
 
       const replaced = await ledger.createItem({
         project: "scrapbook",
@@ -54,6 +56,7 @@ describe("SQLite completion parity", () => {
       const replacedResult = await ledger.completeWork({
         id: replaced.id,
         actor,
+        expectedClaimGeneration: replaced.claimGeneration,
         summary: "Completed with evidence",
         idempotencyKey: "complete-replace",
       });
@@ -63,13 +66,45 @@ describe("SQLite completion parity", () => {
         nextAction: null,
         claimedBy: null,
         claimExpiresAt: null,
+        claimGeneration: 1,
       });
     } finally {
       store.close();
     }
   });
 
-  test("the legacy local completion route uses the same next-action contract", async () => {
+  test("same-actor stale completion is rejected after renewal", async () => {
+    const store = new StensiblyStore(":memory:");
+    const ledger = new SqliteWorkLedger(store);
+    try {
+      const item = await ledger.createItem({
+        project: "scrapbook",
+        kind: "task",
+        title: "Reject stale completion",
+        priority: 50,
+        actor,
+      });
+      const claimed = await ledger.claimWork({ id: item.id, actor, leaseSeconds: 900 });
+      const renewed = renewClaim(
+        store,
+        item.id,
+        actor,
+        1800,
+        claimed.claimGeneration,
+      );
+
+      await expect(ledger.completeWork({
+        id: item.id,
+        actor,
+        expectedClaimGeneration: claimed.claimGeneration,
+      })).rejects.toBeInstanceOf(ConflictError);
+      expect(store.getItem(item.id)).toEqual(renewed);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("the legacy local completion route requires generation zero for fresh work", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const item = store.createItem({
@@ -82,13 +117,20 @@ describe("SQLite completion parity", () => {
         actor,
       });
       const app = createApp(store);
+      const missingGeneration = await app.request(`/api/items/${item.id}/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actor }),
+      });
+      expect(missingGeneration.status).toBe(400);
+
       const response = await app.request(`/api/items/${item.id}/complete`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "idempotency-key": "legacy-complete",
         },
-        body: JSON.stringify({ actor }),
+        body: JSON.stringify({ actor, expectedClaimGeneration: 0 }),
       });
       expect(response.status).toBe(200);
       const payload = await response.json() as any;
@@ -98,6 +140,7 @@ describe("SQLite completion parity", () => {
         nextAction: null,
         claimedBy: null,
         claimExpiresAt: null,
+        claimGeneration: 1,
       });
     } finally {
       store.close();
