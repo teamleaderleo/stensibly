@@ -334,7 +334,7 @@ function backendFailure(context: Context<StensiblyEnv>): Response {
 }
 
 function apiFailureCategory(error: unknown, message: string): FailureCategory {
-  if (error instanceof TypeError) return "request_failure";
+  if (error instanceof TypeError) return "convex_failure";
   if (/fetch failed|failed to fetch|network|ECONN|ENOTFOUND|timed? out|timeout|internal server error/i.test(message)) {
     return "convex_failure";
   }
