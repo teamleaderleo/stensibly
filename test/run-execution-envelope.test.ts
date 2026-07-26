@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { dispatchNextWork } from "../src/dispatcher.ts";
 import type { ExecutionEnvelope } from "../src/execution-envelope.ts";
-import { createWorkRun as createLegacyWorkRun } from "../src/runs-core.ts";
+import {
+  createWorkRun as createLegacyWorkRun,
+  transitionWorkRun as transitionLegacyWorkRun,
+} from "../src/runs-core.ts";
 import {
   createWorkRun,
   getWorkRun,
@@ -66,7 +69,7 @@ function createItem(store: StensiblyStore, title = "Run with an envelope") {
 }
 
 describe("local run execution envelopes", () => {
-  test("persists one immutable envelope and compares it during replay", () => {
+  test("persists one immutable envelope and appends its lifecycle reference", () => {
     const store = new StensiblyStore(":memory:");
     try {
       const item = createItem(store);
@@ -86,13 +89,19 @@ describe("local run execution envelopes", () => {
       expect(replayed).toEqual(created);
       expect(created.executionEnvelope).toEqual(envelope());
       expect(created.executionRecords).toEqual([]);
-      expect(store.listEvents(item.id).find((event) => event.type === "run.queued")?.payload)
-        .toMatchObject({
-          runId: created.id,
-          generation: created.generation,
-          leaseGeneration: created.leaseGeneration,
-          envelopeSchemaVersion: 1,
-        });
+      const queuedEvent = store.listEvents(item.id)
+        .find((event) => event.type === "run.queued");
+      expect(queuedEvent?.payload).not.toHaveProperty("envelopeSchemaVersion");
+      const references = store.listEvents(item.id)
+        .filter((event) => event.type === "run.envelope_reference");
+      expect(references).toHaveLength(1);
+      expect(references[0]?.payload).toMatchObject({
+        runId: created.id,
+        generation: created.generation,
+        leaseGeneration: created.leaseGeneration,
+        envelopeSchemaVersion: 1,
+        lifecycleEventType: "run.queued",
+      });
 
       expect(() => createWorkRun(store, {
         ...input,
@@ -209,6 +218,56 @@ describe("local run execution envelopes", () => {
         idempotencyKey: "legacy-run-key",
         executionEnvelope: envelope(),
       }, baseTime)).toThrow(/legacy run creation without an execution envelope/);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("does not retrofit actual results onto a legacy terminal replay", () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const item = createItem(store, "Legacy terminal replay");
+      const queued = createLegacyWorkRun(store, {
+        itemId: item.id,
+        actor: runner,
+        runnerType: "generic-mcp",
+        runnerProfile: "legacy-profile",
+        leaseSeconds: 600,
+      }, baseTime);
+      const starting = transitionLegacyWorkRun(store, {
+        id: queued.id,
+        actor: runner,
+        command: "start",
+        expectedGeneration: queued.generation,
+        expectedLeaseGeneration: queued.leaseGeneration,
+      }, new Date("2026-07-26T10:01:00.000Z"));
+      const running = transitionLegacyWorkRun(store, {
+        id: starting.id,
+        actor: runner,
+        command: "run",
+        expectedGeneration: starting.generation,
+        expectedLeaseGeneration: starting.leaseGeneration,
+      }, new Date("2026-07-26T10:02:00.000Z"));
+      const legacyCommand = {
+        id: running.id,
+        actor: runner,
+        command: "succeed" as const,
+        expectedGeneration: running.generation,
+        expectedLeaseGeneration: running.leaseGeneration,
+        idempotencyKey: "legacy-terminal-command",
+      };
+      transitionLegacyWorkRun(
+        store,
+        legacyCommand,
+        new Date("2026-07-26T10:03:00.000Z"),
+      );
+
+      expect(() => transitionWorkRun(store, {
+        ...legacyCommand,
+        executionActual: { toolCalls: 9 },
+      }, new Date("2026-07-26T10:04:00.000Z"))).toThrow(
+        /legacy run command without an execution result/,
+      );
     } finally {
       store.close();
     }
