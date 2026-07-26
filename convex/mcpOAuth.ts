@@ -252,7 +252,7 @@ export const exchangeAuthorizationCode = mutation({
         "Refresh token",
       );
       const familyExpiresAt = refreshExpiresAt;
-      const cleanupScheduleGeneration = 1;
+      const cleanupScheduleGeneration = nextCleanupScheduleGeneration(undefined);
       await ctx.db.insert("mcpOAuthRefreshTokens", {
         workspaceId: workspace._id,
         accountId: code.accountId,
@@ -430,7 +430,8 @@ export const cleanupRefreshFamilyScheduled = internalMutation({
       : null;
     const cleanupCoordinator = validRoot ?? oldestRow;
     const matchingSchedule =
-      cleanupCoordinator.cleanupScheduledAt === args.familyExpiresAt
+      isCurrentCleanupScheduleGeneration(args.scheduleGeneration)
+      && cleanupCoordinator.cleanupScheduledAt === args.familyExpiresAt
       && cleanupCoordinator.cleanupScheduleGeneration === args.scheduleGeneration;
 
     if (!args.continuation && !matchingSchedule) {
@@ -790,6 +791,21 @@ function validTimestamp(value: number | undefined): number | null {
     : null;
 }
 
+// Legacy cleanup jobs used positive generations and did not carry workspace identity.
+// Current workspace-bound jobs use negative generations; the absolute value remains monotonic.
+function isCleanupScheduleGeneration(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value !== 0;
+}
+
+function isCurrentCleanupScheduleGeneration(value: number | undefined): boolean {
+  return isCleanupScheduleGeneration(value) && value < 0;
+}
+
+function nextCleanupScheduleGeneration(value: number | undefined): number {
+  const sequence = isCleanupScheduleGeneration(value) ? Math.abs(value) : 0;
+  return sequence >= Number.MAX_SAFE_INTEGER ? -1 : -(sequence + 1);
+}
+
 function failClosedCleanupDeadline(
   cleanupCoordinator: Doc<"mcpOAuthRefreshTokens">,
   now: number,
@@ -799,8 +815,7 @@ function failClosedCleanupDeadline(
   if (
     scheduledAt !== null
     && scheduledAt <= now
-    && Number.isSafeInteger(generation)
-    && (generation ?? 0) > 0
+    && isCleanupScheduleGeneration(generation)
   ) {
     return scheduledAt;
   }
@@ -821,20 +836,15 @@ async function ensureRefreshFamilyCleanupScheduled(
   ) {
     return;
   }
-  const currentGeneration = Number.isSafeInteger(cleanupCoordinator.cleanupScheduleGeneration)
-    && (cleanupCoordinator.cleanupScheduleGeneration ?? 0) > 0
-    ? cleanupCoordinator.cleanupScheduleGeneration ?? 0
-    : 0;
+  const storedGeneration = cleanupCoordinator.cleanupScheduleGeneration;
   if (
     cleanupCoordinator.familyExpiresAt === familyExpiresAt
     && cleanupCoordinator.cleanupScheduledAt === familyExpiresAt
-    && currentGeneration > 0
+    && isCurrentCleanupScheduleGeneration(storedGeneration)
   ) {
     return;
   }
-  const scheduleGeneration = currentGeneration >= Number.MAX_SAFE_INTEGER
-    ? 1
-    : currentGeneration + 1;
+  const scheduleGeneration = nextCleanupScheduleGeneration(storedGeneration);
   await ctx.db.patch(cleanupCoordinator._id, {
     familyExpiresAt,
     cleanupScheduledAt: familyExpiresAt,
