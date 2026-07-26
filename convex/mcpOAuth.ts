@@ -1,3 +1,4 @@
+import { makeFunctionReference } from "convex/server";
 import { v, type GenericId, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -9,7 +10,7 @@ import {
   type MutationContext,
   type QueryContext,
 } from "./lib/domain";
-import { mutation, query } from "./lib/server";
+import { internalMutation, mutation, query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 import { accountRole } from "./schema";
 
@@ -47,6 +48,16 @@ const refreshExchangeValidator = v.union(
   v.object({ status: v.literal("invalid") }),
   v.object({ status: v.literal("replayed") }),
 );
+const refreshCleanupValidator = v.object({
+  status: v.union(
+    v.literal("missing"),
+    v.literal("retained"),
+    v.literal("cleaned"),
+  ),
+  retainedRows: v.number(),
+  cleanedRows: v.number(),
+  hasMore: v.boolean(),
+});
 
 type AccountRole = Infer<typeof accountRole>;
 type OAuthScope = Infer<typeof oauthScope>;
@@ -56,6 +67,10 @@ const MAX_CLIENT_REDIRECT_URIS = 20;
 const MAX_CLIENTS_PER_WORKSPACE = 1_000;
 const MAX_CODE_LIFETIME_MS = 10 * 60 * 1000;
 const MAX_REFRESH_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
+const REFRESH_CLEANUP_BATCH_SIZE = 100;
+const cleanupRefreshFamilyRef = makeFunctionReference<"mutation">(
+  "mcpOAuth:cleanupRefreshFamilyScheduled",
+);
 
 export const registerClient = mutation({
   args: {
@@ -235,6 +250,7 @@ export const exchangeAuthorizationCode = mutation({
         MAX_REFRESH_LIFETIME_MS,
         "Refresh token",
       );
+      const familyExpiresAt = now + MAX_REFRESH_LIFETIME_MS;
       await ctx.db.insert("mcpOAuthRefreshTokens", {
         workspaceId: workspace._id,
         accountId: code.accountId,
@@ -245,8 +261,9 @@ export const exchangeAuthorizationCode = mutation({
         scopes: allowedScopes,
         resource: code.resource,
         createdAt: now,
-        expiresAt: refreshExpiresAt,
+        expiresAt: Math.min(refreshExpiresAt, familyExpiresAt),
       });
+      await scheduleRefreshFamilyCleanup(ctx, refreshId, familyExpiresAt);
     }
 
     await ctx.db.delete(code._id);
@@ -281,12 +298,18 @@ export const rotateRefreshToken = mutation({
     if (!refresh || refresh.workspaceId !== workspace._id || refresh.secretHash !== secretHash) {
       return { status: "invalid" as const };
     }
+    const familyExpiresAt = await refreshFamilyExpiresAt(ctx, refresh);
     if (refresh.consumedAt !== undefined || refresh.revokedAt !== undefined) {
       await revokeRefreshFamily(ctx, refresh.familyExternalId, now);
+      await scheduleRefreshFamilyCleanup(ctx, refresh.familyExternalId, familyExpiresAt);
       return { status: "replayed" as const };
     }
-    if (refresh.expiresAt <= now || refresh.clientExternalId !== args.clientId.trim()) {
-      if (refresh.expiresAt <= now) await ctx.db.patch(refresh._id, { revokedAt: now });
+    if (
+      refresh.expiresAt <= now
+      || familyExpiresAt <= now
+      || refresh.clientExternalId !== args.clientId.trim()
+    ) {
+      if (refresh.revokedAt === undefined) await ctx.db.patch(refresh._id, { revokedAt: now });
       return { status: "invalid" as const };
     }
     const principal = await readAccountPrincipal(ctx, workspace._id, workspaceSlug, refresh.accountId);
@@ -305,6 +328,12 @@ export const rotateRefreshToken = mutation({
       .withIndex("by_external_id", (q) => q.eq("externalId", nextId))
       .unique();
     if (existingNext) throw new Error(`OAuth refresh token ${nextId} already exists`);
+    const requestedNextExpiry = assertExpiry(
+      args.nextExpiresAt,
+      now,
+      MAX_REFRESH_LIFETIME_MS,
+      "Refresh token",
+    );
     await ctx.db.patch(refresh._id, { consumedAt: now, rotatedToExternalId: nextId });
     await ctx.db.insert("mcpOAuthRefreshTokens", {
       workspaceId: workspace._id,
@@ -316,12 +345,61 @@ export const rotateRefreshToken = mutation({
       scopes,
       resource: refresh.resource,
       createdAt: now,
-      expiresAt: assertExpiry(args.nextExpiresAt, now, MAX_REFRESH_LIFETIME_MS, "Refresh token"),
+      expiresAt: Math.min(requestedNextExpiry, familyExpiresAt),
     });
     return {
       status: "ok" as const,
       grant: grant(refresh.clientExternalId, refresh.resource, scopes, principal),
     };
+  },
+});
+
+export const cleanupRefreshFamilyScheduled = internalMutation({
+  args: {
+    familyExternalId: v.string(),
+    familyExpiresAt: v.number(),
+  },
+  returns: refreshCleanupValidator,
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const oldestRows = await ctx.db
+      .query("mcpOAuthRefreshTokens")
+      .withIndex("by_family_created", (q) => q.eq("familyExternalId", args.familyExternalId))
+      .order("asc")
+      .take(REFRESH_CLEANUP_BATCH_SIZE + 1);
+    if (!oldestRows.length) {
+      return cleanupResult("missing", 0, 0, false);
+    }
+
+    const root = await ctx.db
+      .query("mcpOAuthRefreshTokens")
+      .withIndex("by_external_id", (q) => q.eq("externalId", args.familyExternalId))
+      .unique();
+    const canonicalFamilyExpiresAt = root && root.familyExternalId === args.familyExternalId
+      ? boundedFamilyExpiry(root.createdAt)
+      : Math.floor(args.familyExpiresAt);
+    if (canonicalFamilyExpiresAt > now) {
+      if (args.familyExpiresAt !== canonicalFamilyExpiresAt) {
+        await scheduleRefreshFamilyCleanup(ctx, args.familyExternalId, canonicalFamilyExpiresAt);
+      }
+      return cleanupResult(
+        "retained",
+        Math.min(oldestRows.length, REFRESH_CLEANUP_BATCH_SIZE),
+        0,
+        oldestRows.length > REFRESH_CLEANUP_BATCH_SIZE,
+      );
+    }
+
+    const rowsToDelete = oldestRows.slice(0, REFRESH_CLEANUP_BATCH_SIZE);
+    for (const token of rowsToDelete) await ctx.db.delete(token._id);
+    const hasMore = oldestRows.length > REFRESH_CLEANUP_BATCH_SIZE;
+    if (hasMore) {
+      await ctx.scheduler.runAfter(0, cleanupRefreshFamilyRef, {
+        familyExternalId: args.familyExternalId,
+        familyExpiresAt: canonicalFamilyExpiresAt,
+      });
+    }
+    return cleanupResult("cleaned", 0, rowsToDelete.length, hasMore);
   },
 });
 
@@ -521,21 +599,70 @@ async function deleteExpiredCodes(ctx: MutationContext, now: number): Promise<vo
   for (const code of expired) await ctx.db.delete(code._id);
 }
 
+async function refreshFamilyExpiresAt(
+  ctx: MutationContext,
+  token: Doc<"mcpOAuthRefreshTokens">,
+): Promise<number> {
+  const root = await ctx.db
+    .query("mcpOAuthRefreshTokens")
+    .withIndex("by_external_id", (q) => q.eq("externalId", token.familyExternalId))
+    .unique();
+  if (root && root.familyExternalId === token.familyExternalId) {
+    return boundedFamilyExpiry(root.createdAt);
+  }
+  const oldest = await ctx.db
+    .query("mcpOAuthRefreshTokens")
+    .withIndex("by_family_created", (q) => q.eq("familyExternalId", token.familyExternalId))
+    .order("asc")
+    .first();
+  return boundedFamilyExpiry(oldest?.createdAt ?? token.createdAt);
+}
+
+function boundedFamilyExpiry(createdAt: number): number {
+  if (!Number.isFinite(createdAt) || createdAt < 0) return 0;
+  return Math.floor(createdAt) + MAX_REFRESH_LIFETIME_MS;
+}
+
+async function scheduleRefreshFamilyCleanup(
+  ctx: MutationContext,
+  familyExternalId: string,
+  familyExpiresAt: number,
+): Promise<void> {
+  if (!Number.isFinite(familyExpiresAt)) return;
+  await ctx.scheduler.runAt(Math.max(Date.now(), Math.floor(familyExpiresAt)), cleanupRefreshFamilyRef, {
+    familyExternalId,
+    familyExpiresAt: Math.floor(familyExpiresAt),
+  });
+}
+
 async function revokeRefreshFamily(
   ctx: MutationContext,
   familyExternalId: string,
   now: number,
 ): Promise<void> {
-  // A refresh family has one current leaf. Reading newest-first guarantees that
-  // the active token is included even after more than 100 historical rotations.
-  const family = await ctx.db
+  const newest = await ctx.db
     .query("mcpOAuthRefreshTokens")
     .withIndex("by_family_created", (q) => q.eq("familyExternalId", familyExternalId))
     .order("desc")
-    .take(100);
-  for (const token of family) {
-    if (token.revokedAt === undefined) await ctx.db.patch(token._id, { revokedAt: now });
+    .first();
+  if (
+    newest
+    && newest.consumedAt === undefined
+    && newest.revokedAt === undefined
+  ) {
+    await ctx.db.patch(newest._id, { revokedAt: now });
   }
+}
+
+function cleanupResult(
+  status: "missing" | "retained" | "cleaned",
+  retainedRows: number,
+  cleanedRows: number,
+  hasMore: boolean,
+) {
+  const result = { status, retainedRows, cleanedRows, hasMore };
+  console.info("OAuth refresh cleanup", result);
+  return result;
 }
 
 function publicClient(client: Doc<"mcpOAuthClients">) {
