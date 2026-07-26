@@ -21,7 +21,7 @@ const item = {
 };
 
 describe("legacy hosted item control compatibility", () => {
-  test("falls back only when the canonical hosted function is absent", async () => {
+  test("fails closed when an older hosted run cannot prove a trusted live lease", async () => {
     const calls: string[] = [];
     const ledger = new ConvexWorkLedger({
       client: {
@@ -59,7 +59,15 @@ describe("legacy hosted item control compatibility", () => {
                 },
               ],
               artifacts: [],
-              runs: [],
+              runs: [{
+                id: "run_legacy",
+                itemId: item.id,
+                actorId,
+                leaseOwnerId: actorId,
+                status: "running",
+                leaseExpiresAt: null,
+                lastHeartbeatAt: "2099-01-01T00:01:00.000Z",
+              }],
               dependencies: [],
             };
           }
@@ -83,16 +91,17 @@ describe("legacy hosted item control compatibility", () => {
     expect(detail.control).toMatchObject({
       schemaVersion: 1,
       authority: {
-        state: "live",
-        holderActorId: actorId,
+        state: "superseded",
+        holderActorId: null,
         generation: 4,
-        source: "dispatcher",
+        source: "none",
+        allowedOperations: [],
       },
       responsibility: {
-        actorId,
+        actorId: null,
         summary: "The old deployment still owns the durable state.",
         nextAction: "Project control in the adapter.",
-        heartbeatExpectedAt: item.claimExpiresAt,
+        heartbeatExpectedAt: null,
       },
     });
   });
