@@ -11,7 +11,7 @@ import {
 
 export interface PromiseWakeupModelConfig extends Bounds { schemaVersion: 1 }
 export interface PromiseWakeupModelReport {
-  model: "promise-wakeup"; schemaVersion: 1; checker: "stensibly-explicit-state"; checkerVersion: "1";
+  model: "promise-wakeup"; schemaVersion: 1; checker: "stensibly-explicit-state"; checkerVersion: "2";
   bounds: Bounds & { supervisors: number; runners: number; projects: number; producerItems: 1; consumerItems: 1 };
   exploration: { reachableStates: number; exploredTransitions: number; maximumDepthReached: number };
   invariants: Record<InvariantName, "passed">;
@@ -50,7 +50,7 @@ export function checkPromiseWakeupModel(options: Partial<Bounds> = {}): PromiseW
   checkLiveness([...nodes.values()].map((entry) => entry.state), bounds, seen);
   const properties = finish(seen);
   return {
-    model: "promise-wakeup", schemaVersion: 1, checker: "stensibly-explicit-state", checkerVersion: "1",
+    model: "promise-wakeup", schemaVersion: 1, checker: "stensibly-explicit-state", checkerVersion: "2",
     bounds: {
       ...bounds,
       supervisors: supervisors.length,
