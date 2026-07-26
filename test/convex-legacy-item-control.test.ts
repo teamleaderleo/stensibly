@@ -76,8 +76,8 @@ describe("legacy hosted item control compatibility", () => {
     const detail = await ledger.getItem(item.id);
 
     expect(calls).toEqual([
-      "itemReservations:list",
       "itemControl:get",
+      "itemReservations:list",
       "items:get",
     ]);
     expect(detail.control).toMatchObject({
@@ -123,8 +123,8 @@ describe("legacy hosted item control compatibility", () => {
 
     await expect(ledger.getItem(item.id)).rejects.toThrow("Hosted backend request failed");
     expect(calls).toEqual([
-      "itemReservations:list",
       "itemControl:get",
+      "itemReservations:list",
     ]);
   });
 });
