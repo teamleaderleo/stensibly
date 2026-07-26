@@ -80,9 +80,11 @@ preflight:
   instruction_files:
   repository_commands:
   required_and_optional_tools:
+  missing_capabilities:
   validation_environment:
   services_credentials_resources:
   approved_fallbacks:
+  environment_mutations_requiring_authority:
 
 human_approval:
   - contract_or_scope_change
@@ -163,6 +165,10 @@ Keep the handoff to one screen and link detailed evidence.
 ## Validation rules
 
 Preflight must confirm checkout, repository instructions, exact refs, repository-native commands and target kinds, tool availability, platform/services/resources, mutation authority, publication capability, and approved fallbacks.
+
+Agents should use the repository-declared toolchain and record missing capabilities. Routine repository-native formatting, linting, compilation, and tests within the agreed scope remain agent-owned.
+
+System-wide or global installations, lockfile changes made to satisfy an environment, and bootstrap scripts that have not been reviewed require explicit authority.
 
 A fallback is equivalent only when it preserves target kind, features, environment, serialisation, cleanup, and failure semantics. A test-name filter does not prove equivalent build scope.
 
@@ -257,7 +263,7 @@ Clean-candidate work can expose submission defects without reopening settled cor
 
 Treat public forks and research branches as public. “Unpublished upstream” describes publication state, not privacy.
 
-Human approval remains required for merge, deployment, external publication, publication sequence, privacy wording, permission expansion, semantic changes during reconstruction, policy expansion, destructive cleanup, and promotion of a hypothesis into a public bug claim.
+Human approval is reserved for costly, privileged, destructive, externally consequential, or material-scope actions. This includes costly validation beyond the agreed plan, system/global installation, lockfile mutation for environment setup, unreviewed bootstrap execution, merge, deployment, external publication, publication sequence, privacy wording, permission expansion, semantic changes during reconstruction, policy expansion, destructive cleanup, and promotion of a hypothesis into a public bug claim.
 
 ## Reconvene triggers
 
@@ -274,7 +280,7 @@ All four lanes supported:
 - separate investigation and clean-submission tracks;
 - one current-state view plus durable lane evidence;
 - early preflight and typed validation scope;
-- human authority over publication, privacy, merge, deployment, policy expansion, and cleanup;
+- human authority over costly, privileged, destructive, externally consequential, and material-scope actions;
 - lighter solo records while preserving role changes and exact-comparison review.
 
 ### Disagreements and competing recommendations
