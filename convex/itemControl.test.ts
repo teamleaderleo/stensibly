@@ -132,9 +132,19 @@ describe("hosted item control detail", () => {
     expect(handedOffDetail.control.responsibility.actorId).toBe(human.id);
   });
 
-  test("bounds visible history and stays isolated to the requested item", async () => {
+  test("bounds visible history without losing provenance or project isolation", async () => {
     const t = convexTest(schema, modules);
     const visible = await createItem(t, "Bound hosted detail", human, "scrapbook");
+    const handedOff = await t.mutation(convexApi.items.handoff, {
+      serviceSecret,
+      workspace,
+      id: visible.id,
+      actor: human,
+      expectedClaimGeneration: visible.claimGeneration,
+      summary: "Ready for deep review.",
+      nextAction: "Review after the activity stream.",
+      toActorId: agent.id,
+    }) as any;
     const hidden = await createItem(t, "Private detail", human, "private-project");
     await t.run(async (ctx) => {
       const items = await ctx.db.query("items").collect();
@@ -172,6 +182,8 @@ describe("hosted item control detail", () => {
     const result = await detail(t, visible.id, now + 1_000);
     expect(result.events).toHaveLength(100);
     expect(result.events.at(-1)?.payload).toEqual({ index: 119 });
+    expect(result.control.authority.generation).toBe(handedOff.claimGeneration);
+    expect(result.control.responsibility.actorId).toBe(agent.id);
     expect(JSON.stringify(result)).not.toContain(hidden.id);
     expect(JSON.stringify(result)).not.toContain("private-project-value");
   });
