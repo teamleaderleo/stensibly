@@ -20,6 +20,7 @@ import type {
 import {
   projectItemControl,
   type ItemControlEventInput,
+  type ItemControlRunInput,
 } from "./item-control.js";
 import type {
   AttachWorkArtifactInput,
@@ -213,7 +214,7 @@ export class ConvexWorkLedger implements
         control: projectItemControl({
           item: legacy.item,
           events: latestLegacyControlEvents(legacy.events),
-          runs: Array.isArray(legacy.runs) ? legacy.runs : [],
+          runs: legacyControlRuns(legacy.runs),
           now,
         }),
       };
@@ -276,6 +277,21 @@ function latestLegacyControlEvents(events: unknown): ItemControlEventInput[] {
   return ["claim.created", "work.handed_off"].flatMap((type) => {
     const candidate = latest.get(type);
     return candidate ? [candidate.event] : [];
+  });
+}
+
+function legacyControlRuns(runs: unknown): ItemControlRunInput[] {
+  if (!Array.isArray(runs)) return [];
+  return runs.slice(0, 16).flatMap((value) => {
+    const run = record(value);
+    if (!run) return [];
+    return [{
+      actorId: run.actorId ?? null,
+      leaseOwnerId: run.leaseOwnerId ?? null,
+      status: run.status ?? "",
+      leaseExpiresAt: run.leaseExpiresAt ?? null,
+      lastHeartbeatAt: run.lastHeartbeatAt ?? null,
+    }];
   });
 }
 
