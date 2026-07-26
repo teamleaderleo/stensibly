@@ -30,6 +30,9 @@ export const convexApi = {
   itemRuns: {
     list: queryRef("itemRuns:list"),
   },
+  queuedRuns: {
+    finish: mutationRef("queuedRuns:finish"),
+  },
   completionContinuations: {
     complete: mutationRef("completionContinuations:complete"),
   },
