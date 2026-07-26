@@ -56,7 +56,7 @@ describe("hosted item control detail", () => {
     });
   });
 
-  test("requires exact current claim provenance for dispatcher authority", async () => {
+  test("requires the exact durable claim and queued-run pair for dispatcher authority", async () => {
     const t = convexTest(schema, modules);
     const dispatched = await createItem(t, "Hosted dispatcher", supervisor);
     await t.run(async (ctx) => {
@@ -99,12 +99,14 @@ describe("hosted item control detail", () => {
         updatedAt: now,
         startedAt: now,
       });
-      await ctx.db.patch(runId, { externalId: `run_${runId}` });
-      await insertClaimEvent(ctx, {
+      const runExternalId = `run_${runId}`;
+      await ctx.db.patch(runId, { externalId: runExternalId });
+      await insertDispatchEvents(ctx, {
         item,
         actor,
         generation: claimGeneration,
-        source: "supervisor_dispatch",
+        runId: runExternalId,
+        leaseExpiresAt,
         createdAt: now,
       });
     });
@@ -148,54 +150,15 @@ describe("hosted item control detail", () => {
       source: "claim",
     });
     expect(direct.control.responsibility.heartbeatExpectedAt).toBeNull();
+  });
 
+  test("fails closed for lease-less and wrong-run hosted dispatch evidence", async () => {
+    const t = convexTest(schema, modules);
     const leaseLess = await createItem(t, "Hosted lease-less run", supervisor);
-    await t.run(async (ctx) => {
-      const item = (await ctx.db.query("items").collect())
-        .find((entry) => entry.externalId === leaseLess.id);
-      const actor = (await ctx.db.query("actors").collect())
-        .find((entry) => entry.externalId === supervisor.id);
-      if (!item || !actor) throw new Error("Lease-less fixture setup failed");
-      const claimGeneration = item.claimGeneration + 1;
-      await ctx.db.patch(item._id, {
-        status: "active",
-        claimedByActorId: actor._id,
-        claimedByExternalId: actor.externalId,
-        claimExpiresAt: now + 900_000,
-        claimGeneration,
-        version: item.version + 1,
-        updatedAt: now,
-      });
-      const runId = await ctx.db.insert("queuedRuns", {
-        workspaceId: item.workspaceId,
-        projectId: item.projectId,
-        itemId: item._id,
-        externalId: "pending",
-        actorId: actor._id,
-        actorExternalId: actor.externalId,
-        runnerType: "generic-mcp",
-        runnerProfile: "legacy-profile",
-        status: "running",
-        generation: 1,
-        leaseGeneration: 1,
-        leaseOwnerExternalId: actor.externalId,
-        lastHeartbeatAt: now,
-        usage: {},
-        retryAttempt: 0,
-        maxAttempts: 3,
-        retryBackoffSeconds: 60,
-        createdAt: now,
-        updatedAt: now,
-        startedAt: now,
-      });
-      await ctx.db.patch(runId, { externalId: `run_${runId}` });
-      await insertClaimEvent(ctx, {
-        item,
-        actor,
-        generation: claimGeneration,
-        source: "supervisor_dispatch",
-        createdAt: now,
-      });
+    await installHostedDispatchFixture(t, leaseLess.id, {
+      actualRunIdSuffix: "lease_less",
+      eventRunIdSuffix: "lease_less",
+      includeRunLease: false,
     });
 
     const unavailable = await detail(t, leaseLess.id, now);
@@ -204,6 +167,19 @@ describe("hosted item control detail", () => {
       holderActorId: null,
       source: "none",
       allowedOperations: [],
+    });
+
+    const wrongRun = await createItem(t, "Hosted stale wrong run", supervisor);
+    await installHostedDispatchFixture(t, wrongRun.id, {
+      actualRunIdSuffix: "stale_actual",
+      eventRunIdSuffix: "current_expected",
+      includeRunLease: true,
+    });
+    const wrong = await detail(t, wrongRun.id, now);
+    expect(wrong.control.authority).toMatchObject({
+      state: "superseded",
+      holderActorId: null,
+      source: "none",
     });
   });
 
@@ -287,6 +263,106 @@ describe("hosted item control detail", () => {
   });
 });
 
+async function installHostedDispatchFixture(
+  t: ReturnType<typeof convexTest>,
+  itemExternalId: string,
+  input: {
+    actualRunIdSuffix: string;
+    eventRunIdSuffix: string;
+    includeRunLease: boolean;
+  },
+) {
+  await t.run(async (ctx) => {
+    const item = (await ctx.db.query("items").collect())
+      .find((entry) => entry.externalId === itemExternalId);
+    const actor = (await ctx.db.query("actors").collect())
+      .find((entry) => entry.externalId === supervisor.id);
+    if (!item || !actor) throw new Error("Hosted dispatch fixture setup failed");
+    const leaseExpiresAt = now + 900_000;
+    const claimGeneration = item.claimGeneration + 1;
+    await ctx.db.patch(item._id, {
+      status: "active",
+      claimedByActorId: actor._id,
+      claimedByExternalId: actor.externalId,
+      claimExpiresAt: leaseExpiresAt,
+      claimGeneration,
+      version: item.version + 1,
+      updatedAt: now,
+    });
+    const queuedRunId = await ctx.db.insert("queuedRuns", {
+      workspaceId: item.workspaceId,
+      projectId: item.projectId,
+      itemId: item._id,
+      externalId: `run_${input.actualRunIdSuffix}`,
+      actorId: actor._id,
+      actorExternalId: actor.externalId,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      status: "running",
+      generation: 1,
+      leaseGeneration: 1,
+      leaseOwnerExternalId: actor.externalId,
+      ...(input.includeRunLease ? { leaseExpiresAt } : {}),
+      lastHeartbeatAt: now,
+      usage: {},
+      retryAttempt: 0,
+      maxAttempts: 3,
+      retryBackoffSeconds: 60,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+    });
+    await insertDispatchEvents(ctx, {
+      item,
+      actor,
+      generation: claimGeneration,
+      runId: `run_${input.eventRunIdSuffix}`,
+      leaseExpiresAt,
+      createdAt: now,
+    });
+    if (!queuedRunId) throw new Error("Hosted queued run fixture disappeared");
+  });
+}
+
+async function insertDispatchEvents(
+  ctx: any,
+  input: {
+    item: any;
+    actor: any;
+    generation: number;
+    runId: string;
+    leaseExpiresAt: number;
+    createdAt: number;
+  },
+) {
+  await insertClaimEvent(ctx, {
+    item: input.item,
+    actor: input.actor,
+    generation: input.generation,
+    source: "supervisor_dispatch",
+    expiresAt: input.leaseExpiresAt,
+    createdAt: input.createdAt,
+  });
+  const eventId = await ctx.db.insert("events", {
+    workspaceId: input.item.workspaceId,
+    projectId: input.item.projectId,
+    itemId: input.item._id,
+    externalId: "pending",
+    actorId: input.actor._id,
+    actorExternalId: input.actor.externalId,
+    type: "run.queued",
+    payload: {
+      runId: input.runId,
+      generation: 1,
+      leaseGeneration: 1,
+      leaseExpiresAt: new Date(input.leaseExpiresAt).toISOString(),
+      source: "supervisor_dispatch",
+    },
+    createdAt: input.createdAt,
+  });
+  await ctx.db.patch(eventId, { externalId: `evt_${eventId}` });
+}
+
 async function insertClaimEvent(
   ctx: any,
   input: {
@@ -294,6 +370,7 @@ async function insertClaimEvent(
     actor: any;
     generation: number;
     source: string;
+    expiresAt?: number;
     createdAt: number;
   },
 ) {
@@ -308,6 +385,9 @@ async function insertClaimEvent(
     payload: {
       generation: input.generation,
       source: input.source,
+      ...(input.expiresAt === undefined
+        ? {}
+        : { expiresAt: new Date(input.expiresAt).toISOString() }),
     },
     createdAt: input.createdAt,
   });
