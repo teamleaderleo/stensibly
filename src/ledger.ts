@@ -79,22 +79,22 @@ export interface ClaimActionInput extends ActorActionInput {
   expectedClaimGeneration: number;
 }
 
-export interface CompleteWorkInput extends ActorActionInput {
+export interface CompleteWorkInput extends ClaimActionInput {
   summary?: string;
 }
 
-export interface HandoffWorkInput extends ActorActionInput {
+export interface HandoffWorkInput extends ClaimActionInput {
   summary: string;
   nextAction: string;
   toActorId?: string;
 }
 
-export interface BlockWorkInput extends ActorActionInput {
+export interface BlockWorkInput extends ClaimActionInput {
   reason: string;
   nextAction?: string;
 }
 
-export interface UnblockWorkInput extends ActorActionInput {
+export interface UnblockWorkInput extends ClaimActionInput {
   nextAction?: string;
 }
 
