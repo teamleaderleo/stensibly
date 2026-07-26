@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "maxDepth": 8,
+  "maxTime": 4,
+  "recoveryHorizonTicks": 4
+}
