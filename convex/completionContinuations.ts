@@ -75,6 +75,7 @@ export const complete = mutation({
     ...serviceArgs,
     id: v.string(),
     actor: actorValidator,
+    expectedClaimGeneration: v.number(),
     summary: v.optional(v.string()),
     continuations: v.array(draftValidator),
     idempotencyKey: v.optional(v.string()),
@@ -90,6 +91,7 @@ export const complete = mutation({
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
 
     const id = safeText(args.id, "Item ID", 240);
+    const expectedGeneration = itemGeneration(args.expectedClaimGeneration);
     const summary = assertOptionalText(args.summary, "Summary", 10_000);
     const actorRequest = publicActor(args.actor);
     const drafts = (args.continuations as ContinuationDraft[]).map((draft) =>
@@ -98,6 +100,7 @@ export const complete = mutation({
     const request = {
       id,
       actor: actorRequest,
+      expectedClaimGeneration: expectedGeneration,
       summary: summary ?? null,
       continuations: drafts.map((draft) => draft.request),
     };
@@ -126,6 +129,9 @@ export const complete = mutation({
     const now = Date.now();
     let item = await getItemByExternalId(ctx, workspace._id, id);
     item = await expireClaimIfNeeded(ctx, item, now);
+    if (item.claimGeneration !== expectedGeneration) {
+      throw new Error("Item claim generation changed");
+    }
     if (liveClaimHeldByOther(item, actor.externalId, now)) {
       throw new Error("Work is held by another actor");
     }
@@ -133,6 +139,7 @@ export const complete = mutation({
       throw new Error("Item is already complete or archived");
     }
 
+    const nextGeneration = item.claimGeneration + 1;
     await ctx.db.patch(item._id, {
       status: "done",
       summary: summary ?? item.summary,
@@ -140,7 +147,7 @@ export const complete = mutation({
       claimedByActorId: undefined,
       claimedByExternalId: undefined,
       claimExpiresAt: undefined,
-      claimGeneration: item.claimGeneration + 1,
+      claimGeneration: nextGeneration,
       version: item.version + 1 + drafts.length,
       updatedAt: now,
     });
@@ -151,7 +158,11 @@ export const complete = mutation({
       actorId: actor._id,
       actorExternalId: actor.externalId,
       type: "item.completed",
-      payload: summary ? { summary } : {},
+      payload: {
+        ...(summary ? { summary } : {}),
+        generation: item.claimGeneration,
+        nextGeneration,
+      },
       idempotencyKey,
       createdAt: now,
     });
@@ -378,6 +389,13 @@ function safeOptionalText(value: string | undefined, label: string, max: number)
     throw new Error(`${label} cannot contain credential-shaped text`);
   }
   return normalized;
+}
+
+function itemGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error("Expected claim generation must be a non-negative integer");
+  }
+  return value;
 }
 
 function requireSameRequest(existing: unknown, requested: unknown, label: string) {
