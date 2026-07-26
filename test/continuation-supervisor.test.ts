@@ -133,6 +133,7 @@ describe("continuation supervisor dispatch", () => {
     await ledger.blockWork({
       id: target.id,
       actor: supervisor,
+      expectedClaimGeneration: target.claimGeneration,
       reason: "Target is not ready.",
     });
     const proposal = await ledger.proposeContinuation({
