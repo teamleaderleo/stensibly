@@ -39,21 +39,18 @@ A successful code merge without the real ChatGPT flow is not wave completion.
 - Production OAuth discovery remains absent until the OAuth configuration and
   signing secret are enabled on the deployed Worker.
 
-The intended dependency chain is:
+The two implementation tracks may proceed concurrently and converge on rollout:
 
 ```text
-#251 repair owner
-→ independent #251 acceptance
-→ Lane A #220 implementation
-→ independent Lane A acceptance
-→ guarded rollout
-→ real ChatGPT read/write/reconnect evidence
+#251 repair owner ──→ independent #251 acceptance ──┐
+                                                    ├─→ guarded rollout
+Lane A #220 implementation ─→ independent acceptance ┘
+                                                    └─→ real ChatGPT read/write/reconnect evidence
 ```
 
-Lane A and the #251 repair may proceed concurrently because they remain in
-separate code fences. Lane B may prepare both acceptance matrices while avoiding
-implementation ownership for the final revisions it accepts. Lane C may prepare
-rollout work but must not execute production enablement early.
+Lane B may prepare both acceptance matrices while avoiding implementation
+ownership for the final revisions it accepts. Lane C may prepare rollout work but
+must not execute production enablement until both gates are satisfied.
 
 ## Lane A — Finish dynamic-client lifecycle
 
