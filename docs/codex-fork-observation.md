@@ -2,76 +2,80 @@
 
 ## Status
 
-Observed from the GitHub-visible state of `teamleaderleo/codex` on 2026-07-26.
+This is a point-in-time observation, not a continuously updated statement about either repository.
 
-This note records what can be established from the connected repository and what evidence still needs to be imported before drawing conclusions about the proposed Codex fix.
+```yaml
+observed_at: "2026-07-26T02:08:00Z"
+fork: teamleaderleo/codex
+fork_branch: main
+fork_head: 20dafe201d91d4405eef05ecd1db0257f13a9ac8
+upstream: openai/codex
+upstream_branch: main
+upstream_head: 61a44880a85d2fd0d8770908dea5733495e571c8
+merge_base: 20dafe201d91d4405eef05ecd1db0257f13a9ac8
+ahead: 0
+behind: 2
+```
 
-## Visible repository state
+At the observation time, the connector returned no recent pull requests authored by the connected user in `teamleaderleo/codex`. The visible fork history matched upstream through the merge base.
 
-The fork's default branch is `main`.
+The default branch therefore contains too little unique evidence to reconstruct the proposed-fix effort. This is an evidence boundary, not a conclusion that the work did not happen.
 
-At the time of observation:
-
-- `teamleaderleo/codex:main` was **0 commits ahead** and **1 commit behind** `openai/codex:main`;
-- the merge base was commit `20dafe201d91d4405eef05ecd1db0257f13a9ac8`;
-- the fork exposed no recent pull requests authored by the connected user;
-- the visible default-branch history was the upstream Codex history.
-
-The GitHub-visible `main` branch therefore does not contain enough unique evidence to reconstruct the proposed-fix effort.
-
-Possible locations for the missing work include:
-
-- local commits that were never pushed;
-- a non-default branch that is no longer visible through the current connector view;
-- deleted or force-moved branches;
-- chat-generated Markdown stored outside the fork;
-- commits in another repository;
-- patch output that was produced but never committed.
-
-This is a boundary on the current observation, not a conclusion that the work did not happen.
+Possible locations for missing work include local commits, another branch or repository, deleted or force-moved refs, chat-generated documents, and uncommitted patch output.
 
 ## Relevant upstream movement
 
-Recent visible upstream commits include work that overlaps with Stensibly's orchestration concerns:
+Recent upstream changes overlap Stensibly's orchestration concerns:
 
-- item start times added to completion events, including subagent activity lifecycles;
-- ephemeral forks of paginated threads;
-- strengthened cancellation, concurrency, and stale-owner handling;
-- tracing around remote execution setup.
+- completion events include item start times and subagent activity timing — `af7f6f4d346a71e78869f4c0e507160f921fffed`;
+- paginated threads support bounded ephemeral forks — `1811b67a84952b8ebbd0605a0388e02a18453eb8`;
+- network approval cancellation and concurrency handling were hardened — `63fe5a6b71d45dfff24a6a1e5da0699e054f145d`;
+- remote execution connection setup gained tracing — `c3e926e61cb234fc180d8896bdb9655b58c3e735`.
 
-These changes reinforce the value of preserving lifecycle timing, fork/resume lineage, cancellation ownership, and execution evidence in Stensibly's runner model.
+These commits support preserving lifecycle timing, fork and resume lineage, cancellation ownership, and execution evidence. They do not reveal the user's proposed fix.
 
-They do not reveal the content of the user's proposed fix.
+## Evidence intake
 
-## Evidence intake for the Codex experiment
+Import the proposed-fix effort as an execution trace. Minimum useful inputs:
 
-The proposed-fix effort should be imported as an execution trace.
+1. diagnosis, plan, implementation, review, and handoff documents;
+2. relevant branch and commit references;
+3. diffs or patches;
+4. test commands and results;
+5. authorised conversation exports;
+6. agent identities or roles;
+7. timestamps;
+8. user corrections and decisions;
+9. final outcome and abandoned approaches;
+10. related upstream issues or proposals.
 
-Minimum useful inputs:
+### Mandatory privacy gate
 
-1. Markdown documents produced during diagnosis, planning, implementation, review, or handoff.
-2. Every relevant branch and commit SHA.
-3. Diff or patch output.
-4. Test commands and results.
-5. Chat histories or exported transcripts.
-6. Agent identities or roles.
-7. Timestamps where available.
-8. User corrections and decisions.
-9. Final outcome, including abandoned approaches.
-10. Any upstream issue or proposal the fix addresses.
+No artifact enters durable trace storage until all of these checks pass:
 
-Each artifact should receive:
+- the importing actor is authorised for the source and target project;
+- secrets, credentials, unrelated personal data, and disallowed content are removed;
+- an access class and allowed-reader set are assigned;
+- a retention class and deletion rule are recorded;
+- the sanitised content receives a digest;
+- provenance records the source, observation time, and transformations;
+- deletion can propagate to derived indexes, summaries, and caches where required.
+
+Raw transcripts should remain ephemeral by default. Store the smallest authorised excerpt or derived summary that supports the trace claim.
+
+Each accepted artifact receives:
 
 - stable reference;
 - source repository or conversation;
 - observed timestamp;
-- content digest where practical;
+- sanitised-content digest;
 - relation to task, run, checkpoint, decision, or commit;
-- confidentiality and retention class.
+- access, retention, and deletion classes;
+- transformation history.
 
 ## Trace reconstruction
 
-The history should be segmented into:
+Segment the history into:
 
 ```text
 request
@@ -88,29 +92,37 @@ request
 
 The reconstruction should answer:
 
-- What problem was each agent trying to solve?
+- What problem was each worker trying to solve?
 - Which facts were verified?
 - Which assumptions remained speculative?
 - Where did scope expand?
 - Which commits correspond to which decisions?
 - Which work was duplicated?
-- Which agents disagreed?
-- Where did progress stall?
-- Which checkpoints would have made recovery cheaper?
+- Where did workers disagree or stall?
+- Which checkpoints would have reduced recovery cost?
 - How much human review did each output require?
-- Which Codex changes are product improvements?
-- Which lessons belong in Stensibly's orchestration policy?
+- Which findings belong in Codex, Stensibly, or operating practice?
 
-## Proposed experiment record
+## Experiment record
 
 ```yaml
 experiment:
   name: "Codex proposed-fix coordination review"
-  repository: "teamleaderleo/codex"
+  status: awaiting_evidence
+  observed_at: "2026-07-26T02:08:00Z"
+  evidence_complete: false
+
+  repository: teamleaderleo/codex
   source_branch: null
   source_commits: []
   source_documents: []
   source_conversations: []
+
+  privacy:
+    authorization_confirmed: false
+    sanitization_complete: false
+    access_class: null
+    retention_class: null
 
 objectives:
   - reconstruct the diagnostic and implementation sequence
@@ -131,9 +143,11 @@ outputs:
   - issue drafts
 ```
 
+The record cannot advance from `awaiting_evidence` until evidence and privacy gates are complete.
+
 ## Improvement candidate lifecycle
 
-Every proposed improvement should link back to trace evidence.
+Every proposed improvement links to trace evidence and defines a measurable validation plan.
 
 ```yaml
 title: "Require a verified checkpoint before long-run continuation"
@@ -154,16 +168,35 @@ proposal:
 validation:
   experiment_required: true
   success_metrics:
-    - recovery time
-    - repeated-work count
-    - continuity score
+    - name: recovery_time_minutes
+      baseline: awaiting_evidence
+      target: ">=20% below baseline median"
+      direction: decrease
+      measurement_method: "minutes from replacement assignment to first verified forward progress"
+      comparison_window: "five comparable recoveries before and five after"
+
+    - name: repeated_work_count
+      baseline: awaiting_evidence
+      target: ">=30% below baseline mean"
+      direction: decrease
+      measurement_method: "count repeated repository reads, reproductions, or edits already captured by the accepted checkpoint"
+      comparison_window: "five comparable interrupted runs before and five after"
+
+    - name: continuity_score
+      baseline: awaiting_evidence
+      target: ">=0.15 absolute increase"
+      direction: increase
+      measurement_method: "0-1 rubric covering objective, repository state, tests, decisions, remaining work, and next action"
+      comparison_window: "ten continuation packages before and ten after"
 ```
 
-Product-level and process-level improvements should remain separate:
+Targets are provisional until the evidence set supplies baselines and comparable run classes.
 
-- **Product-level** — changes to Codex, Stensibly, tools, prompts, interfaces, or runtime behaviour.
-- **Process-level** — changes to estimating, dividing, executing, verifying, reviewing, communicating, or resuming work.
+Keep product and process changes separate:
+
+- **product** — Codex, Stensibly, tools, interfaces, or runtime behaviour;
+- **process** — estimating, dividing, executing, verifying, reviewing, communicating, or resuming work.
 
 ## Next evidence step
 
-Import the existing Markdown, commit references, and chat histories into one Stensibly project attachment or experiment record. Once those sources are present, produce a trace review whose claims link directly to documents, commits, tests, and conversation events.
+After authorization and sanitization, import the existing Markdown, commit references, patches, tests, and relevant conversation excerpts into one Stensibly experiment record. Then produce a trace review whose claims link directly to accepted evidence.
