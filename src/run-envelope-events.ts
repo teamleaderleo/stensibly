@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EXECUTION_ENVELOPE_SCHEMA_VERSION } from "./execution-envelope.js";
+import { hasExecutionEnvelope } from "./run-execution-store.js";
 import type { WorkRun } from "./runs-core.js";
 import type { StensiblyStore } from "./store.js";
 
@@ -11,6 +12,7 @@ export function appendRunEnvelopeReference(
     actorId?: string | null;
   },
 ): void {
+  if (!hasExecutionEnvelope(store, input.run.id)) return;
   const lifecycleEventType = requiredText(
     input.lifecycleEventType,
     "Lifecycle event type",
