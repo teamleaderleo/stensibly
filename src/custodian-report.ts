@@ -66,9 +66,9 @@ export function inspectScrapbook(
   }
 
   const now = options.now ?? new Date();
-  const allExpiredClaimIds = expireClaims(store, now);
-  const expiredClaimIds = options.project
-    ? allExpiredClaimIds.filter((id) => store.getItem(id).project === options.project)
+  const allExpiredClaimIds: string[] = expireClaims(store, now);
+  const expiredClaimIds: string[] = options.project
+    ? allExpiredClaimIds.filter((id: string) => store.getItem(id).project === options.project)
     : allExpiredClaimIds;
   const items = store.listItems(options.project ? { project: options.project } : {});
   const staleCutoff = now.getTime() - staleDays * 24 * 60 * 60 * 1000;
