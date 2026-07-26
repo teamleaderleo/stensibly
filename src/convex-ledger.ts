@@ -86,8 +86,11 @@ export class ConvexWorkLedger implements
       convexApi.itemReservations.list,
       this.args({ itemId: id, now }),
     ) as Promise<ItemReservation[]>;
-    const detail = await this.getHostedItemDetail(id, now);
-    const reservations = await reservationsPromise;
+    const detailPromise = this.getHostedItemDetail(id, now);
+    const [detail, reservations] = await Promise.all([
+      detailPromise,
+      reservationsPromise,
+    ]);
     return { ...detail, reservations };
   }
 
