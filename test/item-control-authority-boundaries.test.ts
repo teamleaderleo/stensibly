@@ -9,6 +9,7 @@ const supervisor = {
   name: "Supervisor",
   kind: "service" as const,
 };
+const intruder = { id: "agent:intruder", name: "Intruder", kind: "agent" as const };
 
 let store: StensiblyStore;
 let ledger: SqliteWorkLedger;
@@ -86,6 +87,55 @@ describe("local item-control authority boundaries", () => {
     expect(detail.runs).toHaveLength(20);
     expect(detail.runs.some((run) => run.id === runId)).toBe(false);
     expect(detail.runs.some((run) => run.id === "run_imported_malformed")).toBe(false);
+    expect(detail.control.authority).toMatchObject({
+      state: "superseded",
+      holderActorId: null,
+      source: "none",
+      allowedOperations: [],
+    });
+  });
+
+  test("expired rows cannot hide an older unexpired conflicting run", async () => {
+    const now = Date.now();
+    const item = await ledger.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Keep old live conflicts visible",
+      priority: 80,
+      actor: human,
+    });
+    await ledger.createItem({
+      project: "scrapbook",
+      kind: "note",
+      title: "Register conflicting actor",
+      priority: 1,
+      actor: intruder,
+    });
+    await ledger.claimWork({ id: item.id, actor: supervisor, leaseSeconds: 900 });
+    store.db.exec("DROP INDEX idx_work_runs_one_live_item");
+
+    insertRun({
+      id: "run_hidden_live_conflict",
+      itemId: item.id,
+      actorId: intruder.id,
+      status: "running",
+      createdAt: new Date(now).toISOString(),
+      leaseOwnerId: intruder.id,
+      leaseExpiresAt: new Date(now + 600_000).toISOString(),
+    });
+    for (let index = 0; index < 2; index += 1) {
+      insertRun({
+        id: `run_newer_expired_${index}`,
+        itemId: item.id,
+        actorId: supervisor.id,
+        status: "running",
+        createdAt: new Date(now + 1_000 + index).toISOString(),
+        leaseOwnerId: supervisor.id,
+        leaseExpiresAt: new Date(now - 1_000 - index).toISOString(),
+      });
+    }
+
+    const detail = await ledger.getItem(item.id);
     expect(detail.control.authority).toMatchObject({
       state: "superseded",
       holderActorId: null,
