@@ -3,6 +3,7 @@ import {
   type Artifact,
   type ArtifactKind,
 } from "./artifacts.js";
+import { hydrateWorkRun } from "./run-execution-store.js";
 import {
   ensureRunSchema,
   type RunUsage,
@@ -139,7 +140,8 @@ export function readBoundedItemRuns(
       LIMIT ?2
     `)
     .all(itemId, normalizedLimit)
-    .map(mapRun);
+    .map(mapRun)
+    .map((run) => hydrateWorkRun(store, run));
 }
 
 function ensureItemDetailIndexes(store: StensiblyStore): void {
