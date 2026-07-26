@@ -48,6 +48,21 @@ describe("repository attachment contract", () => {
     expect(JSON.parse(first.digestInput)).toEqual(first.contract);
   });
 
+  test("uses locale-independent code-unit ordering for canonical sets", () => {
+    const parsed = parse(fixture.replace(
+      "runner_profiles:\n  - codex-default",
+      "runner_profiles:\n  - z\n  - a_\n  - codex-default\n  - a.\n  - a-",
+    ));
+
+    expect(parsed.contract.runnerProfiles).toEqual([
+      "a-",
+      "a.",
+      "a_",
+      "codex-default",
+      "z",
+    ]);
+  });
+
   test("records the explicit-path then root-only discovery invariant", () => {
     expect(PROJECT_ATTACHMENT_DISCOVERY).toEqual({
       explicitPathPrecedesDefault: true,
@@ -55,6 +70,37 @@ describe("repository attachment contract", () => {
       recursiveSearch: false,
       similarlyNamedFallback: false,
     });
+  });
+
+  test("accepts repository-relative source paths and rejects absolute or traversal paths", () => {
+    const valid = parseProjectAttachmentContract(fixture, {
+      path: "config/STENSIBLY.md",
+      repository: "example-owner/example-repository",
+      revision: "abc123",
+    });
+    expect(valid.ok).toBe(true);
+
+    for (const path of [
+      "/tmp/STENSIBLY.md",
+      "C:/tmp/STENSIBLY.md",
+      String.raw`C:\tmp\STENSIBLY.md`,
+      "../STENSIBLY.md",
+      "config/../../STENSIBLY.md",
+      "./STENSIBLY.md",
+      "config//STENSIBLY.md",
+    ]) {
+      const result = parseProjectAttachmentContract(fixture, {
+        path,
+        repository: "example-owner/example-repository",
+        revision: "abc123",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors).toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: "source.path", code: "invalid_value" }),
+        ]));
+      }
+    }
   });
 
   test("fails closed for malformed input and returns no partial result", () => {
@@ -267,5 +313,60 @@ describe("repository attachment contract", () => {
     });
     expect(incompatible.versionIncompatible).toBe(true);
     expect(incompatible.widensPermissions).toBe(true);
+  });
+
+  test("classifies a fully narrowing proposal without widening", () => {
+    const proposed = parse().contract;
+    const previous = {
+      ...proposed,
+      repositories: [...proposed.repositories, "example-owner/second-repository"],
+      runnerProfiles: [...proposed.runnerProfiles, "hosted-default"],
+      concurrency: { project: 2, global: 2 },
+      autonomousActions: [...proposed.autonomousActions, "open_issue" as const],
+      checks: ["bun run typecheck"],
+    };
+    const narrowed = {
+      ...proposed,
+      approvalRequired: [...proposed.approvalRequired, "request_review" as const],
+    };
+
+    const diff = compareProjectAttachmentContracts(previous, narrowed);
+    expect(diff.widensPermissions).toBe(false);
+    expect(diff.narrowsPermissions).toBe(true);
+    expect(diff.narrowingReasons).toEqual(expect.arrayContaining([
+      "repository removed: example-owner/second-repository",
+      "runner profile removed: hosted-default",
+      "autonomous action removed: open_issue",
+      "approval requirement added: request_review",
+      "verification command added: bun test",
+      "project concurrency decreased",
+      "global concurrency decreased",
+    ]));
+  });
+
+  test("detects shared command reordering when commands are added and removed", () => {
+    const contract = parse().contract;
+    const previous = {
+      ...contract,
+      checks: ["bun run typecheck", "bun test", "bun run convex:test"],
+    };
+    const proposed = {
+      ...contract,
+      checks: ["bun run lint", "bun run convex:test", "bun run typecheck"],
+    };
+
+    const diff = compareProjectAttachmentContracts(previous, proposed);
+    expect(diff.checks).toEqual({
+      added: ["bun run lint"],
+      removed: ["bun test"],
+      orderChanged: true,
+    });
+    expect(diff.widensPermissions).toBe(true);
+    expect(diff.narrowsPermissions).toBe(true);
+    expect(diff.wideningReasons).toEqual(expect.arrayContaining([
+      "verification command removed: bun test",
+      "verification command order changed",
+    ]));
+    expect(diff.narrowingReasons).toContain("verification command added: bun run lint");
   });
 });
