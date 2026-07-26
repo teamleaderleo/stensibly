@@ -260,6 +260,9 @@ export default defineSchema({
     accountId: v.id("accounts"),
     externalId: v.string(),
     familyExternalId: v.string(),
+    familyExpiresAt: v.optional(v.number()),
+    cleanupScheduledAt: v.optional(v.number()),
+    cleanupScheduleGeneration: v.optional(v.number()),
     secretHash: v.string(),
     clientExternalId: v.string(),
     scopes: v.array(mcpOAuthScope),
@@ -272,6 +275,7 @@ export default defineSchema({
   })
     .index("by_external_id", ["externalId"])
     .index("by_family_created", ["familyExternalId", "createdAt"])
+    .index("by_workspace_family_created", ["workspaceId", "familyExternalId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
   items: defineTable({
