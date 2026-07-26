@@ -12,6 +12,7 @@ import {
   assertEnvelopeIdempotency,
   bindExecutionEnvelope,
   ensureRunExecutionSchema,
+  hasExecutionEnvelope,
   hydrateWorkRun,
   hydrateWorkRuns,
   requiredExecutionEnvelope,
@@ -221,6 +222,15 @@ function validateExecutionActualReplay(
     return undefined;
   }
 
+  if (!hasExecutionEnvelope(store, input.id)) {
+    if (rawActual !== undefined) {
+      throw new ConflictError(
+        "Historical run has no execution envelope and cannot accept execution actuals",
+      );
+    }
+    return undefined;
+  }
+
   const actual = parseExecutionActual(rawActual);
   if (!input.idempotencyKey) return actual;
 
@@ -254,7 +264,7 @@ function validateExecutionActualReplay(
     .get(input.idempotencyKey);
   if (legacy) {
     throw new ConflictError(
-      "Idempotency key belongs to a legacy run command without an execution result",
+      "Idempotency key belongs to a run command without an execution result",
     );
   }
   return actual;
