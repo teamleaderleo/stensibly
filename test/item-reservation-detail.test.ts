@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { ConvexWorkLedger } from "../src/convex-ledger.ts";
+import type { ItemControlView } from "../src/item-control.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
 
@@ -21,16 +22,16 @@ const item = {
   updatedAt: "2026-07-25T12:00:00.000Z",
 };
 
-const control = {
-  schemaVersion: 1 as const,
+const control: ItemControlView = {
+  schemaVersion: 1,
   authority: {
-    state: "unclaimed" as const,
+    state: "unclaimed",
     holderActorId: null,
     generation: 0,
     expiresAt: null,
-    source: "none" as const,
-    allowedOperations: ["claim", "complete", "handoff", "block"] as const,
-    approvalRequiredOperations: [] as const,
+    source: "none",
+    allowedOperations: ["claim", "complete", "handoff", "block"],
+    approvalRequiredOperations: [],
     unavailableReasons: {},
   },
   responsibility: {
@@ -38,8 +39,8 @@ const control = {
     summary: null,
     nextAction: null,
     heartbeatExpectedAt: null,
-    evidenceRequired: [] as string[],
-    escalationState: "none" as const,
+    evidenceRequired: [],
+    escalationState: "none",
   },
 };
 
