@@ -247,7 +247,7 @@ describe("work transitions", () => {
       priority: 50,
       actor: leo,
     });
-    store.completeItem(item.id, leo, "Done.");
+    store.completeItem(item.id, leo, item.claimGeneration, "Done.");
 
     expect(() => blockWork(store, {
       id: item.id,
