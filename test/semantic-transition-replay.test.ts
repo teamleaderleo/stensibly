@@ -70,4 +70,33 @@ describe("semantic transition replay identity", () => {
       actor: { id: "other", name: "Other", kind: "agent" },
     })).toThrow(ConflictError);
   });
+
+  test("completion replay preserves an explicit empty summary", () => {
+    const item = store.createItem({
+      project: "scrapbook",
+      kind: "task",
+      title: "Clear the completion summary",
+      summary: "Remove this summary.",
+      priority: 50,
+      actor,
+    });
+    const request = {
+      id: item.id,
+      actor,
+      expectedClaimGeneration: item.claimGeneration,
+      summary: "",
+      idempotencyKey: "complete-empty-summary",
+    };
+
+    const first = completeWork(store, request);
+    expect(first.summary).toBe("");
+    expect(completeWork(store, request)).toEqual(first);
+    expect(store.listEvents(item.id).at(-1)?.payload).toMatchObject({ summary: "" });
+    expect(() => completeWork(store, {
+      id: request.id,
+      actor: request.actor,
+      expectedClaimGeneration: request.expectedClaimGeneration,
+      idempotencyKey: request.idempotencyKey,
+    })).toThrow(ConflictError);
+  });
 });
