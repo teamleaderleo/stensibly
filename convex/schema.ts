@@ -312,6 +312,7 @@ export default defineSchema({
   })
     .index("by_external_id", ["externalId"])
     .index("by_item_created", ["itemId", "createdAt"])
+    .index("by_item_type_created", ["itemId", "type", "createdAt"])
     .index("by_project_created", ["projectId", "createdAt"])
     .index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 

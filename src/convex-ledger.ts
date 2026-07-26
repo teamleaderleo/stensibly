@@ -17,6 +17,11 @@ import type {
   ProposeContinuationInput,
   ResolveContinuationInput,
 } from "./continuations.js";
+import {
+  projectItemControl,
+  type ItemControlEventInput,
+  type ItemControlRunInput,
+} from "./item-control.js";
 import type {
   AttachWorkArtifactInput,
   BlockWorkInput,
@@ -25,6 +30,7 @@ import type {
   CompleteWorkInput,
   CreateWorkInput,
   HandoffWorkInput,
+  ItemDetail,
   ItemReservation,
   ListWorkInput,
   RecordWorkEventInput,
@@ -43,6 +49,9 @@ export interface ConvexWorkLedgerOptions {
   serviceSecret: string;
   workspace?: string;
 }
+
+type HostedItemDetail = Omit<ItemDetail, "reservations">;
+type LegacyHostedItemDetail = Omit<ItemDetail, "control" | "reservations">;
 
 export class ConvexWorkLedger implements
   WorkLedger,
@@ -71,14 +80,16 @@ export class ConvexWorkLedger implements
     return await this.client.query(convexApi.items.list, this.args(input)) as Awaited<ReturnType<WorkLedger["listWork"]>>;
   }
 
-  async getItem(id: string) {
+  async getItem(id: string): Promise<ItemDetail> {
     const now = Date.now();
+    const detailPromise = this.getHostedItemDetail(id, now);
+    const reservationsPromise = this.client.query(
+      convexApi.itemReservations.list,
+      this.args({ itemId: id, now }),
+    ) as Promise<ItemReservation[]>;
     const [detail, reservations] = await Promise.all([
-      this.client.query(convexApi.items.get, this.args({ id })) as Promise<Awaited<ReturnType<WorkLedger["getItem"]>>>,
-      this.client.query(
-        convexApi.itemReservations.list,
-        this.args({ itemId: id, now }),
-      ) as Promise<ItemReservation[]>,
+      detailPromise,
+      reservationsPromise,
     ]);
     return { ...detail, reservations };
   }
@@ -189,6 +200,30 @@ export class ConvexWorkLedger implements
     ) as Awaited<ReturnType<ContinuationSupervisorLedger["runContinuationSupervisorPolicy"]>>;
   }
 
+  private async getHostedItemDetail(id: string, now: number): Promise<HostedItemDetail> {
+    try {
+      return await this.client.query(
+        convexApi.itemControl.get,
+        this.args({ id, now }),
+      ) as HostedItemDetail;
+    } catch (error) {
+      if (!isMissingItemControlFunction(error)) throw error;
+      const legacy = await this.client.query(
+        convexApi.items.get,
+        this.args({ id }),
+      ) as LegacyHostedItemDetail;
+      return {
+        ...legacy,
+        control: projectItemControl({
+          item: legacy.item,
+          events: latestLegacyControlEvents(legacy.events),
+          runs: legacyControlRuns(legacy.runs),
+          now,
+        }),
+      };
+    }
+  }
+
   private args(input: object): Record<string, unknown> {
     return {
       serviceSecret: this.serviceSecret,
@@ -212,6 +247,66 @@ export function createConvexWorkLedgerFromEnv(
     serviceSecret,
     workspace: env.STENSIBLY_WORKSPACE ?? "default",
   });
+}
+
+function latestLegacyControlEvents(events: unknown): ItemControlEventInput[] {
+  if (!Array.isArray(events)) return [];
+  const latest = new Map<string, { event: ItemControlEventInput; millis: number; index: number }>();
+  for (const [index, value] of events.entries()) {
+    const event = record(value);
+    const type = typeof event?.type === "string" ? event.type : "";
+    if (type !== "claim.created" && type !== "work.handed_off") continue;
+    const createdAt = event?.createdAt;
+    const millis = typeof createdAt === "string" ? Date.parse(createdAt) : Number.NaN;
+    const candidate = {
+      event: {
+        actorId: event?.actorId ?? null,
+        type,
+        payload: event?.payload ?? {},
+        createdAt,
+      },
+      millis: Number.isFinite(millis) ? millis : Number.NEGATIVE_INFINITY,
+      index,
+    };
+    const previous = latest.get(type);
+    if (
+      !previous
+      || candidate.millis > previous.millis
+      || (candidate.millis === previous.millis && candidate.index > previous.index)
+    ) {
+      latest.set(type, candidate);
+    }
+  }
+  return ["claim.created", "work.handed_off"].flatMap((type) => {
+    const candidate = latest.get(type);
+    return candidate ? [candidate.event] : [];
+  });
+}
+
+function legacyControlRuns(runs: unknown): ItemControlRunInput[] {
+  if (!Array.isArray(runs)) return [];
+  return runs.slice(0, 16).flatMap((value) => {
+    const run = record(value);
+    if (!run) return [];
+    return [{
+      actorId: run.actorId ?? null,
+      leaseOwnerId: run.leaseOwnerId ?? null,
+      status: run.status ?? "",
+      leaseExpiresAt: run.leaseExpiresAt ?? null,
+      lastHeartbeatAt: run.lastHeartbeatAt ?? null,
+    }];
+  });
+}
+
+function isMissingItemControlFunction(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Could not find public function for ['"`]itemControl:get['"`]/i.test(message);
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function required(value: string | undefined, label: string): string {

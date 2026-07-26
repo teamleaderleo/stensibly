@@ -21,6 +21,9 @@ export const convexApi = {
     block: mutationRef("items:block"),
     unblock: mutationRef("items:unblock"),
   },
+  itemControl: {
+    get: queryRef("itemControl:get"),
+  },
   itemReservations: {
     list: queryRef("itemReservations:list"),
   },
