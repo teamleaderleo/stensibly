@@ -92,8 +92,8 @@ function findReplay(store: StensiblyStore, input: CompleteWorkInput): Item | nul
 }
 
 function claimGeneration(value: number): number {
-  if (!Number.isInteger(value) || value < 1) {
-    throw new RangeError("Expected claim generation must be a positive integer");
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError("Expected claim generation must be a non-negative integer");
   }
   return value;
 }
