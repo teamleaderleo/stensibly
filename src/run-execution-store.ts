@@ -87,6 +87,21 @@ export function requiredExecutionEnvelope(value: unknown): ExecutionEnvelope {
   return parseExecutionEnvelope(value);
 }
 
+export function hasExecutionEnvelope(
+  store: StensiblyStore,
+  runId: string,
+): boolean {
+  ensureRunExecutionSchema(store);
+  return store.db
+    .query<ExistingKeyRow, [string]>(`
+      SELECT 1 AS exists_flag
+      FROM run_execution_envelopes
+      WHERE run_id = ?1
+      LIMIT 1
+    `)
+    .get(runId) !== null;
+}
+
 export function assertEnvelopeIdempotency(
   store: StensiblyStore,
   idempotencyKey: string | undefined,
@@ -225,6 +240,7 @@ export function appendExecutionRecord(
     return;
   }
   ensureRunExecutionSchema(store);
+  if (!hasExecutionEnvelope(store, input.run.id)) return;
   const actual = parseExecutionActual(input.actual);
   if (input.idempotencyKey) {
     const existing = store.db
