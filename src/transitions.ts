@@ -12,15 +12,18 @@ export function handoffWork(
   input: {
     id: string;
     actor: ActorInput;
+    expectedClaimGeneration: number;
     summary: string;
     nextAction: string;
     toActorId?: string;
     idempotencyKey?: string;
   },
 ): Item {
-  expireClaims(store);
   const existing = findIdempotentItem(store, input.idempotencyKey);
   if (existing) return existing;
+  const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  expireClaims(store);
+  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
     store.getItem(input.id);
@@ -35,16 +38,27 @@ export function handoffWork(
             next_action = ?2,
             claimed_by = NULL,
             claim_expires_at = NULL,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
           AND status IN ('ready', 'active', 'blocked')
-          AND (claimed_by IS NULL OR claimed_by = ?5)
+          AND claim_generation = ?5
+          AND (claimed_by IS NULL OR claimed_by = ?6)
       `)
-      .run(input.summary, input.nextAction, now, input.id, input.actor.id);
+      .run(
+        input.summary,
+        input.nextAction,
+        now,
+        input.id,
+        expectedGeneration,
+        input.actor.id,
+      );
 
     if (result.changes !== 1) {
-      throw new ConflictError("Work is complete, archived, or held by another actor");
+      throw new ConflictError(
+        "Work is complete, archived, held by another actor, or the claim generation changed",
+      );
     }
 
     appendTransitionEvent(store, {
@@ -55,6 +69,8 @@ export function handoffWork(
         summary: input.summary,
         nextAction: input.nextAction,
         ...(input.toActorId ? { toActorId: input.toActorId } : {}),
+        generation: expectedGeneration,
+        nextGeneration,
       },
       idempotencyKey: input.idempotencyKey,
       now,
@@ -71,14 +87,17 @@ export function blockWork(
   input: {
     id: string;
     actor: ActorInput;
+    expectedClaimGeneration: number;
     reason: string;
     nextAction?: string;
     idempotencyKey?: string;
   },
 ): Item {
-  expireClaims(store);
   const existing = findIdempotentItem(store, input.idempotencyKey);
   if (existing) return existing;
+  const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  expireClaims(store);
+  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
     store.getItem(input.id);
@@ -93,16 +112,27 @@ export function blockWork(
             next_action = COALESCE(?2, next_action),
             claimed_by = NULL,
             claim_expires_at = NULL,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?3
         WHERE id = ?4
           AND status IN ('ready', 'active')
-          AND (claimed_by IS NULL OR claimed_by = ?5)
+          AND claim_generation = ?5
+          AND (claimed_by IS NULL OR claimed_by = ?6)
       `)
-      .run(input.reason, input.nextAction ?? null, now, input.id, input.actor.id);
+      .run(
+        input.reason,
+        input.nextAction ?? null,
+        now,
+        input.id,
+        expectedGeneration,
+        input.actor.id,
+      );
 
     if (result.changes !== 1) {
-      throw new ConflictError("Work is already blocked, complete, archived, or held by another actor");
+      throw new ConflictError(
+        "Work is already blocked, complete, archived, held by another actor, or the claim generation changed",
+      );
     }
 
     appendTransitionEvent(store, {
@@ -112,6 +142,8 @@ export function blockWork(
       payload: {
         reason: input.reason,
         ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+        generation: expectedGeneration,
+        nextGeneration,
       },
       idempotencyKey: input.idempotencyKey,
       now,
@@ -128,13 +160,16 @@ export function unblockWork(
   input: {
     id: string;
     actor: ActorInput;
+    expectedClaimGeneration: number;
     nextAction?: string;
     idempotencyKey?: string;
   },
 ): Item {
-  expireClaims(store);
   const existing = findIdempotentItem(store, input.idempotencyKey);
   if (existing) return existing;
+  const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
+  expireClaims(store);
+  const nextGeneration = expectedGeneration + 1;
 
   const transaction = store.db.transaction(() => {
     store.getItem(input.id);
@@ -148,21 +183,30 @@ export function unblockWork(
             next_action = COALESCE(?1, next_action),
             claimed_by = NULL,
             claim_expires_at = NULL,
+            claim_generation = claim_generation + 1,
             version = version + 1,
             updated_at = ?2
-        WHERE id = ?3 AND status = 'blocked'
+        WHERE id = ?3
+          AND status = 'blocked'
+          AND claim_generation = ?4
       `)
-      .run(input.nextAction ?? null, now, input.id);
+      .run(input.nextAction ?? null, now, input.id, expectedGeneration);
 
     if (result.changes !== 1) {
-      throw new ConflictError("Only blocked work can be unblocked");
+      throw new ConflictError(
+        "Only blocked work at the current claim generation can be unblocked",
+      );
     }
 
     appendTransitionEvent(store, {
       itemId: input.id,
       actorId: input.actor.id,
       type: "work.unblocked",
-      payload: input.nextAction ? { nextAction: input.nextAction } : {},
+      payload: {
+        ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+        generation: expectedGeneration,
+        nextGeneration,
+      },
       idempotencyKey: input.idempotencyKey,
       now,
     });
@@ -184,6 +228,13 @@ function findIdempotentItem(
     )
     .get(idempotencyKey);
   return existing ? store.getItem(existing.item_id) : null;
+}
+
+function claimGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError("Expected claim generation must be a positive integer");
+  }
+  return value;
 }
 
 function upsertActor(store: StensiblyStore, actor: ActorInput, now: string): void {
