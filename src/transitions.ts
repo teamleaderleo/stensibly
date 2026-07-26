@@ -5,6 +5,7 @@ import { ConflictError, type Item, StensiblyStore } from "./store.js";
 
 interface IdempotentEventRow {
   item_id: string;
+  type: string;
 }
 
 export function handoffWork(
@@ -19,7 +20,12 @@ export function handoffWork(
     idempotencyKey?: string;
   },
 ): Item {
-  const existing = findIdempotentItem(store, input.idempotencyKey);
+  const existing = findIdempotentItem(
+    store,
+    input.id,
+    input.idempotencyKey,
+    "work.handed_off",
+  );
   if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
   expireClaims(store);
@@ -93,7 +99,12 @@ export function blockWork(
     idempotencyKey?: string;
   },
 ): Item {
-  const existing = findIdempotentItem(store, input.idempotencyKey);
+  const existing = findIdempotentItem(
+    store,
+    input.id,
+    input.idempotencyKey,
+    "work.blocked",
+  );
   if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
   expireClaims(store);
@@ -165,7 +176,12 @@ export function unblockWork(
     idempotencyKey?: string;
   },
 ): Item {
-  const existing = findIdempotentItem(store, input.idempotencyKey);
+  const existing = findIdempotentItem(
+    store,
+    input.id,
+    input.idempotencyKey,
+    "work.unblocked",
+  );
   if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
   expireClaims(store);
@@ -219,20 +235,26 @@ export function unblockWork(
 
 function findIdempotentItem(
   store: StensiblyStore,
+  itemId: string,
   idempotencyKey: string | undefined,
+  expectedType: string,
 ): Item | null {
   if (!idempotencyKey) return null;
   const existing = store.db
     .query<IdempotentEventRow, [string]>(
-      "SELECT item_id FROM events WHERE idempotency_key = ?1",
+      "SELECT item_id, type FROM events WHERE idempotency_key = ?1",
     )
     .get(idempotencyKey);
-  return existing ? store.getItem(existing.item_id) : null;
+  if (!existing) return null;
+  if (existing.item_id !== itemId || existing.type !== expectedType) {
+    throw new ConflictError("Idempotency key already belongs to another operation");
+  }
+  return store.getItem(existing.item_id);
 }
 
 function claimGeneration(value: number): number {
-  if (!Number.isInteger(value) || value < 1) {
-    throw new RangeError("Expected claim generation must be a positive integer");
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError("Expected claim generation must be a non-negative integer");
   }
   return value;
 }
