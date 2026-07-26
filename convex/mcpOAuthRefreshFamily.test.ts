@@ -49,7 +49,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
       const familyExpiresAt = base + familyLifetimeMs;
       const beforeReplay = await readFamily(t, rootId);
       expect(beforeReplay).toHaveLength(126);
-      expect(beforeReplay.every((token) => token.expiresAt <= familyExpiresAt)).toBe(true);
+      expect(beforeReplay.every((token: any) => token.expiresAt <= familyExpiresAt)).toBe(true);
       expect(beforeReplay[0].consumedAt).toBeDefined();
       expect(beforeReplay.at(-1)?.externalId).toBe(currentId);
 
@@ -118,7 +118,7 @@ describe("OAuth refresh-family lifetime and cleanup", () => {
         nextSecretHash: "c".repeat(64),
         nextExpiresAt: familyExpiresAt + 30 * 24 * 60 * 60 * 1000,
       })).toMatchObject({ status: "ok" });
-      const leaf = (await readFamily(t, rootId)).find((token) => token.externalId === leafId);
+      const leaf = (await readFamily(t, rootId)).find((token: any) => token.externalId === leafId);
       expect(leaf?.expiresAt).toBe(familyExpiresAt);
 
       clock.mockReturnValue(familyExpiresAt);
