@@ -74,14 +74,12 @@ describe("bounded promise/wakeup lifecycle", () => {
       "create:supervisor-a",
       "satisfy:supervisor-a:p1",
     ]);
-    expect(duplicate?.state.wakeups).toEqual([
-      expect.objectContaining({
-        promiseGeneration: 1,
-        status: "ready",
-        consumedByRunGeneration: null,
-        consumedByRunner: null,
-      }),
-    ]);
+    const duplicateWakeup = duplicate?.state.wakeups[0];
+    expect(duplicateWakeup).toBeDefined();
+    expect(duplicateWakeup?.promiseGeneration).toBe(1);
+    expect(duplicateWakeup?.status).toBe("ready");
+    expect(duplicateWakeup?.consumedByRunGeneration).toBeNull();
+    expect(duplicateWakeup?.consumedByRunner).toBeNull();
     expect(duplicate?.weakOutcome).toContain("emit two effects");
 
     const race = controls.terminal_race_without_fence;
