@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { actions, actionLabel, apply, initial, same, stateKey, type Bounds, type Node } from "./domain.ts";
+import {
+  actions, actionLabel, apply, initial, runners, same, stateKey, supervisors,
+  type Bounds, type Node,
+} from "./domain.ts";
 import {
   checkLiveness, checkState, durableEqual, finish, negativeControls, observations,
   probeFences, probeTerminal, type Counterexample, type InvariantName, type LivenessName,
@@ -9,7 +12,7 @@ import {
 export interface PromiseWakeupModelConfig extends Bounds { schemaVersion: 1 }
 export interface PromiseWakeupModelReport {
   model: "promise-wakeup"; schemaVersion: 1; checker: "stensibly-explicit-state"; checkerVersion: "1";
-  bounds: Bounds & { supervisors: 2; runners: 2; projects: 1; producerItems: 1; consumerItems: 1 };
+  bounds: Bounds & { supervisors: number; runners: number; projects: number; producerItems: 1; consumerItems: 1 };
   exploration: { reachableStates: number; exploredTransitions: number; maximumDepthReached: number };
   invariants: Record<InvariantName, "passed">;
   boundedLiveness: Record<LivenessName, "passed">;
@@ -44,11 +47,18 @@ export function checkPromiseWakeupModel(options: Partial<Bounds> = {}): PromiseW
       nodes.set(nextKey, { state: next, parent: currentKey, action: actionLabel(action), depth: node.depth + 1 }); queue.push(nextKey);
     }
   }
-  checkLiveness([...nodes.values()].map((entry) => entry.state), bounds.recoveryHorizonTicks, seen);
+  checkLiveness([...nodes.values()].map((entry) => entry.state), bounds, seen);
   const properties = finish(seen);
   return {
     model: "promise-wakeup", schemaVersion: 1, checker: "stensibly-explicit-state", checkerVersion: "1",
-    bounds: { ...bounds, supervisors: 2, runners: 2, projects: 1, producerItems: 1, consumerItems: 1 },
+    bounds: {
+      ...bounds,
+      supervisors: supervisors.length,
+      runners: runners.length,
+      projects: new Set([initial.project]).size,
+      producerItems: 1,
+      consumerItems: 1,
+    },
     exploration: { reachableStates: nodes.size, exploredTransitions, maximumDepthReached },
     invariants: properties.invariants, boundedLiveness: properties.boundedLiveness,
     negativeControls: negativeControls(nodes),
