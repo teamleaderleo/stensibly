@@ -23,19 +23,19 @@ export function handoffWork(
   },
 ): Item {
   const payload = handoffPayload(input);
-  const existing = findIdempotentItem(
-    store,
-    input.id,
-    input.actor.id,
-    input.idempotencyKey,
-    "work.handed_off",
-    payload,
-  );
-  if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
-  expireClaims(store);
-
   const transaction = store.db.transaction(() => {
+    const existing = findIdempotentItem(
+      store,
+      input.id,
+      input.actor.id,
+      input.idempotencyKey,
+      "work.handed_off",
+      payload,
+    );
+    if (existing) return existing;
+
+    expireClaims(store);
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -98,19 +98,19 @@ export function blockWork(
   },
 ): Item {
   const payload = blockPayload(input);
-  const existing = findIdempotentItem(
-    store,
-    input.id,
-    input.actor.id,
-    input.idempotencyKey,
-    "work.blocked",
-    payload,
-  );
-  if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
-  expireClaims(store);
-
   const transaction = store.db.transaction(() => {
+    const existing = findIdempotentItem(
+      store,
+      input.id,
+      input.actor.id,
+      input.idempotencyKey,
+      "work.blocked",
+      payload,
+    );
+    if (existing) return existing;
+
+    expireClaims(store);
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -172,19 +172,19 @@ export function unblockWork(
   },
 ): Item {
   const payload = unblockPayload(input);
-  const existing = findIdempotentItem(
-    store,
-    input.id,
-    input.actor.id,
-    input.idempotencyKey,
-    "work.unblocked",
-    payload,
-  );
-  if (existing) return existing;
   const expectedGeneration = claimGeneration(input.expectedClaimGeneration);
-  expireClaims(store);
-
   const transaction = store.db.transaction(() => {
+    const existing = findIdempotentItem(
+      store,
+      input.id,
+      input.actor.id,
+      input.idempotencyKey,
+      "work.unblocked",
+      payload,
+    );
+    if (existing) return existing;
+
+    expireClaims(store);
     store.getItem(input.id);
     const now = new Date().toISOString();
     upsertActor(store, input.actor, now);
@@ -202,8 +202,15 @@ export function unblockWork(
         WHERE id = ?3
           AND status = 'blocked'
           AND claim_generation = ?4
+          AND (claimed_by IS NULL OR claimed_by = ?5)
       `)
-      .run(input.nextAction ?? null, now, input.id, expectedGeneration);
+      .run(
+        input.nextAction ?? null,
+        now,
+        input.id,
+        expectedGeneration,
+        input.actor.id,
+      );
 
     if (result.changes !== 1) {
       throw new ConflictError(
@@ -273,7 +280,7 @@ function blockPayload(input: {
 }): Record<string, unknown> {
   return {
     reason: input.reason,
-    ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+    ...(input.nextAction !== undefined ? { nextAction: input.nextAction } : {}),
     generation: input.expectedClaimGeneration,
     nextGeneration: input.expectedClaimGeneration + 1,
   };
@@ -284,7 +291,7 @@ function unblockPayload(input: {
   expectedClaimGeneration: number;
 }): Record<string, unknown> {
   return {
-    ...(input.nextAction ? { nextAction: input.nextAction } : {}),
+    ...(input.nextAction !== undefined ? { nextAction: input.nextAction } : {}),
     generation: input.expectedClaimGeneration,
     nextGeneration: input.expectedClaimGeneration + 1,
   };
