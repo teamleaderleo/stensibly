@@ -41,7 +41,7 @@ interface RunRow {
 export function readItemControlRuns(
   store: StensiblyStore,
   itemId: string,
-  now: Date,
+  now = new Date(),
 ): WorkRun[] {
   ensureRunSchema(store);
   ensureIndex(store);
