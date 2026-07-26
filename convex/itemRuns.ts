@@ -111,6 +111,7 @@ export const list = query({
       ctx,
       item,
       args.limit ?? MAX_VISIBLE_ITEM_RUNS,
+      true,
     );
   },
 });
