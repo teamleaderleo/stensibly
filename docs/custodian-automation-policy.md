@@ -43,6 +43,10 @@ Applied expiry events include durable metadata for:
 
 Issue #217 owns the claim-fencing contract. Its local claim-generation foundation landed in PR #234 while this extraction was underway. Custodian reconciliation now consumes that canonical generation fence directly and adds no independent authority-clearing path.
 
+## Backend boundary
+
+The custodian command in this slice operates on the local SQLite store. Hosted Convex scheduled expiry remains a separate server-owned path and is outside this PR. This policy does not claim exact field-for-field parity with that scheduler, and it does not invoke or replace hosted expiry.
+
 ## Findings reserved for authorised decision-makers
 
 The custodian reports these findings and leaves them unchanged:
@@ -57,15 +61,15 @@ Automatic block, unblock, completion, handoff, reassignment, merge, archive, and
 
 ## Scope and limits
 
-`--project <slug>` constrains both inspection and apply mode to that project. A project-scoped run reads and reconciles claims from that project alone.
+`--project <slug>` constrains both inspection and apply mode to that project. A project-scoped run reads and reconciles claims from that project alone. A supplied empty or malformed project fails before inspection or reconciliation; only an omitted project requests an unscoped run.
 
-`--max-actions <count>` bounds dry-run and apply mode. Observe mode reports every eligible claim because it performs zero writes.
+`--max-actions <count>` bounds dry-run and apply mode. Observe mode reports every eligible claim because it performs zero writes. The canonical SQLite query applies this bound before returning candidates.
 
 Eligible claims are ordered by stored expiry and then item ID, giving dry-run and apply the same deterministic action order.
 
 ## Exit status
 
-`--fail-on-findings` sets exit status `2` when the pre-action report contains findings. Configuration or runtime errors use exit status `1`.
+`--fail-on-findings` sets exit status `2` when the pre-action report contains any finding, including an elapsed claim eligible for reconciliation. The exit decision deliberately reflects the observed pre-action state even when `apply` reconciles that claim during the same run. Configuration or runtime errors use exit status `1`.
 
 ## Transplanted material from PR #137
 
@@ -82,7 +86,8 @@ Rebuilt for current `main`:
 - read-only expired-claim discovery;
 - exact snapshot planning with claim-generation and item-version comparison;
 - project-scoped canonical expiry reconciliation;
-- concurrency coverage for changed fenced claims;
+- fail-closed public project-scope validation;
+- concurrency and replay coverage for fenced claims;
 - direct CLI parsing coverage.
 
 The old `expireClaimIds` helper was deliberately left behind. It re-read claims by ID through a separate path. The replacement extends the canonical generation-fenced `expireClaims` operation introduced under #217.
