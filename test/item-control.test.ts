@@ -174,10 +174,22 @@ describe("canonical item control projection", () => {
       allowedOperations: [],
     });
 
+    const unsafeGeneration = projectItemControl({
+      item: item({
+        claimGeneration: Number.MAX_SAFE_INTEGER + 1,
+      }),
+      now,
+    });
+    expect(unsafeGeneration.authority).toMatchObject({
+      state: "superseded",
+      generation: 0,
+      allowedOperations: [],
+    });
+
     const malformedReady = projectItemControl({
       item: item({
         status: "ready",
-        claimedBy: 42,
+        claimedBy: "Bearer secret-shaped-holder",
         claimExpiresAt: "not-a-timestamp",
       }),
       now,
@@ -219,12 +231,12 @@ describe("canonical item control projection", () => {
     expect(stale.responsibility.actorId).toBeNull();
   });
 
-  test("closes terminal authority and redacts credential-shaped responsibility text", () => {
+  test("closes terminal authority and preserves an explicit empty summary", () => {
     const completed = projectItemControl({
       item: item({
         kind: "decision",
         status: "done",
-        summary: "stn.tok_secret-shaped-content",
+        summary: "",
         nextAction: null,
         claimGeneration: 9,
       }),
@@ -237,8 +249,28 @@ describe("canonical item control projection", () => {
     });
     expect(completed.responsibility).toMatchObject({
       actorId: null,
-      summary: "[REDACTED]",
+      summary: "",
       escalationState: "none",
     });
+  });
+
+  test("redacts credential-shaped responsibility values without erasing safe context", () => {
+    const control = projectItemControl({
+      item: item({
+        summary: "Use Bearer very-secret-token, ghp_this_must_not_leak, and stn.tok_secret-shaped-content safely.",
+        nextAction: "Review https://user:password@example.test/result.",
+      }),
+      now,
+    });
+    expect(control.responsibility.summary).toBe(
+      "Use [REDACTED], [REDACTED], and [REDACTED] safely.",
+    );
+    expect(control.responsibility.nextAction).toBe(
+      "Review https://[REDACTED]@example.test/result.",
+    );
+    expect(JSON.stringify(control)).not.toContain("very-secret-token");
+    expect(JSON.stringify(control)).not.toContain("ghp_this_must_not_leak");
+    expect(JSON.stringify(control)).not.toContain("secret-shaped-content");
+    expect(JSON.stringify(control)).not.toContain("user:password");
   });
 });
