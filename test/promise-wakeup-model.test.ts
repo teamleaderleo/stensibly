@@ -52,7 +52,7 @@ describe("bounded promise/wakeup lifecycle", () => {
     });
     expect(report.exploration).toEqual({
       reachableStates: 1_330,
-      exploredTransitions: 5_162,
+      exploredTransitions: 5_357,
       maximumDepthReached: 8,
     });
     expect(Object.keys(report.invariants).sort()).toEqual([...expectedInvariants].sort());
@@ -137,12 +137,17 @@ describe("bounded promise/wakeup lifecycle", () => {
       ),
       { kind: "complete-consumer", runner: "runner-a", expectedConsumerGeneration: 1, expectedRunGeneration: 1 },
     );
+    const escalated = transition(readyAtRunOne, {
+      kind: "escalate", expectedPromiseGeneration: 2, expectedConsumerGeneration: 2,
+    });
 
     const matrix: Array<{ label: string; state: State; action: Action; changes: boolean }> = [
       { label: "valid satisfy", state: created, action: { kind: "promise", supervisor: "supervisor-a", command: "satisfy", expectedGeneration: 1 }, changes: true },
       { label: "valid expired reconcile", state: expired, action: { kind: "reconcile", expectedGeneration: 1 }, changes: true },
       { label: "valid consume", state: readyAtRunOne, action: { kind: "consume", runner: "runner-a", expectedPromiseGeneration: 2, expectedConsumerGeneration: 2, expectedRunGeneration: 1 }, changes: true },
       { label: "valid completion", state: activeAtRunTwo, action: { kind: "complete-consumer", runner: "runner-a", expectedConsumerGeneration: 2, expectedRunGeneration: 2 }, changes: true },
+      { label: "valid current wakeup escalation", state: readyAtRunOne, action: { kind: "escalate", expectedPromiseGeneration: 2, expectedConsumerGeneration: 2 }, changes: true },
+      { label: "valid stale wakeup escalation", state: readyAtRunOne, action: { kind: "escalate", expectedPromiseGeneration: 1, expectedConsumerGeneration: 1 }, changes: true },
       { label: "duplicate create", state: created, action: { kind: "create", supervisor: "supervisor-b" }, changes: false },
       { label: "stale supersede generation", state: created, action: { kind: "supersede", supervisor: "supervisor-a", expectedGeneration: 0 }, changes: false },
       { label: "stale terminal command generation", state: created, action: { kind: "promise", supervisor: "supervisor-a", command: "satisfy", expectedGeneration: 0 }, changes: false },
@@ -154,6 +159,9 @@ describe("bounded promise/wakeup lifecycle", () => {
       { label: "stale run generation consume", state: readyAtRunOne, action: { kind: "consume", runner: "runner-a", expectedPromiseGeneration: 2, expectedConsumerGeneration: 2, expectedRunGeneration: 0 }, changes: false },
       { label: "duplicate consumed wakeup", state: consumed, action: { kind: "consume", runner: "runner-b", expectedPromiseGeneration: 1, expectedConsumerGeneration: 1, expectedRunGeneration: 1 }, changes: false },
       { label: "terminal consumer consume", state: terminalWithReady, action: { kind: "consume", runner: "runner-b", expectedPromiseGeneration: 2, expectedConsumerGeneration: 1, expectedRunGeneration: 1 }, changes: false },
+      { label: "wrong promise generation escalation", state: readyAtRunOne, action: { kind: "escalate", expectedPromiseGeneration: 1, expectedConsumerGeneration: 2 }, changes: false },
+      { label: "wrong consumer generation escalation", state: readyAtRunOne, action: { kind: "escalate", expectedPromiseGeneration: 2, expectedConsumerGeneration: 1 }, changes: false },
+      { label: "duplicate escalated wakeup", state: escalated, action: { kind: "escalate", expectedPromiseGeneration: 2, expectedConsumerGeneration: 2 }, changes: false },
       { label: "completion requires active consumer", state: satisfied, action: { kind: "complete-consumer", runner: "runner-a", expectedConsumerGeneration: 1, expectedRunGeneration: 0 }, changes: false },
       { label: "stale consumer generation completion", state: activeAtRunTwo, action: { kind: "complete-consumer", runner: "runner-a", expectedConsumerGeneration: 1, expectedRunGeneration: 2 }, changes: false },
       { label: "stale run generation completion", state: activeAtRunTwo, action: { kind: "complete-consumer", runner: "runner-a", expectedConsumerGeneration: 2, expectedRunGeneration: 1 }, changes: false },
