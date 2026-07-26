@@ -11,7 +11,7 @@ export const continuationDraftSchema = proposeContinuationSchema.omit({ actor: t
 
 export const completeWithContinuationsSchema = z.object({
   actor: actorSchema,
-  expectedClaimGeneration: z.number().int().min(1),
+  expectedClaimGeneration: z.number().int().min(0),
   summary: z.string().trim().max(10_000).optional(),
   continuations: z.array(continuationDraftSchema).max(20).optional(),
 });
