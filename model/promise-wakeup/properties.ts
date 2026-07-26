@@ -1,6 +1,6 @@
 import {
-  apply, check, runners, same, supervisors, terminalPromises,
-  type Node, type State, type WeakRule,
+  actions, apply, check, runners, same, stateKey, supervisors, terminalPromises,
+  type Bounds, type Node, type State, type WakeupRecord, type WeakRule,
 } from "./domain.ts";
 
 export const invariantNames = [
@@ -27,6 +27,7 @@ export interface Observations {
   sawTerminalPromise: boolean; sawWrongConsumerProbe: boolean; sawConsumedWakeup: boolean;
   sawStaleWakeup: boolean; sawRestartWithConsumed: boolean; sawTerminalConsumer: boolean;
   sawExpiredPending: boolean; sawReadyWakeup: boolean; sawSatisfied: boolean;
+  sawWakeupRecord: boolean;
 }
 export function observations(): Observations {
   return {
@@ -34,6 +35,7 @@ export function observations(): Observations {
     sawTerminalPromise: false, sawWrongConsumerProbe: false, sawConsumedWakeup: false,
     sawStaleWakeup: false, sawRestartWithConsumed: false, sawTerminalConsumer: false,
     sawExpiredPending: false, sawReadyWakeup: false, sawSatisfied: false,
+    sawWakeupRecord: false,
   };
 }
 
@@ -52,6 +54,7 @@ export function checkState(state: State, seen: Observations): void {
   seen.sawCoherentPromise = true;
   const generations = new Set<number>();
   for (const wakeup of state.wakeups) {
+    seen.sawWakeupRecord = true;
     check(wakeup.project === state.project, "wakeup project identity changed", state);
     check(!generations.has(wakeup.promiseGeneration), "more than one wakeup exists for a promise generation", state);
     generations.add(wakeup.promiseGeneration);
@@ -105,7 +108,7 @@ export function probeTerminal(state: State, seen: Observations): void {
   seen.sawTerminalConsumer = true;
 }
 
-export function checkLiveness(states: State[], horizon: number, seen: Observations): void {
+export function checkLiveness(states: State[], bounds: Bounds, seen: Observations): void {
   for (const state of states) {
     if (state.promiseStatus === "pending" && state.promiseDeadline !== null && state.promiseDeadline <= state.time) {
       check(apply(state, { kind: "reconcile", expectedGeneration: state.promiseGeneration }).promiseStatus === "missed", "expired pending promise is not reconcilable", state);
@@ -116,11 +119,7 @@ export function checkLiveness(states: State[], horizon: number, seen: Observatio
       seen.sawSatisfied = true;
     }
     for (const wakeup of state.wakeups.filter((entry) => entry.status === "ready" && entry.promiseGeneration === state.promiseGeneration && entry.consumerGeneration === state.consumerGeneration)) {
-      const consumed = apply(state, { kind: "consume", runner: runners[0]!, expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration, expectedRunGeneration: state.consumerRunGeneration });
-      const escalated = apply(state, { kind: "escalate", expectedPromiseGeneration: wakeup.promiseGeneration, expectedConsumerGeneration: wakeup.consumerGeneration });
-      const resolved = consumed.wakeups.some((entry) => entry.promiseGeneration === wakeup.promiseGeneration && entry.status === "consumed")
-        || escalated.wakeups.some((entry) => entry.promiseGeneration === wakeup.promiseGeneration && entry.status === "escalated");
-      check(horizon >= 1 && resolved, "current ready wakeup has no bounded consume or escalate path", state);
+      check(hasResolutionPath(state, wakeup, bounds), "current ready wakeup has no bounded consume or escalate path", state);
       seen.sawReadyWakeup = true;
     }
     if (state.restarted) for (const wakeup of state.wakeups.filter((entry) => entry.status === "consumed")) {
@@ -128,6 +127,33 @@ export function checkLiveness(states: State[], horizon: number, seen: Observatio
       seen.sawRestartWithConsumed = true;
     }
   }
+}
+
+function hasResolutionPath(start: State, target: WakeupRecord, bounds: Bounds): boolean {
+  const queue: Array<{ state: State; depth: number }> = [{ state: start, depth: 0 }];
+  const visited = new Set<string>([stateKey(start)]);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const node = queue[cursor]!;
+    if (wakeupResolved(node.state, target)) return true;
+    if (node.depth >= bounds.recoveryHorizonTicks) continue;
+    for (const action of actions(node.state, bounds)) {
+      const next = apply(node.state, action);
+      if (next === node.state) continue;
+      const key = stateKey(next);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      queue.push({ state: next, depth: node.depth + 1 });
+    }
+  }
+  return false;
+}
+
+function wakeupResolved(state: State, target: WakeupRecord): boolean {
+  return state.wakeups.some((entry) =>
+    entry.promiseGeneration === target.promiseGeneration
+    && entry.consumerGeneration === target.consumerGeneration
+    && (entry.status === "consumed" || entry.status === "escalated")
+  );
 }
 
 export function finish(seen: Observations): { invariants: Record<InvariantName, "passed">; boundedLiveness: Record<LivenessName, "passed"> } {
@@ -141,7 +167,10 @@ export function finish(seen: Observations): { invariants: Record<InvariantName, 
   if (seen.sawStaleWakeup) i.add("stale_wakeup_cannot_wake_new_consumer");
   if (seen.sawRestartWithConsumed) i.add("consumed_marker_survives_restart");
   if (seen.sawTerminalConsumer) i.add("terminal_consumer_not_regressed");
-  i.add("one_wakeup_per_promise_generation"); i.add("project_identity_preserved");
+  if (seen.sawWakeupRecord) {
+    i.add("one_wakeup_per_promise_generation");
+    i.add("project_identity_preserved");
+  }
   if (seen.sawExpiredPending) l.add("expired_pending_promise_reconcilable");
   if (seen.sawReadyWakeup) l.add("current_ready_wakeup_has_consume_or_escalate_path");
   if (seen.sawSatisfied) l.add("satisfied_current_promise_has_wakeup");
