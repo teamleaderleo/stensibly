@@ -35,40 +35,62 @@ interface ConsumptionRow {
 
 interface SchemaRow {
   type: "table" | "view";
+  sql: string | null;
 }
 
 const initializedStores = new WeakSet<StensiblyStore>();
 
 /**
- * Installs append-only wakeup-consumption evidence while preserving the
- * historical logical `promise_wakeups` read/write surface. The public view
- * contains only unconsumed rows, so legacy ready-wakeup readers stop seeing a
- * wakeup as soon as the atomic dispatch transaction records its marker.
+ * Installs append-only wakeup-consumption evidence. The marker is the durable
+ * exactly-once record; the wakeup row's `consumed` state is a compatibility
+ * projection so existing ready-only readers remain correct across restart.
  */
 export function ensurePromiseWakeupConsumptionSchema(store: StensiblyStore): void {
   if (initializedStores.has(store)) return;
 
-  const durableRows = store.db
+  const wakeupSchema = store.db
     .query<SchemaRow, []>(
-      "SELECT type FROM sqlite_master WHERE name = 'promise_wakeup_rows' LIMIT 1",
+      "SELECT type, sql FROM sqlite_master WHERE name = 'promise_wakeups' LIMIT 1",
     )
     .get();
+  if (!wakeupSchema || wakeupSchema.type !== "table") {
+    throw new Error("Promise wakeup storage is unavailable for consumption migration");
+  }
 
-  if (!durableRows) {
-    const logicalWakeups = store.db
-      .query<SchemaRow, []>(
-        "SELECT type FROM sqlite_master WHERE name = 'promise_wakeups' LIMIT 1",
-      )
-      .get();
-    if (!logicalWakeups || logicalWakeups.type !== "table") {
-      throw new Error("Promise wakeup storage is unavailable for consumption migration");
-    }
-    store.db.exec("ALTER TABLE promise_wakeups RENAME TO promise_wakeup_rows");
+  if (!wakeupSchema.sql?.includes("'consumed'")) {
+    const migrate = store.db.transaction(() => {
+      store.db.exec(`
+        DROP INDEX IF EXISTS idx_promise_wakeups_state_created;
+        ALTER TABLE promise_wakeups RENAME TO promise_wakeups_before_consumption;
+
+        CREATE TABLE promise_wakeups (
+          id TEXT PRIMARY KEY,
+          promise_id TEXT NOT NULL REFERENCES work_promises(id) ON DELETE CASCADE,
+          promise_generation INTEGER NOT NULL,
+          item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+          state TEXT NOT NULL CHECK (state IN ('ready', 'consumed')),
+          created_at TEXT NOT NULL,
+          UNIQUE (promise_id, promise_generation)
+        );
+
+        INSERT INTO promise_wakeups (
+          id, promise_id, promise_generation, item_id, state, created_at
+        )
+        SELECT id, promise_id, promise_generation, item_id, state, created_at
+        FROM promise_wakeups_before_consumption;
+
+        DROP TABLE promise_wakeups_before_consumption;
+
+        CREATE INDEX idx_promise_wakeups_state_created
+          ON promise_wakeups(state, created_at ASC);
+      `);
+    });
+    migrate();
   }
 
   store.db.exec(`
     CREATE TABLE IF NOT EXISTS promise_wakeup_consumptions (
-      wakeup_id TEXT PRIMARY KEY REFERENCES promise_wakeup_rows(id) ON DELETE CASCADE,
+      wakeup_id TEXT PRIMARY KEY REFERENCES promise_wakeups(id) ON DELETE CASCADE,
       promise_id TEXT NOT NULL REFERENCES work_promises(id) ON DELETE CASCADE,
       promise_generation INTEGER NOT NULL CHECK (promise_generation >= 1),
       item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -82,31 +104,6 @@ export function ensurePromiseWakeupConsumptionSchema(store: StensiblyStore): voi
       ON promise_wakeup_consumptions(dispatch_command_id, consumed_at, wakeup_id);
     CREATE INDEX IF NOT EXISTS idx_promise_wakeup_consumptions_run
       ON promise_wakeup_consumptions(run_id, consumed_at, wakeup_id);
-
-    CREATE VIEW IF NOT EXISTS promise_wakeups AS
-      SELECT
-        wakeup.id,
-        wakeup.promise_id,
-        wakeup.promise_generation,
-        wakeup.item_id,
-        wakeup.state,
-        wakeup.created_at
-      FROM promise_wakeup_rows wakeup
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM promise_wakeup_consumptions consumed
-        WHERE consumed.wakeup_id = wakeup.id
-      );
-
-    CREATE TRIGGER IF NOT EXISTS trg_promise_wakeups_insert
-    INSTEAD OF INSERT ON promise_wakeups
-    BEGIN
-      INSERT OR IGNORE INTO promise_wakeup_rows (
-        id, promise_id, promise_generation, item_id, state, created_at
-      ) VALUES (
-        NEW.id, NEW.promise_id, NEW.promise_generation, NEW.item_id, NEW.state, NEW.created_at
-      );
-    END;
   `);
 
   initializedStores.add(store);
@@ -136,10 +133,15 @@ export function consumePromiseWakeupsForDispatch(
       dispatch_command_id, run_id, consumed_at
     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
   `);
+  const markConsumed = store.db.query(`
+    UPDATE promise_wakeups
+    SET state = 'consumed'
+    WHERE id = ?1 AND state = 'ready'
+  `);
 
   const consumed: PromiseWakeupConsumption[] = [];
   for (const wakeup of wakeups) {
-    const result = insert.run(
+    const marker = insert.run(
       wakeup.id,
       wakeup.promise_id,
       wakeup.promise_generation,
@@ -149,7 +151,8 @@ export function consumePromiseWakeupsForDispatch(
       input.runId,
       input.consumedAt,
     );
-    if (result.changes !== 1) {
+    const projection = markConsumed.run(wakeup.id);
+    if (marker.changes !== 1 || projection.changes !== 1) {
       throw new ConflictError(`Promise wakeup ${wakeup.id} changed before dispatch committed`);
     }
     consumed.push({
@@ -202,7 +205,7 @@ function selectEligibleWakeups(
         wakeup.item_id,
         item.project_id,
         wakeup.created_at
-      FROM promise_wakeup_rows wakeup
+      FROM promise_wakeups wakeup
       JOIN work_promises promise
         ON promise.id = wakeup.promise_id
        AND promise.item_id = wakeup.item_id
