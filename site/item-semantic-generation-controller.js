@@ -9,7 +9,9 @@ export function readSemanticClaimGeneration(body, expectedItemId = '') {
   if (!(body instanceof Element)) return null;
   const itemId = body.dataset[ITEM_ID_DATA_KEY] || '';
   if (expectedItemId && itemId !== expectedItemId) return null;
-  const generation = Number(body.dataset[GENERATION_DATA_KEY]);
+  const raw = body.dataset[GENERATION_DATA_KEY];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  const generation = Number(raw);
   return Number.isInteger(generation) && generation >= 0 ? generation : null;
 }
 
