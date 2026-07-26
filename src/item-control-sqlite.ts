@@ -38,20 +38,30 @@ interface RunRow {
   ended_at: string | null;
 }
 
-export function readItemControlRuns(store: StensiblyStore, itemId: string): WorkRun[] {
+export function readItemControlRuns(
+  store: StensiblyStore,
+  itemId: string,
+  now: Date,
+): WorkRun[] {
   ensureRunSchema(store);
   ensureIndex(store);
   const runs: WorkRun[] = [];
+  const timestamp = now.toISOString();
   for (const status of liveStatuses) {
     const rows = store.db
-      .query<RunRow, [string, WorkRunStatus, number]>(`
+      .query<RunRow, [string, WorkRunStatus, string, number]>(`
         SELECT *
         FROM work_runs
         WHERE item_id = ?1 AND status = ?2
+          AND (
+            lease_expires_at IS NULL
+            OR julianday(lease_expires_at) IS NULL
+            OR julianday(lease_expires_at) > julianday(?3)
+          )
         ORDER BY created_at DESC, rowid DESC
-        LIMIT ?3
+        LIMIT ?4
       `)
-      .all(itemId, status, MAX_ITEM_CONTROL_RUNS_PER_STATUS);
+      .all(itemId, status, timestamp, MAX_ITEM_CONTROL_RUNS_PER_STATUS);
     runs.push(...rows.map(mapRun));
   }
   return runs;
@@ -60,8 +70,8 @@ export function readItemControlRuns(store: StensiblyStore, itemId: string): Work
 function ensureIndex(store: StensiblyStore): void {
   if (indexedStores.has(store)) return;
   store.db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_work_runs_item_status_created
-    ON work_runs(item_id, status, created_at DESC)
+    CREATE INDEX IF NOT EXISTS idx_work_runs_item_status_lease_created
+    ON work_runs(item_id, status, lease_expires_at, created_at DESC)
   `);
   indexedStores.add(store);
 }
