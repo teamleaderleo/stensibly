@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { safeVercelOrigin } from "../src/dashboard-deployment-diagnostics.ts";
 
 const workflowPath = new URL("../.github/workflows/deploy-dashboard.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
@@ -115,6 +116,60 @@ describe("production dashboard deployment workflow", () => {
     expect(workflow).toContain("title=Post-promotion dashboard verification failed");
     expect(workflow).toContain("Promotion completed");
     expect(workflow).not.toContain("Use an explicit Vercel rollback decision");
+  });
+
+  test("uploads one sanitised JSON fallback for failures before checkout or Bun setup", () => {
+    expect(workflow.match(/uses: actions\/upload-artifact@v4/g)).toHaveLength(2);
+    expect(workflow).toContain("name: Prepare candidate diagnostics fallback");
+    expect(workflow).toContain("name: Prepare deployment diagnostics fallback");
+    expect(workflow).toContain('"completeness": "fallback"');
+    expect(workflow).toContain('"failurePhase": "workflowPrerequisite"');
+    expect(workflow).toContain("bun src/dashboard-deployment-diagnostics.ts");
+    expect(workflow).toContain("--mode candidate");
+    expect(workflow).toContain("--mode deploy");
+    expect(workflow).toContain(
+      "name: dashboard-candidate-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(workflow).toContain(
+      "name: dashboard-deployment-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(workflow).toContain(
+      "path: /tmp/stensibly-dashboard-candidate-diagnostics/report.json",
+    );
+    expect(workflow).toContain(
+      "path: /tmp/stensibly-dashboard-deployment-diagnostics/report.json",
+    );
+    expect(workflow.match(/if-no-files-found: error/g)).toHaveLength(2);
+    expect(workflow).not.toContain("if-no-files-found: warn");
+    expect(workflow.match(/retention-days: 14/g)).toHaveLength(2);
+    expect(workflow).not.toContain("path: /tmp/dashboard-index.html");
+    expect(workflow).not.toContain("path: /tmp/dashboard-asset-");
+
+    const candidateJob = workflow.slice(position("  test:"), position("  deploy:"));
+    expect(candidateJob.indexOf("Prepare candidate diagnostics fallback"))
+      .toBeLessThan(candidateJob.indexOf("Require main branch"));
+    const deployJob = workflow.slice(position("  deploy:"));
+    expect(deployJob.indexOf("Prepare deployment diagnostics fallback"))
+      .toBeLessThan(deployJob.indexOf("Require main branch"));
+
+    const candidateUpload = workflow.slice(
+      position("- name: Upload candidate diagnostics"),
+      position("  deploy:"),
+    );
+    expect(candidateUpload).toContain("if: ${{ failure() }}");
+    const deployUpload = workflow.slice(position("- name: Upload deployment diagnostics"));
+    expect(deployUpload).toContain("if: ${{ failure() }}");
+    expect(position("Record candidate rejection"))
+      .toBeLessThan(position("Upload candidate diagnostics"));
+    expect(position("Record deployment report"))
+      .toBeLessThan(position("Upload deployment diagnostics"));
+  });
+
+  test("uses the same origin-only Vercel validation for staging and reporting", () => {
+    expect(workflow.match(/--safe-vercel-origin/g)).toHaveLength(2);
+    expect(workflow).not.toContain("== https://*.vercel.app");
+    expect(safeVercelOrigin("https://candidate.vercel.app/path")).toBeNull();
+    expect(safeVercelOrigin("https://candidate.vercel.app?bypass=secret")).toBeNull();
   });
 
   test("always records phase outcomes and whether production changed", () => {

@@ -20,6 +20,79 @@ jobs:
     name: Validate dashboard production candidate
     runs-on: ubuntu-latest
     steps:
+      - name: Prepare candidate diagnostics fallback
+        env:
+          DIAGNOSTICS_REPOSITORY: ${{ github.repository }}
+          DIAGNOSTICS_RUN_ID: ${{ github.run_id }}
+          DIAGNOSTICS_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DIAGNOSTICS_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          mkdir -p /tmp/stensibly-dashboard-candidate-diagnostics
+
+          repository_json=null
+          run_id_json=null
+          run_attempt_json=null
+          commit_json=null
+          run_url_json=null
+          if [[ "${DIAGNOSTICS_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            repository_json="\"${DIAGNOSTICS_REPOSITORY}\""
+          fi
+          if [[ "${DIAGNOSTICS_RUN_ID}" =~ ^[0-9]{1,24}$ ]]; then
+            run_id_json="\"${DIAGNOSTICS_RUN_ID}\""
+          fi
+          if [[ "${DIAGNOSTICS_RUN_ATTEMPT}" =~ ^[0-9]{1,24}$ ]]; then
+            run_attempt_json="\"${DIAGNOSTICS_RUN_ATTEMPT}\""
+          fi
+          if [[ "${DIAGNOSTICS_SHA}" =~ ^[A-Fa-f0-9]{40,64}$ ]]; then
+            commit_json="\"${DIAGNOSTICS_SHA,,}\""
+          fi
+          if [ "${repository_json}" != null ] && [ "${run_id_json}" != null ]; then
+            run_url_json="\"https://github.com/${DIAGNOSTICS_REPOSITORY}/actions/runs/${DIAGNOSTICS_RUN_ID}\""
+          fi
+          generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          cat > /tmp/stensibly-dashboard-candidate-diagnostics/report.json <<EOF
+          {
+            "format": "stensibly.dashboard-deployment-diagnostics",
+            "schemaVersion": 1,
+            "generatedAt": "${generated_at}",
+            "mode": "candidate",
+            "completeness": "fallback",
+            "run": {
+              "repository": ${repository_json},
+              "runId": ${run_id_json},
+              "runAttempt": ${run_attempt_json},
+              "commit": ${commit_json},
+              "url": ${run_url_json}
+            },
+            "deployment": {
+              "productionDomain": "https://www.stensibly.com",
+              "stagedDeployment": null,
+              "productionState": "unchanged"
+            },
+            "phases": {
+              "candidateValidation": "failed",
+              "productionSecrets": "not_run",
+              "vercelProjectValidation": "not_run",
+              "pullProjectSettings": "not_run",
+              "linkedProjectValidation": "not_run",
+              "productionBuild": "not_run",
+              "buildOutputValidation": "not_run",
+              "stagedDeployment": "not_run",
+              "stagedVerification": "not_run",
+              "promotion": "not_run",
+              "productionVerification": "not_run"
+            },
+            "failurePhase": "workflowPrerequisite",
+            "verifier": {
+              "assetContract": "src/dashboard-assets.ts",
+              "assetCount": null,
+              "productionVerifier": "src/verify-dashboard.ts"
+            }
+          }
+          EOF
+
       - name: Require main branch
         run: |
           if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
@@ -33,6 +106,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - name: Install locked dependencies
+        id: install
         run: bun install --frozen-lockfile
 
       - name: Run typecheck
@@ -55,6 +129,8 @@ jobs:
 
       - name: Record candidate rejection
         if: ${{ failure() }}
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
         run: |
           {
             echo "## Dashboard production deployment report"
@@ -66,6 +142,23 @@ jobs:
             echo "- commit: \`${GITHUB_SHA}\`"
             echo "- next step: inspect the failed candidate-validation step and its annotation"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ "${INSTALL_OUTCOME:-}" = "success" ] \
+            && command -v bun > /dev/null \
+            && [ -f src/dashboard-deployment-diagnostics.ts ]; then
+            bun src/dashboard-deployment-diagnostics.ts \
+              --mode candidate \
+              --output /tmp/stensibly-dashboard-candidate-diagnostics/report.json
+          fi
+
+      - name: Upload candidate diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-candidate-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/stensibly-dashboard-candidate-diagnostics/report.json
+          if-no-files-found: error
+          retention-days: 14
 
   deploy:
     name: Stage, verify, and promote dashboard
@@ -79,6 +172,79 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
+      - name: Prepare deployment diagnostics fallback
+        env:
+          DIAGNOSTICS_REPOSITORY: ${{ github.repository }}
+          DIAGNOSTICS_RUN_ID: ${{ github.run_id }}
+          DIAGNOSTICS_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DIAGNOSTICS_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          mkdir -p /tmp/stensibly-dashboard-deployment-diagnostics
+
+          repository_json=null
+          run_id_json=null
+          run_attempt_json=null
+          commit_json=null
+          run_url_json=null
+          if [[ "${DIAGNOSTICS_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            repository_json="\"${DIAGNOSTICS_REPOSITORY}\""
+          fi
+          if [[ "${DIAGNOSTICS_RUN_ID}" =~ ^[0-9]{1,24}$ ]]; then
+            run_id_json="\"${DIAGNOSTICS_RUN_ID}\""
+          fi
+          if [[ "${DIAGNOSTICS_RUN_ATTEMPT}" =~ ^[0-9]{1,24}$ ]]; then
+            run_attempt_json="\"${DIAGNOSTICS_RUN_ATTEMPT}\""
+          fi
+          if [[ "${DIAGNOSTICS_SHA}" =~ ^[A-Fa-f0-9]{40,64}$ ]]; then
+            commit_json="\"${DIAGNOSTICS_SHA,,}\""
+          fi
+          if [ "${repository_json}" != null ] && [ "${run_id_json}" != null ]; then
+            run_url_json="\"https://github.com/${DIAGNOSTICS_REPOSITORY}/actions/runs/${DIAGNOSTICS_RUN_ID}\""
+          fi
+          generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          cat > /tmp/stensibly-dashboard-deployment-diagnostics/report.json <<EOF
+          {
+            "format": "stensibly.dashboard-deployment-diagnostics",
+            "schemaVersion": 1,
+            "generatedAt": "${generated_at}",
+            "mode": "deploy",
+            "completeness": "fallback",
+            "run": {
+              "repository": ${repository_json},
+              "runId": ${run_id_json},
+              "runAttempt": ${run_attempt_json},
+              "commit": ${commit_json},
+              "url": ${run_url_json}
+            },
+            "deployment": {
+              "productionDomain": "https://www.stensibly.com",
+              "stagedDeployment": null,
+              "productionState": "unchanged"
+            },
+            "phases": {
+              "candidateValidation": "passed",
+              "productionSecrets": "not_run",
+              "vercelProjectValidation": "not_run",
+              "pullProjectSettings": "not_run",
+              "linkedProjectValidation": "not_run",
+              "productionBuild": "not_run",
+              "buildOutputValidation": "not_run",
+              "stagedDeployment": "not_run",
+              "stagedVerification": "not_run",
+              "promotion": "not_run",
+              "productionVerification": "not_run"
+            },
+            "failurePhase": "workflowPrerequisite",
+            "verifier": {
+              "assetContract": "src/dashboard-assets.ts",
+              "assetCount": null,
+              "productionVerifier": "src/verify-dashboard.ts"
+            }
+          }
+          EOF
+
       - name: Require main branch
         run: |
           if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
@@ -92,6 +258,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - name: Install locked dependencies
+        id: install
         run: bun install --frozen-lockfile
 
       - name: Validate required Vercel secrets
@@ -173,14 +340,15 @@ jobs:
               --yes \
               --token="${VERCEL_TOKEN}"
           )"
-          case "${deployment_url}" in
-            https://*.vercel.app) ;;
-            *)
-              echo "::error title=Staged deployment failed::Vercel did not return a valid staged deployment URL."
-              echo "Vercel did not return a valid staged deployment URL." >&2
-              exit 1
-              ;;
-          esac
+          if ! safe_deployment_url="$(
+            bun src/dashboard-deployment-diagnostics.ts \
+              --safe-vercel-origin "${deployment_url}"
+          )"; then
+            echo "::error title=Staged deployment failed::Vercel did not return a valid origin-only staged deployment URL."
+            echo "Vercel did not return a valid origin-only staged deployment URL." >&2
+            exit 1
+          fi
+          deployment_url="${safe_deployment_url}"
           echo "deployment_url=${deployment_url}" >> "${GITHUB_OUTPUT}"
           echo "::notice title=Staged dashboard created::A production-targeted deployment was created without changing the production domain."
 
@@ -300,6 +468,7 @@ jobs:
       - name: Record deployment report
         if: ${{ always() }}
         env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
           SECRETS_OUTCOME: ${{ steps.secrets.outcome }}
           PROJECT_OUTCOME: ${{ steps.project.outcome }}
           PULL_SETTINGS_OUTCOME: ${{ steps.pull_settings.outcome }}
@@ -338,6 +507,17 @@ jobs:
             guidance="No staged deployment was promoted. Production remains on its previous deployment."
           fi
 
+          safe_deployment_url=""
+          if [ "${INSTALL_OUTCOME:-}" = "success" ] \
+            && command -v bun > /dev/null \
+            && [ -f src/dashboard-deployment-diagnostics.ts ]; then
+            safe_deployment_url="$(
+              bun src/dashboard-deployment-diagnostics.ts \
+                --safe-vercel-origin "${DEPLOYMENT_URL:-}" 2> /dev/null \
+                || true
+            )"
+          fi
+
           {
             echo "## Dashboard production deployment report"
             echo
@@ -362,7 +542,24 @@ jobs:
             echo "- commit: \`${GITHUB_SHA}\`"
             echo "- project: ${EXPECTED_VERCEL_PROJECT}"
             echo "- production domain: ${DASHBOARD_URL}"
-            if [[ "${DEPLOYMENT_URL:-}" == https://*.vercel.app ]]; then
-              echo "- staged deployment: ${DEPLOYMENT_URL} (no bypass credentials included)"
+            if [ -n "${safe_deployment_url}" ]; then
+              echo "- staged deployment: ${safe_deployment_url} (no bypass credentials included)"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ "${INSTALL_OUTCOME:-}" = "success" ] \
+            && command -v bun > /dev/null \
+            && [ -f src/dashboard-deployment-diagnostics.ts ]; then
+            bun src/dashboard-deployment-diagnostics.ts \
+              --mode deploy \
+              --output /tmp/stensibly-dashboard-deployment-diagnostics/report.json
+          fi
+
+      - name: Upload deployment diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-deployment-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/stensibly-dashboard-deployment-diagnostics/report.json
+          if-no-files-found: error
+          retention-days: 14
