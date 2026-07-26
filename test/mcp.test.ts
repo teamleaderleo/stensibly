@@ -51,7 +51,12 @@ describe("MCP work surface", () => {
         "unblock_work",
       ]);
 
-      const created = await call<{ id: string; status: string; project: string }>(
+      const created = await call<{
+        id: string;
+        status: string;
+        project: string;
+        claimGeneration: number;
+      }>(
         client,
         "create_item",
         {
@@ -133,12 +138,17 @@ describe("MCP work surface", () => {
       );
       expect(artifact.kind).toBe("commit");
 
-      const handedOff = await call<{ status: string; claimedBy: null }>(
+      const handedOff = await call<{
+        status: string;
+        claimedBy: null;
+        claimGeneration: number;
+      }>(
         client,
         "handoff_work",
         {
           id: created.id,
           actor: agent,
+          expectedClaimGeneration: renewed.claimGeneration,
           summary: "The protocol path works and needs a human pass.",
           nextAction: "Review the visible wording.",
           toActorId: leo.id,
@@ -146,35 +156,43 @@ describe("MCP work surface", () => {
       );
       expect(handedOff).toMatchObject({ status: "ready", claimedBy: null });
 
-      await call(client, "claim_work", {
+      const humanClaim = await call<{ claimGeneration: number }>(client, "claim_work", {
         id: created.id,
         actor: leo,
         leaseSeconds: 900,
       });
-      const blocked = await call<{ status: string }>(client, "block_work", {
-        id: created.id,
-        actor: leo,
-        reason: "Needs a sample client configuration.",
-        nextAction: "Add one client example.",
-      });
+      const blocked = await call<{ status: string; claimGeneration: number }>(
+        client,
+        "block_work",
+        {
+          id: created.id,
+          actor: leo,
+          expectedClaimGeneration: humanClaim.claimGeneration,
+          reason: "Needs a sample client configuration.",
+          nextAction: "Add one client example.",
+        },
+      );
       expect(blocked.status).toBe("blocked");
 
-      await call(client, "unblock_work", {
+      const unblocked = await call<{ claimGeneration: number }>(client, "unblock_work", {
         id: created.id,
         actor: leo,
+        expectedClaimGeneration: blocked.claimGeneration,
         nextAction: "Finish the sample and close the work.",
       });
-      await call(client, "claim_work", {
+      const finalClaim = await call<{ claimGeneration: number }>(client, "claim_work", {
         id: created.id,
         actor: agent,
         leaseSeconds: 900,
       });
+      expect(finalClaim.claimGeneration).toBeGreaterThan(unblocked.claimGeneration);
       const completed = await call<{ status: string; summary: string }>(
         client,
         "complete_work",
         {
           id: created.id,
           actor: agent,
+          expectedClaimGeneration: finalClaim.claimGeneration,
           summary: "Handled through the protocol.",
         },
       );
