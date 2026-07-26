@@ -79,9 +79,13 @@ describe("dashboard renewal eligibility", () => {
     expect(leaseRenewalAvailability(result, actor, now).message).toContain("server time");
   });
 
-  test("explains missing projection, wrong holder, withheld permission, approval, and stale expiry", () => {
+  test("explains every fail-closed authority branch", () => {
     expect(leaseRenewalAvailability({ status: "absent", authority: null }, actor, now).message)
       .toContain("server-owned authority view");
+    expect(leaseRenewalAvailability({ status: "malformed", authority: null }, actor, now)).toEqual({
+      available: false,
+      message: expect.stringContaining("incompatible"),
+    });
     expect(leaseRenewalAvailability(readRenewalAuthority(detail({ holderActorId: "agent-2" })), actor, now).message)
       .toContain("Only the current holder");
     expect(leaseRenewalAvailability(readRenewalAuthority(detail({ allowedOperations: [] })), actor, now).message)
@@ -92,8 +96,16 @@ describe("dashboard renewal eligibility", () => {
     }));
     expect(leaseRenewalAvailability(approvalAuthority, actor, now).message)
       .toContain("requires server-recorded approval");
+    expect(leaseRenewalAvailability(readRenewalAuthority(detail({ state: "expired" })), actor, now)).toEqual({
+      available: false,
+      message: expect.stringContaining("expired"),
+    });
+    expect(leaseRenewalAvailability(readRenewalAuthority(detail({ state: "superseded" })), actor, now).available)
+      .toBe(false);
     expect(leaseRenewalAvailability(readRenewalAuthority(detail({ expiresAt: "2026-07-25T23:59:00.000Z" })), actor, now).message)
       .toContain("Refresh");
+    expect(leaseRenewalAvailability(readRenewalAuthority(detail()), null, now).message)
+      .toContain("active session actor");
   });
 });
 
