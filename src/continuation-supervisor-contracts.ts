@@ -5,6 +5,7 @@ import type {
   RunContinuationSupervisorPolicyInput,
   SupervisorContinuationResult,
 } from "./continuation-supervisor.js";
+import { executionEnvelopeSchema } from "./execution-envelope-contracts.js";
 import { actorSchema } from "./schemas.js";
 
 const defaultSupervisor = {
@@ -22,7 +23,8 @@ export const queueContinuationForSupervisorSchema = z.object({
   leaseSeconds: z.number().int().min(30).max(86_400).default(900),
   maxAttempts: z.number().int().min(1).max(20).default(3),
   retryBackoffSeconds: z.number().int().min(0).max(86_400).default(60),
-});
+  executionEnvelope: executionEnvelopeSchema.optional(),
+}).strict();
 
 export const runContinuationSupervisorPolicySchema = z.object({
   supervisor: actorSchema.default(defaultSupervisor),
@@ -39,7 +41,7 @@ export const runContinuationSupervisorPolicySchema = z.object({
   leaseSeconds: z.number().int().min(30).max(86_400).default(900),
   maxAttempts: z.number().int().min(1).max(20).default(3),
   retryBackoffSeconds: z.number().int().min(0).max(86_400).default(60),
-});
+}).strict();
 
 export interface ContinuationSupervisorLedger {
   queueContinuationForSupervisor(
