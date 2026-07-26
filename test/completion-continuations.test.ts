@@ -17,7 +17,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("atomic completion continuations", () => {
-  test("completes work and proposes follow-ups exactly once", async () => {
+  test("completes work at the current generation and proposes follow-ups exactly once", async () => {
     const item = await ledger.createItem({
       project: "scrapbook",
       kind: "task",
@@ -26,11 +26,12 @@ describe("atomic completion continuations", () => {
       priority: 70,
       actor: agent,
     });
-    await ledger.claimWork({ id: item.id, actor: agent, leaseSeconds: 900 });
+    const claimed = await ledger.claimWork({ id: item.id, actor: agent, leaseSeconds: 900 });
 
     const input = {
       id: item.id,
       actor: agent,
+      expectedClaimGeneration: claimed.claimGeneration,
       summary: "The implementation is complete.",
       continuations: [
         {
@@ -58,6 +59,7 @@ describe("atomic completion continuations", () => {
       summary: "The implementation is complete.",
       nextAction: null,
       claimedBy: null,
+      claimGeneration: claimed.claimGeneration + 1,
     });
     expect(result.continuations).toHaveLength(2);
     expect(result.continuations.map((entry) => entry.status)).toEqual([
@@ -74,10 +76,18 @@ describe("atomic completion continuations", () => {
       "continuation.proposed",
       "continuation.proposed",
     ]);
+    expect(detail.events.find((event) => event.type === "item.completed")?.payload).toMatchObject({
+      generation: claimed.claimGeneration,
+      nextGeneration: result.item.claimGeneration,
+    });
 
     await expect(ledger.completeWorkWithContinuations({
       ...input,
       summary: "A different replay.",
+    })).rejects.toThrow(ConflictError);
+    await expect(ledger.completeWorkWithContinuations({
+      ...input,
+      expectedClaimGeneration: result.item.claimGeneration,
     })).rejects.toThrow(ConflictError);
   });
 
@@ -94,6 +104,7 @@ describe("atomic completion continuations", () => {
     await expect(ledger.completeWorkWithContinuations({
       id: item.id,
       actor: leo,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "This must be rolled back.",
       continuations: [
         {
@@ -117,6 +128,7 @@ describe("atomic completion continuations", () => {
       status: "ready",
       summary: null,
       nextAction: "Try the atomic completion.",
+      claimGeneration: item.claimGeneration,
       version: item.version,
     });
     expect(detail.events.map((event) => event.type)).toEqual(["item.created"]);
@@ -134,6 +146,7 @@ describe("atomic completion continuations", () => {
     });
     const body = {
       actor: agent,
+      expectedClaimGeneration: item.claimGeneration,
       summary: "Completed through the existing endpoint.",
       continuations: [{
         title: "Review the REST completion",
@@ -143,6 +156,13 @@ describe("atomic completion continuations", () => {
         deliveryMode: "current_conversation",
       }],
     };
+
+    const missingGeneration = await app.request(`/api/v1/items/${item.id}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, expectedClaimGeneration: undefined }),
+    });
+    expect(missingGeneration.status).toBe(400);
 
     const response = await app.request(`/api/v1/items/${item.id}/complete`, {
       method: "POST",
@@ -154,12 +174,13 @@ describe("atomic completion continuations", () => {
     });
     expect(response.status).toBe(200);
     const result = await response.json() as {
-      item: { status: string; summary: string };
+      item: { status: string; summary: string; claimGeneration: number };
       continuations: Array<{ status: string; sourceItemId: string }>;
     };
     expect(result.item).toMatchObject({
       status: "done",
       summary: "Completed through the existing endpoint.",
+      claimGeneration: item.claimGeneration + 1,
     });
     expect(result.continuations).toEqual([
       expect.objectContaining({ status: "proposed", sourceItemId: item.id }),
