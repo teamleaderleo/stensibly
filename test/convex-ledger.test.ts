@@ -97,20 +97,36 @@ describe("Convex work ledger", () => {
     await ledger.handoffWork({
       id: "item_1",
       actor,
+      expectedClaimGeneration: 8,
       summary: "Mapped the calls.",
       nextAction: "Review them.",
     });
-    await ledger.blockWork({ id: "item_1", actor, reason: "Review pending." });
-    await ledger.unblockWork({ id: "item_1", actor });
+    await ledger.blockWork({
+      id: "item_1",
+      actor,
+      expectedClaimGeneration: 9,
+      reason: "Review pending.",
+    });
+    await ledger.unblockWork({
+      id: "item_1",
+      actor,
+      expectedClaimGeneration: 10,
+    });
     await ledger.releaseWork({
       id: "item_1",
       actor,
-      expectedClaimGeneration: 8,
+      expectedClaimGeneration: 11,
     });
-    await ledger.completeWork({ id: "item_1", actor, summary: "Done." });
+    await ledger.completeWork({
+      id: "item_1",
+      actor,
+      expectedClaimGeneration: 12,
+      summary: "Done.",
+    });
     await ledger.completeWorkWithContinuations({
       id: "item_1",
       actor,
+      expectedClaimGeneration: 13,
       summary: "Done with a next move.",
       continuations: [{
         title: "Review the result",
@@ -219,12 +235,32 @@ describe("Convex work ledger", () => {
       leaseSeconds: 1800,
       expectedClaimGeneration: 7,
     });
-    expect(client.one("mutation", "claims:release").args).toMatchObject({
+    expect(client.one("mutation", "items:handoff").args).toMatchObject({
       id: "item_1",
       expectedClaimGeneration: 8,
     });
+    expect(client.one("mutation", "items:block").args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 9,
+    });
+    expect(client.one("mutation", "items:unblock").args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 10,
+    });
+    expect(client.one("mutation", "claims:release").args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 11,
+    });
+    expect(client.one("mutation", "items:complete").args).toMatchObject({
+      id: "item_1",
+      expectedClaimGeneration: 12,
+    });
     expect(client.one("mutation", "completionContinuations:complete").args)
-      .toMatchObject({ id: "item_1", idempotencyKey: "complete-continuation-1" });
+      .toMatchObject({
+        id: "item_1",
+        expectedClaimGeneration: 13,
+        idempotencyKey: "complete-continuation-1",
+      });
     expect(client.one("mutation", "continuationEdits:edit").args).toMatchObject({
       id: "cont_1",
       instruction: "Review and record the decision.",
