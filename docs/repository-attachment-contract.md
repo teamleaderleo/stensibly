@@ -6,11 +6,13 @@
 
 A later importer uses this order:
 
-1. a path explicitly supplied by a human;
+1. a repository-relative path explicitly supplied by a human;
 2. repository-root `STENSIBLY.md`;
 3. no recursive search and no similarly named fallback.
 
-The version 1 parser receives content and source metadata. It performs no file, GitHub, or network discovery.
+Explicit source paths use `/` separators and must remain inside the repository. Absolute paths, drive-qualified paths, URI-like paths, empty segments, `.` segments, `..` traversal, and backslash-separated paths fail closed.
+
+The version 1 parser receives content and trusted source metadata. It performs no file, GitHub, or network discovery.
 
 ## Version 1 format
 
@@ -71,19 +73,22 @@ checks:
 - one action cannot be both autonomous and approval-required.
 - checks are bounded single commands. Shell chaining, interpolation, redirection, environment assignment, continuations, and credential-shaped values fail.
 - the complete document is bounded to 128 KB and rejects tabs, control characters, private keys, tokens, passwords, and other explicit secret-shaped content.
+- source metadata paths must be canonical repository-relative paths and cannot escape the repository.
 - invalid input returns errors and no partial contract.
 
-The canonical projection sorts set-like lists and normalises newlines, identifiers, whitespace, and repository case. Check order remains semantically meaningful. The digest input is fixed-order JSON of the canonical contract; source path, repository, and revision metadata stay outside the content digest.
+The canonical projection sorts set-like lists with explicit Unicode code-unit ordering; it does not depend on the host locale. It also normalises newlines, identifiers, whitespace, and repository case. Check order remains semantically meaningful. The digest input is fixed-order JSON of the canonical contract; source path, repository, and revision metadata stay outside the content digest.
 
 ## Markdown body
 
-Version 1 requires exactly four level-two sections in this order: Goal, Boundaries, Evidence and handoff expectations, and Escalation. Their bounded text is preserved for display. Prose never creates permissions, verification commands, approval records, or live authority. Ordinary Markdown content, including horizontal rules, stays body text after the first closing front-matter delimiter.
+Version 1 requires exactly four level-two sections in this order: Goal, Boundaries, Evidence and handoff expectations, and Escalation. Their bounded text is preserved for display. Prose never creates permissions, verification commands, approval records, or live authority. Ordinary Markdown content, including horizontal rules and headings inside matching backtick or tilde fences, stays body text after the first closing front-matter delimiter.
 
 ## Dry-run comparison
 
-`compareProjectAttachmentContracts` reports added and removed repositories, runner profiles, actions, approval requirements, and verification commands; concurrency increases and decreases; body-only changes; and version incompatibility.
+`compareProjectAttachmentContracts` reports added and removed repositories, runner profiles, actions, approval requirements, and verification commands; relative reordering of commands shared by both contracts; concurrency increases and decreases; body-only changes; and version incompatibility.
 
-Permission widening includes repository or runner expansion, autonomous-action additions, approval-requirement removals, verification-command removals, concurrency increases, project identity changes, and version changes. The comparison only reports widening. A later import flow must obtain confirmation and persist any approval separately.
+Command insertions and removals do not hide a reorder: the comparison checks the relative order of commands present in both contracts. An insertion that preserves the shared command order is not itself a reorder.
+
+Permission widening includes repository or runner expansion, autonomous-action additions, approval-requirement removals, verification-command removals or reordering, concurrency increases, project identity changes, and version changes. Narrowing includes repository or runner removal, autonomous-action removal, approval-requirement addition, verification-command addition, and concurrency decreases. One proposal can contain both widening and narrowing effects. The comparison only reports these effects; a later import flow must obtain confirmation and persist any approval separately.
 
 ## Out of scope
 
