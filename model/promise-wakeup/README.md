@@ -6,9 +6,10 @@ Run it with the repository toolchain:
 
 ```sh
 bun model/promise-wakeup/check.ts
+bun test test/promise-wakeup-model.test.ts
 ```
 
-The checker performs breadth-first exploration and emits a JSON report. The committed bounds are in `config.json`.
+The first command emits the bounded JSON report. The second runs the exact-count, negative-control, and configuration regressions. The committed bounds are in `config.json`.
 
 ## Modelled state
 
