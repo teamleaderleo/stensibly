@@ -85,6 +85,10 @@ export const get = query({
           .withIndex("by_item_status", (q) =>
             q.eq("itemId", item._id).eq("status", status)
           )
+          .filter((q) => q.or(
+            q.eq(q.field("leaseExpiresAt"), undefined),
+            q.gt(q.field("leaseExpiresAt"), args.now),
+          ))
           .order("desc")
           .take(MAX_RUNS_PER_LIVE_STATUS)
       )),
