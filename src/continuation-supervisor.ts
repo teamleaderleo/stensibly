@@ -1,3 +1,8 @@
+import { compatibilityExecutionEnvelope } from "./execution-envelope-default.js";
+import {
+  parseExecutionEnvelope,
+  type ExecutionEnvelope,
+} from "./execution-envelope.js";
 import type { ActorInput } from "./schemas.js";
 import {
   dispatchNextWork,
@@ -11,6 +16,7 @@ import {
   resolveContinuation,
   type ContinuationProposal,
 } from "./continuations.js";
+import { getWorkRun } from "./runs.js";
 import {
   ConflictError,
   type Item,
@@ -27,6 +33,7 @@ export interface QueueContinuationForSupervisorInput {
   leaseSeconds?: number;
   maxAttempts?: number;
   retryBackoffSeconds?: number;
+  executionEnvelope?: ExecutionEnvelope;
   idempotencyKey?: string;
   policyMode?: "human" | "automatic" | "notify";
 }
@@ -76,6 +83,7 @@ export function queueContinuationForSupervisor(
   const input = normalizeQueueInput(rawInput);
   const request = queueRequest(input);
   const requestJson = JSON.stringify(request);
+  const explicitEnvelope = rawInput.executionEnvelope !== undefined;
 
   const transaction = store.db.transaction(() => {
     if (input.idempotencyKey) {
@@ -87,12 +95,21 @@ export function queueContinuationForSupervisor(
         `)
         .get(input.idempotencyKey);
       if (replay) {
+        const storedRequest = parseJsonRecord(replay.request_json);
+        if (storedRequest.executionEnvelope === undefined) {
+          if (explicitEnvelope) {
+            throw new ConflictError(
+              "Historical continuation supervisor request cannot be retrofitted with an execution envelope",
+            );
+          }
+          return hydrateSupervisorReplay(store, replay.result_json, now);
+        }
         if (replay.request_json !== requestJson) {
           throw new ConflictError(
             "Idempotency key was already used for a different continuation supervisor request",
           );
         }
-        return JSON.parse(replay.result_json) as SupervisorContinuationResult;
+        return hydrateSupervisorReplay(store, replay.result_json, now);
       }
     }
 
@@ -150,6 +167,7 @@ export function queueContinuationForSupervisor(
       leaseSeconds: input.leaseSeconds,
       maxAttempts: input.maxAttempts,
       retryBackoffSeconds: input.retryBackoffSeconds,
+      executionEnvelope: input.executionEnvelope,
     }, now);
     if (!dispatch) {
       throw new ConflictError(
@@ -294,6 +312,18 @@ export function ensureContinuationSupervisorSchema(store: StensiblyStore): void 
   initializedStores.add(store);
 }
 
+function hydrateSupervisorReplay(
+  store: StensiblyStore,
+  resultJson: string,
+  now: Date,
+): SupervisorContinuationResult {
+  const result = JSON.parse(resultJson) as SupervisorContinuationResult;
+  return {
+    ...result,
+    run: getWorkRun(store, result.run.id, now),
+  };
+}
+
 function materializeAction(
   store: StensiblyStore,
   continuation: ContinuationProposal,
@@ -349,8 +379,10 @@ function continuationTouchesOnlyProject(
 }
 
 function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
+  const id = requiredText(input.id, "Continuation ID", 240);
+  const runnerProfile = requiredText(input.runnerProfile, "Runner profile", 160);
   return {
-    id: requiredText(input.id, "Continuation ID", 240),
+    id,
     actor: normalizeActor(input.actor, "Approval actor"),
     supervisor: normalizeSupervisor(input.supervisor),
     expectedGeneration: positiveInteger(
@@ -358,7 +390,7 @@ function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
       "Expected generation",
     ),
     runnerType: requiredText(input.runnerType, "Runner type", 80),
-    runnerProfile: requiredText(input.runnerProfile, "Runner profile", 160),
+    runnerProfile,
     leaseSeconds: positiveInteger(input.leaseSeconds ?? 900, "Lease seconds", 86_400, 30),
     maxAttempts: positiveInteger(input.maxAttempts ?? 3, "Maximum attempts", 20),
     retryBackoffSeconds: positiveInteger(
@@ -366,6 +398,12 @@ function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
       "Retry backoff seconds",
       86_400,
       0,
+    ),
+    executionEnvelope: parseExecutionEnvelope(
+      input.executionEnvelope
+        ?? compatibilityExecutionEnvelope(
+          `Execute continuation ${id} with runner profile ${runnerProfile}`,
+        ),
     ),
     idempotencyKey: optionalText(input.idempotencyKey, "Idempotency key", 240),
     policyMode: input.policyMode ?? "human" as const,
@@ -405,6 +443,7 @@ function queueRequest(input: ReturnType<typeof normalizeQueueInput>) {
     leaseSeconds: input.leaseSeconds,
     maxAttempts: input.maxAttempts,
     retryBackoffSeconds: input.retryBackoffSeconds,
+    executionEnvelope: input.executionEnvelope,
     policyMode: input.policyMode,
   };
 }
@@ -433,7 +472,7 @@ function normalizeSupervisor(actor: ActorInput): ActorInput {
 
 function normalizeActor(actor: ActorInput, label: string): ActorInput {
   if (!actor || typeof actor !== "object") throw new TypeError(`${label} is required`);
-  if (!(["human", "agent", "service"] as const).includes(actor.kind)) {
+  if (!( ["human", "agent", "service"] as const).includes(actor.kind)) {
     throw new TypeError(`${label} kind must be human, agent, or service`);
   }
   return {
@@ -441,6 +480,17 @@ function normalizeActor(actor: ActorInput, label: string): ActorInput {
     name: requiredText(actor.name, `${label} name`, 160),
     kind: actor.kind,
   };
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function optionalText(value: unknown, label: string, maxLength: number): string | undefined {
