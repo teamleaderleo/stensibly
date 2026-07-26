@@ -42,6 +42,18 @@ export function readRenewalAuthority(payload, expectedItemId = '') {
     return { status: 'malformed', authority: null };
   }
 
+  const overlappingOperations = allowedOperations.some((operation) => (
+    approvalRequiredOperations.includes(operation)
+  ));
+  const liveState = state === 'live' || state === 'expiring';
+  const invalidLiveState = liveState && (!holderActorId || !expiresAt || source === 'none');
+  const invalidUnclaimedState = state === 'unclaimed' && (
+    holderActorId !== null || expiresAt !== null || source !== 'none'
+  );
+  if (overlappingOperations || invalidLiveState || invalidUnclaimedState) {
+    return { status: 'malformed', authority: null };
+  }
+
   return {
     status: 'available',
     authority: {
@@ -89,6 +101,12 @@ export function leaseRenewalAvailability(authorityResult, actor, now = Date.now(
     return {
       available: false,
       message: `Only the current holder (${authority.holderActorId}) can renew this lease.`,
+    };
+  }
+  if (authority.approvalRequiredOperations.includes(LEASE_RENEW_OPERATION)) {
+    return {
+      available: false,
+      message: 'Lease renewal requires server-recorded approval for this authority generation.',
     };
   }
   if (!authority.allowedOperations.includes(LEASE_RENEW_OPERATION)) {
@@ -154,8 +172,11 @@ export function readRenewedItem(
   if (status !== 'active') throw new TypeError('The renewed item did not remain active.');
   if (expectedActorId && claimedBy !== expectedActorId) throw new TypeError('The endpoint returned a different claimant.');
   if (Number.isNaN(Date.parse(claimExpiresAt))) throw new TypeError('The renewed item returned an invalid lease expiry.');
-  if (claimGeneration === null || claimGeneration <= expectedPreviousGeneration) {
-    throw new TypeError('The renewed item did not advance the claim generation.');
+  if (
+    claimGeneration === null
+    || (expectedPreviousGeneration >= 0 && claimGeneration !== expectedPreviousGeneration + 1)
+  ) {
+    throw new TypeError('The renewed item did not advance the claim generation exactly once.');
   }
   return { id, status, claimedBy, claimExpiresAt, claimGeneration };
 }
@@ -169,7 +190,12 @@ function operationList(value) {
   const operations = [];
   for (const entry of value) {
     const operation = typeof entry === 'string' ? entry.trim() : '';
-    if (!operation || operation.length > 80 || /stn\.tok_/i.test(operation)) return null;
+    if (
+      !operation
+      || operation.length > 80
+      || /[\u0000-\u001f\u007f]/.test(operation)
+      || /stn\.tok_/i.test(operation)
+    ) return null;
     operations.push(operation);
   }
   return [...new Set(operations)];
