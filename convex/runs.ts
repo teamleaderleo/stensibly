@@ -13,6 +13,16 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import {
+  appendExecutionActualEvent,
+  appendExecutionEnvelopeEvent,
+  executionActualValidator,
+  executionEnvelopeValidator,
+  normalizeExecutionActual,
+  normalizeExecutionEnvelope,
+  readHostedRunExecution,
+  sameCanonical,
+} from "./lib/executionEnvelope";
 import { mutation, query } from "./lib/server";
 import { actorValidator, runStatusValidator, serviceArgs } from "./lib/validators";
 
@@ -27,32 +37,44 @@ export const start = mutation({
     repository: v.optional(v.string()),
     branch: v.optional(v.string()),
     worktree: v.optional(v.string()),
+    executionEnvelope: v.optional(executionEnvelopeValidator),
     idempotencyKey: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
+    const input = normalizeStartInput(args);
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
-    if (!workspace) throw new Error(`Item ${args.itemId} does not exist`);
+    if (!workspace) throw new Error(`Item ${input.itemId} does not exist`);
     const existing = await requireMatchingIdempotency(
       ctx,
       workspace._id,
-      args.idempotencyKey,
+      input.idempotencyKey,
       "run.started",
     );
     if (existing) {
-      const runExternalId = (existing.payload as { runId?: unknown }).runId;
-      if (typeof runExternalId !== "string") throw new Error("Run idempotency record is incomplete");
+      const payload = record(existing.payload);
+      const runExternalId = payload?.runId;
+      if (typeof runExternalId !== "string") {
+        throw new Error("Run idempotency record is incomplete");
+      }
       const run = await ctx.db
         .query("runs")
         .withIndex("by_external_id", (q) => q.eq("externalId", runExternalId))
         .unique();
       if (!run) throw new Error("Idempotent run no longer exists");
-      return { ...publicRun(run), itemId: args.itemId };
+      const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+      if (!execution.executionEnvelope) {
+        throw new Error(
+          "Idempotency key belongs to a legacy run start without an execution envelope",
+        );
+      }
+      requireSameRequest(payload?.request, startRequest(input), "run start request");
+      return await publicHostedRun(ctx, run, input.itemId, execution);
     }
 
-    const item = await getItemByExternalId(ctx, workspace._id, args.itemId);
-    const actor = await upsertActor(ctx, workspace._id, args.actor);
+    const item = await getItemByExternalId(ctx, workspace._id, input.itemId);
+    const actor = await upsertActor(ctx, workspace._id, input.actor);
     if (!actor) throw new Error("Failed to create actor");
     const now = Date.now();
     const runId = await ctx.db.insert("runs", {
@@ -62,18 +84,30 @@ export const start = mutation({
       externalId: "pending",
       actorId: actor._id,
       actorExternalId: actor.externalId,
-      harness: assertText(args.harness, "Harness", 160),
-      model: assertOptionalText(args.model, "Model", 160),
-      externalRunId: assertOptionalText(args.externalRunId, "External run id", 240),
-      repository: assertOptionalText(args.repository, "Repository", 500),
-      branch: assertOptionalText(args.branch, "Branch", 500),
-      worktree: assertOptionalText(args.worktree, "Worktree", 1_000),
+      harness: input.harness,
+      model: input.model,
+      externalRunId: input.externalRunId,
+      repository: input.repository,
+      branch: input.branch,
+      worktree: input.worktree,
       status: "running",
       startedAt: now,
       lastHeartbeatAt: now,
     });
     const externalId = `run_${runId}`;
     await ctx.db.patch(runId, { externalId });
+    await appendExecutionEnvelopeEvent(ctx, {
+      workspaceId: item.workspaceId,
+      projectId: item.projectId,
+      itemId: item._id,
+      actorId: actor._id,
+      actorExternalId: actor.externalId,
+      runId: externalId,
+      runGeneration: 1,
+      leaseGeneration: 1,
+      envelope: input.executionEnvelope,
+      createdAt: now,
+    });
     await appendEvent(ctx, {
       workspaceId: item.workspaceId,
       projectId: item.projectId,
@@ -83,15 +117,20 @@ export const start = mutation({
       type: "run.started",
       payload: {
         runId: externalId,
-        harness: args.harness.trim(),
-        ...(args.model ? { model: args.model.trim() } : {}),
+        generation: 1,
+        leaseGeneration: 1,
+        envelopeSchemaVersion: input.executionEnvelope.schemaVersion,
+        request: startRequest(input),
       },
-      idempotencyKey: args.idempotencyKey,
+      idempotencyKey: input.idempotencyKey,
       createdAt: now,
     });
     const run = await ctx.db.get("runs", runId);
     if (!run) throw new Error("Started run disappeared");
-    return { ...publicRun(run), itemId: item.externalId };
+    return await publicHostedRun(ctx, run, item.externalId, {
+      executionEnvelope: input.executionEnvelope,
+      executionRecords: [],
+    });
   },
 });
 
@@ -101,6 +140,7 @@ export const heartbeat = mutation({
     id: v.string(),
     actorId: v.string(),
     status: v.optional(runStatusValidator),
+    checkpoint: v.optional(v.string()),
     childAgentCount: v.optional(v.number()),
     toolCallCount: v.optional(v.number()),
   },
@@ -109,9 +149,14 @@ export const heartbeat = mutation({
     requireServiceSecret(args.serviceSecret);
     const run = await getRun(ctx, args.id);
     await assertRunWorkspace(ctx, run, args.workspace);
-    if (run.actorExternalId !== args.actorId) throw new Error("Only the run owner can heartbeat it");
-    if (!["running", "waiting"].includes(run.status)) throw new Error("Run is already finished");
+    if (run.actorExternalId !== args.actorId) {
+      throw new Error("Only the run owner can heartbeat it");
+    }
+    if (!["running", "waiting"].includes(run.status)) {
+      throw new Error("Run is already finished");
+    }
     const now = Date.now();
+    const checkpoint = assertOptionalText(args.checkpoint, "Checkpoint", 10_000);
     const patch: Record<string, unknown> = {
       status: args.status ?? run.status,
       lastHeartbeatAt: now,
@@ -123,10 +168,39 @@ export const heartbeat = mutation({
       patch.toolCallCount = count(args.toolCallCount, "Tool call count");
     }
     await ctx.db.patch(run._id, patch);
+    const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+    await appendEvent(ctx, {
+      workspaceId: run.workspaceId,
+      projectId: run.projectId,
+      itemId: run.itemId,
+      actorId: run.actorId,
+      actorExternalId: run.actorExternalId,
+      type: "run.heartbeat",
+      payload: {
+        runId: run.externalId,
+        generation: 1,
+        leaseGeneration: 1,
+        envelopeSchemaVersion: execution.executionEnvelope?.schemaVersion ?? null,
+        status: args.status ?? run.status,
+        ...(checkpoint ? { checkpoint } : {}),
+        ...(args.childAgentCount !== undefined
+          ? { childAgentCount: patch.childAgentCount }
+          : {}),
+        ...(args.toolCallCount !== undefined
+          ? { toolCallCount: patch.toolCallCount }
+          : {}),
+      },
+      createdAt: now,
+    });
     const updated = await ctx.db.get("runs", run._id);
     if (!updated) throw new Error("Run disappeared");
     const item = await ctx.db.get("items", run.itemId);
-    return { ...publicRun(updated), itemId: item?.externalId ?? String(run.itemId) };
+    return await publicHostedRun(
+      ctx,
+      updated,
+      item?.externalId ?? String(run.itemId),
+      execution,
+    );
   },
 });
 
@@ -139,6 +213,7 @@ export const finish = mutation({
     outcome: v.optional(v.string()),
     childAgentCount: v.optional(v.number()),
     toolCallCount: v.optional(v.number()),
+    executionActual: v.optional(executionActualValidator),
     idempotencyKey: v.optional(v.string()),
   },
   returns: v.any(),
@@ -149,36 +224,72 @@ export const finish = mutation({
     }
     const run = await getRun(ctx, args.id);
     const workspace = await assertRunWorkspace(ctx, run, args.workspace);
+    const input = normalizeFinishInput(args);
     const existing = await requireMatchingIdempotency(
       ctx,
       workspace._id,
-      args.idempotencyKey,
+      input.idempotencyKey,
       "run.finished",
     );
     if (existing) {
+      const payload = record(existing.payload);
+      requireSameRequest(payload?.request, finishRequest(input), "run finish request");
+      const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+      const actual = execution.executionRecords.at(-1);
+      if (
+        !actual
+        || actual.transition !== `finish:${input.status}`
+        || !sameCanonical(actual.actual, input.executionActual)
+      ) {
+        throw new Error(
+          "Idempotency key belongs to a legacy or different run finish result",
+        );
+      }
       const current = await ctx.db.get("runs", run._id);
       const item = await ctx.db.get("items", run.itemId);
-      return { ...publicRun(current ?? run), itemId: item?.externalId ?? String(run.itemId) };
+      return await publicHostedRun(
+        ctx,
+        current ?? run,
+        item?.externalId ?? String(run.itemId),
+        execution,
+      );
     }
-    if (run.actorExternalId !== args.actorId) throw new Error("Only the run owner can finish it");
-    if (!["running", "waiting"].includes(run.status)) throw new Error("Run is already finished");
+    if (run.actorExternalId !== input.actorId) {
+      throw new Error("Only the run owner can finish it");
+    }
+    if (!["running", "waiting"].includes(run.status)) {
+      throw new Error("Run is already finished");
+    }
     const now = Date.now();
-    const outcome = assertOptionalText(args.outcome, "Outcome", 10_000);
     const patch: Record<string, unknown> = {
-      status: args.status,
-      outcome,
+      status: input.status,
+      outcome: input.outcome,
       lastHeartbeatAt: now,
       endedAt: now,
     };
-    if (args.childAgentCount !== undefined) {
-      patch.childAgentCount = count(args.childAgentCount, "Child agent count");
+    if (input.childAgentCount !== undefined) {
+      patch.childAgentCount = input.childAgentCount;
     }
-    if (args.toolCallCount !== undefined) {
-      patch.toolCallCount = count(args.toolCallCount, "Tool call count");
+    if (input.toolCallCount !== undefined) {
+      patch.toolCallCount = input.toolCallCount;
     }
     await ctx.db.patch(run._id, patch);
     const item = await ctx.db.get("items", run.itemId);
     if (!item) throw new Error("Run item no longer exists");
+    const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+    await appendExecutionActualEvent(ctx, {
+      workspaceId: run.workspaceId,
+      projectId: run.projectId,
+      itemId: run.itemId,
+      actorId: run.actorId,
+      actorExternalId: run.actorExternalId,
+      runId: run.externalId,
+      runGeneration: 1,
+      leaseGeneration: 1,
+      transition: `finish:${input.status}`,
+      actual: input.executionActual,
+      createdAt: now,
+    });
     await appendEvent(ctx, {
       workspaceId: run.workspaceId,
       projectId: run.projectId,
@@ -186,13 +297,33 @@ export const finish = mutation({
       actorId: run.actorId,
       actorExternalId: run.actorExternalId,
       type: "run.finished",
-      payload: { runId: run.externalId, status: args.status, ...(outcome ? { outcome } : {}) },
-      idempotencyKey: args.idempotencyKey,
+      payload: {
+        runId: run.externalId,
+        generation: 1,
+        leaseGeneration: 1,
+        envelopeSchemaVersion: execution.executionEnvelope?.schemaVersion ?? null,
+        request: finishRequest(input),
+      },
+      idempotencyKey: input.idempotencyKey,
       createdAt: now,
     });
     const updated = await ctx.db.get("runs", run._id);
     if (!updated) throw new Error("Finished run disappeared");
-    return { ...publicRun(updated), itemId: item.externalId };
+    return await publicHostedRun(ctx, updated, item.externalId, {
+      executionEnvelope: execution.executionEnvelope,
+      executionRecords: [
+        ...execution.executionRecords,
+        {
+          id: "pending",
+          runId: run.externalId,
+          runGeneration: 1,
+          leaseGeneration: 1,
+          transition: `finish:${input.status}`,
+          actual: input.executionActual,
+          createdAt: new Date(now).toISOString(),
+        },
+      ],
+    });
   },
 });
 
@@ -240,7 +371,13 @@ export const listActive = query({
     const output = [];
     for (const run of runs.slice(0, limit)) {
       const item = await ctx.db.get("items", run.itemId);
-      output.push({ ...publicRun(run), itemId: item?.externalId ?? String(run.itemId) });
+      const execution = await readHostedRunExecution(ctx, run.itemId, run.externalId);
+      output.push(await publicHostedRun(
+        ctx,
+        run,
+        item?.externalId ?? String(run.itemId),
+        execution,
+      ));
     }
     return output;
   },
@@ -257,11 +394,104 @@ async function getRun(ctx: any, externalId: string) {
 
 async function assertRunWorkspace(ctx: any, run: any, workspaceValue: string | undefined) {
   const workspace = await findWorkspace(ctx, normalizeWorkspace(workspaceValue));
-  if (!workspace || workspace._id !== run.workspaceId) throw new Error(`Run ${run.externalId} does not exist`);
+  if (!workspace || workspace._id !== run.workspaceId) {
+    throw new Error(`Run ${run.externalId} does not exist`);
+  }
   return workspace;
 }
 
+async function publicHostedRun(
+  _ctx: any,
+  run: any,
+  itemId: string,
+  execution: Awaited<ReturnType<typeof readHostedRunExecution>>,
+) {
+  return {
+    ...publicRun(run),
+    itemId,
+    generation: 1,
+    leaseGeneration: 1,
+    executionEnvelope: execution.executionEnvelope,
+    executionRecords: execution.executionRecords,
+  };
+}
+
+function normalizeStartInput(args: any) {
+  const itemId = assertText(args.itemId, "Item id", 240);
+  const harness = assertText(args.harness, "Harness", 160);
+  return {
+    itemId,
+    actor: args.actor,
+    harness,
+    model: assertOptionalText(args.model, "Model", 160),
+    externalRunId: assertOptionalText(args.externalRunId, "External run id", 240),
+    repository: assertOptionalText(args.repository, "Repository", 500),
+    branch: assertOptionalText(args.branch, "Branch", 500),
+    worktree: assertOptionalText(args.worktree, "Worktree", 1_000),
+    executionEnvelope: normalizeExecutionEnvelope(
+      args.executionEnvelope,
+      `Execute work item ${itemId} with harness ${harness}`,
+    ),
+    idempotencyKey: args.idempotencyKey as string | undefined,
+  };
+}
+
+function normalizeFinishInput(args: any) {
+  return {
+    actorId: assertText(args.actorId, "Actor id", 120),
+    status: args.status as "succeeded" | "failed" | "cancelled",
+    outcome: assertOptionalText(args.outcome, "Outcome", 10_000),
+    childAgentCount: args.childAgentCount === undefined
+      ? undefined
+      : count(args.childAgentCount, "Child agent count"),
+    toolCallCount: args.toolCallCount === undefined
+      ? undefined
+      : count(args.toolCallCount, "Tool call count"),
+    executionActual: normalizeExecutionActual(args.executionActual),
+    idempotencyKey: args.idempotencyKey as string | undefined,
+  };
+}
+
+function startRequest(input: ReturnType<typeof normalizeStartInput>) {
+  return {
+    itemId: input.itemId,
+    actor: input.actor,
+    harness: input.harness,
+    model: input.model ?? null,
+    externalRunId: input.externalRunId ?? null,
+    repository: input.repository ?? null,
+    branch: input.branch ?? null,
+    worktree: input.worktree ?? null,
+    executionEnvelope: input.executionEnvelope,
+  };
+}
+
+function finishRequest(input: ReturnType<typeof normalizeFinishInput>) {
+  return {
+    actorId: input.actorId,
+    status: input.status,
+    outcome: input.outcome ?? null,
+    childAgentCount: input.childAgentCount ?? null,
+    toolCallCount: input.toolCallCount ?? null,
+    executionActual: input.executionActual,
+  };
+}
+
+function requireSameRequest(existing: unknown, requested: unknown, label: string): void {
+  if (!sameCanonical(existing, requested)) {
+    throw new Error(`Idempotency key was already used for a different ${label}`);
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function count(value: number, label: string): number {
-  if (!Number.isInteger(value) || value < 0) throw new Error(`${label} must be a non-negative integer`);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
   return value;
 }
