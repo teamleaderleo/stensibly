@@ -253,24 +253,25 @@ export class SqliteWorkLedger implements
     return claimRunnerWork(this.store, input);
   }
 
-  async getWorkRun(id: string) {
+  async getRun(id: string) {
+    reconcileStaleRunItems(this.store);
     return getWorkRun(this.store, id);
   }
 
-  async listWorkRuns(input: ListWorkRunsInput = {}) {
+  async listRuns(input: ListWorkRunsInput = {}) {
     reconcileStaleRunItems(this.store);
     return listWorkRuns(this.store, input);
   }
 
-  async heartbeatWorkRun(input: HeartbeatWorkRunInput) {
-    return heartbeatWorkRun(this.store, input);
+  async heartbeatRun(input: HeartbeatWorkRunInput) {
+    reconcileStaleRunItems(this.store);
+    const run = heartbeatWorkRun(this.store, input);
+    syncItemLeaseFromRun(this.store, run, new Date(run.updatedAt), input.actor.id);
+    return run;
   }
 
-  async transitionWorkRun(input: TransitionWorkRunInput) {
+  async transitionRun(input: TransitionWorkRunInput) {
+    reconcileStaleRunItems(this.store);
     return transitionWorkRunWithItemProjection(this.store, input);
-  }
-
-  async syncItemLeaseFromRun(runId: string) {
-    return syncItemLeaseFromRun(this.store, runId);
   }
 }
