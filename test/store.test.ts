@@ -90,8 +90,13 @@ describe("work lifecycle", () => {
       actor: leo,
     });
 
-    store.claimItem(item.id, browserAgent, 900);
-    const completed = store.completeItem(item.id, browserAgent, "A thing occurred.");
+    const claimed = store.claimItem(item.id, browserAgent, 900);
+    const completed = store.completeItem(
+      item.id,
+      browserAgent,
+      claimed.claimGeneration,
+      "A thing occurred.",
+    );
 
     expect(completed.status).toBe("done");
     expect(completed.summary).toBe("A thing occurred.");
