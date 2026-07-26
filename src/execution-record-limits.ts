@@ -1,0 +1,1 @@
+export const MAX_EXECUTION_RECORDS_PER_RUN = 100;
