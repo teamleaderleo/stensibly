@@ -264,6 +264,7 @@ export function createApiV1(
     return context.json({
       item: await ledger.completeWork(actionInput(context, id, {
         actor: parsed.data.actor,
+        expectedClaimGeneration: parsed.data.expectedClaimGeneration,
         ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
       })),
     });
@@ -333,7 +334,7 @@ function backendFailure(context: Context<StensiblyEnv>): Response {
 }
 
 function apiFailureCategory(error: unknown, message: string): FailureCategory {
-  if (error instanceof TypeError) return "convex_failure";
+  if (error instanceof TypeError) return "request_failure";
   if (/fetch failed|failed to fetch|network|ECONN|ENOTFOUND|timed? out|timeout|internal server error/i.test(message)) {
     return "convex_failure";
   }
