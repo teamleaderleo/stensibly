@@ -192,19 +192,26 @@ function activeRunAuthority(
   | { kind: "none"; heartbeatExpectedAt: null }
   | { kind: "matching"; heartbeatExpectedAt: string | null }
   | { kind: "conflict"; heartbeatExpectedAt: null } {
-  const live = runs.flatMap((run) => {
+  const live: Array<{ owner: string | null; heartbeatExpectedAt: string | null }> = [];
+  for (const run of runs) {
     const status = text(run.status);
-    if (!liveRunStatuses.has(status)) return [];
+    if (!liveRunStatuses.has(status)) continue;
     const owner = nullableActorId(run.leaseOwnerId ?? run.actorId);
-    if (!owner.valid || owner.value === null) return [{ owner: null, heartbeatExpectedAt: null }];
+    if (!owner.valid || owner.value === null) {
+      live.push({ owner: null, heartbeatExpectedAt: null });
+      continue;
+    }
     const expiry = nullableTimestamp(run.leaseExpiresAt);
-    if (!expiry.valid) return [{ owner: null, heartbeatExpectedAt: null }];
-    if (expiry.value !== null && expiry.millis <= now) return [];
-    return [{
+    if (!expiry.valid) {
+      live.push({ owner: null, heartbeatExpectedAt: null });
+      continue;
+    }
+    if (expiry.value !== null && expiry.millis <= now) continue;
+    live.push({
       owner: owner.value,
       heartbeatExpectedAt: expiry.value,
-    }];
-  });
+    });
+  }
 
   if (live.some((run) => run.owner === null || run.owner !== holderActorId)) {
     return { kind: "conflict", heartbeatExpectedAt: null };
@@ -315,7 +322,7 @@ function timestamp(value: Date | string | number, label: string): number {
 }
 
 function generation(value: unknown): number | null {
-  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function nullableActorId(value: unknown): { valid: boolean; value: string | null } {
