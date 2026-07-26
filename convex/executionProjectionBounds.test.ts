@@ -60,7 +60,7 @@ describe("hosted execution projection bounds", () => {
     })).rejects.toThrow("Run execution-result history exceeds the bounded projection");
   });
 
-  test("filters private execution rows before the public 100-event limit", async () => {
+  test("filters private execution rows before public event limits", async () => {
     const t = convexTest(schema, modules);
     const item = await createItem(t, "Hosted public event bound");
     await t.run(async (ctx) => {
@@ -99,16 +99,28 @@ describe("hosted execution projection bounds", () => {
       id: item.id,
       now: 3_000,
     }) as any;
-    expect(detail.events).toHaveLength(100);
-    expect(detail.events.filter((event: any) => event.type === "work.progressed"))
-      .toHaveLength(99);
-    expect(detail.events.some((event: any) => event.type === "item.created")).toBe(true);
-    expect(detail.events.some((event: any) =>
-      event.type.startsWith("run.execution_envelope:")
-      || event.type.startsWith("run.execution_actual:")
-    )).toBe(false);
+    expectVisiblePublicHistory(detail.events);
+
+    const listed = await t.query(convexApi.events.list, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      limit: 100,
+    }) as any[];
+    expectVisiblePublicHistory(listed);
   });
 });
+
+function expectVisiblePublicHistory(events: any[]): void {
+  expect(events).toHaveLength(100);
+  expect(events.filter((event: any) => event.type === "work.progressed"))
+    .toHaveLength(99);
+  expect(events.some((event: any) => event.type === "item.created")).toBe(true);
+  expect(events.some((event: any) =>
+    event.type.startsWith("run.execution_envelope:")
+    || event.type.startsWith("run.execution_actual:")
+  )).toBe(false);
+}
 
 async function createItem(t: ReturnType<typeof convexTest>, title: string) {
   return await t.mutation(convexApi.items.create, {
