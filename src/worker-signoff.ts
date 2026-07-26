@@ -68,7 +68,7 @@ export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
 
   const lines = [
     `— ${identityParts.join(" · ")}`,
-    `  Run: ${escapeMarkdown(runId)}`,
+    `  Run: ${runId}`,
     `  Stance: ${escapeMarkdown(stance)}`,
     `  Work: ${escapeMarkdown(work)}`,
   ];
