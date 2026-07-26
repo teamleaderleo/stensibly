@@ -13,6 +13,7 @@ import {
   publicItem,
   requireServiceSecret,
 } from "./lib/domain";
+import { publicExecutionEventFilter } from "./lib/executionEnvelope";
 import { readPublicItemRuns } from "./lib/runVisibility";
 import { query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
@@ -48,6 +49,7 @@ export const get = query({
       ctx.db
         .query("events")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
+        .filter((q) => publicExecutionEventFilter(q))
         .order("desc")
         .take(MAX_DETAIL_EVENTS),
       ctx.db
