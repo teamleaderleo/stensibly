@@ -13,7 +13,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("legacy REST item event authority boundary", () => {
-  test("rejects reserved lifecycle types while ordinary events remain recordable", async () => {
+  test("rejects reserved lifecycle types through the createServerApp root route", async () => {
     const item = store.createItem({
       project: "scrapbook",
       kind: "task",
