@@ -111,7 +111,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
         externalId: consumedId,
         familyExpiresAt,
         cleanupScheduledAt: familyExpiresAt,
-        cleanupScheduleGeneration: 1,
+        cleanupScheduleGeneration: -1,
       });
       expect(enrolledOwner.at(-1)).toMatchObject({ externalId: leafId });
       expect(enrolledOwner.at(-1)?.revokedAt).toBeDefined();
@@ -125,7 +125,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
         workspaceId: owner.workspaceId,
         familyExternalId,
         familyExpiresAt,
-        scheduleGeneration: 1,
+        scheduleGeneration: -1,
       });
 
       clock.mockReturnValue(familyExpiresAt - 1);
@@ -133,7 +133,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
       await t.finishInProgressScheduledFunctions();
       expect(await readByExternalId(t, consumedId)).toMatchObject({
         cleanupScheduledAt: familyExpiresAt,
-        cleanupScheduleGeneration: 2,
+        cleanupScheduleGeneration: -2,
       });
 
       jobs = await scheduledFunctions(t);
@@ -144,7 +144,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
         workspaceId: owner.workspaceId,
         familyExternalId,
         familyExpiresAt,
-        scheduleGeneration: 2,
+        scheduleGeneration: -2,
       });
 
       clock.mockReturnValue(familyExpiresAt);
@@ -214,7 +214,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
         workspaceId: owner.workspaceId,
         familyExternalId,
         familyExpiresAt: base,
-        scheduleGeneration: 1,
+        scheduleGeneration: -1,
       });
 
       await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -261,7 +261,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
       expect(await readByExternalId(t, consumedId)).toMatchObject({
         familyExpiresAt: base,
         cleanupScheduledAt: base,
-        cleanupScheduleGeneration: 1,
+        cleanupScheduleGeneration: -1,
       });
       expect(await readByExternalId(t, leafId)).toMatchObject({ revokedAt: base });
       expect(scheduledArgs((await scheduledFunctions(t))[0])).toMatchObject({
