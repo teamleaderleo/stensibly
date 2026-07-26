@@ -1,4 +1,5 @@
 import { convexTest } from "convex-test";
+import { makeFunctionReference } from "convex/server";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { convexApi } from "./refs";
 import schema from "./schema";
@@ -12,6 +13,9 @@ const codeChallenge = "a".repeat(43);
 const dayMs = 24 * 60 * 60 * 1000;
 const maxFamilyLifetimeMs = 90 * dayMs;
 const acceptedFamilyLifetimeMs = 30 * dayMs;
+const cleanupRefreshFamilyRef = makeFunctionReference<"mutation">(
+  "mcpOAuth:cleanupRefreshFamilyScheduled",
+);
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
@@ -165,6 +169,107 @@ describe("OAuth refresh-family lifetime", () => {
       clock.mockRestore();
     }
   });
+
+  test("upgrades a dormant legacy scheduled job without refresh traffic", async () => {
+    vi.useFakeTimers();
+    const base = Date.parse("2026-03-01T00:00:00.000Z");
+    vi.setSystemTime(base);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(base);
+    try {
+      const t = convexTest(schema, modules);
+      const fixture = await setup(t, "dormantlegacy");
+      const other = await setup(t, "dormantlegacyother", "other-dormant");
+      const rootId = refreshId("dormantlegacyroot");
+      const leafId = refreshId("dormantlegacyleaf");
+      const familyExpiresAt = base + 60_000;
+      await t.run(async (ctx: any) => {
+        await ctx.db.insert("mcpOAuthRefreshTokens", {
+          workspaceId: fixture.workspaceId,
+          accountId: fixture.accountDbId,
+          externalId: rootId,
+          familyExternalId: rootId,
+          familyExpiresAt,
+          cleanupScheduledAt: familyExpiresAt,
+          cleanupScheduleGeneration: 7,
+          secretHash: hashFor(0),
+          clientExternalId: fixture.clientId,
+          scopes: ["read", "offline_access"],
+          resource,
+          createdAt: base,
+          expiresAt: familyExpiresAt,
+          consumedAt: base + 1,
+          rotatedToExternalId: leafId,
+        });
+        await ctx.db.insert("mcpOAuthRefreshTokens", {
+          workspaceId: fixture.workspaceId,
+          accountId: fixture.accountDbId,
+          externalId: leafId,
+          familyExternalId: rootId,
+          familyExpiresAt,
+          secretHash: hashFor(1),
+          clientExternalId: fixture.clientId,
+          scopes: ["read", "offline_access"],
+          resource,
+          createdAt: base + 2,
+          expiresAt: familyExpiresAt,
+        });
+        await ctx.db.insert("mcpOAuthRefreshTokens", {
+          workspaceId: other.workspaceId,
+          accountId: other.accountDbId,
+          externalId: refreshId("otherdormantleaf"),
+          familyExternalId: rootId,
+          familyExpiresAt,
+          secretHash: hashFor(2),
+          clientExternalId: other.clientId,
+          scopes: ["read", "offline_access"],
+          resource,
+          createdAt: base + 3,
+          expiresAt: familyExpiresAt,
+        });
+        for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+          await ctx.scheduler.runAt(base, cleanupRefreshFamilyRef, {
+            familyExternalId: rootId,
+            familyExpiresAt,
+            scheduleGeneration: 7,
+          });
+        }
+      });
+
+      vi.advanceTimersByTime(0);
+      await t.finishInProgressScheduledFunctions();
+
+      const family = await readFamily(t, fixture.workspaceId, rootId);
+      expect(family).toHaveLength(2);
+      expect(await readFamily(t, other.workspaceId, rootId)).toHaveLength(1);
+      expect(family[0]).toMatchObject({
+        cleanupScheduledAt: familyExpiresAt,
+        cleanupScheduleGeneration: -8,
+      });
+      let jobs = await scheduledFunctions(t);
+      expect(jobs).toHaveLength(3);
+      expect(jobs.filter((job: any) => job.state.kind === "success")).toHaveLength(2);
+      const replacement = jobs.find((job: any) => job.state.kind === "pending");
+      expect(scheduledArgs(replacement)).toMatchObject({
+        workspaceId: fixture.workspaceId,
+        familyExternalId: rootId,
+        familyExpiresAt,
+        scheduleGeneration: -8,
+      });
+
+      clock.mockReturnValue(familyExpiresAt);
+      vi.advanceTimersByTime(60_000);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect(await readFamily(t, fixture.workspaceId, rootId)).toHaveLength(0);
+      expect(await readFamily(t, other.workspaceId, rootId)).toHaveLength(1);
+      jobs = await scheduledFunctions(t);
+      expect(jobs).toHaveLength(3);
+      expect(jobs.every((job: any) => job.state.kind === "success")).toBe(true);
+    } finally {
+      clock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 async function createFamily(t: ReturnType<typeof convexTest>, label: string) {
@@ -199,12 +304,16 @@ async function createFamily(t: ReturnType<typeof convexTest>, label: string) {
   return { ...fixture, rootId };
 }
 
-async function setup(t: ReturnType<typeof convexTest>, label: string) {
+async function setup(
+  t: ReturnType<typeof convexTest>,
+  label: string,
+  workspaceSlug = workspace,
+) {
   const account = await t.mutation(convexApi.accounts.upsertProviderIdentity, {
     serviceSecret,
-    workspace,
+    workspace: workspaceSlug,
     provider: "github",
-    subject: `refresh-family-${label}`,
+    subject: `refresh-family-${workspaceSlug}-${label}`,
     username: "teamleaderleo",
     displayName: "Leo",
     emailVerified: false,
@@ -213,7 +322,7 @@ async function setup(t: ReturnType<typeof convexTest>, label: string) {
   }) as any;
   const client = await t.mutation(convexApi.mcpOAuth.registerClient, {
     serviceSecret,
-    workspace,
+    workspace: workspaceSlug,
     clientId: clientId(label),
     clientName: "ChatGPT",
     redirectUris: [redirectUri],
@@ -223,7 +332,7 @@ async function setup(t: ReturnType<typeof convexTest>, label: string) {
   }) as any;
   return await t.run(async (ctx: any) => {
     const ws = await ctx.db.query("workspaces")
-      .withIndex("by_slug", (q: any) => q.eq("slug", workspace)).unique();
+      .withIndex("by_slug", (q: any) => q.eq("slug", workspaceSlug)).unique();
     const dbAccount = await ctx.db.query("accounts")
       .withIndex("by_external_id", (q: any) => q.eq("externalId", account.account.id)).unique();
     if (!ws || !dbAccount) throw new Error("OAuth fixture setup failed");
