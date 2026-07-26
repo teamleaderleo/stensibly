@@ -252,6 +252,7 @@ export async function publicItem(ctx: QueryContext, item: any) {
       item.claimExpiresAt === undefined
         ? null
         : new Date(item.claimExpiresAt).toISOString(),
+    claimGeneration: item.claimGeneration,
     version: item.version,
     createdAt: new Date(item.createdAt).toISOString(),
     updatedAt: new Date(item.updatedAt).toISOString(),
