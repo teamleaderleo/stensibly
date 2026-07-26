@@ -29,7 +29,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
-        "Use the current claim generation returned by the server when renewing or releasing work.",
+        "Use the current claim generation returned by the server for renew, release, handoff, block, unblock, and completion actions.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
@@ -174,14 +174,12 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "handoff_work",
     {
-      description: "Release work to ready state with a compact summary and an explicit next action.",
+      description: "Release work to ready state with a compact summary, explicit next action, and current server-returned claim generation.",
       inputSchema: {
-        id: idSchema(),
-        actor: actorSchema,
+        ...semanticActionSchema(),
         summary: z.string().trim().min(1).max(10_000),
         nextAction: z.string().trim().min(1).max(2_000),
         toActorId: z.string().trim().min(1).max(120).optional(),
-        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -191,13 +189,11 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "block_work",
     {
-      description: "Mark work blocked, record the reason, and release any current lease.",
+      description: "Mark work blocked using the current server-returned claim generation, record the reason, and release any current lease.",
       inputSchema: {
-        id: idSchema(),
-        actor: actorSchema,
+        ...semanticActionSchema(),
         reason: z.string().trim().min(1).max(10_000),
         nextAction: z.string().trim().min(1).max(2_000).optional(),
-        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -207,12 +203,10 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "unblock_work",
     {
-      description: "Return blocked work to ready state and optionally replace its next action.",
+      description: "Return blocked work to ready state using the current server-returned claim generation and optionally replace its next action.",
       inputSchema: {
-        id: idSchema(),
-        actor: actorSchema,
+        ...semanticActionSchema(),
         nextAction: z.string().trim().min(1).max(2_000).optional(),
-        idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -248,9 +242,9 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
   server.registerTool(
     "complete_work",
     {
-      description: "Complete an item, clear its lease, optionally replace its summary, and optionally propose durable next actions in the same transaction.",
+      description: "Complete an item using the current server-returned claim generation, clear its lease, optionally replace its summary, and optionally propose durable next actions in the same transaction.",
       inputSchema: {
-        ...actorActionSchema(),
+        ...semanticActionSchema(),
         summary: z.string().trim().max(10_000).optional(),
         continuations: z.array(continuationDraftSchema).max(20).optional(),
       },
@@ -297,11 +291,15 @@ function idempotencySchema() {
   return z.string().trim().min(1).max(240).optional();
 }
 
-function expectedClaimGenerationSchema() {
+function expectedLiveClaimGenerationSchema() {
   return z.number().int().min(1);
 }
 
-function actorActionSchema() {
+function expectedItemGenerationSchema() {
+  return z.number().int().min(0);
+}
+
+function baseActionSchema() {
   return {
     id: idSchema(),
     actor: actorSchema,
@@ -309,16 +307,23 @@ function actorActionSchema() {
   };
 }
 
+function semanticActionSchema() {
+  return {
+    ...baseActionSchema(),
+    expectedClaimGeneration: expectedItemGenerationSchema(),
+  };
+}
+
 function claimActionSchema() {
   return {
-    ...actorActionSchema(),
-    expectedClaimGeneration: expectedClaimGenerationSchema(),
+    ...baseActionSchema(),
+    expectedClaimGeneration: expectedLiveClaimGenerationSchema(),
   };
 }
 
 function claimSchema() {
   return {
-    ...actorActionSchema(),
+    ...baseActionSchema(),
     leaseSeconds: z.number().int().min(30).max(86_400).default(900),
   };
 }
