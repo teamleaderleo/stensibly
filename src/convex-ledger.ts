@@ -17,7 +17,6 @@ import type {
   ProposeContinuationInput,
   ResolveContinuationInput,
 } from "./continuations.js";
-import type { ItemControlView } from "./item-control.js";
 import type {
   AttachWorkArtifactInput,
   BlockWorkInput,
@@ -45,8 +44,6 @@ export interface ConvexWorkLedgerOptions {
   serviceSecret: string;
   workspace?: string;
 }
-
-type RawHostedItemDetail = Omit<ItemDetail, "control" | "reservations">;
 
 export class ConvexWorkLedger implements
   WorkLedger,
@@ -77,21 +74,17 @@ export class ConvexWorkLedger implements
 
   async getItem(id: string): Promise<ItemDetail> {
     const now = Date.now();
-    const [detail, control, reservations] = await Promise.all([
-      this.client.query(
-        convexApi.items.get,
-        this.args({ id }),
-      ) as Promise<RawHostedItemDetail>,
+    const [detail, reservations] = await Promise.all([
       this.client.query(
         convexApi.itemControl.get,
         this.args({ id, now }),
-      ) as Promise<ItemControlView>,
+      ) as Promise<Omit<ItemDetail, "reservations">>,
       this.client.query(
         convexApi.itemReservations.list,
         this.args({ itemId: id, now }),
       ) as Promise<ItemReservation[]>,
     ]);
-    return { ...detail, control, reservations };
+    return { ...detail, reservations };
   }
 
   async listArtifacts(id: string) {
