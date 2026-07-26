@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("custodian report", () => {
-  test("surfaces expired, expiring, stale, vague, and duplicate work", () => {
+  test("surfaces expired, expiring, stale, vague, and duplicate work without writing", () => {
     const now = new Date("2100-01-01T00:00:00.000Z");
 
     const expired = store.createItem({
@@ -123,6 +123,7 @@ describe("custodian report", () => {
       "Already answered once.",
     );
 
+    const expiredSnapshot = store.getItem(expired.id);
     const report = inspectScrapbook(store, {
       project: "scrapbook",
       staleDays: 7,
@@ -140,6 +141,13 @@ describe("custodian report", () => {
       duplicateTitleGroups: 1,
     });
     expect(report.expiredClaimIds).toEqual([expired.id]);
+    expect(report.expiredClaims).toEqual([
+      expect.objectContaining({
+        id: expired.id,
+        claimGeneration: expiredSnapshot.claimGeneration,
+        version: expiredSnapshot.version,
+      }),
+    ]);
     expect(report.expiringClaims.map((item) => item.id)).toEqual([expiring.id]);
     expect(report.missingNextActions.map((item) => item.id)).toEqual([vague.id]);
     expect(report.staleReady.map((item) => item.id)).toEqual([staleReady.id]);
@@ -156,13 +164,16 @@ describe("custodian report", () => {
     ]);
     expect(reportHasFindings(report)).toBe(true);
     expect(store.getItem(expired.id)).toMatchObject({
-      status: "ready",
-      claimedBy: null,
-      claimExpiresAt: null,
+      status: "active",
+      claimedBy: browserAgent.id,
+      claimExpiresAt: "2099-12-31T23:59:30.000Z",
+      claimGeneration: expiredSnapshot.claimGeneration,
+      version: expiredSnapshot.version,
     });
+    expect(store.listEvents(expired.id).map((event) => event.type)).not.toContain("claim.expired");
   });
 
-  test("can inspect a clean project without noise from another project", () => {
+  test("keeps project-scoped inspection isolated and read-only", () => {
     const now = new Date("2100-01-01T00:00:00.000Z");
     store.createItem({
       project: "clean",
@@ -200,12 +211,15 @@ describe("custodian report", () => {
     });
     expect(report.scope.project).toBe("clean");
     expect(report.expiredClaimIds).toEqual([]);
+    expect(report.expiredClaims).toEqual([]);
     expect(reportHasFindings(report)).toBe(false);
     expect(store.getItem(expiredElsewhere.id)).toMatchObject({
-      status: "ready",
-      claimedBy: null,
-      claimExpiresAt: null,
+      status: "active",
+      claimedBy: browserAgent.id,
+      claimExpiresAt: "2099-12-31T23:59:00.000Z",
     });
+    expect(store.listEvents(expiredElsewhere.id).map((event) => event.type))
+      .not.toContain("claim.expired");
   });
 
   test("validates inspection windows", () => {
