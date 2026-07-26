@@ -116,7 +116,12 @@ describe("custodian report", () => {
       priority: 100,
       actor: leo,
     });
-    store.completeItem(completedDuplicate.id, leo, "Already answered once.");
+    store.completeItem(
+      completedDuplicate.id,
+      leo,
+      completedDuplicate.claimGeneration,
+      "Already answered once.",
+    );
 
     const expiredSnapshot = store.getItem(expired.id);
     const report = inspectScrapbook(store, {
