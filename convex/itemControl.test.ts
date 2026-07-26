@@ -56,7 +56,7 @@ describe("hosted item control detail", () => {
     });
   });
 
-  test("identifies dispatcher authority and current handoff responsibility", async () => {
+  test("requires exact current claim provenance for dispatcher authority", async () => {
     const t = convexTest(schema, modules);
     const dispatched = await createItem(t, "Hosted dispatcher", supervisor);
     await t.run(async (ctx) => {
@@ -66,12 +66,13 @@ describe("hosted item control detail", () => {
         .find((entry) => entry.externalId === supervisor.id);
       if (!item || !actor) throw new Error("Dispatcher fixture setup failed");
       const leaseExpiresAt = now + 900_000;
+      const claimGeneration = item.claimGeneration + 1;
       await ctx.db.patch(item._id, {
         status: "active",
         claimedByActorId: actor._id,
         claimedByExternalId: actor.externalId,
         claimExpiresAt: leaseExpiresAt,
-        claimGeneration: item.claimGeneration + 1,
+        claimGeneration,
         version: item.version + 1,
         updatedAt: now,
       });
@@ -99,6 +100,13 @@ describe("hosted item control detail", () => {
         startedAt: now,
       });
       await ctx.db.patch(runId, { externalId: `run_${runId}` });
+      await insertClaimEvent(ctx, {
+        item,
+        actor,
+        generation: claimGeneration,
+        source: "supervisor_dispatch",
+        createdAt: now,
+      });
     });
 
     const active = await detail(t, dispatched.id, now);
@@ -112,6 +120,95 @@ describe("hosted item control detail", () => {
       heartbeatExpectedAt: "2026-07-26T12:15:00.000Z",
     });
 
+    await t.run(async (ctx) => {
+      const item = (await ctx.db.query("items").collect())
+        .find((entry) => entry.externalId === dispatched.id);
+      const actor = (await ctx.db.query("actors").collect())
+        .find((entry) => entry.externalId === supervisor.id);
+      if (!item || !actor) throw new Error("Direct-claim fixture setup failed");
+      const nextGeneration = item.claimGeneration + 1;
+      await ctx.db.patch(item._id, {
+        claimGeneration: nextGeneration,
+        version: item.version + 1,
+        updatedAt: now + 1_000,
+      });
+      await insertClaimEvent(ctx, {
+        item,
+        actor,
+        generation: nextGeneration,
+        source: "direct_claim",
+        createdAt: now + 1_000,
+      });
+    });
+
+    const direct = await detail(t, dispatched.id, now + 1_000);
+    expect(direct.control.authority).toMatchObject({
+      state: "live",
+      holderActorId: supervisor.id,
+      source: "claim",
+    });
+    expect(direct.control.responsibility.heartbeatExpectedAt).toBeNull();
+
+    const leaseLess = await createItem(t, "Hosted lease-less run", supervisor);
+    await t.run(async (ctx) => {
+      const item = (await ctx.db.query("items").collect())
+        .find((entry) => entry.externalId === leaseLess.id);
+      const actor = (await ctx.db.query("actors").collect())
+        .find((entry) => entry.externalId === supervisor.id);
+      if (!item || !actor) throw new Error("Lease-less fixture setup failed");
+      const claimGeneration = item.claimGeneration + 1;
+      await ctx.db.patch(item._id, {
+        status: "active",
+        claimedByActorId: actor._id,
+        claimedByExternalId: actor.externalId,
+        claimExpiresAt: now + 900_000,
+        claimGeneration,
+        version: item.version + 1,
+        updatedAt: now,
+      });
+      const runId = await ctx.db.insert("queuedRuns", {
+        workspaceId: item.workspaceId,
+        projectId: item.projectId,
+        itemId: item._id,
+        externalId: "pending",
+        actorId: actor._id,
+        actorExternalId: actor.externalId,
+        runnerType: "generic-mcp",
+        runnerProfile: "legacy-profile",
+        status: "running",
+        generation: 1,
+        leaseGeneration: 1,
+        leaseOwnerExternalId: actor.externalId,
+        lastHeartbeatAt: now,
+        usage: {},
+        retryAttempt: 0,
+        maxAttempts: 3,
+        retryBackoffSeconds: 60,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+      });
+      await ctx.db.patch(runId, { externalId: `run_${runId}` });
+      await insertClaimEvent(ctx, {
+        item,
+        actor,
+        generation: claimGeneration,
+        source: "supervisor_dispatch",
+        createdAt: now,
+      });
+    });
+
+    const unavailable = await detail(t, leaseLess.id, now);
+    expect(unavailable.control.authority).toMatchObject({
+      state: "superseded",
+      holderActorId: null,
+      source: "none",
+      allowedOperations: [],
+    });
+  });
+
+  test("identifies current handoff responsibility", async () => {
+    const t = convexTest(schema, modules);
     const handoff = await createItem(t, "Hosted handoff", agent);
     const handedOff = await t.mutation(convexApi.items.handoff, {
       serviceSecret,
@@ -189,6 +286,33 @@ describe("hosted item control detail", () => {
     expect(JSON.stringify(result)).not.toContain("private-project-value");
   });
 });
+
+async function insertClaimEvent(
+  ctx: any,
+  input: {
+    item: any;
+    actor: any;
+    generation: number;
+    source: string;
+    createdAt: number;
+  },
+) {
+  const eventId = await ctx.db.insert("events", {
+    workspaceId: input.item.workspaceId,
+    projectId: input.item.projectId,
+    itemId: input.item._id,
+    externalId: "pending",
+    actorId: input.actor._id,
+    actorExternalId: input.actor.externalId,
+    type: "claim.created",
+    payload: {
+      generation: input.generation,
+      source: input.source,
+    },
+    createdAt: input.createdAt,
+  });
+  await ctx.db.patch(eventId, { externalId: `evt_${eventId}` });
+}
 
 async function createItem(
   t: ReturnType<typeof convexTest>,
