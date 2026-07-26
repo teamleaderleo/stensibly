@@ -104,7 +104,10 @@ export function projectItemControl(input: ProjectItemControlInput): ItemControlV
   const coherentHolder = holder.valid;
   const coherentExpiry = expiry.valid;
   const terminal = status === "done" || status === "archived";
-  const unclaimedFields = holder.value === null && expiry.value === null;
+  const unclaimedFields = coherentHolder
+    && coherentExpiry
+    && holder.value === null
+    && expiry.value === null;
 
   if (coherentGeneration && coherentStatus && !terminal) {
     if ((status === "ready" || status === "blocked") && unclaimedFields) {
