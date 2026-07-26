@@ -116,6 +116,7 @@ export function listDispatchablePromiseWakeups(
       FROM promise_wakeups w
       JOIN work_promises p
         ON p.id = w.promise_id
+       AND p.item_id = w.item_id
        AND p.generation = w.promise_generation
        AND p.status = 'satisfied'
       JOIN items i
@@ -176,6 +177,7 @@ export function consumePromiseWakeupsForDispatch(
         FROM promise_wakeups w
         JOIN work_promises p
           ON p.id = w.promise_id
+         AND p.item_id = w.item_id
          AND p.generation = w.promise_generation
          AND p.status = 'satisfied'
         JOIN items i
@@ -317,11 +319,12 @@ export function listPromiseWakeupConsumptions(
   const dispatchCommandId = input.dispatchCommandId ?? null;
   return store.db
     .query<ConsumptionRow, [string | null, string | null]>(`
-      SELECT *
-      FROM promise_wakeup_consumptions
-      WHERE (?1 IS NULL OR item_id = ?1)
-        AND (?2 IS NULL OR dispatch_command_id = ?2)
-      ORDER BY consumed_at ASC, wakeup_id ASC
+      SELECT c.*
+      FROM promise_wakeup_consumptions c
+      JOIN promise_wakeups w ON w.id = c.wakeup_id
+      WHERE (?1 IS NULL OR c.item_id = ?1)
+        AND (?2 IS NULL OR c.dispatch_command_id = ?2)
+      ORDER BY c.consumed_at ASC, w.created_at ASC, w.id ASC
     `)
     .all(itemId, dispatchCommandId)
     .map(mapConsumption);
