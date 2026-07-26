@@ -288,7 +288,7 @@ describe("promise wakeup dispatch consumption", () => {
       `).run(item.id);
 
       expect(listReadyPromiseWakeups(store, baseTime)).toEqual([]);
-      expect(surveyDispatch(store, { itemId: item.id } as any, baseTime).candidates[0])
+      expect(surveyDispatch(store, {}, baseTime).candidates[0])
         .toMatchObject({ itemId: item.id, readyPromiseWakeups: 0 });
     } finally {
       store.close();
@@ -316,6 +316,7 @@ describe("promise wakeup dispatch consumption", () => {
     } finally {
       first.close();
     }
+    if (!firstResult) throw new Error("Expected initial restart dispatch");
 
     const second = new StensiblyStore(path);
     try {
@@ -326,7 +327,7 @@ describe("promise wakeup dispatch consumption", () => {
       );
       expect(replay).toEqual(firstResult);
       expect(listPromiseWakeupConsumptions(second, { itemId }).map((entry) => entry.wakeupId))
-        .toEqual(firstResult?.consumedPromiseWakeupIds);
+        .toEqual(firstResult.consumedPromiseWakeupIds);
       expect(listReadyPromiseWakeups(second, baseTime)).toEqual([]);
     } finally {
       second.close();
