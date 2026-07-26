@@ -51,6 +51,7 @@ describe("project briefs", () => {
     blockWork(store, {
       id: blocked.id,
       actor: leo,
+      expectedClaimGeneration: blocked.claimGeneration,
       reason: "Waiting for a deployment target.",
       nextAction: "Choose a host.",
     });
