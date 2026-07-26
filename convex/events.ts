@@ -10,6 +10,7 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import { publicExecutionEventFilter } from "./lib/executionEnvelope";
 import { mutation, query } from "./lib/server";
 import { actorValidator, serviceArgs } from "./lib/validators";
 
@@ -75,6 +76,7 @@ export const list = query({
     const events = await ctx.db
       .query("events")
       .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
+      .filter((q) => publicExecutionEventFilter(q))
       .order("desc")
       .take(limit);
     return events.reverse().map((event) => ({
