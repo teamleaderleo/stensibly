@@ -3,6 +3,7 @@
 **Status:** active execution focus  
 **Date established:** 2026-07-27  
 **Tracking issue:** #286  
+**Current pod projection:** Foundry (`docs/pods/foundry/charter.md`)  
 **Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
 
 This file is a compact current-focus projection. GitHub issues, pull requests,
@@ -33,24 +34,23 @@ A successful code merge without the real ChatGPT flow is not wave completion.
   sign-off.
 - PR #256 already added Worker-side registration rate limiting and exact redirect
   origin gating.
-- PR #251 is adjacent refresh-family lifetime and cleanup hardening. It remains a
-  draft and must stay separate from #220's dynamic-client implementation.
-- #289 owns the remaining dormant-legacy-family repair action for PR #251.
+- PR #251 was independently accepted at exact head
+  `5735abda87eeeacaef442fc7655bf807a1f24d8f` and merged as
+  `ad65af47b7e1e3cbf65ec734a43d786cb311c421`. Its dormant legacy-family outcome
+  resolves #289's implementation gate.
 - Production OAuth discovery remains absent until the OAuth configuration and
   signing secret are enabled on the deployed Worker.
 
-The two implementation tracks may proceed concurrently and converge on rollout:
+The remaining implementation and rollout chain is:
 
 ```text
-#251 repair owner ──→ independent #251 acceptance ──┐
-                                                    ├─→ guarded rollout
-Lane A #220 implementation ─→ independent acceptance ┘
-                                                    └─→ real ChatGPT read/write/reconnect evidence
+Lane A #220 implementation -> independent exact-head acceptance -> guarded rollout
+                                                            -> real ChatGPT read/write/reconnect evidence
 ```
 
-Lane B may prepare both acceptance matrices while avoiding implementation
-ownership for the final revisions it accepts. Lane C may prepare rollout work but
-must not execute production enablement until both gates are satisfied.
+Lane B may prepare the acceptance matrix while avoiding implementation ownership
+for the final revision it accepts. Lane C may prepare rollout work but must not
+execute production enablement until the remaining gate is satisfied.
 
 ## Lane A — Finish dynamic-client lifecycle
 
@@ -77,17 +77,20 @@ Required handoff:
 - unresolved risks;
 - deployment implications.
 
-## PR #251 repair ownership
+## Completed adjacent refresh-family gate
 
-PR #251 retains its existing implementation owner until it reaches an exact-head
-handoff that closes #289.
+PR #251 remains a separate merged refresh-family hardening slice. Any regression
+or follow-up must preserve its exact accepted invariants and must not be silently
+folded into Lane A merely because both areas involve OAuth.
 
-- Lane B reviews PR #251 and must not author the final repair it accepts.
-- If Lane B blocks the current head and the prior implementation owner is
-  unavailable, assign a separate temporary repair owner to #289.
-- After any repair, Lane B re-reviews the exact replacement head.
-- Keep PR #251's refresh-family code separate from Lane A's #220 dynamic-client
-  branch.
+Its accepted contract includes:
+
+- immutable accepted refresh-family deadlines;
+- workspace-scoped family reads, writes, revocation, scheduling, and deletion;
+- bounded 100-row cleanup continuations;
+- deduplicated current and compatible rooted legacy scheduling;
+- fail-closed handling for rootless or ambiguous legacy calls;
+- no dependency on later refresh traffic for pending dormant legacy jobs.
 
 ## Lane B — Independent acceptance
 
@@ -104,10 +107,8 @@ Review Lane A for:
 - idempotency and metadata matching;
 - secret and callback-data logging;
 - legacy compatibility;
-- exact production-gate acceptance.
-
-Independently review PR #251 for its declared refresh-family invariants and #289's
-dormant-legacy-family outcome.
+- exact production-gate acceptance;
+- compatibility with the merged PR #251 refresh-family contract.
 
 Every verdict must name the exact reviewed revision and contain either:
 
@@ -124,17 +125,12 @@ Prepare before enabling OAuth:
 - monitoring for registration rejection and client-count pressure;
 - one-command or one-step rollback by disabling OAuth configuration;
 - metadata and unauthenticated challenge checks;
-- a bounded test account and dedicated OAuth dogfood project.
+- a bounded test account and dedicated OAuth dogfood project;
+- confirmation that the deployed Convex revision includes merged PR #251.
 
-Execute production rollout only after:
-
-1. Lane A receives independent exact-head acceptance; and
-2. PR #251 is independently accepted and merged, or explicitly deferred through
-   a recorded production-risk decision approved by the human operator.
-
-The preferred production-complete path is to merge PR #251 after #289 is repaired
-and accepted. Deferral may support a deliberately bounded protocol experiment,
-but it does not count as production-complete without an explicit risk decision.
+Execute production rollout only after Lane A receives independent exact-head
+acceptance and the operator approves the consequential configuration and secret
+changes.
 
 Then:
 
@@ -164,6 +160,17 @@ The test must not claim, complete, delete, merge, deploy, spend money, contact a
 external system, or mutate unrelated work. Record the project, item name,
 idempotency key reference, approval record, write result, and confirming read.
 
+## Pod context for this wave
+
+The temporary pod bootstrap uses Foundry as the broad default collective context.
+Workers may join it for a run through `docs/pods/enrolment.md`. This affiliation is
+descriptive only and does not replace W01 lanes, exact work ownership, independent
+acceptance, or operator approval.
+
+Do not create another pod solely for one W01 lane. Propose a fork only if the wave
+retrospective shows recurring multi-run context or obligations that deserve
+separate continuity.
+
 ## Work-selection policy for this wave
 
 Until the real connection works:
@@ -186,10 +193,11 @@ A ChatGPT Project using this repository should direct fresh chats to read:
 2. `docs/current-wave.md`;
 3. `README.md`;
 4. `docs/product-model.md`;
-5. the relevant issue, linked parent issues, open pull requests, review threads,
+5. `docs/pods/registry.yaml` and selected pod context when relevant;
+6. the relevant issue, linked parent issues, open pull requests, review threads,
    and exact-head handoff;
-6. repository-root `STENSIBLY.md`, when present;
-7. `convex/_generated/ai/guidelines.md` before touching Convex.
+7. repository-root `STENSIBLY.md`, when present;
+8. `convex/_generated/ai/guidelines.md` before touching Convex.
 
 Fresh chats should inspect existing work and select a useful non-conflicting
 action from this wave before proposing new roadmap work.
@@ -199,8 +207,10 @@ action from this wave before proposing new roadmap work.
 After connection succeeds, record:
 
 - which instructions fresh agents actually followed;
-- whether the wave/lane/action vocabulary helped;
+- whether the wave/lane/action and pod vocabulary helped;
 - duplicated work or comments that could have been avoided;
 - missing observability or API tools;
-- which steps should become Stensibly-enforced records;
-- what can be removed from this temporary file.
+- which pod, enrolment, memory, and lifecycle steps should become typed
+  Stensibly-enforced records;
+- whether Foundry should remain broad, fork, merge, enter dormancy, or be replaced;
+- what can be removed from these temporary files.
