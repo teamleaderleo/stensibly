@@ -57,6 +57,14 @@ describe("dashboard renewal authority", () => {
       status: "malformed",
       authority: null,
     });
+    expect(readRenewalAuthority(detail({ source: "none" }), "item_1")).toEqual({
+      status: "malformed",
+      authority: null,
+    });
+    expect(readRenewalAuthority(detail({ approvalRequiredOperations: ["renew"] }), "item_1")).toEqual({
+      status: "malformed",
+      authority: null,
+    });
     expect(() => readRenewalAuthority(detail(), "item_2")).toThrow("different item");
   });
 });
@@ -71,13 +79,19 @@ describe("dashboard renewal eligibility", () => {
     expect(leaseRenewalAvailability(result, actor, now).message).toContain("server time");
   });
 
-  test("explains missing projection, wrong holder, withheld permission, and stale expiry", () => {
+  test("explains missing projection, wrong holder, withheld permission, approval, and stale expiry", () => {
     expect(leaseRenewalAvailability({ status: "absent", authority: null }, actor, now).message)
       .toContain("server-owned authority view");
     expect(leaseRenewalAvailability(readRenewalAuthority(detail({ holderActorId: "agent-2" })), actor, now).message)
       .toContain("Only the current holder");
     expect(leaseRenewalAvailability(readRenewalAuthority(detail({ allowedOperations: [] })), actor, now).message)
       .toContain("withholds lease renewal");
+    const approvalAuthority = readRenewalAuthority(detail({
+      allowedOperations: [],
+      approvalRequiredOperations: ["renew"],
+    }));
+    expect(leaseRenewalAvailability(approvalAuthority, actor, now).message)
+      .toContain("requires server-recorded approval");
     expect(leaseRenewalAvailability(readRenewalAuthority(detail({ expiresAt: "2026-07-25T23:59:00.000Z" })), actor, now).message)
       .toContain("Refresh");
   });
@@ -106,7 +120,7 @@ describe("dashboard renewal request and response fencing", () => {
     expect(tracker.keyFor(first)).toBe("renew_third");
   });
 
-  test("requires the renewed response to advance generation", () => {
+  test("requires the renewed response to advance generation exactly once", () => {
     const payload = {
       item: {
         id: "item_1",
@@ -126,6 +140,9 @@ describe("dashboard renewal request and response fencing", () => {
     });
     expect(() => readRenewedItem({
       item: { ...payload.item, claimGeneration: 7 },
-    }, "item_1", "agent-1", 7)).toThrow("advance the claim generation");
+    }, "item_1", "agent-1", 7)).toThrow("exactly once");
+    expect(() => readRenewedItem({
+      item: { ...payload.item, claimGeneration: 9 },
+    }, "item_1", "agent-1", 7)).toThrow("exactly once");
   });
 });
