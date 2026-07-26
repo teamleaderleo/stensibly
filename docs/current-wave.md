@@ -3,11 +3,16 @@
 **Status:** active execution focus  
 **Date established:** 2026-07-27  
 **Tracking issue:** #286  
+**Wave:** `W01`  
+**Wave revision:** `1`  
+**Operating protocol:** `stensibly-agent-ops/0.1.0`  
 **Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
 
 This file is a compact current-focus projection. GitHub issues, pull requests,
 exact revisions, deployed configuration, and Stensibly records remain canonical.
-Update or replace this file when the wave changes.
+Update or replace this file when the wave changes. Increment the wave revision
+when its gates, lanes, or accepted test effects change materially; do not reuse a
+revision after external review or execution has cited it.
 
 ## Wave
 
@@ -180,16 +185,9 @@ Until the real connection works:
 
 ## Project-instruction prompt
 
-A ChatGPT Project using this repository should direct fresh chats to read:
-
-1. `AGENTS.md`;
-2. `docs/current-wave.md`;
-3. `README.md`;
-4. `docs/product-model.md`;
-5. the relevant issue, linked parent issues, open pull requests, review threads,
-   and exact-head handoff;
-6. repository-root `STENSIBLY.md`, when present;
-7. `convex/_generated/ai/guidelines.md` before touching Convex.
+A ChatGPT Project using this repository should use the compact bootstrap in
+`docs/chatgpt-project-instructions.md`. The Project setting should not duplicate
+this wave's lanes or detailed gates.
 
 Fresh chats should inspect existing work and select a useful non-conflicting
 action from this wave before proposing new roadmap work.
@@ -202,5 +200,9 @@ After connection succeeds, record:
 - whether the wave/lane/action vocabulary helped;
 - duplicated work or comments that could have been avoided;
 - missing observability or API tools;
+- whether more or less startup context would have helped;
+- missed or excessive parallelism;
+- useful pod notes or resource requests;
 - which steps should become Stensibly-enforced records;
-- what can be removed from this temporary file.
+- what can be removed from this temporary file;
+- at least one accepted, rejected, or no-change instruction proposal under #293.
