@@ -13,6 +13,7 @@ import { readStoredActor } from './session-context.js';
 const ACTOR_STORAGE_KEY = 'stensiblyActor';
 const TOKEN_STORAGE_KEY = 'stensiblyToken';
 const ENDPOINT_STORAGE_KEY = 'stensiblyEndpoint';
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export function installLeaseRenewalController() {
   const board = document.querySelector('#board');
@@ -32,7 +33,9 @@ export function installLeaseRenewalController() {
   let loading = false;
   let renewalInFlight = false;
   let loadQueued = false;
-  let contextFingerprint = readContext().fingerprint;
+  const initialContext = readContext();
+  let contextFingerprint = initialContext.fingerprint;
+  let contextToken = initialContext.token;
 
   board.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
@@ -68,9 +71,10 @@ export function installLeaseRenewalController() {
   bodyObserver.observe(body, { childList: true, subtree: true });
 
   const contextObserver = new MutationObserver(() => {
-    const next = readContext().fingerprint;
-    if (next === contextFingerprint) return;
-    contextFingerprint = next;
+    const next = readContext();
+    if (next.fingerprint === contextFingerprint && next.token === contextToken) return;
+    contextFingerprint = next.fingerprint;
+    contextToken = next.token;
     resetAll();
     if (dialog.open && itemId) {
       render();
@@ -108,9 +112,10 @@ export function installLeaseRenewalController() {
       const response = await fetch(`${context.endpoint}/api/v1/items/${encodeURIComponent(requestedItemId)}`, {
         headers: { authorization: `Bearer ${context.token}` },
         cache: 'no-store',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const payload = await response.json().catch(() => null);
-      if (!detailRequestCurrent(requestId, requestedItemId, context.fingerprint)) return;
+      if (!detailRequestCurrent(requestId, requestedItemId, context.fingerprint, context.token)) return;
       if (!response.ok) {
         authorityResult = { status: 'absent', authority: null };
         render(`Authority refresh failed. ${safeFailureMessage(response, payload, context.token)}`);
@@ -119,22 +124,29 @@ export function installLeaseRenewalController() {
       authorityResult = readRenewalAuthority(payload, requestedItemId);
       render();
     } catch (cause) {
-      if (!detailRequestCurrent(requestId, requestedItemId, context.fingerprint)) return;
+      if (!detailRequestCurrent(requestId, requestedItemId, context.fingerprint, context.token)) return;
       authorityResult = { status: 'absent', authority: null };
-      const message = cause instanceof Error && cause.name === 'TypeError'
+      const message = cause instanceof TypeError
         ? cause.message
-        : 'The authority request could not reach the API.';
+        : 'The authority request could not reach the API before its deadline.';
       render(message);
     } finally {
       if (detailGate.isCurrent(requestId)) loading = false;
     }
   }
 
-  function detailRequestCurrent(requestId, requestedItemId, requestedContextFingerprint) {
+  function detailRequestCurrent(
+    requestId,
+    requestedItemId,
+    requestedContextFingerprint,
+    requestedToken,
+  ) {
+    const currentContext = readContext();
     return (
       detailGate.isCurrent(requestId)
       && requestedItemId === itemId
-      && requestedContextFingerprint === readContext().fingerprint
+      && requestedContextFingerprint === currentContext.fingerprint
+      && requestedToken === currentContext.token
       && dialog.open
     );
   }
@@ -162,10 +174,11 @@ export function installLeaseRenewalController() {
     const serverAuthority = result?.status === 'available' ? result.authority : null;
     const serverHasLiveAuthority = serverAuthority
       && ['live', 'expiring', 'superseded'].includes(serverAuthority.state);
-    const legacyExtendControl = submit instanceof HTMLButtonElement
-      && /extend lease/i.test(submit.textContent || '');
+    const legacyActiveClaim = !serverAuthority
+      && readDetailField(body, 'Status') === 'active'
+      && Boolean(readDetailField(body, 'Claimed by'));
 
-    if (serverHasLiveAuthority || (!serverAuthority && legacyExtendControl)) {
+    if (serverHasLiveAuthority || legacyActiveClaim) {
       form.hidden = true;
       const note = element('p', 'detail-empty detail-claim-renewal-note');
       note.dataset.claimAcquisitionNote = 'true';
@@ -259,6 +272,7 @@ export function installLeaseRenewalController() {
     }
 
     detailGate.invalidate();
+    loading = false;
     const requestId = renewalGate.begin();
     renewalInFlight = true;
     submitButton.disabled = true;
@@ -281,21 +295,22 @@ export function installLeaseRenewalController() {
           leaseSeconds: renewal.leaseSeconds,
           expectedClaimGeneration: renewal.expectedClaimGeneration,
         }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch {
-      if (!renewalRequestCurrent(requestId, renewal.id, context.fingerprint)) return;
+      if (!renewalRequestCurrent(requestId, renewal.id, context.fingerprint, context.token)) return;
       unlockRenewal(submitButton);
       actionState.textContent = 'retry available';
       setError(
         error,
-        'The renewal request could not reach the API. Retry the unchanged duration and generation to reuse the same idempotency key.',
+        'The renewal request could not reach the API before its deadline. Retry the unchanged duration and generation to reuse the same idempotency key.',
         context.token,
       );
       return;
     }
 
     const payload = await response.json().catch(() => null);
-    if (!renewalRequestCurrent(requestId, renewal.id, context.fingerprint)) return;
+    if (!renewalRequestCurrent(requestId, renewal.id, context.fingerprint, context.token)) return;
     if (!response.ok) {
       unlockRenewal(submitButton);
       const failure = describeHttpFailure(response.status, payload);
@@ -341,23 +356,33 @@ export function installLeaseRenewalController() {
     idempotency.reset();
     actionState.textContent = 'renewed';
     if (detailState) detailState.textContent = 'renewed';
-    if (announcer) announcer.textContent = `Renewed lease until ${formatTimestamp(renewed.claimExpiresAt)}.`;
+    if (announcer) {
+      announcer.textContent = `Renewed lease until ${formatTimestamp(renewed.claimExpiresAt, context.token)}.`;
+    }
     document.querySelector('#refresh')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     resetAuthority();
     refreshButton.click();
   }
 
-  function renewalRequestCurrent(requestId, requestedItemId, requestedContextFingerprint) {
+  function renewalRequestCurrent(
+    requestId,
+    requestedItemId,
+    requestedContextFingerprint,
+    requestedToken,
+  ) {
+    const currentContext = readContext();
     return (
       renewalGate.isCurrent(requestId)
       && requestedItemId === itemId
-      && requestedContextFingerprint === readContext().fingerprint
+      && requestedContextFingerprint === currentContext.fingerprint
+      && requestedToken === currentContext.token
       && dialog.open
     );
   }
 
   function unlockRenewal(submitButton) {
     renewalInFlight = false;
+    loading = false;
     refreshButton.disabled = false;
     submitButton.disabled = false;
     if (detailState) detailState.textContent = 'needs attention';
@@ -417,14 +442,33 @@ function readContext() {
   }
   const canWrite = panel?.dataset.mode === 'write';
   const actorFingerprint = actor ? `${actor.id}\u0000${actor.name}\u0000${actor.kind}` : '';
+  const tokenTag = token ? `token-${tokenDiscriminator(token)}` : 'no-token';
   return {
     actor,
     token,
     endpoint,
     canWrite,
     connected: Boolean(endpoint && token),
-    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${token}\u0000${actorFingerprint}`,
+    fingerprint: `${canWrite ? 'write' : 'read'}\u0000${endpoint}\u0000${tokenTag}\u0000${actorFingerprint}`,
   };
+}
+
+function tokenDiscriminator(token) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function readDetailField(root, label) {
+  for (const term of root.querySelectorAll('.detail-grid dt')) {
+    if (term.textContent?.trim() !== label) continue;
+    const value = term.nextElementSibling?.textContent?.trim() || '';
+    return value === '—' ? '' : value;
+  }
+  return '';
 }
 
 function findSection(root, heading) {
@@ -449,10 +493,10 @@ function emptyBlock(message) {
   return block;
 }
 
-function formatTimestamp(value) {
+function formatTimestamp(value, token = '') {
   if (typeof value !== 'string' || !value) return '';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? redactCredentialText(value) : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? redactCredentialText(value, token) : date.toLocaleString();
 }
 
 function element(tagName, className = '') {
