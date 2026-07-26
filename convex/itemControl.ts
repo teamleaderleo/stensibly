@@ -1,16 +1,24 @@
 import { v } from "convex/values";
 import { projectItemControl } from "../src/item-control";
 import {
+  filterVisibleDependencyEvents,
+  readVisibleDependencies,
+} from "./lib/dependencyVisibility";
+import {
   findWorkspace,
   getItemByExternalId,
   normalizeWorkspace,
+  publicArtifact,
+  publicEvent,
   publicItem,
   requireServiceSecret,
 } from "./lib/domain";
+import { readPublicItemRuns } from "./lib/runVisibility";
 import { query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
-const MAX_CONTROL_EVENTS = 32;
+const MAX_DETAIL_EVENTS = 100;
+const MAX_DETAIL_ARTIFACTS = 100;
 const MAX_RUNS_PER_LIVE_STATUS = 2;
 const queuedLiveStatuses = ["queued", "starting", "running", "waiting"] as const;
 const legacyLiveStatuses = ["running", "waiting"] as const;
@@ -27,12 +35,19 @@ export const get = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
-    const [events, queuedGroups, legacyGroups] = await Promise.all([
+    const [eventRows, artifactRows, runs, dependencies, queuedGroups, legacyGroups] = await Promise.all([
       ctx.db
         .query("events")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
         .order("desc")
-        .take(MAX_CONTROL_EVENTS),
+        .take(MAX_DETAIL_EVENTS),
+      ctx.db
+        .query("artifacts")
+        .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
+        .order("desc")
+        .take(MAX_DETAIL_ARTIFACTS),
+      readPublicItemRuns(ctx, item),
+      readVisibleDependencies(ctx, item),
       Promise.all(queuedLiveStatuses.map(async (status) =>
         await ctx.db
           .query("queuedRuns")
@@ -52,38 +67,60 @@ export const get = query({
           .take(MAX_RUNS_PER_LIVE_STATUS)
       )),
     ]);
+    const visibleEvents = await filterVisibleDependencyEvents(
+      ctx,
+      item,
+      [...eventRows].reverse(),
+      dependencies,
+    );
+    const publicItemValue = await publicItem(ctx, item);
+    const controlEvents = [...eventRows]
+      .filter((event) => event.type === "claim.created" || event.type === "work.handed_off")
+      .map((event) => ({
+        actorId: event.actorExternalId ?? null,
+        type: event.type,
+        payload: event.payload,
+        createdAt: new Date(event.createdAt).toISOString(),
+      }));
+    const controlRuns = [
+      ...queuedGroups.flat().map((run) => ({
+        actorId: run.actorExternalId,
+        leaseOwnerId: run.leaseOwnerExternalId ?? null,
+        status: run.status,
+        leaseExpiresAt: run.leaseExpiresAt === undefined
+          ? null
+          : new Date(run.leaseExpiresAt).toISOString(),
+        lastHeartbeatAt: run.lastHeartbeatAt === undefined
+          ? null
+          : new Date(run.lastHeartbeatAt).toISOString(),
+      })),
+      ...legacyGroups.flat().map((run) => ({
+        actorId: run.actorExternalId,
+        leaseOwnerId: run.actorExternalId,
+        status: run.status,
+        leaseExpiresAt: null,
+        lastHeartbeatAt: new Date(run.lastHeartbeatAt).toISOString(),
+      })),
+    ];
 
-    return projectItemControl({
-      item: await publicItem(ctx, item),
-      now: args.now,
-      events: events
-        .filter((event) => event.type === "claim.created" || event.type === "work.handed_off")
-        .map((event) => ({
-          actorId: event.actorExternalId ?? null,
-          type: event.type,
-          payload: event.payload,
-          createdAt: new Date(event.createdAt).toISOString(),
-        })),
-      runs: [
-        ...queuedGroups.flat().map((run) => ({
-          actorId: run.actorExternalId,
-          leaseOwnerId: run.leaseOwnerExternalId ?? null,
-          status: run.status,
-          leaseExpiresAt: run.leaseExpiresAt === undefined
-            ? null
-            : new Date(run.leaseExpiresAt).toISOString(),
-          lastHeartbeatAt: run.lastHeartbeatAt === undefined
-            ? null
-            : new Date(run.lastHeartbeatAt).toISOString(),
-        })),
-        ...legacyGroups.flat().map((run) => ({
-          actorId: run.actorExternalId,
-          leaseOwnerId: run.actorExternalId,
-          status: run.status,
-          leaseExpiresAt: null,
-          lastHeartbeatAt: new Date(run.lastHeartbeatAt).toISOString(),
-        })),
-      ],
-    });
+    return {
+      item: publicItemValue,
+      control: projectItemControl({
+        item: publicItemValue,
+        now: args.now,
+        events: controlEvents,
+        runs: controlRuns,
+      }),
+      events: visibleEvents.map((event) => ({
+        ...publicEvent(event),
+        itemId: item.externalId,
+      })),
+      artifacts: [...artifactRows].reverse().map((artifact) => ({
+        ...publicArtifact(artifact),
+        itemId: item.externalId,
+      })),
+      runs,
+      dependencies,
+    };
   },
 });
