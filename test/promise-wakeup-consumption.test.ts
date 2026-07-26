@@ -119,7 +119,7 @@ describe("exactly-once promise wakeup consumption", () => {
       surveyDispatch(store, {}, baseTime);
       const expected = store.db
         .query<{ id: string }, []>(
-          "SELECT id FROM promise_wakeup_rows ORDER BY created_at ASC, id ASC",
+          "SELECT id FROM promise_wakeups ORDER BY created_at ASC, id ASC",
         )
         .all()
         .map((row) => row.id);
@@ -192,7 +192,7 @@ describe("exactly-once promise wakeup consumption", () => {
       const mismatched = readyWakeup(store, other.id, 2);
       surveyDispatch(store, {}, baseTime);
       store.db.query("UPDATE work_promises SET generation = generation + 1 WHERE id = ?1").run(stale.id);
-      store.db.query("UPDATE promise_wakeup_rows SET item_id = ?1 WHERE promise_id = ?2")
+      store.db.query("UPDATE promise_wakeups SET item_id = ?1 WHERE promise_id = ?2")
         .run(item.id, mismatched.id);
 
       const survey = surveyDispatch(store, { project: "orchestration" }, baseTime);
