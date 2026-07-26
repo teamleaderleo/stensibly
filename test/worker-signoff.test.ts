@@ -72,6 +72,33 @@ describe("worker sign-off contract", () => {
     ].join("\n"));
   });
 
+  test("renders numeric and named character references literally", () => {
+    const hexadecimal = buildWorkerSignoff({
+      ...baseInput,
+      callsign: "Night&#x202e;jar",
+    });
+    expect(hexadecimal.markdown.split("\n")[0]).toBe("— Night&amp;#x202e;jar");
+
+    const decimal = buildWorkerSignoff({
+      ...baseInput,
+      stance: "review &#8238; safely",
+    });
+    expect(decimal.markdown).toContain("Stance: review &amp;#8238; safely");
+
+    const named = buildWorkerSignoff({
+      ...baseInput,
+      pod: "Foundry&rlm;Lab",
+    });
+    expect(named.markdown.split("\n")[0]).toBe("— Nightjar · Foundry&amp;rlm;Lab pod");
+
+    const visibleAmpersand = buildWorkerSignoff({
+      ...baseInput,
+      work: "Research & Review",
+    });
+    expect(visibleAmpersand.work).toBe("Research & Review");
+    expect(visibleAmpersand.markdown).toContain("Work: Research &amp; Review");
+  });
+
   test("rejects empty, unsafe, and oversized descriptive fields", () => {
     expect(() => buildWorkerSignoff({ ...baseInput, callsign: "   " }))
       .toThrow("Worker callsign must not be empty");
