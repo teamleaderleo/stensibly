@@ -28,6 +28,15 @@ describe("automatic W01 OAuth rollout workflow", () => {
     expect(workflow).toContain("environment:\n      name: production");
   });
 
+  test("pins every rollout command to the exact approved application revision", () => {
+    expect(workflow).toContain(
+      "ROLLOUT_SOURCE_SHA: 5ee0852904dad614d46edbd10453e96e04ba409f",
+    );
+    expect(workflow).toContain("ref: ${{ env.ROLLOUT_SOURCE_SHA }}");
+    expect(workflow).toContain("deployed source: \\`$ROLLOUT_SOURCE_SHA\\`");
+    expect(workflow).not.toContain("DEPLOY_SHA: ${{ github.sha }}");
+  });
+
   test("no-ops until every protected prerequisite and merged harness are present", () => {
     for (const name of [
       "CLOUDFLARE_ACCOUNT_ID",
@@ -62,6 +71,23 @@ describe("automatic W01 OAuth rollout workflow", () => {
     expect(workflow).not.toContain("inputs.endpoint");
     expect(workflow).not.toContain("inputs.issuer");
     expect(workflow).not.toContain("inputs.subject");
+  });
+
+  test("checks live state before spending CI time and skips deployment after enablement", () => {
+    const stateCheck = workflow.indexOf("Detect current public auth state");
+    const candidateChecks = workflow.indexOf("Run exact candidate checks");
+    const convexDeploy = workflow.indexOf("Deploy current Convex functions");
+    expect(stateCheck).toBeGreaterThan(-1);
+    expect(candidateChecks).toBeGreaterThan(stateCheck);
+    expect(convexDeploy).toBeGreaterThan(candidateChecks);
+
+    const candidateSection = section(
+      "Run exact candidate checks",
+      "Deploy current Convex functions",
+    );
+    expect(candidateSection).toContain(
+      "steps.state.outputs.already_enabled != 'true'",
+    );
   });
 
   test("runs the complete repository gate and deploys Convex before Worker configuration", () => {
