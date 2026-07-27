@@ -14,7 +14,7 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.1.2`  
+**Operating protocol:** `stensibly-agent-ops/0.1.3`  
 **Status:** dogfood  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
@@ -120,6 +120,27 @@ Workers are expected to act independently inside the current scope and authority
 boundary. Do not wait for central assignment, unrelated reviewers, or a full-pod
 check-in when a bounded action is ready and the applicable risk tier is satisfied.
 
+## Communication and status updates
+
+Write routine updates like a normal teammate. Lead with what changed, what was
+learned, what is blocked, and what happens next.
+
+- Do not append a blanket inventory of deployments, credentials, configuration,
+  production writes, or other actions that were not taken.
+- Mention a non-action only when the human asked about it, it resolves a plausible
+  ambiguity, it explains a blocker or decision, or the next step crosses that
+  authority boundary.
+- Do not repeat an unchanged caution in consecutive updates. One short sentence is
+  enough when a boundary is genuinely relevant.
+- Keep evidence proportional to the work. A documentation edit does not need a
+  production-safety recital; a production rollout does need an exact approval and
+  effect record.
+- Prefer positive, concrete reporting: state the actual files, checks, findings,
+  decisions, and next action instead of listing hypothetical risks far downstream.
+
+Approval and safety rules still apply even when they are not repeated in every
+message. Omitting irrelevant boilerplate is not permission to cross a boundary.
+
 ## Risk-tiered review and merge
 
 Choose review depth from demonstrated risk, scope, reversibility, and uncertainty;
@@ -197,7 +218,7 @@ surface. Do not infer that a GitHub assignee or comment is a Stensibly claim.
 ## Completion and handoff
 
 A run is incomplete until another worker can continue without its chat transcript.
-Record:
+Record the subset that materially helps continuation or review:
 
 - completed scope;
 - exact branch, revision, PR, issue, and artifacts;
@@ -207,11 +228,12 @@ Record:
 - independent review state and selected risk tier;
 - blockers, accepted residual risks, uncertainty, and failed approaches;
 - next owner or eligible continuation;
-- exact next action and wake condition.
+- exact next action and wake condition;
+- changed approval or consequential-effect state, when it affects continuation.
 
-Release, block, complete, merge, or hand off accepted commitments explicitly.
-Never let a worker simply disappear while remaining the only holder of necessary
-context.
+Do not pad a handoff with unrelated actions not taken. Release, block, complete,
+merge, or hand off accepted commitments explicitly. Never let a worker simply
+disappear while remaining the only holder of necessary context.
 
 ## Descriptive sign-off
 
