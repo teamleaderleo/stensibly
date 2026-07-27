@@ -3,6 +3,20 @@ export interface HostedSessionPreparedRequest {
   credentials: RequestCredentials;
 }
 
+export interface HostedSessionResponseObservation {
+  status: number;
+  method: string;
+  url: string;
+}
+
+export interface HostedSessionRecoveryView {
+  title: string;
+  state: string;
+  summary: string;
+  disconnectedTitle: string;
+  disconnectedMessage: string;
+}
+
 export function hostedSessionSentinel(): string;
 
 export function isHostedSessionSentinel(value: unknown): boolean;
@@ -22,8 +36,14 @@ export function prepareHostedSessionRequest(
   sentinel?: string,
 ): HostedSessionPreparedRequest;
 
+export function describeHostedSessionRecovery(
+  observation: HostedSessionResponseObservation,
+  sessionOrigin: string,
+): HostedSessionRecoveryView | null;
+
 export function installHostedSessionFetchBridge(options: {
   fetchImpl: typeof fetch;
   sessionOrigin: string;
   sentinel?: string;
+  onHostedSessionResponse?: (observation: HostedSessionResponseObservation) => void;
 }): typeof fetch;
