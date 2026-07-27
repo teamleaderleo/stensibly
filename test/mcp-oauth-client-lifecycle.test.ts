@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { HostedAccountService } from "../src/hosted-account-service.ts";
-import type {
-  McpOAuthClientRecord,
-  McpOAuthGrant,
-  McpOAuthRefreshExchange,
-  McpOAuthService,
+import {
+  ConvexMcpOAuthService,
+  type McpOAuthClientRecord,
+  type McpOAuthGrant,
+  type McpOAuthRefreshExchange,
+  type McpOAuthService,
 } from "../src/mcp-oauth-service.ts";
 import { createMcpOAuth } from "../src/mcp-oauth.ts";
 import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
 
 const issuer = "https://api.stensibly.com";
 const redirectUri = "https://chatgpt.com/connector/oauth/callback";
+const validClientId = "oauth_client_abcdefghijkl";
 
 class CapacityPressureService implements McpOAuthService {
   async registerClient(
@@ -78,5 +80,47 @@ describe("OAuth client lifecycle HTTP handling", () => {
     expect(body).not.toContain("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
     expect(body).not.toContain(clientName);
     expect(body).not.toContain(redirectUri);
+  });
+
+  test("passes trusted read time in the query key and maps replay conflicts", async () => {
+    const calls: Array<{ kind: "query" | "mutation"; args: Record<string, unknown> }> = [];
+    const client = {
+      async query(_reference: unknown, args: Record<string, unknown>) {
+        calls.push({ kind: "query", args });
+        return null;
+      },
+      async mutation(_reference: unknown, args: Record<string, unknown>) {
+        calls.push({ kind: "mutation", args });
+        return { status: "conflict" };
+      },
+    } as any;
+    const service = new ConvexMcpOAuthService({
+      client,
+      serviceSecret: "service-secret",
+      workspace: "default",
+    });
+
+    const before = Date.now();
+    expect(await service.getClient(validClientId)).toBeNull();
+    const after = Date.now();
+    expect(calls[0]?.kind).toBe("query");
+    expect(calls[0]?.args).toMatchObject({
+      serviceSecret: "service-secret",
+      workspace: "default",
+      clientId: validClientId,
+    });
+    const now = calls[0]?.args.now;
+    expect(typeof now).toBe("number");
+    expect(now as number).toBeGreaterThanOrEqual(before);
+    expect(now as number).toBeLessThanOrEqual(after);
+
+    await expect(service.registerClient({
+      clientId: validClientId,
+      clientName: "ChatGPT",
+      redirectUris: [redirectUri],
+      tokenEndpointAuthMethod: "none",
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+    })).rejects.toThrow("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
   });
 });
