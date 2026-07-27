@@ -20,7 +20,7 @@ describe("hosted dashboard session marker", () => {
 });
 
 describe("hosted dashboard request bridge", () => {
-  test("replaces only the exact session marker on REST v1 requests at the bound origin", () => {
+  test("uses cookies only for hosted REST and never sends the session marker", () => {
     const marker = hostedSessionSentinel();
     const request = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${marker}` },
@@ -33,20 +33,20 @@ describe("hosted dashboard request bridge", () => {
       headers: { authorization: `Bearer ${manualToken}` },
     }, endpoint);
     expect(bearer.headers.get("authorization")).toBe(`Bearer ${manualToken}`);
-    expect(bearer.credentials).toBe("same-origin");
+    expect(bearer.credentials).toBe("omit");
 
     const mcp = prepareHostedSessionRequest(`${endpoint}/mcp`, {
       method: "POST",
       headers: { authorization: `Bearer ${marker}` },
     }, endpoint);
-    expect(mcp.headers.get("authorization")).toBe(`Bearer ${marker}`);
-    expect(mcp.credentials).toBe("same-origin");
+    expect(mcp.headers.get("authorization")).toBeNull();
+    expect(mcp.credentials).toBe("omit");
 
     const foreign = prepareHostedSessionRequest("https://other.example/api/v1/items", {
       headers: { authorization: `Bearer ${marker}` },
     }, endpoint);
-    expect(foreign.headers.get("authorization")).toBe(`Bearer ${marker}`);
-    expect(foreign.credentials).toBe("same-origin");
+    expect(foreign.headers.get("authorization")).toBeNull();
+    expect(foreign.credentials).toBe("omit");
   });
 
   test("installs a bridge that forwards a credentialed Request", async () => {
