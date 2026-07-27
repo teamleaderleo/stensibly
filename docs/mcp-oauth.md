@@ -97,6 +97,10 @@ STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS=300
 STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS=2592000
 ```
 
+Do not stage an optional lifetime setting before the signing secret and hosted GitHub
+authentication are complete. Any one of the OAuth lifetime variables marks OAuth as
+configured; an incomplete configuration fails closed at the Worker.
+
 The signed consent payload expires after **600 seconds**. That short browser handoff lifetime is fixed in code rather than operator-configurable, so a stale consent page must restart the authorization flow.
 
 Store `GITHUB_OAUTH_CLIENT_SECRET` and `STENSIBLY_OAUTH_SIGNING_SECRET` as encrypted Worker secrets. The GitHub client ID and non-secret policy values may be Worker variables. Never place any of these credentials in the static dashboard, repository files, URLs, issue comments, or pasted logs.
@@ -112,7 +116,7 @@ OAuth adds Convex tables, so deploy the Convex schema and functions before deplo
 5. Deploy Convex through the explicit production path.
 6. Deploy the Worker through the guarded production workflow.
 7. Run the existing official and fallback `verify:hosted` checks with a `stn.tok_...` read token.
-8. Verify the OAuth metadata endpoints.
+8. Run the official and fallback `verify:oauth` checks.
 9. Create the ChatGPT plugin with `https://api.stensibly.com/mcp` and select OAuth.
 10. Complete GitHub login, review the Stensibly consent page, and confirm tool discovery.
 11. Test a read-only grant before approving write access.
@@ -139,17 +143,42 @@ STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
   --endpoint https://stensibly-api.leoli-082000.workers.dev
 ```
 
-Public metadata checks after deployment:
+OAuth discovery and challenge checks after deployment:
 
 ```bash
-curl -fsS https://api.stensibly.com/.well-known/oauth-protected-resource/mcp
-curl -fsS https://api.stensibly.com/.well-known/oauth-authorization-server
+bun run verify:oauth
+bun run verify:oauth -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev \
+  --issuer https://api.stensibly.com
 ```
 
-The unauthenticated MCP response should be `401` and advertise a `WWW-Authenticate: Bearer` challenge containing the protected-resource metadata URL.
+The OAuth verifier is unauthenticated and read-only. It checks the health surface,
+both metadata documents, the required-token MCP challenge, and the invalid-token
+challenge. It rejects redirects, applies one request deadline through bounded response
+body consumption, and retains only fixed failure classifications, HTTP status, and a
+validated bounded request ID. It does not register a client, start a login, exchange a
+token, copy response payloads or raw challenge headers into output, or mutate Convex
+state.
+
+Before enablement, or after rollback, verify the disabled baseline while preserving
+hosted GitHub authentication:
+
+```bash
+bun run verify:oauth -- --expect disabled
+```
 
 ## Rollback
 
-The API-token path remains independent of OAuth. To stop new OAuth sessions while preserving existing API-token clients, remove the OAuth signing-secret binding and deploy the previous Worker version. A complete rollback also restores the previous Worker code. The additive Convex tables may remain unused; deleting production authentication data is a separate explicit operation.
+The API-token path remains independent of OAuth. To stop new OAuth sessions while
+preserving existing API-token clients, remove the OAuth signing-secret binding **and
+all three optional OAuth lifetime bindings as one controlled configuration change**,
+then deploy or roll back to the previous Worker version. Removing only the signing
+secret while a lifetime binding remains is an invalid partial configuration and can
+make the current Worker fail closed.
 
-After any rollback, rerun both hosted verifier commands and confirm that `stn.tok_...` MCP initialization still passes.
+The additive Convex tables may remain unused; deleting production authentication data
+is a separate explicit operation.
+
+After any rollback, rerun both bearer verifier commands, run
+`bun run verify:oauth -- --expect disabled`, and confirm that `stn.tok_...` MCP
+initialization still passes.
