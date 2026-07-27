@@ -2,7 +2,7 @@ const limits = {
   callsign: 80,
   mantleName: 80,
   pod: 120,
-  stance: 160,
+  intention: 240,
   work: 320,
   runId: 160,
 } as const;
@@ -20,20 +20,20 @@ export interface WorkerSignoffInput {
   callsign: string;
   mantle?: WorkerMantleSignoffInput;
   pod?: string;
-  runId: string;
-  stance: string;
-  work: string;
+  intention?: string;
+  runId?: string;
+  work?: string;
   reviewedRevision?: string;
 }
 
 export interface WorkerSignoff {
-  version: 1;
+  version: 2;
   callsign: string;
   mantle: { name: string; version: number } | null;
   pod: string | null;
-  runId: string;
-  stance: string;
-  work: string;
+  intention: string | null;
+  runId: string | null;
+  work: string | null;
   reviewedRevision: string | null;
   markdown: string;
 }
@@ -41,6 +41,9 @@ export interface WorkerSignoff {
 /**
  * Builds descriptive attribution only. The result does not grant or prove
  * authority, ownership, repository access, competence, or review approval.
+ *
+ * Routine output needs only a callsign, with pod and intention when useful.
+ * Run, work, mantle, and revision metadata are optional expanded provenance.
  */
 export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
   const callsign = boundedText(input.callsign, "Worker callsign", limits.callsign);
@@ -53,9 +56,13 @@ export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
   const pod = input.pod === undefined
     ? null
     : boundedText(input.pod, "Pod name", limits.pod);
-  const runId = workerRunId(input.runId);
-  const stance = boundedText(input.stance, "Worker stance", limits.stance);
-  const work = boundedText(input.work, "Work address", limits.work);
+  const intention = input.intention === undefined
+    ? null
+    : boundedText(input.intention, "Worker intention", limits.intention);
+  const runId = input.runId === undefined ? null : workerRunId(input.runId);
+  const work = input.work === undefined
+    ? null
+    : boundedText(input.work, "Work address", limits.work);
   const reviewedRevision = input.reviewedRevision === undefined
     ? null
     : reviewedCommit(input.reviewedRevision);
@@ -64,25 +71,23 @@ export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
   if (mantle) {
     identityParts.push(`${escapeMarkdown(mantle.name)} mantle v${mantle.version}`);
   }
-  if (pod) identityParts.push(`${escapeMarkdown(pod)} pod`);
+  if (pod) identityParts.push(escapeMarkdown(pod));
 
-  const lines = [
-    `— ${identityParts.join(" · ")}`,
-    `  Run: ${runId}`,
-    `  Stance: ${escapeMarkdown(stance)}`,
-    `  Work: ${escapeMarkdown(work)}`,
-  ];
+  const lines = [`— ${identityParts.join(" · ")}`];
+  if (intention) lines.push(`  Intention: ${escapeMarkdown(intention)}`);
+  if (runId) lines.push(`  Run: ${runId}`);
+  if (work) lines.push(`  Work: ${escapeMarkdown(work)}`);
   if (reviewedRevision) {
     lines.push(`  Reviewed revision: ${reviewedRevision}`);
   }
 
   return {
-    version: 1,
+    version: 2,
     callsign,
     mantle,
     pod,
+    intention,
     runId,
-    stance,
     work,
     reviewedRevision,
     markdown: lines.join("\n"),
