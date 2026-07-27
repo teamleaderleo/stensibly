@@ -39,12 +39,8 @@ export function prepareHostedSessionRequest(
     return request;
   }
 
-  const headers = new Headers(request.headers);
-  headers.delete('authorization');
-  return new Request(request, {
-    headers,
-    credentials: 'include',
-  });
+  request.headers.delete('authorization');
+  return new Request(request, { credentials: 'include' });
 }
 
 export function installHostedSessionFetchBridge({
