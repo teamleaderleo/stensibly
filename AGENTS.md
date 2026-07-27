@@ -14,7 +14,7 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.1.1`  
+**Operating protocol:** `stensibly-agent-ops/0.1.2`  
 **Status:** dogfood  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
@@ -39,6 +39,12 @@ Before changing code or creating new work, read in this order:
    lease, or authority grant.
 7. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
 
+Near session start, choose one short callsign for this live worker session and
+state it in the chat or first substantive repository interaction. Keep it stable
+for the session. Do not silently inherit a callsign found in prior context; that
+name belongs to the earlier worker unless this is demonstrably the same live
+session.
+
 Do not begin by creating another issue or implementation branch. First determine
 whether existing work should be finished, reviewed, repaired, integrated,
 unblocked, or explicitly superseded.
@@ -61,12 +67,39 @@ Keep these dimensions separate:
 - **Lane:** medium-lived coherent thread within a wave.
 - **Action:** small executable next step.
 - **Run:** one bounded worker attempt.
-- **Callsign:** disposable display name for one worker or run.
+- **Callsign:** required session-local display name during current dogfood.
 - **Mantle:** optional reusable, versioned presentation and practice bundle.
 
 Pod names, worker names, mantles, roles, issue assignment, and GitHub identity do
 not grant authority. Current server-owned claims, approval records, and project
 policy remain authoritative.
+
+### Callsign adoption
+
+Every interactive worker must adopt one callsign near the start of its live chat
+or session. This is the routine attribution boundary when several workers share
+one human-facing account.
+
+- Choose a short, pronounceable, visually distinctive callsign.
+- Search active and recent project history when practical and avoid another
+  active worker's callsign. Reuse of a historical callsign is discouraged.
+- Keep the callsign stable for the session. If it must change, state the change
+  explicitly and do not imply that two different sessions are one continuing
+  private identity.
+- A callsign found in a handoff identifies the prior worker. Say `continuing from
+  <Callsign>'s handoff` or record an explicit responsibility transfer rather than
+  writing under that callsign.
+- Do not use the shared GitHub account, provider, model, harness, permanent role,
+  stance, lane letter, or labels such as `Agent 1` as the primary callsign.
+- Use the callsign in substantive comments, reviews, pull-request descriptions,
+  checkpoints, and handoffs. It need not be repeated in every conversational
+  sentence.
+- Use `anonymous worker` only when a technical surface cannot retain a callsign.
+  State that limitation and adopt a callsign at the next durable interaction.
+
+A callsign is descriptive, disposable attribution. It is not a durable actor ID,
+private-memory claim, authority grant, responsibility record, competence claim,
+or proof that a prior chat has returned.
 
 ## Work-selection rule
 
@@ -183,18 +216,28 @@ context.
 ## Descriptive sign-off
 
 Because many workers use the same GitHub account, end substantive comments,
-reviews, and handoffs with a compact generated sign-off when the metadata is
-known:
+reviews, pull-request descriptions, checkpoints, and handoffs with the session's
+callsign. The current routine v2 form is:
 
 ```text
-— <Callsign or anonymous worker> · <pod or mantle, if any>
-  Run: <run ID or chat-local identifier>
-  Stance: <implementation | review | synthesis | rollout | ...>
-  Work: <project / wave / lane / action>
-  Revision: <exact commit SHA, when applicable>
+— <Callsign> · <pod context, if useful>
+  Intention: <current bounded intention, if useful>
 ```
 
-The sign-off is attribution metadata, not authority or proof of competence.
+Use expanded provenance only when it helps continuation or review:
+
+```text
+— <Callsign> · <mantle, if any> · <pod context, if useful>
+  Intention: <current bounded intention, if useful>
+  Run: <run ID or chat-local identifier>
+  Work: <project / wave / lane / action>
+  Reviewed revision: <exact commit SHA, when applicable>
+```
+
+Do not add `Stance` or provider/model/runtime labels to the routine footer. Store
+those as separate run provenance when relevant. The sign-off is attribution
+metadata, not authority, identity continuity, responsibility, or proof of
+competence.
 
 ## Surveys and improvement
 
