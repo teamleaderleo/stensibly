@@ -11,7 +11,12 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
-import { publicExecutionEventFilter } from "./lib/executionEnvelope";
+import { readVisibleDependencies } from "./lib/dependencyVisibility";
+import {
+  ITEM_HISTORY_CONTRACT_VERSION,
+  MAX_DIRECT_VISIBLE_EVENTS,
+  readBoundedVisibleItemEvents,
+} from "./lib/itemHistory";
 import { mutation, query } from "./lib/server";
 import { actorValidator, serviceArgs } from "./lib/validators";
 
@@ -74,16 +79,19 @@ export const list = query({
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
-    const limit = Math.min(Math.max(Math.floor(args.limit ?? 200), 1), 1_000);
-    const events = await ctx.db
-      .query("events")
-      .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
-      .filter((q) => publicExecutionEventFilter(q))
-      .order("desc")
-      .take(limit);
-    return events.reverse().map((event) => ({
-      ...publicEvent(event),
-      itemId: item.externalId,
-    }));
+    const limit = Math.min(
+      Math.max(Math.floor(args.limit ?? 200), 1),
+      MAX_DIRECT_VISIBLE_EVENTS,
+    );
+    const dependencies = await readVisibleDependencies(ctx, item);
+    const window = await readBoundedVisibleItemEvents(ctx, item, dependencies, limit);
+    return {
+      historyContractVersion: ITEM_HISTORY_CONTRACT_VERSION,
+      events: window.events.map((event) => ({
+        ...publicEvent(event),
+        itemId: item.externalId,
+      })),
+      eventsTruncated: window.truncated,
+    };
   },
 });
