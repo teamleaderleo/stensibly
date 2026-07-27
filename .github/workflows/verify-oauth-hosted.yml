@@ -1,0 +1,82 @@
+name: Verify hosted OAuth
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: Worker origin to request
+        required: true
+        default: https://api.stensibly.com
+        type: string
+      issuer:
+        description: Canonical OAuth issuer
+        required: true
+        default: https://api.stensibly.com
+        type: string
+      expectation:
+        description: Expected hosted OAuth state
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ENDPOINT: ${{ inputs.endpoint }}
+      ISSUER: ${{ inputs.issuer }}
+      EXPECTATION: ${{ inputs.expectation }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Validate public HTTPS origins
+        run: |
+          set -euo pipefail
+          case "$ENDPOINT" in
+            https://*) ;;
+            *) echo "endpoint must use HTTPS" >&2; exit 1 ;;
+          esac
+          case "$ISSUER" in
+            https://*) ;;
+            *) echo "issuer must use HTTPS" >&2; exit 1 ;;
+          esac
+      - name: Run hosted OAuth verifier
+        run: |
+          set -euo pipefail
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "endpoint=${ENDPOINT}"
+            echo "issuer=${ISSUER}"
+            echo "expectation=${EXPECTATION}"
+            echo "observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            bun run verify:oauth -- \
+              --endpoint "$ENDPOINT" \
+              --issuer "$ISSUER" \
+              --expect "$EXPECTATION"
+          } 2>&1 | tee oauth-verification.txt
+      - name: Publish verification summary
+        if: always()
+        run: |
+          {
+            echo "## Hosted OAuth verification"
+            echo
+            echo '```text'
+            cat oauth-verification.txt 2>/dev/null || echo "Verifier did not produce output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload bounded verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-oauth-verification
+          path: oauth-verification.txt
+          if-no-files-found: warn
+          retention-days: 14
