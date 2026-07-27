@@ -32,8 +32,10 @@ Lifecycle enforcement is bounded and workspace-scoped:
 - an early scheduled invocation creates exactly one successor generation at the same deadline;
 - stale or duplicate generations do not delete or amplify scheduling;
 - an expired unused client is deleted only when no authorisation code and no refresh token in the owning workspace references its exact client ID;
-- a discovered code or refresh reference changes an expired or malformed indexed client conservatively to valid `used` state instead of deleting it;
-- an unreferenced malformed indexed row is quarantined outside the expiry index, remains unavailable, continues to count toward the workspace ceiling, and requires explicit operator repair rather than unsafe deletion;
+- a discovered code or refresh reference changes an expired, legacy, or malformed client conservatively to valid `used` state instead of deleting it;
+- the hosted service runs that exact-ID reference reconciliation as a separate committed Convex mutation before registration, lookup, or authorisation-code creation, so a later metadata conflict or validation failure cannot roll the durable repair back;
+- an unreferenced malformed indexed row is quarantined by clearing its expiry and schedule metadata, remains unavailable, continues to count toward the workspace ceiling, and requires explicit operator repair rather than unsafe deletion;
+- the bounded expiry scan explicitly excludes missing `unusedExpiresAt` values before applying its deadline upper bound, so quarantined rows do not re-enter or starve later valid expiries;
 - registration attempts one batch of at most 100 expired candidates before enforcing the 1,000-client workspace ceiling;
 - bounded deletions, conservative `used` transitions, and malformed-row quarantine commit before either a retryable or terminal limit result is returned;
 - if the committed batch cannot recover capacity while more indexed candidates remain, registration returns the stable retryable `MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED` class through the normal non-secret OAuth backend response;
@@ -46,7 +48,7 @@ The hosted service passes a validated current timestamp into client lookup so ex
 
 Legacy client rows without lifecycle metadata remain readable and non-expiring. They are changed to explicit `used` state only when actual authorisation use or a durable code/refresh reference establishes that conservative state. No legacy client is expired from `createdAt` alone.
 
-Cleanup logs contain only status and bounded counts. Client IDs, names, redirect values, credentials, provider data, and full registration metadata are excluded.
+Cleanup and reconciliation logs contain only status and bounded counts. Client IDs, names, redirect values, credentials, provider data, and full registration metadata are excluded.
 
 ## Deployment order
 
@@ -54,7 +56,7 @@ OAuth remains disabled during the rollout:
 
 1. deploy the widened Convex schema and the new lifecycle functions;
 2. wait for the workspace/lifecycle and workspace/client reference indexes to become available;
-3. deploy the Worker build whose Convex references route registration, time-keyed client reads, and authorisation-code creation through the lifecycle module;
+3. deploy the Worker build whose Convex references route exact-ID reconciliation, registration, time-keyed client reads, and authorisation-code creation through the lifecycle module;
 4. run the disabled-state verifier and focused load/abuse checks;
 5. only then consider enabling `STENSIBLY_OAUTH_SIGNING_SECRET` under the guarded rollout approval.
 
@@ -64,7 +66,7 @@ The prior service-secret Convex functions remain temporarily readable for rollin
 
 Before enabling `STENSIBLY_OAUTH_SIGNING_SECRET` in production:
 
-- independently review the exact lifecycle head for storage exhaustion, deletion safety, replay/amplification, workspace isolation, legacy behaviour, malformed-record handling, and sensitive logging;
+- independently review the exact lifecycle head for storage exhaustion, deletion safety, replay/amplification, workspace isolation, legacy behaviour, malformed-record handling, transaction-boundary repair, and sensitive logging;
 - verify registration-limit exhaustion and retry recovery in a deployed non-production or guarded environment;
 - inspect and explicitly repair any quarantined malformed lifecycle rows before production enablement;
 - load-test registration and authorisation without exposing credentials or callback metadata in logs;
