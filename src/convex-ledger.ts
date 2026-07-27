@@ -62,7 +62,7 @@ export class HostedBackendUpgradeRequiredError extends Error {
   readonly code = "hosted_backend_upgrade_required";
 
   constructor() {
-    super("Hosted backend must be upgraded before bounded history can be read");
+    super("hosted_backend_upgrade_required: Hosted backend must be upgraded before bounded history can be read");
     this.name = "HostedBackendUpgradeRequiredError";
   }
 }
@@ -72,7 +72,7 @@ export class HistoryWindowOverflowError extends Error {
   readonly resource: "artifacts";
 
   constructor(resource: "artifacts") {
-    super(`Hosted ${resource} history exceeds the bounded complete window`);
+    super(`history_window_overflow: Hosted ${resource} history exceeds the bounded complete window`);
     this.name = "HistoryWindowOverflowError";
     this.resource = resource;
   }
