@@ -3,6 +3,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
   createHttpAuthMiddleware,
+  currentPrincipal,
   requireHttpAccess,
   type HttpAuthOptions,
   type StensiblyEnv,
@@ -27,11 +28,12 @@ export interface GitHubWebhookOptions {
 
 const githubDeliveryPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const githubRepositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const gitRevisionPattern = /^[0-9a-f]{40}$/i;
 const controlPattern = /[\u0000-\u001f\u007f-\u009f]/u;
 
 const pullRequestReviewSchema = z.object({
-  action: z.string().min(1).max(64),
+  action: z.enum(["submitted", "edited", "dismissed"]),
   repository: z.object({
     full_name: z.string().min(3).max(200).regex(githubRepositoryPattern),
   }).passthrough(),
@@ -42,19 +44,27 @@ const pullRequestReviewSchema = z.object({
     }).passthrough(),
   }).passthrough(),
   review: z.object({
-    state: z.string().min(1).max(64),
+    state: z.enum([
+      "approved",
+      "changes_requested",
+      "commented",
+      "dismissed",
+      "pending",
+    ]),
   }).passthrough(),
   sender: z.object({
-    login: z.string().min(1).max(100),
+    login: z.string().regex(githubLoginPattern),
   }).passthrough().optional(),
 }).passthrough();
 
+const acknowledgementActorSchema = z.string()
+  .trim()
+  .min(1)
+  .max(120)
+  .refine((value) => !controlPattern.test(value), "Actor contains control characters");
+
 const acknowledgementSchema = z.object({
-  actor: z.string()
-    .trim()
-    .min(1)
-    .max(120)
-    .refine((value) => !controlPattern.test(value), "Actor contains control characters"),
+  actor: acknowledgementActorSchema.optional(),
 }).strict();
 
 export function registerGitHubProviderEventRoutes(
@@ -106,10 +116,10 @@ export function registerGitHubProviderEventRoutes(
 
     let rawPayload: unknown;
     try {
-      rawPayload = JSON.parse(new TextDecoder().decode(bodyResult));
+      rawPayload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyResult));
     } catch {
       return context.json({
-        error: "GitHub webhook body must be valid JSON",
+        error: "GitHub webhook body must be valid UTF-8 JSON",
         code: "invalid_request",
       }, 400);
     }
@@ -214,11 +224,35 @@ export function registerGitHubProviderEventRoutes(
       }, 400);
     }
 
+    const principal = currentPrincipal(context);
+    const principalActor = principal
+      ? `${principal.kind}:${principal.name}`
+      : null;
+    if (principalActor && !acknowledgementActorSchema.safeParse(principalActor).success) {
+      return context.json({
+        error: "Authenticated principal cannot be represented as a bounded acknowledgement actor",
+        code: "invalid_operation",
+      }, 400);
+    }
+    if (principalActor && parsed.data.actor && parsed.data.actor !== principalActor) {
+      return context.json({
+        error: "Acknowledgement actor must match the authenticated principal",
+        code: "invalid_request",
+      }, 400);
+    }
+    const actor = principalActor ?? parsed.data.actor;
+    if (!actor) {
+      return context.json({
+        error: "Acknowledgement actor is required when HTTP authentication is disabled",
+        code: "invalid_request",
+      }, 400);
+    }
+
     try {
       return context.json({
         event: events.acknowledge(
           context.req.param("id"),
-          parsed.data.actor,
+          actor,
           new Date(normalized.now()).toISOString(),
         ),
       });
