@@ -14,7 +14,7 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.1.0`  
+**Operating protocol:** `stensibly-agent-ops/0.1.1`  
 **Status:** dogfood  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
@@ -81,7 +81,72 @@ Prefer, in order:
 Use one implementation owner for overlapping code. Parallel workers should take
 non-overlapping lanes such as independent acceptance, reproduction, research,
 rollout preparation, or evidence reconciliation. A worker must not approve its
-own implementation as the only acceptance signal.
+own consequential implementation as the only acceptance signal.
+
+Workers are expected to act independently inside the current scope and authority
+boundary. Do not wait for central assignment, unrelated reviewers, or a full-pod
+check-in when a bounded action is ready and the applicable risk tier is satisfied.
+
+## Risk-tiered review and merge
+
+Choose review depth from demonstrated risk, scope, reversibility, and uncertainty;
+do not choose it from worker headcount.
+
+### Tier 0 — mechanical or documentation-only
+
+Examples include isolated documentation, comments, formatting, generated-file
+refreshes, test fixture corrections, and mechanical configuration with no runtime,
+authority, security, data, deployment, dependency, or public-contract effect.
+
+- Independent review is optional.
+- The author or integration worker may merge after inspecting the exact diff,
+  running relevant checks, confirming the head is unchanged and mergeable, and
+  clearing concrete findings.
+- Use `[skip review]` or `review-exempt` when automated review would add little
+  useful evidence.
+
+### Tier 1 — bounded low-risk runtime change
+
+Examples include a small local helper, typed renderer, narrow validation repair,
+or isolated behaviour with straightforward rollback and no authorization,
+privacy, schema, migration, durable-state, data-loss, deployment, or broad
+compatibility boundary.
+
+- Require one independent exact-head `ACCEPT` plus green relevant checks.
+- Once the head is unchanged, mergeable, green, and free of unresolved blocking
+  threads, the integration worker may merge without another ceremonial wait.
+
+### Tier 2 — elevated or broad change
+
+Use this tier for authentication or authorization, privacy, schema or migration,
+durable state machines, exactly-once effects, data retention or deletion,
+cross-project isolation, public protocol changes, dependencies, broad
+compatibility, or changes whose rollback is uncertain.
+
+- Require at least one independent exact-head acceptance and an explicit
+  integration decision.
+- Add a second or specialist review when the change spans multiple high-risk
+  boundaries, evidence conflicts, tests cannot cover the failure mode, or the
+  first reviewer records material residual uncertainty.
+- Competing candidates require an independent integration owner who did not
+  author the selected final revision.
+
+### Tier 3 — consequential operation
+
+Production deployment or enablement, credentials, permission widening,
+destructive data operations, spending, external publication, irreversible
+migration, and comparable real-world effects require contemporaneous human
+approval unless a narrower standing policy explicitly grants them.
+
+A known regression may be accepted as residual risk only when it is bounded,
+reversible, documented, outside safety/authorization/privacy/data-loss
+boundaries, and paired with a clear follow-up or rollback condition. Do not block
+a useful low-risk change merely because it is imperfect; do not downgrade a
+serious finding merely because the diff is small.
+
+After the required evidence exists, merge promptly. Re-fetch the exact head,
+current base, CI, mergeability, reviews, and unresolved threads immediately
+before merging. Do not merge a moved head on stale acceptance.
 
 ## Before claiming or editing
 
@@ -89,9 +154,9 @@ own implementation as the only acceptance signal.
 - Inspect active pull requests and recent commits for overlapping work.
 - Record or respect the current claim generation when Stensibly is available.
 - State the files or subsystem you expect to touch.
-- Keep consequential actions—merge, deploy, credential changes, spending,
-  external communication, destructive data operations, and permission widening—
-  behind the applicable approval policy.
+- Classify the review and merge tier before handoff; record why deeper or lighter
+  review is appropriate.
+- Keep Tier 3 actions behind the applicable approval policy.
 
 Until the ChatGPT MCP connection is enabled, GitHub is a temporary coordination
 surface. Do not infer that a GitHub assignee or comment is a Stensibly claim.
@@ -106,13 +171,14 @@ Record:
 - changed files;
 - commands and checks with results;
 - self-review findings;
-- independent review state;
-- blockers, uncertainty, and failed approaches;
+- independent review state and selected risk tier;
+- blockers, accepted residual risks, uncertainty, and failed approaches;
 - next owner or eligible continuation;
 - exact next action and wake condition.
 
-Release, block, complete, or hand off accepted commitments explicitly. Never let a
-worker simply disappear while remaining the only holder of necessary context.
+Release, block, complete, merge, or hand off accepted commitments explicitly.
+Never let a worker simply disappear while remaining the only holder of necessary
+context.
 
 ## Descriptive sign-off
 
@@ -151,9 +217,11 @@ this shared protocol requires a reviewed proposal.
 
 - CodeRabbit is already configured to review non-draft pull requests automatically. Do not manually invoke it after every push.
 - Greptile is an opt-in second review and runs only when the human operator applies the `deep-review` label. Do not apply that label or mention `@greptileai` unless explicitly asked.
-- Keep a pull request in draft while actively iterating. Mark it ready only after the change is coherent and the claimed checks pass.
+- Keep a pull request in draft while actively iterating. Mark it ready when the change is coherent and the checks required by its risk tier pass.
 - Do not request Codex GitHub reviews or mention `@codex review`. Codex usage is reserved for explicit implementation work requested by the human operator.
 - Retrigger CodeRabbit or Greptile only when the human operator asks or when a requested review failed for a transient service reason.
 - Verify every automated finding against the current code. Prioritize demonstrated correctness, authorization, security, data-loss, state-machine, compatibility, and contract issues.
 - Ignore or explain away speculative style, blanket documentation, duplication, and refactoring suggestions that do not improve behavior or reduce a concrete maintenance risk.
-- Use the `review-exempt` label or `[skip review]` in the title for mechanical configuration changes, temporary verification pull requests, and other changes where automated review would add little value.
+- Do not involve every worker by default. Request only the independent or specialist review justified by the selected tier.
+- An `ACCEPT` applies only to the exact reviewed revision. A bounded documented residual risk may remain; a concrete unresolved blocker may not.
+- Use the `review-exempt` label or `[skip review]` in the title for Tier 0 changes where automated review would add little value.
