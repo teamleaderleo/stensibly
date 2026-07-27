@@ -82,7 +82,7 @@ describe("OAuth client lifecycle HTTP handling", () => {
     expect(body).not.toContain(redirectUri);
   });
 
-  test("passes trusted current time as part of the Convex client-query key", async () => {
+  test("reconciles before querying and passes trusted current time in the query key", async () => {
     const calls: Array<{ kind: "query" | "mutation"; args: Record<string, unknown> }> = [];
     const client = {
       async query(_reference: unknown, args: Record<string, unknown>) {
@@ -91,7 +91,7 @@ describe("OAuth client lifecycle HTTP handling", () => {
       },
       async mutation(_reference: unknown, args: Record<string, unknown>) {
         calls.push({ kind: "mutation", args });
-        return { status: "limit" };
+        return { status: "unchanged" };
       },
     } as any;
     const service = new ConvexMcpOAuthService({
@@ -103,15 +103,81 @@ describe("OAuth client lifecycle HTTP handling", () => {
     const before = Date.now();
     expect(await service.getClient(validClientId)).toBeNull();
     const after = Date.now();
-    expect(calls[0]?.kind).toBe("query");
-    expect(calls[0]?.args).toMatchObject({
+    expect(calls.map((call) => call.kind)).toEqual(["mutation", "query"]);
+    expect(calls[0]?.args).toEqual({
       serviceSecret: "service-secret",
       workspace: "default",
       clientId: validClientId,
     });
-    const now = calls[0]?.args.now;
+    expect(calls[1]?.args).toMatchObject({
+      serviceSecret: "service-secret",
+      workspace: "default",
+      clientId: validClientId,
+    });
+    const now = calls[1]?.args.now;
     expect(typeof now).toBe("number");
     expect(now as number).toBeGreaterThanOrEqual(before);
     expect(now as number).toBeLessThanOrEqual(after);
+  });
+
+  test("runs durable reconciliation in a separate call before later request failures", async () => {
+    const calls: Array<{ kind: "mutation"; args: Record<string, unknown> }> = [];
+    const client = {
+      async query() {
+        return null;
+      },
+      async mutation(_reference: unknown, args: Record<string, unknown>) {
+        calls.push({ kind: "mutation", args });
+        if (calls.length === 1 || calls.length === 3) return { status: "repaired" };
+        if (calls.length === 2) throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
+        throw new Error("OAuth redirect URI is not registered");
+      },
+    } as any;
+    const service = new ConvexMcpOAuthService({
+      client,
+      serviceSecret: "service-secret",
+      workspace: "default",
+    });
+
+    await expect(service.registerClient({
+      clientId: validClientId,
+      clientName: "Changed client",
+      redirectUris: [redirectUri],
+      tokenEndpointAuthMethod: "none",
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+    })).rejects.toThrow("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
+
+    await expect(service.createAuthorizationCode({
+      accountId: "account_test",
+      clientId: validClientId,
+      redirectUri: "https://example.com/wrong",
+      codeChallenge: "a".repeat(43),
+      scopes: ["read"],
+      resource: `${issuer}/mcp`,
+      id: "oauth_code_abcdefghijkl",
+      secretHash: "a".repeat(64),
+      expiresAt: Date.now() + 60_000,
+    })).rejects.toThrow("OAuth redirect URI is not registered");
+
+    expect(calls).toHaveLength(4);
+    expect(calls[0]?.args).toEqual({
+      serviceSecret: "service-secret",
+      workspace: "default",
+      clientId: validClientId,
+    });
+    expect(calls[1]?.args).toMatchObject({
+      clientId: validClientId,
+      clientName: "Changed client",
+    });
+    expect(calls[2]?.args).toEqual({
+      serviceSecret: "service-secret",
+      workspace: "default",
+      clientId: validClientId,
+    });
+    expect(calls[3]?.args).toMatchObject({
+      accountId: "account_test",
+      clientId: validClientId,
+    });
   });
 });
