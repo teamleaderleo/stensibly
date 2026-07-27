@@ -1,3 +1,5 @@
+import { isPlausibleToken } from './connection.js';
+
 const API_PREFIX = '/api/v1';
 const SESSION_TOKEN_PARTS = ['stn.', 'tok_', '0'.repeat(32), '.', 's'.repeat(40)];
 
@@ -7,6 +9,13 @@ export function hostedSessionSentinel() {
 
 export function isHostedSessionSentinel(value) {
   return String(value || '') === hostedSessionSentinel();
+}
+
+export function classifyHostedSessionDisconnect(storedToken, hostedAuthorizationDenied) {
+  const stored = String(storedToken || '');
+  if (isPlausibleToken(stored) && !isHostedSessionSentinel(stored)) return 'bearer';
+  if (isHostedSessionSentinel(stored) || hostedAuthorizationDenied === true) return 'hosted';
+  return 'ordinary';
 }
 
 export function isDefaultHostedEndpoint(endpoint, defaultEndpoint) {
@@ -47,10 +56,12 @@ export function prepareHostedSessionRequest(
 ) {
   const request = new Request(input, init);
   const authorization = request.headers.get('authorization');
-  if (!authorization) return { request, credentials: request.credentials };
+  if (!authorization) {
+    return { request, credentials: request.credentials, hostedSession: false };
+  }
 
   if (authorization !== `Bearer ${sentinel}`) {
-    return { request, credentials: 'omit' };
+    return { request, credentials: 'omit', hostedSession: false };
   }
 
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
@@ -61,6 +72,7 @@ export function prepareHostedSessionRequest(
   return {
     request,
     credentials: hostedRestRequest ? 'include' : 'omit',
+    hostedSession: hostedRestRequest,
   };
 }
 
@@ -68,12 +80,24 @@ export function installHostedSessionFetchBridge({
   fetchImpl,
   sessionOrigin,
   sentinel = hostedSessionSentinel(),
+  onHostedAccessDenied,
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
+  if (onHostedAccessDenied !== undefined && typeof onHostedAccessDenied !== 'function') {
+    throw new TypeError('Hosted access-denied callback must be a function.');
+  }
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
-  return (input, init) => {
+  return async (input, init) => {
     const prepared = prepareHostedSessionRequest(input, init, allowedOrigin, sentinel);
-    return fetchImpl(prepared.request, { credentials: prepared.credentials });
+    const response = await fetchImpl(prepared.request, { credentials: prepared.credentials });
+    if (prepared.hostedSession && response.status === 403) {
+      try {
+        onHostedAccessDenied?.();
+      } catch {
+        // UI notification must not replace the authenticated HTTP response.
+      }
+    }
+    return response;
   };
 }
 
