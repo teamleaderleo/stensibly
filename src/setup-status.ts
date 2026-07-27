@@ -92,6 +92,9 @@ const validStates = new Set<SetupStepState>([
   "deferred",
 ]);
 
+const timestampPattern =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+
 /**
  * Projects content-minimised onboarding readiness from already observed setup facts.
  *
@@ -197,12 +200,33 @@ function assertStep(value: string): asserts value is SetupStep {
 }
 
 function canonicalTimestamp(value: string): string {
-  if (typeof value !== "string" || value.length > 64) {
+  if (
+    typeof value !== "string"
+    || value.length > 64
+    || /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)
+  ) {
     throw new RangeError("Setup observation time is invalid");
   }
-  const millis = Date.parse(value);
-  if (!Number.isFinite(millis)) throw new RangeError("Setup observation time is invalid");
-  return new Date(millis).toISOString();
+
+  const normalized = value.trim();
+  if (!timestampPattern.test(normalized)) {
+    throw new RangeError("Setup observation time must be an ISO-8601 UTC timestamp");
+  }
+
+  const millis = Date.parse(normalized);
+  if (!Number.isFinite(millis)) {
+    throw new RangeError("Setup observation time must be an ISO-8601 UTC timestamp");
+  }
+
+  const canonical = new Date(millis).toISOString();
+  const comparableInput = normalized.includes(".")
+    ? normalized
+    : normalized.replace(/Z$/, ".000Z");
+  if (canonical !== comparableInput) {
+    throw new RangeError("Setup observation time must be a valid calendar timestamp");
+  }
+
+  return canonical;
 }
 
 function normalizeServiceOrigin(value: string, mode: SetupDeploymentMode): string {
