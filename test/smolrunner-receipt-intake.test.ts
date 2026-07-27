@@ -20,6 +20,8 @@ describe("SmolRunner receipt intake", () => {
       executionId: "exec_quarry_238_a",
       checkpointGeneration: 3,
       producerVersion: "0.1.0",
+      operationFamily: "repository-verification",
+      operationSchemaVersion: 1,
       sourceCommit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       sourceTree: "cccccccccccccccccccccccccccccccccccccccc",
       state: "running",
@@ -107,6 +109,37 @@ describe("SmolRunner receipt intake", () => {
     });
   });
 
+  test("binds same-checkpoint replay to every accepted public semantic field", () => {
+    const progress = parseSmolRunnerReceiptIntake(progressFixture);
+    const completed = parseSmolRunnerReceiptIntake(completedFixture);
+
+    const changedDeferredAction = parseSmolRunnerReceiptIntake(modify(progressFixture, (value) => {
+      value.receipt.outcome.deferredActions = ["await-review"];
+    }));
+    const changedArtifact = parseSmolRunnerReceiptIntake(modify(progressFixture, (value) => {
+      value.receipt.evidence.artifactRef = `smolrunner:artifact:sha256:${"6".repeat(64)}`;
+    }));
+    const changedTerminalTime = parseSmolRunnerReceiptIntake(modify(completedFixture, (value) => {
+      value.receipt.terminalAt = "2026-07-28T18:07:59.000Z";
+    }));
+
+    for (const [previous, incoming] of [
+      [progress, changedDeferredAction],
+      [progress, changedArtifact],
+      [completed, changedTerminalTime],
+    ] as const) {
+      expect(incoming.fingerprint).not.toBe(previous.fingerprint);
+      expect(compareSmolRunnerReceiptTransitions(previous, incoming)).toEqual({
+        status: "conflict",
+        reason: "checkpoint_semantics",
+      });
+    }
+
+    const exactClone = parseSmolRunnerReceiptIntake(structuredClone(progressFixture));
+    expect(exactClone.fingerprint).toBe(progress.fingerprint);
+    expect(compareSmolRunnerReceiptTransitions(progress, exactClone)).toEqual({ status: "duplicate" });
+  });
+
   test("fails closed on changed authority or execution identity", () => {
     const progress = parseSmolRunnerReceiptIntake(progressFixture);
 
@@ -125,6 +158,18 @@ describe("SmolRunner receipt intake", () => {
       status: "conflict",
       reason: "execution_identity",
     });
+
+    for (const mutation of [
+      (value: SmolRunnerReceiptIntake) => { value.receipt.producer.version = "0.2.0"; },
+      (value: SmolRunnerReceiptIntake) => { value.receipt.operation.family = "repository-build"; },
+      (value: SmolRunnerReceiptIntake) => { value.receipt.operation.schemaVersion = 2; },
+    ]) {
+      const changedOperation = parseSmolRunnerReceiptIntake(modify(completedFixture, mutation));
+      expect(compareSmolRunnerReceiptTransitions(progress, changedOperation)).toEqual({
+        status: "conflict",
+        reason: "execution_identity",
+      });
+    }
   });
 
   test("rejects candidate-head regression, terminal advance, invalid state order, and time reversal", () => {
