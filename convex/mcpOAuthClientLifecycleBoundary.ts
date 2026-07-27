@@ -144,7 +144,7 @@ export const createAuthorizationCode = mutation({
 
 async function repairReferencedClient(
   ctx: MutationContext,
-  workspaceValue: string,
+  workspaceValue: string | undefined,
   clientIdValue: string,
   now: number,
 ): Promise<void> {
