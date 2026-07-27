@@ -16,6 +16,7 @@
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
     "verify:dashboard": "bun src/verify-dashboard.ts",
+    "audit:membership": "bun src/provider-membership-audit-cli.ts",
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
