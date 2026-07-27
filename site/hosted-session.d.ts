@@ -1,3 +1,8 @@
+export interface HostedSessionPreparedRequest {
+  request: Request;
+  credentials: RequestCredentials;
+}
+
 export function hostedSessionSentinel(): string;
 
 export function isHostedSessionSentinel(value: unknown): boolean;
@@ -15,7 +20,7 @@ export function prepareHostedSessionRequest(
   init: RequestInit | undefined,
   sessionOrigin: string,
   sentinel?: string,
-): Request;
+): HostedSessionPreparedRequest;
 
 export function installHostedSessionFetchBridge(options: {
   fetchImpl: typeof fetch;
