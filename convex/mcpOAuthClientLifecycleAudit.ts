@@ -11,14 +11,6 @@ import { serviceArgs } from "./lib/validators";
 const MAX_AUDIT_CLIENTS = 1_000;
 const MAX_MALFORMED_ROW_REFERENCES = 100;
 
-const lifecycleClassValidator = v.union(
-  v.literal("legacy"),
-  v.literal("unused_live"),
-  v.literal("unused_expired"),
-  v.literal("used"),
-  v.literal("malformed"),
-);
-
 const lifecycleCountsValidator = v.object({
   total: v.number(),
   legacy: v.number(),
@@ -54,8 +46,9 @@ const lifecycleAuditValidator = v.object({
   counts: lifecycleCountsValidator,
   malformedRows: v.array(malformedRowValidator),
   malformedRowsTruncated: v.boolean(),
-  lifecycleAuditClear: v.boolean(),
+  lifecycleShapeClear: v.boolean(),
   requiresExplicitRepair: v.boolean(),
+  requiresCleanupEvidence: v.boolean(),
   requiresFurtherInspection: v.boolean(),
   containsSecrets: v.literal(false),
   grantsOAuthEnablement: v.literal(false),
@@ -86,9 +79,10 @@ type LifecycleCounts = {
  * for malformed rows so an authorised operator can inspect and repair the exact
  * records through a separately reviewed path.
  *
- * A clear result covers lifecycle shape only. It is not rollout approval and does
- * not replace abuse evidence, reference inspection, deployment evidence, or the
- * contemporaneous human approval required for production OAuth enablement.
+ * A clear lifecycle shape covers classification consistency only. It is not rollout
+ * approval and does not replace cleanup/retry evidence, abuse evidence, reference
+ * inspection, deployment evidence, or the contemporaneous human approval required
+ * for production OAuth enablement.
  */
 export const auditClientLifecycles = query({
   args: {
@@ -112,8 +106,9 @@ export const auditClientLifecycles = query({
         counts: emptyCounts(),
         malformedRows: [],
         malformedRowsTruncated: false,
-        lifecycleAuditClear: false,
+        lifecycleShapeClear: false,
         requiresExplicitRepair: false,
+        requiresCleanupEvidence: false,
         requiresFurtherInspection: true,
         containsSecrets: false as const,
         grantsOAuthEnablement: false as const,
@@ -173,8 +168,9 @@ export const auditClientLifecycles = query({
       counts,
       malformedRows,
       malformedRowsTruncated,
-      lifecycleAuditClear: !truncatedClients && counts.malformed === 0,
+      lifecycleShapeClear: !truncatedClients && counts.malformed === 0,
       requiresExplicitRepair: counts.malformed > 0,
+      requiresCleanupEvidence: counts.unusedExpired > 0,
       requiresFurtherInspection: truncatedClients || malformedRowsTruncated,
       containsSecrets: false as const,
       grantsOAuthEnablement: false as const,
@@ -261,5 +257,3 @@ function assertTrustedTimestamp(value: number, label: string): number {
   if (!safeTimestamp(value)) throw new Error(`${label} is invalid`);
   return value;
 }
-
-void lifecycleClassValidator;
