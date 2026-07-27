@@ -37,7 +37,8 @@ export type McpOAuthRefreshExchange =
 type McpOAuthRegistrationResult =
   | { status: "ok"; client: McpOAuthClientRecord }
   | { status: "retryable" }
-  | { status: "limit" };
+  | { status: "limit" }
+  | { status: "conflict" };
 
 export interface McpOAuthService {
   registerClient(input: {
@@ -90,10 +91,10 @@ const registerClientRef = makeFunctionReference<"mutation">(
   "mcpOAuthClientRegistration:registerClient",
 );
 const getClientRef = makeFunctionReference<"query">(
-  "mcpOAuthClientLifecycle:getClient",
+  "mcpOAuthClientRegistration:getClient",
 );
 const createAuthorizationCodeRef = makeFunctionReference<"mutation">(
-  "mcpOAuthClientLifecycle:createAuthorizationCode",
+  "mcpOAuthClientRegistration:createAuthorizationCode",
 );
 
 export class ConvexMcpOAuthService implements McpOAuthService {
@@ -116,13 +117,16 @@ export class ConvexMcpOAuthService implements McpOAuthService {
     if (result.status === "retryable") {
       throw new Error("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
     }
+    if (result.status === "conflict") {
+      throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
+    }
     throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
   }
 
   async getClient(clientId: string) {
     return await this.client.query(
       getClientRef,
-      this.args({ clientId }),
+      this.args({ clientId, now: Date.now() }),
     ) as McpOAuthClientRecord | null;
   }
 
