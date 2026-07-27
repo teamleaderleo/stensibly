@@ -26,10 +26,10 @@ const agents = document.querySelector('#agents');
 const lastUpdated = document.querySelector('#last-updated');
 
 const columns = [
-  ['ready', 'Ready', 'waiting for a willing creature'],
-  ['active', 'Active', 'currently being interfered with'],
-  ['blocked', 'Blocked', 'staring into the middle distance'],
-  ['done', 'Done', 'ostensibly handled'],
+  ['ready', 'Ready', 'available to begin'],
+  ['active', 'Active', 'being worked on now'],
+  ['blocked', 'Blocked', 'waiting on a named condition'],
+  ['done', 'Done', 'completed work'],
 ];
 
 let items = [];
@@ -331,7 +331,7 @@ function isCurrentRequest(requestId) {
 }
 
 function showConnectedState() {
-  connectionTitle.textContent = 'Ledger connected';
+  connectionTitle.textContent = 'Project desk connected';
   form.hidden = true;
   connectedSummary.hidden = false;
   cancelConnection.hidden = true;
@@ -355,7 +355,7 @@ function showConnectedIssue(message) {
 }
 
 function showConnectionForm(message = '', { keepDashboard = false, allowCancel = false } = {}) {
-  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Connect a ledger';
+  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Welcome back';
   form.hidden = false;
   connectedSummary.hidden = true;
   cancelConnection.hidden = !allowCancel;
@@ -370,8 +370,8 @@ function showConnectionForm(message = '', { keepDashboard = false, allowCancel =
   if (!keepDashboard) {
     dashboard.hidden = true;
     disconnected.hidden = false;
-    disconnected.querySelector('p').textContent = 'No ledger connected.';
-    disconnected.querySelector('span').textContent = 'Enter an API token with read access to inspect shared work.';
+    disconnected.querySelector('p').textContent = 'Your project desk is ready when you are.';
+    disconnected.querySelector('span').textContent = 'Continue with GitHub, or use the advanced connection for another endpoint.';
   }
 }
 
@@ -430,7 +430,7 @@ function render() {
   )].sort();
   agents.innerHTML = activeActors.length
     ? activeActors.map((actor) => `<div class="agent">${escapeHtml(actor)}</div>`).join('')
-    : '<p class="empty">quiet. suspiciously quiet.</p>';
+    : '<p class="empty">Nothing active right now.</p>';
 
   board.innerHTML = columns.map(([status, label, hint]) => {
     const matching = visible
@@ -442,7 +442,7 @@ function render() {
         <span class="count">${matching.length}</span>
       </header>
       <div class="cards">
-        ${matching.length ? matching.map(renderCard).join('') : '<p class="empty">nothing here</p>'}
+        ${matching.length ? matching.map(renderCard).join('') : '<p class="empty">Nothing here yet.</p>'}
       </div>
     </section>`;
   }).join('');
