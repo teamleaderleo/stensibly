@@ -37,15 +37,15 @@ describe("dashboard endpoint validation", () => {
 
 describe("dashboard HTTP failure messages", () => {
   test("distinguishes authentication and authorization failures", () => {
-    expect(describeHttpFailure(401, { error: "A valid Bearer token is required" })).toEqual({
+    expect(describeHttpFailure(401, { error: "A valid Bearer token or hosted session is required" })).toEqual({
       kind: "invalid_token",
-      message: "The read token is invalid or revoked. Enter a current token and try again.",
+      message: "Sign in with GitHub, or enter a current API token and try again.",
     });
     expect(describeHttpFailure(403, { error: "Origin is not allowed: https://example.com" }).kind)
       .toBe("forbidden_origin");
-    expect(describeHttpFailure(403, { error: "Token requires read scope" })).toEqual({
+    expect(describeHttpFailure(403, { error: "Account requires read scope" })).toEqual({
       kind: "forbidden",
-      message: "Token requires read scope",
+      message: "Account requires read scope",
     });
   });
 
