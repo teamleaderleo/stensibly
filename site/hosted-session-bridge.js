@@ -11,9 +11,14 @@ const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const STORAGE_KEY = 'stensiblyToken';
 const sentinel = hostedSessionSentinel();
 const originalFetch = window.fetch.bind(window);
+const sessionOrigin = savedSessionOrigin();
 
 installSessionMarker();
-window.fetch = installHostedSessionFetchBridge({ fetchImpl: originalFetch, sentinel });
+window.fetch = installHostedSessionFetchBridge({
+  fetchImpl: originalFetch,
+  sessionOrigin,
+  sentinel,
+});
 
 const signInButton = document.querySelector('#github-sign-in');
 const signInState = document.querySelector('#hosted-sign-in-state');
@@ -30,6 +35,15 @@ function installSessionMarker() {
     if (!isPlausibleToken(stored)) sessionStorage.setItem(STORAGE_KEY, sentinel);
   } catch {
     // The dashboard will fall back to its ordinary connection form.
+  }
+}
+
+function savedSessionOrigin() {
+  try {
+    return normalizeEndpoint(localStorage.getItem('stensiblyEndpoint') || DEFAULT_ENDPOINT);
+  } catch {
+    localStorage.removeItem('stensiblyEndpoint');
+    return DEFAULT_ENDPOINT;
   }
 }
 
@@ -69,7 +83,7 @@ async function signOutHostedSession(event) {
   clearError();
 
   try {
-    const response = await originalFetch(createHostedLogoutUrl(selectedEndpoint()), {
+    const response = await originalFetch(createHostedLogoutUrl(sessionOrigin), {
       method: 'POST',
       credentials: 'include',
       cache: 'no-store',
