@@ -276,7 +276,7 @@ async function register(
     responseTypes?: string[];
   } = {},
 ) {
-  return await t.mutation(convexApi.mcpOAuth.registerClient, {
+  const result = await t.mutation(convexApi.mcpOAuth.registerClient, {
     serviceSecret,
     workspace,
     clientId: id,
@@ -286,6 +286,11 @@ async function register(
     grantTypes: overrides.grantTypes ?? ["authorization_code", "refresh_token"],
     responseTypes: overrides.responseTypes ?? ["code"],
   }) as any;
+  if (result.status === "ok") return result.client;
+  if (result.status === "retryable") {
+    throw new Error("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
+  }
+  throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
 }
 
 async function setupAccount(
