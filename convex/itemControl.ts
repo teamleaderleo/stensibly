@@ -1,9 +1,6 @@
 import { v } from "convex/values";
 import { projectItemControl } from "../src/item-control";
-import {
-  filterVisibleDependencyEvents,
-  readVisibleDependencies,
-} from "./lib/dependencyVisibility";
+import { readVisibleDependencies } from "./lib/dependencyVisibility";
 import {
   findWorkspace,
   getItemByExternalId,
@@ -13,13 +10,17 @@ import {
   publicItem,
   requireServiceSecret,
 } from "./lib/domain";
-import { publicExecutionEventFilter } from "./lib/executionEnvelope";
+import {
+  assertCompleteArtifactWindow,
+  ITEM_HISTORY_CONTRACT_VERSION,
+  MAX_ITEM_DETAIL_VISIBLE_EVENTS,
+  MAX_PUBLIC_ITEM_ARTIFACTS,
+  readBoundedVisibleItemEvents,
+} from "./lib/itemHistory";
 import { readPublicItemRuns } from "./lib/runVisibility";
 import { query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
-const MAX_DETAIL_EVENTS = 100;
-const MAX_DETAIL_ARTIFACTS = 100;
 const MAX_RUNS_PER_LIVE_STATUS = 2;
 const queuedLiveStatuses = ["queued", "starting", "running", "waiting"] as const;
 const legacyLiveStatuses = ["running", "waiting"] as const;
@@ -37,7 +38,6 @@ export const get = query({
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
     const [
-      eventRows,
       latestClaimEvent,
       latestQueuedEvent,
       latestHandoffEvent,
@@ -47,12 +47,6 @@ export const get = query({
       queuedGroups,
       legacyGroups,
     ] = await Promise.all([
-      ctx.db
-        .query("events")
-        .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
-        .filter((q) => publicExecutionEventFilter(q))
-        .order("desc")
-        .take(MAX_DETAIL_EVENTS),
       ctx.db
         .query("events")
         .withIndex("by_item_type_created", (q) =>
@@ -78,7 +72,7 @@ export const get = query({
         .query("artifacts")
         .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
         .order("desc")
-        .take(MAX_DETAIL_ARTIFACTS),
+        .take(MAX_PUBLIC_ITEM_ARTIFACTS + 1),
       readPublicItemRuns(ctx, item, undefined, true),
       readVisibleDependencies(ctx, item),
       Promise.all(queuedLiveStatuses.map(async (status) =>
@@ -104,11 +98,12 @@ export const get = query({
           .take(MAX_RUNS_PER_LIVE_STATUS)
       )),
     ]);
-    const visibleEvents = await filterVisibleDependencyEvents(
+    assertCompleteArtifactWindow(artifactRows.length);
+    const eventWindow = await readBoundedVisibleItemEvents(
       ctx,
       item,
-      [...eventRows].reverse(),
       dependencies,
+      MAX_ITEM_DETAIL_VISIBLE_EVENTS,
     );
     const publicItemValue = await publicItem(ctx, item);
     const controlEvents = [latestClaimEvent, latestQueuedEvent, latestHandoffEvent]
@@ -143,6 +138,7 @@ export const get = query({
     ];
 
     return {
+      historyContractVersion: ITEM_HISTORY_CONTRACT_VERSION,
       item: publicItemValue,
       control: projectItemControl({
         item: publicItemValue,
@@ -150,10 +146,11 @@ export const get = query({
         events: controlEvents,
         runs: controlRuns,
       }),
-      events: visibleEvents.map((event) => ({
+      events: eventWindow.events.map((event) => ({
         ...publicEvent(event),
         itemId: item.externalId,
       })),
+      eventsTruncated: eventWindow.truncated,
       artifacts: [...artifactRows].reverse().map((artifact) => ({
         ...publicArtifact(artifact),
         itemId: item.externalId,
