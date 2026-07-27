@@ -1,0 +1,87 @@
+name: W01 hosted-auth configuration preflight
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/w01-auth-config-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check production environment secret presence
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+          GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GITHUB_OAUTH_CLIENT_ID }}
+          GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          : > auth-config-preflight.txt
+          for name in \
+            CLOUDFLARE_ACCOUNT_ID \
+            CLOUDFLARE_API_TOKEN \
+            STENSIBLY_READ_TOKEN \
+            GITHUB_OAUTH_CLIENT_ID \
+            GITHUB_OAUTH_CLIENT_SECRET; do
+            if [[ -n "${!name:-}" ]]; then
+              echo "$name=present" | tee -a auth-config-preflight.txt
+            else
+              echo "$name=missing" | tee -a auth-config-preflight.txt
+            fi
+          done
+
+      - name: Check current Cloudflare Worker secret names
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" || -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "cloudflare_secret_list=skipped" | tee -a auth-config-preflight.txt
+            exit 0
+          fi
+
+          if ! bunx wrangler secret list --json > /tmp/cloudflare-secrets.json; then
+            echo "cloudflare_secret_list=failed" | tee -a auth-config-preflight.txt
+            exit 0
+          fi
+
+          echo "cloudflare_secret_list=passed" | tee -a auth-config-preflight.txt
+          for name in \
+            CONVEX_URL \
+            STENSIBLY_SERVICE_SECRET \
+            GITHUB_OAUTH_CLIENT_ID \
+            GITHUB_OAUTH_CLIENT_SECRET \
+            STENSIBLY_AUTH_ORIGIN \
+            STENSIBLY_AUTH_RETURN_ORIGINS \
+            STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS \
+            STENSIBLY_OAUTH_SIGNING_SECRET; do
+            if jq -e --arg name "$name" '.[] | select(.name == $name)' /tmp/cloudflare-secrets.json >/dev/null; then
+              echo "cloudflare_$name=present" | tee -a auth-config-preflight.txt
+            else
+              echo "cloudflare_$name=missing" | tee -a auth-config-preflight.txt
+            fi
+          done
+
+      - name: Upload bounded preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-auth-config-preflight
+          path: auth-config-preflight.txt
+          if-no-files-found: error
+          retention-days: 3
