@@ -11,6 +11,7 @@
     "tokens": "bun src/tokens.ts",
     "snapshot": "bun src/snapshot-cli.ts",
     "attach": "bun src/project-attach-cli.ts",
+    "callsigns": "bun src/callsigns.ts",
     "verify:hosted": "bun src/verify-hosted.ts",
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
