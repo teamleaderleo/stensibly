@@ -166,7 +166,7 @@ export const registerClient = mutation({
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message.includes(CLIENT_REGISTRATION_CONFLICT)) {
-        return { status: "conflict" as const };
+        throw error;
       }
       const capacityFailure =
         message.includes(CLIENT_REGISTRATION_LIMIT)
