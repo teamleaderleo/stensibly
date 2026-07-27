@@ -1,20 +1,27 @@
-name: W01 automatic OAuth rollout
+name: W01 manual OAuth rollout
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 * * * *"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/w01-oauth-auto-rollout.yml"
+    inputs:
+      approval_reference:
+        description: Exact fresh Tier 3 approval reference (issue-N-comment-N)
+        required: true
+        type: string
+      rollout_generation:
+        description: Unique bounded rollout generation (w01-...)
+        required: true
+        type: string
+      confirm_rollout:
+        description: Confirm this dispatch may perform the approved production rollout
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: w01-oauth-auto-rollout
+  group: w01-oauth-rollout
   cancel-in-progress: false
 
 env:
@@ -27,10 +34,12 @@ env:
   OAUTH_ACCESS_TOKEN_SECONDS: "600"
   OAUTH_AUTHORIZATION_CODE_SECONDS: "300"
   OAUTH_REFRESH_TOKEN_SECONDS: "2592000"
-  APPROVAL_REFERENCE: issue-220-comment-5093505474
+  APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+  ROLLOUT_GENERATION: ${{ inputs.rollout_generation }}
 
 jobs:
   rollout:
+    if: ${{ inputs.confirm_rollout == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
@@ -45,7 +54,7 @@ jobs:
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check resumable rollout prerequisites
+      - name: Check manual rollout prerequisites
         id: readiness
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -78,18 +87,24 @@ jobs:
             || ! grep -q '"verify:oauth-abuse"' package.json; then
             missing+=("MERGED_GUARDED_ABUSE_HARNESS")
           fi
+          if [[ ! "$APPROVAL_REFERENCE" =~ ^issue-[0-9]+-comment-[0-9]+$ ]]; then
+            missing+=("INVALID_APPROVAL_REFERENCE")
+          fi
+          if [[ ! "$ROLLOUT_GENERATION" =~ ^w01-[A-Za-z0-9._-]{1,64}$ ]]; then
+            missing+=("INVALID_ROLLOUT_GENERATION")
+          fi
 
           if (( ${#missing[@]} > 0 )); then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo "## W01 OAuth rollout waiting"
               echo
-              echo "Missing prerequisites:"
+              echo "Missing or invalid prerequisites:"
               for name in "${missing[@]}"; do
                 echo "- \`$name\`"
               done
               echo
-              echo "The hourly workflow will retry automatically."
+              echo "Dispatch again only with a fresh approval and corrected prerequisites."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -159,15 +174,28 @@ jobs:
           }
 
           if [[ "$canonical_surface" == oauth || "$worker_surface" == oauth ]]; then
-            echo "auth_state=recover_oauth" >> "$GITHUB_OUTPUT"
+            echo "auth_state=ambiguous_oauth" >> "$GITHUB_OUTPUT"
           else
             echo "auth_state=needs_hosted_auth" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Stop on ambiguous existing OAuth state
+        if: steps.state.outputs.auth_state == 'ambiguous_oauth'
+        run: |
+          {
+            echo "## W01 OAuth rollout held"
+            echo
+            echo "OAuth is advertised but enabled verification did not pass on both origins."
+            echo "No binding deletion, deployment, or signing-secret rotation was attempted."
+            echo "A separate fresh Tier 3 recovery decision is required."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Run exact candidate checks
         if: >-
           steps.readiness.outputs.ready == 'true'
-          && steps.state.outputs.auth_state != 'enabled'
+          && (steps.state.outputs.auth_state == 'disabled'
+          || steps.state.outputs.auth_state == 'needs_hosted_auth')
         run: |
           set -euo pipefail
           bun run typecheck
@@ -178,36 +206,14 @@ jobs:
       - name: Deploy current Convex functions
         if: >-
           steps.readiness.outputs.ready == 'true'
-          && steps.state.outputs.auth_state != 'enabled'
+          && (steps.state.outputs.auth_state == 'disabled'
+          || steps.state.outputs.auth_state == 'needs_hosted_auth')
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: bunx convex deploy
 
-      - name: Clear OAuth bindings from an unverified prior enablement
-        if: steps.state.outputs.auth_state == 'recover_oauth'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          rollback_file="$(mktemp)"
-          trap 'rm -f "$rollback_file"' EXIT
-          cat > "$rollback_file" <<'JSON'
-          {
-            "STENSIBLY_OAUTH_SIGNING_SECRET": null,
-            "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS": null,
-            "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS": null,
-            "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS": null
-          }
-          JSON
-          bunx wrangler secret bulk "$rollback_file"
-          rm -f "$rollback_file"
-          trap - EXIT
-
       - name: Configure hosted GitHub auth and prove disabled state
-        if: >-
-          steps.state.outputs.auth_state == 'needs_hosted_auth'
-          || steps.state.outputs.auth_state == 'recover_oauth'
+        if: steps.state.outputs.auth_state == 'needs_hosted_auth'
         id: phase1
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -323,7 +329,7 @@ jobs:
             --endpoint "$WORKER_ORIGIN" \
             --issuer "$CANONICAL_ORIGIN"
 
-      - name: Roll back OAuth bindings after a failed enable attempt
+      - name: Roll back OAuth bindings after a failed current enable attempt
         if: >-
           failure()
           && steps.state.outputs.auth_state != 'enabled'
@@ -371,6 +377,7 @@ jobs:
             echo
             echo "- deployed source: \`$ROLLOUT_SOURCE_SHA\`"
             echo "- approval: \`$APPROVAL_REFERENCE\`"
+            echo "- generation: \`$ROLLOUT_GENERATION\`"
             echo "- canonical origin: $CANONICAL_ORIGIN"
             echo "- Worker fallback: $WORKER_ORIGIN"
             echo "- bearer compatibility: passed on both origins"
