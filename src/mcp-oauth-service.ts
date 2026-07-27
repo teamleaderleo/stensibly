@@ -1,3 +1,4 @@
+import { makeFunctionReference } from "convex/server";
 import { convexApi } from "../convex/refs.js";
 import type { ConvexCaller } from "./convex-ledger.js";
 import type { AccountRole, AccountScope } from "./hosted-account-service.js";
@@ -32,6 +33,11 @@ export type McpOAuthRefreshExchange =
   | { status: "ok"; grant: McpOAuthGrant }
   | { status: "invalid" }
   | { status: "replayed" };
+
+type McpOAuthRegistrationResult =
+  | { status: "ok"; client: McpOAuthClientRecord }
+  | { status: "retryable" }
+  | { status: "limit" };
 
 export interface McpOAuthService {
   registerClient(input: {
@@ -80,6 +86,19 @@ export interface ConvexMcpOAuthServiceOptions {
   workspace: string;
 }
 
+const registerClientRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientRegistration:registerClient",
+);
+const reconcileClientLifecycleRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientLifecycle:reconcileClientLifecycle",
+);
+const getClientRef = makeFunctionReference<"query">(
+  "mcpOAuthClientLifecycle:getClient",
+);
+const createAuthorizationCodeRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientLifecycle:createAuthorizationCode",
+);
+
 export class ConvexMcpOAuthService implements McpOAuthService {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -92,22 +111,30 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   }
 
   async registerClient(input: Parameters<McpOAuthService["registerClient"]>[0]) {
-    return await this.client.mutation(
-      convexApi.mcpOAuth.registerClient,
+    await this.reconcileClientLifecycle(input.clientId);
+    const result = await this.client.mutation(
+      registerClientRef,
       this.args(input),
-    ) as McpOAuthClientRecord;
+    ) as McpOAuthRegistrationResult;
+    if (result.status === "ok") return result.client;
+    if (result.status === "retryable") {
+      throw new Error("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
+    }
+    throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
   }
 
   async getClient(clientId: string) {
+    await this.reconcileClientLifecycle(clientId);
     return await this.client.query(
-      convexApi.mcpOAuth.getClient,
-      this.args({ clientId }),
+      getClientRef,
+      this.args({ clientId, now: Date.now() }),
     ) as McpOAuthClientRecord | null;
   }
 
   async createAuthorizationCode(input: Parameters<McpOAuthService["createAuthorizationCode"]>[0]) {
+    await this.reconcileClientLifecycle(input.clientId);
     return await this.client.mutation(
-      convexApi.mcpOAuth.createAuthorizationCode,
+      createAuthorizationCodeRef,
       this.args(input),
     ) as McpOAuthGrant;
   }
@@ -124,6 +151,13 @@ export class ConvexMcpOAuthService implements McpOAuthService {
       convexApi.mcpOAuth.rotateRefreshToken,
       this.args(input),
     ) as McpOAuthRefreshExchange;
+  }
+
+  private async reconcileClientLifecycle(clientId: string): Promise<void> {
+    await this.client.mutation(
+      reconcileClientLifecycleRef,
+      this.args({ clientId }),
+    );
   }
 
   private args(input: object): Record<string, unknown> {
