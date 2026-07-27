@@ -47,10 +47,10 @@ export function prepareHostedSessionRequest(
 ) {
   const request = new Request(input, init);
   const authorization = request.headers.get('authorization');
-  if (!authorization) return request;
+  if (!authorization) return { request, credentials: request.credentials };
 
   if (authorization !== `Bearer ${sentinel}`) {
-    return new Request(request, { credentials: 'omit' });
+    return { request, credentials: 'omit' };
   }
 
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
@@ -58,9 +58,10 @@ export function prepareHostedSessionRequest(
   request.headers.delete('authorization');
   const hostedRestRequest = url.origin === allowedOrigin
     && (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`));
-  return new Request(request, {
+  return {
+    request,
     credentials: hostedRestRequest ? 'include' : 'omit',
-  });
+  };
 }
 
 export function installHostedSessionFetchBridge({
@@ -70,9 +71,10 @@ export function installHostedSessionFetchBridge({
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
-  return (input, init) => fetchImpl(
-    prepareHostedSessionRequest(input, init, allowedOrigin, sentinel),
-  );
+  return (input, init) => {
+    const prepared = prepareHostedSessionRequest(input, init, allowedOrigin, sentinel);
+    return fetchImpl(prepared.request, { credentials: prepared.credentials });
+  };
 }
 
 function normalizeOrigin(value, label) {
