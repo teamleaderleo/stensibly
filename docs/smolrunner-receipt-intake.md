@@ -45,6 +45,8 @@ The receipt must repeat the envelope version, repository, runner profile, verifi
 
 Candidate heads are not treated as immutable attempt identity. A later checkpoint may publish a new exact head. Replaying the same checkpoint generation with different head or other semantics conflicts, and a later checkpoint may not regress from a known head to `null`.
 
+Within one execution ID, the producer version and operation family/schema are immutable. A later checkpoint that changes any of those fields conflicts as changed execution identity.
+
 ## Public receipt limits
 
 The accepted receipt contains only bounded machine fields:
@@ -53,8 +55,8 @@ The accepted receipt contains only bounded machine fields:
 - exact execution ID and monotonic checkpoint generation;
 - repository, profile, workspace, source commit/tree, and source digest;
 - closed phase and state vocabularies;
-- canonical timestamps;
-- bounded queue, reservation, heartbeat, progress, outcome counts, continuation codes, and next action;
+- canonical start, observation, and terminal timestamps;
+- bounded queue, reservation, heartbeat, progress, outcome counts, continuation barriers, deferred actions, and next action;
 - opaque log/artifact references;
 - coverage state;
 - explicit false authority declarations.
@@ -63,15 +65,17 @@ Unknown fields fail closed. Filesystem paths, argv, commands, environment values
 
 ## Replay and conflict
 
+`parseSmolRunnerReceiptIntake` validates the complete public intake and computes its canonical fingerprint from the full validated attempt and receipt semantics. The returned transition remains a bounded projection, while fields omitted from that projection—such as detailed counts, continuation arrays, timestamps, and evidence references—still participate in exact replay identity.
+
 `compareSmolRunnerReceiptTransitions` classifies one incoming checkpoint against the last durable transition:
 
 - `insert` — first accepted checkpoint;
-- `duplicate` — exact same checkpoint identity and fingerprint;
-- `advance` — exactly the next checkpoint generation and an allowed state transition;
+- `duplicate` — exact same checkpoint generation and complete validated semantic fingerprint;
+- `advance` — exactly the next checkpoint generation, the same immutable execution identity, and an allowed state transition;
 - `stale` — an older checkpoint generation;
 - `conflict` — changed attempt/execution identity, reused checkpoint generation with different semantics, generation gap, candidate-head regression, terminal mutation, invalid state order, or observation-time reversal.
 
-A different execution ID is not an implicit fallback. Fallback or handoff must create an explicitly superseding Stensibly attempt while preserving the reviewed repository/base/head/profile/workspace identity required by policy.
+A different execution ID, producer version, or operation family/schema is not an implicit fallback. Fallback or handoff must create an explicitly superseding Stensibly attempt while preserving the reviewed repository/base/head/profile/workspace identity required by policy.
 
 ## Heartbeat and named waits
 
@@ -90,10 +94,10 @@ This slice provides:
 
 - strict schemas;
 - pure receipt-to-transition mapping;
-- deterministic canonical fingerprints;
-- replay/conflict classification;
+- complete-semantic deterministic canonical fingerprints;
+- replay/conflict classification with immutable producer/operation identity;
 - pure liveness projection;
 - progress and terminal fixtures;
-- focused non-disclosure and generation-fence tests.
+- focused non-disclosure, generation-fence, and semantic-replay tests.
 
 It adds no database table, event writer, REST/MCP endpoint, network client, filesystem read, background poller, live SmolRunner invocation, retry command, handoff mutation, or fallback executor. Those belong in later reviewed slices after SmolRunner freezes its public receipt schema and the Stensibly durable attempt store is selected.
