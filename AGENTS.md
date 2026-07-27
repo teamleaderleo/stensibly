@@ -14,7 +14,7 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.1.2`  
+**Operating protocol:** `stensibly-agent-ops/0.2.0`  
 **Status:** dogfood  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
@@ -47,7 +47,7 @@ session.
 
 Do not begin by creating another issue or implementation branch. First determine
 whether existing work should be finished, reviewed, repaired, integrated,
-unblocked, or explicitly superseded.
+unblocked, deployed under valid authority, or explicitly superseded.
 
 If a ChatGPT Project bootstrap names an older protocol version, follow the
 repository version and report the bootstrap drift. The pasted Project setting is
@@ -120,6 +120,42 @@ Workers are expected to act independently inside the current scope and authority
 boundary. Do not wait for central assignment, unrelated reviewers, or a full-pod
 check-in when a bounded action is ready and the applicable risk tier is satisfied.
 
+## Autonomous portfolio execution
+
+The accepted practice in `docs/autonomous-portfolio-execution.md` changes the
+default from one action followed by another request for direction to continuous,
+bounded portfolio execution.
+
+- Maintain one primary outcome and normally no more than three bounded secondary
+  lanes. Use fewer when the primary work is broad or high risk.
+- Secondary lanes may include independent review, repair, integration, rollout
+  preparation, verification, evidence reconciliation, documentation, or a
+  separately fenced exploration.
+- At completion, block, CI result, review verdict, handoff, or integration
+  decision, choose the next highest-value eligible action without waiting for a
+  human ping.
+- When one lane is waiting on review, CI, a dependency, or another owner, advance
+  a safe non-overlapping lane.
+- Larger outcome-owned scopes are encouraged when they are decomposed into
+  inspectable actions with shared contracts, exact evidence, integration
+  ownership, rollback, and recovery conditions.
+- Do not use autonomy to hoard claims, hide branches, combine unrelated changes,
+  weaken review independence, or create overlapping implementation ownership.
+- Quiet or dormant work may become recoverable, shareable, repairable,
+  transferable, partitionable, or eligible for deliberate competition after
+  current state, overlap, provenance, responsibility, and authority are
+  reconciled explicitly.
+- Silence is not approval, delivery, transfer, renewal, or proof of current
+  attention. Recovery is a new attributable action.
+- Routine updates should emphasize results, findings, decisions, changed risk or
+  authority, blockers, and the next executable action rather than inventories of
+  unrelated non-actions.
+
+A worker may maintain a small portfolio without central assignment, but every
+lane must remain legible and independently recoverable. Record the exact target,
+owner or overlap, risk tier, next action, and stop or wake condition when those
+facts are not already obvious from the live issue or pull request.
+
 ## Risk-tiered review and merge
 
 Choose review depth from demonstrated risk, scope, reversibility, and uncertainty;
@@ -138,12 +174,12 @@ authority, security, data, deployment, dependency, or public-contract effect.
 - Use `[skip review]` or `review-exempt` when automated review would add little
   useful evidence.
 
-### Tier 1 — bounded low-risk runtime change
+### Tier 1 — bounded low-risk runtime or shared-practice change
 
 Examples include a small local helper, typed renderer, narrow validation repair,
-or isolated behaviour with straightforward rollback and no authorization,
-privacy, schema, migration, durable-state, data-loss, deployment, or broad
-compatibility boundary.
+focused instruction change, or isolated behaviour with straightforward rollback
+and no authorization, privacy, schema, migration, durable-state, data-loss,
+deployment, or broad compatibility boundary.
 
 - Require one independent exact-head `ACCEPT` plus green relevant checks.
 - Once the head is unchanged, mergeable, green, and free of unresolved blocking
@@ -183,7 +219,8 @@ before merging. Do not merge a moved head on stale acceptance.
 
 ## Before claiming or editing
 
-- Confirm the exact issue, lane, action, repository, branch, and expected output.
+- Confirm the exact issue, wave, lane, action, repository, branch, and expected
+  output.
 - Inspect active pull requests and recent commits for overlapping work.
 - Record or respect the current claim generation when Stensibly is available.
 - State the files or subsystem you expect to touch.
@@ -206,8 +243,9 @@ Record:
 - self-review findings;
 - independent review state and selected risk tier;
 - blockers, accepted residual risks, uncertainty, and failed approaches;
+- current primary and secondary lanes that remain live;
 - next owner or eligible continuation;
-- exact next action and wake condition.
+- exact next action and wake, recovery, or stop condition.
 
 Release, block, complete, merge, or hand off accepted commitments explicitly.
 Never let a worker simply disappear while remaining the only holder of necessary
