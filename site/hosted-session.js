@@ -9,6 +9,11 @@ export function isHostedSessionSentinel(value) {
   return String(value || '') === hostedSessionSentinel();
 }
 
+export function isDefaultHostedEndpoint(endpoint, defaultEndpoint) {
+  return normalizeOrigin(endpoint, 'API endpoint')
+    === normalizeOrigin(defaultEndpoint, 'Default hosted endpoint');
+}
+
 export function createGithubSignInUrl(endpoint, returnTo) {
   const origin = normalizeOrigin(endpoint, 'API endpoint');
   const destination = normalizeReturnTo(returnTo);
@@ -19,6 +24,19 @@ export function createGithubSignInUrl(endpoint, returnTo) {
 
 export function createHostedLogoutUrl(endpoint) {
   return new URL('/auth/logout', normalizeOrigin(endpoint, 'API endpoint')).toString();
+}
+
+export async function revokeHostedSession(fetchImpl, endpoint) {
+  if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
+  const response = await fetchImpl(createHostedLogoutUrl(endpoint), {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`Sign out returned HTTP ${response.status}.`);
+  }
 }
 
 export function prepareHostedSessionRequest(
