@@ -14,6 +14,9 @@ const dayMs = 24 * 60 * 60 * 1000;
 const registerClientRef = makeFunctionReference<"mutation">(
   "mcpOAuthClientRegistration:registerClient",
 );
+const reconcileClientRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientLifecycle:reconcileClientLifecycle",
+);
 const getClientRef = makeFunctionReference<"query">(
   "mcpOAuthClientLifecycle:getClient",
 );
@@ -229,6 +232,72 @@ describe("OAuth dynamic-client lifecycle", () => {
           base,
         )).rejects.toThrow("OAuth client is unavailable");
       }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("commits reference-backed repair before later registration or authorization failure", async () => {
+    const t = convexTest(schema, modules);
+    const base = Date.parse("2026-08-01T22:00:00.000Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(base);
+    try {
+      const account = await setupAccount(t, "failure-repair", defaultWorkspace);
+      const referencedConflict = clientId("refconflict");
+      const referencedAuth = clientId("refauthfail");
+      const unreferenced = clientId("unreffail");
+      const expiredAt = base - 1;
+      await t.run(async (ctx: any) => {
+        for (const id of [referencedConflict, referencedAuth, unreferenced]) {
+          await ctx.db.insert("mcpOAuthClients", clientRecord(account.workspaceId, id, base - dayMs, {
+            lifecycleState: "unused",
+            unusedExpiresAt: expiredAt,
+            cleanupScheduledAt: expiredAt,
+            cleanupScheduleGeneration: 1,
+          }));
+        }
+        await insertCodeReference(ctx, account, referencedConflict, codeId("repairconflict"), base);
+        await insertRefreshReference(ctx, account, referencedAuth, refreshId("repairauth"), base);
+      });
+
+      expect(await reconcileClient(t, referencedConflict)).toEqual({ status: "repaired" });
+      await expect(register(t, defaultWorkspace, referencedConflict, {
+        clientName: "Changed client",
+      })).rejects.toThrow("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
+      expect(await readClient(t, referencedConflict)).toMatchObject({
+        lifecycleState: "used",
+        firstUsedAt: base,
+      });
+
+      expect(await reconcileClient(t, referencedAuth)).toEqual({ status: "repaired" });
+      await expect(t.mutation(createAuthorizationCodeRef, {
+        serviceSecret,
+        workspace: defaultWorkspace,
+        accountId: account.accountId,
+        clientId: referencedAuth,
+        redirectUri: "https://example.com/wrong",
+        codeChallenge,
+        scopes: ["read"],
+        resource,
+        id: codeId("repairauthfail"),
+        secretHash: "a".repeat(64),
+        expiresAt: base + 60_000,
+      })).rejects.toThrow("OAuth redirect URI is not registered");
+      expect(await readClient(t, referencedAuth)).toMatchObject({
+        lifecycleState: "used",
+        firstUsedAt: base,
+      });
+
+      expect(await reconcileClient(t, unreferenced)).toEqual({ status: "unchanged" });
+      await expect(register(t, defaultWorkspace, unreferenced, {
+        clientName: "Changed client",
+      })).rejects.toThrow("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
+      await expect(createCode(t, account.accountId, unreferenced, codeId("unrefauthfail"), base))
+        .rejects.toThrow("OAuth client is unavailable");
+      expect(await readClient(t, unreferenced)).toMatchObject({
+        lifecycleState: "unused",
+        unusedExpiresAt: expiredAt,
+      });
     } finally {
       clock.mockRestore();
     }
@@ -505,6 +574,67 @@ describe("OAuth dynamic-client lifecycle", () => {
       clock.mockRestore();
     }
   });
+
+  test("quarantined malformed rows cannot starve a later valid expiry", async () => {
+    const t = convexTest(schema, modules);
+    const base = Date.parse("2026-08-07T00:00:00.000Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(base);
+    try {
+      const owner = await setupAccount(t, "starvation-owner", defaultWorkspace);
+      const expiredAt = base - 1;
+      const malformedIds = Array.from(
+        { length: 100 },
+        (_, index) => clientId(`starvebad${index.toString().padStart(3, "0")}`),
+      );
+      const validExpiredId = clientId("starvevalid");
+      await t.run(async (ctx: any) => {
+        for (const [index, id] of malformedIds.entries()) {
+          await ctx.db.insert("mcpOAuthClients", clientRecord(owner.workspaceId, id, base - dayMs + index, {
+            lifecycleState: "unused",
+            unusedExpiresAt: expiredAt,
+            cleanupScheduleGeneration: 1,
+          }));
+        }
+        await ctx.db.insert("mcpOAuthClients", clientRecord(owner.workspaceId, validExpiredId, base - dayMs + 101, {
+          lifecycleState: "unused",
+          unusedExpiresAt: expiredAt,
+          cleanupScheduledAt: expiredAt,
+          cleanupScheduleGeneration: 1,
+        }));
+        for (let index = 0; index < 899; index += 1) {
+          await ctx.db.insert("mcpOAuthClients", clientRecord(
+            owner.workspaceId,
+            clientId(`starveused${index.toString().padStart(3, "0")}`),
+            base + index,
+            { lifecycleState: "used", firstUsedAt: base },
+          ));
+        }
+      });
+
+      expect(await registrationResult(t, defaultWorkspace, clientId("starvefirst"))).toEqual({
+        status: "retryable",
+      });
+      const firstSnapshots = await Promise.all(malformedIds.map(async (id) => {
+        const client = await readClient(t, id);
+        expect(client?.unusedExpiresAt).toBeUndefined();
+        return client?.updatedAt;
+      }));
+      expect(await readClient(t, validExpiredId)).not.toBeNull();
+
+      clock.mockReturnValue(base + 1_000);
+      const second = await registrationResult(t, defaultWorkspace, clientId("starvesecond"));
+      expect(second.status).toBe("ok");
+      expect(await readClient(t, validExpiredId)).toBeNull();
+      expect(await readClient(t, clientId("starvesecond"))).not.toBeNull();
+      const secondSnapshots = await Promise.all(malformedIds.map(async (id) =>
+        (await readClient(t, id))?.updatedAt
+      ));
+      expect(secondSnapshots).toEqual(firstSnapshots);
+      expect(await clientsInWorkspace(t, defaultWorkspace)).toHaveLength(1_000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
 });
 
 async function registrationResult(
@@ -547,6 +677,17 @@ async function register(
     throw new Error("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
   }
   throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
+}
+
+async function reconcileClient(
+  t: ReturnType<typeof convexTest>,
+  id: string,
+) {
+  return await t.mutation(reconcileClientRef, {
+    serviceSecret,
+    workspace: defaultWorkspace,
+    clientId: id,
+  }) as any;
 }
 
 async function lookupClient(
