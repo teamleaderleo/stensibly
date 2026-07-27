@@ -61,12 +61,34 @@ Keep these dimensions separate:
 - **Lane:** medium-lived coherent thread within a wave.
 - **Action:** small executable next step.
 - **Run:** one bounded worker attempt.
-- **Callsign:** disposable display name for one worker or run.
+- **Callsign:** disposable display name for one worker or chat session.
 - **Mantle:** optional reusable, versioned presentation and practice bundle.
 
 Pod names, worker names, mantles, roles, issue assignment, and GitHub identity do
 not grant authority. Current server-owned claims, approval records, and project
 policy remain authoritative.
+
+## Callsign, mantle, and continuity
+
+Choose one short, pronounceable, visually distinctive callsign near the start of
+each chat that performs repository work. Announce it in the first user-facing work
+update and keep it stable for that chat. Prefer a callsign that is not currently
+active and has not already identified another recent worker in the same project.
+
+A callsign is session attribution, not a durable actor identity. Do not claim to be
+a previous worker or imply that a fresh chat shares another worker's private
+continuity. A fresh worker may continue from a handoff, accept transferred work,
+or adopt a reusable mantle, but it must describe that relationship explicitly,
+for example:
+
+- `continuing from Keystone's handoff`;
+- `accepted responsibility previously held by Nightjar`;
+- `wearing Gatekeeper mantle v2`.
+
+Mantles are optional. Use one only when a named, versioned practice bundle or
+lineage genuinely helps the work. Callsigns, mantles, pods, sign-offs, and GitHub
+identity remain descriptive and grant no authority, responsibility, competence,
+claim, approval, lease, or identity continuity.
 
 ## Work-selection rule
 
@@ -182,19 +204,34 @@ context.
 
 ## Descriptive sign-off
 
-Because many workers use the same GitHub account, end substantive comments,
-reviews, and handoffs with a compact generated sign-off when the metadata is
-known:
+Because many workers use the same ChatGPT and GitHub identities, end substantive
+GitHub comments, reviews, handoffs, and user-facing repository-work handoffs with
+the stable callsign chosen for the chat.
+
+Use the lightweight routine footer:
 
 ```text
-— <Callsign or anonymous worker> · <pod or mantle, if any>
-  Run: <run ID or chat-local identifier>
-  Stance: <implementation | review | synthesis | rollout | ...>
-  Work: <project / wave / lane / action>
-  Revision: <exact commit SHA, when applicable>
+— <Callsign> · <pod context, if useful>
+  Intention: <current bounded intention, if useful>
 ```
 
-The sign-off is attribution metadata, not authority or proof of competence.
+Reviews, decisions, handoffs, and succession records may add only the provenance
+that helps inspection or continuation, such as:
+
+```text
+— <Callsign> · <pod context, if useful>
+  Intention: <current bounded intention>
+  Mantle: <name and version, when adopted>
+  Continuing from: <prior handoff reference, when applicable>
+  Run: <run ID or chat-local identifier>
+  Work: <project / wave / lane / action>
+  Reviewed revision: <exact commit SHA, when applicable>
+  Verdict: <ACCEPT | REPAIR | BLOCKED, when applicable>
+```
+
+Do not render a default stance, model-provider label, adapter label, or obvious
+repository context merely to fill fields. The sign-off is attribution metadata,
+not authority, ownership, competence, acceptance, or proof of continuity.
 
 ## Surveys and improvement
 
