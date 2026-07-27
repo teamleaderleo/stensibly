@@ -6,6 +6,7 @@ const MAX_CHALLENGE_HEADER_LENGTH = 2_048;
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+const AUTH_TOKEN_CHARACTER_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 export type OAuthExpectation = "enabled" | "disabled";
 
@@ -90,6 +91,7 @@ export async function verifyOAuthHosted(
     expectation: normalizeExpectation(options.expectation),
     timeoutMs,
   };
+  const resourceMetadata = `${normalized.issuer}/.well-known/oauth-protected-resource/mcp`;
   const results: OAuthCheckResult[] = [];
 
   results.push(await runCheck("health surfaces", async () => {
@@ -180,22 +182,16 @@ export async function verifyOAuthHosted(
   results.push(await runCheck("required-token MCP challenge", async () => {
     const { response } = await mcpInitialize(fetchImpl, normalized, undefined);
     expectStatus(response, 401);
-    const challenge = validChallengeHeader(response);
-    requireBearerChallenge(response, challenge);
+    const params = parseBearerChallenge(response);
     if (normalized.expectation === "enabled") {
-      requireChallengePart(
-        response,
-        challenge,
-        `resource_metadata="${normalized.issuer}/.well-known/oauth-protected-resource/mcp"`,
-        "resource metadata",
-      );
-      requireChallengePart(response, challenge, 'scope="read write"', "read/write scope");
-    } else if (/resource_metadata=/i.test(challenge)) {
-      throw responseError(response, "Disabled OAuth challenge still advertises resource metadata");
+      requireExactChallengeParameters(response, params, {
+        resource_metadata: resourceMetadata,
+        scope: "read write",
+      });
+      return "401 OAuth discovery challenge";
     }
-    return normalized.expectation === "enabled"
-      ? "401 OAuth discovery challenge"
-      : "401 bearer-only challenge";
+    requireExactChallengeParameters(response, params, {});
+    return "401 bearer-only challenge";
   }));
 
   results.push(await runCheck("invalid-token MCP challenge", async () => {
@@ -205,22 +201,17 @@ export async function verifyOAuthHosted(
       "Bearer verifier.invalid.token",
     );
     expectStatus(response, 401);
-    const challenge = validChallengeHeader(response);
-    requireBearerChallenge(response, challenge);
+    const params = parseBearerChallenge(response);
     if (normalized.expectation === "enabled") {
-      requireChallengePart(
-        response,
-        challenge,
-        `resource_metadata="${normalized.issuer}/.well-known/oauth-protected-resource/mcp"`,
-        "resource metadata",
-      );
-      requireChallengePart(response, challenge, 'error="invalid_token"', "invalid-token error");
-    } else if (/resource_metadata=|error="invalid_token"/i.test(challenge)) {
-      throw responseError(response, "Disabled OAuth challenge still advertises OAuth token handling");
+      requireExactChallengeParameters(response, params, {
+        resource_metadata: resourceMetadata,
+        scope: "read write",
+        error: "invalid_token",
+      });
+      return "401 error=invalid_token";
     }
-    return normalized.expectation === "enabled"
-      ? "401 error=invalid_token"
-      : "401 bearer-only invalid token";
+    requireExactChallengeParameters(response, params, {});
+    return "401 bearer-only invalid token";
   }));
 
   return results;
@@ -405,7 +396,7 @@ function expectStatus(response: Response, expected: number): void {
   }
 }
 
-function validChallengeHeader(response: Response): string {
+function parseBearerChallenge(response: Response): Map<string, string> {
   const challenge = response.headers.get("www-authenticate") ?? "";
   if (
     challenge.length > MAX_CHALLENGE_HEADER_LENGTH
@@ -413,24 +404,76 @@ function validChallengeHeader(response: Response): string {
   ) {
     throw responseError(response, "WWW-Authenticate challenge is invalid");
   }
-  return challenge;
-}
 
-function requireBearerChallenge(response: Response, challenge: string): void {
-  if (!/^\s*Bearer\b/i.test(challenge)) {
-    throw responseError(response, "Expected a Bearer challenge");
+  const match = /^\s*Bearer(?:\s+(.*?))?\s*$/i.exec(challenge);
+  if (!match) throw responseError(response, "Expected a Bearer challenge");
+  const rawParameters = match[1];
+  if (!rawParameters) return new Map();
+
+  const parameters = new Map<string, string>();
+  let index = 0;
+  while (index < rawParameters.length) {
+    while (rawParameters[index] === " " || rawParameters[index] === "\t") index += 1;
+    const nameStart = index;
+    while (index < rawParameters.length && isAuthTokenCharacter(rawParameters[index]!)) index += 1;
+    const name = rawParameters.slice(nameStart, index).toLowerCase();
+    if (!name || !AUTH_TOKEN_CHARACTER_PATTERN.test(name)) {
+      throw responseError(response, "WWW-Authenticate challenge is malformed");
+    }
+    while (rawParameters[index] === " " || rawParameters[index] === "\t") index += 1;
+    if (rawParameters[index] !== "=") {
+      throw responseError(response, "WWW-Authenticate challenge is malformed");
+    }
+    index += 1;
+    while (rawParameters[index] === " " || rawParameters[index] === "\t") index += 1;
+    if (rawParameters[index] !== '"') {
+      throw responseError(response, "WWW-Authenticate challenge is malformed");
+    }
+    index += 1;
+    const valueStart = index;
+    while (
+      index < rawParameters.length
+      && rawParameters[index] !== '"'
+      && rawParameters[index] !== "\\"
+    ) index += 1;
+    if (index >= rawParameters.length || rawParameters[index] !== '"') {
+      throw responseError(response, "WWW-Authenticate challenge is malformed");
+    }
+    const value = rawParameters.slice(valueStart, index);
+    index += 1;
+    if (parameters.has(name)) {
+      throw responseError(response, "WWW-Authenticate challenge has duplicate parameters");
+    }
+    parameters.set(name, value);
+    while (rawParameters[index] === " " || rawParameters[index] === "\t") index += 1;
+    if (index === rawParameters.length) break;
+    if (rawParameters[index] !== ",") {
+      throw responseError(response, "WWW-Authenticate challenge is malformed");
+    }
+    index += 1;
+    if (index === rawParameters.length) {
+      throw responseError(response, "WWW-Authenticate challenge is malformed");
+    }
   }
+  return parameters;
 }
 
-function requireChallengePart(
+function requireExactChallengeParameters(
   response: Response,
-  challenge: string,
-  expected: string,
-  label: string,
+  actual: Map<string, string>,
+  expected: Record<string, string>,
 ): void {
-  if (!challenge.includes(expected)) {
-    throw responseError(response, `OAuth challenge is missing ${label}`);
+  const entries = Object.entries(expected);
+  if (
+    actual.size !== entries.length
+    || entries.some(([name, value]) => actual.get(name) !== value)
+  ) {
+    throw responseError(response, "OAuth challenge parameters do not match the expected state");
   }
+}
+
+function isAuthTokenCharacter(value: string): boolean {
+  return AUTH_TOKEN_CHARACTER_PATTERN.test(value);
 }
 
 function arrayEquals(value: unknown, expected: string[]): boolean {
