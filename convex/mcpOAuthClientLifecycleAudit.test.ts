@@ -91,8 +91,9 @@ describe("OAuth client lifecycle audit", () => {
         malformed: 2,
       },
       malformedRowsTruncated: false,
-      lifecycleAuditClear: false,
+      lifecycleShapeClear: false,
       requiresExplicitRepair: true,
+      requiresCleanupEvidence: true,
       requiresFurtherInspection: false,
       containsSecrets: false,
       grantsOAuthEnablement: false,
@@ -122,14 +123,15 @@ describe("OAuth client lifecycle audit", () => {
     expect(serialized).not.toContain("secretHash");
   });
 
-  test("distinguishes a complete clear audit from a missing workspace", async () => {
+  test("distinguishes a complete clear shape audit from a missing workspace", async () => {
     const observedAt = Date.parse("2026-08-02T01:00:00.000Z");
     const missing = await audit(convexTest(schema, modules), observedAt);
     expect(missing).toMatchObject({
       workspaceFound: false,
       scannedClients: 0,
-      lifecycleAuditClear: false,
+      lifecycleShapeClear: false,
       requiresExplicitRepair: false,
+      requiresCleanupEvidence: false,
       requiresFurtherInspection: true,
       grantsOAuthEnablement: false,
     });
@@ -161,8 +163,9 @@ describe("OAuth client lifecycle audit", () => {
         used: 1,
         malformed: 0,
       },
-      lifecycleAuditClear: true,
+      lifecycleShapeClear: true,
       requiresExplicitRepair: false,
+      requiresCleanupEvidence: false,
       requiresFurtherInspection: false,
       grantsOAuthEnablement: false,
     });
@@ -189,7 +192,7 @@ describe("OAuth client lifecycle audit", () => {
     expect(result.malformedRowsTruncated).toBe(true);
     expect(result.requiresExplicitRepair).toBe(true);
     expect(result.requiresFurtherInspection).toBe(true);
-    expect(result.lifecycleAuditClear).toBe(false);
+    expect(result.lifecycleShapeClear).toBe(false);
   });
 
   test("rejects invalid observation times and invalid service authentication", async () => {
