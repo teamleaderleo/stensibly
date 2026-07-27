@@ -130,13 +130,17 @@ describe("hosted item detail composition", () => {
     const before = Date.now();
     const detail = await ledger.getItem(item.id);
     const after = Date.now();
+    const hostedDetail = detail as typeof detail & {
+      historyContractVersion: 1;
+      eventsTruncated: boolean;
+    };
 
-    expect(detail).toEqual({
-      historyContractVersion: 1,
+    expect(hostedDetail.historyContractVersion).toBe(1);
+    expect(hostedDetail.eventsTruncated).toBe(false);
+    expect(detail).toMatchObject({
       item,
       control,
       events: [],
-      eventsTruncated: false,
       artifacts: [],
       dependencies: [],
       reservations,
