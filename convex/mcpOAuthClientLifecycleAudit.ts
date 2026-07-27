@@ -9,7 +9,16 @@ import { query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
 const MAX_AUDIT_CLIENTS = 1_000;
+const MAX_AUDIT_ROWS_READ = MAX_AUDIT_CLIENTS + 1;
+const MAX_AUDIT_BYTES_READ = 1024 * 1024;
 const MAX_MALFORMED_ROW_REFERENCES = 100;
+
+const cursorValidator = v.union(v.string(), v.null());
+const pageStatusValidator = v.union(
+  v.literal("SplitRecommended"),
+  v.literal("SplitRequired"),
+  v.null(),
+);
 
 const lifecycleCountsValidator = v.object({
   total: v.number(),
@@ -41,8 +50,18 @@ const lifecycleAuditValidator = v.object({
   workspace: v.string(),
   workspaceFound: v.boolean(),
   observedAt: v.number(),
+  cursor: cursorValidator,
+  continueCursor: cursorValidator,
+  splitCursor: cursorValidator,
+  pageStatus: pageStatusValidator,
   scannedClients: v.number(),
   truncatedClients: v.boolean(),
+  pageComplete: v.boolean(),
+  workspaceAuditComplete: v.boolean(),
+  readBounds: v.object({
+    maximumRowsRead: v.number(),
+    maximumBytesRead: v.number(),
+  }),
   counts: lifecycleCountsValidator,
   malformedRows: v.array(malformedRowValidator),
   malformedRowsTruncated: v.boolean(),
@@ -71,7 +90,7 @@ type LifecycleCounts = {
 };
 
 /**
- * Produces one bounded, content-minimised audit projection for OAuth dynamic-client
+ * Produces one bounded, content-minimised audit page for OAuth dynamic-client
  * lifecycle rows in a workspace.
  *
  * The projection intentionally excludes external client IDs, names, redirect URIs,
@@ -79,21 +98,24 @@ type LifecycleCounts = {
  * for malformed rows so an authorised operator can inspect and repair the exact
  * records through a separately reviewed path.
  *
- * A clear lifecycle shape covers classification consistency only. It is not rollout
- * approval and does not replace cleanup/retry evidence, abuse evidence, reference
- * inspection, deployment evidence, or the contemporaneous human approval required
- * for production OAuth enablement.
+ * Each page has fixed row and byte read caps. A clear lifecycle shape is reported
+ * only when the audit starts at the first page and the complete workspace fits in
+ * that one bounded page. Multi-page audits retain explicit continuation evidence for
+ * an external evidence collector; no page or aggregate result grants rollout
+ * approval.
  */
 export const auditClientLifecycles = query({
   args: {
     ...serviceArgs,
     observedAt: v.number(),
+    cursor: v.optional(cursorValidator),
   },
   returns: lifecycleAuditValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspaceSlug = normalizeWorkspace(args.workspace);
     const observedAt = assertTrustedTimestamp(args.observedAt, "Lifecycle audit time");
+    const cursor = args.cursor ?? null;
     const workspace = await findWorkspace(ctx, workspaceSlug);
     if (!workspace) {
       return {
@@ -101,8 +123,15 @@ export const auditClientLifecycles = query({
         workspace: workspaceSlug,
         workspaceFound: false,
         observedAt,
+        cursor,
+        continueCursor: null,
+        splitCursor: null,
+        pageStatus: null,
         scannedClients: 0,
         truncatedClients: false,
+        pageComplete: true,
+        workspaceAuditComplete: false,
+        readBounds: readBounds(),
         counts: emptyCounts(),
         malformedRows: [],
         malformedRowsTruncated: false,
@@ -115,12 +144,23 @@ export const auditClientLifecycles = query({
       };
     }
 
-    const rows = await ctx.db
+    const page = await ctx.db
       .query("mcpOAuthClients")
       .withIndex("by_workspace_created", (q) => q.eq("workspaceId", workspace._id))
-      .take(MAX_AUDIT_CLIENTS + 1);
-    const truncatedClients = rows.length > MAX_AUDIT_CLIENTS;
-    const scannedRows = rows.slice(0, MAX_AUDIT_CLIENTS);
+      .paginate({
+        numItems: MAX_AUDIT_CLIENTS,
+        cursor,
+        maximumRowsRead: MAX_AUDIT_ROWS_READ,
+        maximumBytesRead: MAX_AUDIT_BYTES_READ,
+      });
+    const pageStatus = page.pageStatus ?? null;
+    const splitCursor = page.splitCursor ?? null;
+    const pageComplete = page.isDone
+      && pageStatus === null
+      && splitCursor === null
+      && page.page.length <= MAX_AUDIT_CLIENTS;
+    const truncatedClients = !pageComplete;
+    const scannedRows = page.page.slice(0, MAX_AUDIT_CLIENTS);
     const counts = emptyCounts();
     const malformedRows: Array<{
       rowId: Doc<"mcpOAuthClients">["_id"];
@@ -156,22 +196,29 @@ export const auditClientLifecycles = query({
       }
     }
 
-    const malformedRowsTruncated = truncatedClients
-      || malformedRows.length < counts.malformed;
+    const malformedRowsTruncated = malformedRows.length < counts.malformed;
+    const workspaceAuditComplete = cursor === null && pageComplete;
     return {
       version: 1 as const,
       workspace: workspaceSlug,
       workspaceFound: true,
       observedAt,
+      cursor,
+      continueCursor: pageComplete ? null : page.continueCursor,
+      splitCursor,
+      pageStatus,
       scannedClients: scannedRows.length,
       truncatedClients,
+      pageComplete,
+      workspaceAuditComplete,
+      readBounds: readBounds(),
       counts,
       malformedRows,
       malformedRowsTruncated,
-      lifecycleShapeClear: !truncatedClients && counts.malformed === 0,
+      lifecycleShapeClear: workspaceAuditComplete && counts.malformed === 0,
       requiresExplicitRepair: counts.malformed > 0,
       requiresCleanupEvidence: counts.unusedExpired > 0,
-      requiresFurtherInspection: truncatedClients || malformedRowsTruncated,
+      requiresFurtherInspection: !pageComplete || malformedRowsTruncated,
       containsSecrets: false as const,
       grantsOAuthEnablement: false as const,
     };
@@ -222,6 +269,13 @@ function emptyCounts(): LifecycleCounts {
     unusedExpired: 0,
     used: 0,
     malformed: 0,
+  };
+}
+
+function readBounds() {
+  return {
+    maximumRowsRead: MAX_AUDIT_ROWS_READ,
+    maximumBytesRead: MAX_AUDIT_BYTES_READ,
   };
 }
 
