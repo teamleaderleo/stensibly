@@ -14,7 +14,7 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.1.1`  
+**Operating protocol:** `stensibly-agent-ops/0.2.0`  
 **Status:** dogfood  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
@@ -109,6 +109,40 @@ Workers are expected to act independently inside the current scope and authority
 boundary. Do not wait for central assignment, unrelated reviewers, or a full-pod
 check-in when a bounded action is ready and the applicable risk tier is satisfied.
 
+## Autonomous portfolio execution
+
+Maintain a small explicit portfolio instead of stopping for another operator prompt
+at every natural boundary. One lane should normally own the primary outcome. Up to
+three secondary lanes may cover non-conflicting review, repair, integration,
+rollout preparation, reproduction, evidence, documentation, or exploration. Use
+fewer lanes when the primary work is broad, uncertain, or high risk.
+
+For each active or ready lane, keep enough durable context to identify its outcome,
+exact target, implementation or integration owner, file or subsystem fence, risk
+tier, next executable action, and block, wake, stop, or handoff condition. At a
+completion, block, review verdict, CI result, handoff, or integration decision,
+select the next highest-value eligible action without waiting for central
+assignment. When one lane blocks, advance another non-conflicting lane.
+
+Portfolio ownership does not permit hoarding or hidden overlap:
+
+- keep one implementation owner for overlapping code or shared deliverables;
+- declare stacked, partitioned, repair, continuation, and competing work explicitly;
+- do not open a replacement branch merely because another worker is temporarily quiet;
+- expose or release work that no longer receives active attention;
+- keep every lane independently understandable and recoverable.
+
+Quiet or dormant attention does not erase responsibility, provenance, branches,
+findings, or committed effects. A recovery worker may continue, repair, review,
+partition, or deliberately compete only after reconciling canonical state and
+recording the prior holder, exact last evidence, relationship to the prior work,
+overlap fence, newly accepted responsibility, remaining prior responsibility, and
+clearing or integration condition. Claims, leases, approvals, credentials, and
+production authority expire independently and must be reacquired when required.
+
+See `docs/autonomous-portfolio-execution.md` for the accepted rationale,
+evaluation signals, and rollback conditions behind this protocol default.
+
 ## Risk-tiered review and merge
 
 Choose review depth from demonstrated risk, scope, reversibility, and uncertainty;
@@ -127,12 +161,12 @@ authority, security, data, deployment, dependency, or public-contract effect.
 - Use `[skip review]` or `review-exempt` when automated review would add little
   useful evidence.
 
-### Tier 1 — bounded low-risk runtime change
+### Tier 1 — bounded low-risk runtime or operating-protocol change
 
 Examples include a small local helper, typed renderer, narrow validation repair,
-or isolated behaviour with straightforward rollback and no authorization,
-privacy, schema, migration, durable-state, data-loss, deployment, or broad
-compatibility boundary.
+focused instruction change, or isolated behaviour with straightforward rollback
+and no authorization, privacy, schema, migration, durable-state, data-loss,
+deployment, or broad compatibility boundary.
 
 - Require one independent exact-head `ACCEPT` plus green relevant checks.
 - Once the head is unchanged, mergeable, green, and free of unresolved blocking
