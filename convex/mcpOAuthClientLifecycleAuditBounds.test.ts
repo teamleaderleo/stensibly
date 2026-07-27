@@ -39,6 +39,7 @@ describe("OAuth client lifecycle audit bounds", () => {
       cursor: null,
       scannedClients: 1_000,
       truncatedClients: true,
+      pageRowOverflow: false,
       pageComplete: false,
       workspaceAuditComplete: false,
       readBounds: {
@@ -96,6 +97,7 @@ describe("OAuth client lifecycle audit bounds", () => {
     expect(result).toMatchObject({
       workspace: workspace,
       scannedClients: 2,
+      pageRowOverflow: false,
       pageComplete: true,
       workspaceAuditComplete: true,
       counts: {
@@ -146,6 +148,7 @@ describe("OAuth client lifecycle audit bounds", () => {
         maximumBytesRead: 1_048_576,
       });
       expect(result.scannedClients).toBeLessThanOrEqual(1_000);
+      expect(result.pageRowOverflow).toBe(false);
       expect(result.counts.malformed).toBe(0);
       expect(result.containsSecrets).toBe(false);
       expect(result.grantsOAuthEnablement).toBe(false);
@@ -172,8 +175,17 @@ async function audit(
     serviceSecret,
     workspace: targetWorkspace,
     observedAt,
-    cursor,
+    paginationOpts: pagination(cursor),
   });
+}
+
+function pagination(cursor: string | null) {
+  return {
+    numItems: 1_000,
+    cursor,
+    maximumRowsRead: 1_001,
+    maximumBytesRead: 1_048_576,
+  };
 }
 
 async function insertWorkspace(
