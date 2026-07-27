@@ -21,12 +21,21 @@ export function createHostedLogoutUrl(endpoint) {
   return new URL('/auth/logout', normalizeOrigin(endpoint, 'API endpoint')).toString();
 }
 
-export function prepareHostedSessionRequest(input, init = {}, sentinel = hostedSessionSentinel()) {
+export function prepareHostedSessionRequest(
+  input,
+  init = {},
+  sessionOrigin,
+  sentinel = hostedSessionSentinel(),
+) {
   const request = new Request(input, init);
   if (request.headers.get('authorization') !== `Bearer ${sentinel}`) return request;
 
+  const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
   const url = new URL(request.url);
-  if (url.pathname !== API_PREFIX && !url.pathname.startsWith(`${API_PREFIX}/`)) {
+  if (
+    url.origin !== allowedOrigin
+    || (url.pathname !== API_PREFIX && !url.pathname.startsWith(`${API_PREFIX}/`))
+  ) {
     return request;
   }
 
@@ -40,10 +49,14 @@ export function prepareHostedSessionRequest(input, init = {}, sentinel = hostedS
 
 export function installHostedSessionFetchBridge({
   fetchImpl,
+  sessionOrigin,
   sentinel = hostedSessionSentinel(),
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
-  return (input, init) => fetchImpl(prepareHostedSessionRequest(input, init, sentinel));
+  const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
+  return (input, init) => fetchImpl(
+    prepareHostedSessionRequest(input, init, allowedOrigin, sentinel),
+  );
 }
 
 function normalizeOrigin(value, label) {
