@@ -1,3 +1,4 @@
+import { makeFunctionReference } from "convex/server";
 import { convexApi } from "../convex/refs.js";
 import type { ConvexCaller } from "./convex-ledger.js";
 import type { AccountRole, AccountScope } from "./hosted-account-service.js";
@@ -85,6 +86,16 @@ export interface ConvexMcpOAuthServiceOptions {
   workspace: string;
 }
 
+const registerClientRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientRegistration:registerClient",
+);
+const getClientRef = makeFunctionReference<"query">(
+  "mcpOAuthClientLifecycle:getClient",
+);
+const createAuthorizationCodeRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientLifecycle:createAuthorizationCode",
+);
+
 export class ConvexMcpOAuthService implements McpOAuthService {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -98,7 +109,7 @@ export class ConvexMcpOAuthService implements McpOAuthService {
 
   async registerClient(input: Parameters<McpOAuthService["registerClient"]>[0]) {
     const result = await this.client.mutation(
-      convexApi.mcpOAuth.registerClient,
+      registerClientRef,
       this.args(input),
     ) as McpOAuthRegistrationResult;
     if (result.status === "ok") return result.client;
@@ -110,14 +121,14 @@ export class ConvexMcpOAuthService implements McpOAuthService {
 
   async getClient(clientId: string) {
     return await this.client.query(
-      convexApi.mcpOAuth.getClient,
+      getClientRef,
       this.args({ clientId }),
     ) as McpOAuthClientRecord | null;
   }
 
   async createAuthorizationCode(input: Parameters<McpOAuthService["createAuthorizationCode"]>[0]) {
     return await this.client.mutation(
-      convexApi.mcpOAuth.createAuthorizationCode,
+      createAuthorizationCodeRef,
       this.args(input),
     ) as McpOAuthGrant;
   }
