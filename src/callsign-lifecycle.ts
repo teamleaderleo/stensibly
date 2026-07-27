@@ -114,8 +114,13 @@ export interface CallsignLifecycleResult {
 export function evaluateCallsignLifecycle(
   input: CallsignLifecycleRequestInput,
 ): CallsignLifecycleResult {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new RangeError("Callsign lifecycle request must be an object");
+  }
+
+  const evaluatedAt = canonicalTimestamp(input.evaluatedAt, "Evaluation time");
   const requested = canonicalCallsign(input.requestedCallsign, "Requested callsign");
-  const prior = canonicalPriorHolder(input.priorHolder, input.evaluatedAt);
+  const prior = canonicalPriorHolder(input.priorHolder, evaluatedAt);
   if (requested.collisionKey !== prior.collisionKey) {
     throw new RangeError("Requested callsign must match the prior holder collision key");
   }
@@ -123,17 +128,6 @@ export function evaluateCallsignLifecycle(
   const newRunId = canonicalRunId(input.newRunId, "New run ID");
   if (newRunId === prior.runId) {
     throw new RangeError("New run ID must differ from the prior holder run ID");
-  }
-
-  const evaluatedAt = canonicalTimestamp(input.evaluatedAt, "Evaluation time");
-  if (Date.parse(prior.lastActiveAt) > Date.parse(evaluatedAt)) {
-    throw new RangeError("Prior activity cannot be later than evaluation time");
-  }
-  if (prior.releasedAt && Date.parse(prior.releasedAt) > Date.parse(evaluatedAt)) {
-    throw new RangeError("Release time cannot be later than evaluation time");
-  }
-  if (prior.retiredAt && Date.parse(prior.retiredAt) > Date.parse(evaluatedAt)) {
-    throw new RangeError("Retirement time cannot be later than evaluation time");
   }
 
   const mode = canonicalMode(input.mode);
@@ -144,7 +138,7 @@ export function evaluateCallsignLifecycle(
   const coolingOffUntil = decision === "blocked_cooling_off"
     ? coolingOffDeadline(prior, policy)
     : null;
-  const lineageKind = decision === "reusable"
+  const lineageKind: CallsignLifecycleResult["lineageKind"] = decision === "reusable"
     ? "reuse"
     : decision === "inherited"
     ? "inherit"
@@ -181,16 +175,16 @@ export function evaluateCallsignLifecycle(
 
 function canonicalPriorHolder(
   input: PriorCallsignHolderInput,
-  rawEvaluatedAt: string,
+  evaluatedAt: string,
 ): CallsignLifecycleResult["priorHolder"] {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new RangeError("Prior callsign holder must be an object");
   }
+
   const callsign = canonicalCallsign(input.callsign, "Prior callsign");
   const runId = canonicalRunId(input.runId, "Prior holder run ID");
   const state = canonicalState(input.state);
   const lastActiveAt = canonicalTimestamp(input.lastActiveAt, "Prior last activity");
-  const evaluatedAt = canonicalTimestamp(rawEvaluatedAt, "Evaluation time");
   const releasedAt = input.releasedAt === undefined
     ? null
     : canonicalTimestamp(input.releasedAt, "Release time");
@@ -209,12 +203,18 @@ function canonicalPriorHolder(
     if (Date.parse(releasedAt) < Date.parse(lastActiveAt)) {
       throw new RangeError("Release time cannot be earlier than prior activity");
     }
+    if (Date.parse(releasedAt) > Date.parse(evaluatedAt)) {
+      throw new RangeError("Release time cannot be later than evaluation time");
+    }
   } else if (state === "retired") {
     if (!retiredAt || releasedAt) {
       throw new RangeError("Retired callsign state requires retirement time and no release time");
     }
     if (Date.parse(retiredAt) < Date.parse(lastActiveAt)) {
       throw new RangeError("Retirement time cannot be earlier than prior activity");
+    }
+    if (Date.parse(retiredAt) > Date.parse(evaluatedAt)) {
+      throw new RangeError("Retirement time cannot be later than evaluation time");
     }
   } else if (releasedAt || retiredAt) {
     throw new RangeError(`${state} callsign state cannot include release or retirement time`);
@@ -273,9 +273,18 @@ function canonicalCallsign(
 }
 
 function canonicalRunId(value: string, label: string): string {
-  const normalized = boundedIdentifier(value, label, limits.runId, runIdPattern);
-  if (!normalized.startsWith("run_")) {
-    throw new RangeError(`${label} must start with run_`);
+  if (typeof value !== "string" || unsafeTextPattern.test(value)) {
+    throw new RangeError(`${label} contains unsupported control characters`);
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0) throw new RangeError(`${label} must not be empty`);
+  if ([...normalized].length > limits.runId) {
+    throw new RangeError(`${label} must be at most ${limits.runId} characters`);
+  }
+  if (!runIdPattern.test(normalized)) {
+    throw new RangeError(
+      `${label} must start with run_ and contain only letters, digits, dot, underscore, colon, or hyphen`,
+    );
   }
   return normalized;
 }
@@ -300,6 +309,12 @@ function canonicalPolicy(
     throw new RangeError(
       `Callsign cooling-off seconds must be an integer from 0 to ${limits.maximumCoolingOffSeconds}`,
     );
+  }
+  if (
+    input.explicitReleaseBypassesCoolingOff !== undefined
+    && typeof input.explicitReleaseBypassesCoolingOff !== "boolean"
+  ) {
+    throw new RangeError("Explicit release bypass must be a boolean");
   }
   return {
     version,
