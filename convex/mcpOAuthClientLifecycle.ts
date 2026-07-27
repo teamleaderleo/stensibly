@@ -58,6 +58,13 @@ const clientCleanupValidator = v.object({
   blockedClients: v.number(),
   hasMore: v.boolean(),
 });
+const clientReconcileValidator = v.object({
+  status: v.union(
+    v.literal("missing"),
+    v.literal("unchanged"),
+    v.literal("repaired"),
+  ),
+});
 
 type AccountRole = Infer<typeof accountRole>;
 type OAuthScope = Infer<typeof oauthScope>;
@@ -190,6 +197,33 @@ export const getClient = query({
   },
 });
 
+export const reconcileClientLifecycle = mutation({
+  args: { ...serviceArgs, clientId: v.string() },
+  returns: clientReconcileValidator,
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) return { status: "missing" as const };
+    const clientId = readCredentialId(args.clientId, "client");
+    if (!clientId) return { status: "missing" as const };
+    const client = await ctx.db
+      .query("mcpOAuthClients")
+      .withIndex("by_external_id", (q) => q.eq("externalId", clientId))
+      .unique();
+    if (!client || client.workspaceId !== workspace._id) {
+      return { status: "missing" as const };
+    }
+    if (classifyClientLifecycle(client).kind === "used") {
+      return { status: "unchanged" as const };
+    }
+    if (!await clientHasReferences(ctx, workspace._id, client.externalId)) {
+      return { status: "unchanged" as const };
+    }
+    await markClientUsedConservatively(ctx, client, Date.now());
+    return { status: "repaired" as const };
+  },
+});
+
 export const createAuthorizationCode = mutation({
   args: {
     ...serviceArgs,
@@ -317,6 +351,7 @@ async function cleanupExpiredUnusedClients(
     .withIndex("by_workspace_lifecycle_expiry", (q) => q
       .eq("workspaceId", workspaceId)
       .eq("lifecycleState", "unused")
+      .gt("unusedExpiresAt", undefined)
       .lte("unusedExpiresAt", now))
     .take(CLIENT_CLEANUP_BATCH_SIZE + 1);
   let cleaned = 0;
