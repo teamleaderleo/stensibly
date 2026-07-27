@@ -156,6 +156,26 @@ describe("setup status projection", () => {
     }))).toThrow("must currently be ready");
   });
 
+  test("requires an unambiguous canonical UTC observation timestamp", () => {
+    expect(projectSetupStatus(input({
+      observedAt: "2026-07-27T13:45:00.123Z",
+    })).observedAt).toBe("2026-07-27T13:45:00.123Z");
+
+    for (const observedAt of [
+      "2026-07-27T13:45:00",
+      "2026-07-27T13:45:00+00:00",
+      "07/27/2026 13:45:00",
+    ]) {
+      expect(() => projectSetupStatus(input({ observedAt }))).toThrow(
+        "ISO-8601 UTC timestamp",
+      );
+    }
+
+    expect(() => projectSetupStatus(input({
+      observedAt: "2026-02-30T13:45:00Z",
+    }))).toThrow("valid calendar timestamp");
+  });
+
   test("normalises safe public values and rejects credential-shaped or mismatched URLs", () => {
     const result = projectSetupStatus(input({
       mode: "production",
