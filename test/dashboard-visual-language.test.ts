@@ -28,6 +28,22 @@ describe("dashboard visual language", () => {
     expect(hostedStyles).toContain("var(--accent-strong)");
   });
 
+  test("keeps dynamically loaded item actions inside the same palette", async () => {
+    const actionStyles = await Promise.all([
+      "item-claim.css",
+      "item-progress.css",
+      "item-block.css",
+      "item-complete.css",
+      "item-handoff.css",
+    ].map(siteFile));
+    const combined = actionStyles.join("\n");
+
+    expect(combined).toContain("var(--accent-strong)");
+    expect(combined).toContain("var(--danger-soft)");
+    expect(combined).not.toContain("#ffc0aa");
+    expect(combined).not.toContain("rgba(255,154,118");
+  });
+
   test("removes terminal persona copy while preserving the four-state board", async () => {
     const [html, app] = await Promise.all([
       siteFile("index.html"),
