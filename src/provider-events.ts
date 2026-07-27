@@ -11,6 +11,7 @@ export interface ProviderEvent {
   provider: "github";
   deliveryId: string;
   eventType: "pull_request_review";
+  externalObjectId: string;
   repository: string;
   subjectNumber: number;
   action: string;
@@ -27,6 +28,7 @@ export interface ProviderEvent {
 export interface IngestGitHubPullRequestReviewInput {
   deliveryId: string;
   payloadDigest: string;
+  externalObjectId: string;
   repository: string;
   subjectNumber: number;
   action: string;
@@ -47,6 +49,7 @@ interface ProviderEventRow {
   delivery_id: string;
   payload_digest: string;
   event_type: "pull_request_review";
+  external_object_id: string;
   repository: string;
   subject_number: number;
   action: string;
@@ -109,6 +112,7 @@ export class SqliteProviderEventStore {
             delivery_id,
             payload_digest,
             event_type,
+            external_object_id,
             repository,
             subject_number,
             action,
@@ -119,14 +123,15 @@ export class SqliteProviderEventStore {
             summary,
             received_at
           ) VALUES (
-            ?1, 'github', ?2, ?3, 'pull_request_review', ?4, ?5, ?6, ?7, ?8,
-            'record', 'pending', ?9, ?10
+            ?1, 'github', ?2, ?3, 'pull_request_review', ?4, ?5, ?6, ?7, ?8, ?9,
+            'record', 'pending', ?10, ?11
           )
         `)
         .run(
           id,
           input.deliveryId,
           input.payloadDigest,
+          input.externalObjectId,
           input.repository,
           input.subjectNumber,
           input.action,
@@ -155,7 +160,11 @@ export class SqliteProviderEventStore {
         SELECT *
         FROM provider_events
         WHERE (?1 IS NULL OR status = ?1)
-        ORDER BY received_at DESC, id DESC
+        ORDER BY
+          CASE WHEN ?1 = 'pending' THEN received_at END ASC,
+          CASE WHEN ?1 = 'pending' THEN id END ASC,
+          CASE WHEN ?1 IS NULL OR ?1 = 'acknowledged' THEN received_at END DESC,
+          CASE WHEN ?1 IS NULL OR ?1 = 'acknowledged' THEN id END DESC
         LIMIT ?2
       `)
       .all(options.status ?? null, limit);
@@ -219,6 +228,7 @@ export class SqliteProviderEventStore {
         delivery_id TEXT NOT NULL,
         payload_digest TEXT NOT NULL,
         event_type TEXT NOT NULL CHECK (event_type = 'pull_request_review'),
+        external_object_id TEXT NOT NULL,
         repository TEXT NOT NULL,
         subject_number INTEGER NOT NULL CHECK (subject_number > 0),
         action TEXT NOT NULL,
@@ -245,6 +255,7 @@ function mapProviderEvent(row: ProviderEventRow): ProviderEvent {
     provider: row.provider,
     deliveryId: row.delivery_id,
     eventType: row.event_type,
+    externalObjectId: row.external_object_id,
     repository: row.repository,
     subjectNumber: row.subject_number,
     action: row.action,
