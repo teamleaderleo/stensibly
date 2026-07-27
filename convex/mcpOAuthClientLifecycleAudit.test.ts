@@ -80,8 +80,13 @@ describe("OAuth client lifecycle audit", () => {
       workspace,
       workspaceFound: true,
       observedAt,
+      cursor: null,
+      continueCursor: null,
       scannedClients: 6,
       truncatedClients: false,
+      pageRowOverflow: false,
+      pageComplete: true,
+      workspaceAuditComplete: true,
       counts: {
         total: 6,
         legacy: 1,
@@ -129,6 +134,8 @@ describe("OAuth client lifecycle audit", () => {
     expect(missing).toMatchObject({
       workspaceFound: false,
       scannedClients: 0,
+      pageComplete: true,
+      workspaceAuditComplete: false,
       lifecycleShapeClear: false,
       requiresExplicitRepair: false,
       requiresCleanupEvidence: false,
@@ -155,6 +162,8 @@ describe("OAuth client lifecycle audit", () => {
     expect(clear).toMatchObject({
       workspaceFound: true,
       scannedClients: 2,
+      pageComplete: true,
+      workspaceAuditComplete: true,
       counts: {
         total: 2,
         legacy: 1,
@@ -195,7 +204,7 @@ describe("OAuth client lifecycle audit", () => {
     expect(result.lifecycleShapeClear).toBe(false);
   });
 
-  test("rejects invalid observation times and invalid service authentication", async () => {
+  test("rejects invalid observation, authentication, and pagination contracts", async () => {
     const t = convexTest(schema, modules);
     await expect(audit(t, -1)).rejects.toThrow("Lifecycle audit time is invalid");
     await expect(audit(t, 1.5)).rejects.toThrow("Lifecycle audit time is invalid");
@@ -203,7 +212,17 @@ describe("OAuth client lifecycle audit", () => {
       serviceSecret: "wrong-secret",
       workspace,
       observedAt: 1,
+      paginationOpts: pagination(null),
     })).rejects.toThrow();
+    await expect(t.query(auditRef, {
+      serviceSecret,
+      workspace,
+      observedAt: 1,
+      paginationOpts: {
+        ...pagination(null),
+        maximumBytesRead: 2 * 1024 * 1024,
+      },
+    })).rejects.toThrow("exact fixed row and byte bounds");
   });
 });
 
@@ -212,7 +231,17 @@ async function audit(t: ReturnType<typeof convexTest>, observedAt: number) {
     serviceSecret,
     workspace,
     observedAt,
+    paginationOpts: pagination(null),
   });
+}
+
+function pagination(cursor: string | null) {
+  return {
+    numItems: 1_000,
+    cursor,
+    maximumRowsRead: 1_001,
+    maximumBytesRead: 1_048_576,
+  };
 }
 
 async function insertWorkspace(
