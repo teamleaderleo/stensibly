@@ -32,7 +32,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
-      - name: Run unauthenticated disabled-state verifier
+      - name: Run unauthenticated enabled-state verifier
         id: verify
         continue-on-error: true
         env:
@@ -44,12 +44,12 @@ jobs:
             echo "target=${{ matrix.target }}"
             echo "endpoint=${ENDPOINT}"
             echo "issuer=https://api.stensibly.com"
-            echo "expectation=disabled"
+            echo "expectation=enabled"
             echo "observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             bun run verify:oauth -- \
               --endpoint "$ENDPOINT" \
               --issuer https://api.stensibly.com \
-              --expect disabled
+              --expect enabled
           } 2>&1 | tee "oauth-observation-${{ matrix.target }}.txt"
       - name: Publish bounded observation summary
         if: always()
@@ -70,6 +70,6 @@ jobs:
           path: oauth-observation-${{ matrix.target }}.txt
           if-no-files-found: warn
           retention-days: 14
-      - name: Fail when the declared disabled contract did not pass
+      - name: Fail when the declared enabled contract did not pass
         if: steps.verify.outcome != 'success'
         run: exit 1
