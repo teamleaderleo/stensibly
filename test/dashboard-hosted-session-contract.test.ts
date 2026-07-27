@@ -29,39 +29,45 @@ describe("hosted dashboard session marker", () => {
 describe("hosted dashboard request bridge", () => {
   test("uses cookies only for hosted REST and never sends the session marker", () => {
     const marker = hostedSessionSentinel();
-    const request = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
+    const hosted = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${marker}` },
     }, endpoint);
-    expect(request.headers.get("authorization")).toBeNull();
-    expect(request.credentials).toBe("include");
+    expect(hosted.request.headers.get("authorization")).toBeNull();
+    expect(hosted.credentials).toBe("include");
 
     const manualToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
     const bearer = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${manualToken}` },
     }, endpoint);
-    expect(bearer.headers.get("authorization")).toBe(`Bearer ${manualToken}`);
+    expect(bearer.request.headers.get("authorization")).toBe(`Bearer ${manualToken}`);
     expect(bearer.credentials).toBe("omit");
 
     const mcp = prepareHostedSessionRequest(`${endpoint}/mcp`, {
       method: "POST",
       headers: { authorization: `Bearer ${marker}` },
     }, endpoint);
-    expect(mcp.headers.get("authorization")).toBeNull();
+    expect(mcp.request.headers.get("authorization")).toBeNull();
     expect(mcp.credentials).toBe("omit");
 
     const foreign = prepareHostedSessionRequest("https://other.example/api/v1/items", {
       headers: { authorization: `Bearer ${marker}` },
     }, endpoint);
-    expect(foreign.headers.get("authorization")).toBeNull();
+    expect(foreign.request.headers.get("authorization")).toBeNull();
     expect(foreign.credentials).toBe("omit");
   });
 
-  test("installs a bridge that forwards a credentialed Request", async () => {
-    const observed: Request[] = [];
-    const fetchImpl = (async (input: RequestInfo | URL) => {
-      observed.push(input instanceof Request ? input : new Request(input));
+  test("installs a bridge that forwards the explicit credential mode", async () => {
+    const observed: Array<{ request: Request; credentials: RequestCredentials | undefined }> = [];
+    const fetchImpl = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      observed.push({
+        request: input instanceof Request ? input : new Request(input),
+        credentials: init?.credentials,
+      });
       return new Response(null, { status: 204 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const bridgedFetch = installHostedSessionFetchBridge({
       fetchImpl,
       sessionOrigin: endpoint,
@@ -71,11 +77,11 @@ describe("hosted dashboard request bridge", () => {
       headers: { authorization: `Bearer ${marker}` },
     });
     expect(response.status).toBe(204);
-    const request = observed[0];
-    expect(request).toBeDefined();
-    if (!request) throw new Error("The bridge did not forward a request.");
-    expect(request.credentials).toBe("include");
-    expect(request.headers.get("authorization")).toBeNull();
+    const observedRequest = observed[0];
+    expect(observedRequest).toBeDefined();
+    if (!observedRequest) throw new Error("The bridge did not forward a request.");
+    expect(observedRequest.credentials).toBe("include");
+    expect(observedRequest.request.headers.get("authorization")).toBeNull();
   });
 });
 
