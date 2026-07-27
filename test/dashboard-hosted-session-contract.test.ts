@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import {
+  classifyHostedSessionDisconnect,
   createGithubSignInUrl,
   createHostedLogoutUrl,
   hostedSessionSentinel,
@@ -24,6 +26,15 @@ describe("hosted dashboard session marker", () => {
     expect(isDefaultHostedEndpoint(`${endpoint}/`, endpoint)).toBe(true);
     expect(isDefaultHostedEndpoint("https://self-hosted.example", endpoint)).toBe(false);
   });
+
+  test("yields hosted denial recovery after a bearer token takes over", () => {
+    const marker = hostedSessionSentinel();
+    const manualToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
+    expect(classifyHostedSessionDisconnect(marker, false)).toBe("hosted");
+    expect(classifyHostedSessionDisconnect("", true)).toBe("hosted");
+    expect(classifyHostedSessionDisconnect(manualToken, true)).toBe("bearer");
+    expect(classifyHostedSessionDisconnect("", false)).toBe("ordinary");
+  });
 });
 
 describe("hosted dashboard request bridge", () => {
@@ -34,6 +45,7 @@ describe("hosted dashboard request bridge", () => {
     }, endpoint);
     expect(hosted.request.headers.get("authorization")).toBeNull();
     expect(hosted.credentials).toBe("include");
+    expect(hosted.hostedSession).toBe(true);
 
     const manualToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
     const bearer = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
@@ -41,6 +53,7 @@ describe("hosted dashboard request bridge", () => {
     }, endpoint);
     expect(bearer.request.headers.get("authorization")).toBe(`Bearer ${manualToken}`);
     expect(bearer.credentials).toBe("omit");
+    expect(bearer.hostedSession).toBe(false);
 
     const mcp = prepareHostedSessionRequest(`${endpoint}/mcp`, {
       method: "POST",
@@ -48,12 +61,14 @@ describe("hosted dashboard request bridge", () => {
     }, endpoint);
     expect(mcp.request.headers.get("authorization")).toBeNull();
     expect(mcp.credentials).toBe("omit");
+    expect(mcp.hostedSession).toBe(false);
 
     const foreign = prepareHostedSessionRequest("https://other.example/api/v1/items", {
       headers: { authorization: `Bearer ${marker}` },
     }, endpoint);
     expect(foreign.request.headers.get("authorization")).toBeNull();
     expect(foreign.credentials).toBe("omit");
+    expect(foreign.hostedSession).toBe(false);
   });
 
   test("installs a bridge that forwards the explicit credential mode", async () => {
@@ -83,6 +98,62 @@ describe("hosted dashboard request bridge", () => {
     expect(observedRequest.credentials).toBe("include");
     expect(observedRequest.request.headers.get("authorization")).toBeNull();
   });
+
+  test("reports only authenticated hosted REST denials", async () => {
+    let denials = 0;
+    const deniedFetch = (async () => new Response(null, { status: 403 })) as unknown as typeof fetch;
+    const bridgedFetch = installHostedSessionFetchBridge({
+      fetchImpl: deniedFetch,
+      sessionOrigin: endpoint,
+      onHostedAccessDenied: () => {
+        denials += 1;
+      },
+    });
+    const marker = hostedSessionSentinel();
+    const manualToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
+
+    await bridgedFetch(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${marker}` },
+    });
+    expect(denials).toBe(1);
+
+    await bridgedFetch(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${manualToken}` },
+    });
+    await bridgedFetch(`${endpoint}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${marker}` },
+    });
+    await bridgedFetch("https://other.example/api/v1/items", {
+      headers: { authorization: `Bearer ${marker}` },
+    });
+    expect(denials).toBe(1);
+  });
+
+  test("does not replace a hosted 403 when denial notification fails", async () => {
+    const deniedFetch = (async () => new Response(null, { status: 403 })) as unknown as typeof fetch;
+    const bridgedFetch = installHostedSessionFetchBridge({
+      fetchImpl: deniedFetch,
+      sessionOrigin: endpoint,
+      onHostedAccessDenied: () => {
+        throw new Error("private UI failure");
+      },
+    });
+    const response = await bridgedFetch(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${hostedSessionSentinel()}` },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  test("rejects an invalid hosted denial callback", () => {
+    const fetchImpl = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
+    expect(() => installHostedSessionFetchBridge({
+      fetchImpl,
+      sessionOrigin: endpoint,
+      onHostedAccessDenied: "not-a-function",
+    } as unknown as Parameters<typeof installHostedSessionFetchBridge>[0]))
+      .toThrow("Hosted access-denied callback must be a function");
+  });
 });
 
 describe("hosted dashboard auth URLs and logout", () => {
@@ -106,6 +177,21 @@ describe("hosted dashboard auth URLs and logout", () => {
 
     const failure = (async () => new Response(null, { status: 503 })) as unknown as typeof fetch;
     await expect(revokeHostedSession(failure, endpoint)).rejects.toThrow("Sign out returned HTTP 503");
+  });
+
+  test("wires denial recovery while yielding a later bearer disconnect", async () => {
+    const [html, bridge] = await Promise.all([
+      readFile(new URL("../site/index.html", import.meta.url), "utf8"),
+      readFile(new URL("../site/hosted-session-bridge.js", import.meta.url), "utf8"),
+    ]);
+    expect(html).toContain('id="hosted-sign-out"');
+    expect(bridge).toContain("onHostedAccessDenied: preserveHostedSignOut");
+    expect(bridge).toContain("classifyHostedSessionDisconnect(stored, hostedAuthorizationDenied)");
+    expect(bridge).toContain("if (mode === 'bearer')");
+    expect(bridge).toContain("clearHostedDenialRecovery()");
+    expect(bridge).toContain("if (mode !== 'hosted') return");
+    expect(bridge).toContain("hostedSignOutButton.hidden = true");
+    expect(bridge).toContain("clearHostedMarker()");
   });
 
   test("rejects credential-bearing and non-origin endpoints", () => {
