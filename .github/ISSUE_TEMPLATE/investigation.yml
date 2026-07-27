@@ -1,0 +1,57 @@
+name: Investigation or observation
+description: Preserve a question or finding that needs bounded investigation before commitment
+title: "[Investigation]: "
+labels:
+  - "type:investigation"
+  - "triage:needed"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Recording an observation does not create responsibility, priority, approval, or an implementation commitment. Use this form when the evidence is useful but the right action is not yet established.
+
+  - type: textarea
+    id: observation
+    attributes:
+      label: Observation or question
+      description: State the fact, anomaly, workflow friction, creative idea, or uncertainty without presenting a conclusion as proven.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Current evidence
+      description: Link exact runs, revisions, issues, reviews, logs, source locations, user reports, or measurements. Declare important omissions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis or competing explanations
+      description: Explain what may be happening and what evidence would distinguish the alternatives.
+    validations:
+      required: true
+
+  - type: textarea
+    id: investigation
+    attributes:
+      label: Bounded investigation
+      description: Define the smallest read-only check, reproduction, comparison, survey, or prototype that would materially improve confidence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: promotion
+    attributes:
+      label: Promotion or stop condition
+      description: State what would promote this into a bug, improvement, proposal, ready action, pod memory, or no-action result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: overlap
+    attributes:
+      label: Related or overlapping work
+      description: Link existing captures, issues, pull requests, surveys, or active work whose independence must be preserved.

@@ -1,0 +1,58 @@
+name: Bug report
+description: Report demonstrated incorrect behaviour, a regression, or a broken contract
+title: "[Bug]: "
+labels:
+  - "type:bug"
+  - "triage:needed"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for behaviour that is demonstrably wrong. Security or privacy-sensitive details should be minimised and shared only through an appropriate restricted channel.
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the observed behaviour and its impact.
+      placeholder: Include the smallest concrete example.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen?
+      description: State the expected behaviour or contract.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and evidence
+      description: Provide bounded steps, exact commands, logs, screenshots, tests, or source references. Remove credentials and private data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Exact scope and version
+      description: Name the repository area, environment, branch, revision, deployment, protocol, or contract version when known.
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and authority considerations
+      description: Note possible security, privacy, data-loss, production, credential, or permission implications. Write "none known" when appropriate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: overlap
+    attributes:
+      label: Related or overlapping work
+      description: Link related issues, pull requests, reviews, incidents, or competing explanations.

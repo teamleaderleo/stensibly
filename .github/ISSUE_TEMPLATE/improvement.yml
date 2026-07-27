@@ -1,0 +1,57 @@
+name: Improvement or technical debt
+description: Improve existing behaviour, maintainability, validation, or workflow
+title: "[Improvement]: "
+labels:
+  - "type:improvement"
+  - "triage:needed"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a concrete improvement to something that already exists. Prefer an evidence-backed bounded slice over a general request to refactor or clean up.
+
+  - type: textarea
+    id: friction
+    attributes:
+      label: Current friction or debt
+      description: What is brittle, repetitive, costly, unclear, or harder to extend than it should be?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable improvement without prescribing unnecessary implementation detail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link repeated failures, duplicated work, maintenance history, performance data, review findings, or exact source locations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: slice
+    attributes:
+      label: Bounded first slice
+      description: Name a small implementation or experiment, expected files or subsystem, acceptance signal, and stop condition.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Trade-offs and rollback
+      description: What complexity, compatibility, migration, review, or operational cost could increase? How can the change be revised or reverted?
+    validations:
+      required: true
+
+  - type: textarea
+    id: overlap
+    attributes:
+      label: Related or overlapping work
+      description: Link existing issues, pull requests, proposals, or active file fences that should be finished, avoided, or deliberately overlapped.

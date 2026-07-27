@@ -1,0 +1,61 @@
+name: Sync issue labels
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/labels.json
+      - .github/workflows/sync-issue-labels.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create or update declared labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          jq -e '
+            type == "array"
+            and length > 0
+            and all(
+              .[];
+              (.name | type == "string" and length > 0 and length <= 50)
+              and (.color | test("^[0-9a-fA-F]{6}$"))
+              and (.description | type == "string" and length <= 100)
+            )
+            and ((map(.name) | unique | length) == length)
+          ' .github/labels.json >/dev/null
+
+          jq -c '.[]' .github/labels.json | while IFS= read -r label; do
+            name="$(jq -r '.name' <<<"$label")"
+            color="$(jq -r '.color' <<<"$label")"
+            description="$(jq -r '.description' <<<"$label")"
+            encoded_name="$(jq -rn --arg value "$name" '$value | @uri')"
+
+            if gh api "repos/$REPOSITORY/labels/$encoded_name" >/dev/null 2>&1; then
+              gh api --method PATCH "repos/$REPOSITORY/labels/$encoded_name" \
+                -f new_name="$name" \
+                -f color="$color" \
+                -f description="$description" >/dev/null
+              echo "Updated $name"
+            else
+              gh api --method POST "repos/$REPOSITORY/labels" \
+                -f name="$name" \
+                -f color="$color" \
+                -f description="$description" >/dev/null
+              echo "Created $name"
+            fi
+          done

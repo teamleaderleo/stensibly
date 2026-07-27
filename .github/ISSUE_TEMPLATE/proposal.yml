@@ -1,0 +1,57 @@
+name: Product or workflow proposal
+description: Propose a new product direction, workflow, policy, or bounded experiment
+title: "[Proposal]: "
+labels:
+  - "type:proposal"
+  - "triage:needed"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a new direction rather than a demonstrated defect. A proposal is advisory until it is reviewed, accepted, and given any required responsibility or authority.
+
+  - type: textarea
+    id: opportunity
+    attributes:
+      label: Opportunity or problem
+      description: What becomes possible, easier, safer, more useful, or more creative?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the user or system result and the boundary of the proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: timing
+    attributes:
+      label: Why consider this now?
+      description: Link current evidence, context that may decay, a newly available capability, or a recurring need.
+    validations:
+      required: true
+
+  - type: textarea
+    id: experiment
+    attributes:
+      label: First experiment
+      description: Define a reversible bounded trial, baseline, acceptance signal, failure condition, and review point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: authority
+    attributes:
+      label: Authority and consequence boundary
+      description: Name any merge, deployment, credential, spending, external communication, data, permission, or production effects that remain separately controlled.
+    validations:
+      required: true
+
+  - type: textarea
+    id: overlap
+    attributes:
+      label: Related or overlapping work
+      description: Link existing issues, proposals, experiments, pull requests, or integration owners.
