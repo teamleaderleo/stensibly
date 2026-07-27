@@ -382,7 +382,7 @@ async function readChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<ReadableStreamDefaultReadResult<Uint8Array>> {
+) {
   if (signal.aborted) throw new VerificationError(`Request timed out after ${timeoutMs}ms`);
   return await new Promise((resolve, reject) => {
     const onAbort = () => reject(new VerificationError(`Request timed out after ${timeoutMs}ms`));
