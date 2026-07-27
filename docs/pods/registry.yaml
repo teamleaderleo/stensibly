@@ -4,21 +4,28 @@ status: temporary-github-projection
 canonical_authority: false
 last_reviewed: 2026-07-27
 source_issues:
+  - 270
   - 272
   - 278
   - 281
-  - 270
+  - 293
+  - 297
+  - 312
 
 pods:
   - id: pod_foundry
     display_name: Foundry
-    lifecycle_status: active
+    lifecycle_status: trial
+    lifecycle_effective_when: accepted-merge-of-pr-298
+    proposal_ref: https://github.com/teamleaderleo/stensibly/pull/298
+    decision_ref: null
+    sponsor_status: pending-human-decision
+    sponsor: null
     purpose: >-
-      Broad provisional pod for advancing Stensibly while retaining useful
-      context, practices, and lineage across ephemeral worker runs.
-    sponsor: human-operator
-    enrolment: open
-    membership_model: run-scoped-non-exclusive
+      Broad provisional pod context for advancing Stensibly while retaining useful
+      practices, evidence, and lineage across ephemeral worker runs.
+    participation: open-after-explicit-declaration
+    membership_model: run-scoped-non-exclusive-descriptive
     scope:
       projects:
         - stensibly
@@ -42,6 +49,7 @@ proposal_policy:
     - dormant
     - dissolved
   default_trial_required: true
+  decision_required_before_trial: true
   human_approval_required_for:
     - credentials
     - spending
