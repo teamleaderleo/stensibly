@@ -36,6 +36,11 @@ interface ResponseDocument {
   body: unknown;
 }
 
+interface BoundedStreamReadResult {
+  done: boolean;
+  value?: Uint8Array;
+}
+
 class VerificationError extends Error {}
 
 export function parseVerifyOAuthHostedArgs(
@@ -382,9 +387,9 @@ async function readChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   signal: AbortSignal,
   timeoutMs: number,
-) {
+): Promise<BoundedStreamReadResult> {
   if (signal.aborted) throw new VerificationError(`Request timed out after ${timeoutMs}ms`);
-  return await new Promise((resolve, reject) => {
+  return await new Promise<BoundedStreamReadResult>((resolve, reject) => {
     const onAbort = () => reject(new VerificationError(`Request timed out after ${timeoutMs}ms`));
     signal.addEventListener("abort", onAbort, { once: true });
     reader.read().then(resolve, reject).finally(() => {
