@@ -44,20 +44,22 @@ describe("hosted dashboard request bridge", () => {
   });
 
   test("installs a bridge that forwards a credentialed Request", async () => {
-    let observed: Request | null = null;
-    const bridgedFetch = installHostedSessionFetchBridge({
-      fetchImpl: async (input) => {
-        observed = input instanceof Request ? input : new Request(input);
-        return new Response(null, { status: 204 });
-      },
-    });
+    const observed: Request[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      observed.push(input instanceof Request ? input : new Request(input));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const bridgedFetch = installHostedSessionFetchBridge({ fetchImpl });
     const marker = hostedSessionSentinel();
     const response = await bridgedFetch(`${endpoint}/api/v1/principal`, {
       headers: { authorization: `Bearer ${marker}` },
     });
     expect(response.status).toBe(204);
-    expect(observed?.credentials).toBe("include");
-    expect(observed?.headers.get("authorization")).toBeNull();
+    const request = observed[0];
+    expect(request).toBeDefined();
+    if (!request) throw new Error("The bridge did not forward a request.");
+    expect(request.credentials).toBe("include");
+    expect(request.headers.get("authorization")).toBeNull();
   });
 });
 
