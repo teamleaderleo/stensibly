@@ -23,6 +23,11 @@ const queuedStatuses = [
 const activeStatuses = new Set(["queued", "starting", "running", "waiting", "blocked"]);
 export const MAX_VISIBLE_ITEM_RUNS = 20;
 
+const hostedPromiseWakeupProjection = {
+  promiseWakeupSource: "hosted_unavailable" as const,
+  consumedPromiseWakeupIds: [] as string[],
+};
+
 type RunCandidate =
   | { family: "legacy"; run: Doc<"runs"> }
   | { family: "queued"; run: Doc<"queuedRuns"> };
@@ -110,6 +115,7 @@ export function publicItemRuns(
     .map((run) => ({
       ...publicRun(run),
       itemId: itemExternalId,
+      ...hostedPromiseWakeupProjection,
     }));
 }
 
@@ -161,6 +167,7 @@ function publicLegacyRun(
     leaseGeneration: execution.leaseGeneration ?? 1,
     executionEnvelope: execution.executionEnvelope,
     executionRecords: execution.executionRecords,
+    ...hostedPromiseWakeupProjection,
   };
 }
 
@@ -202,6 +209,7 @@ function publicQueuedRun(
     endedAt: run.endedAt === undefined ? null : new Date(run.endedAt).toISOString(),
     executionEnvelope: execution.executionEnvelope,
     executionRecords: execution.executionRecords,
+    ...hostedPromiseWakeupProjection,
   };
 }
 
