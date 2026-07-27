@@ -201,6 +201,14 @@ describe("GitHub provider event intake", () => {
       expect(malformed.status).toBe(400);
       expect(await malformed.json()).toMatchObject({ code: "invalid_request" });
 
+      const unsupportedActionBody = JSON.stringify(reviewPayload({ action: "created" }));
+      const unsupportedAction = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: signedHeaders(unsupportedActionBody, "delivery-action"),
+        body: unsupportedActionBody,
+      });
+      expect(unsupportedAction.status).toBe(400);
+
       const oversizedBody = JSON.stringify({ padding: "x".repeat(2_000) });
       const oversized = await app.request("/webhooks/github", {
         method: "POST",
@@ -217,7 +225,7 @@ describe("GitHub provider event intake", () => {
     }
   });
 
-  test("keeps webhook authentication separate from admin event reads", async () => {
+  test("keeps webhook authentication separate from principal-bound admin acknowledgement", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const readToken = createApiToken(store, {
@@ -255,8 +263,45 @@ describe("GitHub provider event intake", () => {
         headers: bearer(adminToken.token),
       });
       expect(administrator.status).toBe(200);
-      const administratorJson = await administrator.json() as { events: unknown[] };
+      const administratorJson = await administrator.json() as {
+        events: Array<{ id: string }>;
+      };
       expect(administratorJson.events).toHaveLength(1);
+      const eventId = administratorJson.events[0]!.id;
+
+      const forgedActor = await app.request(
+        `/api/v1/provider-events/${encodeURIComponent(eventId)}/acknowledge`,
+        {
+          method: "POST",
+          headers: {
+            ...bearer(adminToken.token),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ actor: "Nightjar" }),
+        },
+      );
+      expect(forgedActor.status).toBe(400);
+      expect(await forgedActor.json()).toMatchObject({ code: "invalid_request" });
+
+      const acknowledged = await app.request(
+        `/api/v1/provider-events/${encodeURIComponent(eventId)}/acknowledge`,
+        {
+          method: "POST",
+          headers: {
+            ...bearer(adminToken.token),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({}),
+        },
+      );
+      expect(acknowledged.status).toBe(200);
+      expect(await acknowledged.json()).toMatchObject({
+        event: {
+          id: eventId,
+          status: "acknowledged",
+          acknowledgedBy: "api_token:Administrator",
+        },
+      });
     } finally {
       store.close();
     }
