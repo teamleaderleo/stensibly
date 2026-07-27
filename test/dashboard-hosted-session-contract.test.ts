@@ -98,7 +98,7 @@ describe("hosted dashboard auth URLs and logout", () => {
     expect(request?.method).toBe("POST");
     expect(request?.credentials).toBe("include");
 
-    const failure = (async () => new Response(null, { status: 503 })) as typeof fetch;
+    const failure = (async () => new Response(null, { status: 503 })) as unknown as typeof fetch;
     await expect(revokeHostedSession(failure, endpoint)).rejects.toThrow("Sign out returned HTTP 503");
   });
 
