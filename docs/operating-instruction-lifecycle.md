@@ -1,6 +1,6 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.1.1`  
+**Protocol:** `stensibly-agent-ops/0.1.2`  
 **Bootstrap:** `stensibly-project-bootstrap/v1`  
 **Tracking issue:** #293  
 **Status:** dogfood
@@ -16,7 +16,7 @@ Use the identifier that matches the thing being reviewed or changed:
 - software release: `stensibly 0.0.1`;
 - deployed revision: exact commit, build, Worker, and Convex deployment identifiers;
 - Project bootstrap: `stensibly-project-bootstrap/v1`;
-- repository operating protocol: `stensibly-agent-ops/0.1.1`;
+- repository operating protocol: `stensibly-agent-ops/0.1.2`;
 - wave and revision: for example `W01 rev 1`;
 - contract version: for example `project-attachment-v1`;
 - work authority: exact claim, lease, continuation, or approval generation;
@@ -44,9 +44,10 @@ rollout gates into Project settings.
 
 ### `AGENTS.md`
 
-Contains the accepted repository operating protocol: startup order, general work
-selection, authority boundaries, risk-tiered review and merge policy, review
-independence, handoff expectations, and shared improvement rules.
+Contains the accepted repository operating protocol: startup order, session-local
+callsign adoption, general work selection, authority boundaries, risk-tiered
+review and merge policy, review independence, handoff expectations, and shared
+improvement rules.
 
 ### `docs/current-wave.md`
 
