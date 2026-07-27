@@ -20,27 +20,33 @@ describe("hosted dashboard session marker", () => {
 });
 
 describe("hosted dashboard request bridge", () => {
-  test("replaces only the exact session marker on REST v1 requests", () => {
+  test("replaces only the exact session marker on REST v1 requests at the bound origin", () => {
     const marker = hostedSessionSentinel();
     const request = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${marker}` },
-    });
+    }, endpoint);
     expect(request.headers.get("authorization")).toBeNull();
     expect(request.credentials).toBe("include");
 
     const manualToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
     const bearer = prepareHostedSessionRequest(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${manualToken}` },
-    });
+    }, endpoint);
     expect(bearer.headers.get("authorization")).toBe(`Bearer ${manualToken}`);
     expect(bearer.credentials).toBe("same-origin");
 
     const mcp = prepareHostedSessionRequest(`${endpoint}/mcp`, {
       method: "POST",
       headers: { authorization: `Bearer ${marker}` },
-    });
+    }, endpoint);
     expect(mcp.headers.get("authorization")).toBe(`Bearer ${marker}`);
     expect(mcp.credentials).toBe("same-origin");
+
+    const foreign = prepareHostedSessionRequest("https://other.example/api/v1/items", {
+      headers: { authorization: `Bearer ${marker}` },
+    }, endpoint);
+    expect(foreign.headers.get("authorization")).toBe(`Bearer ${marker}`);
+    expect(foreign.credentials).toBe("same-origin");
   });
 
   test("installs a bridge that forwards a credentialed Request", async () => {
@@ -49,7 +55,10 @@ describe("hosted dashboard request bridge", () => {
       observed.push(input instanceof Request ? input : new Request(input));
       return new Response(null, { status: 204 });
     }) as typeof fetch;
-    const bridgedFetch = installHostedSessionFetchBridge({ fetchImpl });
+    const bridgedFetch = installHostedSessionFetchBridge({
+      fetchImpl,
+      sessionOrigin: endpoint,
+    });
     const marker = hostedSessionSentinel();
     const response = await bridgedFetch(`${endpoint}/api/v1/principal`, {
       headers: { authorization: `Bearer ${marker}` },
