@@ -1,6 +1,7 @@
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { MAX_EXECUTION_RECORDS_PER_RUN } from "../src/execution-record-limits";
+import { ITEM_HISTORY_CONTRACT_VERSION } from "./lib/itemHistory";
 import { convexApi } from "./refs";
 import schema from "./schema";
 import { modules } from "./test.setup";
@@ -99,6 +100,8 @@ describe("hosted execution projection bounds", () => {
       id: item.id,
       now: 3_000,
     }) as any;
+    expect(detail.historyContractVersion).toBe(ITEM_HISTORY_CONTRACT_VERSION);
+    expect(detail.eventsTruncated).toBe(true);
     expectVisiblePublicHistory(detail.events);
 
     const listed = await t.query(convexApi.events.list, {
@@ -106,8 +109,10 @@ describe("hosted execution projection bounds", () => {
       workspace,
       id: item.id,
       limit: 100,
-    }) as any[];
-    expectVisiblePublicHistory(listed);
+    }) as any;
+    expect(listed.historyContractVersion).toBe(ITEM_HISTORY_CONTRACT_VERSION);
+    expect(listed.eventsTruncated).toBe(true);
+    expectVisiblePublicHistory(listed.events);
   });
 });
 
