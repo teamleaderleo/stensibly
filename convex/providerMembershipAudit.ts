@@ -63,7 +63,7 @@ const MAX_AUDIT_PROJECTS = 100;
 const MAX_PROJECT_LENGTH = 80;
 const MAX_PROVIDER_LENGTH = 40;
 const MAX_SUBJECT_LENGTH = 240;
-const projectPattern = /^[a-z0-9][a-z0-9-_]*$/;
+const projectPattern = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
  * Inspects whether one provider subject already resolves to an account membership
@@ -71,9 +71,10 @@ const projectPattern = /^[a-z0-9][a-z0-9-_]*$/;
  *
  * The query is read-only and content-minimised. It never returns the provider
  * subject, account or identity IDs, profile fields, email, avatar, session data,
- * credentials, or provider payloads. Only an absent identity is eligible for a
- * clean first-login bootstrap. Every existing, conflicting, disabled, missing,
- * revoked, or uninspectable path requires a separately reviewed membership plan.
+ * credentials, or provider payloads. Only an absent identity in a non-conflicting
+ * workspace is eligible for clean first-login bootstrap. Every existing,
+ * conflicting, disabled, missing, revoked, or uninspectable path requires a
+ * separately reviewed membership plan.
  */
 export const auditProviderMembership = query({
   args: {
@@ -87,6 +88,15 @@ export const auditProviderMembership = query({
     const workspace = normalizeWorkspace(args.workspace);
     const provider = normalizeProvider(args.provider);
     const subject = assertText(args.subject, "Provider subject", MAX_SUBJECT_LENGTH);
+
+    const workspaces = await ctx.db
+      .query("workspaces")
+      .withIndex("by_slug", (q) => q.eq("slug", workspace))
+      .take(2);
+    if (workspaces.length > 1) {
+      return result(workspace, provider, "workspace_conflict", null);
+    }
+    const workspaceDocument = workspaces[0] ?? null;
 
     const identities = await ctx.db
       .query("accountIdentities")
@@ -110,20 +120,8 @@ export const auditProviderMembership = query({
       return result(workspace, provider, "account_disabled", null);
     }
 
-    const workspaces = await ctx.db
-      .query("workspaces")
-      .withIndex("by_slug", (q) => q.eq("slug", workspace))
-      .take(2);
-    if (workspaces.length === 0) {
-      return result(workspace, provider, "workspace_absent", null);
-    }
-    if (workspaces.length > 1) {
-      return result(workspace, provider, "workspace_conflict", null);
-    }
-
-    const workspaceDocument = workspaces[0];
     if (!workspaceDocument) {
-      return result(workspace, provider, "workspace_conflict", null);
+      return result(workspace, provider, "workspace_absent", null);
     }
     const memberships = await ctx.db
       .query("workspaceMemberships")
