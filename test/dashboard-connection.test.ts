@@ -47,6 +47,10 @@ describe("dashboard HTTP failure messages", () => {
       kind: "forbidden",
       message: "Account requires read scope",
     });
+    expect(describeHttpFailure(403, null)).toEqual({
+      kind: "forbidden",
+      message: "The authenticated account or token lacks access for this ledger.",
+    });
   });
 
   test("distinguishes incompatible, invalid, conflict, and server responses", () => {
