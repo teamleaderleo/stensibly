@@ -115,7 +115,7 @@ describe("hosted dashboard request bridge", () => {
     expect(observations).toHaveLength(1);
 
     const callbackFailure = installHostedSessionFetchBridge({
-      fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch,
+      fetchImpl: (async () => new Response(null, { status: 204 })) as unknown as typeof fetch,
       sessionOrigin: endpoint,
       onHostedSessionResponse: () => {
         throw new Error("UI callback failed");
