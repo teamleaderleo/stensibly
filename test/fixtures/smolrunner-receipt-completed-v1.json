@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "attempt": {
+    "attemptId": "attempt_quarry_238_a",
+    "workspaceId": "workspace_quarry",
+    "projectId": "project_quarry",
+    "itemId": "item_238",
+    "claimGeneration": 7,
+    "runId": "run_quarry_238",
+    "runGeneration": 4,
+    "leaseGeneration": 9,
+    "executionEnvelopeVersion": 1,
+    "executorAdapter": "smolrunner",
+    "runnerProfileId": "quarry.checkpoint",
+    "repository": "quarry-labs/quarry",
+    "requestedBase": "refs/heads/main",
+    "resolvedBaseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "candidateHead": "dddddddddddddddddddddddddddddddddddddddd",
+    "verificationProfileId": "quarry.checkpoint",
+    "workspaceReceiptRef": "smolrunner:workspace:quarry-238-a"
+  },
+  "receipt": {
+    "schemaVersion": 1,
+    "producer": {
+      "name": "smolrunner",
+      "version": "0.1.0"
+    },
+    "executionId": "exec_quarry_238_a",
+    "checkpointGeneration": 4,
+    "executionEnvelopeVersion": 1,
+    "operation": {
+      "family": "repository-verification",
+      "schemaVersion": 1
+    },
+    "repository": "quarry-labs/quarry",
+    "runnerProfileId": "quarry.checkpoint",
+    "profileId": "quarry.checkpoint",
+    "workspaceReceiptRef": "smolrunner:workspace:quarry-238-a",
+    "source": {
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "commit": "dddddddddddddddddddddddddddddddddddddddd",
+      "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "phaseId": "checkpoint-verify",
+    "state": "completed",
+    "observedAt": "2026-07-28T18:08:00.000Z",
+    "startedAt": "2026-07-28T18:00:00.000Z",
+    "terminalAt": "2026-07-28T18:08:00.000Z",
+    "queue": {
+      "admittedAt": "2026-07-28T17:59:00.000Z",
+      "position": 0,
+      "capacityState": "reserved"
+    },
+    "reservation": {
+      "id": "reservation_quarry_238_a",
+      "generation": 2,
+      "expiresAt": "2026-07-28T18:10:00.000Z"
+    },
+    "heartbeat": null,
+    "progress": {
+      "completed": 12,
+      "total": 12,
+      "unit": "actions"
+    },
+    "outcome": {
+      "disposition": "succeeded",
+      "publicCode": null,
+      "counts": {
+        "completed": 12,
+        "failed": 0,
+        "skipped": 0,
+        "compensated": 0,
+        "rolledBack": 0,
+        "rollbackFailed": 0
+      },
+      "freshObservationRequired": false,
+      "continuationBarriers": [],
+      "deferredActions": [],
+      "nextAction": "await_external_ci"
+    },
+    "evidence": {
+      "receiptDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "logRef": "smolrunner:log:quarry-238-a-4",
+      "artifactRef": "smolrunner:artifact:sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "coverage": {
+      "state": "complete",
+      "truncated": false,
+      "omitted": false
+    },
+    "authority": {
+      "merge": false,
+      "deploy": false,
+      "credentials": false,
+      "spending": false,
+      "providerAdministration": false
+    }
+  }
+}
