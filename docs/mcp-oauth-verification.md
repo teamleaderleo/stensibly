@@ -2,10 +2,10 @@
 
 ## Purpose
 
-Use the hosted OAuth verifier to collect repeatable evidence before enablement, after
-enablement, and after rollback. The verifier is unauthenticated and read-only. It
-checks the public hosted surface and two invalid MCP initialise requests; it does
-not require a valid API or OAuth token.
+Use the hosted OAuth verifier to collect repeatable public evidence before enablement,
+after enablement, and after rollback. The OAuth verifier is unauthenticated and
+read-only. It checks the public hosted surface and two invalid MCP initialise
+requests; it does not replace the valid legacy-bearer compatibility gate.
 
 The canonical issuer is:
 
@@ -19,7 +19,7 @@ The canonical MCP endpoint is:
 https://api.stensibly.com/mcp
 ```
 
-## Checks
+## Public OAuth checks
 
 The command runs five independent checks:
 
@@ -38,7 +38,7 @@ All five checks run even when an earlier check fails.
 
 ## Safety and evidence bounds
 
-Every request:
+Every public-verifier request:
 
 - uses manual redirect handling;
 - has one deadline covering response headers and body consumption;
@@ -69,9 +69,26 @@ The disabled contract requires:
 
 This state is a rollout gate, not the W01 completion target.
 
+## Valid legacy-bearer compatibility
+
+After every Worker deployment and after rollback, verify that existing
+`stn.tok_...` clients can still initialise MCP on both hosted origins:
+
+```bash
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
+STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
+  bun run verify:hosted -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev
+```
+
+These commands use a valid read token and are deliberately separate from the public
+OAuth verifier. A green OAuth metadata/challenge result does not prove that the
+legacy bearer path remains healthy.
+
 ## Enabled-state evidence
 
-After the approved production configuration and deployment:
+After the approved production configuration and deployment, first run both legacy
+bearer commands above. Then run the public OAuth verifier:
 
 ```bash
 bun run verify:oauth
@@ -88,6 +105,11 @@ bun run verify:oauth -- \
 The fallback must serve the requested checks directly. A redirect to the canonical
 origin is not sufficient evidence.
 
+The manual GitHub Actions workflow in `.github/workflows/verify-oauth-hosted.yml`
+runs the public verifier and retains bounded output. It does not receive or use the
+legacy bearer token; run the two bearer commands through the approved credentialed
+operator path.
+
 ## Rollout sequence
 
 After the lifecycle and verifier candidates are accepted:
@@ -97,25 +119,41 @@ After the lifecycle and verifier candidates are accepted:
    production control path;
 3. deploy Convex schema and functions;
 4. deploy the Worker;
-5. run the enabled verifier against the canonical origin and Worker fallback;
-6. create or refresh the ChatGPT app and scan tools;
-7. complete a bounded read;
-8. obtain the contemporaneous approval for the predeclared low-risk write and
+5. run both valid `verify:hosted` bearer checks;
+6. run the canonical and Worker-fallback `verify:oauth` checks;
+7. create or refresh the ChatGPT app and scan tools;
+8. complete a bounded read;
+9. obtain the contemporaneous approval for the predeclared low-risk write and
    confirm it through a subsequent read;
-9. verify refresh-token or reconnect behaviour;
-10. attach exact deployment and verification evidence to W01.
+10. verify refresh-token or reconnect behaviour;
+11. attach exact deployment and verification evidence to W01.
 
 ## Rollback verification
 
-A controlled rollback disables the complete OAuth configuration set rather than
-leaving a partial configuration. After rollback:
+To disable OAuth while preserving hosted GitHub authentication and the legacy bearer
+path, remove these four bindings together as one controlled configuration change:
 
-```bash
-bun run verify:oauth -- --expect disabled
+```text
+STENSIBLY_OAUTH_SIGNING_SECRET
+STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS
+STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS
+STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS
 ```
 
-Also rerun the existing hosted API-token checks to confirm the independent
-`stn.tok_...` path remains healthy.
+Preserve the GitHub OAuth client configuration, allowed GitHub subjects, auth origin,
+return origins, and bootstrap-role settings so the hosted `auth` surface remains
+healthy. Removing only the signing secret while a lifetime binding remains is an
+invalid partial configuration and can make the Worker fail closed.
+
+After the controlled change and Worker deployment or rollback:
+
+1. rerun both valid `verify:hosted` bearer commands;
+2. run `bun run verify:oauth -- --expect disabled` against the canonical endpoint;
+3. run the disabled verifier against the Worker fallback with the canonical issuer;
+4. confirm `stn.tok_...` MCP initialisation remains healthy.
+
+The additive Convex tables may remain unused. Deleting production authentication data
+is a separate explicit operation.
 
 ## Failure handling
 
