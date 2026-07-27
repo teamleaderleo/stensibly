@@ -1,22 +1,23 @@
 import { isPlausibleToken, normalizeEndpoint } from './connection.js';
 import {
   createGithubSignInUrl,
-  createHostedLogoutUrl,
   hostedSessionSentinel,
   installHostedSessionFetchBridge,
+  isDefaultHostedEndpoint,
   isHostedSessionSentinel,
+  revokeHostedSession,
 } from './hosted-session.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const STORAGE_KEY = 'stensiblyToken';
 const sentinel = hostedSessionSentinel();
 const originalFetch = window.fetch.bind(window);
-const sessionOrigin = savedSessionOrigin();
+const savedEndpoint = readSavedEndpoint();
 
-installSessionMarker();
+installSessionMarker(savedEndpoint);
 window.fetch = installHostedSessionFetchBridge({
   fetchImpl: originalFetch,
-  sessionOrigin,
+  sessionOrigin: DEFAULT_ENDPOINT,
   sentinel,
 });
 
@@ -29,20 +30,29 @@ const disconnectButton = document.querySelector('#disconnect-connection');
 signInButton?.addEventListener('click', beginGithubSignIn);
 disconnectButton?.addEventListener('click', signOutHostedSession, { capture: true });
 
-function installSessionMarker() {
+function installSessionMarker(endpoint) {
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY) || '';
-    if (!isPlausibleToken(stored)) sessionStorage.setItem(STORAGE_KEY, sentinel);
+    if (isPlausibleToken(stored)) return;
+    if (isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) {
+      sessionStorage.setItem(STORAGE_KEY, sentinel);
+    } else {
+      sessionStorage.removeItem(STORAGE_KEY);
+    }
   } catch {
     // The dashboard will fall back to its ordinary connection form.
   }
 }
 
-function savedSessionOrigin() {
+function readSavedEndpoint() {
   try {
     return normalizeEndpoint(localStorage.getItem('stensiblyEndpoint') || DEFAULT_ENDPOINT);
   } catch {
-    localStorage.removeItem('stensiblyEndpoint');
+    try {
+      localStorage.removeItem('stensiblyEndpoint');
+    } catch {
+      // The default remains usable when browser storage is unavailable.
+    }
     return DEFAULT_ENDPOINT;
   }
 }
@@ -56,6 +66,9 @@ function beginGithubSignIn() {
   clearError();
   try {
     const endpoint = selectedEndpoint();
+    if (!isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) {
+      throw new TypeError('GitHub sign-in is available for api.stensibly.com. Use an API token for a custom endpoint.');
+    }
     localStorage.setItem('stensiblyEndpoint', endpoint);
     if (signInButton) signInButton.disabled = true;
     if (signInState) signInState.textContent = 'Opening GitHub…';
@@ -83,15 +96,7 @@ async function signOutHostedSession(event) {
   clearError();
 
   try {
-    const response = await originalFetch(createHostedLogoutUrl(sessionOrigin), {
-      method: 'POST',
-      credentials: 'include',
-      cache: 'no-store',
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok && response.status !== 204) {
-      throw new Error(`Sign out returned HTTP ${response.status}.`);
-    }
+    await revokeHostedSession(originalFetch, DEFAULT_ENDPOINT);
     sessionStorage.removeItem(STORAGE_KEY);
     window.location.reload();
   } catch (cause) {
