@@ -2,164 +2,146 @@
 
 **Status:** active execution focus  
 **Date established:** 2026-07-27  
+**Last reconciled:** 2026-07-27 after production OAuth observation and PR #390 merge  
 **Tracking issue:** #286  
 **Wave:** `W01`  
-**Wave revision:** `1`  
-**Operating protocol:** `stensibly-agent-ops/0.1.0`  
-**Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
+**Wave revision:** `2`  
+**Operating protocol:** `stensibly-agent-ops/0.2.0`  
+**Primary outcome:** connect a fresh ChatGPT conversation to the hosted Stensibly MCP server through OAuth and complete one real bounded read/write/reconnect dogfood cycle.
 
 This file is a compact current-focus projection. GitHub issues, pull requests,
 exact revisions, deployed configuration, and Stensibly records remain canonical.
 Update or replace this file when the wave changes. Increment the wave revision
-when its gates, lanes, or accepted test effects change materially; do not reuse a
-revision after external review or execution has cited it.
+when its gates, lanes, or accepted test effects change materially.
 
-## Wave
+## Current observed state
 
-**W01 — Production MCP Connection**
+Production OAuth is enabled and remains enabled under the operator's current
+decision.
 
-The wave is complete only when a fresh ChatGPT conversation can:
+Read-only verifier run `30290380944` observed the canonical origin and Worker
+fallback at **5/5 enabled** on 2026-07-27:
+
+- health advertised hosted auth and OAuth;
+- protected-resource metadata resolved the canonical MCP resource;
+- authorization-server metadata resolved the canonical issuer;
+- required-token and invalid-token MCP challenges matched the enabled contract.
+
+Source-side lifecycle, registration, refresh-family, discovery, consent, token,
+and MCP work is merged. Issue #220 remains open for deployed abuse/lifecycle
+evidence and final production-gate reconciliation.
+
+PR #384 merged the read-only provider-subject membership audit. PR #390 merged
+the hosted GitHub browser-session dashboard path at merge commit
+`9d0275f20fd9e29ac079f0c0b024a0490c21aa2a` after independent exact-head
+acceptance and green CI.
+
+The dashboard merge is source evidence. Confirm the hosted deployment serves the
+new GitHub sign-in assets before treating the browser path as live.
+
+## Wave completion
+
+W01 is complete only when a fresh ChatGPT conversation can:
 
 1. discover OAuth from `https://api.stensibly.com/mcp`;
 2. complete GitHub-backed Stensibly consent;
 3. scan the live MCP tools;
 4. call a bounded read tool such as `get_brief` or `survey_workspace`;
 5. perform the predeclared, explicitly approved low-risk write below;
-6. leave a durable event or item proving the connection;
+6. leave a durable item or event proving the connection;
 7. reconnect through refresh-token flow or an equivalent verified renewal path;
-8. document rollback and operator recovery.
+8. retain bounded rollback and operator-recovery evidence.
 
-A successful code merge without the real ChatGPT flow is not wave completion.
+Code merges, public metadata checks, and dashboard sign-in alone do not complete
+the wave.
 
 ## Current blocker chain
 
-- #220 owns the remaining dynamic-client lifecycle, capacity recovery,
-  idempotency policy, combined load verification, and final production-gate
-  sign-off.
-- PR #256 already added Worker-side registration rate limiting and exact redirect
-  origin gating.
-- PR #251 is adjacent refresh-family lifetime and cleanup hardening. It remains a
-  draft and must stay separate from #220's dynamic-client implementation.
-- #289 owns the remaining dormant-legacy-family repair action for PR #251.
-- Production OAuth discovery remains absent until the OAuth configuration and
-  signing secret are enabled on the deployed Worker.
+### 1. Real ChatGPT journey
 
-The two implementation tracks may proceed concurrently and converge on rollout:
+The remaining primary action is the real client journey from a fresh ChatGPT
+conversation or newly created agent:
 
-```text
-#251 repair owner ──→ independent #251 acceptance ──┐
-                                                    ├─→ guarded rollout
-Lane A #220 implementation ─→ independent acceptance ┘
-                                                    └─→ real ChatGPT read/write/reconnect evidence
-```
+- connect to `https://api.stensibly.com/mcp`;
+- complete GitHub sign-in and consent;
+- scan tools;
+- perform one bounded read;
+- obtain contemporaneous approval for the predeclared write;
+- perform that write with an explicit idempotency key;
+- confirm it through a bounded read;
+- verify refresh or reconnect.
 
-Lane B may prepare both acceptance matrices while avoiding implementation
-ownership for the final revisions it accepts. Lane C may prepare rollout work but
-must not execute production enablement until both gates are satisfied.
+The journey must use a dedicated OAuth dogfood project and content-minimised
+evidence. Do not copy access tokens, provider payloads, or session contents into
+GitHub, chat, analytics, or durable project records.
 
-## Lane A — Finish dynamic-client lifecycle
+### 2. Deployed production-gate evidence
 
-**Single implementation owner.** Do not open competing code branches against the
-same schema and registration mutations.
+Issue #220 still owns the remaining deployed evidence:
 
-Deliver:
+- registration-limit exhaustion and recovery;
+- bounded dynamic-client cleanup and capacity recovery;
+- guarded registration and authorisation load checks;
+- inspection and explicit repair of malformed lifecycle rows, when any exist;
+- exact Convex and Worker deployment revisions;
+- current rollback mechanism and bounded verifier output.
 
-- explicit unused-client expiry policy;
-- bounded cleanup and registration-capacity recovery;
-- exact workspace isolation;
-- an explicit identical-registration/idempotency decision;
-- focused Convex and HTTP tests;
-- migration and legacy-record behaviour;
-- updated production-gate documentation;
-- one coherent PR linked to #220.
+OAuth is already enabled. Treat an unexpected disabled state as an incident or
+an explicitly approved reconfiguration, not as the expected starting point.
 
-Required handoff:
+### 3. Recovery packet replay
 
-- exact head SHA;
-- changed files;
-- tests and results;
-- security invariants;
-- unresolved risks;
-- deployment implications.
+PR #379 and PR #387 still describe PR #384 as pending or require replay after it
+lands. Their product intent remains useful, but their exact branch and evidence
+metadata are stale.
 
-## PR #251 repair ownership
+Before either can integrate:
 
-PR #251 retains its existing implementation owner until it reaches an exact-head
-handoff that closes #289.
+- replay the unchanged product diff onto current `main`;
+- bind it to the integrated provider-membership audit contract;
+- run a fresh full gate;
+- refresh exact head/base/merge metadata;
+- obtain the required independent exact-head verdict and integration decision.
 
-- Lane B reviews PR #251 and must not author the final repair it accepts.
-- If Lane B blocks the current head and the prior implementation owner is
-  unavailable, assign a separate temporary repair owner to #289.
-- After any repair, Lane B re-reviews the exact replacement head.
-- Keep PR #251's refresh-family code separate from Lane A's #220 dynamic-client
-  branch.
+These recovery artifacts may inspect and prepare bounded evidence. They grant no
+login, membership change, OAuth disablement, credential access, or production
+mutation authority.
 
-## Lane B — Independent acceptance
+### 4. Hosted dashboard verification and control-room continuation
 
-This lane must be performed by a worker that did not author the final code being
-accepted.
+Verify the deployed dashboard contains the PR #390 assets and supports:
 
-Review Lane A for:
+- **Continue with GitHub** on the canonical hosted endpoint;
+- session-authenticated REST reads and writes within account/project scope;
+- token-only custom endpoints;
+- hosted logout with retry on server failure;
+- mobile access without reopening overloaded chats.
 
-- storage exhaustion and ceiling recovery;
-- active-client deletion safety;
-- retry and replay behaviour;
-- cross-workspace isolation;
-- scheduler or cleanup amplification;
-- idempotency and metadata matching;
-- secret and callback-data logging;
-- legacy compatibility;
-- exact production-gate acceptance.
+After deployment verification, continue #334 with the smallest non-overlapping
+onboarding slice: show the next required setup action, public MCP endpoint copy,
+and a bounded first-read verification. Keep manual bearer-token entry as the
+advanced fallback.
 
-Independently review PR #251 for its declared refresh-family invariants and #289's
-dormant-legacy-family outcome.
+## Production decision boundary
 
-Every verdict must name the exact reviewed revision and contain either:
+The accepted current direction is to keep production OAuth enabled.
 
-- `accepted` with residual risks; or
-- `blocked` with demonstrated findings and required repairs.
+Any transition to hosted-auth-only disabled OAuth requires a fresh Tier 3
+approval naming:
 
-## Lane C — Guarded rollout and real ChatGPT verification
+- the exact current deployment and source revision;
+- the exact binding names and removal or version-restore mechanism;
+- the intended disabled state;
+- the rollback target;
+- the bounded verification and compensation steps.
 
-Prepare before enabling OAuth:
-
-- required Cloudflare secrets and variables;
-- GitHub OAuth callback and allowed-subject configuration;
-- exact ChatGPT redirect-origin admission;
-- monitoring for registration rejection and client-count pressure;
-- one-command or one-step rollback by disabling OAuth configuration;
-- metadata and unauthenticated challenge checks;
-- a bounded test account and dedicated OAuth dogfood project.
-
-Execute production rollout only after:
-
-1. Lane A receives independent exact-head acceptance; and
-2. PR #251 is independently accepted and merged, or explicitly deferred through
-   a recorded production-risk decision approved by the human operator.
-
-The preferred production-complete path is to merge PR #251 after #289 is repaired
-and accepted. Deferral may support a deliberately bounded protocol experiment,
-but it does not count as production-complete without an explicit risk decision.
-
-Then:
-
-1. deploy Convex and Worker changes in the required order;
-2. enable the OAuth signing secret and hosted-auth configuration;
-3. verify:
-   - `/.well-known/oauth-protected-resource/mcp`;
-   - `/.well-known/oauth-authorization-server`;
-   - unauthenticated `/mcp` returns a valid OAuth challenge;
-4. create or refresh the Stensibly ChatGPT app and scan tools;
-5. complete a read-only test;
-6. perform the predeclared low-risk write below;
-7. verify refresh or reconnect behaviour;
-8. attach evidence and close or update #220 and #286.
+No documentation packet or prior approval silently authorises that transition.
 
 ## Predeclared low-risk write
 
 Do not improvise the production write test.
 
-The authorised test action is:
+The authorised test class is:
 
 > Create one uniquely named test item in a dedicated OAuth dogfood project using
 > an explicit idempotency key and a human approval recorded immediately before
@@ -167,42 +149,48 @@ The authorised test action is:
 
 The test must not claim, complete, delete, merge, deploy, spend money, contact an
 external system, or mutate unrelated work. Record the project, item name,
-idempotency key reference, approval record, write result, and confirming read.
+idempotency-key reference, approval record, write result, and confirming read.
 
-## Work-selection policy for this wave
+## Active lanes
 
-Until the real connection works:
+### Lane A — real connection and evidence
 
-1. finish or review the blocker chain before starting unrelated Stensibly
-   features;
-2. keep one implementation owner per overlapping subsystem;
-3. direct spare workers to acceptance, reproduction, rollout preparation,
-   documentation, or evidence reconciliation;
-4. convert long discussion into exact findings, decisions, patches, tests, or
-   handoffs;
-5. stop creating adjacent OAuth issues unless an independently buildable boundary
-   is demonstrated.
+Primary owner completes the fresh ChatGPT OAuth, tool scan, bounded read,
+approved write, confirming read, and refresh/reconnect journey. Stop before the
+write until the contemporaneous human approval exists.
 
-## Project-instruction prompt
+### Lane B — recovery and deployed verification
 
-A ChatGPT Project using this repository should use the compact bootstrap in
-`docs/chatgpt-project-instructions.md`. The Project setting should not duplicate
-this wave's lanes or detailed gates.
+A non-overlapping worker replays #379/#387 against current main or gathers the
+remaining read-only #220 evidence. Production mutation requires the applicable
+approval.
 
-Fresh chats should inspect existing work and select a useful non-conflicting
-action from this wave before proposing new roadmap work.
+### Lane C — browser control room
+
+Verify the PR #390 deployment, then advance #334 through a small step-based
+onboarding/status slice. Keep account/session UX, setup projection, and control
+room work separate from recovery packet changes.
+
+## Work-selection policy
+
+Until the real connection succeeds:
+
+1. finish the real journey or remove a demonstrated blocker before unrelated work;
+2. prefer independent acceptance, integration, repair, replay, deployment evidence,
+   and control-room access over new adjacent OAuth designs;
+3. keep one implementation owner per overlapping subsystem;
+4. convert discussion into exact findings, decisions, patches, tests, evidence,
+   or handoffs;
+5. leave production effects behind their current approval boundary.
 
 ## Wave retrospective
 
 After connection succeeds, record:
 
-- which instructions fresh agents actually followed;
+- which instructions fresh workers followed;
 - whether the wave/lane/action vocabulary helped;
-- duplicated work or comments that could have been avoided;
-- missing observability or API tools;
-- whether more or less startup context would have helped;
-- missed or excessive parallelism;
-- useful pod notes or resource requests;
-- which steps should become Stensibly-enforced records;
-- what can be removed from this temporary file;
-- at least one accepted, rejected, or no-change instruction proposal under #293.
+- duplicated or abandoned work;
+- missing observability or connector capabilities;
+- how the mobile/browser control room changed intervention cost;
+- which coordination facts should become server-enforced records;
+- one accepted, rejected, or no-change operating-instruction proposal under #293.
