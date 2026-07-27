@@ -109,15 +109,11 @@ export class ConvexWorkLedger implements
   async getItem(id: string): Promise<ItemDetail> {
     await this.ensureBoundedHistoryCapability();
     const now = Date.now();
-    const detailPromise = this.getHostedItemDetail(id, now);
-    const reservationsPromise = this.client.query(
+    const detail = await this.getHostedItemDetail(id, now);
+    const reservations = await this.client.query(
       convexApi.itemReservations.list,
       this.args({ itemId: id, now }),
-    ) as Promise<ItemReservation[]>;
-    const [detail, reservations] = await Promise.all([
-      detailPromise,
-      reservationsPromise,
-    ]);
+    ) as ItemReservation[];
     return { ...detail, reservations };
   }
 
@@ -261,12 +257,16 @@ export class ConvexWorkLedger implements
 
   private async ensureBoundedHistoryCapability(): Promise<void> {
     if (!this.historyCapabilityPromise) {
-      this.historyCapabilityPromise = this.loadBoundedHistoryCapability().catch((error) => {
-        this.historyCapabilityPromise = null;
-        throw error;
-      });
+      this.historyCapabilityPromise = this.loadBoundedHistoryCapability();
     }
-    await this.historyCapabilityPromise;
+    const capability = this.historyCapabilityPromise;
+    try {
+      await capability;
+    } finally {
+      if (this.historyCapabilityPromise === capability) {
+        this.historyCapabilityPromise = null;
+      }
+    }
   }
 
   private async loadBoundedHistoryCapability(): Promise<void> {
