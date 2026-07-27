@@ -44,6 +44,8 @@ describe("provider membership audit workspace integrity", () => {
       cleanBootstrapEligible: false,
       requiresSeparateMembershipPlan: true,
       containsSecrets: false,
+      readOnly: true,
+      grantsMembershipChange: false,
       grantsMembership: false,
       grantsLogin: false,
       grantsOAuthEnablement: false,
