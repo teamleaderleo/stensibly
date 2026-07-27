@@ -6,21 +6,22 @@ const workflowPath = new URL(
 );
 const workflow = await Bun.file(workflowPath).text();
 
-describe("W01 OAuth credential mapping", () => {
-  test("uses GitHub-safe environment secret names and preserves Worker binding names", () => {
-    expect(workflow).toContain(
-      "GITHUB_OAUTH_CLIENT_ID: ${{ secrets.STENSIBLY_GITHUB_OAUTH_CLIENT_ID }}",
-    );
-    expect(workflow).toContain(
-      "GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.STENSIBLY_GITHUB_OAUTH_CLIENT_SECRET }}",
-    );
-    expect(workflow).not.toContain(
-      "GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GITHUB_OAUTH_CLIENT_ID }}",
-    );
-    expect(workflow).not.toContain(
-      "GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}",
-    );
-    expect(workflow).toContain("GITHUB_OAUTH_CLIENT_ID: $clientId");
-    expect(workflow).toContain("GITHUB_OAUTH_CLIENT_SECRET: $clientSecret");
+describe("contained W01 OAuth credential mapping", () => {
+  test("references no GitHub or Worker OAuth credential binding", () => {
+    for (const name of [
+      "STENSIBLY_GITHUB_OAUTH_CLIENT_ID",
+      "STENSIBLY_GITHUB_OAUTH_CLIENT_SECRET",
+      "GITHUB_OAUTH_CLIENT_ID",
+      "GITHUB_OAUTH_CLIENT_SECRET",
+      "STENSIBLY_OAUTH_SIGNING_SECRET",
+      "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS",
+      "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS",
+      "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS",
+    ]) {
+      expect(workflow).not.toContain(name);
+    }
+    expect(workflow).not.toContain("secrets.");
+    expect(workflow).not.toContain("$clientId");
+    expect(workflow).not.toContain("$clientSecret");
   });
 });
