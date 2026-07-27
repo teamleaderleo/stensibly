@@ -41,6 +41,27 @@ https://stensibly.vercel.app
 
 `CONVEX_URL` and `STENSIBLY_SERVICE_SECRET` are required encrypted bindings. They never belong in `wrangler.jsonc`.
 
+Hosted GitHub authentication is a separate all-or-nothing configuration set:
+
+```text
+GITHUB_OAUTH_CLIENT_ID
+GITHUB_OAUTH_CLIENT_SECRET
+STENSIBLY_AUTH_ORIGIN=https://api.stensibly.com
+STENSIBLY_AUTH_RETURN_ORIGINS=<reviewed browser return origins>
+STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS=<reviewed numeric GitHub user IDs>
+```
+
+`GITHUB_OAUTH_CLIENT_SECRET` is encrypted. The client ID and reviewed policy values may be non-secret Worker variables. Optional bootstrap-role and session-lifetime settings do not replace any required value. If none of these bindings is present, the Worker intentionally omits the hosted `auth` surface. If only part of the set is present, Worker startup fails closed.
+
+MCP OAuth is a later configuration phase. Keep these four bindings absent until hosted auth, the disabled public verifier, guarded abuse evidence, lifecycle-row inspection, and the contemporaneous production approval are complete:
+
+```text
+STENSIBLY_OAUTH_SIGNING_SECRET
+STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS
+STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS
+STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS
+```
+
 ## Install and authenticate
 
 ```bash
@@ -75,7 +96,7 @@ curl http://localhost:8787/health
 
 ## First production deployment
 
-The first deployment must upload code and both encrypted bindings together. This avoids creating an active Worker version with missing production credentials.
+The first deployment must upload code and both encrypted backend bindings together. This avoids creating an active Worker version with missing production credentials.
 
 Create a temporary untracked file:
 
@@ -93,13 +114,17 @@ rm .env.production
 
 Delete the temporary file immediately after the successful deployment. Keep one matching service-secret value in Convex and Cloudflare; creating an unrelated second value breaks gateway calls.
 
+Hosted GitHub auth activation is a separate controlled binding change. Configure its complete required set through the approved Cloudflare path, preserve all four MCP OAuth bindings as absent, deploy the accepted Worker build, and run the disabled-state verification described below. Do not put secret values in repository files, workflow inputs, issue comments, or retained verifier output.
+
 ## Code-only deployments
 
-Once the encrypted bindings exist, routine code deployments preserve them:
+Once encrypted bindings exist, routine code deployments preserve them:
 
 ```bash
 bun run worker:deploy
 ```
+
+That preservation is useful but means a code-only deployment cannot repair missing hosted-auth configuration. The production workflow therefore verifies the declared public OAuth state after every deployment instead of treating successful legacy bearer checks as proof that hosted auth exists.
 
 Before deployment, run:
 
@@ -153,6 +178,20 @@ STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
 
 The official endpoint should remain the public configuration after both pass.
 
+Then verify the declared public auth/OAuth state on both origins. Before OAuth enablement:
+
+```bash
+bun run verify:oauth -- --expect disabled
+bun run verify:oauth -- \
+  --endpoint https://stensibly-api.leoli-082000.workers.dev \
+  --issuer https://api.stensibly.com \
+  --expect disabled
+```
+
+A valid disabled baseline is **5/5**: hosted GitHub auth is healthy, OAuth metadata is absent, and both MCP challenges are exact bare `Bearer`. A 4/5 result with the `auth` surface missing is a configuration blocker even when all OAuth-disabled checks pass.
+
+After separately approved OAuth enablement, rerun the same two public checks with `--expect enabled`. The production deployment workflow requires a typed `disabled` or `enabled` expectation and runs both legacy bearer and both public auth/OAuth gates before reporting success.
+
 ## Logs
 
 Stream production Worker logs with:
@@ -187,9 +226,9 @@ Rollback to a known version ID:
 bunx wrangler rollback VERSION_ID
 ```
 
-After rollback, run the hosted verifier against both the Worker fallback and official custom domain.
+After rollback, run the hosted verifier against both the Worker fallback and official custom domain. If OAuth was enabled, remove the signing secret and all three OAuth lifetime bindings together while preserving the complete hosted GitHub-auth configuration, then verify the `disabled` public state on both origins.
 
-A Worker rollback changes Worker code and bindings captured in that version. It does not reverse Convex data changes. Coordinate any data recovery separately.
+Worker rollback changes Worker code and bindings captured in that version. It does not reverse Convex data changes. Coordinate any data recovery separately.
 
 ## Parked Vercel API project
 

@@ -7,7 +7,7 @@ describe("production Worker deployment workflow", () => {
   test("is manual, main-only, serialized, and environment-gated", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("Require main branch");
-    expect(workflow).toContain('refs/heads/main');
+    expect(workflow).toContain("refs/heads/main");
     expect(workflow).toContain("group: stensibly-worker-production");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("name: production");
@@ -29,6 +29,8 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("secrets.STENSIBLY_READ_TOKEN");
     expect(workflow).not.toContain("STENSIBLY_SERVICE_SECRET");
     expect(workflow).not.toContain("CONVEX_URL");
+    expect(workflow).not.toContain("GITHUB_OAUTH_CLIENT_SECRET");
+    expect(workflow).not.toContain("STENSIBLY_OAUTH_SIGNING_SECRET");
   });
 
   test("runs locked checks before deployment", () => {
@@ -41,11 +43,38 @@ describe("production Worker deployment workflow", () => {
       .toBeLessThan(workflow.indexOf("bun run worker:deploy"));
   });
 
-  test("deploys once and verifies both production endpoints", () => {
+  test("uses a typed declared OAuth state without accepting network targets", () => {
+    expect(workflow).toContain("oauth_expectation:");
+    expect(workflow).toContain("type: choice");
+    expect(workflow).toContain("- disabled");
+    expect(workflow).toContain("- enabled");
+    expect(workflow).toContain("OAUTH_EXPECTATION: ${{ inputs.oauth_expectation }}");
+    expect(workflow).not.toContain("inputs.endpoint");
+    expect(workflow).not.toContain("inputs.issuer");
+  });
+
+  test("deploys once and verifies bearer and public OAuth state on both origins", () => {
     expect(workflow.match(/bun run worker:deploy/g)).toHaveLength(1);
     expect(workflow).toContain("https://stensibly-api.leoli-082000.workers.dev");
     expect(workflow).toContain("https://api.stensibly.com");
     expect(workflow.match(/bun run verify:hosted/g)).toHaveLength(2);
-    expect(workflow).toContain("for attempt in 1 2 3");
+    expect(workflow.match(/bun run verify:oauth/g)).toHaveLength(2);
+    expect(workflow).toContain('--expect "$OAUTH_EXPECTATION"');
+    expect(workflow.match(/for attempt in 1 2 3/g)).toHaveLength(4);
+
+    const finalBearer = workflow.indexOf("Verify official endpoint bearer compatibility");
+    const firstOAuth = workflow.indexOf("Verify Worker fallback public OAuth state");
+    expect(finalBearer).toBeGreaterThan(-1);
+    expect(firstOAuth).toBeGreaterThan(finalBearer);
+  });
+
+  test("records the declared state only after every verification gate", () => {
+    const officialOAuth = workflow.indexOf("Verify official endpoint public OAuth state");
+    const summary = workflow.indexOf("Record deployment summary");
+    expect(officialOAuth).toBeGreaterThan(-1);
+    expect(summary).toBeGreaterThan(officialOAuth);
+    expect(workflow).toContain("Declared OAuth state");
+    expect(workflow).toContain("Legacy bearer verification: passed on both origins");
+    expect(workflow).toContain("Public auth/OAuth verification: passed on both origins");
   });
 });
