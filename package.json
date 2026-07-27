@@ -12,6 +12,7 @@
     "snapshot": "bun src/snapshot-cli.ts",
     "attach": "bun src/project-attach-cli.ts",
     "verify:hosted": "bun src/verify-hosted.ts",
+    "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:dashboard": "bun src/verify-dashboard.ts",
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
