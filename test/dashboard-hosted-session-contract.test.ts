@@ -4,8 +4,10 @@ import {
   createHostedLogoutUrl,
   hostedSessionSentinel,
   installHostedSessionFetchBridge,
+  isDefaultHostedEndpoint,
   isHostedSessionSentinel,
   prepareHostedSessionRequest,
+  revokeHostedSession,
 } from "../site/hosted-session.js";
 
 const endpoint = "https://api.stensibly.com";
@@ -16,6 +18,11 @@ describe("hosted dashboard session marker", () => {
     expect(marker).toMatch(/^stn\.tok_[a-f0-9]{32}\.[A-Za-z0-9_-]{40,}$/);
     expect(isHostedSessionSentinel(marker)).toBe(true);
     expect(isHostedSessionSentinel(`${marker}x`)).toBe(false);
+  });
+
+  test("keeps persisted custom endpoints outside hosted-session mode", () => {
+    expect(isDefaultHostedEndpoint(`${endpoint}/`, endpoint)).toBe(true);
+    expect(isDefaultHostedEndpoint("https://self-hosted.example", endpoint)).toBe(false);
   });
 });
 
@@ -72,11 +79,27 @@ describe("hosted dashboard request bridge", () => {
   });
 });
 
-describe("hosted dashboard auth URLs", () => {
+describe("hosted dashboard auth URLs and logout", () => {
   test("builds exact GitHub start and logout URLs", () => {
     expect(createGithubSignInUrl(endpoint, "https://www.stensibly.com/board?project=scrapbook"))
       .toBe("https://api.stensibly.com/auth/github/start?returnTo=https%3A%2F%2Fwww.stensibly.com%2Fboard%3Fproject%3Dscrapbook");
     expect(createHostedLogoutUrl(endpoint)).toBe("https://api.stensibly.com/auth/logout");
+  });
+
+  test("accepts successful logout and preserves a failed session for retry", async () => {
+    const observed: Request[] = [];
+    const success = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(new Request(input, init));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await expect(revokeHostedSession(success, endpoint)).resolves.toBeUndefined();
+    const request = observed[0];
+    expect(request?.url).toBe(`${endpoint}/auth/logout`);
+    expect(request?.method).toBe("POST");
+    expect(request?.credentials).toBe("include");
+
+    const failure = (async () => new Response(null, { status: 503 })) as typeof fetch;
+    await expect(revokeHostedSession(failure, endpoint)).rejects.toThrow("Sign out returned HTTP 503");
   });
 
   test("rejects credential-bearing and non-origin endpoints", () => {
