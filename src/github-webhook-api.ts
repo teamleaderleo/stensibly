@@ -39,11 +39,10 @@ const pullRequestReviewSchema = z.object({
   }).passthrough(),
   pull_request: z.object({
     number: z.number().int().positive(),
-    head: z.object({
-      sha: z.string().regex(gitRevisionPattern),
-    }).passthrough(),
   }).passthrough(),
   review: z.object({
+    id: z.number().int().positive().safe(),
+    commit_id: z.string().regex(gitRevisionPattern),
     state: z.enum([
       "approved",
       "changes_requested",
@@ -94,6 +93,17 @@ export function registerGitHubProviderEventRoutes(
       }, 400);
     }
 
+    const contentType = context.req.header("Content-Type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (contentType !== "application/json") {
+      return context.json({
+        error: "GitHub webhook content type must be application/json",
+        code: "unsupported_media_type",
+      }, 415);
+    }
+
     const bodyResult = await readBoundedBody(context.req.raw, normalized.maxBodyBytes);
     if (bodyResult instanceof Response) return bodyResult;
 
@@ -137,9 +147,10 @@ export function registerGitHubProviderEventRoutes(
     }
 
     const payload = parsed.data;
+    const externalObjectId = String(payload.review.id);
     const repository = payload.repository.full_name;
     const subjectNumber = payload.pull_request.number;
-    const revision = payload.pull_request.head.sha.toLowerCase();
+    const revision = payload.review.commit_id.toLowerCase();
     const actor = payload.sender?.login ?? null;
     const summary = boundedSummary(
       `GitHub pull request review ${payload.action} on ${repository}#${subjectNumber} (${payload.review.state})`,
@@ -149,6 +160,7 @@ export function registerGitHubProviderEventRoutes(
       const result = events.ingestGitHubPullRequestReview({
         deliveryId,
         payloadDigest: createHash("sha256").update(bodyResult).digest("hex"),
+        externalObjectId,
         repository,
         subjectNumber,
         action: payload.action,
@@ -269,8 +281,9 @@ function normalizeOptions(options: GitHubWebhookOptions): {
   maxBodyBytes: number;
   now: () => number;
 } {
-  if (options.secret.length < 1 || options.secret.length > 1024) {
-    throw new Error("GitHub webhook secret must contain between 1 and 1024 characters");
+  const secretBytes = Buffer.byteLength(options.secret, "utf8");
+  if (secretBytes < 16 || secretBytes > 1024) {
+    throw new Error("GitHub webhook secret must contain between 16 and 1024 UTF-8 bytes");
   }
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_GITHUB_WEBHOOK_MAX_BODY_BYTES;
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024 || maxBodyBytes > 1024 * 1024) {
