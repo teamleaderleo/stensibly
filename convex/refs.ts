@@ -85,7 +85,7 @@ export const convexApi = {
     consume: mutationRef("oauthStates:consume"),
   },
   mcpOAuth: {
-    registerClient: mutationRef("mcpOAuthClientLifecycle:registerClient"),
+    registerClient: mutationRef("mcpOAuthClientRegistration:registerClient"),
     getClient: queryRef("mcpOAuthClientLifecycle:getClient"),
     createAuthorizationCode: mutationRef("mcpOAuthClientLifecycle:createAuthorizationCode"),
     exchangeAuthorizationCode: mutationRef("mcpOAuth:exchangeAuthorizationCode"),
