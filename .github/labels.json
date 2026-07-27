@@ -1,0 +1,107 @@
+[
+  {
+    "name": "type:bug",
+    "color": "d73a4a",
+    "description": "Demonstrated incorrect behaviour, regression, or broken contract"
+  },
+  {
+    "name": "type:improvement",
+    "color": "0e8a16",
+    "description": "Bounded improvement to existing behaviour, maintainability, or workflow"
+  },
+  {
+    "name": "type:proposal",
+    "color": "8250df",
+    "description": "New product, workflow, policy, or experiment proposal"
+  },
+  {
+    "name": "type:investigation",
+    "color": "bf8700",
+    "description": "Observation or question requiring bounded investigation before commitment"
+  },
+  {
+    "name": "area:product",
+    "color": "1f6feb",
+    "description": "Product model, user experience, or feature surface"
+  },
+  {
+    "name": "area:runtime",
+    "color": "0969da",
+    "description": "Runtime, persistence, execution, scheduling, or data-path behaviour"
+  },
+  {
+    "name": "area:oauth",
+    "color": "6639ba",
+    "description": "Authentication, OAuth, identity, sessions, or access-token flows"
+  },
+  {
+    "name": "area:coordination",
+    "color": "218bff",
+    "description": "Workers, pods, responsibility, authority, review, or handoff coordination"
+  },
+  {
+    "name": "area:ci",
+    "color": "0550ae",
+    "description": "Continuous integration, tests, validation, or developer tooling"
+  },
+  {
+    "name": "area:docs",
+    "color": "0075ca",
+    "description": "Documentation, examples, architecture notes, or repository guidance"
+  },
+  {
+    "name": "area:operations",
+    "color": "57606a",
+    "description": "Deployment, monitoring, recovery, capacity, or production operations"
+  },
+  {
+    "name": "concern:security",
+    "color": "b60205",
+    "description": "Security, authority, abuse resistance, or unsafe-effect concern"
+  },
+  {
+    "name": "concern:privacy",
+    "color": "c5def5",
+    "description": "Privacy, sensitive-data handling, visibility, or retention concern"
+  },
+  {
+    "name": "concern:compatibility",
+    "color": "d4c5f9",
+    "description": "Compatibility, migration, rollout, or legacy-behaviour concern"
+  },
+  {
+    "name": "concern:performance",
+    "color": "fbca04",
+    "description": "Performance, physical bounds, resource use, or scaling concern"
+  },
+  {
+    "name": "concern:tech-debt",
+    "color": "e99695",
+    "description": "Concrete maintenance debt, repeated friction, or brittle design"
+  },
+  {
+    "name": "concern:creative-experiment",
+    "color": "fef2c0",
+    "description": "Evidence-seeking creative experiment or novel direction"
+  },
+  {
+    "name": "triage:needed",
+    "color": "d4c5f9",
+    "description": "Needs overlap, scope, evidence, and promotion-path triage"
+  },
+  {
+    "name": "triage:ready",
+    "color": "0e8a16",
+    "description": "Scoped enough for an eligible worker to select; not assigned"
+  },
+  {
+    "name": "triage:waiting",
+    "color": "fbca04",
+    "description": "Waiting on a named dependency, decision, review, or external condition"
+  },
+  {
+    "name": "triage:superseded",
+    "color": "cfd3d7",
+    "description": "Preserved historical issue replaced by a named current record"
+  }
+]
