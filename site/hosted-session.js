@@ -1,4 +1,5 @@
 const API_PREFIX = '/api/v1';
+const ITEMS_PATH = '/api/v1/items';
 const SESSION_TOKEN_PARTS = ['stn.', 'tok_', '0'.repeat(32), '.', 's'.repeat(40)];
 
 export function hostedSessionSentinel() {
@@ -64,16 +65,53 @@ export function prepareHostedSessionRequest(
   };
 }
 
+export function describeHostedSessionRecovery(observation, sessionOrigin) {
+  if (!observation || ![401, 403].includes(observation.status)) return null;
+  if (String(observation.method || '').toUpperCase() !== 'GET') return null;
+
+  let url;
+  try {
+    url = new URL(String(observation.url || ''));
+  } catch {
+    return null;
+  }
+  const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
+  if (url.origin !== allowedOrigin || url.pathname !== ITEMS_PATH) return null;
+
+  return {
+    title: 'Hosted session needs attention',
+    state: observation.status === 401 ? 'session expired' : 'access unavailable',
+    summary: observation.status === 401
+      ? 'The hosted session expired. Sign out to clear it and begin again.'
+      : 'The hosted account cannot open this ledger. Sign out to clear the session.',
+    disconnectedTitle: 'Hosted session is still active.',
+    disconnectedMessage: 'Use sign out to clear the hosted cookie before trying another account or connection.',
+  };
+}
+
 export function installHostedSessionFetchBridge({
   fetchImpl,
   sessionOrigin,
   sentinel = hostedSessionSentinel(),
+  onHostedSessionResponse,
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
-  return (input, init) => {
+  return async (input, init) => {
     const prepared = prepareHostedSessionRequest(input, init, allowedOrigin, sentinel);
-    return fetchImpl(prepared.request, { credentials: prepared.credentials });
+    const response = await fetchImpl(prepared.request, { credentials: prepared.credentials });
+    if (prepared.credentials === 'include' && typeof onHostedSessionResponse === 'function') {
+      try {
+        onHostedSessionResponse({
+          status: response.status,
+          method: prepared.request.method,
+          url: prepared.request.url,
+        });
+      } catch {
+        // Dashboard recovery UI must never alter the request result.
+      }
+    }
+    return response;
   };
 }
 
