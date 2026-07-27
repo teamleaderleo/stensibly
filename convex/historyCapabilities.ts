@@ -38,9 +38,9 @@ export const get = query({
       physicalEventByteLimit: MAX_ITEM_EVENT_SCAN_BYTES,
       artifactLimit: MAX_PUBLIC_ITEM_ARTIFACTS,
       artifactOverflowCode: ARTIFACT_HISTORY_OVERFLOW_CODE,
-      boundedItemControl: true as const,
-      boundedDirectEvents: true as const,
-      boundedArtifacts: true as const,
-    };
+      boundedItemControl: true,
+      boundedDirectEvents: true,
+      boundedArtifacts: true,
+    } as const;
   },
 });
