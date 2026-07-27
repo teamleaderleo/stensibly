@@ -16,6 +16,7 @@ const requireAuth = Bun.env.STENSIBLY_REQUIRE_AUTH === "true";
 const allowedOrigins = splitList(Bun.env.STENSIBLY_ALLOWED_ORIGINS);
 const allowedHosts = splitList(Bun.env.STENSIBLY_ALLOWED_HOSTS);
 const backend = Bun.env.STENSIBLY_BACKEND ?? "sqlite";
+const githubWebhookSecret = Bun.env.STENSIBLY_GITHUB_WEBHOOK_SECRET;
 const runnerGlobalConcurrency = positiveIntegerEnv(
   Bun.env.STENSIBLY_RUNNER_GLOBAL_CONCURRENCY,
   defaultRunnerConcurrencyPolicy.globalLimit,
@@ -62,6 +63,9 @@ const app = createServerApp(store, {
       projectLimit: runnerProjectConcurrency,
     },
   },
+  ...(githubWebhookSecret
+    ? { githubWebhook: { secret: githubWebhookSecret } }
+    : {}),
 });
 
 Bun.serve({
@@ -76,6 +80,9 @@ console.log(`Allowed remote origins: ${allowedOrigins.length ? allowedOrigins.jo
 console.log(`API v1, token authority, and MCP backend: ${backend}`);
 console.log("Remote MCP: /mcp (Bearer token always required)");
 console.log("Runner MCP: /runner/mcp (Bearer token always required)");
+console.log(
+  `GitHub webhook intake: ${githubWebhookSecret ? "enabled" : "disabled"}`,
+);
 console.log(
   `Runner concurrency: ${runnerGlobalConcurrency} global, ${runnerProjectConcurrency} per project`,
 );
