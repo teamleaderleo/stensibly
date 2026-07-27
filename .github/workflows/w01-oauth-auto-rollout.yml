@@ -18,6 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  ROLLOUT_SOURCE_SHA: 5ee0852904dad614d46edbd10453e96e04ba409f
   CANONICAL_ORIGIN: https://api.stensibly.com
   WORKER_ORIGIN: https://stensibly-api.leoli-082000.workers.dev
   AUTH_RETURN_ORIGINS: https://www.stensibly.com
@@ -37,6 +38,8 @@ jobs:
       url: https://api.stensibly.com/health
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.ROLLOUT_SOURCE_SHA }}
       - uses: oven-sh/setup-bun@v2
 
       - name: Install locked dependencies
@@ -91,15 +94,6 @@ jobs:
 
           echo "ready=true" >> "$GITHUB_OUTPUT"
 
-      - name: Run exact candidate checks
-        if: steps.readiness.outputs.ready == 'true'
-        run: |
-          set -euo pipefail
-          bun run typecheck
-          bun run test
-          bun run test:convex
-          bun run worker:check
-
       - name: Detect current public auth state
         if: steps.readiness.outputs.ready == 'true'
         id: state
@@ -124,6 +118,17 @@ jobs:
           else
             echo "hosted_auth_ready=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Run exact candidate checks
+        if: >-
+          steps.readiness.outputs.ready == 'true'
+          && steps.state.outputs.already_enabled != 'true'
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
 
       - name: Deploy current Convex functions
         if: >-
@@ -296,13 +301,11 @@ jobs:
 
       - name: Record successful or already-enabled state
         if: steps.verify_enabled.outcome == 'success'
-        env:
-          DEPLOY_SHA: ${{ github.sha }}
         run: |
           {
             echo "## W01 OAuth rollout complete"
             echo
-            echo "- commit: \`$DEPLOY_SHA\`"
+            echo "- deployed source: \`$ROLLOUT_SOURCE_SHA\`"
             echo "- approval: \`$APPROVAL_REFERENCE\`"
             echo "- canonical origin: $CANONICAL_ORIGIN"
             echo "- Worker fallback: $WORKER_ORIGIN"
