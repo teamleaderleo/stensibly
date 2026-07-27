@@ -13,7 +13,10 @@ const svgContentTypes = ["image/svg+xml"] as const;
 
 export const dashboardAssets: readonly DashboardAssetExpectation[] = [
   { path: "/styles.css", kind: "css", contentTypes: cssContentTypes, marker: ":root" },
+  { path: "/hosted-session.css", kind: "css", contentTypes: cssContentTypes, marker: ".hosted-sign-in" },
   { path: "/app.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "DEFAULT_ENDPOINT" },
+  { path: "/hosted-session.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "hostedSessionSentinel" },
+  { path: "/hosted-session-bridge.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installHostedSessionFetchBridge" },
   { path: "/item-claim.css", kind: "css", contentTypes: cssContentTypes, marker: ".detail-claim" },
   { path: "/item-claim.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "validateClaimInput" },
   { path: "/item-progress-controller.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installProgressController" },
