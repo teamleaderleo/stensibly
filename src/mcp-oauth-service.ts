@@ -33,6 +33,11 @@ export type McpOAuthRefreshExchange =
   | { status: "invalid" }
   | { status: "replayed" };
 
+type McpOAuthRegistrationResult =
+  | { status: "ok"; client: McpOAuthClientRecord }
+  | { status: "retryable" }
+  | { status: "limit" };
+
 export interface McpOAuthService {
   registerClient(input: {
     clientId: string;
@@ -92,10 +97,15 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   }
 
   async registerClient(input: Parameters<McpOAuthService["registerClient"]>[0]) {
-    return await this.client.mutation(
+    const result = await this.client.mutation(
       convexApi.mcpOAuth.registerClient,
       this.args(input),
-    ) as McpOAuthClientRecord;
+    ) as McpOAuthRegistrationResult;
+    if (result.status === "ok") return result.client;
+    if (result.status === "retryable") {
+      throw new Error("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
+    }
+    throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
   }
 
   async getClient(clientId: string) {
