@@ -1,6 +1,6 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.1.2`  
+**Protocol:** `stensibly-agent-ops/0.2.0`  
 **Bootstrap:** `stensibly-project-bootstrap/v1`  
 **Tracking issue:** #293  
 **Status:** dogfood
@@ -16,8 +16,8 @@ Use the identifier that matches the thing being reviewed or changed:
 - software release: `stensibly 0.0.1`;
 - deployed revision: exact commit, build, Worker, and Convex deployment identifiers;
 - Project bootstrap: `stensibly-project-bootstrap/v1`;
-- repository operating protocol: `stensibly-agent-ops/0.1.2`;
-- wave and revision: for example `W01 rev 1`;
+- repository operating protocol: `stensibly-agent-ops/0.2.0`;
+- wave and revision: for example `W01 rev 2`;
 - contract version: for example `project-attachment-v1`;
 - work authority: exact claim, lease, continuation, or approval generation;
 - artifact or review: exact commit SHA, PR head, or event sequence.
@@ -45,14 +45,26 @@ rollout gates into Project settings.
 ### `AGENTS.md`
 
 Contains the accepted repository operating protocol: startup order, session-local
-callsign adoption, general work selection, authority boundaries, risk-tiered
-review and merge policy, review independence, handoff expectations, and shared
-improvement rules.
+callsign adoption, bounded autonomous portfolios, dormant-work recovery, general
+work selection, authority boundaries, risk-tiered review and merge policy, review
+independence, handoff expectations, and shared improvement rules.
 
 ### `docs/current-wave.md`
 
 Contains temporary operational focus, gates, lanes, accepted test effects, and
 retrospective questions. It has its own wave revision.
+
+### Focused accepted practices
+
+A reviewed focused practice may remain in its own document when retaining its
+rationale, evaluation, and rollback detail is useful. The canonical protocol must
+summarize the active obligations and link to the accepted practice rather than
+requiring fresh workers to infer adoption from an old pull request.
+
+Current focused practice:
+
+- `docs/autonomous-portfolio-execution.md` — accepted through #330 / PR #331 and
+  integrated into protocol `0.2.0`.
 
 ### Pod notes and practices
 
@@ -165,11 +177,11 @@ dependency, or public-contract effect and a trivial rollback.
   unresolved concrete finding are sufficient.
 - The author or integration worker may merge under the standing repository policy.
 
-### Tier 1 — bounded low-risk runtime
+### Tier 1 — bounded low-risk runtime or shared-practice change
 
-Use for small isolated runtime or contract changes with straightforward rollback
-and no authorization, privacy, schema, migration, durable-state, data-loss,
-deployment, or broad compatibility boundary.
+Use for small isolated runtime, contract, or focused instruction changes with
+straightforward rollback and no authorization, privacy, schema, migration,
+durable-state, data-loss, deployment, or broad compatibility boundary.
 
 - One independent exact-head acceptance is normally sufficient.
 - Green relevant checks, an unchanged mergeable head, and no unresolved blocking
@@ -212,6 +224,37 @@ its own Tier 1 or Tier 2 final revision.
 This policy does not require the whole pod or every available worker to review a
 change. It requires only the independence and specialist coverage justified by
 the selected tier.
+
+## Autonomous portfolio adoption
+
+Proposal #330 and PR #331 were accepted as a Tier 1 shared-practice change. The
+active protocol adopts their bounded form:
+
+- one primary outcome plus normally no more than three secondary lanes;
+- autonomous next-action selection at natural boundaries;
+- useful non-overlapping work while another lane waits;
+- larger outcome-owned scopes only with explicit decomposition, integration,
+  evidence, and recovery boundaries;
+- one implementation owner for overlapping work;
+- no self-acceptance, hidden branches, or claim hoarding;
+- explicit dormant-work recovery that preserves provenance and does not silently
+  transfer authority;
+- concise result-centred progress updates;
+- Tier 3 authority boundaries unchanged.
+
+This is an additive minor protocol change from `0.1.2` to `0.2.0`. Roll back to
+`0.1.2` if the trial materially increases hidden overlap, abandoned portfolios,
+integration collisions, unrecoverable work, or unsafe authority assumptions.
+Preserve the trial evidence and handoffs if rollback occurs.
+
+PR #298 remains a separate broader pod-bootstrap candidate. This protocol
+integration supersedes only its overlapping work-selection, sign-off, and version
+claims; it does not decide whether the pod registry, charter, memory, or templates
+should merge.
+
+PR #342 is superseded by the selected callsign baseline in PR #341 plus this
+current-main portfolio integration. Its ChatGPT bootstrap expansion is not required
+to activate the repository protocol and should not be layered mechanically.
 
 ## Version changes
 
