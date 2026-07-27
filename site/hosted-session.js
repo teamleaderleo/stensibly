@@ -28,19 +28,21 @@ export function prepareHostedSessionRequest(
   sentinel = hostedSessionSentinel(),
 ) {
   const request = new Request(input, init);
-  if (request.headers.get('authorization') !== `Bearer ${sentinel}`) return request;
+  const authorization = request.headers.get('authorization');
+  if (!authorization) return request;
+
+  if (authorization !== `Bearer ${sentinel}`) {
+    return new Request(request, { credentials: 'omit' });
+  }
 
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
   const url = new URL(request.url);
-  if (
-    url.origin !== allowedOrigin
-    || (url.pathname !== API_PREFIX && !url.pathname.startsWith(`${API_PREFIX}/`))
-  ) {
-    return request;
-  }
-
   request.headers.delete('authorization');
-  return new Request(request, { credentials: 'include' });
+  const hostedRestRequest = url.origin === allowedOrigin
+    && (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`));
+  return new Request(request, {
+    credentials: hostedRestRequest ? 'include' : 'omit',
+  });
 }
 
 export function installHostedSessionFetchBridge({
