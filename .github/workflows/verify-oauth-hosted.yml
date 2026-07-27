@@ -1,0 +1,86 @@
+name: Verify hosted OAuth
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Predeclared Stensibly Worker origin
+        required: true
+        default: canonical
+        type: choice
+        options:
+          - canonical
+          - worker-fallback
+      expectation:
+        description: Expected hosted OAuth state
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TARGET: ${{ inputs.target }}
+      EXPECTATION: ${{ inputs.expectation }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Select validated Stensibly origin
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            canonical)
+              endpoint="https://api.stensibly.com"
+              ;;
+            worker-fallback)
+              endpoint="https://stensibly-api.leoli-082000.workers.dev"
+              ;;
+            *)
+              echo "Unsupported target choice" >&2
+              exit 1
+              ;;
+          esac
+          echo "ENDPOINT=$endpoint" >> "$GITHUB_ENV"
+          echo "ISSUER=https://api.stensibly.com" >> "$GITHUB_ENV"
+      - name: Run hosted OAuth verifier
+        run: |
+          set -euo pipefail
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "target=${TARGET}"
+            echo "endpoint=${ENDPOINT}"
+            echo "issuer=${ISSUER}"
+            echo "expectation=${EXPECTATION}"
+            echo "observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            bun run verify:oauth -- \
+              --endpoint "$ENDPOINT" \
+              --issuer "$ISSUER" \
+              --expect "$EXPECTATION"
+          } 2>&1 | tee oauth-verification.txt
+      - name: Publish verification summary
+        if: always()
+        run: |
+          {
+            echo "## Hosted OAuth verification"
+            echo
+            echo '```text'
+            cat oauth-verification.txt 2>/dev/null || echo "Verifier did not produce output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload bounded verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-oauth-verification-${{ inputs.target }}-${{ inputs.expectation }}
+          path: oauth-verification.txt
+          if-no-files-found: warn
+          retention-days: 14
