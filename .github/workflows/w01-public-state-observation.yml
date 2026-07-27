@@ -1,0 +1,96 @@
+name: W01 public OAuth state observation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/w01-public-state-observation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Observe both fixed public origins
+        env:
+          CANONICAL_ORIGIN: https://api.stensibly.com
+          WORKER_ORIGIN: https://stensibly-api.leoli-082000.workers.dev
+        run: |
+          set -u
+          observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          run_check() {
+            local name="$1"
+            shift
+            set +e
+            "$@" > "${name}.txt" 2>&1
+            local status=$?
+            set -e
+            printf '%s' "$status"
+          }
+
+          set -e
+          canonical_enabled="$(run_check canonical-enabled bun run verify:oauth)"
+          fallback_enabled="$(run_check fallback-enabled bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN")"
+          canonical_disabled="$(run_check canonical-disabled bun run verify:oauth -- --expect disabled)"
+          fallback_disabled="$(run_check fallback-disabled bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect disabled)"
+
+          state=unclassified
+          if [[ "$canonical_enabled" -eq 0 && "$fallback_enabled" -eq 0 ]]; then
+            state=enabled
+          elif [[ "$canonical_disabled" -eq 0 && "$fallback_disabled" -eq 0 ]]; then
+            state=disabled
+          fi
+
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "observed_at=${observed_at}"
+            echo "state=${state}"
+            echo "canonical_enabled_exit=${canonical_enabled}"
+            echo "fallback_enabled_exit=${fallback_enabled}"
+            echo "canonical_disabled_exit=${canonical_disabled}"
+            echo "fallback_disabled_exit=${fallback_disabled}"
+            for name in canonical-enabled fallback-enabled canonical-disabled fallback-disabled; do
+              echo
+              echo "=== ${name} ==="
+              cat "${name}.txt"
+            done
+          } > public-oauth-observation.txt
+
+          {
+            echo "## W01 public OAuth state observation"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- observed at: \`${observed_at}\`"
+            echo "- classified state: \`${state}\`"
+            echo
+            echo '```text'
+            cat public-oauth-observation.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$state" == unclassified ]]; then
+            exit 1
+          fi
+
+      - name: Upload bounded public observation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-public-oauth-observation
+          path: public-oauth-observation.txt
+          if-no-files-found: warn
+          retention-days: 3
