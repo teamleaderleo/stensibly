@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -56,6 +57,7 @@ const lifecycleAuditValidator = v.object({
   pageStatus: pageStatusValidator,
   scannedClients: v.number(),
   truncatedClients: v.boolean(),
+  pageRowOverflow: v.boolean(),
   pageComplete: v.boolean(),
   workspaceAuditComplete: v.boolean(),
   readBounds: v.object({
@@ -98,24 +100,25 @@ type LifecycleCounts = {
  * for malformed rows so an authorised operator can inspect and repair the exact
  * records through a separately reviewed path.
  *
- * Each page has fixed row and byte read caps. A clear lifecycle shape is reported
- * only when the audit starts at the first page and the complete workspace fits in
- * that one bounded page. Multi-page audits retain explicit continuation evidence for
- * an external evidence collector; no page or aggregate result grants rollout
- * approval.
+ * Callers must provide the exact fixed pagination contract. The validated pagination
+ * object is passed unchanged to Convex, with fixed row and byte read caps. A clear
+ * lifecycle shape is reported only when the audit starts at the first page and the
+ * complete workspace fits in that one bounded page. Multi-page or overfull native
+ * pages remain explicit incomplete evidence and never grant rollout approval.
  */
 export const auditClientLifecycles = query({
   args: {
     ...serviceArgs,
     observedAt: v.number(),
-    cursor: v.optional(cursorValidator),
+    paginationOpts: paginationOptsValidator,
   },
   returns: lifecycleAuditValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspaceSlug = normalizeWorkspace(args.workspace);
     const observedAt = assertTrustedTimestamp(args.observedAt, "Lifecycle audit time");
-    const cursor = args.cursor ?? null;
+    assertAuditPaginationOptions(args.paginationOpts as unknown as Record<string, unknown>);
+    const cursor = args.paginationOpts.cursor;
     const workspace = await findWorkspace(ctx, workspaceSlug);
     if (!workspace) {
       return {
@@ -129,6 +132,7 @@ export const auditClientLifecycles = query({
         pageStatus: null,
         scannedClients: 0,
         truncatedClients: false,
+        pageRowOverflow: false,
         pageComplete: true,
         workspaceAuditComplete: false,
         readBounds: readBounds(),
@@ -147,18 +151,14 @@ export const auditClientLifecycles = query({
     const page = await ctx.db
       .query("mcpOAuthClients")
       .withIndex("by_workspace_created", (q) => q.eq("workspaceId", workspace._id))
-      .paginate({
-        numItems: MAX_AUDIT_CLIENTS,
-        cursor,
-        maximumRowsRead: MAX_AUDIT_ROWS_READ,
-        maximumBytesRead: MAX_AUDIT_BYTES_READ,
-      });
+      .paginate(args.paginationOpts);
     const pageStatus = page.pageStatus ?? null;
     const splitCursor = page.splitCursor ?? null;
+    const pageRowOverflow = page.page.length > MAX_AUDIT_CLIENTS;
     const pageComplete = page.isDone
       && pageStatus === null
       && splitCursor === null
-      && page.page.length <= MAX_AUDIT_CLIENTS;
+      && !pageRowOverflow;
     const truncatedClients = !pageComplete;
     const scannedRows = page.page.slice(0, MAX_AUDIT_CLIENTS);
     const counts = emptyCounts();
@@ -204,11 +204,12 @@ export const auditClientLifecycles = query({
       workspaceFound: true,
       observedAt,
       cursor,
-      continueCursor: pageComplete ? null : page.continueCursor,
+      continueCursor: pageRowOverflow || pageComplete ? null : page.continueCursor,
       splitCursor,
       pageStatus,
       scannedClients: scannedRows.length,
       truncatedClients,
+      pageRowOverflow,
       pageComplete,
       workspaceAuditComplete,
       readBounds: readBounds(),
@@ -277,6 +278,20 @@ function readBounds() {
     maximumRowsRead: MAX_AUDIT_ROWS_READ,
     maximumBytesRead: MAX_AUDIT_BYTES_READ,
   };
+}
+
+function assertAuditPaginationOptions(options: Record<string, unknown>): void {
+  if (
+    options.numItems !== MAX_AUDIT_CLIENTS
+    || options.maximumRowsRead !== MAX_AUDIT_ROWS_READ
+    || options.maximumBytesRead !== MAX_AUDIT_BYTES_READ
+    || options.endCursor !== undefined
+    || options.id !== undefined
+  ) {
+    throw new Error(
+      "Lifecycle audit pagination must use the exact fixed row and byte bounds",
+    );
+  }
 }
 
 function incrementCount(counts: LifecycleCounts, classification: LifecycleClass): void {
