@@ -6,68 +6,83 @@ import {
 
 const baseInput: WorkerSignoffInput = {
   callsign: "Nightjar",
-  runId: "run_01JABC-123",
-  stance: "independent acceptance review",
-  work: "Stensibly / W02 / OAuth lifecycle",
 };
 
 describe("worker sign-off contract", () => {
-  test("renders deterministic complete attribution", () => {
+  test("renders deterministic expanded attribution", () => {
     const signoff = buildWorkerSignoff({
       ...baseInput,
       mantle: { name: "Lantern", version: 2 },
       pod: "Foundry",
+      intention: "decide exact-head acceptance",
+      runId: "run_01JABC-123",
+      work: "Stensibly / W02 / OAuth lifecycle",
       reviewedRevision: "8FD0C86",
     });
 
     expect(signoff).toEqual({
-      version: 1,
+      version: 2,
       callsign: "Nightjar",
       mantle: { name: "Lantern", version: 2 },
       pod: "Foundry",
+      intention: "decide exact-head acceptance",
       runId: "run_01JABC-123",
-      stance: "independent acceptance review",
       work: "Stensibly / W02 / OAuth lifecycle",
       reviewedRevision: "8fd0c86",
       markdown: [
-        "— Nightjar · Lantern mantle v2 · Foundry pod",
+        "— Nightjar · Lantern mantle v2 · Foundry",
+        "  Intention: decide exact-head acceptance",
         "  Run: run_01JABC-123",
-        "  Stance: independent acceptance review",
         "  Work: Stensibly / W02 / OAuth lifecycle",
         "  Reviewed revision: 8fd0c86",
       ].join("\n"),
     });
   });
 
-  test("omits absent optional metadata without dangling separators", () => {
+  test("renders a minimal callsign without empty metadata lines", () => {
     const signoff = buildWorkerSignoff(baseInput);
 
-    expect(signoff.mantle).toBeNull();
-    expect(signoff.pod).toBeNull();
-    expect(signoff.reviewedRevision).toBeNull();
+    expect(signoff).toEqual({
+      version: 2,
+      callsign: "Nightjar",
+      mantle: null,
+      pod: null,
+      intention: null,
+      runId: null,
+      work: null,
+      reviewedRevision: null,
+      markdown: "— Nightjar",
+    });
+  });
+
+  test("renders the lightweight routine footer", () => {
+    const signoff = buildWorkerSignoff({
+      ...baseInput,
+      pod: "Foundry",
+      intention: "unblock MCP dogfood",
+    });
+
     expect(signoff.markdown).toBe([
-      "— Nightjar",
-      "  Run: run_01JABC-123",
-      "  Stance: independent acceptance review",
-      "  Work: Stensibly / W02 / OAuth lifecycle",
+      "— Nightjar · Foundry",
+      "  Intention: unblock MCP dogfood",
     ].join("\n"));
+    expect(signoff.markdown).not.toContain("Stance:");
+    expect(signoff.markdown).not.toContain("ChatGPT worker");
   });
 
   test("normalizes bounded spaces and escapes inline Markdown", () => {
     const signoff = buildWorkerSignoff({
-      ...baseInput,
       callsign: "  Night*  Jar  ",
       mantle: { name: "Core_[v]", version: 3 },
       pod: "Foundry`Lab",
-      stance: "review <read-only>",
+      intention: "review <read-only>",
       work: "Stensibly / [OAuth]",
     });
 
     expect(signoff.callsign).toBe("Night* Jar");
     expect(signoff.markdown).toBe([
-      "— Night\\* Jar · Core\\_\\[v\\] mantle v3 · Foundry\\`Lab pod",
-      "  Run: run_01JABC-123",
-      "  Stance: review \\<read-only\\>",
+      "— Night\\* Jar · Core\\_\\[v\\] mantle v3 · Foundry\\`Lab",
+      "  Intention: review \\<read-only\\>",
       "  Work: Stensibly / \\[OAuth\\]",
     ].join("\n"));
   });
@@ -77,19 +92,19 @@ describe("worker sign-off contract", () => {
       ...baseInput,
       callsign: "Night&#x202e;jar",
     });
-    expect(hexadecimal.markdown.split("\n")[0]).toBe("— Night&amp;#x202e;jar");
+    expect(hexadecimal.markdown).toBe("— Night&amp;#x202e;jar");
 
     const decimal = buildWorkerSignoff({
       ...baseInput,
-      stance: "review &#8238; safely",
+      intention: "review &#8238; safely",
     });
-    expect(decimal.markdown).toContain("Stance: review &amp;#8238; safely");
+    expect(decimal.markdown).toContain("Intention: review &amp;#8238; safely");
 
     const named = buildWorkerSignoff({
       ...baseInput,
       pod: "Foundry&rlm;Lab",
     });
-    expect(named.markdown.split("\n")[0]).toBe("— Nightjar · Foundry&amp;rlm;Lab pod");
+    expect(named.markdown).toBe("— Nightjar · Foundry&amp;rlm;Lab");
 
     const visibleAmpersand = buildWorkerSignoff({
       ...baseInput,
@@ -100,17 +115,19 @@ describe("worker sign-off contract", () => {
   });
 
   test("rejects empty, unsafe, and oversized descriptive fields", () => {
-    expect(() => buildWorkerSignoff({ ...baseInput, callsign: "   " }))
+    expect(() => buildWorkerSignoff({ callsign: "   " }))
       .toThrow("Worker callsign must not be empty");
-    expect(() => buildWorkerSignoff({ ...baseInput, stance: "review\n" }))
-      .toThrow("Worker stance contains unsupported control characters");
+    expect(() => buildWorkerSignoff({ ...baseInput, intention: "review\n" }))
+      .toThrow("Worker intention contains unsupported control characters");
     expect(() => buildWorkerSignoff({ ...baseInput, pod: "Foundry\u202e" }))
       .toThrow("Pod name contains unsupported control characters");
     expect(() => buildWorkerSignoff({ ...baseInput, callsign: "x".repeat(81) }))
       .toThrow("Worker callsign must be at most 80 characters");
+    expect(() => buildWorkerSignoff({ ...baseInput, intention: "x".repeat(241) }))
+      .toThrow("Worker intention must be at most 240 characters");
   });
 
-  test("rejects malformed run identities", () => {
+  test("rejects malformed optional run identities", () => {
     for (const runId of [
       "worker_01JABC",
       "run_",

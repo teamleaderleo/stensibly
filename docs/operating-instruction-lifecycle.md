@@ -1,6 +1,6 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.1.0`  
+**Protocol:** `stensibly-agent-ops/0.1.1`  
 **Bootstrap:** `stensibly-project-bootstrap/v1`  
 **Tracking issue:** #293  
 **Status:** dogfood
@@ -16,7 +16,7 @@ Use the identifier that matches the thing being reviewed or changed:
 - software release: `stensibly 0.0.1`;
 - deployed revision: exact commit, build, Worker, and Convex deployment identifiers;
 - Project bootstrap: `stensibly-project-bootstrap/v1`;
-- repository operating protocol: `stensibly-agent-ops/0.1.0`;
+- repository operating protocol: `stensibly-agent-ops/0.1.1`;
 - wave and revision: for example `W01 rev 1`;
 - contract version: for example `project-attachment-v1`;
 - work authority: exact claim, lease, continuation, or approval generation;
@@ -45,8 +45,8 @@ rollout gates into Project settings.
 ### `AGENTS.md`
 
 Contains the accepted repository operating protocol: startup order, general work
-selection, authority boundaries, review independence, handoff expectations, and
-shared improvement rules.
+selection, authority boundaries, risk-tiered review and merge policy, review
+independence, handoff expectations, and shared improvement rules.
 
 ### `docs/current-wave.md`
 
@@ -147,6 +147,70 @@ external users. State whether the Project bootstrap must change.
 Record reviewer, human approval when required, exact adopted revision, effective
 scope, rejected alternatives, residual uncertainty, and follow-up survey.
 ```
+
+## Risk-tiered review and merge decisions
+
+Review count is a consequence of risk, not a measure of seriousness or worker
+participation. Every handoff should identify the selected tier and the evidence
+that justifies it.
+
+### Tier 0 — mechanical or documentation-only
+
+Use for changes with no runtime, authority, security, data, deployment,
+dependency, or public-contract effect and a trivial rollback.
+
+- Independent review may be omitted.
+- Exact diff inspection, relevant checks, unchanged head, mergeability, and no
+  unresolved concrete finding are sufficient.
+- The author or integration worker may merge under the standing repository policy.
+
+### Tier 1 — bounded low-risk runtime
+
+Use for small isolated runtime or contract changes with straightforward rollback
+and no authorization, privacy, schema, migration, durable-state, data-loss,
+deployment, or broad compatibility boundary.
+
+- One independent exact-head acceptance is normally sufficient.
+- Green relevant checks, an unchanged mergeable head, and no unresolved blocking
+  thread complete the gate.
+- The integration worker should merge promptly rather than waiting for unrelated
+  workers or another ceremonial approval.
+
+### Tier 2 — elevated or broad
+
+Use for authentication or authorization, privacy, schema or migration, durable
+state machines, exactly-once effects, deletion or retention, cross-project
+isolation, public protocol changes, dependencies, broad compatibility, or
+uncertain rollback.
+
+- Require at least one independent exact-head acceptance and a separate integration
+  decision when the reviewer is not the integration owner.
+- Add another independent or specialist review when multiple high-risk boundaries
+  are crossed, evidence conflicts, the relevant failure mode cannot be exercised,
+  or material residual uncertainty remains.
+- Competing candidates require a selector independent of the selected final
+  revision.
+
+### Tier 3 — consequential operation
+
+Production deployment or enablement, credentials, permission widening,
+destructive data operations, spending, external publication, irreversible
+migration, and comparable real-world effects require contemporaneous human
+approval unless a narrower standing policy explicitly grants them.
+
+A residual regression may be accepted only when it is bounded, reversible,
+documented, outside safety, authorization, privacy, and data-loss boundaries,
+and has a clear follow-up or rollback condition. Reviewers should distinguish a
+blocking defect from an imperfection that can safely ship.
+
+Before merging any reviewed PR, re-fetch the exact head, current base, CI,
+mergeability, reviews, and unresolved threads. Exact-head acceptance expires when
+the head moves. A worker may never use its own review as the sole acceptance for
+its own Tier 1 or Tier 2 final revision.
+
+This policy does not require the whole pod or every available worker to review a
+change. It requires only the independence and specialist coverage justified by
+the selected tier.
 
 ## Version changes
 
