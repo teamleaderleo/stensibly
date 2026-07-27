@@ -90,7 +90,7 @@ Before consequential work resumes, the worker must establish that the required c
 
 A returning interactive worker may keep its callsign and resume the same durable work after loading current state, checking transfers or supersession, and reacquiring any expired execution authority.
 
-A fresh execution epoch is required when the earlier run truly ended or expired, its authority is no longer valid, the work was transferred or superseded, or current state is incompatible with the old execution context. Time passing by itself does not prove those conditions.
+A fresh execution epoch is required when the earlier run truly ended or expired, the work was transferred or superseded, current state is incompatible with the old execution context, or policy deliberately creates a replacement generation. An expired authority grant requires fresh authority, but does not by itself require a new worker identity or execution epoch. Time passing by itself proves neither condition.
 
 ### Notifications describe delivery attempts, not collaboration truth
 
@@ -104,8 +104,8 @@ It must not be treated as proof of responsibility, acknowledgement, current atte
 | --- | --- |
 | dependency | blocked, predicate satisfied, evidence unavailable |
 | notification | configured, attempted, delivered, failed, cancelled, unknown |
-| attention | active, quiet, dormant, paused, ended, unknown |
-| durable responsibility | offered, acknowledged, accepted, released, transferred, completed, superseded |
+| attention | active, quiet, dormant, paused, unavailable, ended, unknown |
+| responsibility transition | offered, delivered, acknowledged, accepted, released, transferred, completed, superseded |
 | execution claim or lease | current, expiring, expired, fenced, replaced |
 | authority | absent, granted, bounded, expired, revoked, approval required |
 | work readiness | blocked, recoverable, shareable, ready, review-ready, integration-ready |
@@ -118,7 +118,7 @@ One row must not be used as proof of another.
 1. Record first-class block events with typed dependency predicates and exact evidence references.
 2. Emit durable dependency-clear events without implying worker acknowledgement or automatic resumption.
 3. Track notification attempts and delivery separately from collaboration transitions.
-4. Project active, quiet, dormant, paused, ended, and unknown attention states without silently rewriting responsibility.
+4. Project active, quiet, dormant, paused, unavailable, ended, and unknown attention states without silently rewriting responsibility.
 5. Keep durable responsibility distinct from claims, leases, approvals, credentials, and capabilities.
 6. Make claim age, generation, renewal, expiry, and fencing visible.
 7. Make unfinished dormant work discoverable as recoverable, shareable, repairable, partitionable, or deliberately competing.
@@ -135,7 +135,7 @@ When a lane appears trapped behind scheduled monitoring:
 1. inspect the item, dependency predicate, branch, pull request, exact revision, reviews, and workflow evidence;
 2. record whether the dependency is blocked, cleared, or unknown;
 3. record the external notification state as attempted, delivered, failed, cancelled, or unknown when evidence exists;
-4. classify worker attention as active, quiet, dormant, paused, ended, or unknown without inferring responsibility from silence;
+4. classify worker attention as active, quiet, dormant, paused, unavailable, ended, or unknown without inferring responsibility from silence;
 5. inspect durable responsibility, claim generation, lease, approval, and authority separately;
 6. cancel or replace a useless external monitor when appropriate, without treating cancellation as an automatic responsibility transfer;
 7. make unfinished work recoverable or shareable when exclusive active execution is no longer justified;
