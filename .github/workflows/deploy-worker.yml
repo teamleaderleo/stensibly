@@ -7,6 +7,14 @@ on:
         description: Optional project slug for scoped-token verification
         required: false
         type: string
+      oauth_expectation:
+        description: Expected public OAuth state after deployment
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
 
 permissions:
   contents: read
@@ -59,10 +67,12 @@ jobs:
     name: Deploy and verify
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment:
       name: production
       url: https://api.stensibly.com/health
+    env:
+      OAUTH_EXPECTATION: ${{ inputs.oauth_expectation }}
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -92,6 +102,10 @@ jobs:
             echo "The optional project must be a lowercase project slug" >&2
             exit 1
           fi
+          case "$OAUTH_EXPECTATION" in
+            disabled|enabled) ;;
+            *) echo "OAuth expectation must be disabled or enabled" >&2; exit 1 ;;
+          esac
 
       - name: Deploy Cloudflare Worker
         env:
@@ -99,7 +113,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bun run worker:deploy
 
-      - name: Verify Worker fallback
+      - name: Verify Worker fallback bearer compatibility
         env:
           STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
           STENSIBLY_PROJECT: ${{ inputs.project }}
@@ -115,7 +129,7 @@ jobs:
           done
           exit 1
 
-      - name: Verify official endpoint
+      - name: Verify official endpoint bearer compatibility
         env:
           STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
           STENSIBLY_PROJECT: ${{ inputs.project }}
@@ -123,6 +137,35 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3; do
             if bun run verify:hosted; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep 10
+            fi
+          done
+          exit 1
+
+      - name: Verify Worker fallback public OAuth state
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if bun run verify:oauth -- \
+              --endpoint https://stensibly-api.leoli-082000.workers.dev \
+              --issuer https://api.stensibly.com \
+              --expect "$OAUTH_EXPECTATION"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep 10
+            fi
+          done
+          exit 1
+
+      - name: Verify official endpoint public OAuth state
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if bun run verify:oauth -- --expect "$OAUTH_EXPECTATION"; then
               exit 0
             fi
             if [[ "$attempt" -lt 3 ]]; then
@@ -141,5 +184,7 @@ jobs:
             echo "- Commit: \`$DEPLOY_SHA\`"
             echo "- Worker fallback: https://stensibly-api.leoli-082000.workers.dev"
             echo "- Official endpoint: https://api.stensibly.com"
-            echo "- Post-deploy verification: passed"
+            echo "- Declared OAuth state: \`$OAUTH_EXPECTATION\`"
+            echo "- Legacy bearer verification: passed on both origins"
+            echo "- Public auth/OAuth verification: passed on both origins"
           } >> "$GITHUB_STEP_SUMMARY"
