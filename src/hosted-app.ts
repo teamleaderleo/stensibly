@@ -1,5 +1,9 @@
 import { Hono } from "hono";
 import { createApiV1 } from "./api-v1.js";
+import {
+  parseHostedAuthBootstrapProjects,
+  withHostedAuthBootstrapProjects,
+} from "./hosted-account-bootstrap.js";
 import type { ConvexWorkLedger } from "./convex-ledger.js";
 import { createConvexProjectAttachmentLedgerFromEnv } from "./project-attachment-convex-ledger.js";
 import { createCorsMiddleware } from "./cors.js";
@@ -152,6 +156,9 @@ function hostedAuthFromEnv(
   const authOrigin = trimmed(env.STENSIBLY_AUTH_ORIGIN);
   const returnOrigins = splitList(env.STENSIBLY_AUTH_RETURN_ORIGINS);
   const allowedGitHubSubjects = splitList(env.STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS);
+  const bootstrapProjects = parseHostedAuthBootstrapProjects(
+    env.STENSIBLY_AUTH_BOOTSTRAP_PROJECTS,
+  );
   const configured = Boolean(
     clientId
     || clientSecret
@@ -159,6 +166,7 @@ function hostedAuthFromEnv(
     || env.STENSIBLY_AUTH_RETURN_ORIGINS
     || env.STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS
     || env.STENSIBLY_AUTH_BOOTSTRAP_ROLE
+    || env.STENSIBLY_AUTH_BOOTSTRAP_PROJECTS
     || env.STENSIBLY_SESSION_MAX_AGE_SECONDS
   );
   if (!configured) return undefined;
@@ -170,12 +178,13 @@ function hostedAuthFromEnv(
     );
   }
 
+  const accountService = new ConvexHostedAccountService({
+    client: ledger.client,
+    serviceSecret: ledger.serviceSecret,
+    workspace: ledger.workspace,
+  });
   return {
-    accountService: new ConvexHostedAccountService({
-      client: ledger.client,
-      serviceSecret: ledger.serviceSecret,
-      workspace: ledger.workspace,
-    }),
+    accountService: withHostedAuthBootstrapProjects(accountService, bootstrapProjects),
     githubClient: new HttpGitHubOAuthClient({ clientId, clientSecret }),
     githubClientId: clientId,
     authOrigin,
