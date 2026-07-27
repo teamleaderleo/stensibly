@@ -10,6 +10,8 @@ Related work:
 
 - #230 — temporary agent task groups and bounded integration
 - #248 — delegation waves and independent lanes
+- #272 — durable pods and operating context
+- #278 — pod charter, practice, memory, and lifecycle
 - #280 — wave, lane, action, and run as separate work scales
 - `docs/product-model.md` — authority and responsibility remain distinct from names and assignments
 
@@ -184,17 +186,35 @@ mantle:
   version: 2
 ```
 
-### Pod or temporary group
+### Pod
 
-A temporary collaboration or affiliation around a shared deliverable or capability.
+A durable operating unit that retains a mission, policy, knowledge, responsibilities, practice, and learning across worker sessions, repositories, waves, and temporary task groups.
 
 ```yaml
 pod:
   slug: foundry
   title: Foundry
+  mission: Build and review bounded production-ready systems
 ```
 
-Pod membership is orthogonal to the work address. A pod may contribute to several lanes, and a lane may pass between pods. Moving work does not transfer authority implicitly.
+A pod may have temporary participants, become dormant, fork, merge, or dissolve under an explicit lifecycle. The pod does not disappear merely because one worker or run ends.
+
+Pod membership is orthogonal to the work address. A pod may contribute to several lanes, and a lane may pass between pods. Moving work or joining a pod does not transfer authority implicitly.
+
+### Temporary task group
+
+A bounded execution group formed around one shared deliverable, integration checkpoint, or short-lived coordination need. It has explicit membership, scope, stopping conditions, and a dissolution or handoff point.
+
+```yaml
+taskGroup:
+  slug: oauth-rollout-check
+  deliverable: Verify one guarded OAuth rollout candidate
+  stoppingCondition: Record an independent verdict and handoff
+```
+
+A temporary task group may operate within one pod, include participants from several pods, or have no pod affiliation. It can contribute to a lane without becoming the lane, and it dissolves or hands off when its bounded purpose ends.
+
+Pods and temporary task groups both remain outside the canonical work address and separate from actor identity, responsibility, claims, and authority.
 
 ### Actor
 
@@ -343,7 +363,8 @@ Then record:
 | Section or assignment | Action |
 | Revision or production pass | Run |
 | Author byline | Actor, callsign, or mantle metadata |
-| Editorial team | Pod or temporary group |
+| Publishing house or standing editorial organisation | Pod |
+| Temporary production crew | Temporary task group |
 | Manuscript and citations | Artifacts and evidence |
 | Editorial review | Independent review record |
 | Publication | Accepted shared deliverable |
@@ -356,7 +377,7 @@ The analogy is a display and organisation aid. It does not replace Stensibly's a
 
 Field by field:
 
-> **Projects identify durable bodies of work. Waves identify outcomes. Lanes identify coherent threads. Actions identify claimable next steps. Run IDs identify executions. Callsigns and mantles identify voices. Pods identify affiliations. Actor IDs identify principals. Authority grants identify permission.**
+> **Projects identify durable bodies of work. Waves identify outcomes. Lanes identify coherent threads. Actions identify claimable next steps. Run IDs identify executions. Callsigns and mantles identify voices. Pods identify durable affiliations. Temporary task groups identify bounded collaboration. Actor IDs identify principals. Authority grants identify permission.**
 
 These facts must not be collapsed into one agent name.
 
