@@ -1,5 +1,6 @@
 import { isPlausibleToken, normalizeEndpoint } from './connection.js';
 import {
+  classifyHostedSessionDisconnect,
   createGithubSignInUrl,
   hostedSessionSentinel,
   installHostedSessionFetchBridge,
@@ -14,25 +15,34 @@ const sentinel = hostedSessionSentinel();
 const originalFetch = window.fetch.bind(window);
 const savedEndpoint = readSavedEndpoint();
 
+const signInButton = document.querySelector('#github-sign-in');
+const hostedSignOutButton = document.querySelector('#hosted-sign-out');
+const signInState = document.querySelector('#hosted-sign-in-state');
+const connectionError = document.querySelector('#connection-error');
+const endpointInput = document.querySelector('#connect-form [name="endpoint"]');
+const disconnectButton = document.querySelector('#disconnect-connection');
+let hostedAuthorizationDenied = false;
+
 installSessionMarker(savedEndpoint);
 window.fetch = installHostedSessionFetchBridge({
   fetchImpl: originalFetch,
   sessionOrigin: DEFAULT_ENDPOINT,
   sentinel,
+  onHostedAccessDenied: preserveHostedSignOut,
 });
 
-const signInButton = document.querySelector('#github-sign-in');
-const signInState = document.querySelector('#hosted-sign-in-state');
-const connectionError = document.querySelector('#connection-error');
-const endpointInput = document.querySelector('#connect-form [name="endpoint"]');
-const disconnectButton = document.querySelector('#disconnect-connection');
-
 signInButton?.addEventListener('click', beginGithubSignIn);
+hostedSignOutButton?.addEventListener('click', signOutHostedSession, { capture: true });
 disconnectButton?.addEventListener('click', signOutHostedSession, { capture: true });
 
 function installSessionMarker(endpoint) {
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY) || '';
+    if (isHostedSessionSentinel(stored)) {
+      if (isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) return;
+      sessionStorage.removeItem(STORAGE_KEY);
+      return;
+    }
     if (isPlausibleToken(stored)) return;
     if (isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) {
       sessionStorage.setItem(STORAGE_KEY, sentinel);
@@ -81,27 +91,68 @@ function beginGithubSignIn() {
   }
 }
 
+function preserveHostedSignOut() {
+  hostedAuthorizationDenied = true;
+  if (hostedSignOutButton) hostedSignOutButton.hidden = false;
+  if (signInState) {
+    signInState.textContent = 'This GitHub session is signed in but cannot access this ledger. Sign out to use another account.';
+  }
+}
+
 async function signOutHostedSession(event) {
   let stored = '';
   try {
     stored = sessionStorage.getItem(STORAGE_KEY) || '';
   } catch {
+    if (!hostedAuthorizationDenied) return;
+  }
+
+  const mode = classifyHostedSessionDisconnect(stored, hostedAuthorizationDenied);
+  if (mode === 'bearer') {
+    clearHostedDenialRecovery();
     return;
   }
-  if (!isHostedSessionSentinel(stored)) return;
+  if (mode !== 'hosted') return;
 
   event.preventDefault();
   event.stopImmediatePropagation();
-  disconnectButton.disabled = true;
+  if (disconnectButton) disconnectButton.disabled = true;
+  if (hostedSignOutButton) hostedSignOutButton.disabled = true;
   clearError();
 
   try {
     await revokeHostedSession(originalFetch, DEFAULT_ENDPOINT);
-    sessionStorage.removeItem(STORAGE_KEY);
-    window.location.reload();
   } catch (cause) {
-    disconnectButton.disabled = false;
+    if (disconnectButton) disconnectButton.disabled = false;
+    if (hostedSignOutButton) {
+      hostedSignOutButton.disabled = false;
+      hostedSignOutButton.hidden = false;
+    }
     showError(cause instanceof Error ? cause.message : 'Hosted sign out failed.');
+    return;
+  }
+
+  clearHostedDenialRecovery();
+  clearHostedMarker();
+  window.location.reload();
+}
+
+function clearHostedDenialRecovery() {
+  hostedAuthorizationDenied = false;
+  if (hostedSignOutButton) {
+    hostedSignOutButton.disabled = false;
+    hostedSignOutButton.hidden = true;
+  }
+  if (signInState) {
+    signInState.textContent = 'Use the GitHub account authorised for this Stensibly workspace. The browser keeps a secure hosted session cookie.';
+  }
+}
+
+function clearHostedMarker() {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // The server session is already revoked; reload without treating local cleanup as logout failure.
   }
 }
 
