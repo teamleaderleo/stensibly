@@ -122,7 +122,7 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   async getClient(clientId: string) {
     return await this.client.query(
       getClientRef,
-      this.args({ clientId }),
+      this.args({ clientId, now: Date.now() }),
     ) as McpOAuthClientRecord | null;
   }
 
