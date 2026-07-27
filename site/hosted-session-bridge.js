@@ -1,6 +1,7 @@
 import { isPlausibleToken, normalizeEndpoint } from './connection.js';
 import {
   createGithubSignInUrl,
+  describeHostedSessionRecovery,
   hostedSessionSentinel,
   installHostedSessionFetchBridge,
   isDefaultHostedEndpoint,
@@ -13,19 +14,29 @@ const STORAGE_KEY = 'stensiblyToken';
 const sentinel = hostedSessionSentinel();
 const originalFetch = window.fetch.bind(window);
 const savedEndpoint = readSavedEndpoint();
+let hostedSessionActive = installSessionMarker(savedEndpoint);
 
-installSessionMarker(savedEndpoint);
 window.fetch = installHostedSessionFetchBridge({
   fetchImpl: originalFetch,
   sessionOrigin: DEFAULT_ENDPOINT,
   sentinel,
+  onHostedSessionResponse: scheduleHostedSessionRecovery,
 });
 
 const signInButton = document.querySelector('#github-sign-in');
 const signInState = document.querySelector('#hosted-sign-in-state');
+const connectionPanel = document.querySelector('#connection-panel');
+const connectionTitle = document.querySelector('#connection-title');
+const connectionState = document.querySelector('#connection-state');
 const connectionError = document.querySelector('#connection-error');
+const connectForm = document.querySelector('#connect-form');
 const endpointInput = document.querySelector('#connect-form [name="endpoint"]');
+const connectedSummary = document.querySelector('#connected-summary');
+const connectedEndpoint = document.querySelector('#connected-endpoint');
+const changeConnectionButton = document.querySelector('#change-connection');
 const disconnectButton = document.querySelector('#disconnect-connection');
+const dashboard = document.querySelector('#dashboard');
+const disconnected = document.querySelector('#disconnected-state');
 
 signInButton?.addEventListener('click', beginGithubSignIn);
 disconnectButton?.addEventListener('click', signOutHostedSession, { capture: true });
@@ -33,14 +44,21 @@ disconnectButton?.addEventListener('click', signOutHostedSession, { capture: tru
 function installSessionMarker(endpoint) {
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY) || '';
-    if (isPlausibleToken(stored)) return;
+    if (isHostedSessionSentinel(stored)) {
+      if (isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) return true;
+      sessionStorage.removeItem(STORAGE_KEY);
+      return false;
+    }
+    if (isPlausibleToken(stored)) return false;
     if (isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) {
       sessionStorage.setItem(STORAGE_KEY, sentinel);
-    } else {
-      sessionStorage.removeItem(STORAGE_KEY);
+      return true;
     }
+    sessionStorage.removeItem(STORAGE_KEY);
+    return false;
   } catch {
     // The dashboard will fall back to its ordinary connection form.
+    return false;
   }
 }
 
@@ -81,14 +99,64 @@ function beginGithubSignIn() {
   }
 }
 
+function scheduleHostedSessionRecovery(observation) {
+  if (!hostedSessionActive) return;
+  const recovery = describeHostedSessionRecovery(observation, DEFAULT_ENDPOINT);
+  if (!recovery) return;
+  window.setTimeout(() => applyHostedSessionRecovery(recovery), 0);
+}
+
+function applyHostedSessionRecovery(recovery) {
+  if (!hostedSessionActive) return;
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEY) || '';
+    if (isPlausibleToken(stored) && !isHostedSessionSentinel(stored)) {
+      hostedSessionActive = false;
+      return;
+    }
+  } catch {
+    // The in-memory hosted-session mode still permits explicit sign-out.
+  }
+
+  if (connectionPanel) connectionPanel.hidden = false;
+  if (connectionTitle) connectionTitle.textContent = recovery.title;
+  if (connectionState) {
+    connectionState.textContent = recovery.state;
+    connectionState.classList.add('error');
+  }
+  if (connectForm) connectForm.hidden = true;
+  if (connectedSummary) connectedSummary.hidden = false;
+  if (connectedEndpoint) connectedEndpoint.textContent = DEFAULT_ENDPOINT;
+  if (changeConnectionButton) changeConnectionButton.hidden = true;
+  if (disconnectButton) {
+    disconnectButton.hidden = false;
+    disconnectButton.disabled = false;
+    disconnectButton.textContent = 'sign out';
+  }
+  if (dashboard) dashboard.hidden = true;
+  if (disconnected) {
+    disconnected.hidden = false;
+    const title = disconnected.querySelector('p');
+    const message = disconnected.querySelector('span');
+    if (title) title.textContent = recovery.disconnectedTitle;
+    if (message) message.textContent = recovery.disconnectedMessage;
+  }
+  if (connectionError?.hidden) showError(recovery.summary);
+}
+
 async function signOutHostedSession(event) {
+  if (!disconnectButton) return;
   let stored = '';
   try {
     stored = sessionStorage.getItem(STORAGE_KEY) || '';
   } catch {
+    // Continue from the in-memory mode when storage is unavailable.
+  }
+  if (isPlausibleToken(stored) && !isHostedSessionSentinel(stored)) {
+    hostedSessionActive = false;
     return;
   }
-  if (!isHostedSessionSentinel(stored)) return;
+  if (!hostedSessionActive && !isHostedSessionSentinel(stored)) return;
 
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -97,6 +165,7 @@ async function signOutHostedSession(event) {
 
   try {
     await revokeHostedSession(originalFetch, DEFAULT_ENDPOINT);
+    hostedSessionActive = false;
     sessionStorage.removeItem(STORAGE_KEY);
     window.location.reload();
   } catch (cause) {
