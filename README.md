@@ -266,6 +266,7 @@ See [issue #214](https://github.com/teamleaderleo/stensibly/issues/214) for the 
 ## Documentation
 
 - [Product model: authority and responsibility](docs/product-model.md)
+- [Agent and work-group nomenclature](docs/agent-nomenclature.md)
 - [Distributed coordination correctness](docs/coordination-correctness.md)
 - [Architecture](docs/architecture.md)
 - [Hosted operations](docs/operations.md)
