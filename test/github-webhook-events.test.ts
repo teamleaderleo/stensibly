@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApiToken } from "../src/auth.ts";
+import { SqliteProviderEventStore } from "../src/provider-events.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
 
@@ -39,6 +40,7 @@ describe("GitHub provider event intake", () => {
       duplicate: boolean;
       event: {
         id: string;
+        externalObjectId: string;
         routingLevel: string;
         status: string;
         repository: string;
@@ -50,6 +52,7 @@ describe("GitHub provider event intake", () => {
     expect(acceptedJson).toMatchObject({
       duplicate: false,
       event: {
+        externalObjectId: "987654321",
         routingLevel: "record",
         status: "pending",
         repository: "teamleaderleo/stensibly",
@@ -209,6 +212,17 @@ describe("GitHub provider event intake", () => {
       });
       expect(unsupportedAction.status).toBe(400);
 
+      const wrongMediaType = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          ...signedHeaders(malformedBody, "delivery-media"),
+          "content-type": "text/plain",
+        },
+        body: malformedBody,
+      });
+      expect(wrongMediaType.status).toBe(415);
+      expect(await wrongMediaType.json()).toMatchObject({ code: "unsupported_media_type" });
+
       const oversizedBody = JSON.stringify({ padding: "x".repeat(2_000) });
       const oversized = await app.request("/webhooks/github", {
         method: "POST",
@@ -306,6 +320,54 @@ describe("GitHub provider event intake", () => {
       store.close();
     }
   });
+
+  test("serves pending records oldest first so later arrivals cannot starve them", () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const events = new SqliteProviderEventStore(store);
+      const older = events.ingestGitHubPullRequestReview({
+        deliveryId: "delivery-older",
+        payloadDigest: "a".repeat(64),
+        externalObjectId: "100",
+        repository: "teamleaderleo/stensibly",
+        subjectNumber: 327,
+        action: "submitted",
+        revision: "1".repeat(40),
+        actor: "reviewer",
+        summary: "Older review",
+        receivedAt: "2026-07-27T13:00:00.000Z",
+      }).event;
+      const newer = events.ingestGitHubPullRequestReview({
+        deliveryId: "delivery-newer",
+        payloadDigest: "b".repeat(64),
+        externalObjectId: "101",
+        repository: "teamleaderleo/stensibly",
+        subjectNumber: 328,
+        action: "submitted",
+        revision: "2".repeat(40),
+        actor: "reviewer",
+        summary: "Newer review",
+        receivedAt: "2026-07-27T13:01:00.000Z",
+      }).event;
+
+      expect(events.list({ status: "pending", limit: 1 })).toEqual([older]);
+      events.acknowledge(older.id, "Nightjar", "2026-07-27T13:02:00.000Z");
+      expect(events.list({ status: "pending", limit: 1 })).toEqual([newer]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rejects webhook secrets that are too short for an authenticated ingress", () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      expect(() => createServerApp(store, {
+        githubWebhook: { secret: "short" },
+      })).toThrow("between 16 and 1024 UTF-8 bytes");
+    } finally {
+      store.close();
+    }
+  });
 });
 
 function reviewPayload(overrides: { action?: string } = {}) {
@@ -314,9 +376,13 @@ function reviewPayload(overrides: { action?: string } = {}) {
     repository: { full_name: "teamleaderleo/stensibly" },
     pull_request: {
       number: 327,
-      head: { sha: "0123456789abcdef0123456789abcdef01234567" },
+      head: { sha: "ffffffffffffffffffffffffffffffffffffffff" },
     },
-    review: { state: "approved" },
+    review: {
+      id: 987654321,
+      commit_id: "0123456789abcdef0123456789abcdef01234567",
+      state: "approved",
+    },
     sender: { login: "reviewer" },
   };
 }
