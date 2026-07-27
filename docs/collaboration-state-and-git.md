@@ -80,7 +80,8 @@ clearing condition:
   - replacement exact head
   - focused regressions
   - green full gate
-merge authority: human required
+integration decision: required under the current repository risk-tier policy
+consequential external effects: contemporaneous human approval where required
 ```
 
 The repository references identify the artifact state. The Stensibly record identifies responsibility, review meaning, authority, and next action.
