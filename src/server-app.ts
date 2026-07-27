@@ -3,6 +3,10 @@ import { createApiV1 } from "./api-v1.js";
 import { createApp } from "./app.js";
 import { createContextPacketApi } from "./context-api.js";
 import { createCorsMiddleware } from "./cors.js";
+import {
+  registerGitHubProviderEventRoutes,
+  type GitHubWebhookOptions,
+} from "./github-webhook-api.js";
 import type { HttpAuthOptions, StensiblyEnv } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
 import {
@@ -26,6 +30,8 @@ export interface ServerAppOptions {
   ledger?: WorkLedger;
   authenticator?: ApiTokenAuthenticator;
   corsOrigins?: string[];
+  backend?: "sqlite" | "convex";
+  githubWebhook?: GitHubWebhookOptions;
 }
 
 export function createServerApp(
@@ -57,6 +63,25 @@ export function createServerApp(
       authenticator,
     }),
   );
+
+  if (options.githubWebhook) {
+    const providerEventBackend = options.backend
+      ?? (options.ledger === undefined && options.authenticator === undefined
+        ? "sqlite"
+        : null);
+    if (providerEventBackend !== "sqlite") {
+      throw new Error(
+        "GitHub provider event persistence requires the SQLite backend to be explicit",
+      );
+    }
+    registerGitHubProviderEventRoutes(
+      app,
+      store,
+      authenticator,
+      authOptions,
+      options.githubWebhook,
+    );
+  }
 
   app.route("/api/v1", createApiV1(authenticator, ledger, authOptions));
   app.route("/api/v1", createContextPacketApi(authenticator, ledger, authOptions));
