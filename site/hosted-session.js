@@ -1,0 +1,80 @@
+const API_PREFIX = '/api/v1';
+const SESSION_TOKEN_PARTS = ['stn.', 'tok_', '0'.repeat(32), '.', 's'.repeat(40)];
+
+export function hostedSessionSentinel() {
+  return SESSION_TOKEN_PARTS.join('');
+}
+
+export function isHostedSessionSentinel(value) {
+  return String(value || '') === hostedSessionSentinel();
+}
+
+export function createGithubSignInUrl(endpoint, returnTo) {
+  const origin = normalizeOrigin(endpoint, 'API endpoint');
+  const destination = normalizeReturnTo(returnTo);
+  const url = new URL('/auth/github/start', origin);
+  url.searchParams.set('returnTo', destination);
+  return url.toString();
+}
+
+export function createHostedLogoutUrl(endpoint) {
+  return new URL('/auth/logout', normalizeOrigin(endpoint, 'API endpoint')).toString();
+}
+
+export function prepareHostedSessionRequest(input, init = {}, sentinel = hostedSessionSentinel()) {
+  const request = new Request(input, init);
+  if (request.headers.get('authorization') !== `Bearer ${sentinel}`) return request;
+
+  const url = new URL(request.url);
+  if (url.pathname !== API_PREFIX && !url.pathname.startsWith(`${API_PREFIX}/`)) {
+    return request;
+  }
+
+  const headers = new Headers(request.headers);
+  headers.delete('authorization');
+  return new Request(request, {
+    headers,
+    credentials: 'include',
+  });
+}
+
+export function installHostedSessionFetchBridge({
+  fetchImpl,
+  sentinel = hostedSessionSentinel(),
+}) {
+  if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
+  return (input, init) => fetchImpl(prepareHostedSessionRequest(input, init, sentinel));
+}
+
+function normalizeOrigin(value, label) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || '').trim());
+  } catch {
+    throw new TypeError(`${label} is invalid.`);
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol)
+    || parsed.username
+    || parsed.password
+    || parsed.pathname !== '/'
+    || parsed.search
+    || parsed.hash
+  ) {
+    throw new TypeError(`${label} must be an HTTP or HTTPS origin.`);
+  }
+  return parsed.origin;
+}
+
+function normalizeReturnTo(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || '').trim());
+  } catch {
+    throw new TypeError('Return destination is invalid.');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new TypeError('Return destination must use HTTP or HTTPS without credentials.');
+  }
+  return parsed.toString();
+}
