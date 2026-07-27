@@ -1,6 +1,6 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.1.0`  
+**Protocol:** `stensibly-agent-ops/0.2.0`  
 **Bootstrap:** `stensibly-project-bootstrap/v1`  
 **Tracking issue:** #293  
 **Status:** dogfood
@@ -16,7 +16,7 @@ Use the identifier that matches the thing being reviewed or changed:
 - software release: `stensibly 0.0.1`;
 - deployed revision: exact commit, build, Worker, and Convex deployment identifiers;
 - Project bootstrap: `stensibly-project-bootstrap/v1`;
-- repository operating protocol: `stensibly-agent-ops/0.1.0`;
+- repository operating protocol: `stensibly-agent-ops/0.2.0`;
 - wave and revision: for example `W01 rev 1`;
 - contract version: for example `project-attachment-v1`;
 - work authority: exact claim, lease, continuation, or approval generation;

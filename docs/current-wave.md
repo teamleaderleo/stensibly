@@ -4,8 +4,9 @@
 **Date established:** 2026-07-27  
 **Tracking issue:** #286  
 **Wave:** `W01`  
-**Wave revision:** `1`  
-**Operating protocol:** `stensibly-agent-ops/0.1.0`  
+**Wave revision:** `3`  
+**Operating protocol:** `stensibly-agent-ops/0.2.0`  
+**Current pod projection:** Foundry trial context (`docs/pods/foundry/charter.md`); participation requires an explicit declaration  
 **Primary outcome:** connect ChatGPT to the hosted Stensibly MCP server through OAuth and complete one real read/write dogfood cycle.
 
 This file is a compact current-focus projection. GitHub issues, pull requests,
@@ -24,7 +25,7 @@ The wave is complete only when a fresh ChatGPT conversation can:
 2. complete GitHub-backed Stensibly consent;
 3. scan the live MCP tools;
 4. call a bounded read tool such as `get_brief` or `survey_workspace`;
-5. perform the predeclared, explicitly approved low-risk write below;
+5. perform the eligible, separately approved low-risk write below;
 6. leave a durable event or item proving the connection;
 7. reconnect through refresh-token flow or an equivalent verified renewal path;
 8. document rollback and operator recovery.
@@ -33,73 +34,71 @@ A successful code merge without the real ChatGPT flow is not wave completion.
 
 ## Current blocker chain
 
-- #220 owns the remaining dynamic-client lifecycle, capacity recovery,
-  idempotency policy, combined load verification, and final production-gate
-  sign-off.
-- PR #256 already added Worker-side registration rate limiting and exact redirect
-  origin gating.
-- PR #251 is adjacent refresh-family lifetime and cleanup hardening. It remains a
-  draft and must stay separate from #220's dynamic-client implementation.
-- #289 owns the remaining dormant-legacy-family repair action for PR #251.
-- Production OAuth discovery remains absent until the OAuth configuration and
-  signing secret are enabled on the deployed Worker.
+- PR #251 was independently accepted at exact head
+  `5735abda87eeeacaef442fc7655bf807a1f24d8f` and merged as
+  `ad65af47b7e1e3cbf65ec734a43d786cb311c421`.
+- PR #308 is the sole dynamic-client lifecycle candidate for #220. Keystone
+  independently accepted exact head
+  `3a0c3823b50cc347a68b8e8f2e17ea7ea10499bd`; it remains open and draft until
+  current merge authority integrates it.
+- The original rollout-verifier PR #299 and replacement PRs #313 and #314 overlap
+  the same four-file mutation-free verifier slice. They require an independent
+  integration decision; no worker who authored a candidate may select its own.
+- Production OAuth discovery remains absent until accepted code is integrated,
+  deployed in the documented order, and the OAuth configuration and signing
+  secret are enabled through explicit human approval.
 
-The two implementation tracks may proceed concurrently and converge on rollout:
+The remaining implementation and rollout chain is:
 
 ```text
-#251 repair owner ──→ independent #251 acceptance ──┐
-                                                    ├─→ guarded rollout
-Lane A #220 implementation ─→ independent acceptance ┘
-                                                    └─→ real ChatGPT read/write/reconnect evidence
+merge accepted #308 candidate
+        -> independently select one accepted verifier candidate
+        -> guarded deployment and configuration approval
+        -> real ChatGPT registration/login/tool-scan/read/write/reconnect evidence
 ```
 
-Lane B may prepare both acceptance matrices while avoiding implementation
-ownership for the final revisions it accepts. Lane C may prepare rollout work but
-must not execute production enablement until both gates are satisfied.
+Lane B may review replacement heads while avoiding implementation ownership for
+the final revision it accepts. Lane C may prepare rollout work but must not execute
+production enablement until the remaining gates and human approvals are satisfied.
 
-## Lane A — Finish dynamic-client lifecycle
+## Lane A — Dynamic-client lifecycle candidate
 
-**Single implementation owner.** Do not open competing code branches against the
-same schema and registration mutations.
-
-Deliver:
+PR #308 delivers the current implementation candidate:
 
 - explicit unused-client expiry policy;
 - bounded cleanup and registration-capacity recovery;
 - exact workspace isolation;
-- an explicit identical-registration/idempotency decision;
+- an explicit same-client-ID metadata replay decision;
 - focused Convex and HTTP tests;
 - migration and legacy-record behaviour;
-- updated production-gate documentation;
-- one coherent PR linked to #220.
+- updated production-gate documentation.
 
-Required handoff:
+The exact-head implementation review is complete. Integration must still verify
+that the head, main, merge tree, CI, and deployment order remain current. Merge,
+deployment, bindings, secrets, and production enablement remain outside the
+acceptance review.
 
-- exact head SHA;
-- changed files;
-- tests and results;
-- security invariants;
-- unresolved risks;
-- deployment implications.
+## Completed adjacent refresh-family gate
 
-## PR #251 repair ownership
+PR #251 remains a separate merged refresh-family hardening slice. Any regression
+or follow-up must preserve its exact accepted invariants and must not be silently
+folded into Lane A merely because both areas involve OAuth.
 
-PR #251 retains its existing implementation owner until it reaches an exact-head
-handoff that closes #289.
+Its accepted contract includes:
 
-- Lane B reviews PR #251 and must not author the final repair it accepts.
-- If Lane B blocks the current head and the prior implementation owner is
-  unavailable, assign a separate temporary repair owner to #289.
-- After any repair, Lane B re-reviews the exact replacement head.
-- Keep PR #251's refresh-family code separate from Lane A's #220 dynamic-client
-  branch.
+- immutable accepted refresh-family deadlines;
+- workspace-scoped family reads, writes, revocation, scheduling, and deletion;
+- bounded 100-row cleanup continuations;
+- deduplicated current and compatible rooted legacy scheduling;
+- fail-closed handling for rootless or ambiguous legacy calls;
+- no dependency on later refresh traffic for pending dormant legacy jobs.
 
 ## Lane B — Independent acceptance
 
 This lane must be performed by a worker that did not author the final code being
 accepted.
 
-Review Lane A for:
+Review implementation candidates for:
 
 - storage exhaustion and ceiling recovery;
 - active-client deletion safety;
@@ -109,15 +108,16 @@ Review Lane A for:
 - idempotency and metadata matching;
 - secret and callback-data logging;
 - legacy compatibility;
-- exact production-gate acceptance.
-
-Independently review PR #251 for its declared refresh-family invariants and #289's
-dormant-legacy-family outcome.
+- exact production-gate acceptance;
+- compatibility with the merged PR #251 refresh-family contract.
 
 Every verdict must name the exact reviewed revision and contain either:
 
 - `accepted` with residual risks; or
-- `blocked` with demonstrated findings and required repairs.
+- `blocked` or `repair` with demonstrated findings and required repairs.
+
+A verdict on one overlapping verifier candidate does not select it over another.
+That selection is a separate independent integration responsibility.
 
 ## Lane C — Guarded rollout and real ChatGPT verification
 
@@ -128,18 +128,14 @@ Prepare before enabling OAuth:
 - exact ChatGPT redirect-origin admission;
 - monitoring for registration rejection and client-count pressure;
 - one-command or one-step rollback by disabling OAuth configuration;
-- metadata and unauthenticated challenge checks;
-- a bounded test account and dedicated OAuth dogfood project.
+- one independently selected mutation-free metadata/challenge verifier candidate;
+- a bounded test account and dedicated OAuth dogfood project;
+- confirmation that the deployed Convex revision includes merged PR #251 and the
+  accepted #220 lifecycle implementation.
 
-Execute production rollout only after:
-
-1. Lane A receives independent exact-head acceptance; and
-2. PR #251 is independently accepted and merged, or explicitly deferred through
-   a recorded production-risk decision approved by the human operator.
-
-The preferred production-complete path is to merge PR #251 after #289 is repaired
-and accepted. Deferral may support a deliberately bounded protocol experiment,
-but it does not count as production-complete without an explicit risk decision.
+Execute production rollout only after the implementation and verifier integration
+gates are current and the operator approves the consequential deployment,
+configuration, and secret changes.
 
 Then:
 
@@ -151,30 +147,51 @@ Then:
    - unauthenticated `/mcp` returns a valid OAuth challenge;
 4. create or refresh the Stensibly ChatGPT app and scan tools;
 5. complete a read-only test;
-6. perform the predeclared low-risk write below;
+6. obtain the exact human approval described below and perform the bounded write;
 7. verify refresh or reconnect behaviour;
 8. attach evidence and close or update #220 and #286.
 
-## Predeclared low-risk write
+## Eligible bounded write candidate
 
-Do not improvise the production write test.
+Do not improvise the production write test. This document does **not** approve or
+authorise any mutation.
 
-The authorised test action is:
+The eligible test action is:
 
 > Create one uniquely named test item in a dedicated OAuth dogfood project using
-> an explicit idempotency key and a human approval recorded immediately before
-> execution. Confirm the item appears through a subsequent bounded read.
+> an explicit idempotency key. Confirm the item appears through a subsequent
+> bounded read.
 
-The test must not claim, complete, delete, merge, deploy, spend money, contact an
-external system, or mutate unrelated work. Record the project, item name,
-idempotency key reference, approval record, write result, and confirming read.
+Immediately before execution, a contemporaneous durable human approval must name
+the exact project, bounded action, and idempotency-key reference. Without that
+record, the write remains unauthorised. The test must not claim, complete, delete,
+merge, deploy, spend money, contact an external system, or mutate unrelated work.
+Record the approval, project, item name, idempotency-key reference, write result,
+and confirming read.
+
+## Pod context for this wave
+
+The temporary pod bootstrap offers Foundry as the broad default context candidate.
+Reading its registry, charter, or memory does not create participation. Workers may
+declare explicit run-scoped participation through `docs/pods/enrolment.md` when
+that collective context is useful.
+
+A worker-enrolment request and a pod-participation declaration are different
+records: the former identifies a disposable worker session; the latter is
+descriptive collective context. Neither creates authority by itself.
+
+Pod participation does not replace W01 lanes, exact work ownership, independent
+acceptance, operator approval, or current claims and leases.
+
+Do not create another pod solely for one W01 lane. Propose a fork only if the wave
+retrospective shows recurring multi-run context or obligations that deserve
+separate continuity.
 
 ## Work-selection policy for this wave
 
 Until the real connection works:
 
-1. finish or review the blocker chain before starting unrelated Stensibly
-   features;
+1. finish or review the blocker chain before starting unrelated Stensibly features;
 2. keep one implementation owner per overlapping subsystem;
 3. direct spare workers to acceptance, reproduction, rollout preparation,
    documentation, or evidence reconciliation;
@@ -183,26 +200,35 @@ Until the real connection works:
 5. stop creating adjacent OAuth issues unless an independently buildable boundary
    is demonstrated.
 
+A quiet or dormant interactive worker is not presumed notified or available. Its
+unfinished work may be recovered, partitioned, repaired, or deliberately competed
+under the current overlap policy while preserving provenance. A returning worker
+must reconcile current state before resuming.
+
 ## Project-instruction prompt
 
 A ChatGPT Project using this repository should use the compact bootstrap in
 `docs/chatgpt-project-instructions.md`. The Project setting should not duplicate
-this wave's lanes or detailed gates.
+this wave's lanes, pod practices, or detailed gates.
 
-Fresh chats should inspect existing work and select a useful non-conflicting
-action from this wave before proposing new roadmap work.
+Fresh chats should inspect existing work and select a useful non-conflicting action
+from this wave before proposing new roadmap work.
 
 ## Wave retrospective
 
 After connection succeeds, record:
 
 - which instructions fresh agents actually followed;
-- whether the wave/lane/action vocabulary helped;
+- whether the wave/lane/action and pod vocabulary helped;
 - duplicated work or comments that could have been avoided;
 - missing observability or API tools;
 - whether more or less startup context would have helped;
 - missed or excessive parallelism;
 - useful pod notes or resource requests;
-- which steps should become Stensibly-enforced records;
-- what can be removed from this temporary file;
+- whether quiet/dormant workers and returning chats were reconciled correctly;
+- which pod, participation, memory, and lifecycle steps should become typed
+  Stensibly-enforced records;
+- whether Foundry should remain broad, become active, fork, merge, enter dormancy,
+  or be replaced;
+- what can be removed from these temporary files;
 - at least one accepted, rejected, or no-change instruction proposal under #293.

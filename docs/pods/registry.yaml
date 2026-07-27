@@ -1,0 +1,59 @@
+schema: stensibly.pod-registry-bootstrap
+version: 1
+status: temporary-github-projection
+canonical_authority: false
+last_reviewed: 2026-07-27
+source_issues:
+  - 270
+  - 272
+  - 278
+  - 281
+  - 293
+  - 297
+  - 312
+
+pods:
+  - id: pod_foundry
+    display_name: Foundry
+    lifecycle_status: trial
+    lifecycle_effective_when: accepted-merge-of-pr-298
+    proposal_ref: https://github.com/teamleaderleo/stensibly/pull/298
+    decision_ref: null
+    sponsor_status: pending-human-decision
+    sponsor: null
+    purpose: >-
+      Broad provisional pod context for advancing Stensibly while retaining useful
+      practices, evidence, and lineage across ephemeral worker runs.
+    participation: open-after-explicit-declaration
+    membership_model: run-scoped-non-exclusive-descriptive
+    scope:
+      projects:
+        - stensibly
+      repositories:
+        - teamleaderleo/stensibly
+    current_wave: W01
+    charter: docs/pods/foundry/charter.md
+    memory: docs/pods/foundry/memory.md
+    practices: docs/pods/foundry/practices.md
+    history: docs/pods/foundry/history.md
+    next_review: >-
+      After the W01 retrospective, or earlier when repeated work demonstrates
+      that a separate pod would materially reduce context or coordination cost.
+
+proposal_policy:
+  template: docs/pods/templates/pod-proposal.md
+  lifecycle_states:
+    - proposed
+    - trial
+    - active
+    - dormant
+    - dissolved
+  default_trial_required: true
+  decision_required_before_trial: true
+  human_approval_required_for:
+    - credentials
+    - spending
+    - production_authority
+    - permission_widening
+    - cross_project_scope
+    - durable_policy_changes

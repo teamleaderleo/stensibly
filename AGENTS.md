@@ -14,7 +14,7 @@ Convex agent skills for common tasks can be installed by running
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.1.0`  
+**Operating protocol:** `stensibly-agent-ops/0.2.0`  
 **Status:** dogfood  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
@@ -32,12 +32,19 @@ Before changing code or creating new work, read in this order:
    focus, not permanent product policy.
 3. Read `README.md`.
 4. Read `docs/product-model.md`.
-5. Read the relevant issue, linked parent issues, open pull requests, review
+5. Read `docs/pods/registry.yaml` for discovery. Read a candidate pod's charter
+   and compact current memory only when that context may help the selected action.
+   Read its practices or history only when the action needs that deeper context.
+6. Read the relevant issue, linked parent issues, open pull requests, review
    threads, and exact-head handoffs.
-6. Read the repository-root `STENSIBLY.md` when present. It declares static
+7. Read the repository-root `STENSIBLY.md` when present. It declares static
    project context and policy; it is never a live claim, approval, credential,
    lease, or authority grant.
-7. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
+8. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
+
+Reading pod files is discovery, not participation. It does not enrol a worker,
+add a pod sign-off, accept a commitment, or imply affiliation. Declare pod
+participation explicitly before representing yourself as participating.
 
 Do not begin by creating another issue or implementation branch. First determine
 whether existing work should be finished, reviewed, repaired, integrated,
@@ -51,7 +58,7 @@ an entry point, not the source of truth.
 
 Workers are ephemeral generalists. Do not assign permanent employee-style
 identities such as manager, IC, product, security, or marketing. A worker may
-take a temporary stance for one action or run: implementation, review,
+take a temporary approach for one action or run: implementation, review,
 exploration, synthesis, coordination, rollout, or another useful approach.
 
 Keep these dimensions separate:
@@ -61,12 +68,43 @@ Keep these dimensions separate:
 - **Lane:** medium-lived coherent thread within a wave.
 - **Action:** small executable next step.
 - **Run:** one bounded worker attempt.
-- **Callsign:** disposable display name for one worker or run.
+- **Callsign:** stable session attribution for one worker chat or run.
 - **Mantle:** optional reusable, versioned presentation and practice bundle.
 
 Pod names, worker names, mantles, roles, issue assignment, and GitHub identity do
 not grant authority. Current server-owned claims, approval records, and project
 policy remain authoritative.
+
+Choose one short callsign near session start and keep it stable for that
+conversation. Do not impersonate another worker or imply identity continuity
+with a different chat. A successor may continue another worker's handoff or wear
+a mantle, but must state that boundary explicitly.
+
+For human-started interactive chats, silence is not automatic expiry. Before the
+configured freshness threshold a worker may be quiet; after the current eight-hour
+dogfood threshold treat it as dormant, not expired. Dormancy removes assumptions
+of availability or exclusive active execution while preserving history and making
+unfinished work recoverable or shareable. The same chat may resume under the same
+callsign after reconciling current state. Claims, leases, approvals, credentials,
+and other authority expire under their own independent policies.
+
+## Temporary pod bootstrap
+
+Until typed pod and participation records exist in Stensibly, `docs/pods/` is a
+readable bootstrap for pod discovery, explicit run-scoped participation, charters,
+reusable memory, practices, history, and pod proposals.
+
+- Foundry is the broad default **context candidate** when no better open pod exists.
+  It is not automatic participation.
+- Pod participation is temporary, non-exclusive, and descriptive; it does not
+  create authority or responsibility.
+- Join, switch, resume, and leave through the declaration and handoff protocol in
+  `docs/pods/enrolment.md`.
+- Propose new pods only from recurring multi-run evidence, with a trial and a
+  reversible migration or dissolution path.
+- Never store secrets or unbounded transcripts in pod memory.
+- Treat source issues, commits, reviews, artifacts, and ledger records as
+  canonical; Markdown remains a projection.
 
 ## Work-selection rule
 
@@ -94,7 +132,13 @@ own implementation as the only acceptance signal.
   behind the applicable approval policy.
 
 Until the ChatGPT MCP connection is enabled, GitHub is a temporary coordination
-surface. Do not infer that a GitHub assignee or comment is a Stensibly claim.
+surface. Do not infer that a GitHub assignee or comment is a Stensibly claim or
+that a quiet worker was notified by a comment.
+
+When returning after quiet or dormant time, re-read the current issue, PR, branch,
+revision, tests, reviews, and authority records. State what remains current, what
+was completed, transferred, superseded, or forked, and what you are continuing or
+releasing before modifying anything.
 
 ## Completion and handoff
 
@@ -111,24 +155,30 @@ Record:
 - next owner or eligible continuation;
 - exact next action and wake condition.
 
-Release, block, complete, or hand off accepted commitments explicitly. Never let a
-worker simply disappear while remaining the only holder of necessary context.
+Release, block, complete, pause, or hand off accepted commitments explicitly. A
+worker going quiet does not erase responsibility or prove termination; after the
+freshness threshold, surface unfinished work as recoverable or shareable while
+preserving the prior holder and exact evidence.
 
 ## Descriptive sign-off
 
 Because many workers use the same GitHub account, end substantive comments,
 reviews, and handoffs with a compact generated sign-off when the metadata is
-known:
+known. The routine form is:
 
 ```text
-— <Callsign or anonymous worker> · <pod or mantle, if any>
-  Run: <run ID or chat-local identifier>
-  Stance: <implementation | review | synthesis | rollout | ...>
-  Work: <project / wave / lane / action>
-  Revision: <exact commit SHA, when applicable>
+— <Callsign> · <explicit pod context, if useful>
+  Intention: <current bounded intention, if useful>
 ```
 
-The sign-off is attribution metadata, not authority or proof of competence.
+Reviews, decisions, handoffs, and succession records may add run ID, work address,
+mantle/version, exact reviewed revision, verdict, previous holder, transfer record,
+or next action when those fields aid inspection. Do not render a default `Stance`
+or runtime/model label. A pod name belongs in the sign-off only after explicit
+participation.
+
+The sign-off is attribution metadata, not authority, identity proof, continuity
+proof, membership, ownership, or competence.
 
 ## Surveys and improvement
 
