@@ -30,6 +30,11 @@ const publicClientValidator = v.object({
   responseTypes: v.array(v.string()),
   createdAt: v.string(),
 });
+const registrationResultValidator = v.union(
+  v.object({ status: v.literal("ok"), client: publicClientValidator }),
+  v.object({ status: v.literal("retryable") }),
+  v.object({ status: v.literal("limit") }),
+);
 const grantValidator = v.object({
   clientId: v.string(),
   resource: v.string(),
@@ -67,14 +72,19 @@ type NormalizedClientMetadata = {
   responseTypes: string[];
 };
 
+type ClientLifecycle =
+  | { kind: "legacy" }
+  | { kind: "unused"; unusedExpiresAt: number; scheduleGeneration: number }
+  | { kind: "used"; firstUsedAt: number }
+  | { kind: "malformed" };
+
 const MAX_CLIENT_REDIRECT_URIS = 20;
 const MAX_CLIENTS_PER_WORKSPACE = 1_000;
 const MAX_CODE_LIFETIME_MS = 10 * 60 * 1000;
 const UNUSED_CLIENT_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const CLIENT_CLEANUP_BATCH_SIZE = 100;
 const CLIENT_REGISTRATION_CONFLICT = "MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT";
-const CLIENT_REGISTRATION_LIMIT = "MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED";
-const CLIENT_CAPACITY_CLEANUP_REQUIRED = "MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED";
+const CLIENT_REGISTRATION_EXPIRED = "MCP_OAUTH_CLIENT_REGISTRATION_EXPIRED";
 const cleanupUnusedClientRef = makeFunctionReference<"mutation">(
   "mcpOAuthClientLifecycle:cleanupUnusedClientScheduled",
 );
@@ -89,37 +99,48 @@ export const registerClient = mutation({
     grantTypes: v.array(v.string()),
     responseTypes: v.array(v.string()),
   },
-  returns: publicClientValidator,
+  returns: registrationResultValidator,
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await ensureWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error("Failed to create workspace");
     const clientId = assertCredentialId(args.clientId, "client");
     const metadata = normalizeClientMetadata(args);
+    const now = Date.now();
     const existing = await ctx.db
       .query("mcpOAuthClients")
       .withIndex("by_external_id", (q) => q.eq("externalId", clientId))
       .unique();
     if (existing) {
       if (
-        existing.workspaceId === workspace._id
-        && clientMetadataMatches(existing, metadata)
+        existing.workspaceId !== workspace._id
+        || !clientMetadataMatches(existing, metadata)
       ) {
-        return publicClient(existing);
+        throw new Error(CLIENT_REGISTRATION_CONFLICT);
       }
-      throw new Error(CLIENT_REGISTRATION_CONFLICT);
+      const lifecycle = classifyClientLifecycle(existing);
+      if (lifecycle.kind === "malformed") {
+        throw new Error(CLIENT_REGISTRATION_CONFLICT);
+      }
+      if (lifecycle.kind === "unused" && lifecycle.unusedExpiresAt <= now) {
+        if (await clientHasReferences(ctx, workspace._id, existing.externalId)) {
+          await markClientUsedConservatively(ctx, existing, now);
+          return { status: "ok" as const, client: publicClient(existing) };
+        }
+        throw new Error(CLIENT_REGISTRATION_EXPIRED);
+      }
+      return { status: "ok" as const, client: publicClient(existing) };
     }
 
-    const now = Date.now();
     const cleanup = await cleanupExpiredUnusedClients(ctx, workspace._id, now);
     const clients = await ctx.db
       .query("mcpOAuthClients")
       .withIndex("by_workspace_created", (q) => q.eq("workspaceId", workspace._id))
       .take(MAX_CLIENTS_PER_WORKSPACE);
     if (clients.length >= MAX_CLIENTS_PER_WORKSPACE) {
-      throw new Error(cleanup.hasMore
-        ? CLIENT_CAPACITY_CLEANUP_REQUIRED
-        : CLIENT_REGISTRATION_LIMIT);
+      return cleanup.hasMore
+        ? { status: "retryable" as const }
+        : { status: "limit" as const };
     }
 
     const unusedExpiresAt = now + UNUSED_CLIENT_LIFETIME_MS;
@@ -144,12 +165,12 @@ export const registerClient = mutation({
     });
     const client = await ctx.db.get("mcpOAuthClients", id);
     if (!client) throw new Error("Created OAuth client disappeared");
-    return publicClient(client);
+    return { status: "ok" as const, client: publicClient(client) };
   },
 });
 
 export const getClient = query({
-  args: { ...serviceArgs, clientId: v.string() },
+  args: { ...serviceArgs, clientId: v.string(), now: v.number() },
   returns: v.union(publicClientValidator, v.null()),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
@@ -157,11 +178,12 @@ export const getClient = query({
     if (!workspace) return null;
     const clientId = readCredentialId(args.clientId, "client");
     if (!clientId) return null;
+    const now = assertTrustedNow(args.now);
     const client = await ctx.db
       .query("mcpOAuthClients")
       .withIndex("by_external_id", (q) => q.eq("externalId", clientId))
       .unique();
-    if (!client || client.workspaceId !== workspace._id || clientExpiredUnused(client, Date.now())) {
+    if (!client || client.workspaceId !== workspace._id || !clientAvailableAt(client, now)) {
       return null;
     }
     return publicClient(client);
@@ -216,15 +238,9 @@ export const createAuthorizationCode = mutation({
     };
 
     await deleteExpiredCodes(ctx, now);
-    if (client.lifecycleState !== "used") {
-      await ctx.db.patch(client._id, {
-        lifecycleState: "used",
-        firstUsedAt: client.firstUsedAt ?? now,
-        unusedExpiresAt: undefined,
-        cleanupScheduledAt: undefined,
-        cleanupScheduleGeneration: undefined,
-        updatedAt: now,
-      });
+    const lifecycle = classifyClientLifecycle(client);
+    if (lifecycle.kind !== "used") {
+      await markClientUsedConservatively(ctx, client, now);
     }
     await ctx.db.insert("mcpOAuthCodes", code);
     return grant(client.externalId, args.resource, scopes, principal);
@@ -247,18 +263,29 @@ export const cleanupUnusedClientScheduled = internalMutation({
     if (!client || client.workspaceId !== args.workspaceId) {
       return clientCleanupResult("missing", 0, 0, false);
     }
-    const matchingSchedule =
+    const rawScheduleMatches =
       client.lifecycleState === "unused"
       && client.unusedExpiresAt === args.unusedExpiresAt
       && client.cleanupScheduledAt === args.unusedExpiresAt
       && client.cleanupScheduleGeneration === args.scheduleGeneration
-      && Number.isSafeInteger(args.scheduleGeneration)
-      && args.scheduleGeneration > 0;
-    if (!matchingSchedule) {
+      && positiveGeneration(args.scheduleGeneration);
+    if (!rawScheduleMatches) {
       return clientCleanupResult("retained", 0, 0, false);
     }
 
     const now = Date.now();
+    const lifecycle = classifyClientLifecycle(client);
+    if (lifecycle.kind === "malformed") {
+      if (await clientHasReferences(ctx, args.workspaceId, args.clientExternalId)) {
+        await markClientUsedConservatively(ctx, client, now);
+      } else {
+        await quarantineMalformedClient(ctx, client, now);
+      }
+      return clientCleanupResult("retained", 0, 1, false);
+    }
+    if (lifecycle.kind !== "unused") {
+      return clientCleanupResult("retained", 0, 0, false);
+    }
     if (args.unusedExpiresAt > now) {
       const nextGeneration = nextScheduleGeneration(args.scheduleGeneration);
       await ctx.db.patch(client._id, { cleanupScheduleGeneration: nextGeneration });
@@ -295,12 +322,16 @@ async function cleanupExpiredUnusedClients(
   let cleaned = 0;
   let blocked = 0;
   for (const client of candidates.slice(0, CLIENT_CLEANUP_BATCH_SIZE)) {
+    const lifecycle = classifyClientLifecycle(client);
     if (await clientHasReferences(ctx, workspaceId, client.externalId)) {
       await markClientUsedConservatively(ctx, client, now);
       blocked += 1;
-    } else {
+    } else if (lifecycle.kind === "unused" && lifecycle.unusedExpiresAt <= now) {
       await ctx.db.delete(client._id);
       cleaned += 1;
+    } else {
+      await quarantineMalformedClient(ctx, client, now);
+      blocked += 1;
     }
   }
   const result = {
@@ -340,18 +371,67 @@ async function markClientUsedConservatively(
 ): Promise<void> {
   await ctx.db.patch(client._id, {
     lifecycleState: "used",
-    firstUsedAt: client.firstUsedAt ?? now,
+    firstUsedAt: safeTimestamp(client.firstUsedAt) ? client.firstUsedAt : now,
     unusedExpiresAt: undefined,
     cleanupScheduledAt: undefined,
     cleanupScheduleGeneration: undefined,
-    updatedAt: Math.max(client.updatedAt, now),
+    updatedAt: safeTimestamp(client.updatedAt) ? Math.max(client.updatedAt, now) : now,
   });
 }
 
-function clientExpiredUnused(client: Doc<"mcpOAuthClients">, now: number): boolean {
-  return client.lifecycleState === "unused"
-    && typeof client.unusedExpiresAt === "number"
-    && client.unusedExpiresAt <= now;
+async function quarantineMalformedClient(
+  ctx: MutationContext,
+  client: Doc<"mcpOAuthClients">,
+  now: number,
+): Promise<void> {
+  await ctx.db.patch(client._id, {
+    unusedExpiresAt: undefined,
+    cleanupScheduledAt: undefined,
+    cleanupScheduleGeneration: undefined,
+    updatedAt: safeTimestamp(client.updatedAt) ? Math.max(client.updatedAt, now) : now,
+  });
+}
+
+function classifyClientLifecycle(client: Doc<"mcpOAuthClients">): ClientLifecycle {
+  const allAbsent = client.lifecycleState === undefined
+    && client.unusedExpiresAt === undefined
+    && client.cleanupScheduledAt === undefined
+    && client.cleanupScheduleGeneration === undefined
+    && client.firstUsedAt === undefined;
+  if (allAbsent) return { kind: "legacy" };
+
+  if (
+    client.lifecycleState === "unused"
+    && safeTimestamp(client.unusedExpiresAt)
+    && client.cleanupScheduledAt === client.unusedExpiresAt
+    && positiveGeneration(client.cleanupScheduleGeneration)
+    && client.firstUsedAt === undefined
+  ) {
+    return {
+      kind: "unused",
+      unusedExpiresAt: client.unusedExpiresAt,
+      scheduleGeneration: client.cleanupScheduleGeneration,
+    };
+  }
+
+  if (
+    client.lifecycleState === "used"
+    && safeTimestamp(client.firstUsedAt)
+    && client.unusedExpiresAt === undefined
+    && client.cleanupScheduledAt === undefined
+    && client.cleanupScheduleGeneration === undefined
+  ) {
+    return { kind: "used", firstUsedAt: client.firstUsedAt };
+  }
+
+  return { kind: "malformed" };
+}
+
+function clientAvailableAt(client: Doc<"mcpOAuthClients">, now: number): boolean {
+  const lifecycle = classifyClientLifecycle(client);
+  return lifecycle.kind === "legacy"
+    || lifecycle.kind === "used"
+    || (lifecycle.kind === "unused" && lifecycle.unusedExpiresAt > now);
 }
 
 function normalizeClientMetadata(input: {
@@ -386,9 +466,22 @@ function equalStrings(left: string[], right: string[]): boolean {
 }
 
 function nextScheduleGeneration(value: number): number {
-  return Number.isSafeInteger(value) && value > 0 && value < Number.MAX_SAFE_INTEGER
+  return positiveGeneration(value) && value < Number.MAX_SAFE_INTEGER
     ? value + 1
     : 1;
+}
+
+function positiveGeneration(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function safeTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function assertTrustedNow(value: number): number {
+  if (!safeTimestamp(value)) throw new Error("OAuth client lookup time is invalid");
+  return value;
 }
 
 async function requireClient(
@@ -402,7 +495,7 @@ async function requireClient(
     .query("mcpOAuthClients")
     .withIndex("by_external_id", (q) => q.eq("externalId", clientId))
     .unique();
-  if (!client || client.workspaceId !== workspaceId || clientExpiredUnused(client, now)) {
+  if (!client || client.workspaceId !== workspaceId || !clientAvailableAt(client, now)) {
     throw new Error("OAuth client is unavailable");
   }
   return client;
