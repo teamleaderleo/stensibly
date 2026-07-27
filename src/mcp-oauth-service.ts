@@ -89,6 +89,9 @@ export interface ConvexMcpOAuthServiceOptions {
 const registerClientRef = makeFunctionReference<"mutation">(
   "mcpOAuthClientRegistration:registerClient",
 );
+const reconcileClientLifecycleRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientLifecycle:reconcileClientLifecycle",
+);
 const getClientRef = makeFunctionReference<"query">(
   "mcpOAuthClientLifecycle:getClient",
 );
@@ -108,6 +111,7 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   }
 
   async registerClient(input: Parameters<McpOAuthService["registerClient"]>[0]) {
+    await this.reconcileClientLifecycle(input.clientId);
     const result = await this.client.mutation(
       registerClientRef,
       this.args(input),
@@ -120,6 +124,7 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   }
 
   async getClient(clientId: string) {
+    await this.reconcileClientLifecycle(clientId);
     return await this.client.query(
       getClientRef,
       this.args({ clientId, now: Date.now() }),
@@ -127,6 +132,7 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   }
 
   async createAuthorizationCode(input: Parameters<McpOAuthService["createAuthorizationCode"]>[0]) {
+    await this.reconcileClientLifecycle(input.clientId);
     return await this.client.mutation(
       createAuthorizationCodeRef,
       this.args(input),
@@ -145,6 +151,13 @@ export class ConvexMcpOAuthService implements McpOAuthService {
       convexApi.mcpOAuth.rotateRefreshToken,
       this.args(input),
     ) as McpOAuthRefreshExchange;
+  }
+
+  private async reconcileClientLifecycle(clientId: string): Promise<void> {
+    await this.client.mutation(
+      reconcileClientLifecycleRef,
+      this.args({ clientId }),
+    );
   }
 
   private args(input: object): Record<string, unknown> {
