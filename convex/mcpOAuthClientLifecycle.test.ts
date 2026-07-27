@@ -1,3 +1,4 @@
+import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { convexApi } from "./refs";
@@ -10,6 +11,15 @@ const redirectUri = "https://chatgpt.com/connector/oauth/callback";
 const resource = "https://api.stensibly.com/mcp";
 const codeChallenge = "a".repeat(43);
 const dayMs = 24 * 60 * 60 * 1000;
+const registerClientRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientRegistration:registerClient",
+);
+const getClientRef = makeFunctionReference<"query">(
+  "mcpOAuthClientLifecycle:getClient",
+);
+const createAuthorizationCodeRef = makeFunctionReference<"mutation">(
+  "mcpOAuthClientLifecycle:createAuthorizationCode",
+);
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
@@ -62,7 +72,7 @@ describe("OAuth dynamic-client lifecycle", () => {
           updatedAt: base - 10 * dayMs,
         });
       });
-      expect(await t.query(convexApi.mcpOAuth.getClient, {
+      expect(await t.query(getClientRef, {
         serviceSecret,
         workspace: defaultWorkspace,
         clientId: legacyId,
@@ -129,7 +139,7 @@ describe("OAuth dynamic-client lifecycle", () => {
       const account = await setupAccount(t, "used", defaultWorkspace);
       const id = clientId("used");
       await register(t, defaultWorkspace, id);
-      await t.mutation(convexApi.mcpOAuth.createAuthorizationCode, {
+      await t.mutation(createAuthorizationCodeRef, {
         serviceSecret,
         workspace: defaultWorkspace,
         accountId: account.accountId,
@@ -276,7 +286,7 @@ async function register(
     responseTypes?: string[];
   } = {},
 ) {
-  const result = await t.mutation(convexApi.mcpOAuth.registerClient, {
+  const result = await t.mutation(registerClientRef, {
     serviceSecret,
     workspace,
     clientId: id,
