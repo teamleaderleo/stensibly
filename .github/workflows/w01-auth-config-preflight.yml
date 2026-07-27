@@ -11,7 +11,7 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     environment:
       name: production
     steps:
@@ -28,6 +28,8 @@ jobs:
           STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
           GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GITHUB_OAUTH_CLIENT_ID }}
           GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
         run: |
           set -euo pipefail
           : > auth-config-preflight.txt
@@ -36,7 +38,9 @@ jobs:
             CLOUDFLARE_API_TOKEN \
             STENSIBLY_READ_TOKEN \
             GITHUB_OAUTH_CLIENT_ID \
-            GITHUB_OAUTH_CLIENT_SECRET; do
+            GITHUB_OAUTH_CLIENT_SECRET \
+            VERCEL_TOKEN \
+            VERCEL_ORG_ID; do
             if [[ -n "${!name:-}" ]]; then
               echo "$name=present" | tee -a auth-config-preflight.txt
             else
@@ -55,7 +59,7 @@ jobs:
             exit 0
           fi
 
-          if ! bunx wrangler secret list --json > /tmp/cloudflare-secrets.json; then
+          if ! bunx wrangler secret list --json > /tmp/cloudflare-secrets.json 2>/tmp/cloudflare-secret-list.log; then
             echo "cloudflare_secret_list=failed" | tee -a auth-config-preflight.txt
             exit 0
           fi
@@ -74,6 +78,72 @@ jobs:
               echo "cloudflare_$name=present" | tee -a auth-config-preflight.txt
             else
               echo "cloudflare_$name=missing" | tee -a auth-config-preflight.txt
+            fi
+          done
+
+      - name: Check parked Vercel API project for OAuth credential names
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: |
+          set -euo pipefail
+          workdir=/tmp/stensibly-parked-api-preflight
+          envfile=/tmp/stensibly-parked-api.env
+          projects=/tmp/stensibly-vercel-projects.json
+          rm -rf "$workdir" "$envfile" "$projects"
+          mkdir -p "$workdir/.vercel"
+          trap 'rm -rf "$workdir" "$envfile" "$projects" /tmp/stensibly-vercel-pull.log' EXIT
+
+          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" ]]; then
+            echo "parked_vercel_project=skipped" | tee -a auth-config-preflight.txt
+            exit 0
+          fi
+
+          if ! curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "https://api.vercel.com/v9/projects?teamId=${VERCEL_ORG_ID}&limit=100" \
+            > "$projects"; then
+            echo "parked_vercel_project=list_failed" | tee -a auth-config-preflight.txt
+            exit 0
+          fi
+
+          project_id="$(jq -r '.projects[]? | select(.name == "stensibly-api") | .id' "$projects" | head -n 1)"
+          if [[ -z "$project_id" ]]; then
+            echo "parked_vercel_project=missing" | tee -a auth-config-preflight.txt
+            exit 0
+          fi
+          echo "parked_vercel_project=present" | tee -a auth-config-preflight.txt
+
+          jq -n \
+            --arg orgId "$VERCEL_ORG_ID" \
+            --arg projectId "$project_id" \
+            '{orgId: $orgId, projectId: $projectId}' \
+            > "$workdir/.vercel/project.json"
+
+          if ! (
+            cd "$workdir"
+            npx --yes vercel@56.5.0 env pull "$envfile" \
+              --environment=production \
+              --yes \
+              --token="$VERCEL_TOKEN" \
+              > /tmp/stensibly-vercel-pull.log 2>&1
+          ); then
+            echo "parked_vercel_env_pull=failed" | tee -a auth-config-preflight.txt
+            exit 0
+          fi
+          echo "parked_vercel_env_pull=passed" | tee -a auth-config-preflight.txt
+
+          for name in \
+            GITHUB_OAUTH_CLIENT_ID \
+            GITHUB_OAUTH_CLIENT_SECRET \
+            AUTH_GITHUB_ID \
+            AUTH_GITHUB_SECRET \
+            GITHUB_CLIENT_ID \
+            GITHUB_CLIENT_SECRET; do
+            if grep -qE "^${name}=" "$envfile"; then
+              echo "parked_vercel_$name=present" | tee -a auth-config-preflight.txt
+            else
+              echo "parked_vercel_$name=missing" | tee -a auth-config-preflight.txt
             fi
           done
 
