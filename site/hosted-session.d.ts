@@ -8,11 +8,13 @@ export function createHostedLogoutUrl(endpoint: string): string;
 
 export function prepareHostedSessionRequest(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init: RequestInit | undefined,
+  sessionOrigin: string,
   sentinel?: string,
 ): Request;
 
 export function installHostedSessionFetchBridge(options: {
   fetchImpl: typeof fetch;
+  sessionOrigin: string;
   sentinel?: string;
 }): typeof fetch;
