@@ -373,6 +373,8 @@ export interface SmolRunnerReceiptTransition {
   executionId: string;
   checkpointGeneration: number;
   producerVersion: string;
+  operationFamily: string;
+  operationSchemaVersion: number;
   sourceCommit: string;
   sourceTree: string;
   state: SmolRunnerReceiptState;
@@ -400,6 +402,8 @@ export function parseSmolRunnerReceiptIntake(input: unknown): SmolRunnerReceiptT
     executionId: parsed.receipt.executionId,
     checkpointGeneration: parsed.receipt.checkpointGeneration,
     producerVersion: parsed.receipt.producer.version,
+    operationFamily: parsed.receipt.operation.family,
+    operationSchemaVersion: parsed.receipt.operation.schemaVersion,
     sourceCommit: parsed.receipt.source.commit,
     sourceTree: parsed.receipt.source.tree,
     state: parsed.receipt.state,
@@ -418,7 +422,7 @@ export function parseSmolRunnerReceiptIntake(input: unknown): SmolRunnerReceiptT
   } as const;
   return {
     ...transition,
-    fingerprint: digestCanonical(transition),
+    fingerprint: digestCanonical(parsed),
   };
 }
 
@@ -437,7 +441,7 @@ export function compareSmolRunnerReceiptTransitions(
   if (stableJson(stableAttemptIdentity(previous.attempt)) !== stableJson(stableAttemptIdentity(incoming.attempt))) {
     return { status: "conflict", reason: "attempt_identity" };
   }
-  if (previous.executionId !== incoming.executionId) {
+  if (stableJson(stableExecutionIdentity(previous)) !== stableJson(stableExecutionIdentity(incoming))) {
     return { status: "conflict", reason: "execution_identity" };
   }
   if (incoming.checkpointGeneration < previous.checkpointGeneration) {
@@ -495,6 +499,15 @@ export function projectSmolRunnerReceiptLiveness(
 function stableAttemptIdentity(attempt: SmolRunnerAttemptBinding): Omit<SmolRunnerAttemptBinding, "candidateHead"> {
   const { candidateHead: _candidateHead, ...identity } = attempt;
   return identity;
+}
+
+function stableExecutionIdentity(transition: SmolRunnerReceiptTransition) {
+  return {
+    executionId: transition.executionId,
+    producerVersion: transition.producerVersion,
+    operationFamily: transition.operationFamily,
+    operationSchemaVersion: transition.operationSchemaVersion,
+  };
 }
 
 function transitionKind(state: SmolRunnerReceiptState): SmolRunnerTransitionKind {
