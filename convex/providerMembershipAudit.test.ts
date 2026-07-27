@@ -31,6 +31,8 @@ describe("provider membership audit", () => {
       cleanBootstrapEligible: true,
       requiresSeparateMembershipPlan: false,
       containsSecrets: false,
+      readOnly: true,
+      grantsMembershipChange: false,
       grantsMembership: false,
       grantsLogin: false,
       grantsOAuthEnablement: false,
@@ -51,6 +53,8 @@ describe("provider membership audit", () => {
       status: "membership_active",
       cleanBootstrapEligible: false,
       requiresSeparateMembershipPlan: true,
+      readOnly: true,
+      grantsMembershipChange: false,
       membership: {
         role: "member",
         projectScope: "bounded",
@@ -107,6 +111,32 @@ describe("provider membership audit", () => {
     expect(await audit(disabledTest)).toMatchObject({
       status: "account_disabled",
       membership: null,
+      cleanBootstrapEligible: false,
+      requiresSeparateMembershipPlan: true,
+    });
+  });
+
+  test("fails closed when a stored revocation timestamp is uninspectable", async () => {
+    const t = convexTest(schema, modules);
+    await upsertGithubAccount(t, {
+      subject: "13091533",
+      role: "viewer",
+      projects: ["oauth-dogfood"],
+    });
+    await t.run(async (ctx: any) => {
+      const membership = await membershipFor(ctx, "github", "13091533", "test");
+      if (!membership) throw new Error("Test membership disappeared");
+      await ctx.db.patch(membership._id, { revokedAt: -1 });
+    });
+
+    expect(await audit(t)).toMatchObject({
+      status: "membership_uninspectable",
+      membership: {
+        role: "viewer",
+        projects: ["oauth-dogfood"],
+        revocationState: "uninspectable",
+        revokedAt: null,
+      },
       cleanBootstrapEligible: false,
       requiresSeparateMembershipPlan: true,
     });
