@@ -37,7 +37,13 @@ export type McpOAuthRefreshExchange =
 type McpOAuthRegistrationResult =
   | { status: "ok"; client: McpOAuthClientRecord }
   | { status: "retryable" }
-  | { status: "limit" };
+  | { status: "limit" }
+  | { status: "conflict" }
+  | { status: "expired" };
+
+type McpOAuthAuthorizationResult =
+  | { status: "ok"; grant: McpOAuthGrant }
+  | { status: "invalid" };
 
 export interface McpOAuthService {
   registerClient(input: {
@@ -87,13 +93,13 @@ export interface ConvexMcpOAuthServiceOptions {
 }
 
 const registerClientRef = makeFunctionReference<"mutation">(
-  "mcpOAuthClientRegistration:registerClient",
+  "mcpOAuthClientLifecycleBoundary:registerClient",
 );
 const getClientRef = makeFunctionReference<"query">(
   "mcpOAuthClientLifecycle:getClient",
 );
 const createAuthorizationCodeRef = makeFunctionReference<"mutation">(
-  "mcpOAuthClientLifecycle:createAuthorizationCode",
+  "mcpOAuthClientLifecycleBoundary:createAuthorizationCode",
 );
 
 export class ConvexMcpOAuthService implements McpOAuthService {
@@ -116,7 +122,13 @@ export class ConvexMcpOAuthService implements McpOAuthService {
     if (result.status === "retryable") {
       throw new Error("MCP_OAUTH_CLIENT_CAPACITY_CLEANUP_REQUIRED");
     }
-    throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
+    if (result.status === "limit") {
+      throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_LIMIT_REACHED");
+    }
+    if (result.status === "expired") {
+      throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_EXPIRED");
+    }
+    throw new Error("MCP_OAUTH_CLIENT_REGISTRATION_CONFLICT");
   }
 
   async getClient(clientId: string) {
@@ -127,10 +139,12 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   }
 
   async createAuthorizationCode(input: Parameters<McpOAuthService["createAuthorizationCode"]>[0]) {
-    return await this.client.mutation(
+    const result = await this.client.mutation(
       createAuthorizationCodeRef,
       this.args(input),
-    ) as McpOAuthGrant;
+    ) as McpOAuthAuthorizationResult;
+    if (result.status === "ok") return result.grant;
+    throw new Error("MCP_OAUTH_AUTHORIZATION_CODE_REJECTED");
   }
 
   async exchangeAuthorizationCode(input: Parameters<McpOAuthService["exchangeAuthorizationCode"]>[0]) {
