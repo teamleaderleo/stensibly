@@ -8,6 +8,7 @@
     <title>Stensibly · Agent scrapbook</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/item-claim.css" />
+    <link rel="stylesheet" href="/hosted-session.css" />
   </head>
   <body>
     <main class="shell">
@@ -26,14 +27,20 @@
         <div>
           <p class="eyebrow">A scrapbook for agents</p>
           <h1>See what the machines are doing before they forget.</h1>
-          <p class="lede">Connect this dashboard to a Stensibly API and inspect ready work, live claims, blockers, and recent movement across projects.</p>
+          <p class="lede">Sign in once to inspect and respond to shared work from a compact project board, including on a phone.</p>
         </div>
         <div class="connection" id="connection-panel">
           <div class="connection-head">
-            <strong id="connection-title">Connect a ledger</strong>
+            <strong id="connection-title">Sign in or connect</strong>
             <span id="connection-state">disconnected</span>
           </div>
           <form id="connect-form">
+            <div class="hosted-sign-in" id="hosted-sign-in">
+              <button id="github-sign-in" type="button">Continue with GitHub</button>
+              <p id="hosted-sign-in-state">Use the GitHub account authorised for this Stensibly workspace. The browser keeps a secure hosted session cookie.</p>
+            </div>
+            <p class="connection-divider"><span>advanced connection</span></p>
+            <p class="advanced-connection-copy">Use a bearer token for self-hosted ledgers, diagnostics, and machine-style access.</p>
             <label>
               API URL
               <input name="endpoint" type="url" required placeholder="https://api.stensibly.com" autocomplete="url" autocapitalize="none" spellcheck="false" />
@@ -43,7 +50,7 @@
               <input name="token" type="password" placeholder="stn.tok_…" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-note" />
             </label>
             <div class="connection-form-actions">
-              <button type="submit">Open scrapbook</button>
+              <button type="submit">Open with token</button>
               <button class="secondary" id="cancel-connection" type="button" hidden>cancel</button>
             </div>
           </form>
@@ -58,7 +65,7 @@
             </div>
           </div>
           <p class="connection-error" id="connection-error" role="alert" hidden></p>
-          <p class="connection-note" id="connection-note">The endpoint is remembered locally. The token lives only in this browser session and is never displayed after connection.</p>
+          <p class="connection-note" id="connection-note">The endpoint is remembered locally. Hosted sign-in uses an HttpOnly session cookie. A manually entered token lives only in this browser session and disappears after disconnect.</p>
         </div>
       </section>
 
@@ -86,7 +93,7 @@
 
           <div class="principal-summary" id="principal-summary" hidden>
             <div>
-              <span>Token authority</span>
+              <span>Authenticated authority</span>
               <strong id="principal-name"></strong>
               <small id="principal-boundary"></small>
             </div>
@@ -128,9 +135,9 @@
             <p class="actor-error" id="actor-error" role="alert" hidden></p>
           </form>
 
-          <p class="actor-unavailable" id="actor-unavailable">Connect a ledger to inspect token capability.</p>
+          <p class="actor-unavailable" id="actor-unavailable">Connect a ledger to inspect account or token capability.</p>
           <p class="session-context-error" id="session-context-error" role="alert" hidden></p>
-          <p class="session-context-note">The bearer token grants authority. The actor identifies who or what will be recorded in ledger events. Actor context stays in this browser session.</p>
+          <p class="session-context-note">The hosted account or bearer token grants authority. The actor identifies who or what will be recorded in ledger events. Actor context stays in this browser session.</p>
         </section>
 
         <section class="metrics" aria-label="Status totals">
@@ -150,7 +157,7 @@
 
       <section class="disconnected" id="disconnected-state">
         <p>No ledger connected yet.</p>
-        <span>Enter an API token with read access to inspect shared work.</span>
+        <span>Continue with GitHub, or use the advanced token connection for another endpoint.</span>
       </section>
     </main>
 
@@ -220,6 +227,7 @@
     </dialog>
     <p class="sr-only" id="create-item-announcer" aria-live="polite"></p>
 
+    <script src="/hosted-session-bridge.js" type="module"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

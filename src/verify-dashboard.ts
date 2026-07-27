@@ -20,9 +20,12 @@ export function verifyDashboardHtml(html: string): void {
   const required = [
     "<title>Stensibly · Agent scrapbook</title>",
     'content="Stensibly is a shared work-in-progress ledger for humans and agents."',
+    'src="/hosted-session-bridge.js"',
     'src="/app.js"',
     'href="/styles.css"',
     'href="/item-claim.css"',
+    'href="/hosted-session.css"',
+    'id="github-sign-in"',
     'id="connect-form"',
     'id="dashboard"',
     'id="item-detail-dialog"',

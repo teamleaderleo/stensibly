@@ -13,10 +13,13 @@ const validHtml = `<!doctype html>
 <meta name="description" content="Stensibly is a shared work-in-progress ledger for humans and agents." />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/item-claim.css" />
+<link rel="stylesheet" href="/hosted-session.css" />
 </head><body>
+<button id="github-sign-in"></button>
 <form id="connect-form"></form>
 <section id="dashboard"></section>
 <dialog id="item-detail-dialog"></dialog>
+<script src="/hosted-session-bridge.js" type="module"></script>
 <script src="/app.js" type="module"></script>
 </body></html>`;
 

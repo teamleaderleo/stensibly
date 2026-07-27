@@ -30,7 +30,7 @@ export function describeHttpFailure(status, payload) {
   if (status === 401) {
     return {
       kind: 'invalid_token',
-      message: 'The read token is invalid or revoked. Enter a current token and try again.',
+      message: 'Sign in with GitHub, or enter a current API token and try again.',
     };
   }
 
@@ -44,7 +44,7 @@ export function describeHttpFailure(status, payload) {
   if (status === 403) {
     return {
       kind: 'forbidden',
-      message: apiMessage || 'The token is valid but lacks read access for this ledger.',
+      message: apiMessage || 'The authenticated account or token lacks access for this ledger.',
     };
   }
 
