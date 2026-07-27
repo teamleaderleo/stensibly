@@ -27,6 +27,13 @@ const runnerProjectConcurrency = positiveIntegerEnv(
   defaultRunnerConcurrencyPolicy.projectLimit,
   "STENSIBLY_RUNNER_PROJECT_CONCURRENCY",
 );
+
+if (githubWebhookSecret && backend !== "sqlite") {
+  throw new Error(
+    "STENSIBLY_GITHUB_WEBHOOK_SECRET currently requires STENSIBLY_BACKEND=sqlite; hosted provider-event persistence is not implemented",
+  );
+}
+
 const store = new StensiblyStore(databasePath);
 let ledger: WorkLedger;
 let authenticator: ApiTokenAuthenticator;
