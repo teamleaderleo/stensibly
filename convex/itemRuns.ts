@@ -31,6 +31,10 @@ const executionProjection = {
   executionEnvelope: nullableExecutionEnvelope,
   executionRecords: v.array(executionRecordValidator),
 };
+const hostedPromiseWakeupProjection = {
+  promiseWakeupSource: v.literal("hosted_unavailable"),
+  consumedPromiseWakeupIds: v.array(v.string()),
+};
 const legacyItemRunValidator = v.object({
   id: v.string(),
   itemId: v.string(),
@@ -51,6 +55,7 @@ const legacyItemRunValidator = v.object({
   endedAt: nullableString,
   outcome: nullableString,
   ...executionProjection,
+  ...hostedPromiseWakeupProjection,
 });
 const queuedRunStatusValidator = v.union(
   v.literal("queued"),
@@ -89,6 +94,7 @@ const queuedItemRunValidator = v.object({
   startedAt: nullableString,
   endedAt: nullableString,
   ...executionProjection,
+  ...hostedPromiseWakeupProjection,
 });
 const itemRunValidator = v.union(
   legacyItemRunValidator,
