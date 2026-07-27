@@ -120,7 +120,9 @@ describe("exactly-once promise wakeup consumption", () => {
     const directory = await mkdtemp(join(tmpdir(), "stensibly-wakeup-order-"));
     tempDirectories.push(directory);
     const path = join(directory, "ledger.sqlite");
-    const expected = ["wake_z_earlier", "wake_a_later"];
+    const earlierWakeupId = "wake_z_earlier";
+    const laterWakeupId = "wake_a_later";
+    const expected = [earlierWakeupId, laterWakeupId];
     let itemId = "";
     let runId = "";
 
@@ -149,9 +151,9 @@ describe("exactly-once promise wakeup consumption", () => {
       if (!earlierId || !laterId) throw new Error("Expected both wakeups");
 
       firstStore.db.query("UPDATE promise_wakeups SET id = ?1 WHERE id = ?2")
-        .run(expected[0], earlierId);
+        .run(earlierWakeupId, earlierId);
       firstStore.db.query("UPDATE promise_wakeups SET id = ?1 WHERE id = ?2")
-        .run(expected[1], laterId);
+        .run(laterWakeupId, laterId);
 
       const result = dispatchNextWork(
         firstStore,
