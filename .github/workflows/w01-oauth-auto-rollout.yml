@@ -4,6 +4,7 @@ name: W01 automatic OAuth rollout — contained
 # REPAIR. The original implementation remains attributable in PR #358 and commit
 # c0008c32cccc6eb4ad6c443360cda49c7a3bb0df. Restore execution only through a new
 # exact-head Tier 3 candidate that closes the evidence and partial-state findings.
+# workflow_dispatch is retained only for operator visibility; the job cannot run.
 on:
   workflow_dispatch:
 
