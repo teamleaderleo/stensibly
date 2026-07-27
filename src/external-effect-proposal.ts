@@ -115,6 +115,7 @@ const limits = {
   reference: 240,
   references: 32,
   payloadBytes: 16 * 1024,
+  payloadNodes: 8_192,
   payloadDepth: 8,
   payloadKeys: 64,
   payloadArray: 64,
@@ -147,6 +148,11 @@ const expectedConsequence: Readonly<Record<ExternalEffectClass, ExternalEffectCo
   "destructive.delete": "destructive",
   "spend.commit": "financial",
 };
+
+interface PayloadBudget {
+  nodes: number;
+  bytes: number;
+}
 
 /**
  * Builds one exact, one-time Tier 3 effect proposal for later persistence and
@@ -312,7 +318,8 @@ export function buildExternalEffectProposal(
 }
 
 function canonicalPayload(value: unknown): { [key: string]: CanonicalJsonValue } {
-  const canonical = canonicalJson(value, "payload", 0, new Set<object>());
+  const budget: PayloadBudget = { nodes: 0, bytes: 0 };
+  const canonical = canonicalJson(value, "payload", 0, new Set<object>(), budget);
   if (!isRecord(canonical)) {
     throw new RangeError("Effect payload must be a JSON object");
   }
@@ -324,19 +331,27 @@ function canonicalJson(
   path: string,
   depth: number,
   seen: Set<object>,
+  budget: PayloadBudget,
 ): CanonicalJsonValue {
   if (depth > limits.payloadDepth) {
     throw new RangeError(`Effect ${path} exceeds the maximum depth`);
   }
-  if (value === null || typeof value === "boolean") return value;
+  chargeNode(budget);
+  if (value === null || typeof value === "boolean") {
+    chargeSerializedValue(budget, value);
+    return value;
+  }
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) {
       throw new RangeError(`Effect ${path} numbers must be safe integers`);
     }
+    chargeSerializedValue(budget, value);
     return value;
   }
   if (typeof value === "string") {
-    return exactPayloadString(value, path);
+    const canonical = exactPayloadString(value, path);
+    chargeSerializedValue(budget, canonical);
+    return canonical;
   }
   if (typeof value !== "object" || value === undefined || ArrayBuffer.isView(value)) {
     throw new RangeError(`Effect ${path} must contain only JSON values`);
@@ -344,8 +359,10 @@ function canonicalJson(
   if (seen.has(value)) throw new RangeError("Effect payload must not contain cycles");
   seen.add(value);
   try {
-    if (Array.isArray(value)) return canonicalArray(value, path, depth, seen);
-    return canonicalObject(value, path, depth, seen);
+    if (Array.isArray(value)) {
+      return canonicalArray(value, path, depth, seen, budget);
+    }
+    return canonicalObject(value, path, depth, seen, budget);
   } finally {
     seen.delete(value);
   }
@@ -356,6 +373,7 @@ function canonicalArray(
   path: string,
   depth: number,
   seen: Set<object>,
+  budget: PayloadBudget,
 ): CanonicalJsonValue[] {
   if (value.length > limits.payloadArray) {
     throw new RangeError(`Effect ${path} arrays must contain at most ${limits.payloadArray} entries`);
@@ -372,7 +390,14 @@ function canonicalArray(
   if (keys.length !== value.length) {
     throw new RangeError(`Effect ${path} arrays must be dense and contain no extra properties`);
   }
-  return value.map((entry, index) => canonicalJson(entry, `${path}[${index}]`, depth + 1, seen));
+
+  chargeBytes(budget, 2);
+  const result: CanonicalJsonValue[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (index > 0) chargeBytes(budget, 1);
+    result.push(canonicalJson(value[index], `${path}[${index}]`, depth + 1, seen, budget));
+  }
+  return result;
 }
 
 function canonicalObject(
@@ -380,6 +405,7 @@ function canonicalObject(
   path: string,
   depth: number,
   seen: Set<object>,
+  budget: PayloadBudget,
 ): { [key: string]: CanonicalJsonValue } {
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
@@ -393,16 +419,55 @@ function canonicalObject(
   if (keys.length > limits.payloadKeys) {
     throw new RangeError(`Effect ${path} objects must contain at most ${limits.payloadKeys} keys`);
   }
+
+  chargeBytes(budget, 2);
   const result: { [key: string]: CanonicalJsonValue } = {};
-  for (const rawKey of keys.sort(compareCodePoints)) {
-    const descriptor = descriptors[rawKey];
-    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+  const sortedKeys = keys.sort(compareCodePoints);
+  for (let index = 0; index < sortedKeys.length; index += 1) {
+    const rawKey = sortedKeys[index];
+    const descriptor = rawKey === undefined ? undefined : descriptors[rawKey];
+    if (!rawKey || !descriptor || !descriptor.enumerable || !("value" in descriptor)) {
       throw new RangeError(`Effect ${path} must contain only enumerable data properties`);
     }
     const key = exactPayloadKey(rawKey, path);
-    result[key] = canonicalJson(descriptor.value, `${path}.${key}`, depth + 1, seen);
+    if (index > 0) chargeBytes(budget, 1);
+    chargeBytes(budget, encodedJsonBytes(key) + 1);
+    result[key] = canonicalJson(descriptor.value, `${path}.${key}`, depth + 1, seen, budget);
   }
   return result;
+}
+
+function chargeNode(budget: PayloadBudget): void {
+  budget.nodes += 1;
+  if (budget.nodes > limits.payloadNodes) {
+    throw new RangeError(
+      `Effect payload exceeds the maximum validation node budget of ${limits.payloadNodes}`,
+    );
+  }
+}
+
+function chargeBytes(budget: PayloadBudget, bytes: number): void {
+  budget.bytes += bytes;
+  if (budget.bytes > limits.payloadBytes) {
+    throw new RangeError(
+      `Effect payload exceeds the maximum validation byte budget of ${limits.payloadBytes}`,
+    );
+  }
+}
+
+function chargeSerializedValue(
+  budget: PayloadBudget,
+  value: null | boolean | number | string,
+): void {
+  chargeBytes(budget, encodedJsonBytes(value));
+}
+
+function encodedJsonBytes(value: null | boolean | number | string): number {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new RangeError("Effect payload must contain only JSON values");
+  }
+  return Buffer.byteLength(serialized, "utf8");
 }
 
 function exactPayloadString(value: string, path: string): string {
