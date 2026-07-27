@@ -3,16 +3,14 @@ name: Verify hosted OAuth
 on:
   workflow_dispatch:
     inputs:
-      endpoint:
-        description: Worker origin to request
+      target:
+        description: Predeclared Stensibly Worker origin
         required: true
-        default: https://api.stensibly.com
-        type: string
-      issuer:
-        description: Canonical OAuth issuer
-        required: true
-        default: https://api.stensibly.com
-        type: string
+        default: canonical
+        type: choice
+        options:
+          - canonical
+          - worker-fallback
       expectation:
         description: Expected hosted OAuth state
         required: true
@@ -30,29 +28,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      ENDPOINT: ${{ inputs.endpoint }}
-      ISSUER: ${{ inputs.issuer }}
+      TARGET: ${{ inputs.target }}
       EXPECTATION: ${{ inputs.expectation }}
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      - name: Validate public HTTPS origins
+      - run: bun install --frozen-lockfile
+      - name: Select validated Stensibly origin
         run: |
           set -euo pipefail
-          case "$ENDPOINT" in
-            https://*) ;;
-            *) echo "endpoint must use HTTPS" >&2; exit 1 ;;
+          case "$TARGET" in
+            canonical)
+              endpoint="https://api.stensibly.com"
+              ;;
+            worker-fallback)
+              endpoint="https://stensibly-api.leoli-082000.workers.dev"
+              ;;
+            *)
+              echo "Unsupported target choice" >&2
+              exit 1
+              ;;
           esac
-          case "$ISSUER" in
-            https://*) ;;
-            *) echo "issuer must use HTTPS" >&2; exit 1 ;;
-          esac
+          echo "ENDPOINT=$endpoint" >> "$GITHUB_ENV"
+          echo "ISSUER=https://api.stensibly.com" >> "$GITHUB_ENV"
       - name: Run hosted OAuth verifier
         run: |
           set -euo pipefail
           {
             echo "commit=${GITHUB_SHA}"
+            echo "target=${TARGET}"
             echo "endpoint=${ENDPOINT}"
             echo "issuer=${ISSUER}"
             echo "expectation=${EXPECTATION}"
@@ -76,7 +80,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hosted-oauth-verification
+          name: hosted-oauth-verification-${{ inputs.target }}-${{ inputs.expectation }}
           path: oauth-verification.txt
           if-no-files-found: warn
           retention-days: 14
