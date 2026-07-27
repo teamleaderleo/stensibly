@@ -1,6 +1,6 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.1.3`  
+**Protocol:** `stensibly-agent-ops/0.2.0`  
 **Bootstrap:** `stensibly-project-bootstrap/v1`  
 **Tracking issue:** #293  
 **Status:** dogfood
@@ -16,7 +16,7 @@ Use the identifier that matches the thing being reviewed or changed:
 - software release: `stensibly 0.0.1`;
 - deployed revision: exact commit, build, Worker, and Convex deployment identifiers;
 - Project bootstrap: `stensibly-project-bootstrap/v1`;
-- repository operating protocol: `stensibly-agent-ops/0.1.3`;
+- repository operating protocol: `stensibly-agent-ops/0.2.0`;
 - wave and revision: for example `W01 rev 1`;
 - contract version: for example `project-attachment-v1`;
 - work authority: exact claim, lease, continuation, or approval generation;
@@ -24,6 +24,13 @@ Use the identifier that matches the thing being reviewed or changed:
 
 Never cite only "the current version" in an audit, review, handoff, or migration.
 Name the relevant version class and exact identifier.
+
+Protocol `0.2.0` preserves the accepted session-local callsign, lightweight
+communication, status-update, and handoff rules from `0.1.3`; links the
+collision-aware local callsign helper from #343; and adopts the autonomous-portfolio
+and dormant-recovery convention from #330. The Project bootstrap remains `v1`
+because the repository entrypoint, authority boundary, and drift-detection contract
+remain compatible.
 
 ## What belongs where
 
@@ -34,7 +41,9 @@ Keep only the stable bootstrap:
 - repository identity;
 - canonical startup entrypoint;
 - instruction-drift detection;
+- stable per-chat callsign and explicit succession boundary;
 - inspect-before-creating rule;
+- bounded autonomous continuation rule;
 - authority boundary;
 - durable-handoff requirement;
 - direction to use Stensibly when available.
@@ -45,9 +54,9 @@ rollout gates into Project settings.
 ### `AGENTS.md`
 
 Contains the accepted repository operating protocol: startup order, session-local
-callsign adoption, general work selection, normal status-update style, authority
-boundaries, risk-tiered review and merge policy, review independence, handoff
-expectations, and shared improvement rules.
+callsign adoption, autonomous portfolio execution, general work selection, normal
+status-update style, authority boundaries, risk-tiered review and merge policy,
+review independence, handoff expectations, and shared improvement rules.
 
 ### `docs/current-wave.md`
 
@@ -165,11 +174,11 @@ dependency, or public-contract effect and a trivial rollback.
   unresolved concrete finding are sufficient.
 - The author or integration worker may merge under the standing repository policy.
 
-### Tier 1 — bounded low-risk runtime
+### Tier 1 — bounded low-risk runtime or operating-protocol change
 
-Use for small isolated runtime or contract changes with straightforward rollback
-and no authorization, privacy, schema, migration, durable-state, data-loss,
-deployment, or broad compatibility boundary.
+Use for small isolated runtime, contract, or focused instruction changes with
+straightforward rollback and no authorization, privacy, schema, migration,
+durable-state, data-loss, deployment, or broad compatibility boundary.
 
 - One independent exact-head acceptance is normally sufficient.
 - Green relevant checks, an unchanged mergeable head, and no unresolved blocking
