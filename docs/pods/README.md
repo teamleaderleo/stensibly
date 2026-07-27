@@ -1,51 +1,85 @@
 # Pod bootstrap
 
-This directory is a temporary, repository-readable projection of pod context until typed pod identity, participation, knowledge, and lifecycle records exist in the Stensibly ledger.
+This directory is a temporary, repository-readable projection of pod context until
+typed pod identity, participation, knowledge, and lifecycle records exist in the
+Stensibly ledger.
 
-It is useful coordination scaffolding. It is **not** a source of authority, credentials, claims, approvals, leases, or permission. GitHub identity, pod names, Markdown edits, and descriptive sign-offs never grant access or responsibility.
+It is useful coordination scaffolding. It is **not** a source of authority,
+credentials, claims, approvals, leases, sponsorship, participation, or permission.
+GitHub identity, pod names, Markdown edits, and descriptive sign-offs never grant
+access or responsibility.
 
 Worker enrolment and pod participation remain separate:
 
-- worker enrolment identifies one disposable worker session and canonicalises its declared metadata under #270, PR #294, and #300;
-- pod participation identifies which collective context that worker is using for a run and remains descriptive until #281 adds typed records.
+- worker enrolment identifies one disposable worker session and canonicalises its
+  declared metadata under #270, PR #294, and #300;
+- pod participation identifies which collective context that worker explicitly
+  chooses for a run and remains descriptive until #281 adds typed records.
+
+Reading the registry or any pod file is discovery only. It does not enrol a worker,
+accept commitments, or add pod context to a sign-off.
 
 ## Start here
 
-1. Read [`registry.yaml`](registry.yaml).
-2. Select an open pod whose current charter fits the run. The default is the broad [`Foundry`](foundry/charter.md) pod while evidence for additional pods develops.
-3. Read that pod's charter, memory, practices, and history.
-4. Follow [`enrolment.md`](enrolment.md) to declare temporary pod participation.
-5. Accept work only through the applicable issue, claim, responsibility, approval, or other current authority record.
+1. Read [`registry.yaml`](registry.yaml) for bounded discovery.
+2. Treat broad [`Foundry`](foundry/charter.md) as a context candidate when no
+   better open pod exists; do not assume participation.
+3. Read the candidate charter and compact current memory only if that context may
+   help the selected action. Read practices or history only when needed.
+4. Follow [`enrolment.md`](enrolment.md) to declare explicit temporary pod
+   participation before representing yourself as participating.
+5. Accept work only through the applicable issue, claim, responsibility, approval,
+   or other current authority record.
 
-A worker may participate in several pods for one run. Participation is run-scoped, non-exclusive, and descriptive. It creates only the obligations the worker explicitly accepts.
+A worker may participate in several pods for one run. Participation is run-scoped,
+non-exclusive, and descriptive. It creates only the obligations the worker
+explicitly accepts.
 
-## Join, switch, or leave
+## Join, resume, switch, or leave
 
 To join a pod:
 
-- confirm its registry status is `active` or `trial` and participation is open;
-- state the pod, run, stance, expected contribution, and accepted commitments in the first substantive handoff or coordination comment;
-- use the pod name in the descriptive sign-off when helpful;
-- contribute durable findings using the pod's memory format.
+- confirm its registry status is `trial` or `active`, its decision/effective
+  condition is satisfied, and participation is open;
+- state the pod, run, stable callsign, bounded intention, expected contribution,
+  and accepted commitments in the first substantive declaration;
+- use the pod name in the descriptive sign-off only after that declaration;
+- contribute durable findings using the pod's memory format when useful.
+
+To resume after quiet or dormant time:
+
+- keep the same callsign only when returning to the same conversation;
+- re-fetch current work, reviews, competing candidates, and authority records;
+- state what remains current, was completed, transferred, superseded, or forked;
+- do not assume a GitHub comment reached a dormant worker;
+- renew any claims, leases, approvals, or capabilities under their own policies.
 
 To switch pods or leave:
 
 - checkpoint or hand off every accepted commitment;
 - name the destination for unresolved work and reusable knowledge;
-- record the departure in a substantive handoff rather than maintaining a permanent roster here;
-- join the next pod through the same run-scoped declaration.
+- record the departure in a substantive handoff rather than maintaining a
+  permanent roster here;
+- join the next pod through the same explicit run-scoped declaration.
 
-The bootstrap deliberately avoids a long-lived Markdown membership list. Current workers disappear too quickly for such a list to remain reliable. The future ledger implementation in #281 should own typed pod participation, departure, invitations, and requests.
+The bootstrap deliberately avoids a long-lived Markdown membership list. Current
+participation should be reconstructed from bounded recent declarations and
+handoffs until #281 owns typed participation, departure, invitations, and requests.
+Silence may make a worker quiet or dormant, but does not itself erase identity,
+history, or accepted responsibility.
 
 ## Propose a pod
 
-Do not create a department taxonomy in advance. Copy [`templates/pod-proposal.md`](templates/pod-proposal.md) when repeated work, context, or operating practices appear to deserve separate continuity.
+Do not create a department taxonomy in advance. Copy
+[`templates/pod-proposal.md`](templates/pod-proposal.md) when repeated work,
+context, or operating practices appear to deserve separate continuity.
 
 A useful proposal identifies:
 
 - observed recurring work across more than one run;
 - the context or commitments that should remain distinct;
-- an initial sponsor and approved scope;
+- a proposed sponsor and the status of any sponsor decision;
+- an explicit decision/reference required before trial;
 - expected coordination benefit and switching cost;
 - a trial duration or review condition;
 - migration, merge, dormancy, and dissolution paths;
@@ -57,11 +91,15 @@ Lifecycle states are:
 proposed -> trial -> active -> dormant -> dissolved
 ```
 
-Fork and merge proposals are governed by the same evidence, migration, and review requirements. Issue #278 remains the design track for typed lifecycle operations.
+A proposal or Markdown edit does not move itself into `trial` or `active`. Record
+the independent decision and any required human approval. Fork and merge proposals
+are governed by the same evidence, migration, and review requirements. Issue #278
+remains the design track for typed lifecycle operations.
 
 ## Pod memory
 
-Pod memory contains compact reusable findings, not copies of entire chats or source systems. Every entry must include:
+Pod memory contains compact reusable findings, not copies of entire chats or
+source systems. Every entry must include:
 
 - stable entry ID and concise claim;
 - source references and provenance;
@@ -70,7 +108,10 @@ Pod memory contains compact reusable findings, not copies of entire chats or sou
 - status such as provisional, accepted, superseded, or rejected;
 - explicit supersession rather than silent rewriting.
 
-Never store secrets, credentials, private tokens, unrestricted personal data, or unbounded transcripts. Source issues, commits, reviews, artifacts, and ledger records remain canonical. Use [`templates/memory-entry.md`](templates/memory-entry.md) for new entries.
+Never store secrets, credentials, private tokens, unrestricted personal data, or
+unbounded transcripts. Source issues, commits, reviews, artifacts, and ledger
+records remain canonical. Use [`templates/memory-entry.md`](templates/memory-entry.md)
+for new entries.
 
 ## Migration target
 
@@ -79,6 +120,8 @@ This bootstrap is intended to be replaced by typed Stensibly records and MCP too
 - #272 — durable pod identity and cross-repository working memory;
 - #278 — fork, merge, charter change, dormancy, and dissolution;
 - #281 — fluid pod participation, pod inboxes, and inter-pod communication;
-- #270 — MCP worker enrolment and continue-useful-work protocol.
+- #270 — MCP worker enrolment and continue-useful-work protocol;
+- #312 — worker quiet/dormant/expiry and same-chat resumption semantics.
 
-When those surfaces exist, these files should become generated, reviewable projections rather than mutable sources of live coordination state.
+When those surfaces exist, these files should become generated, reviewable
+projections rather than mutable sources of live coordination state.
