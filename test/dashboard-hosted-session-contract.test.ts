@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   createGithubSignInUrl,
   createHostedLogoutUrl,
+  describeHostedSessionRecovery,
   hostedSessionSentinel,
   installHostedSessionFetchBridge,
   isDefaultHostedEndpoint,
   isHostedSessionSentinel,
   prepareHostedSessionRequest,
   revokeHostedSession,
+  type HostedSessionResponseObservation,
 } from "../site/hosted-session.js";
 
 const endpoint = "https://api.stensibly.com";
@@ -82,6 +84,88 @@ describe("hosted dashboard request bridge", () => {
     if (!observedRequest) throw new Error("The bridge did not forward a request.");
     expect(observedRequest.credentials).toBe("include");
     expect(observedRequest.request.headers.get("authorization")).toBeNull();
+  });
+
+  test("observes hosted responses without observing bearer requests or changing results", async () => {
+    const observations: HostedSessionResponseObservation[] = [];
+    const fetchImpl = (async () => new Response(
+      JSON.stringify({ error: "Account requires read scope" }),
+      { status: 403, headers: { "content-type": "application/json" } },
+    )) as unknown as typeof fetch;
+    const bridgedFetch = installHostedSessionFetchBridge({
+      fetchImpl,
+      sessionOrigin: endpoint,
+      onHostedSessionResponse: (observation) => observations.push(observation),
+    });
+    const marker = hostedSessionSentinel();
+    const response = await bridgedFetch(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${marker}` },
+    });
+    expect(response.status).toBe(403);
+    expect(observations).toEqual([{
+      status: 403,
+      method: "GET",
+      url: `${endpoint}/api/v1/items`,
+    }]);
+
+    const manualToken = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
+    await bridgedFetch(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${manualToken}` },
+    });
+    expect(observations).toHaveLength(1);
+
+    const callbackFailure = installHostedSessionFetchBridge({
+      fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch,
+      sessionOrigin: endpoint,
+      onHostedSessionResponse: () => {
+        throw new Error("UI callback failed");
+      },
+    });
+    await expect(callbackFailure(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${marker}` },
+    })).resolves.toHaveProperty("status", 204);
+  });
+});
+
+describe("hosted dashboard recovery view", () => {
+  test("reveals sign-out only for terminal hosted item-list authentication responses", () => {
+    expect(describeHostedSessionRecovery({
+      status: 403,
+      method: "GET",
+      url: `${endpoint}/api/v1/items`,
+    }, endpoint)).toEqual({
+      title: "Hosted session needs attention",
+      state: "access unavailable",
+      summary: "The hosted account cannot open this ledger. Sign out to clear the session.",
+      disconnectedTitle: "Hosted session is still active.",
+      disconnectedMessage: "Use sign out to clear the hosted cookie before trying another account or connection.",
+    });
+    expect(describeHostedSessionRecovery({
+      status: 401,
+      method: "GET",
+      url: `${endpoint}/api/v1/items?project=oauth-dogfood`,
+    }, endpoint)?.state).toBe("session expired");
+
+    expect(describeHostedSessionRecovery({
+      status: 403,
+      method: "GET",
+      url: `${endpoint}/api/v1/principal`,
+    }, endpoint)).toBeNull();
+    expect(describeHostedSessionRecovery({
+      status: 403,
+      method: "POST",
+      url: `${endpoint}/api/v1/items`,
+    }, endpoint)).toBeNull();
+    expect(describeHostedSessionRecovery({
+      status: 500,
+      method: "GET",
+      url: `${endpoint}/api/v1/items`,
+    }, endpoint)).toBeNull();
+    expect(describeHostedSessionRecovery({
+      status: 403,
+      method: "GET",
+      url: "https://other.example/api/v1/items",
+    }, endpoint)).toBeNull();
   });
 });
 
