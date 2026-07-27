@@ -332,7 +332,7 @@ async function requestJson(
     if (response.status >= 300 && response.status < 400) {
       throw responseError(response, "Unexpected redirect response");
     }
-    const body = await Promise.race([readJsonBounded(response), timeout]);
+    const body = await Promise.race([readJsonBounded(response, controller.signal), timeout]);
     return { response, body };
   } catch (error) {
     if (error === timeoutFailure || controller.signal.aborted) throw timeoutFailure;
@@ -343,7 +343,7 @@ async function requestJson(
   }
 }
 
-async function readJsonBounded(response: Response): Promise<unknown> {
+async function readJsonBounded(response: Response, signal: AbortSignal): Promise<unknown> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength && /^\d+$/.test(declaredLength)) {
     const parsed = Number(declaredLength);
@@ -354,6 +354,10 @@ async function readJsonBounded(response: Response): Promise<unknown> {
   if (!response.body) return null;
 
   const reader = response.body.getReader();
+  const abortRead = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal.addEventListener("abort", abortRead, { once: true });
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -373,6 +377,7 @@ async function readJsonBounded(response: Response): Promise<unknown> {
       chunks.push(value);
     }
   } finally {
+    signal.removeEventListener("abort", abortRead);
     reader.releaseLock();
   }
 
