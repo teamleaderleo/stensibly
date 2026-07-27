@@ -1,20 +1,13 @@
-name: W01 automatic OAuth rollout
+name: W01 guarded OAuth rollout
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 * * * *"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/w01-oauth-auto-rollout.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: w01-oauth-auto-rollout
+  group: w01-oauth-guarded-rollout
   cancel-in-progress: false
 
 env:
@@ -27,7 +20,8 @@ env:
   OAUTH_ACCESS_TOKEN_SECONDS: "600"
   OAUTH_AUTHORIZATION_CODE_SECONDS: "300"
   OAUTH_REFRESH_TOKEN_SECONDS: "2592000"
-  APPROVAL_REFERENCE: issue-220-comment-5093505474
+  ROLLOUT_APPROVAL_REFERENCE: issue-220-comment-5093505474
+  ROLLOUT_DECISION_REFERENCE: issue-220-comment-5094418635
 
 jobs:
   rollout:
@@ -45,7 +39,7 @@ jobs:
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check resumable rollout prerequisites
+      - name: Check guarded rollout prerequisites
         id: readiness
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -80,18 +74,17 @@ jobs:
           fi
 
           if (( ${#missing[@]} > 0 )); then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
             {
-              echo "## W01 OAuth rollout waiting"
+              echo "## W01 guarded OAuth rollout blocked"
               echo
               echo "Missing prerequisites:"
               for name in "${missing[@]}"; do
                 echo "- \`$name\`"
               done
               echo
-              echo "The hourly workflow will retry automatically."
+              echo "Configure the protected prerequisites, obtain the required production approval, and dispatch again."
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            exit 1
           fi
 
           echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -159,10 +152,17 @@ jobs:
           }
 
           if [[ "$canonical_surface" == oauth || "$worker_surface" == oauth ]]; then
-            echo "auth_state=recover_oauth" >> "$GITHUB_OUTPUT"
-          else
-            echo "auth_state=needs_hosted_auth" >> "$GITHUB_OUTPUT"
+            echo "auth_state=ambiguous_oauth" >> "$GITHUB_OUTPUT"
+            {
+              echo "## W01 guarded OAuth rollout stopped"
+              echo
+              echo "OAuth is advertised on at least one production origin, but the enabled verifier did not pass on both origins."
+              echo "No OAuth binding is removed or rotated. Collect current evidence and obtain a fresh Tier 3 recovery decision."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+
+          echo "auth_state=needs_hosted_auth" >> "$GITHUB_OUTPUT"
 
       - name: Run exact candidate checks
         if: >-
@@ -183,31 +183,8 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: bunx convex deploy
 
-      - name: Clear OAuth bindings from an unverified prior enablement
-        if: steps.state.outputs.auth_state == 'recover_oauth'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          rollback_file="$(mktemp)"
-          trap 'rm -f "$rollback_file"' EXIT
-          cat > "$rollback_file" <<'JSON'
-          {
-            "STENSIBLY_OAUTH_SIGNING_SECRET": null,
-            "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS": null,
-            "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS": null,
-            "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS": null
-          }
-          JSON
-          bunx wrangler secret bulk "$rollback_file"
-          rm -f "$rollback_file"
-          trap - EXIT
-
       - name: Configure hosted GitHub auth and prove disabled state
-        if: >-
-          steps.state.outputs.auth_state == 'needs_hosted_auth'
-          || steps.state.outputs.auth_state == 'recover_oauth'
+        if: steps.state.outputs.auth_state == 'needs_hosted_auth'
         id: phase1
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -323,7 +300,7 @@ jobs:
             --endpoint "$WORKER_ORIGIN" \
             --issuer "$CANONICAL_ORIGIN"
 
-      - name: Roll back OAuth bindings after a failed enable attempt
+      - name: Roll back OAuth bindings after a failed current enable attempt
         if: >-
           failure()
           && steps.state.outputs.auth_state != 'enabled'
@@ -367,10 +344,11 @@ jobs:
         if: steps.verify_enabled.outcome == 'success'
         run: |
           {
-            echo "## W01 OAuth rollout complete"
+            echo "## W01 guarded OAuth rollout complete"
             echo
             echo "- deployed source: \`$ROLLOUT_SOURCE_SHA\`"
-            echo "- approval: \`$APPROVAL_REFERENCE\`"
+            echo "- rollout approval: \`$ROLLOUT_APPROVAL_REFERENCE\`"
+            echo "- corrected decision: \`$ROLLOUT_DECISION_REFERENCE\`"
             echo "- canonical origin: $CANONICAL_ORIGIN"
             echo "- Worker fallback: $WORKER_ORIGIN"
             echo "- bearer compatibility: passed on both origins"
