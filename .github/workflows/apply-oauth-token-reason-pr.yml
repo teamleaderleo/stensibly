@@ -46,6 +46,30 @@ jobs:
         run: |
           set -o pipefail
           bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts 2>&1 | tee focused-test-output.txt
+      - name: Run typecheck
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -o pipefail
+          bun run typecheck 2>&1 | tee typecheck-output.txt
+      - name: Run full Bun tests
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -o pipefail
+          bun test 2>&1 | tee bun-test-output.txt
+      - name: Run Convex tests
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -o pipefail
+          bun run test:convex 2>&1 | tee convex-test-output.txt
+      - name: Bundle Worker
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -o pipefail
+          bun run worker:check 2>&1 | tee worker-check-output.txt
       - name: Upload execution output
         if: always()
         uses: actions/upload-artifact@v4
@@ -54,15 +78,12 @@ jobs:
           path: |
             candidate/applicator-output.txt
             candidate/focused-test-output.txt
-          if-no-files-found: error
+            candidate/typecheck-output.txt
+            candidate/bun-test-output.txt
+            candidate/convex-test-output.txt
+            candidate/worker-check-output.txt
+          if-no-files-found: warn
           retention-days: 1
-      - name: Run full repository gate
-        working-directory: candidate
-        run: |
-          bun run typecheck
-          bun test
-          bun run test:convex
-          bun run worker:check
       - name: Commit source-only candidate and remove branch applicators
         working-directory: candidate
         shell: bash
