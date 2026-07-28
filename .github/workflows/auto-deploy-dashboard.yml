@@ -1,19 +1,8 @@
-name: Queue Dashboard Production Deployment
+name: Budget Dashboard Production Deployment
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - site/**
-      - src/dashboard-assets.ts
-      - src/dashboard-deployment-diagnostics.ts
-      - src/verify-dashboard.ts
-      - package.json
-      - bun.lock
-      - tsconfig.json
-      - .github/workflows/deploy-dashboard.yml
-      - .github/workflows/auto-deploy-dashboard.yml
+  schedule:
+    - cron: '17 */2 * * *'
 
 permissions:
   actions: write
@@ -23,19 +12,100 @@ concurrency:
   group: stensibly-dashboard-auto-dispatch
   cancel-in-progress: true
 
+env:
+  MAX_AUTO_DEPLOYS_PER_24H: '4'
+
 jobs:
   dispatch:
-    name: Queue guarded production workflow
+    name: Queue one relevant deployment within budget
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch dashboard production workflow from main
+      - name: Inspect deployment state and dispatch when needed
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
+          api_headers=(
+            --header "Accept: application/vnd.github+json"
+            --header "Authorization: Bearer ${GITHUB_TOKEN}"
+            --header "X-GitHub-Api-Version: 2022-11-28"
+          )
+          runs_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-dashboard.yml/runs?branch=main&per_page=100"
+          runs_json="$(curl --fail-with-body --silent --show-error "${api_headers[@]}" "${runs_url}")"
+
+          active_count="$(
+            jq '[.workflow_runs[] | select(
+              .status == "requested"
+              or .status == "waiting"
+              or .status == "pending"
+              or .status == "queued"
+              or .status == "in_progress"
+            )] | length' <<< "${runs_json}"
+          )"
+          if [ "${active_count}" -gt 0 ]; then
+            echo "::notice title=Dashboard deployment coalesced::A guarded deployment is already active; no additional run was queued."
+            exit 0
+          fi
+
+          cutoff_epoch="$(date -u -d '24 hours ago' +%s)"
+          recent_count="$(
+            jq --argjson cutoff "${cutoff_epoch}" '[.workflow_runs[]
+              | select((.created_at | fromdateiso8601) >= $cutoff)
+              | select(.conclusion != "cancelled" and .conclusion != "skipped")
+            ] | length' <<< "${runs_json}"
+          )"
+          if [ "${recent_count}" -ge "${MAX_AUTO_DEPLOYS_PER_24H}" ]; then
+            echo "::notice title=Dashboard deployment budget reached::${recent_count} guarded deployment runs were already created in the last 24 hours; automatic dispatch is capped at ${MAX_AUTO_DEPLOYS_PER_24H}."
+            exit 0
+          fi
+
+          latest_success_sha="$(
+            jq -r '[.workflow_runs[] | select(.conclusion == "success")]
+              | sort_by(.created_at)
+              | last
+              | .head_sha // empty' <<< "${runs_json}"
+          )"
+          current_sha="${GITHUB_SHA}"
+          if [ -n "${latest_success_sha}" ] && [ "${latest_success_sha}" = "${current_sha}" ]; then
+            echo "::notice title=Dashboard already current::The latest successful guarded deployment already covers ${current_sha}."
+            exit 0
+          fi
+
+          should_dispatch=false
+          if [ -z "${latest_success_sha}" ]; then
+            should_dispatch=true
+          else
+            compare_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/compare/${latest_success_sha}...${current_sha}?per_page=100"
+            if ! compare_json="$(curl --fail-with-body --silent --show-error "${api_headers[@]}" "${compare_url}")"; then
+              echo "::warning title=Dashboard comparison unavailable::Could not compare the latest successful deployment with main. Automatic deployment was skipped to preserve quota; use the guarded manual workflow for an urgent release."
+              exit 0
+            fi
+
+            compare_status="$(jq -r '.status // "unknown"' <<< "${compare_json}")"
+            total_commits="$(jq -r '.total_commits // 0' <<< "${compare_json}")"
+            if [ "${compare_status}" = "diverged" ] || [ "${total_commits}" -gt 250 ]; then
+              should_dispatch=true
+            else
+              relevant_count="$(
+                jq '[.files[]?.filename | select(test(
+                  "^(site/|src/dashboard-assets\\.ts$|src/dashboard-deployment-diagnostics\\.ts$|src/verify-dashboard\\.ts$|package\\.json$|bun\\.lock$|tsconfig\\.json$|\\.github/workflows/(deploy-dashboard|auto-deploy-dashboard)\\.yml$)"
+                ))] | length' <<< "${compare_json}"
+              )"
+              if [ "${relevant_count}" -gt 0 ]; then
+                should_dispatch=true
+              fi
+            fi
+          fi
+
+          if [ "${should_dispatch}" != true ]; then
+            echo "::notice title=No dashboard release needed::Main has no dashboard-relevant changes since the latest successful guarded deployment."
+            exit 0
+          fi
+
           curl --fail-with-body --silent --show-error \
             --request POST \
-            --header "Accept: application/vnd.github+json" \
-            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${api_headers[@]}" \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-dashboard.yml/dispatches" \
             --data '{"ref":"main"}'
+          echo "::notice title=Dashboard deployment queued::Queued one guarded production deployment for ${current_sha}; ${recent_count}/${MAX_AUTO_DEPLOYS_PER_24H} runs were already counted in the rolling budget."
