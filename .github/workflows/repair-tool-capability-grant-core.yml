@@ -32,15 +32,28 @@ jobs:
           import base64
           import gzip
           from pathlib import Path
-          files = {
-              "src/tool-capability-grant.ts": ".github/tool-capability-repair.src.b64",
-              "test/tool-capability-grant.test.ts": ".github/tool-capability-repair.test.b64",
-              "docs/tool-capability-grants.md": ".github/tool-capability-repair.doc.b64",
+
+          source_b64 = "".join(
+              Path(f".github/tool-capability-repair.src.part{index}").read_text()
+              for index in range(1, 5)
+          )
+          payloads = {
+              "src/tool-capability-grant.ts": source_b64,
+              "test/tool-capability-grant.test.ts": Path(
+                  ".github/tool-capability-repair.test.b64"
+              ).read_text(),
+              "docs/tool-capability-grants.md": Path(
+                  ".github/tool-capability-repair.doc.b64"
+              ).read_text(),
           }
-          for output, staged in files.items():
-              Path(output).write_bytes(gzip.decompress(base64.b64decode(Path(staged).read_text())))
+          for output, encoded in payloads.items():
+              Path(output).write_bytes(gzip.decompress(base64.b64decode(encoded)))
           PYCODE
           rm .github/tool-capability-repair.src.b64
+          rm .github/tool-capability-repair.src.part1
+          rm .github/tool-capability-repair.src.part2
+          rm .github/tool-capability-repair.src.part3
+          rm .github/tool-capability-repair.src.part4
           rm .github/tool-capability-repair.test.b64
           rm .github/tool-capability-repair.doc.b64
           rm .github/workflows/repair-tool-capability-grant-core.yml
@@ -68,6 +81,10 @@ jobs:
             test/tool-capability-grant.test.ts \
             docs/tool-capability-grants.md \
             .github/tool-capability-repair.src.b64 \
+            .github/tool-capability-repair.src.part1 \
+            .github/tool-capability-repair.src.part2 \
+            .github/tool-capability-repair.src.part3 \
+            .github/tool-capability-repair.src.part4 \
             .github/tool-capability-repair.test.b64 \
             .github/tool-capability-repair.doc.b64 \
             .github/workflows/repair-tool-capability-grant-core.yml
