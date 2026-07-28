@@ -26,7 +26,7 @@ jobs:
         working-directory: docs/research/issue-474-lane-b
         run: |
           npx --no-install tsc -p tsconfig.eslint.json --pretty false > tsc-observed.txt 2>&1
-          npx --no-install eslint receiver-eslint-matrix.fixture.ts --format json > eslint-observed.json || true
+          npx --no-install eslint receiver-eslint-matrix.fixture.ts --format json > eslint-observed.json 2>&1 || true
           {
             echo "node $(node --version)"
             echo "typescript $(npx --no-install tsc --version)"
