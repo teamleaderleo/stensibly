@@ -1,67 +1,56 @@
 .detail-claim-summary, .detail-renewal-summary {
   margin: 0 0 .72rem;
-  color: #c7c7cf;
-  font-size: .76rem;
-  line-height: 1.45;
+  color: var(--muted);
+  font-size: .77rem;
+  line-height: 1.48;
 }
 
 .detail-claim-form, .detail-renewal-form {
   display: grid;
   grid-template-columns: minmax(10rem, .55fr) minmax(0, 1fr);
-  gap: .65rem .75rem;
+  gap: .68rem .78rem;
   align-items: end;
 }
 
 .detail-claim-form label, .detail-renewal-form label { margin: 0; }
-
-.detail-claim-actions, .detail-renewal-actions {
-  display: flex;
-  align-items: center;
-  gap: .55rem;
-}
+.detail-claim-actions, .detail-renewal-actions { display: flex; align-items: center; gap: .55rem; }
 
 .detail-claim-actions button, .detail-renewal-actions button {
-  color: #111;
+  color: var(--on-accent);
   border-color: transparent;
-  background: var(--accent);
+  background: var(--accent-solid);
+  box-shadow: 0 .35rem .8rem color-mix(in srgb, var(--accent) 20%, transparent);
   font-weight: 750;
 }
 
 .detail-claim-actions span, .detail-renewal-actions span {
   color: var(--muted);
-  font: .66rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: .67rem ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .detail-claim-error, .detail-renewal-error {
   grid-column: 1 / -1;
   margin: 0;
-  padding: .62rem .68rem;
-  border: 1px solid rgba(255,154,118,.35);
-  border-radius: .55rem;
-  color: #ffc0aa;
-  background: rgba(255,154,118,.08);
-  font-size: .72rem;
-  line-height: 1.4;
+  padding: .64rem .7rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line));
+  border-radius: .68rem;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: .73rem;
+  line-height: 1.42;
 }
 
 .detail-renewal-section {
-  border-color: rgba(216,255,95,.24);
-  background: linear-gradient(155deg, rgba(216,255,95,.045), var(--panel) 55%);
+  border-color: color-mix(in srgb, var(--active-ink) 28%, var(--line));
+  background: linear-gradient(155deg, color-mix(in srgb, var(--active) 22%, transparent), var(--panel) 58%);
 }
 
-.detail-renewal-summary { color: #d6dec0; }
+.detail-renewal-summary { color: var(--active-ink); }
 .detail-claim-renewal-note { padding: .75rem .6rem; text-align: left; }
-.detail-claim-form button:disabled, .detail-renewal-form button:disabled {
-  cursor: wait;
-  opacity: .65;
-}
+.detail-claim-form button:disabled, .detail-renewal-form button:disabled { cursor: wait; opacity: .65; }
 
 @media (max-width: 560px) {
-  .detail-claim-form, .detail-renewal-form {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
+  .detail-claim-form, .detail-renewal-form { grid-template-columns: 1fr; align-items: stretch; }
   .detail-claim-actions, .detail-renewal-actions { flex-wrap: wrap; }
   .detail-claim-actions button, .detail-renewal-actions button { flex: 1; }
 }
