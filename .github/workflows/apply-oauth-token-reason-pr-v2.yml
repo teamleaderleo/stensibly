@@ -25,10 +25,21 @@ jobs:
       - name: Apply exact source patch
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           git show "origin/${{ github.head_ref }}:oauth-token-reason.patch" > /tmp/oauth-token-reason.patch
-          git apply --check /tmp/oauth-token-reason.patch
+          git apply --check --verbose /tmp/oauth-token-reason.patch > /tmp/oauth-token-reason-apply.txt 2>&1
+          status=$?
+          cat /tmp/oauth-token-reason-apply.txt
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           git apply /tmp/oauth-token-reason.patch
+      - name: Upload patch-check output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oauth-token-reason-apply-output
+          path: /tmp/oauth-token-reason-apply.txt
+          if-no-files-found: ignore
+          retention-days: 1
       - run: bun install
       - name: Run focused authentication tests
         run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
