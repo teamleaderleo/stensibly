@@ -77,7 +77,7 @@ function beginGithubSignIn() {
   try {
     const endpoint = selectedEndpoint();
     if (!isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) {
-      throw new TypeError('GitHub sign-in is available for api.stensibly.com. Use an API token for a custom endpoint.');
+      throw new TypeError('GitHub sign-in only works with api.stensibly.com. Use an API token for another endpoint.');
     }
     localStorage.setItem('stensiblyEndpoint', endpoint);
     if (signInButton) signInButton.disabled = true;
@@ -86,8 +86,8 @@ function beginGithubSignIn() {
     window.location.assign(createGithubSignInUrl(endpoint, returnTo));
   } catch (cause) {
     if (signInButton) signInButton.disabled = false;
-    if (signInState) signInState.textContent = 'Sign in with the GitHub account authorised for this workspace.';
-    showError(cause instanceof Error ? cause.message : 'GitHub sign-in could not start.');
+    if (signInState) signInState.textContent = 'Use your GitHub account.';
+    showError(cause instanceof Error ? cause.message : 'Could not start GitHub sign-in.');
   }
 }
 
@@ -95,7 +95,7 @@ function preserveHostedSignOut() {
   hostedAuthorizationDenied = true;
   if (hostedSignOutButton) hostedSignOutButton.hidden = false;
   if (signInState) {
-    signInState.textContent = 'This GitHub session is signed in but cannot access this ledger. Sign out to use another account.';
+    signInState.textContent = 'This account cannot access this workspace.';
   }
 }
 
@@ -128,7 +128,7 @@ async function signOutHostedSession(event) {
       hostedSignOutButton.disabled = false;
       hostedSignOutButton.hidden = false;
     }
-    showError(cause instanceof Error ? cause.message : 'Hosted sign out failed.');
+    showError(cause instanceof Error ? cause.message : 'Sign out failed.');
     return;
   }
 
@@ -144,7 +144,7 @@ function clearHostedDenialRecovery() {
     hostedSignOutButton.hidden = true;
   }
   if (signInState) {
-    signInState.textContent = 'Use the GitHub account authorised for this Stensibly workspace. The browser keeps a secure hosted session cookie.';
+    signInState.textContent = 'Use your GitHub account.';
   }
 }
 
