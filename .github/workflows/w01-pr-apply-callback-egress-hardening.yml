@@ -1,0 +1,85 @@
+name: W01 PR Apply Callback Egress Hardening
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/w01-callback-egress-trigger
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'bramble/callback-egress-hardening'
+    name: Apply and verify callback egress hardening
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Apply exact hardening script
+        id: applicator
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/w01_callback_egress_hardening.py \
+            > .github/w01-callback-egress-apply.log \
+            2>&1
+      - name: Record applicator failure
+        if: steps.applicator.outcome == 'failure'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.existsSync('.github/w01-callback-egress-apply.log')
+              ? fs.readFileSync('.github/w01-callback-egress-apply.log', 'utf8')
+              : 'applicator log unavailable';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '## Callback hardening applicator failed',
+                '',
+                `- workflow run: \`${context.runId}\``,
+                '```text',
+                raw.slice(0, 1800).replace(/`/g, "'"),
+                '```',
+                '',
+                '— Bramble · bounded applicator receipt'
+              ].join('\n')
+            });
+      - name: Stop after applicator failure
+        if: steps.applicator.outcome == 'failure'
+        run: exit 1
+      - name: Run exact checks
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+      - name: Commit hardened callback transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/hosted-auth.ts test/hosted-auth-github-preflight.test.ts
+          if git diff --cached --quiet; then
+            echo "Hardening already applied"
+            exit 0
+          fi
+          git commit -m "Harden GitHub callback egress diagnostics"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
