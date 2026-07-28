@@ -127,7 +127,7 @@ describe("bounded hosted history compatibility", () => {
     }
   });
 
-  test("caches one accepted capability across bounded item and artifact reads", async () => {
+  test("revalidates an accepted capability across bounded item and artifact reads", async () => {
     const calls: string[] = [];
     const ledger = ledgerWith(async (name) => {
       calls.push(name);
@@ -145,7 +145,7 @@ describe("bounded hosted history compatibility", () => {
       reservations: [],
     });
     await expect(ledger.listArtifacts(item.id)).resolves.toEqual([]);
-    expect(calls.filter((name) => name === "historyCapabilities:get")).toHaveLength(1);
+    expect(calls.filter((name) => name === "historyCapabilities:get")).toHaveLength(2);
     expect(calls).not.toContain("items:get");
   });
 
