@@ -29,6 +29,7 @@ export interface CloudflareBindings {
 }
 
 const W01_GITHUB_TOKEN_EGRESS_PROBE = "/__w01/github-token-egress";
+const W01_GITHUB_TOKEN_EGRESS_CAPABILITY = "-YnH9yW8pN4yfuUKDSwjY1PvtG257gveyMeKKuNE0Y8";
 const PROVIDER_STAGES = new Set([
   "token_exchange",
   "unexpected_scope",
@@ -79,8 +80,7 @@ async function githubTokenEgressProbe(
 ): Promise<Response> {
   if (
     request.method !== "POST"
-    || !env.STENSIBLY_SERVICE_SECRET
-    || request.headers.get("authorization") !== `Bearer ${env.STENSIBLY_SERVICE_SECRET}`
+    || request.headers.get("x-stensibly-diagnostic") !== W01_GITHUB_TOKEN_EGRESS_CAPABILITY
   ) {
     return diagnosticJson({ error: "Not found" }, 404);
   }
