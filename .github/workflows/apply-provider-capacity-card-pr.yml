@@ -27,6 +27,7 @@ jobs:
         run: |
           set -o pipefail
           git show "origin/${{ github.head_ref }}:scripts/apply-provider-capacity-card.py" > /tmp/apply-provider-capacity-card.py
+          sed -i '$d' /tmp/apply-provider-capacity-card.py
           python /tmp/apply-provider-capacity-card.py 2>&1 | tee /tmp/provider-capacity-card-apply.txt
       - name: Upload applicator failure
         if: failure()
