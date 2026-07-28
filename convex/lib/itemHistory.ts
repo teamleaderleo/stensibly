@@ -22,7 +22,7 @@ export interface VisibleEventWindow {
 
 export interface BoundedPaginationStatus {
   isDone: boolean;
-  pageStatus?: string | null;
+  pageStatus?: "SplitRecommended" | "SplitRequired" | null;
   splitCursor?: string | null;
 }
 
@@ -85,7 +85,7 @@ export function paginationRequiresFurtherInspection(
   page: BoundedPaginationStatus,
 ): boolean {
   return !page.isDone
-    || page.pageStatus === "SplitRequired"
+    || page.pageStatus !== null && page.pageStatus !== undefined
     || (typeof page.splitCursor === "string" && page.splitCursor.length > 0);
 }
 
