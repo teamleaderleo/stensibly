@@ -1,8 +1,8 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.3.0`  
+**Protocol:** `stensibly-agent-ops/0.4.0`  
 **Bootstrap:** `stensibly-project-bootstrap/v2`  
-**Standing project policy:** `stensibly-internal-dogfood/v1`  
+**Standing project policy:** `stensibly-internal-dogfood/v2`  
 **Tracking issue:** #293  
 **Status:** internal dogfood
 
@@ -93,7 +93,8 @@ Instruction changes may be:
 Direct operator corrections may become effective immediately when delay would
 continue a demonstrated coordination failure. Record the change, exact source, and
 follow-up review; do not force the operator to endure the old behaviour while agents
-complete ceremony about changing it.
+complete ceremony about changing it. The worker receiving the correction may
+self-review and integrate a repository-only instruction update directly.
 
 Preserve superseded text in Git history. Do not keep it active merely to show that a
 rollback is possible.
@@ -134,7 +135,9 @@ Record the effective revision, rejected alternatives, and follow-up.
 
 ## Risk-tiered review and execution
 
-Review count follows actual consequences, not vocabulary such as “production.”
+Review depth follows actual consequences, not vocabulary such as “production” or a
+fixed reviewer count. Current operator direction and `STENSIBLY.md` determine when
+self-review is sufficient.
 
 ### Tier 0 — mechanical
 
@@ -144,16 +147,21 @@ Independent review is optional. Merge after exact inspection and relevant checks
 ### Tier 1 — bounded internal dogfood
 
 Small reversible runtime, UI, configuration, deployment, or protocol changes with
-narrow impact and strong verification. One independent exact-head acceptance is
-normally sufficient. Merge and deploy promptly.
+narrow impact and strong verification. Self-review is normally sufficient for work
+covered by standing policy or current operator direction. Seek independent review only
+when it materially reduces uncertainty. Merge and deploy promptly.
 
 ### Tier 2 — elevated internal dogfood
 
 Authentication, authorisation, privacy, schema, durable state, retention,
 cross-project isolation, public contracts, dependencies, broad compatibility, or
-uncertain recovery. Require independent exact-head acceptance and an integration
-decision. Add specialist review only when the actual boundaries justify it. After the
-gate, merge, deploy, and dogfood under `STENSIBLY.md`.
+uncertain recovery. Require deliberate exact-candidate inspection, relevant checks, an
+explicit integration decision, and a credible recovery or fix-forward path. Current
+direct operator direction satisfies the integration-decision requirement for covered
+internal dogfood work, and the implementing or integration worker may perform the
+review. Add independent or specialist review only when actual residual uncertainty,
+consequences, or operator direction justify it. After the decision, merge, deploy, and
+dogfood under `STENSIBLY.md`.
 
 ### Tier 3 — external or materially consequential
 
@@ -173,8 +181,10 @@ exact effect.
 Deployment, enablement, use of protected credentials inside reviewed workflows, and
 bounded internal test writes are not automatically Tier 3.
 
-Before merging reviewed work, re-fetch the exact head, current base, CI, mergeability,
-reviews, and unresolved threads. Acceptance expires when the head moves.
+Before merging a change, re-fetch the exact head, current base, CI, mergeability,
+reviews, and unresolved threads when present. Reassess concrete findings rather than
+using stale comments as ceremonial blockers. Any acceptance or self-review expires when
+the head moves materially.
 
 ## Rollback and failure conditions
 
@@ -205,6 +215,7 @@ Surveys should look specifically for:
 - work stopping at PRs or documentation;
 - deployments deferred without a real blocker;
 - repeated approval requests for standing-authorised actions;
+- independent-review ceremony blocking operator-directed internal work;
 - rollback chosen instead of the stated product goal;
 - missed safe parallelism;
 - duplicate or abandoned portfolios;
@@ -215,8 +226,13 @@ operator correction.
 
 ## Protocol history
 
-Protocol `0.3.0` replaces the blanket rule that every production deployment,
-enablement, credentialed workflow, and internal write is Tier 3. It adopts
+Protocol `0.4.0` makes accountable self-review the default for operator-directed,
+reversible internal dogfood work. It removes the blanket second-agent gate for Tier 1
+and Tier 2 changes while retaining exact-candidate inspection, relevant checks,
+integration decisions, recovery evidence, and Tier 3 operator approval.
+
+Protocol `0.3.0` replaced the blanket rule that every production deployment,
+enablement, credentialed workflow, and internal write is Tier 3. It adopted
 consequence-based review and the standing ambitious internal-dogfood grant in
 `STENSIBLY.md`.
 
