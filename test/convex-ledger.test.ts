@@ -326,35 +326,93 @@ function fixture(name: string): unknown {
   if (name === "projects:brief") {
     return { project: "scrapbook", counts: { total: 0 } };
   }
-  if (name === "items:list") return [];
-  if (name === "continuations:get") {
+  if (name === "continuationSupervisor:runPolicy") {
+    return { considered: 0, dispatched: [], skipped: [] };
+  }
+  if (name === "completionContinuations:complete") {
+    return { item: item(), continuations: [continuation()] };
+  }
+  if (name === "continuationSupervisor:queue") {
     return {
-      id: "cont_1",
-      sourceItemId: "item_1",
-      title: "Review the result",
-      rationale: "A decision remains.",
-      instruction: "Review and continue.",
-      action: { kind: "request_decision", decisionType: "review" },
-      status: "proposed",
-      generation: 1,
+      continuation: continuation(),
+      item: item(),
+      run: { id: "run_1" },
+      createdItemId: null,
+      notificationRecommended: false,
     };
   }
-  return { id: "ok" };
+  if (name === "continuationEdits:edit" || name.startsWith("continuations:")) {
+    return continuation();
+  }
+  if (name === "events:record") {
+    return {
+      id: "evt_1",
+      itemId: "item_1",
+      actorId: actor.id,
+      type: "progress.recorded",
+      payload: {},
+      createdAt: new Date().toISOString(),
+    };
+  }
+  if (name === "artifacts:attach") {
+    return {
+      id: "art_1",
+      itemId: "item_1",
+      actorId: actor.id,
+      kind: "commit",
+      label: "Gateway commit",
+      uri: "git:repo@gateway",
+      mimeType: null,
+      metadata: {},
+      createdAt: new Date().toISOString(),
+    };
+  }
+  return item();
+}
+
+function continuation() {
+  const now = new Date().toISOString();
+  return {
+    id: "cont_1",
+    sourceItemId: "item_1",
+    sourceEventId: "evt_continuation",
+    sourceRunId: null,
+    title: "Review the result",
+    rationale: "A decision remains.",
+    instruction: "Review and continue.",
+    action: { kind: "request_decision", decisionType: "review" },
+    evidence: [],
+    suggestedBy: actor.id,
+    approvalMode: "human",
+    deliveryMode: "human_inbox",
+    status: "proposed",
+    generation: 1,
+    expiresAt: null,
+    resolutionActorId: null,
+    resolutionNote: null,
+    result: null,
+    consumedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function item() {
+  const now = new Date().toISOString();
   return {
     id: "item_1",
     project: "scrapbook",
     kind: "task",
-    title: "Item",
+    title: "Map the gateway",
+    summary: null,
     status: "ready",
-    priority: 50,
+    priority: 60,
+    nextAction: null,
     claimedBy: null,
     claimExpiresAt: null,
     claimGeneration: 0,
     version: 1,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    createdAt: now,
+    updatedAt: now,
   };
 }
