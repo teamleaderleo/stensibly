@@ -1,3 +1,4 @@
+# Retry after correcting the approval-vs-resource test expectation.
 name: Repair tool capability grant trust boundary
 
 on:
