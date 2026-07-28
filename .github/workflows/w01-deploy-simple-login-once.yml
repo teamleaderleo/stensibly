@@ -1,0 +1,296 @@
+name: W01 deploy simple login once
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: stensibly-dashboard-production
+  cancel-in-progress: false
+
+env:
+  REQUIRED_SOURCE_SHA: fceb0877a7598ba253979e1e35d4e689c94d86bb
+  VERCEL_CLI_VERSION: 56.5.0
+  EXPECTED_VERCEL_PROJECT: stensibly
+  DASHBOARD_URL: https://www.stensibly.com
+
+jobs:
+  deploy-simple-login:
+    name: Stage, verify, promote, and verify simple login
+    if: >-
+      github.event.pull_request.head.ref == 'lantern/456-deploy-simple-login' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://www.stensibly.com
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate exact site tree and protected inputs
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            echo "This one-time dashboard generation cannot be rerun" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$REQUIRED_SOURCE_SHA" "$GITHUB_SHA" || {
+            echo "Execution revision does not contain the accepted login source" >&2
+            exit 1
+          }
+          required_site_tree="$(git rev-parse "$REQUIRED_SOURCE_SHA:site")"
+          current_site_tree="$(git rev-parse "$GITHUB_SHA:site")"
+          if [[ "$current_site_tree" != "$required_site_tree" ]]; then
+            echo "Dashboard site tree differs from the accepted source revision" >&2
+            exit 1
+          fi
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing protected production input: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run exact source gate
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run verify:dashboard -- --html-file site/index.html --github-annotation
+          test ! -e .vercel
+
+      - name: Validate existing Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          project_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_ORG_ID}"
+          if ! curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "$project_url" > /tmp/vercel-project.json; then
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+              "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
+              > /tmp/vercel-project.json
+          fi
+          test "$(jq -r '.name // empty' /tmp/vercel-project.json)" = "$EXPECTED_VERCEL_PROJECT"
+          test "$(jq -r '.rootDirectory // empty' /tmp/vercel-project.json)" = "site"
+
+      - name: Pull and validate production project settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@${VERCEL_CLI_VERSION} pull \
+            --yes \
+            --environment=production \
+            --token="${VERCEL_TOKEN}"
+          jq --exit-status \
+            --arg project "$VERCEL_PROJECT_ID" \
+            --arg org "$VERCEL_ORG_ID" \
+            '.projectId == $project and .orgId == $org' \
+            .vercel/project.json > /dev/null
+
+      - name: Build production dashboard
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@${VERCEL_CLI_VERSION} build \
+            --prod \
+            --token="${VERCEL_TOKEN}"
+          test -f .vercel/output/config.json
+          test -d .vercel/output/static
+
+      - name: Create staged production deployment
+        id: stage
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          deployment_url="$(
+            npx --yes vercel@${VERCEL_CLI_VERSION} deploy \
+              --prebuilt \
+              --prod \
+              --skip-domain \
+              --yes \
+              --token="${VERCEL_TOKEN}"
+          )"
+          safe_deployment_url="$(
+            bun src/dashboard-deployment-diagnostics.ts \
+              --safe-vercel-origin "$deployment_url"
+          )"
+          echo "deployment_url=${safe_deployment_url}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$safe_deployment_url" > evidence/staged-origin.txt
+
+      - name: Verify staged dashboard with propagation retries
+        env:
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          bun src/dashboard-assets.ts > /tmp/dashboard-assets.json
+          jq --exit-status '
+            type == "array"
+            and length > 0
+            and all(.[];
+              (.path | type == "string")
+              and (.path | test("^/[A-Za-z0-9._/-]+$"))
+              and (.kind == "css" or .kind == "javascript" or .kind == "svg")
+              and (.contentTypes | type == "array")
+              and (.contentTypes | length > 0)
+              and (.marker | type == "string")
+              and (.marker | length > 0)
+            )
+          ' /tmp/dashboard-assets.json > /dev/null
+
+          verify_stage() {
+            npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
+              --deployment "$DEPLOYMENT_URL" \
+              --fail --silent --show-error \
+              > /tmp/dashboard-index.html
+            bun run verify:dashboard -- --html-file /tmp/dashboard-index.html --github-annotation
+
+            while IFS=$'\t' read -r asset kind allowed_content_types marker; do
+              output="/tmp/dashboard-asset-$(printf '%s' "$asset" | tr '/.' '__')"
+              content_type="$(
+                npx --yes vercel@${VERCEL_CLI_VERSION} curl "$asset" \
+                  --deployment "$DEPLOYMENT_URL" \
+                  --fail --silent --show-error \
+                  --output "$output" \
+                  --write-out '%{content_type}\n'
+              )"
+              content_type="$(printf '%s\n' "$content_type" | tr -d '\r' | tail -n 1 | cut -c1-160)"
+              media_type="${content_type%%;*}"
+              media_type="$(printf '%s' "$media_type" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+              printf '%s\n' "$allowed_content_types" \
+                | tr ',' '\n' \
+                | grep --fixed-strings --ignore-case --line-regexp --quiet -- "$media_type"
+              test -s "$output"
+              grep --fixed-strings --quiet -- "$marker" "$output"
+              if grep --extended-regexp --quiet 'stn\.tok_[A-Za-z0-9._-]+' "$output"; then
+                echo "Staged asset $asset contains a token-shaped value" >&2
+                return 1
+              fi
+            done < <(jq -r '.[] | [.path, .kind, (.contentTypes | join(",")), .marker] | @tsv' /tmp/dashboard-assets.json)
+          }
+
+          for attempt in 1 2 3 4 5; do
+            if verify_stage; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              sleep $((attempt * 8))
+            fi
+          done
+          echo "Staged dashboard verification failed after propagation retries" >&2
+          exit 1
+
+      - name: Promote verified deployment
+        id: promote
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@${VERCEL_CLI_VERSION} promote \
+            "$DEPLOYMENT_URL" \
+            --yes \
+            --timeout=5m \
+            --token="${VERCEL_TOKEN}"
+
+      - name: Verify production dashboard
+        id: production_verify
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            args=(--url "$DASHBOARD_URL")
+            if [[ "$attempt" -eq 5 ]]; then args+=(--github-annotation); fi
+            if bun run verify:dashboard -- "${args[@]}"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 5 ]]; then sleep $((attempt * 8)); fi
+          done
+          echo "Production dashboard verification failed after promotion" >&2
+          exit 1
+
+      - name: Record bounded deployment result
+        if: always()
+        env:
+          EXECUTION_STATUS: ${{ job.status }}
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+          PROMOTE_OUTCOME: ${{ steps.promote.outcome }}
+          PRODUCTION_VERIFY_OUTCOME: ${{ steps.production_verify.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          jq -n \
+            --arg format "stensibly-simple-login-deploy/v1" \
+            --arg status "$EXECUTION_STATUS" \
+            --arg source "$REQUIRED_SOURCE_SHA" \
+            --arg staged "${DEPLOYMENT_URL:-}" \
+            --arg production "$DASHBOARD_URL" \
+            --arg promotion "${PROMOTE_OUTCOME:-not_run}" \
+            --arg verification "${PRODUCTION_VERIFY_OUTCOME:-not_run}" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{format: $format, status: $status, source_sha: $source, staged_origin: $staged, production_origin: $production, promotion: $promotion, production_verification: $verification, completed_at: $completedAt, contains_secret_values: false}' \
+            > evidence/result.json
+
+      - name: Post bounded result to issue 456
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTION_STATUS: ${{ job.status }}
+          DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/comment.md <<EOF
+          ## Simple login deployment
+
+          - Workflow run: \`${GITHUB_RUN_ID}\` — \`${EXECUTION_STATUS}\`
+          - Run URL: ${RUN_URL}
+          - Source: \`${REQUIRED_SOURCE_SHA}\`
+          - Stage: \`${DEPLOYMENT_URL:-unavailable}\`
+          - Production: ${DASHBOARD_URL}
+          EOF
+          gh issue comment 456 --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
+
+      - name: Upload bounded deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-simple-login-deploy
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 3
