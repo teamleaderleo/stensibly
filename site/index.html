@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/item-claim.css" />
     <link rel="stylesheet" href="/hosted-session.css" />
+    <link rel="stylesheet" href="/login-scrapbook.css" />
   </head>
   <body>
     <main class="shell">
@@ -23,37 +24,81 @@
         <a class="github" href="https://github.com/teamleaderleo/stensibly">view source ↗</a>
       </header>
 
-      <section class="hero">
-        <div>
+      <section class="hero hero-login">
+        <div class="hero-copy">
+          <div class="hero-register" aria-label="Workspace notes">
+            <span>workroom 01</span>
+            <span>private by default</span>
+          </div>
           <p class="eyebrow">Shared studio</p>
-          <h1>Shared work, in one place.</h1>
-          <p class="lede">See what is moving, where you are needed, and what happened without reopening every chat.</p>
+          <h1>Pick up the work without reopening every chat.</h1>
+          <p class="lede">Open one calm project desk for the queue, the people and agents moving it, and the evidence behind every handoff.</p>
+
+          <div class="workroom-preview" aria-label="What the project desk includes">
+            <article>
+              <span>01</span>
+              <strong>Find the next move</strong>
+              <p>See ready, active, blocked, and completed work in one bounded view.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <strong>Know who moved it</strong>
+              <p>Keep people, agents, callsigns, runs, and current authority distinct.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <strong>Resume from evidence</strong>
+              <p>Follow the item history and artifacts without making chat the source of truth.</p>
+            </article>
+          </div>
         </div>
-        <div class="connection" id="connection-panel">
+
+        <aside class="connection" id="connection-panel" aria-labelledby="connection-title">
           <div class="connection-head">
-            <strong id="connection-title">Welcome back</strong>
-            <span id="connection-state">disconnected</span>
+            <div class="connection-heading">
+              <span class="connection-kicker">Workspace access</span>
+              <strong id="connection-title">Open your project desk</strong>
+            </div>
+            <span class="connection-state-pill" id="connection-state">disconnected</span>
           </div>
           <form id="connect-form">
             <div class="hosted-sign-in" id="hosted-sign-in">
-              <button id="github-sign-in" type="button">Continue with GitHub</button>
+              <div class="hosted-sign-in-copy">
+                <span class="hosted-sign-in-label">Recommended</span>
+                <p id="hosted-sign-in-state">Use the GitHub account authorised for this Stensibly workspace. The browser keeps a secure hosted session cookie.</p>
+              </div>
+              <button id="github-sign-in" type="button">
+                <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+                  <path fill="currentColor" d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.78-.25.78-.55v-2.16c-3.17.69-3.84-1.35-3.84-1.35-.52-1.31-1.27-1.66-1.27-1.66-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.53-2.53-.29-5.19-1.27-5.19-5.59 0-1.24.44-2.25 1.17-3.04-.12-.29-.51-1.44.11-3 0 0 .95-.3 3.11 1.16A10.8 10.8 0 0 1 12 6.09c.96 0 1.92.13 2.82.38 2.16-1.46 3.11-1.16 3.11-1.16.62 1.56.23 2.71.11 3 .73.79 1.17 1.8 1.17 3.04 0 4.33-2.67 5.3-5.21 5.58.41.35.77 1.05.77 2.12v3.1c0 .3.21.66.79.55A11.3 11.3 0 0 0 12 .7Z" />
+                </svg>
+                <span>Continue with GitHub</span>
+                <span class="button-arrow" aria-hidden="true">↗</span>
+              </button>
               <button class="secondary" id="hosted-sign-out" type="button" hidden>Sign out of hosted session</button>
-              <p id="hosted-sign-in-state">Use the GitHub account authorised for this Stensibly workspace. The browser keeps a secure hosted session cookie.</p>
+              <p class="hosted-session-note">Secure session cookie · no access token pasted into this page</p>
             </div>
-            <p class="connection-divider"><span>advanced connection</span></p>
-            <p class="advanced-connection-copy">Use a bearer token for a self-hosted ledger, diagnostics, or machine access.</p>
-            <label>
-              API URL
-              <input name="endpoint" type="url" required placeholder="https://api.stensibly.com" autocomplete="url" autocapitalize="none" spellcheck="false" />
-            </label>
-            <label>
-              API token
-              <input name="token" type="password" placeholder="stn.tok_…" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-note" />
-            </label>
-            <div class="connection-form-actions">
-              <button type="submit">Open with token</button>
-              <button class="secondary" id="cancel-connection" type="button" hidden>cancel</button>
-            </div>
+
+            <details class="advanced-connection">
+              <summary>
+                <span>Advanced connection</span>
+                <small>self-hosted or diagnostics</small>
+              </summary>
+              <div class="advanced-connection-body">
+                <p class="advanced-connection-copy">Use a bearer token for a self-hosted ledger, diagnostics, or machine access.</p>
+                <label>
+                  API URL
+                  <input name="endpoint" type="url" required placeholder="https://api.stensibly.com" autocomplete="url" autocapitalize="none" spellcheck="false" />
+                </label>
+                <label>
+                  API token
+                  <input name="token" type="password" placeholder="stn.tok_…" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-note" />
+                </label>
+                <div class="connection-form-actions">
+                  <button type="submit">Open with token</button>
+                  <button class="secondary" id="cancel-connection" type="button" hidden>cancel</button>
+                </div>
+              </div>
+            </details>
           </form>
           <div class="connected-summary" id="connected-summary" hidden>
             <div class="connected-copy">
@@ -67,7 +112,7 @@
           </div>
           <p class="connection-error" id="connection-error" role="alert" hidden></p>
           <p class="connection-note" id="connection-note">The endpoint is remembered locally. Hosted sign-in uses an HttpOnly session cookie. A manually entered token lives only in this browser session and disappears after disconnect.</p>
-        </div>
+        </aside>
       </section>
 
       <section class="dashboard" id="dashboard" hidden>
@@ -157,8 +202,8 @@
       </section>
 
       <section class="disconnected" id="disconnected-state">
-        <p>Your project desk is ready when you are.</p>
-        <span>Continue with GitHub, or use the advanced connection for another endpoint.</span>
+        <p>The workroom is ready when you are.</p>
+        <span>Continue with GitHub to open the hosted desk, or unfold the advanced connection for another endpoint.</span>
       </section>
     </main>
 
