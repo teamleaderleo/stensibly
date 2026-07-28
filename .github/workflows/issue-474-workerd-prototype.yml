@@ -1,0 +1,52 @@
+name: Issue 474 workerd receiver prototype
+
+on:
+  push:
+    branches:
+      - research/issue-474-workerd-prototype
+    paths:
+      - .github/workflows/issue-474-workerd-prototype.yml
+      - docs/research/issue-474-lane-a/prototype/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out Stensibly prototype
+        uses: actions/checkout@v4
+
+      - name: Check out pinned workerd source
+        uses: actions/checkout@v4
+        with:
+          repository: cloudflare/workerd
+          ref: 6aa890be9fa547e3907c805b312e39917a274221
+          path: workerd
+
+      - name: Apply prototype patch
+        run: |
+          git -C workerd apply --check \
+            ../docs/research/issue-474-lane-a/prototype/workerd-receiver-types.patch
+          git -C workerd apply \
+            ../docs/research/issue-474-lane-a/prototype/workerd-receiver-types.patch
+          git -C workerd diff --check
+
+      - name: Install Bazelisk
+        run: npm install --global @bazel/bazelisk
+
+      - name: Confirm focused targets
+        working-directory: workerd
+        run: |
+          bazelisk query '//types:*' | grep -E 'globals\.spec|fetch-receiver'
+
+      - name: Run generator transform and type fixtures
+        working-directory: workerd
+        run: |
+          bazelisk test \
+            //types:test/transforms/globals.spec \
+            //types:test/types/fetch-receiver \
+            --test_output=errors
