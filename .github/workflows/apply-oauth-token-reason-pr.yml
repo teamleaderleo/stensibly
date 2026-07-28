@@ -37,20 +37,25 @@ jobs:
         run: |
           set -euo pipefail
           python ../trigger/scripts/run-oauth-token-reason-applicator.py 2>&1 | tee applicator-output.txt
-      - name: Upload applicator output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: oauth-reason-standalone-output
-          path: candidate/applicator-output.txt
-          if-no-files-found: error
-          retention-days: 1
       - name: Install dependencies
         working-directory: candidate
         run: bun install
       - name: Run focused authentication tests
         working-directory: candidate
-        run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
+        shell: bash
+        run: |
+          set -o pipefail
+          bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts 2>&1 | tee focused-test-output.txt
+      - name: Upload execution output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oauth-reason-execution-output
+          path: |
+            candidate/applicator-output.txt
+            candidate/focused-test-output.txt
+          if-no-files-found: error
+          retention-days: 1
       - name: Run full repository gate
         working-directory: candidate
         run: |
