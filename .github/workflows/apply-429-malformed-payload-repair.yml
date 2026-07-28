@@ -91,12 +91,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Run focused authentication tests
         run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
-      - name: Run full repository gate
-        run: |
-          bun run typecheck
-          bun test
-          bun run test:convex
-          bun run worker:check
+      - name: Run typecheck
+        run: bun run typecheck
+      - name: Run Bun tests
+        run: bun test
+      - name: Run Convex tests
+        run: bun run test:convex
+      - name: Bundle Cloudflare Worker
+        run: bun run worker:check
       - name: Commit repaired exact head
         shell: bash
         run: |
