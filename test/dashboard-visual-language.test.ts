@@ -37,14 +37,23 @@ describe("dashboard visual language", () => {
     expect(hostedStyles).toContain("--accent-solid: #5d5478");
     expect(hostedStyles).toContain("--accent-solid: #70668b");
     expect(hostedStyles).toContain("--on-accent: #fff");
-    expect(hostedStyles).toContain(".connection-form-actions button:first-child");
-    expect(hostedStyles).toContain(".actor-form-actions button:first-child");
-    expect(hostedStyles).toContain(".create-item-actions button:first-child");
-    expect(hostedStyles).toContain("color: var(--on-accent)");
-    expect(hostedStyles).toContain("background: var(--accent-solid)");
-    expect(claimStyles).toContain(".detail-claim-actions button, .detail-renewal-actions button");
-    expect(claimStyles).toContain("color: var(--on-accent)");
-    expect(claimStyles).toContain("background: var(--accent-solid)");
+
+    expect(cssRule(hostedStyles, ".hosted-sign-in button")).toContain(
+      "color: var(--on-accent);\n  border-color: transparent;\n  background: var(--accent-solid);",
+    );
+    expect(cssRule(hostedStyles, [
+      ".connection-form-actions button:first-child",
+      ".actor-form-actions button:first-child",
+      ".create-item-actions button:first-child",
+    ].join(",\n"))).toContain(
+      "color: var(--on-accent);\n  background: var(--accent-solid);",
+    );
+    expect(cssRule(claimStyles, [
+      ".detail-claim-actions button",
+      ".detail-renewal-actions button",
+    ].join(", "))).toContain(
+      "color: var(--on-accent);\n  border-color: transparent;\n  background: var(--accent-solid);",
+    );
 
     expect(contrastRatio("#5d5478", "#ffffff")).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio("#70668b", "#ffffff")).toBeGreaterThanOrEqual(4.5);
@@ -82,6 +91,14 @@ describe("dashboard visual language", () => {
     }
   });
 });
+
+function cssRule(styles: string, selectors: string): string {
+  const start = styles.indexOf(`${selectors} {`);
+  if (start < 0) throw new Error(`Missing CSS rule: ${selectors}`);
+  const end = styles.indexOf("}", start);
+  if (end < 0) throw new Error(`Unclosed CSS rule: ${selectors}`);
+  return styles.slice(start, end + 1);
+}
 
 function contrastRatio(background: string, foreground: string): number {
   const light = relativeLuminance(foreground);
