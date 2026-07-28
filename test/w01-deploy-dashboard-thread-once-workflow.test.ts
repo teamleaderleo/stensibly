@@ -5,6 +5,10 @@ const workflow = readFileSync(
   new URL("../.github/workflows/w01-deploy-dashboard-thread-once.yml", import.meta.url),
   "utf8",
 );
+const verifier = readFileSync(
+  new URL("../src/verify-dashboard.ts", import.meta.url),
+  "utf8",
+);
 
 describe("W01 attributable dashboard thread deployment", () => {
   test("runs only for the exact same-repository execution branch", () => {
@@ -23,6 +27,14 @@ describe("W01 attributable dashboard thread deployment", () => {
     expect(workflow).toContain('git rev-parse "$REQUIRED_SOURCE_SHA:site"');
     expect(workflow).toContain('git rev-parse "$GITHUB_SHA:site"');
     expect(workflow).toContain("persist-credentials: false");
+  });
+
+  test("uses the repaired current-shell verifier before Vercel", () => {
+    expect(verifier).toContain("Stensibly · Shared work");
+    expect(verifier).toContain("item-detail-announcer");
+    expect(workflow.indexOf("verify:dashboard")).toBeLessThan(
+      workflow.indexOf("Validate the existing Vercel project"),
+    );
   });
 
   test("uses protected Vercel inputs and the existing project boundary", () => {
