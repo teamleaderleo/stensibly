@@ -12,6 +12,7 @@ describe("worker sign-off contract", () => {
   test("renders deterministic expanded attribution", () => {
     const signoff = buildWorkerSignoff({
       ...baseInput,
+      callsignLeaseGeneration: 3,
       mantle: { name: "Lantern", version: 2 },
       pod: "Foundry",
       intention: "decide exact-head acceptance",
@@ -21,8 +22,9 @@ describe("worker sign-off contract", () => {
     });
 
     expect(signoff).toEqual({
-      version: 2,
+      version: 3,
       callsign: "Nightjar",
+      callsignLeaseGeneration: 3,
       mantle: { name: "Lantern", version: 2 },
       pod: "Foundry",
       intention: "decide exact-head acceptance",
@@ -30,7 +32,7 @@ describe("worker sign-off contract", () => {
       work: "Stensibly / W02 / OAuth lifecycle",
       reviewedRevision: "8fd0c86",
       markdown: [
-        "— Nightjar · Lantern mantle v2 · Foundry",
+        "— Nightjar g3 · Lantern mantle v2 · Foundry",
         "  Intention: decide exact-head acceptance",
         "  Run: run_01JABC-123",
         "  Work: Stensibly / W02 / OAuth lifecycle",
@@ -39,12 +41,13 @@ describe("worker sign-off contract", () => {
     });
   });
 
-  test("renders a minimal callsign without empty metadata lines", () => {
+  test("renders a minimal unleased callsign without empty metadata lines", () => {
     const signoff = buildWorkerSignoff(baseInput);
 
     expect(signoff).toEqual({
-      version: 2,
+      version: 3,
       callsign: "Nightjar",
+      callsignLeaseGeneration: null,
       mantle: null,
       pod: null,
       intention: null,
@@ -70,9 +73,24 @@ describe("worker sign-off contract", () => {
     expect(signoff.markdown).not.toContain("ChatGPT worker");
   });
 
+  test("renders canonical callsign lease generation without implying continuity", () => {
+    const signoff = buildWorkerSignoff({
+      callsign: "Zebu",
+      callsignLeaseGeneration: 1,
+      runId: "run_zebu_callsign_adoption_01",
+    });
+
+    expect(signoff.callsignLeaseGeneration).toBe(1);
+    expect(signoff.markdown).toBe([
+      "— Zebu g1",
+      "  Run: run_zebu_callsign_adoption_01",
+    ].join("\n"));
+  });
+
   test("normalizes bounded spaces and escapes inline Markdown", () => {
     const signoff = buildWorkerSignoff({
       callsign: "  Night*  Jar  ",
+      callsignLeaseGeneration: 7,
       mantle: { name: "Core_[v]", version: 3 },
       pod: "Foundry`Lab",
       intention: "review <read-only>",
@@ -81,7 +99,7 @@ describe("worker sign-off contract", () => {
 
     expect(signoff.callsign).toBe("Night* Jar");
     expect(signoff.markdown).toBe([
-      "— Night\\* Jar · Core\\_\\[v\\] mantle v3 · Foundry\\`Lab",
+      "— Night\\* Jar g7 · Core\\_\\[v\\] mantle v3 · Foundry\\`Lab",
       "  Intention: review \\<read-only\\>",
       "  Work: Stensibly / \\[OAuth\\]",
     ].join("\n"));
@@ -140,7 +158,14 @@ describe("worker sign-off contract", () => {
       .toThrow("Run ID must start with run_");
   });
 
-  test("rejects invalid mantle versions and reviewed revisions", () => {
+  test("rejects invalid lease generations, mantle versions, and reviewed revisions", () => {
+    for (const generation of [0, -1, 1.5, 1_000_000_001, Number.NaN]) {
+      expect(() => buildWorkerSignoff({
+        ...baseInput,
+        callsignLeaseGeneration: generation,
+      })).toThrow("Callsign lease generation must be an integer from 1 to 1000000000");
+    }
+
     for (const version of [0, -1, 1.5, 10_000, Number.NaN]) {
       expect(() => buildWorkerSignoff({
         ...baseInput,
