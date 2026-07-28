@@ -1,14 +1,17 @@
 name: W01 deploy OAuth token reason diagnostic once
 
 on:
-  push:
+  pull_request:
     branches:
       - main
-    paths:
-      - .github/workflows/w01-deploy-oauth-token-reason-once.yml
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: stensibly-worker-production
@@ -24,6 +27,10 @@ env:
 jobs:
   deploy-diagnostic:
     name: Deploy and verify bounded token-exchange reasons
+    if: >-
+      github.event.pull_request.number == 435 &&
+      github.event.pull_request.head.ref == 'nightjar/429-deploy-token-reason-once' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -149,7 +156,7 @@ jobs:
           bunx wrangler deployments list --name stensibly-api --json > /tmp/post-deployments.json
           jq 'sort_by(.created_on) | last | {deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' /tmp/post-deployments.json > evidence/post-deployment.json
           jq -n \
-            --arg version "w01-oauth-token-reason-deploy/v1" \
+            --arg version "w01-oauth-token-reason-deploy/v2" \
             --arg sourceSha "$DEPLOY_SHA" \
             --arg sourceBlob "$SOURCE_BLOB" \
             --arg httpTestBlob "$HTTP_TEST_BLOB" \
@@ -157,15 +164,6 @@ jobs:
             --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{version: $version, status: "deployed_verified", source_sha: $sourceSha, reviewed_blobs: {hosted_auth: $sourceBlob, http_client_test: $httpTestBlob, callback_test: $callbackTestBlob}, completed_at: $completedAt, oauth_state: "enabled", bearer_verified: true, contains_secret_values: false}' \
             > evidence/result.json
-          {
-            echo "## W01 OAuth token reason diagnostic deployed"
-            echo
-            echo "- Source: \`$DEPLOY_SHA\`"
-            echo "- Reviewed hosted-auth blob: \`$SOURCE_BLOB\`"
-            echo "- Bearer compatibility: passed on both origins"
-            echo "- Enabled OAuth contract: 5/5 on both origins"
-            echo "- Next: retry GitHub login and retain only the bounded callback stage and reason if it fails"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Restore exact pre-deployment Worker after failed verification
         if: failure() && steps.deploy.outcome != 'skipped'
@@ -181,6 +179,37 @@ jobs:
           bun run verify:hosted -- --endpoint "$WORKER_ORIGIN" | tee evidence/restored-bearer-worker.txt
           bun run verify:oauth -- --expect enabled | tee evidence/restored-oauth-canonical.txt
           bun run verify:oauth -- --endpoint "$WORKER_ORIGIN" --issuer "$CANONICAL_ORIGIN" --expect enabled | tee evidence/restored-oauth-worker.txt
+
+      - name: Post bounded execution result to issue 402
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTION_STATUS: ${{ job.status }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          deployment="unavailable"
+          version="unavailable"
+          if [[ -f evidence/post-deployment.json ]]; then
+            deployment="$(jq -r '.deployment_id // "unavailable"' evidence/post-deployment.json)"
+            version="$(jq -r '.version_id // "unavailable"' evidence/post-deployment.json)"
+          fi
+          cat > /tmp/comment.md <<EOF
+          ## OAuth token-reason diagnostic execution
+
+          - Execution PR: #435
+          - Workflow run: \`${GITHUB_RUN_ID}\` — \`${EXECUTION_STATUS}\`
+          - Run URL: ${RUN_URL}
+          - Reviewed hosted-auth blob: \`${SOURCE_BLOB}\`
+          - Active deployment recorded: \`${deployment}\`
+          - Active version recorded: \`${version}\`
+
+          A successful result means bearer compatibility and the 5/5 enabled OAuth contract passed on both fixed origins. Retry GitHub sign-in and retain only the bounded \`stage\` and \`reason\` if it fails.
+
+          — Lantern · Foundry
+            Intention: deploy the bounded token reason and continue from the real login failure
+          EOF
+          gh issue comment 402 --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
 
       - name: Upload bounded deployment evidence
         if: always()
