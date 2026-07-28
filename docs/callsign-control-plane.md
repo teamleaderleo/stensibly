@@ -2,6 +2,7 @@
 
 **Status:** draft v0 implementation note  
 **Tracking:** #450  
+**Dogfood projection:** #454  
 **Related:** #45, #270, #297, #301, #343, #355
 
 ## Purpose
@@ -47,6 +48,61 @@ The command returns a replayable request fingerprint. It does not accept a lease
 output keeps `reservationAccepted`, `grantsIdentityContinuity`, and `grantsAuthority`
 false so a local draft cannot be mistaken for server-owned current state.
 
+## Shared-account GitHub dogfood
+
+All participating workers currently publish through the same `teamleaderleo` GitHub
+account. GitHub authorship therefore identifies the shared transport principal, not an
+individual worker session.
+
+The GitHub-native trial in #454 puts session attribution inside every command and receipt:
+
+```text
+Callsign <sigil>
+run: run_<unique-run-id>
+session: <unique-worker-session-id>
+```
+
+The callsign is the searchable session name. The run and session IDs distinguish
+concurrent and successive workers that use one GitHub account.
+
+### Sigils
+
+`src/callsign-sigils.ts` returns one stable visual sigil for a callsign. A few familiar
+names have curated overrides, such as `Rook 🪶`; the rest use a deterministic hash into a
+bounded local emoji pool.
+
+A sigil is decoration rather than a second identity system:
+
+- it may collide with another callsign's sigil;
+- it has no independent lease or generation;
+- it grants no identity continuity, responsibility, membership, or authority;
+- changing the sigil policy does not rewrite callsign attribution.
+
+### Serialized bot registrar
+
+The workflow `.github/workflows/callsign-registry.yml` listens only to commands on #454
+from the repository owner. One concurrency group serializes command processing. The
+workflow checks out the default branch and runs `src/github-callsign-registrar.ts`.
+
+The registrar:
+
+1. adds an 👀 status reaction;
+2. parses the command without interpolating comment text into a shell command;
+3. reads all prior `github-actions[bot]` receipts;
+4. replays active, expired, released, and rejected history in comment-ID order;
+5. accepts one generation or records a typed rejection;
+6. posts the canonical bot receipt;
+7. adds 👍 for acceptance/release or 👎 for rejection.
+
+GitHub exposes only eight native reaction types. Reactions are status decoration and
+never worker identity or canonical registry state. A worker-authored receipt under the
+shared account is a proposal or simulation; only a valid `github-actions[bot]` receipt
+counts in this trial.
+
+This projection deliberately uses append-only comments as the command and receipt log.
+It offers useful dogfood today while making its limitation explicit: serial workflow
+processing substitutes for a true atomic server mutation.
+
 ## Record boundaries
 
 Keep these facts separate:
@@ -54,6 +110,7 @@ Keep these facts separate:
 | Record | Meaning |
 | --- | --- |
 | Catalog entry | Curated display name, collision key, category, and source |
+| Sigil | Stable derived visual decoration with no separate lifecycle |
 | Availability projection | Current eligibility state for browsing and recommendation |
 | Reservation request | Replayable intent from one worker session and run |
 | Accepted lease | Server-owned holder, generation, expiry, and lifecycle state |
@@ -100,6 +157,16 @@ The request binds:
 It canonicalises the input and hashes the complete request for replay comparison. A
 later durable writer must compare the request ID and fingerprint, then atomically accept
 or reject the lease.
+
+### GitHub registry core
+
+`src/github-callsign-registry.ts` adds a temporary projection for the shared-account
+trial. It strictly parses reserve and release commands, parses bot receipts, projects
+current leases, advances generations after release or expiry, rejects active collisions
+and stale releases, and treats an already-receipted comment as an idempotent replay.
+
+The GitHub adapter remains issue-specific and operator-only. It is a dogfood bridge, not
+the final public API.
 
 ## Hosted follow-up
 
@@ -187,6 +254,8 @@ rewrites authorship.
 - Should voluntary release bypass cooling-off by default or remain policy-specific?
 - Should an enrolment request embed the callsign request fingerprint or only the
   accepted lease ID?
+- Should sigils become explicit catalog fields or remain derived at render time?
+- How long should the GitHub trial retain expired receipts before hosted migration?
 
 ## Acceptance for the v0 draft
 
@@ -197,7 +266,10 @@ rewrites authorship.
 - request fingerprints replay exactly after canonicalisation;
 - the CLI makes browsing and request drafting convenient;
 - every result states that it grants no authority or identity continuity;
-- durable acceptance remains a clearly named hosted follow-up.
+- shared-account GitHub commands carry explicit callsign, run, and session attribution;
+- only serialized bot receipts become canonical trial leases;
+- sigils remain stable decoration with no independent reservation;
+- durable hosted acceptance remains a clearly named follow-up.
 
-— Rook · Foundry
-  Intention: make callsign selection pleasant while preserving exact attribution
+— Rook 🪶 · Foundry
+  Intention: make shared-account callsign selection pleasant and attributable
