@@ -1,0 +1,92 @@
+name: Repair PR 413 on current main
+
+on:
+  push:
+    branches:
+      - plover/403-public-event-reader
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: plover/403-public-event-reader
+      - uses: oven-sh/setup-bun@v2
+      - name: Replay candidate and apply attribution-text repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Junco Stensibly Worker"
+          git config user.email "teamleaderleo@users.noreply.github.com"
+          git fetch origin main
+          git reset --hard origin/main
+          git checkout 56b1350302f9c0685350f824f0c667ef772f4f69 -- \
+            site/item-detail.js \
+            site/item-detail.d.ts \
+            test/dashboard-item-detail.test.ts
+          python3 <<'PY'
+          from pathlib import Path
+
+          reader = Path("site/item-detail.js")
+          source = reader.read_text()
+          old_pattern = "const controlCharacterPattern = /[\\u0000-\\u001f\\u007f]/;"
+          new_pattern = "const unsafeTextPattern = /[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]/u;"
+          if source.count(old_pattern) != 1:
+              raise SystemExit("expected one legacy control-character pattern")
+          source = source.replace(old_pattern, new_pattern)
+          old_use = "!controlCharacterPattern.test(output)"
+          if source.count(old_use) != 1:
+              raise SystemExit("expected one legacy pattern use")
+          source = source.replace(old_use, "!unsafeTextPattern.test(output)")
+          reader.write_text(source)
+
+          tests = Path("test/dashboard-item-detail.test.ts")
+          source = tests.read_text()
+          actor_anchor = '    expect(readPublicEvent({ ...event("plover"), type: "bad\\nkind" }, "item_1")).toBeNull();\n'
+          actor_replacement = actor_anchor + (
+              '    expect(readPublicEvent(event("plover\\u0085"), "item_1")).toBeNull();\n'
+              '    expect(readPublicEvent(event("plover\\u2028"), "item_1")).toBeNull();\n'
+              '    expect(readPublicEvent(event("plover\\u202e"), "item_1")).toBeNull();\n'
+              '    expect(readPublicEvent(event("plover\\u2066"), "item_1")).toBeNull();\n'
+          )
+          if source.count(actor_anchor) != 1:
+              raise SystemExit("expected one public-event unsafe-text anchor")
+          source = source.replace(actor_anchor, actor_replacement)
+
+          payload_anchor = '      ["constructor", "ignored"],\n'
+          payload_replacement = payload_anchor + (
+              '      ["bad\\u0085key", "ignored"],\n'
+              '      ["bad\\u2066key", "ignored"],\n'
+          )
+          if source.count(payload_anchor) != 1:
+              raise SystemExit("expected one payload-key anchor")
+          source = source.replace(payload_anchor, payload_replacement)
+
+          assertion_anchor = '    expect(Object.hasOwn(event?.payload || {}, "constructor")).toBe(false);\n'
+          assertion_replacement = assertion_anchor + (
+              '    expect(Object.hasOwn(event?.payload || {}, "bad\\u0085key")).toBe(false);\n'
+              '    expect(Object.hasOwn(event?.payload || {}, "bad\\u2066key")).toBe(false);\n'
+          )
+          if source.count(assertion_anchor) != 1:
+              raise SystemExit("expected one payload assertion anchor")
+          source = source.replace(assertion_anchor, assertion_replacement)
+          tests.write_text(source)
+          PY
+          git diff --check
+      - run: bun install
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run test:convex
+      - run: bun run worker:check
+      - name: Publish repaired candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add site/item-detail.js site/item-detail.d.ts test/dashboard-item-detail.test.ts
+          git commit -m "Harden public event attribution text"
+          git push --force-with-lease origin HEAD:plover/403-public-event-reader
