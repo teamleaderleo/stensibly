@@ -1,309 +1,224 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.2.0`  
-**Bootstrap:** `stensibly-project-bootstrap/v1`  
+**Protocol:** `stensibly-agent-ops/0.3.0`  
+**Bootstrap:** `stensibly-project-bootstrap/v2`  
+**Standing project policy:** `stensibly-internal-dogfood/v1`  
 **Tracking issue:** #293  
-**Status:** dogfood
+**Status:** internal dogfood
 
-This document defines how Stensibly's agent instructions, pod practices, and
-coordination guidance change without turning one pasted prompt into an unreviewed
-source of truth.
+This document defines how Stensibly's agent instructions and coordination guidance
+change without leaving stale caution, temporary gates, or one-off prompts as active
+policy forever.
 
-## Separate version classes
+## Sources and precedence
 
-Use the identifier that matches the thing being reviewed or changed:
+Use the following order when instructions conflict:
 
-- software release: `stensibly 0.0.1`;
-- deployed revision: exact commit, build, Worker, and Convex deployment identifiers;
-- Project bootstrap: `stensibly-project-bootstrap/v1`;
-- repository operating protocol: `stensibly-agent-ops/0.2.0`;
-- wave and revision: for example `W01 rev 1`;
-- contract version: for example `project-attachment-v1`;
-- work authority: exact claim, lease, continuation, or approval generation;
-- artifact or review: exact commit SHA, PR head, or event sequence.
+1. current direct operator direction;
+2. `STENSIBLY.md` standing project policy;
+3. `AGENTS.md` repository operating protocol;
+4. `docs/current-wave.md` temporary execution focus;
+5. accepted versioned contracts and policies;
+6. pod practices and historical handoffs.
 
-Never cite only "the current version" in an audit, review, handoff, or migration.
-Name the relevant version class and exact identifier.
+Live claims, credentials, leases, and exact deployment state still come from their
+own canonical systems. Static policy determines what classes of action are already
+authorised.
 
-Protocol `0.2.0` preserves the accepted session-local callsign, lightweight
-communication, status-update, and handoff rules from `0.1.3`; links the
-collision-aware local callsign helper from #343; and adopts the autonomous-portfolio
-and dormant-recovery convention from #330. The Project bootstrap remains `v1`
-because the repository entrypoint, authority boundary, and drift-detection contract
-remain compatible.
+## Version classes
+
+Name the exact class being changed:
+
+- software release;
+- deployed source and environment revision;
+- ChatGPT Project bootstrap;
+- repository operating protocol;
+- standing project policy;
+- wave revision;
+- product or data contract;
+- claim, lease, responsibility, or approval generation;
+- exact PR head, artifact, or event sequence.
+
+Do not cite only “the current version” in a review or migration.
 
 ## What belongs where
 
 ### ChatGPT Project settings
 
-Keep only the stable bootstrap:
+Keep a small bootstrap containing:
 
-- repository identity;
-- canonical startup entrypoint;
-- instruction-drift detection;
-- stable per-chat callsign and explicit succession boundary;
-- inspect-before-creating rule;
-- bounded autonomous continuation rule;
-- authority boundary;
-- durable-handoff requirement;
-- direction to use Stensibly when available.
+- repository identity and startup entrypoint;
+- callsign and succession boundary;
+- instruction-drift handling;
+- ambitious autonomous continuation;
+- the internal dogfood standing grant and its true external boundaries;
+- durable-handoff expectations.
 
-Do not paste current lanes, issue numbers, detailed pod practices, or temporary
-rollout gates into Project settings.
+Do not paste current issue numbers, deployments, or temporary gates into Project
+settings.
+
+### `STENSIBLY.md`
+
+Contains stable project context and narrower standing policy. It may explicitly grant
+authority for classes of internal dogfood action. This is where the project declares
+that its live hosted environment is internal dogfood rather than a customer service.
 
 ### `AGENTS.md`
 
-Contains the accepted repository operating protocol: startup order, session-local
-callsign adoption, autonomous portfolio execution, general work selection, normal
-status-update style, authority boundaries, risk-tiered review and merge policy,
-review independence, handoff expectations, and shared improvement rules.
+Contains startup order, work selection, autonomous portfolios, dormant recovery,
+risk-tiered review, merge and deployment behaviour, communication, and handoffs.
 
 ### `docs/current-wave.md`
 
-Contains temporary operational focus, gates, lanes, accepted test effects, and
-retrospective questions. It has its own wave revision.
+Contains the temporary primary outcome, current live state, active lanes, accepted
+internal test effects, and definition of done.
 
-### Pod notes and practices
+### Stensibly ledger and external systems
 
-May contain local tips, rituals, repository knowledge, experiments, and working
-preferences. Local notes do not become shared policy merely because they are
-useful to one pod. Promotion into `AGENTS.md` requires an accepted proposal.
+Own live claims, approvals outside standing policy, responsibilities, requests,
+deployment identifiers, credentials, and exact operational evidence.
 
-### Stensibly ledger
+## Change lifecycle
 
-When available, owns live claims, approvals, responsibilities, requests, survey
-results, proposals, decisions, and version references. Git remains canonical for
-repository text and exact code revisions.
+Instruction changes may be:
 
-## Proposal lifecycle
+1. `observed`;
+2. `proposed`;
+3. `experimenting`;
+4. `accepted`;
+5. `rejected`;
+6. `superseded`;
+7. `rolled_back`.
 
-Instruction changes use these states:
+Direct operator corrections may become effective immediately when delay would
+continue a demonstrated coordination failure. Record the change, exact source, and
+follow-up review; do not force the operator to endure the old behaviour while agents
+complete ceremony about changing it.
 
-1. `observed` — an evidenced problem or opportunity exists;
-2. `proposed` — a bounded change and expected effect are stated;
-3. `experimenting` — the change is tried in a declared scope;
-4. `accepted` — the shared protocol or pod practice adopts a new version;
-5. `rejected` — the proposal is declined with evidence and reason;
-6. `superseded` — another proposal or version replaces it;
-7. `rolled_back` — the previous accepted version is restored with cause.
-
-A survey may produce `no_change_recommended`. Do not create a proposal merely to
-show activity.
+Preserve superseded text in Git history. Do not keep it active merely to show that a
+rollback is possible.
 
 ## Proposal template
 
 ```markdown
 ## Instruction proposal
 
-- State: observed | proposed | experimenting | accepted | rejected | superseded | rolled_back
-- Affected set: project bootstrap | operating protocol | wave | pod practice | contract
+- State:
+- Affected set:
 - Current version:
-- Proposed version, if accepted:
-- Scope:
+- Proposed version:
+- Operator direction or evidence:
 - Owner:
-- Independent reviewer:
+- Independent reviewer, when useful:
 
 ### Observation
-
-What happened? Link exact runs, issues, PRs, comments, surveys, commits, or audit
-evidence. Separate facts from interpretation.
+What happened? Separate facts from interpretation.
 
 ### Problem class
+Examples: repeated human intervention, unnecessary approval, missed ambition,
+context overload, stale guidance, duplicate work, collision, unsafe authority
+assumption, absent evidence, or tool gap.
 
-Choose one or more:
-
-- context missing;
-- context overload or repeated irrelevant detail;
-- contradiction or stale guidance;
-- duplicate work or verification;
-- missed safe parallelism;
-- excessive parallelism or integration collision;
-- unclear ownership or handoff;
-- repeated human intervention;
-- unnecessary approval;
-- absent independent review;
-- useful pod practice;
-- resource or capacity request;
-- external audit finding;
-- tool or observability gap;
-- instruction ignored or misinterpreted;
-- other, with explanation.
-
-### Proposed change
-
-Show the smallest addition, deletion, reordering, clarification, or local
-experiment. Identify what should remain unchanged.
+### Change
+Show the deletion, replacement, changed default, or experiment. State what remains.
 
 ### Expected effect and cost
+Describe delivery, coordination, safety, compatibility, and maintenance effects.
 
-What should improve? What context, latency, coordination, compatibility, or
-maintenance cost might increase?
-
-### Experiment
-
-- Scope and duration:
-- Baseline:
-- Acceptance signal:
-- Failure or rollback condition:
-- Data and source coverage:
-
-### Compatibility and rollout
-
-Describe affected chats, pods, repositories, waves, contracts, deployments, and
-external users. State whether the Project bootstrap must change.
+### Evaluation
+Name the acceptance signal, failure signal, duration, and evidence coverage.
 
 ### Decision
-
-Record reviewer, human approval when required, exact adopted revision, effective
-scope, rejected alternatives, residual uncertainty, and follow-up survey.
+Record the effective revision, rejected alternatives, and follow-up.
 ```
 
-## Risk-tiered review and merge decisions
+## Risk-tiered review and execution
 
-Review count is a consequence of risk, not a measure of seriousness or worker
-participation. Every handoff should identify the selected tier and the evidence
-that justifies it.
+Review count follows actual consequences, not vocabulary such as “production.”
 
-### Tier 0 — mechanical or documentation-only
+### Tier 0 — mechanical
 
-Use for changes with no runtime, authority, security, data, deployment,
-dependency, or public-contract effect and a trivial rollback.
+Repository-only documentation, formatting, generated refreshes, and narrow fixtures.
+Independent review is optional. Merge after exact inspection and relevant checks.
 
-- Independent review may be omitted.
-- Exact diff inspection, relevant checks, unchanged head, mergeability, and no
-  unresolved concrete finding are sufficient.
-- The author or integration worker may merge under the standing repository policy.
+### Tier 1 — bounded internal dogfood
 
-### Tier 1 — bounded low-risk runtime or operating-protocol change
+Small reversible runtime, UI, configuration, deployment, or protocol changes with
+narrow impact and strong verification. One independent exact-head acceptance is
+normally sufficient. Merge and deploy promptly.
 
-Use for small isolated runtime, contract, or focused instruction changes with
-straightforward rollback and no authorization, privacy, schema, migration,
-durable-state, data-loss, deployment, or broad compatibility boundary.
+### Tier 2 — elevated internal dogfood
 
-- One independent exact-head acceptance is normally sufficient.
-- Green relevant checks, an unchanged mergeable head, and no unresolved blocking
-  thread complete the gate.
-- The integration worker should merge promptly rather than waiting for unrelated
-  workers or another ceremonial approval.
+Authentication, authorisation, privacy, schema, durable state, retention,
+cross-project isolation, public contracts, dependencies, broad compatibility, or
+uncertain recovery. Require independent exact-head acceptance and an integration
+decision. Add specialist review only when the actual boundaries justify it. After the
+gate, merge, deploy, and dogfood under `STENSIBLY.md`.
 
-### Tier 2 — elevated or broad
+### Tier 3 — external or materially consequential
 
-Use for authentication or authorization, privacy, schema or migration, durable
-state machines, exactly-once effects, deletion or retention, cross-project
-isolation, public protocol changes, dependencies, broad compatibility, or
-uncertain rollback.
+Use Tier 3 only for consequences outside the standing internal dogfood grant, such as:
 
-- Require at least one independent exact-head acceptance and a separate integration
-  decision when the reviewer is not the integration owner.
-- Add another independent or specialist review when multiple high-risk boundaries
-  are crossed, evidence conflicts, the relevant failure mode cannot be exercised,
-  or material residual uncertainty remains.
-- Competing candidates require a selector independent of the selected final
-  revision.
+- material spend;
+- access widening beyond the operator and participating agents;
+- secret exposure;
+- external publication or contact;
+- destructive non-test data operations;
+- irreversible migration without recovery;
+- legal, financial, or contractual effects.
 
-### Tier 3 — consequential operation
+Tier 3 requires fresh operator approval unless a narrower standing grant covers the
+exact effect.
 
-Production deployment or enablement, credentials, permission widening,
-destructive data operations, spending, external publication, irreversible
-migration, and comparable real-world effects require contemporaneous human
-approval unless a narrower standing policy explicitly grants them.
+Deployment, enablement, use of protected credentials inside reviewed workflows, and
+bounded internal test writes are not automatically Tier 3.
 
-A residual regression may be accepted only when it is bounded, reversible,
-documented, outside safety, authorization, privacy, and data-loss boundaries,
-and has a clear follow-up or rollback condition. Reviewers should distinguish a
-blocking defect from an imperfection that can safely ship.
+Before merging reviewed work, re-fetch the exact head, current base, CI, mergeability,
+reviews, and unresolved threads. Acceptance expires when the head moves.
 
-Before merging any reviewed PR, re-fetch the exact head, current base, CI,
-mergeability, reviews, and unresolved threads. Exact-head acceptance expires when
-the head moves. A worker may never use its own review as the sole acceptance for
-its own Tier 1 or Tier 2 final revision.
+## Rollback and failure conditions
 
-This policy does not require the whole pod or every available worker to review a
-change. It requires only the independence and specialist coverage justified by
-the selected tier.
+A rollback condition belongs in an experiment or deployment plan when it makes
+recovery clearer. It is not the desired outcome.
 
-## Version changes
+- Prefer fix-forward when safe.
+- Roll back after a demonstrated regression or unsafe partial state when rollback is
+  the better recovery.
+- Do not restore an old cautious default merely because ambitious execution found a
+  repairable defect.
+- Evaluate whether the new default improves completed outcomes without causing hidden
+  collisions, unrecoverable state, or genuine external consequences.
 
-For the operating protocol:
+## Surveys
 
-- patch: wording or clarification that preserves obligations and authority;
-- minor: new optional capability, new shared practice, or changed default workflow;
-- major: incompatible startup, authority, acceptance, or handoff semantics.
+Run an instruction survey after:
 
-While the protocol remains `0.x`, use judgement but still record whether the
-change is clarification, additive behaviour, or incompatible behaviour.
+- repeated operator correction;
+- a wave completion or stall;
+- material coordination failure;
+- an external audit;
+- enough evidence accumulates to change a default.
 
-The Project bootstrap uses integer versions and should change rarely. A bootstrap
-version changes only when the canonical entrypoint, authority boundary, or drift
-handling changes—not whenever `AGENTS.md` or the current wave changes.
+Surveys should look specifically for:
 
-Increment a wave revision when its lanes, execution gates, accepted test effects,
-or completion criteria change materially. Preserve prior revisions in Git history
-and never rewrite a cited revision without a replacement identifier.
+- caution being treated as the objective;
+- work stopping at PRs or documentation;
+- deployments deferred without a real blocker;
+- repeated approval requests for standing-authorised actions;
+- rollback chosen instead of the stated product goal;
+- missed safe parallelism;
+- duplicate or abandoned portfolios;
+- genuine unsafe authority assumptions.
 
-## External audit intake
+A survey may recommend no change. It should not use process to avoid an obvious direct
+operator correction.
 
-An external audit finding must state:
+## Protocol history
 
-- auditor or source and date;
-- exact software, deployment, bootstrap, protocol, wave, and contract versions
-  reviewed, as applicable;
-- scope and source coverage;
-- severity and confidence;
-- evidence and reproduction;
-- affected authority or compatibility boundaries;
-- proposed repair and alternatives;
-- migration, rollout, and rollback requirements;
-- acceptance and re-audit criteria.
+Protocol `0.3.0` replaces the blanket rule that every production deployment,
+enablement, credentialed workflow, and internal write is Tier 3. It adopts
+consequence-based review and the standing ambitious internal-dogfood grant in
+`STENSIBLY.md`.
 
-An audit may result in code, protocol, contract, pod-practice, or deployment
-changes. Version only the affected classes. Preserve the audit finding even when
-its recommendation is rejected.
-
-## Pod learning and tips
-
-Pods may record concise notes such as:
-
-- commands and verification recipes;
-- recurring failure modes;
-- successful decomposition or review techniques;
-- context that fresh workers routinely need;
-- information that repeatedly proves unnecessary;
-- useful collaboration patterns with other pods;
-- hypotheses worth testing.
-
-Each note should carry provenance, scope, confidence, freshness, and sensitivity
-when relevant. Notes may be revised or retired. Do not promote anecdotal tips into
-shared protocol without comparable evidence or a bounded experiment.
-
-## Resource requests
-
-A pod or worker may request additional capacity without inventing a permanent
-role. A request should contain:
-
-- requested outcome or capability;
-- reason and evidence;
-- relevant wave, lane, or action;
-- urgency and expiry or wake condition;
-- expected duration;
-- context packet or source links;
-- conflicts or independence requirements;
-- acceptable response: accept, decline, defer, delegate, or propose another pod;
-- current response owner.
-
-The request survives the initiating worker and closes explicitly.
-
-## Survey cadence
-
-Run an instruction survey:
-
-- after a wave completes or stalls;
-- after material coordination failure;
-- after repeated human correction;
-- after an external audit;
-- before a major protocol change;
-- periodically when enough new after-action evidence exists.
-
-Surveys should remain quiet when there is no material change. They should compare
-observed behaviour with the protocol version actually in force, not with an
-uncited memory of prior instructions.
+Bootstrap `v2` changes the default execution and authority posture and therefore
+replaces bootstrap `v1`.
