@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "attempt": {
+    "attemptId": "attempt_quarry_238_a",
+    "workspaceId": "workspace_quarry",
+    "projectId": "project_quarry",
+    "itemId": "item_238",
+    "claimGeneration": 7,
+    "runId": "run_quarry_238",
+    "runGeneration": 4,
+    "leaseGeneration": 9,
+    "executionEnvelopeVersion": 1,
+    "executorAdapter": "smolrunner",
+    "runnerProfileId": "quarry.checkpoint",
+    "repository": "quarry-labs/quarry",
+    "requestedBase": "refs/heads/main",
+    "resolvedBaseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "candidateHead": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "verificationProfileId": "quarry.checkpoint",
+    "workspaceReceiptRef": "smolrunner:workspace:quarry-238-a"
+  },
+  "receipt": {
+    "schemaVersion": 1,
+    "producer": {
+      "name": "smolrunner",
+      "version": "0.1.0"
+    },
+    "executionId": "exec_quarry_238_a",
+    "checkpointGeneration": 3,
+    "executionEnvelopeVersion": 1,
+    "operation": {
+      "family": "repository-verification",
+      "schemaVersion": 1
+    },
+    "repository": "quarry-labs/quarry",
+    "runnerProfileId": "quarry.checkpoint",
+    "profileId": "quarry.checkpoint",
+    "workspaceReceiptRef": "smolrunner:workspace:quarry-238-a",
+    "source": {
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "tree": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    "phaseId": "source-work",
+    "state": "running",
+    "observedAt": "2026-07-28T18:02:00.000Z",
+    "startedAt": "2026-07-28T18:00:00.000Z",
+    "terminalAt": null,
+    "queue": {
+      "admittedAt": "2026-07-28T17:59:00.000Z",
+      "position": 0,
+      "capacityState": "reserved"
+    },
+    "reservation": {
+      "id": "reservation_quarry_238_a",
+      "generation": 2,
+      "expiresAt": "2026-07-28T18:10:00.000Z"
+    },
+    "heartbeat": {
+      "intervalSeconds": 60,
+      "leaseExpiresAt": "2026-07-28T18:05:00.000Z"
+    },
+    "progress": {
+      "completed": 4,
+      "total": 12,
+      "unit": "actions"
+    },
+    "outcome": {
+      "disposition": "none",
+      "publicCode": null,
+      "counts": {
+        "completed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "compensated": 0,
+        "rolledBack": 0,
+        "rollbackFailed": 0
+      },
+      "freshObservationRequired": false,
+      "continuationBarriers": [],
+      "deferredActions": [],
+      "nextAction": "continue"
+    },
+    "evidence": {
+      "receiptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "logRef": "smolrunner:log:quarry-238-a-3",
+      "artifactRef": null
+    },
+    "coverage": {
+      "state": "complete",
+      "truncated": false,
+      "omitted": false
+    },
+    "authority": {
+      "merge": false,
+      "deploy": false,
+      "credentials": false,
+      "spending": false,
+      "providerAdministration": false
+    }
+  }
+}
