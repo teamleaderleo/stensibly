@@ -13,7 +13,7 @@ Convex agent skills for common tasks can be installed with
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.3.0`  
+**Operating protocol:** `stensibly-agent-ops/0.4.0`  
 **Status:** internal dogfood  
 **Standing project policy:** `STENSIBLY.md`  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
@@ -53,7 +53,7 @@ step ended.
 When the next covered step is available, continue through:
 
 - implementation;
-- independent review;
+- self-review or independent review when it materially helps;
 - integration and merge;
 - deployment or configuration;
 - real product use;
@@ -73,7 +73,8 @@ text calls it `production`.
 `STENSIBLY.md` grants standing authority for reviewed, reversible internal
 dogfood work, including merges, deployments, enablement, protected-workflow
 credential use, bounded test data, migrations with recovery, OAuth journeys,
-project-scoped writes, and operational verification.
+project-scoped writes, and operational verification. Review may be performed by
+the implementing worker when the standing policy allows self-review.
 
 Do not invent a fresh approval requirement merely because an action touches the
 live dogfood environment.
@@ -83,6 +84,25 @@ grant, including material spend, secret exposure, widening access beyond the
 operator and participating agents, external publication or contact, destructive
 non-test data changes, irreversible migrations without recovery, and legal or
 financial effects outside the project.
+
+## Active operator direction
+
+Current direct operator direction outranks older repository ceremony. An explicit
+instruction in the active chat to proceed, fix, merge, deploy, test, connect, or
+finish a covered internal-dogfood outcome counts as the integration decision for
+that action.
+
+Do not make the operator wait for another agent merely to create reviewer
+independence. For covered reversible internal work, the same worker may implement,
+self-review, integrate, merge, deploy, verify, and fix forward. The worker must
+still inspect the exact candidate, confirm relevant checks, assess actual runtime,
+data, privacy, compatibility, and recovery consequences, and record a concrete
+integration decision.
+
+Independent review is a tool for reducing real uncertainty, not a ritual gate. Use
+it when another perspective is likely to catch a material issue, when the operator
+requests it, or when the action crosses into Tier 3. Do not manufacture
+independence by changing callsigns, chats, or labels.
 
 ## Operating model
 
@@ -129,8 +149,8 @@ continuation.
 Prefer, in order:
 
 1. the primary current-wave outcome and demonstrated blockers;
-2. integration, deployment, verification, and real dogfood use of accepted work;
-3. independent review or acceptance that closes existing work;
+2. integration, deployment, verification, and real dogfood use of reviewed work;
+3. review, self-review, or acceptance that closes existing work;
 4. repair or recovery of active or dormant work;
 5. adjacent product work that advances the wave;
 6. exploration when higher-value executable work is unavailable.
@@ -178,7 +198,8 @@ chat.
 ## Risk-tiered review, merge, and deployment
 
 Choose review depth from real consequences, scope, reversibility, and uncertainty.
-Deployment alone does not determine the tier.
+Deployment alone does not determine the tier. `STENSIBLY.md` controls when
+operator-directed self-review is sufficient.
 
 ### Tier 0 — mechanical
 
@@ -194,7 +215,9 @@ repository-only configuration with no runtime or public-contract effect.
 Small reversible runtime, UI, protocol, deployment, or configuration changes with
 narrow impact and strong verification.
 
-- One independent exact-head acceptance is normally sufficient.
+- Self-review is normally sufficient when the change is covered by the standing
+  policy or current operator direction.
+- Seek independent review only when it materially reduces uncertainty.
 - Merge and deploy promptly once green, mergeable, unchanged, and free of concrete
   blockers.
 
@@ -203,11 +226,14 @@ narrow impact and strong verification.
 Authentication, authorisation, privacy, schema, durable state, retention,
 cross-project isolation, broad compatibility, dependencies, or uncertain recovery.
 
-- Require at least one independent exact-head acceptance and an explicit
-  integration decision.
-- Add specialist review only when the actual boundaries or residual uncertainty
-  justify it.
-- After acceptance, merge, deploy, and dogfood under `STENSIBLY.md` rather than
+- Require deliberate exact-candidate review, relevant checks, an explicit
+  integration decision, and a credible recovery or fix-forward path.
+- Current direct operator direction satisfies the integration-decision requirement
+  for covered internal dogfood work, and the implementing or integration worker may
+  perform the review.
+- Add an independent or specialist reviewer only when actual residual uncertainty,
+  consequences, or operator direction justify it.
+- After the decision, merge, deploy, and dogfood under `STENSIBLY.md` rather than
   waiting for ceremonial approval.
 
 ### Tier 3 — external or materially consequential effect
@@ -220,9 +246,10 @@ migration without recovery, or comparable legal/financial consequences.
 Tier 3 requires fresh operator approval unless a narrower standing grant covers the
 exact effect.
 
-Before merging a reviewed change, re-fetch the exact head, current base, CI,
-mergeability, reviews, and unresolved threads. Exact-head acceptance expires when
-the head moves.
+Before merging a change, re-fetch the exact head, current base, CI, mergeability,
+reviews, and unresolved threads when present. Re-inspect concrete blockers rather
+than treating stale comments as automatic gates. Any acceptance or self-review
+expires when the head moves materially.
 
 ## Deployment and failure handling
 
