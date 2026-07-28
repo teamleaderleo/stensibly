@@ -1,1 +1,0 @@
-Real callback reproduction: Cloudflare LAX returned token_exchange/network_exception/type_error during preflight. The repair preserves the native Worker fetch invocation receiver through a wrapper and adds a receiver-sensitive regression test.
