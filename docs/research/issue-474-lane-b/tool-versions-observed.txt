@@ -1,0 +1,4 @@
+node v22.23.1
+typescript Version 5.8.3
+eslint v10.7.0
+typescript-eslint 8.65.0
