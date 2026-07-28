@@ -34,47 +34,51 @@ jobs:
 
           reader = Path("site/item-detail.js")
           source = reader.read_text()
-          strict = """  if (payload.historyContractVersion !== itemHistoryContractVersion) {
-            throw new TypeError('The item detail response uses an incompatible history contract.');
-          }
-          if (typeof payload.eventsTruncated !== 'boolean') {
-            throw new TypeError('The item detail response is missing event-history completeness.');
-          }
-          return {
-            historyContractVersion: itemHistoryContractVersion,
-            eventsTruncated: payload.eventsTruncated,
-          """
-          compatible = """  const declaresHistoryContract = Object.hasOwn(payload, 'historyContractVersion');
-          const declaresEventCompleteness = Object.hasOwn(payload, 'eventsTruncated');
-          if (declaresHistoryContract || declaresEventCompleteness) {
-            if (payload.historyContractVersion !== itemHistoryContractVersion) {
-              throw new TypeError('The item detail response uses an incompatible history contract.');
-            }
-            if (typeof payload.eventsTruncated !== 'boolean') {
-              throw new TypeError('The item detail response is missing event-history completeness.');
-            }
-          }
-          return {
-            historyContractVersion: declaresHistoryContract ? itemHistoryContractVersion : null,
-            eventsTruncated: declaresEventCompleteness ? payload.eventsTruncated : null,
-          """
+          strict = (
+              "  if (payload.historyContractVersion !== itemHistoryContractVersion) {\n"
+              "    throw new TypeError('The item detail response uses an incompatible history contract.');\n"
+              "  }\n"
+              "  if (typeof payload.eventsTruncated !== 'boolean') {\n"
+              "    throw new TypeError('The item detail response is missing event-history completeness.');\n"
+              "  }\n"
+              "  return {\n"
+              "    historyContractVersion: itemHistoryContractVersion,\n"
+              "    eventsTruncated: payload.eventsTruncated,\n"
+          )
+          compatible = (
+              "  const declaresHistoryContract = Object.hasOwn(payload, 'historyContractVersion');\n"
+              "  const declaresEventCompleteness = Object.hasOwn(payload, 'eventsTruncated');\n"
+              "  if (declaresHistoryContract || declaresEventCompleteness) {\n"
+              "    if (payload.historyContractVersion !== itemHistoryContractVersion) {\n"
+              "      throw new TypeError('The item detail response uses an incompatible history contract.');\n"
+              "    }\n"
+              "    if (typeof payload.eventsTruncated !== 'boolean') {\n"
+              "      throw new TypeError('The item detail response is missing event-history completeness.');\n"
+              "    }\n"
+              "  }\n"
+              "  return {\n"
+              "    historyContractVersion: declaresHistoryContract ? itemHistoryContractVersion : null,\n"
+              "    eventsTruncated: declaresEventCompleteness ? payload.eventsTruncated : null,\n"
+          )
           if source.count(strict) != 1:
               raise SystemExit("expected one strict hosted-envelope block")
           source = source.replace(strict, compatible)
 
-          nullable = """function nullableBoundedText(value, maximum) {
-            if (value === null || value === undefined) return null;
-            const output = boundedTextValue(value, maximum);
-            return output || undefined;
-          }
-          """
-          required_nullable = """function nullableBoundedText(value, maximum) {
-            if (value === null) return null;
-            if (value === undefined) return undefined;
-            const output = boundedTextValue(value, maximum);
-            return output || undefined;
-          }
-          """
+          nullable = (
+              "function nullableBoundedText(value, maximum) {\n"
+              "  if (value === null || value === undefined) return null;\n"
+              "  const output = boundedTextValue(value, maximum);\n"
+              "  return output || undefined;\n"
+              "}\n"
+          )
+          required_nullable = (
+              "function nullableBoundedText(value, maximum) {\n"
+              "  if (value === null) return null;\n"
+              "  if (value === undefined) return undefined;\n"
+              "  const output = boundedTextValue(value, maximum);\n"
+              "  return output || undefined;\n"
+              "}\n"
+          )
           if source.count(nullable) != 1:
               raise SystemExit("expected one nullable actor helper")
           source = source.replace(nullable, required_nullable)
@@ -101,83 +105,85 @@ jobs:
               raise SystemExit("expected one Bun test import")
           source = source.replace(import_anchor, import_replacement)
 
-          envelope_test = '''  test("requires the exact versioned history and completeness envelope", () => {
-            const base = {
-              item: { id: "item_1" },
-              events: [],
-              artifacts: [],
-              historyContractVersion: 1,
-              eventsTruncated: false,
-            };
-            expect(readItemDetail(base, "item_1")).toMatchObject({
-              historyContractVersion: 1,
-              eventsTruncated: false,
-              events: [],
-            });
-            expect(() => readItemDetail({ ...base, historyContractVersion: 2 }, "item_1"))
-              .toThrow("incompatible history contract");
-            expect(() => readItemDetail({ ...base, historyContractVersion: undefined }, "item_1"))
-              .toThrow("incompatible history contract");
-            expect(() => readItemDetail({ ...base, eventsTruncated: undefined }, "item_1"))
-              .toThrow("missing event-history completeness");
-          });
-          '''
-          replacement_test = '''  test("preserves legacy unknown completeness and requires an exact declared envelope", () => {
-            const legacy = {
-              item: { id: "item_1" },
-              events: [],
-              artifacts: [],
-            };
-            expect(readItemDetail(legacy, "item_1")).toMatchObject({
-              historyContractVersion: null,
-              eventsTruncated: null,
-              events: [],
-            });
-
-            const hosted = {
-              ...legacy,
-              historyContractVersion: 1,
-              eventsTruncated: false,
-            };
-            expect(readItemDetail(hosted, "item_1")).toMatchObject({
-              historyContractVersion: 1,
-              eventsTruncated: false,
-              events: [],
-            });
-            expect(() => readItemDetail({ ...hosted, historyContractVersion: 2 }, "item_1"))
-              .toThrow("incompatible history contract");
-            expect(() => readItemDetail({ ...hosted, historyContractVersion: undefined }, "item_1"))
-              .toThrow("incompatible history contract");
-            expect(() => readItemDetail({ ...hosted, eventsTruncated: undefined }, "item_1"))
-              .toThrow("missing event-history completeness");
-            expect(() => readItemDetail({ ...legacy, eventsTruncated: false }, "item_1"))
-              .toThrow("incompatible history contract");
-          });
-
-          test("reads the real SQLite API detail with unknown completeness", async () => {
-            const store = new StensiblyStore(":memory:");
-            try {
-              const item = store.createItem({
-                project: "scrapbook",
-                kind: "task",
-                title: "Read local history",
-                priority: 50,
-                actor: { id: "leo", name: "Leo", kind: "human" },
-              });
-              const app = createServerApp(store);
-              const response = await app.request(`/api/v1/items/${encodeURIComponent(item.id)}`);
-              expect(response.status).toBe(200);
-
-              const detail = readItemDetail(await response.json(), item.id);
-              expect(detail.historyContractVersion).toBeNull();
-              expect(detail.eventsTruncated).toBeNull();
-              expect(detail.item).toMatchObject({ id: item.id, project: "scrapbook" });
-              expect(detail.events.map((event) => event.type)).toContain("item.created");
-            } finally {
-              store.close();
-            }
-          });
-          '''
+          envelope_test = (
+              '  test("requires the exact versioned history and completeness envelope", () => {\n'
+              '    const base = {\n'
+              '      item: { id: "item_1" },\n'
+              '      events: [],\n'
+              '      artifacts: [],\n'
+              '      historyContractVersion: 1,\n'
+              '      eventsTruncated: false,\n'
+              '    };\n'
+              '    expect(readItemDetail(base, "item_1")).toMatchObject({\n'
+              '      historyContractVersion: 1,\n'
+              '      eventsTruncated: false,\n'
+              '      events: [],\n'
+              '    });\n'
+              '    expect(() => readItemDetail({ ...base, historyContractVersion: 2 }, "item_1"))\n'
+              '      .toThrow("incompatible history contract");\n'
+              '    expect(() => readItemDetail({ ...base, historyContractVersion: undefined }, "item_1"))\n'
+              '      .toThrow("incompatible history contract");\n'
+              '    expect(() => readItemDetail({ ...base, eventsTruncated: undefined }, "item_1"))\n'
+              '      .toThrow("missing event-history completeness");\n'
+              '  });\n'
+          )
+          replacement_test = (
+              '  test("preserves legacy unknown completeness and requires an exact declared envelope", () => {\n'
+              '    const legacy = {\n'
+              '      item: { id: "item_1" },\n'
+              '      events: [],\n'
+              '      artifacts: [],\n'
+              '    };\n'
+              '    expect(readItemDetail(legacy, "item_1")).toMatchObject({\n'
+              '      historyContractVersion: null,\n'
+              '      eventsTruncated: null,\n'
+              '      events: [],\n'
+              '    });\n'
+              '\n'
+              '    const hosted = {\n'
+              '      ...legacy,\n'
+              '      historyContractVersion: 1,\n'
+              '      eventsTruncated: false,\n'
+              '    };\n'
+              '    expect(readItemDetail(hosted, "item_1")).toMatchObject({\n'
+              '      historyContractVersion: 1,\n'
+              '      eventsTruncated: false,\n'
+              '      events: [],\n'
+              '    });\n'
+              '    expect(() => readItemDetail({ ...hosted, historyContractVersion: 2 }, "item_1"))\n'
+              '      .toThrow("incompatible history contract");\n'
+              '    expect(() => readItemDetail({ ...hosted, historyContractVersion: undefined }, "item_1"))\n'
+              '      .toThrow("incompatible history contract");\n'
+              '    expect(() => readItemDetail({ ...hosted, eventsTruncated: undefined }, "item_1"))\n'
+              '      .toThrow("missing event-history completeness");\n'
+              '    expect(() => readItemDetail({ ...legacy, eventsTruncated: false }, "item_1"))\n'
+              '      .toThrow("incompatible history contract");\n'
+              '  });\n'
+              '\n'
+              '  test("reads the real SQLite API detail with unknown completeness", async () => {\n'
+              '    const store = new StensiblyStore(":memory:");\n'
+              '    try {\n'
+              '      const item = store.createItem({\n'
+              '        project: "scrapbook",\n'
+              '        kind: "task",\n'
+              '        title: "Read local history",\n'
+              '        priority: 50,\n'
+              '        actor: { id: "leo", name: "Leo", kind: "human" },\n'
+              '      });\n'
+              '      const app = createServerApp(store);\n'
+              '      const response = await app.request(`/api/v1/items/${encodeURIComponent(item.id)}`);\n'
+              '      expect(response.status).toBe(200);\n'
+              '\n'
+              '      const detail = readItemDetail(await response.json(), item.id);\n'
+              '      expect(detail.historyContractVersion).toBeNull();\n'
+              '      expect(detail.eventsTruncated).toBeNull();\n'
+              '      expect(detail.item).toMatchObject({ id: item.id, project: "scrapbook" });\n'
+              '      expect(detail.events.map((event) => event.type)).toContain("item.created");\n'
+              '    } finally {\n'
+              '      store.close();\n'
+              '    }\n'
+              '  });\n'
+          )
           if source.count(envelope_test) != 1:
               raise SystemExit("expected one history-envelope test")
           source = source.replace(envelope_test, replacement_test)
