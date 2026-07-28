@@ -2,18 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { paginationRequiresFurtherInspection } from "../convex/lib/itemHistory.ts";
 
 describe("bounded item history pagination status", () => {
-  test("treats Convex SplitRequired as partial even when isDone is true", () => {
-    expect(paginationRequiresFurtherInspection({
-      isDone: true,
-      pageStatus: "SplitRequired",
-      splitCursor: null,
-    })).toBe(true);
+  test("treats Convex split statuses as partial even when isDone is true", () => {
+    for (const pageStatus of ["SplitRecommended", "SplitRequired"] as const) {
+      expect(paginationRequiresFurtherInspection({
+        isDone: true,
+        pageStatus,
+        splitCursor: null,
+      })).toBe(true);
+    }
   });
 
   test("treats an explicit split cursor as partial", () => {
     expect(paginationRequiresFurtherInspection({
       isDone: true,
-      pageStatus: "SplitRecommended",
+      pageStatus: null,
       splitCursor: "bounded-split-cursor",
     })).toBe(true);
   });
