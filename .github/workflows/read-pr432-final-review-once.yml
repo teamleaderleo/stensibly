@@ -19,37 +19,11 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - name: Read exact-head reviewer disposition
+      - name: Read exact remaining reviewer finding
         env:
           GH_TOKEN: ${{ github.token }}
-          EXACT_HEAD: 579b953ffe26cbade1e334111448801c98f4c0e5
-          AFTER_COMMENT_ID: 5106889674
+          COMMENT_ID: 5106894429
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/issues/432/comments?per_page=100" --paginate > /tmp/comments.json
-          jq -s 'add' /tmp/comments.json > /tmp/all-comments.json
-          jq --arg head "$EXACT_HEAD" --argjson after "$AFTER_COMMENT_ID" '
-            [ .[]
-              | select(.id > $after)
-              | select(.user.login == "coderabbitai[bot]")
-              | select((.body // "") | contains($head))
-              | {id, body}
-            ]
-          ' /tmp/all-comments.json > /tmp/matches.json
-          count="$(jq 'length' /tmp/matches.json)"
-          disposition="unknown"
-          matched_ids="none"
-          if [[ "$count" -gt 0 ]]; then
-            matched_ids="$(jq -r 'map(.id | tostring) | join(",")' /tmp/matches.json)"
-            bodies="$(jq -r 'map(.body) | join("\n")' /tmp/matches.json)"
-            if grep -Eqi '(^|[^A-Z])(REPAIR|actionable issue|actionable comment|issues? remain)' <<<"$bodies"; then
-              disposition="repair"
-            elif grep -Eqi '(ACCEPT|no actionable comments|0 issues|no issues)' <<<"$bodies"; then
-              disposition="accept"
-            fi
-          fi
-          echo "exact_head=$EXACT_HEAD"
-          echo "matched_count=$count"
-          echo "matched_comment_ids=$matched_ids"
-          echo "disposition=$disposition"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" --jq '.body'
