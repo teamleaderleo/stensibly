@@ -1,7 +1,7 @@
 import { callsignCollisionKey } from "./callsign-suggestions.ts";
 import { callsignSigil } from "./callsign-sigils.ts";
 
-const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const unsafeTextPattern = /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const runIdPattern = /^run_[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const receiptHeader = "callsign-receipt/v0";
@@ -518,7 +518,7 @@ function optionalField(fields: ReadonlyMap<string, string>, key: string): string
 
 function firstParagraph(value: string, label: string): string {
   assertSafeText(value, label);
-  const normalized = value.replace(/\r\n/gu, "\n").trim();
+  const normalized = value.replace(/\r\n?/gu, "\n").trim();
   if (normalized.length === 0) throw new RangeError(`${label} must not be empty`);
   return normalized.split(/\n\s*\n/u, 1)[0] ?? normalized;
 }
