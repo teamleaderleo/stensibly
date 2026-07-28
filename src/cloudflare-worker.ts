@@ -1,5 +1,4 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
-import { HttpGitHubOAuthClient } from "./hosted-auth.js";
 import {
   enforceOAuthRegistrationAdmission,
   type OAuthRegistrationRateLimiter,
@@ -30,23 +29,20 @@ export interface CloudflareBindings {
 
 const W01_GITHUB_TOKEN_EGRESS_PROBE = "/__w01/github-token-egress";
 const W01_GITHUB_TOKEN_EGRESS_CAPABILITY = "-YnH9yW8pN4yfuUKDSwjY1PvtG257gveyMeKKuNE0Y8";
-const PROVIDER_STAGES = new Set([
-  "token_exchange",
-  "unexpected_scope",
-  "identity_request",
-  "identity_payload",
-]);
-const PROVIDER_REASONS = new Set([
+const TOKEN_RESPONSE_REASONS = new Set([
   "incorrect_client_credentials",
   "redirect_uri_mismatch",
   "bad_verification_code",
   "unverified_user_email",
-  "network_timeout",
-  "network_exception",
-  "provider_rejection",
-  "malformed_response",
-  "missing_access_token",
 ]);
+
+interface ProbeResult {
+  outcome: "response" | "exception";
+  elapsed: "under_100ms" | "under_1s" | "under_5s" | "under_30s" | "at_least_30s";
+  status?: number;
+  providerReason?: string;
+  errorName?: string;
+}
 
 const worker = {
   async fetch(request: Request, env: CloudflareBindings): Promise<Response> {
@@ -97,39 +93,121 @@ async function githubTokenEgressProbe(
     });
   }
 
-  const client = new HttpGitHubOAuthClient({ clientId, clientSecret });
+  const githubRoot = await requestProbe("https://github.com/robots.txt");
+  const githubApi = await requestProbe("https://api.github.com/zen", {
+    headers: { "user-agent": "Stensibly" },
+  });
+  const tokenNoSignal = await tokenRequestProbe({
+    clientId,
+    clientSecret,
+    authOrigin,
+    userAgent: false,
+    timeoutSignal: false,
+  });
+  const tokenWithUserAgent = await tokenRequestProbe({
+    clientId,
+    clientSecret,
+    authOrigin,
+    userAgent: true,
+    timeoutSignal: false,
+  });
+  const tokenWithSignal = await tokenRequestProbe({
+    clientId,
+    clientSecret,
+    authOrigin,
+    userAgent: true,
+    timeoutSignal: true,
+  });
+  const ok = [tokenNoSignal, tokenWithUserAgent, tokenWithSignal].some((result) =>
+    result.outcome === "response" && result.providerReason === "bad_verification_code"
+  );
+  return diagnosticJson({
+    ok,
+    githubRoot,
+    githubApi,
+    tokenNoSignal,
+    tokenWithUserAgent,
+    tokenWithSignal,
+  });
+}
+
+async function requestProbe(url: string, init?: RequestInit): Promise<ProbeResult> {
+  const startedAt = performance.now();
   try {
-    await client.exchangeCode({
-      code: "w01-intentionally-invalid-authorization-code",
-      redirectUri: `${authOrigin}/auth/github/callback`,
-      codeVerifier: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    });
-    return diagnosticJson({
-      ok: false,
-      stage: "token_exchange",
-      reason: "unexpected_success",
-    });
+    const response = await fetch(url, init);
+    return {
+      outcome: "response",
+      elapsed: elapsedBucket(performance.now() - startedAt),
+      status: response.status,
+    };
   } catch (error) {
-    const failure = boundedProviderFailure(error);
-    return diagnosticJson({
-      ok: failure.stage === "token_exchange" && failure.reason === "bad_verification_code",
-      ...failure,
-    });
+    return exceptionProbeResult(error, performance.now() - startedAt);
   }
 }
 
-function boundedProviderFailure(error: unknown): { stage: string; reason: string } {
-  if (typeof error !== "object" || error === null) {
-    return { stage: "token_exchange", reason: "unknown_exception" };
+async function tokenRequestProbe(options: {
+  clientId: string;
+  clientSecret: string;
+  authOrigin: string;
+  userAgent: boolean;
+  timeoutSignal: boolean;
+}): Promise<ProbeResult> {
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "content-type": "application/x-www-form-urlencoded",
+  };
+  if (options.userAgent) headers["user-agent"] = "Stensibly";
+  const startedAt = performance.now();
+  try {
+    const response = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({
+        client_id: options.clientId,
+        client_secret: options.clientSecret,
+        code: "w01-intentionally-invalid-authorization-code",
+        redirect_uri: `${options.authOrigin}/auth/github/callback`,
+        code_verifier: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      }),
+      ...(options.timeoutSignal ? { signal: AbortSignal.timeout(10_000) } : {}),
+    });
+    const payload = await response.json().catch(() => null) as { error?: unknown } | null;
+    const providerReason = typeof payload?.error === "string"
+      && TOKEN_RESPONSE_REASONS.has(payload.error)
+      ? payload.error
+      : "other_response";
+    return {
+      outcome: "response",
+      elapsed: elapsedBucket(performance.now() - startedAt),
+      status: response.status,
+      providerReason,
+    };
+  } catch (error) {
+    return exceptionProbeResult(error, performance.now() - startedAt);
   }
-  const candidate = error as { stage?: unknown; reason?: unknown };
-  const stage = typeof candidate.stage === "string" && PROVIDER_STAGES.has(candidate.stage)
-    ? candidate.stage
-    : "token_exchange";
-  const reason = typeof candidate.reason === "string" && PROVIDER_REASONS.has(candidate.reason)
-    ? candidate.reason
-    : "unknown_exception";
-  return { stage, reason };
+}
+
+function exceptionProbeResult(error: unknown, elapsed: number): ProbeResult {
+  const rawName = typeof error === "object" && error !== null && "name" in error
+    ? (error as { name?: unknown }).name
+    : undefined;
+  const errorName = typeof rawName === "string"
+    && ["TypeError", "AbortError", "TimeoutError", "Error"].includes(rawName)
+    ? rawName
+    : "OtherError";
+  return {
+    outcome: "exception",
+    elapsed: elapsedBucket(elapsed),
+    errorName,
+  };
+}
+
+function elapsedBucket(elapsed: number): ProbeResult["elapsed"] {
+  if (elapsed < 100) return "under_100ms";
+  if (elapsed < 1_000) return "under_1s";
+  if (elapsed < 5_000) return "under_5s";
+  if (elapsed < 30_000) return "under_30s";
+  return "at_least_30s";
 }
 
 function diagnosticJson(value: unknown, status = 200): Response {
