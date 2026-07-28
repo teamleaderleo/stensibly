@@ -70,14 +70,14 @@ describe("dashboard item detail integration", () => {
     expect(styles).toContain(".detail-run-failed");
   });
 
-
-  test("renders attributable public activity with explicit-only relationships and filters", () => {
+  test("renders attributable public activity flat with filters and partial-history truth", () => {
     expect(controller).toContain("activityThreadSection(detail.events");
-    expect(activityThread).toContain("replyToEventId");
-    expect(activityThread).toContain("causedByEventId");
+    expect(activityThread).toContain("actor+callsign:");
     expect(activityThread).toContain("Filter activity thread");
     expect(activityThread).toContain("Partial history");
     expect(activityThread).toContain("reset filters");
+    expect(activityThread).not.toContain("readRelationship");
+    expect(activityThread).not.toContain("maximumThreadDepth");
     expect(activityThread).not.toContain("window.open");
     expect(styles).toContain(".detail-activity-thread");
     expect(styles).toContain(".detail-thread-filters");
