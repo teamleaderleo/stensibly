@@ -25,9 +25,12 @@ jobs:
           bun-version: latest
 
       - name: Extract and apply exact repair
+        id: exact-repair
+        continue-on-error: true
         shell: bash
         run: |
-          python3 <<'PY'
+          set +e
+          python3 <<'PY' > .github/provider-network-repair-error.txt 2>&1
           from pathlib import Path
 
           source = Path('.github/workflows/w01-apply-provider-network-repair.yml').read_text()
@@ -43,20 +46,43 @@ jobs:
           script = script.replace(bad, good, 1)
           exec(compile(script, 'provider-network-repair.py', 'exec'))
           PY
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
 
+          rm .github/provider-network-repair-error.txt
           rm .github/workflows/w01-apply-provider-network-repair.yml
           rm .github/workflows/w01-bootstrap-provider-network-repair.yml
 
+      - name: Commit bounded applicator failure receipt
+        if: steps.exact-repair.outcome == 'failure'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/provider-network-repair-error.txt
+          git commit -m "Record provider repair applicator failure"
+          git push origin HEAD:${{ github.head_ref }}
+
+      - name: Fail after recording applicator receipt
+        if: steps.exact-repair.outcome == 'failure'
+        run: exit 1
+
       - name: Install dependencies
+        if: steps.exact-repair.outcome == 'success'
         run: bun install --frozen-lockfile
 
       - name: Validate repair
+        if: steps.exact-repair.outcome == 'success'
         run: |
           bun test test/hosted-auth-github-http-client.test.ts test/worker-observability.test.ts
           bun run typecheck
           git diff --check
 
       - name: Commit repair
+        if: steps.exact-repair.outcome == 'success'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
