@@ -1,0 +1,41 @@
+name: Queue Dashboard Production Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - site/**
+      - src/dashboard-assets.ts
+      - src/dashboard-deployment-diagnostics.ts
+      - src/verify-dashboard.ts
+      - package.json
+      - bun.lock
+      - tsconfig.json
+      - .github/workflows/deploy-dashboard.yml
+      - .github/workflows/auto-deploy-dashboard.yml
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: stensibly-dashboard-auto-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: Queue guarded production workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch dashboard production workflow from main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-dashboard.yml/dispatches" \
+            --data '{"ref":"main"}'
