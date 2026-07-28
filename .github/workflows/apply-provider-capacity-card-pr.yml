@@ -1,0 +1,56 @@
+name: Apply provider capacity card from PR
+
+on:
+  pull_request:
+    branches:
+      - kite/426-capacity-card
+    paths:
+      - .github/workflows/apply-provider-capacity-card-pr.yml
+      - scripts/apply-provider-capacity-card.py
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'kite/426-capacity-card-trigger'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: kite/426-capacity-card
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply exact provider capacity card source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "origin/${{ github.head_ref }}:scripts/apply-provider-capacity-card.py" > /tmp/apply-provider-capacity-card.py
+          python /tmp/apply-provider-capacity-card.py
+      - run: bun install
+      - name: Run focused dashboard capacity tests
+        run: bun test test/dashboard-provider-capacity.test.ts
+      - name: Run typecheck
+        run: bun run typecheck
+      - name: Run full Bun suite
+        run: bun run test
+      - name: Run full Convex suite
+        run: bun run test:convex
+      - name: Bundle Cloudflare Worker
+        run: bun run worker:check
+      - name: Commit source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Kite"
+          git config user.email "teamleaderleo@users.noreply.github.com"
+          git add \
+            site/provider-capacity.js \
+            site/provider-capacity-controller.js \
+            site/provider-capacity.css \
+            site/index.html \
+            site/app.js \
+            test/dashboard-provider-capacity.test.ts
+          git commit -m "Show CodeRabbit capacity in the control room"
+          git push origin HEAD:kite/426-capacity-card
