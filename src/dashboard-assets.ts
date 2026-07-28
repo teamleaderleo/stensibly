@@ -12,13 +12,15 @@ const javascriptContentTypes = ["text/javascript", "application/javascript"] as 
 const svgContentTypes = ["image/svg+xml"] as const;
 
 export const dashboardAssets: readonly DashboardAssetExpectation[] = [
-  { path: "/styles.css", kind: "css", contentTypes: cssContentTypes, marker: ":root" },
+  { path: "/styles.css", kind: "css", contentTypes: cssContentTypes, marker: ".detail-activity-thread" },
   { path: "/hosted-session.css", kind: "css", contentTypes: cssContentTypes, marker: ".hosted-sign-in" },
   { path: "/app.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "DEFAULT_ENDPOINT" },
   { path: "/hosted-session.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "hostedSessionSentinel" },
   { path: "/hosted-session-bridge.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installHostedSessionFetchBridge" },
   { path: "/item-claim.css", kind: "css", contentTypes: cssContentTypes, marker: ".detail-claim" },
   { path: "/item-claim.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "validateClaimInput" },
+  { path: "/item-detail-controller.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "activityThreadSection" },
+  { path: "/item-activity-thread.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "projectActivityThread" },
   { path: "/item-progress-controller.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installProgressController" },
   { path: "/item-block-controller.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installBlockController" },
   { path: "/item-complete-controller.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installCompleteController" },
