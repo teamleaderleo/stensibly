@@ -35,12 +35,14 @@ jobs:
             test/provider-capacity-convex.test.ts \
             test/hosted-provider-capacity-api.test.ts
           bunx vitest run convex/providerCapacities.test.ts
-      - name: Run full repository gate
-        run: |
-          bun run typecheck
-          bun test
-          bun run test:convex
-          bun run worker:check
+      - name: Run typecheck
+        run: bun run typecheck
+      - name: Run full Bun suite
+        run: bun test
+      - name: Run full Convex suite
+        run: bun run test:convex
+      - name: Bundle Cloudflare Worker
+        run: bun run worker:check
       - name: Commit source-only candidate
         shell: bash
         run: |
