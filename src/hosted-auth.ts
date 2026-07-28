@@ -29,6 +29,12 @@ export interface GitHubIdentity {
   avatarUrl?: string;
 }
 
+export type GitHubProviderFailureStage =
+  | "token_exchange"
+  | "unexpected_scope"
+  | "identity_request"
+  | "identity_payload";
+
 export interface GitHubOAuthClient {
   exchangeCode(input: {
     code: string;
@@ -155,18 +161,38 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
       return authError(context, new AuthInputError("OAuth state is invalid, expired, or already used"), 400);
     }
 
-    let identity: GitHubIdentity;
+    let accessToken: string;
     try {
-      const accessToken = await normalized.githubClient.exchangeCode({
+      accessToken = await normalized.githubClient.exchangeCode({
         code,
         redirectUri: normalized.redirectUri,
         codeVerifier: stateCookie.codeVerifier,
       });
-      identity = normalizeGitHubIdentity(
-        await normalized.githubClient.readIdentity(accessToken),
+    } catch (error) {
+      return providerBackendError(
+        context,
+        providerFailureStage(error, "token_exchange"),
       );
-    } catch {
-      return providerBackendError(context);
+    }
+
+    let providerIdentity: GitHubIdentity;
+    try {
+      providerIdentity = await normalized.githubClient.readIdentity(accessToken);
+    } catch (error) {
+      return providerBackendError(
+        context,
+        providerFailureStage(error, "identity_request"),
+      );
+    }
+
+    let identity: GitHubIdentity;
+    try {
+      identity = normalizeGitHubIdentity(providerIdentity);
+    } catch (error) {
+      return providerBackendError(
+        context,
+        providerFailureStage(error, "identity_payload"),
+      );
     }
 
     if (!normalized.allowedGitHubSubjectSet.has(identity.subject)) {
@@ -283,40 +309,47 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
     redirectUri: string;
     codeVerifier: string;
   }): Promise<string> {
-    const response = await this.fetchImpl("https://github.com/login/oauth/access_token", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded",
-        "user-agent": "Stensibly",
-      },
-      body: new URLSearchParams({
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
-        code: input.code,
-        redirect_uri: input.redirectUri,
-        code_verifier: input.codeVerifier,
-      }),
-      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded",
+          "user-agent": "Stensibly",
+        },
+        body: new URLSearchParams({
+          client_id: this.clientId,
+          client_secret: this.clientSecret,
+          code: input.code,
+          redirect_uri: input.redirectUri,
+          code_verifier: input.codeVerifier,
+        }),
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ProviderFailure("token_exchange");
+    }
+    if (!response.ok) throw new ProviderFailure("token_exchange");
+
     const payload = await response.json().catch(() => null) as {
       access_token?: unknown;
       scope?: unknown;
     } | null;
+    const grantedScopes = readGrantedScopes(payload?.scope);
+    if (grantedScopes === null) throw new ProviderFailure("token_exchange");
+    if (grantedScopes.length > 0) throw new ProviderFailure("unexpected_scope");
+
     const rawAccessToken = typeof payload?.access_token === "string"
       ? payload.access_token
       : "";
     const accessToken = rawAccessToken.trim();
-    const grantedScopes = readGrantedScopes(payload?.scope);
     if (
-      !response.ok
-      || !accessToken
+      !accessToken
       || accessToken !== rawAccessToken
       || /\s/.test(accessToken)
-      || grantedScopes === null
-      || grantedScopes.length > 0
     ) {
-      throw new ProviderFailure("GitHub authorization failed");
+      throw new ProviderFailure("token_exchange");
     }
     return accessToken;
   }
@@ -329,11 +362,23 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
       "user-agent": "Stensibly",
       "x-github-api-version": "2026-03-10",
     };
-    const userResponse = await this.fetchImpl("https://api.github.com/user", {
-      headers,
-      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-    });
-    const responseScopes = readGrantedScopes(userResponse.headers.get("x-oauth-scopes") ?? "");
+    let userResponse: Response;
+    try {
+      userResponse = await this.fetchImpl("https://api.github.com/user", {
+        headers,
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ProviderFailure("identity_request");
+    }
+    if (!userResponse.ok) throw new ProviderFailure("identity_request");
+
+    const responseScopes = readGrantedScopes(
+      userResponse.headers.get("x-oauth-scopes"),
+    );
+    if (responseScopes === null) throw new ProviderFailure("identity_payload");
+    if (responseScopes.length > 0) throw new ProviderFailure("unexpected_scope");
+
     const user = await userResponse.json().catch(() => null) as {
       id?: unknown;
       login?: unknown;
@@ -341,15 +386,12 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
       avatar_url?: unknown;
     } | null;
     if (
-      !userResponse.ok
-      || responseScopes === null
-      || responseScopes.length > 0
-      || (typeof user?.id !== "number" && typeof user?.id !== "string")
+      (typeof user?.id !== "number" && typeof user?.id !== "string")
       || (typeof user.id === "number" && (!Number.isSafeInteger(user.id) || user.id <= 0))
       || typeof user?.login !== "string"
       || !user.login.trim()
     ) {
-      throw new ProviderFailure("GitHub identity request failed");
+      throw new ProviderFailure("identity_payload");
     }
 
     return normalizeGitHubIdentity({
@@ -386,7 +428,7 @@ function validProviderAccessToken(value: string): string {
     || normalized.length > 4096
     || /\s/.test(normalized)
   ) {
-    throw new ProviderFailure("GitHub access token is invalid");
+    throw new ProviderFailure("identity_request");
   }
   return normalized;
 }
@@ -396,7 +438,7 @@ function normalizeGitHubIdentity(value: GitHubIdentity): GitHubIdentity {
   try {
     subject = normalizeGitHubSubject(value.subject, "GitHub identity subject");
   } catch {
-    throw new ProviderFailure("GitHub identity subject is invalid");
+    throw new ProviderFailure("identity_payload");
   }
   const username = boundedProviderText(value.username, "GitHub username", 160);
   const displayName = boundedProviderText(
@@ -419,7 +461,7 @@ function normalizeGitHubIdentity(value: GitHubIdentity): GitHubIdentity {
 function boundedProviderText(value: string, label: string, maximum: number): string {
   const normalized = value.trim();
   if (!normalized || normalized.length > maximum) {
-    throw new ProviderFailure(`${label} is invalid`);
+    throw new ProviderFailure("identity_payload");
   }
   return normalized;
 }
@@ -428,7 +470,7 @@ function normalizeProviderEmail(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-    throw new ProviderFailure("GitHub email address is invalid");
+    throw new ProviderFailure("identity_payload");
   }
   return normalized;
 }
@@ -436,15 +478,17 @@ function normalizeProviderEmail(value: string | undefined): string | undefined {
 function normalizeProviderUrl(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
   const normalized = value.trim();
-  if (!normalized || normalized.length > 2048) throw new ProviderFailure(`${label} is invalid`);
+  if (!normalized || normalized.length > 2048) {
+    throw new ProviderFailure("identity_payload");
+  }
   let parsed: URL;
   try {
     parsed = new URL(normalized);
   } catch {
-    throw new ProviderFailure(`${label} is invalid`);
+    throw new ProviderFailure("identity_payload");
   }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
-    throw new ProviderFailure(`${label} is invalid`);
+    throw new ProviderFailure("identity_payload");
   }
   return parsed.toString();
 }
@@ -713,10 +757,32 @@ function authBackendError(context: Context<StensiblyEnv>) {
   return context.json({ error: "Hosted authentication service failed", code: "backend_failure" }, 502);
 }
 
-function providerBackendError(context: Context<StensiblyEnv>) {
+function providerBackendError(
+  context: Context<StensiblyEnv>,
+  stage: GitHubProviderFailureStage,
+) {
   context.header(FAILURE_CATEGORY_HEADER, "request_failure");
-  return context.json({ error: "GitHub authentication failed", code: "provider_failure" }, 502);
+  return context.json({
+    error: "GitHub authentication failed",
+    code: "provider_failure",
+    stage,
+  }, 502);
+}
+
+function providerFailureStage(
+  error: unknown,
+  fallback: GitHubProviderFailureStage,
+): GitHubProviderFailureStage {
+  return error instanceof ProviderFailure ? error.stage : fallback;
 }
 
 class AuthInputError extends Error {}
-class ProviderFailure extends Error {}
+class ProviderFailure extends Error {
+  readonly stage: GitHubProviderFailureStage;
+
+  constructor(stage: GitHubProviderFailureStage) {
+    super("GitHub provider failure");
+    Object.defineProperty(this, "name", { value: "ProviderFailure" });
+    this.stage = stage;
+  }
+}
