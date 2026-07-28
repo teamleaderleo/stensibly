@@ -1,0 +1,31 @@
+name: Callsign Registry Dogfood
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: callsign-registry-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  register:
+    if: >-
+      github.event.issue.number == 454 &&
+      github.event.comment.user.login == github.repository_owner &&
+      startsWith(github.event.comment.body, '/callsign ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: oven-sh/setup-bun@v2
+      - name: Process callsign command
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun src/github-callsign-registrar.ts
