@@ -1,0 +1,122 @@
+name: W01 OAuth rollback preflight
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/w01-oauth-rollback-preflight.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w01-oauth-rollback-preflight
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Inspect current production rollback boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://api.stensibly.com/health
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate protected inputs
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN STENSIBLY_READ_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required production environment secret: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Record deployment, versions, and binding names
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p preflight
+          bunx wrangler deployments list --name stensibly-api --json > preflight/deployments.json
+          bunx wrangler versions list --name stensibly-api --json > preflight/versions.json
+          bunx wrangler secret list --name stensibly-api --format json \
+            | jq '[.[].name] | sort' > preflight/secret-names.json
+          jq -n \
+            --arg version "w01-oauth-rollback-preflight/v1" \
+            --arg sourceSha "$SOURCE_SHA" \
+            --arg observedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, source_sha: $sourceSha, observed_at: $observedAt, read_only: true, contains_secret_values: false}' \
+            > preflight/manifest.json
+
+          for name in \
+            STENSIBLY_OAUTH_SIGNING_SECRET \
+            STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS \
+            STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS \
+            STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS; do
+            jq -e --arg name "$name" 'index($name) != null' preflight/secret-names.json >/dev/null \
+              || { echo "Expected enabled OAuth binding name is absent: $name" >&2; exit 1; }
+          done
+
+      - name: Verify current bearer compatibility
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bun run verify:hosted | tee preflight/bearer-canonical.txt
+          bun run verify:hosted -- \
+            --endpoint https://stensibly-api.leoli-082000.workers.dev \
+            | tee preflight/bearer-worker.txt
+
+      - name: Verify current enabled public OAuth state
+        run: |
+          set -euo pipefail
+          bun run verify:oauth -- --expect enabled \
+            | tee preflight/oauth-canonical.txt
+          bun run verify:oauth -- \
+            --endpoint https://stensibly-api.leoli-082000.workers.dev \
+            --issuer https://api.stensibly.com \
+            --expect enabled \
+            | tee preflight/oauth-worker.txt
+
+      - name: Record bounded preflight summary
+        if: always()
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "## W01 production rollback preflight"
+            echo
+            echo "- Source revision: \`$SOURCE_SHA\`"
+            echo "- Worker: \`stensibly-api\`"
+            echo "- Operation: read-only inspection"
+            echo "- Secret values retained: no"
+            echo "- Deployment/version metadata: retained in one-day artifact"
+            echo "- Binding names only: retained in one-day artifact"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bounded preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-oauth-rollback-preflight
+          path: preflight
+          if-no-files-found: error
+          retention-days: 1
