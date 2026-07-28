@@ -1,4 +1,5 @@
 name: W01 Commit Callback Egress Hardening
+# Triggered after workflow registration so GitHub Actions sees the push event.
 
 on:
   push:
