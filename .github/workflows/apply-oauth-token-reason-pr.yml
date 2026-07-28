@@ -34,6 +34,10 @@ jobs:
           block = source[start:end]
           indent = min(len(line) - len(line.lstrip()) for line in block if line.strip())
           script = "\n".join(line[indent:] for line in block) + "\n"
+          script = script.replace(
+              'raise SystemExit(f"expected one match in {path}, found {count}")',
+              'raise SystemExit(f"expected one match in {path}, found {count}: {old[:160]!r}")',
+          )
           exec(compile(script, "oauth-token-reason-applicator.py", "exec"), {})
           PY
       - name: Upload applicator output
