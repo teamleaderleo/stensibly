@@ -113,8 +113,9 @@ jobs:
               "signal: AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS),"
           )
 
-          identity_throw = unique_index(
+          identity_throw = next_index(
               hosted,
+              identity_endpoint,
               'throw new ProviderFailure("identity_request");',
               "identity request network catch",
           )
