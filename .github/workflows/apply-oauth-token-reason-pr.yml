@@ -1,4 +1,4 @@
-name: Apply OAuth token reason diagnostic from PR
+name: Apply OAuth token payload shape repair from PR
 
 on:
   pull_request:
@@ -6,8 +6,7 @@ on:
       - nightjar/402-token-exchange-reason
     paths:
       - .github/workflows/apply-oauth-token-reason-pr.yml
-      - scripts/apply-oauth-token-reason.py
-      - scripts/run-oauth-token-reason-applicator.py
+      - scripts/apply-oauth-payload-shape-repair.py
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -31,68 +30,34 @@ jobs:
           path: candidate
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
-      - name: Apply exact source and test repair
+      - name: Apply exact review repair
         working-directory: candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          python ../trigger/scripts/run-oauth-token-reason-applicator.py 2>&1 | tee applicator-output.txt
+        run: python ../trigger/scripts/apply-oauth-payload-shape-repair.py
       - name: Install dependencies
         working-directory: candidate
         run: bun install
       - name: Run focused authentication tests
         working-directory: candidate
-        shell: bash
-        run: |
-          set -o pipefail
-          bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts 2>&1 | tee focused-test-output.txt
+        run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
       - name: Run typecheck
         working-directory: candidate
-        shell: bash
-        run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee typecheck-output.txt
+        run: bun run typecheck
       - name: Run full Bun tests
         working-directory: candidate
-        shell: bash
-        run: |
-          set -o pipefail
-          bun run test 2>&1 | tee bun-test-output.txt
+        run: bun run test
       - name: Run Convex tests
         working-directory: candidate
-        shell: bash
-        run: |
-          set -o pipefail
-          bun run test:convex 2>&1 | tee convex-test-output.txt
+        run: bun run test:convex
       - name: Bundle Worker
         working-directory: candidate
-        shell: bash
-        run: |
-          set -o pipefail
-          bun run worker:check 2>&1 | tee worker-check-output.txt
-      - name: Upload execution output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: oauth-reason-execution-output
-          path: |
-            candidate/applicator-output.txt
-            candidate/focused-test-output.txt
-            candidate/typecheck-output.txt
-            candidate/bun-test-output.txt
-            candidate/convex-test-output.txt
-            candidate/worker-check-output.txt
-          if-no-files-found: warn
-          retention-days: 1
-      - name: Commit source-only candidate and remove branch applicators
+        run: bun run worker:check
+      - name: Commit repaired source-only candidate
         working-directory: candidate
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "Nightjar"
           git config user.email "teamleaderleo@users.noreply.github.com"
-          git add src/hosted-auth.ts test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
-          git commit -m "Classify GitHub token exchange rejection reasons"
-          git rm .github/workflows/apply-oauth-token-reason-once.yml .github/workflows/apply-oauth-token-reason-trigger.yml
-          git commit -m "Remove OAuth reason applicators"
+          git add src/hosted-auth.ts test/hosted-auth-github-http-client.test.ts
+          git commit -m "Reject non-object GitHub token payloads"
           git push origin HEAD:nightjar/402-token-exchange-reason
