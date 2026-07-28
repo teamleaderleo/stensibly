@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bun test 2>&1 | tee bun-test-output.txt
+          bun run test 2>&1 | tee bun-test-output.txt
       - name: Run Convex tests
         working-directory: candidate
         shell: bash
