@@ -38,7 +38,18 @@ jobs:
       - name: Run typecheck
         run: bun run typecheck
       - name: Run full Bun suite
-        run: bun test
+        shell: bash
+        run: |
+          set -o pipefail
+          bun test 2>&1 | tee /tmp/hosted-capacity-full-bun.txt
+      - name: Upload full Bun failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-capacity-full-bun
+          path: /tmp/hosted-capacity-full-bun.txt
+          if-no-files-found: error
+          retention-days: 1
       - name: Run full Convex suite
         run: bun run test:convex
       - name: Bundle Cloudflare Worker
