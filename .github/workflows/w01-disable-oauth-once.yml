@@ -1,0 +1,266 @@
+name: W01 disable OAuth once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/w01-disable-oauth-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-worker-production
+  cancel-in-progress: false
+
+env:
+  APPROVAL_REFERENCE: issue-220-comment-5103728457
+  PREFLIGHT_REFERENCE: issue-410-comment-5103768286
+  EXPECTED_PRECHANGE_DEPLOYMENT_ID: abd768e5-d932-4477-a1a8-1db897c003fe
+  EXPECTED_PRECHANGE_VERSION_ID: ad65a3af-137a-4275-88a5-bb93acd073df
+  CANONICAL_ORIGIN: https://api.stensibly.com
+  WORKER_ORIGIN: https://stensibly-api.leoli-082000.workers.dev
+
+jobs:
+  disable-oauth:
+    name: Return production to hosted-auth-only OAuth disabled
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://api.stensibly.com/health
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate one-time execution and protected inputs
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            echo "This production transition cannot be rerun; create a new reviewed generation" >&2
+            exit 1
+          fi
+          missing=0
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN STENSIBLY_READ_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required production environment secret: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Run exact source gate
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Revalidate exact pre-change deployment and bindings
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          bunx wrangler deployments list --name stensibly-api --json > /tmp/deployments.json
+          latest="$(jq -c 'sort_by(.created_on) | last' /tmp/deployments.json)"
+          jq -e \
+            --arg deployment "$EXPECTED_PRECHANGE_DEPLOYMENT_ID" \
+            --arg version "$EXPECTED_PRECHANGE_VERSION_ID" \
+            '.id == $deployment
+              and (.versions | length) == 1
+              and .versions[0].version_id == $version
+              and .versions[0].percentage == 100' \
+            <<< "$latest" >/dev/null || {
+              echo "Active Worker deployment/version drifted after preflight" >&2
+              exit 1
+            }
+          jq '{deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' \
+            <<< "$latest" > evidence/pre-deployment.json
+
+          bunx wrangler secret list --name stensibly-api --format json \
+            | jq '[.[].name] | sort' > evidence/pre-secret-names.json
+          cat > /tmp/expected-pre-secret-names.json <<'JSON'
+          [
+            "CONVEX_URL",
+            "GITHUB_OAUTH_CLIENT_ID",
+            "GITHUB_OAUTH_CLIENT_SECRET",
+            "STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS",
+            "STENSIBLY_AUTH_BOOTSTRAP_ROLE",
+            "STENSIBLY_AUTH_ORIGIN",
+            "STENSIBLY_AUTH_RETURN_ORIGINS",
+            "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS",
+            "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS",
+            "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS",
+            "STENSIBLY_OAUTH_SIGNING_SECRET",
+            "STENSIBLY_SERVICE_SECRET"
+          ]
+          JSON
+          diff -u \
+            <(jq -S . /tmp/expected-pre-secret-names.json) \
+            <(jq -S . evidence/pre-secret-names.json) || {
+              echo "Production binding-name set drifted after preflight" >&2
+              exit 1
+            }
+
+      - name: Revalidate enabled state and bearer compatibility
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bun run verify:hosted | tee evidence/pre-bearer-canonical.txt
+          bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN" \
+            | tee evidence/pre-bearer-worker.txt
+          bun run verify:oauth -- --expect enabled \
+            | tee evidence/pre-oauth-canonical.txt
+          bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect enabled \
+            | tee evidence/pre-oauth-worker.txt
+
+      - name: Delete exactly the four MCP OAuth bindings
+        id: disable_oauth
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          removal_file="$(mktemp)"
+          trap 'rm -f "$removal_file"' EXIT
+          cat > "$removal_file" <<'JSON'
+          {
+            "STENSIBLY_OAUTH_SIGNING_SECRET": null,
+            "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS": null,
+            "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS": null,
+            "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS": null
+          }
+          JSON
+          bunx wrangler secret bulk "$removal_file" --name stensibly-api
+          rm -f "$removal_file"
+          trap - EXIT
+
+      - name: Prove exact post-change binding names
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          bunx wrangler secret list --name stensibly-api --format json \
+            | jq '[.[].name] | sort' > evidence/post-secret-names.json
+          cat > /tmp/expected-post-secret-names.json <<'JSON'
+          [
+            "CONVEX_URL",
+            "GITHUB_OAUTH_CLIENT_ID",
+            "GITHUB_OAUTH_CLIENT_SECRET",
+            "STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS",
+            "STENSIBLY_AUTH_BOOTSTRAP_ROLE",
+            "STENSIBLY_AUTH_ORIGIN",
+            "STENSIBLY_AUTH_RETURN_ORIGINS",
+            "STENSIBLY_SERVICE_SECRET"
+          ]
+          JSON
+          diff -u \
+            <(jq -S . /tmp/expected-post-secret-names.json) \
+            <(jq -S . evidence/post-secret-names.json) || {
+              echo "Post-change binding-name set is not the exact approved hosted-auth-only set" >&2
+              exit 1
+            }
+
+          bunx wrangler deployments list --name stensibly-api --json > /tmp/post-deployments.json
+          jq 'sort_by(.created_on) | last | {deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' \
+            /tmp/post-deployments.json > evidence/post-deployment.json
+
+      - name: Verify hosted auth, bearer compatibility, and disabled OAuth
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bun run verify:hosted | tee evidence/post-bearer-canonical.txt
+          bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN" \
+            | tee evidence/post-bearer-worker.txt
+          bun run verify:oauth -- --expect disabled \
+            | tee evidence/post-oauth-canonical.txt
+          bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect disabled \
+            | tee evidence/post-oauth-worker.txt
+
+      - name: Restore exact pre-change Worker version after any failed mutation
+        if: failure() && steps.disable_oauth.outcome != 'skipped'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bunx wrangler rollback "$EXPECTED_PRECHANGE_VERSION_ID" \
+            --name stensibly-api \
+            --message "Restore exact pre-change version after failed #410 OAuth disable transition"
+          bunx wrangler secret list --name stensibly-api --format json \
+            | jq '[.[].name] | sort' > evidence/restored-secret-names.json
+          diff -u \
+            <(jq -S . /tmp/expected-pre-secret-names.json) \
+            <(jq -S . evidence/restored-secret-names.json)
+          bun run verify:hosted | tee evidence/restored-bearer-canonical.txt
+          bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN" \
+            | tee evidence/restored-bearer-worker.txt
+          bun run verify:oauth -- --expect enabled \
+            | tee evidence/restored-oauth-canonical.txt
+          bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect enabled \
+            | tee evidence/restored-oauth-worker.txt
+
+      - name: Record successful transition
+        if: success()
+        env:
+          TRANSITION_SHA: ${{ github.sha }}
+        run: |
+          jq -n \
+            --arg version "w01-disable-oauth-once/v1" \
+            --arg transitionSha "$TRANSITION_SHA" \
+            --arg approval "$APPROVAL_REFERENCE" \
+            --arg preflight "$PREFLIGHT_REFERENCE" \
+            --arg recoveryVersion "$EXPECTED_PRECHANGE_VERSION_ID" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, status: "disabled_verified", transition_sha: $transitionSha, approval_reference: $approval, preflight_reference: $preflight, recovery_version: $recoveryVersion, completed_at: $completedAt, contains_secret_values: false}' \
+            > evidence/result.json
+          {
+            echo "## W01 OAuth rollback complete"
+            echo
+            echo "- Result: hosted-auth-only OAuth disabled"
+            echo "- Bearer compatibility: 5/5 on both origins"
+            echo "- Disabled public OAuth contract: 5/5 on both origins"
+            echo "- Removed bindings: exactly four approved MCP OAuth names"
+            echo "- Recovery version: \`$EXPECTED_PRECHANGE_VERSION_ID\`"
+            echo "- Approval: \`$APPROVAL_REFERENCE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bounded transition evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-disable-oauth-once
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 3
