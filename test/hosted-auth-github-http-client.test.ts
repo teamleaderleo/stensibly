@@ -74,6 +74,16 @@ describe("HttpGitHubOAuthClient", () => {
       "malformed_response",
     );
 
+    for (const payload of ["scalar", []]) {
+      const invalidShape = githubClient(singleUseFetch(tokenResponse(payload)));
+      expectFailure(
+        await captureFailure(invalidShape.exchangeCode(EXCHANGE_INPUT)),
+        "token_exchange",
+        [EXCHANGE_INPUT.code, "scalar"],
+        "malformed_response",
+      );
+    }
+
     const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
     expectFailure(
       await captureFailure(missing.exchangeCode(EXCHANGE_INPUT)),

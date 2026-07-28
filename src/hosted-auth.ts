@@ -354,7 +354,9 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
     const providerReason = tokenExchangeFailureReason(payload?.error);
     if (providerReason) throw new ProviderFailure("token_exchange", providerReason);
     if (!response.ok) throw new ProviderFailure("token_exchange", "provider_rejection");
-    if (!payload) throw new ProviderFailure("token_exchange", "malformed_response");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new ProviderFailure("token_exchange", "malformed_response");
+    }
 
     const grantedScopes = readGrantedScopes(payload.scope);
     if (grantedScopes === null) {
