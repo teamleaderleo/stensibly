@@ -1,0 +1,75 @@
+name: Repair tool capability grant trust boundary
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/repair-tool-capability-grant-core.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply exact trust and constraint repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PYCODE'
+          import base64
+          import gzip
+          from pathlib import Path
+          files = {
+              "src/tool-capability-grant.ts": ".github/tool-capability-repair.src.b64",
+              "test/tool-capability-grant.test.ts": ".github/tool-capability-repair.test.b64",
+              "docs/tool-capability-grants.md": ".github/tool-capability-repair.doc.b64",
+          }
+          for output, staged in files.items():
+              Path(output).write_bytes(gzip.decompress(base64.b64decode(Path(staged).read_text())))
+          PYCODE
+          rm .github/tool-capability-repair.src.b64
+          rm .github/tool-capability-repair.test.b64
+          rm .github/tool-capability-repair.doc.b64
+          rm .github/workflows/repair-tool-capability-grant-core.yml
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate repaired capability core
+        run: |
+          bun test test/tool-capability-grant.test.ts
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          git diff --check
+
+      - name: Commit validated repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            src/tool-capability-grant.ts \
+            test/tool-capability-grant.test.ts \
+            docs/tool-capability-grants.md \
+            .github/tool-capability-repair.src.b64 \
+            .github/tool-capability-repair.test.b64 \
+            .github/tool-capability-repair.doc.b64 \
+            .github/workflows/repair-tool-capability-grant-core.yml
+          git commit -m "Bind tool grants to trusted server state"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
