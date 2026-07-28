@@ -25,6 +25,7 @@ export function verifyDashboardHtml(html: string): void {
     'href="/styles.css"',
     'href="/item-claim.css"',
     'href="/hosted-session.css"',
+    'href="/login-scrapbook.css"',
     'id="github-sign-in"',
     'id="connect-form"',
     'id="dashboard"',
