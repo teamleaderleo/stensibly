@@ -1,4 +1,4 @@
-name: Apply PR 429 malformed payload repair
+name: Validate PR 429 exact OAuth diagnostic head
 
 on:
   pull_request:
@@ -9,85 +9,28 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  REQUIRED_SOURCE_SHA: 03a8582bfc36ef58adffff91c229d849876f3761
 
 jobs:
-  repair:
+  validate:
     if: github.head_ref == 'nightjar/429-malformed-response-repair-exec'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: nightjar/402-token-exchange-reason
+          ref: ${{ env.REQUIRED_SOURCE_SHA }}
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-      - name: Apply exact reviewed repair
+          persist-credentials: false
+      - name: Verify exact candidate source
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path: str, old: str, new: str) -> None:
-              file = Path(path)
-              text = file.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"expected one match in {path}, found {count}")
-              file.write_text(text.replace(old, new, 1))
-
-          replace_once(
-              "src/hosted-auth.ts",
-              '''    if (!response.ok) throw new ProviderFailure("token_exchange", "provider_rejection");
-              if (!payload) throw new ProviderFailure("token_exchange", "malformed_response");
-          ''',
-              '''    if (!response.ok) throw new ProviderFailure("token_exchange", "provider_rejection");
-              if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-                throw new ProviderFailure("token_exchange", "malformed_response");
-              }
-          ''',
-          )
-
-          replace_once(
-              "test/hosted-auth-github-http-client.test.ts",
-              '''  test("classifies malformed token JSON and a missing token", async () => {
-              const malformed = githubClient(singleUseFetch(
-                new Response("{", { status: 200 }),
-              ));
-              expectFailure(
-                await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
-                "token_exchange",
-                [EXCHANGE_INPUT.code],
-                "malformed_response",
-              );
-
-              const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
-          ''',
-              '''  test("classifies malformed token responses and a missing token", async () => {
-              const malformed = githubClient(singleUseFetch(
-                new Response("{", { status: 200 }),
-              ));
-              expectFailure(
-                await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
-                "token_exchange",
-                [EXCHANGE_INPUT.code],
-                "malformed_response",
-              );
-
-              for (const payload of ["scalar-token-payload", []]) {
-                const nonObject = githubClient(singleUseFetch(tokenResponse(payload)));
-                expectFailure(
-                  await captureFailure(nonObject.exchangeCode(EXCHANGE_INPUT)),
-                  "token_exchange",
-                  [EXCHANGE_INPUT.code],
-                  "malformed_response",
-                );
-              }
-
-              const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
-          ''',
-          )
-          PY
+          test "$(git rev-parse HEAD)" = "$REQUIRED_SOURCE_SHA"
+          test "$(git diff --name-only "$REQUIRED_SOURCE_SHA^" "$REQUIRED_SOURCE_SHA" | sort | tr '\n' ' ')" = "src/hosted-auth.ts test/hosted-auth-github-http-client.test.ts "
+      - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: Run focused authentication tests
         run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
@@ -99,12 +42,3 @@ jobs:
         run: bun run test:convex
       - name: Bundle Cloudflare Worker
         run: bun run worker:check
-      - name: Commit repaired exact head
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "Nightjar"
-          git config user.email "teamleaderleo@users.noreply.github.com"
-          git add src/hosted-auth.ts test/hosted-auth-github-http-client.test.ts
-          git commit -m "Classify non-object GitHub token payloads as malformed"
-          git push origin HEAD:nightjar/402-token-exchange-reason
