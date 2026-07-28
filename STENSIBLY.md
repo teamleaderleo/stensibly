@@ -1,7 +1,7 @@
 # Stensibly project policy
 
-**Policy:** `stensibly-internal-dogfood/v1`  
-**Source:** direct operator instruction, 2026-07-28  
+**Policy:** `stensibly-internal-dogfood/v2`  
+**Source:** direct operator instruction, 2026-07-29  
 **Scope:** `teamleaderleo/stensibly` and its operator-controlled hosted environments
 
 ## Project context
@@ -37,8 +37,8 @@ next executable step is available and covered by this standing policy.
 ## Standing internal-dogfood grant
 
 The operator grants workers standing authority to perform the following inside the
-operator-controlled Stensibly dogfood environment, subject to the repository's normal
-review and evidence requirements:
+operator-controlled Stensibly dogfood environment, subject to the self-review and
+evidence requirements below:
 
 - merge accepted repository changes;
 - deploy reviewed code to the Stensibly hosted dashboard, Worker, and Convex dogfood
@@ -58,6 +58,33 @@ Protected secret values must stay inside the protected execution surface. Using 
 credential is normal authorised work; printing, copying, publishing, or retaining the
 secret value is not.
 
+## Active operator direction and self-review
+
+A direct instruction from the operator in the active chat is a current integration
+decision for the covered internal-dogfood action. When the operator says to proceed,
+fix, merge, deploy, test, connect, or otherwise complete an internal outcome, do not
+pause solely to obtain a second agent's approval or ask the operator to repeat the
+instruction in another form.
+
+For covered internal dogfood work, the same worker may implement, self-review,
+integrate, merge, deploy, and verify the change. Self-review means the worker must:
+
+- re-fetch and inspect the exact candidate being integrated;
+- check the complete diff and the relevant runtime, data, privacy, and recovery
+  boundaries;
+- run or confirm the relevant exact-head checks;
+- distinguish concrete unresolved blockers from stale, optional, or already-superseded
+  review comments;
+- make an explicit integration decision and preserve enough evidence for recovery.
+
+Independent review remains useful when it materially reduces uncertainty, but it is not
+a default blocking gate for operator-directed, reversible internal dogfood work. Require
+a separate reviewer only when the operator explicitly requests one or when the actual
+consequences leave the standing internal-dogfood boundary and require Tier 3 treatment.
+
+Do not manufacture independence by changing callsigns, sessions, or agent labels. The
+point is accountable inspection and evidence, not ceremony.
+
 ## Deployment is not automatically Tier 3
 
 The word `production` in this repository often means the live internal dogfood
@@ -69,8 +96,10 @@ Classify an internal deployment or enablement by its real consequences:
 - **Tier 1:** reversible internal deployment, configuration, UI, or runtime work with
   narrow impact and strong verification;
 - **Tier 2:** authentication, authorisation, schema, durable-state, compatibility, or
-  broader internal effects requiring independent exact-head review and an integration
-  decision;
+  broader internal effects requiring deliberate exact-candidate review, relevant
+  checks, an explicit integration decision, and a credible recovery path. Active
+  operator direction satisfies the integration-decision requirement, and the
+  implementing worker may perform the review;
 - **Tier 3:** effects beyond the internal dogfood boundary or effects that create
   material external, financial, destructive, irreversible, or access-widening
   consequences.
@@ -120,6 +149,9 @@ The following interpretations are superseded for this project:
 - “Prefer rollback or disablement whenever authority wording is ambiguous.”
 - “List every production action that was not taken.”
 - “Wait for another operator ping after each completed action.”
+- “The author cannot review or integrate their own internal dogfood change.”
+- “Every authentication or Tier 2 repair needs a different agent even while the
+  operator is actively directing the work.”
 
 When older instructions conflict with this file, apply this narrower standing project
 policy and record the conflict for later cleanup.
@@ -132,6 +164,7 @@ changes the next action.
 
 ## Success measure
 
-The policy is working when workers deliver larger coherent outcomes, deploy and use the
-real product, recover each other's dormant work, reduce operator micromanagement, and
-finish W01 through a real ChatGPT OAuth read/write/refresh/reconnect journey.
+The policy is working when workers deliver larger coherent outcomes, self-review and
+integrate operator-directed internal repairs without ceremonial stalls, deploy and use
+the real product, recover each other's dormant work, reduce operator micromanagement,
+and finish W01 through a real ChatGPT OAuth read/write/refresh/reconnect journey.
