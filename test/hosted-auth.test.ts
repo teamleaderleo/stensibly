@@ -333,9 +333,13 @@ describe("hosted GitHub OAuth endpoints", () => {
       { headers: { cookie: `__Secure-stensibly-oauth-state=${cookie}` } },
     );
     expect(failed.status).toBe(502);
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.init?.method).toBe("GET");
     expect(String(requests[0]?.input)).toBe("https://github.com/login/oauth/access_token");
-    const exchangeBody = new URLSearchParams(String(requests[0]?.init?.body));
+    expect(requests[0]?.init?.body).toBeUndefined();
+    expect(requests[1]?.init?.method).toBe("POST");
+    expect(String(requests[1]?.input)).toBe("https://github.com/login/oauth/access_token");
+    const exchangeBody = new URLSearchParams(String(requests[1]?.init?.body));
     expect(exchangeBody.get("code_verifier")).toBe(verifier);
     expect(exchangeBody.get("redirect_uri")).toBe(
       "https://api.stensibly.com/auth/github/callback",

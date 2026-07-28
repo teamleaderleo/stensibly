@@ -18,6 +18,7 @@ const OAUTH_COOKIE_PATH = "/auth/github/callback";
 const DEFAULT_SESSION_SECONDS = 60 * 60 * 24 * 30;
 const DEFAULT_STATE_SECONDS = 10 * 60;
 const MAX_SESSION_SECONDS = 60 * 60 * 24 * 90;
+const GITHUB_TOKEN_PREFLIGHT_TIMEOUT_MS = 5_000;
 const GITHUB_TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 const GITHUB_IDENTITY_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -47,12 +48,26 @@ export type GitHubProviderFailureReason =
   | "malformed_response"
   | "missing_access_token";
 
+type GitHubProviderFailureDetail =
+  | "timeout_error"
+  | "abort_error"
+  | "subrequest_limit"
+  | "request_context"
+  | "connection_lost"
+  | "dns_failure"
+  | "tls_failure"
+  | "type_error"
+  | "error"
+  | "non_error";
+
 interface GitHubProviderFailureDetails {
   stage: GitHubProviderFailureStage;
   reason?: GitHubProviderFailureReason;
+  detail?: GitHubProviderFailureDetail;
 }
 
 export interface GitHubOAuthClient {
+  prepareExchange?(): Promise<void>;
   exchangeCode(input: {
     code: string;
     redirectUri: string;
@@ -149,7 +164,6 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     const state = context.req.query("state") ?? "";
     const code = context.req.query("code") ?? "";
     const stateCookie = parseOAuthStateCookie(getCookie(context, OAUTH_STATE_COOKIE) ?? "");
-    clearOAuthStateCookie(context);
 
     const parsedState = stateCookie
       ? await parseCredential(stateCookie.credential, "oauth")
@@ -161,8 +175,21 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
       || !parsedState
       || !constantTimeEqual(state, parsedState.id)
     ) {
+      clearOAuthStateCookie(context);
       return authError(context, new AuthInputError("OAuth callback validation failed"), 400);
     }
+
+    if (normalized.githubClient.prepareExchange) {
+      try {
+        await normalized.githubClient.prepareExchange();
+      } catch (error) {
+        return providerBackendError(
+          context,
+          providerFailureDetails(error, "token_exchange"),
+        );
+      }
+    }
+    clearOAuthStateCookie(context);
 
     let consumed;
     try {
@@ -321,6 +348,23 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
+  async prepareExchange(): Promise<void> {
+    try {
+      await this.fetchImpl("https://github.com/login/oauth/access_token", {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          "user-agent": "Stensibly",
+        },
+        cache: "no-store",
+        redirect: "manual",
+        signal: AbortSignal.timeout(GITHUB_TOKEN_PREFLIGHT_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw providerNetworkFailure("token_exchange", error);
+    }
+  }
+
   async exchangeCode(input: {
     code: string;
     redirectUri: string;
@@ -341,14 +385,13 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
           code: input.code,
           redirect_uri: input.redirectUri,
           code_verifier: input.codeVerifier,
-        }),
+        }).toString(),
+        cache: "no-store",
+        redirect: "manual",
         signal: AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      throw new ProviderFailure(
-        "token_exchange",
-        providerNetworkFailureReason(error),
-      );
+      throw providerNetworkFailure("token_exchange", error);
     }
 
     const payload = await response.json().catch(() => null) as {
@@ -398,10 +441,7 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
         signal: AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      throw new ProviderFailure(
-        "identity_request",
-        providerNetworkFailureReason(error),
-      );
+      throw providerNetworkFailure("identity_request", error);
     }
     if (!userResponse.ok) throw new ProviderFailure("identity_request");
 
@@ -452,11 +492,58 @@ function readGrantedScopes(value: unknown): string[] | null {
     .filter(Boolean);
 }
 
+const providerFailureDetailsByError = new WeakMap<object, GitHubProviderFailureDetail>();
+
+function providerNetworkFailure(
+  stage: "token_exchange" | "identity_request",
+  error: unknown,
+): ProviderFailure {
+  const failure = new ProviderFailure(stage, providerNetworkFailureReason(error));
+  providerFailureDetailsByError.set(failure, providerNetworkFailureDetail(error));
+  return failure;
+}
+
 function providerNetworkFailureReason(error: unknown): GitHubProviderFailureReason {
-  const name = typeof error === "object" && error !== null && "name" in error
-    ? (error as { name?: unknown }).name
+  return providerErrorName(error) === "TimeoutError"
+    ? "network_timeout"
+    : "network_exception";
+}
+
+function providerNetworkFailureDetail(error: unknown): GitHubProviderFailureDetail {
+  const name = providerErrorName(error);
+  const message = providerErrorMessage(error).toLowerCase();
+  if (name === "TimeoutError") return "timeout_error";
+  if (name === "AbortError") return "abort_error";
+  if (message.includes("too many subrequests")) return "subrequest_limit";
+  if (message.includes("different request") || message.includes("request context")) {
+    return "request_context";
+  }
+  if (message.includes("connection reset") || message.includes("connection lost")) {
+    return "connection_lost";
+  }
+  if (message.includes("dns") || message.includes("resolve") || message.includes("getaddrinfo")) {
+    return "dns_failure";
+  }
+  if (message.includes("tls") || message.includes("ssl") || message.includes("certificate")) {
+    return "tls_failure";
+  }
+  if (name === "TypeError") return "type_error";
+  if (name === "Error") return "error";
+  return "non_error";
+}
+
+function providerErrorName(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "name" in error
+    && typeof (error as { name?: unknown }).name === "string"
+    ? (error as { name: string }).name
     : undefined;
-  return name === "TimeoutError" ? "network_timeout" : "network_exception";
+}
+
+function providerErrorMessage(error: unknown): string {
+  return typeof error === "object" && error !== null && "message" in error
+    && typeof (error as { message?: unknown }).message === "string"
+    ? (error as { message: string }).message
+    : "";
 }
 
 function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {
@@ -814,11 +901,14 @@ function providerBackendError(
   failure: GitHubProviderFailureDetails,
 ) {
   context.header(FAILURE_CATEGORY_HEADER, "request_failure");
+  const colo = workerColo(context.req.raw);
   return context.json({
     error: "GitHub authentication failed",
     code: "provider_failure",
     stage: failure.stage,
     ...(failure.reason ? { reason: failure.reason } : {}),
+    ...(failure.detail ? { detail: failure.detail } : {}),
+    ...(colo ? { colo } : {}),
   }, 502);
 }
 
@@ -826,9 +916,18 @@ function providerFailureDetails(
   error: unknown,
   fallback: GitHubProviderFailureStage,
 ): GitHubProviderFailureDetails {
-  return error instanceof ProviderFailure
-    ? { stage: error.stage, ...(error.reason ? { reason: error.reason } : {}) }
-    : { stage: fallback };
+  if (!(error instanceof ProviderFailure)) return { stage: fallback };
+  const detail = providerFailureDetailsByError.get(error);
+  return {
+    stage: error.stage,
+    ...(error.reason ? { reason: error.reason } : {}),
+    ...(detail ? { detail } : {}),
+  };
+}
+
+function workerColo(request: Request): string | undefined {
+  const value = (request as Request & { cf?: { colo?: unknown } }).cf?.colo;
+  return typeof value === "string" && /^[A-Z]{3}$/.test(value) ? value : undefined;
 }
 
 class AuthInputError extends Error {}
