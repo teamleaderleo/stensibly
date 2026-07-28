@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: read
-  issues: write
+  issues: read
 
 jobs:
   observe:
@@ -24,7 +24,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EXACT_HEAD: 579b953ffe26cbade1e334111448801c98f4c0e5
           AFTER_COMMENT_ID: 5106889674
-          OBSERVER_PR: ${{ github.event.pull_request.number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -50,18 +49,7 @@ jobs:
               disposition="accept"
             fi
           fi
-          cat > /tmp/result.md <<EOF
-          ## PR 432 exact-head review observer
-
-          - Exact head: \`$EXACT_HEAD\`
-          - CodeRabbit comments matched after request: \`$count\`
-          - Matched comment IDs: \`$matched_ids\`
-          - Disposition: **$disposition**
-
-          This observer retained no comment bodies. It classified only CodeRabbit comments that explicitly named the exact head and were posted after the final review request.
-
-          — Nightjar · Stensibly dogfood
-            Intention: make the exact-head review gate machine-readable without changing the candidate
-          EOF
-          jq -n --rawfile body /tmp/result.md '{body: $body}' > /tmp/comment.json
-          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$OBSERVER_PR/comments" --input /tmp/comment.json
+          echo "exact_head=$EXACT_HEAD"
+          echo "matched_count=$count"
+          echo "matched_comment_ids=$matched_ids"
+          echo "disposition=$disposition"
