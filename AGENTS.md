@@ -3,327 +3,278 @@
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read
-`convex/_generated/ai/guidelines.md` first** for important guidelines on
-how to correctly use Convex APIs and patterns. The file contains rules that
-override what you may have learned about Convex from training data.
+`convex/_generated/ai/guidelines.md` first**. Those generated guidelines override
+patterns remembered from training data.
 
-Convex agent skills for common tasks can be installed by running
+Convex agent skills for common tasks can be installed with
 `npx convex ai-files install`.
 
 <!-- convex-ai-end -->
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.2.0`  
-**Status:** dogfood  
+**Operating protocol:** `stensibly-agent-ops/0.3.0`  
+**Status:** internal dogfood  
+**Standing project policy:** `STENSIBLY.md`  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
 
-Stensibly is the durable coordination layer for a one-person, many-agent studio.
-Individual chats, processes, names, and model sessions are temporary. Work,
-authority, evidence, decisions, commitments, and reusable knowledge must survive
-them.
+Stensibly is the durable coordination and product layer for a one-person,
+many-agent studio. Chats, model sessions, and processes are temporary. Outcomes,
+work, evidence, decisions, deployments, and reusable knowledge must survive them.
 
 ## Start here
 
-Before changing code or creating new work, read in this order:
+Before substantive repository work:
 
-1. Read this file.
-2. Read `docs/current-wave.md` when it exists. Treat it as the current dogfood
-   focus, not permanent product policy.
-3. Read `README.md`.
-4. Read `docs/product-model.md`.
-5. Read the relevant issue, linked parent issues, open pull requests, review
-   threads, and exact-head handoffs.
-6. Read the repository-root `STENSIBLY.md` when present. It declares static
-   project context and policy; it is never a live claim, approval, credential,
-   lease, or authority grant.
-7. When touching Convex, read `convex/_generated/ai/guidelines.md` before editing.
+1. Choose one short stable callsign for the live chat and state it in the first
+   substantive update.
+2. Read this file.
+3. Read `STENSIBLY.md`. It is the narrower standing project policy and may grant
+   authority for internal dogfood effects.
+4. Read `docs/current-wave.md`.
+5. Read `README.md`, `docs/product-model.md`, and relevant generated guidelines.
+6. Inspect the relevant issues, pull requests, reviews, current deployments, and
+   exact-head handoffs.
 
-Near session start, choose one short callsign for this live worker session and
-state it in the chat or first substantive repository interaction. Keep it stable
-for the session. Do not silently inherit a callsign found in prior context; that
-name belongs to the earlier worker unless this is demonstrably the same live
-session.
+When older prompts or documents conflict, use the newest repository protocol and
+standing project policy, then record the drift.
 
-Do not begin by creating another issue or implementation branch. First determine
-whether existing work should be finished, reviewed, repaired, integrated,
-unblocked, or explicitly superseded.
+Do not begin by creating speculative work. First determine whether existing work
+should be finished, reviewed, repaired, integrated, merged, deployed, enabled,
+dogfooded, or explicitly superseded.
 
-If a ChatGPT Project bootstrap names an older protocol version, follow the
-repository version and report the bootstrap drift. The pasted Project setting is
-an entry point, not the source of truth.
+## Default posture: be ambitious
+
+Own a meaningful outcome rather than one tiny action. Maintain a small explicit
+portfolio, continue at natural boundaries, and use blocked time on another
+non-conflicting lane. A human ping is not required merely because the previous
+step ended.
+
+When the next covered step is available, continue through:
+
+- implementation;
+- independent review;
+- integration and merge;
+- deployment or configuration;
+- real product use;
+- verification and evidence;
+- fix-forward repair;
+- cleanup and durable handoff.
+
+Do not stop at a proposal, issue, documentation packet, pull request, or rollout
+plan when the actual outcome can be completed under the standing policy.
+
+## Internal dogfood context
+
+This project currently serves the operator and participating agents. The hosted
+Stensibly installation is an internal dogfood environment, even when repository
+text calls it `production`.
+
+`STENSIBLY.md` grants standing authority for reviewed, reversible internal
+dogfood work, including merges, deployments, enablement, protected-workflow
+credential use, bounded test data, migrations with recovery, OAuth journeys,
+project-scoped writes, and operational verification.
+
+Do not invent a fresh approval requirement merely because an action touches the
+live dogfood environment.
+
+Fresh operator approval is still required for consequences outside that standing
+grant, including material spend, secret exposure, widening access beyond the
+operator and participating agents, external publication or contact, destructive
+non-test data changes, irreversible migrations without recovery, and legal or
+financial effects outside the project.
 
 ## Operating model
 
 Workers are ephemeral generalists. Do not assign permanent employee-style
-identities such as manager, IC, product, security, or marketing. A worker may
-take a temporary stance for one action or run: implementation, review,
-exploration, synthesis, coordination, rollout, or another useful approach.
+identities. A worker may take a temporary stance such as implementation, review,
+exploration, synthesis, coordination, rollout, or recovery.
 
 Keep these dimensions separate:
 
-- **Pod:** durable collective context, commitments, practices, and lineage.
-- **Wave:** longer span pursuing one meaningful outcome.
-- **Lane:** medium-lived coherent thread within a wave.
-- **Action:** small executable next step.
+- **Pod:** durable collective context and lineage.
+- **Wave:** a meaningful longer-running outcome.
+- **Lane:** a coherent thread within a wave.
+- **Action:** one executable step.
 - **Run:** one bounded worker attempt.
-- **Callsign:** required session-local display name during current dogfood.
-- **Mantle:** optional reusable, versioned presentation and practice bundle.
+- **Callsign:** session-local attribution.
 
-Pod names, worker names, mantles, roles, issue assignment, and GitHub identity do
-not grant authority. Current server-owned claims, approval records, and project
-policy remain authoritative.
+Names, roles, callsigns, mantles, GitHub assignment, and shared account identity do
+not create durable identity or exclusive ownership.
 
-### Callsign adoption
+## Callsign and provenance
 
-Every interactive worker must adopt one callsign near the start of its live chat
-or session. This is the routine attribution boundary when several workers share
-one human-facing account.
+Every interactive worker adopts one short, pronounceable, visually distinctive
+callsign near session start and keeps it stable for the chat.
 
-- Choose a short, pronounceable, visually distinctive callsign.
-- Search active and recent project history when practical and avoid another
-  active worker's callsign. Reuse of a historical callsign is discouraged.
-- When repository tooling is available, use `bun run callsigns -- ...` with an
-  explicit avoid set to obtain collision-aware candidates. Suggestions are local
-  display candidates only; re-check current project history before adopting one.
-- Keep the callsign stable for the session. If it must change, state the change
-  explicitly and do not imply that two different sessions are one continuing
-  private identity.
-- A callsign found in a handoff identifies the prior worker. Say `continuing from
-  <Callsign>'s handoff` or record an explicit responsibility transfer rather than
-  writing under that callsign.
-- Do not use the shared GitHub account, provider, model, harness, permanent role,
-  stance, lane letter, or labels such as `Agent 1` as the primary callsign.
-- Use the callsign in substantive comments, reviews, pull-request descriptions,
-  checkpoints, and handoffs. It need not be repeated in every conversational
-  sentence.
-- Use `anonymous worker` only when a technical surface cannot retain a callsign.
-  State that limitation and adopt a callsign at the next durable interaction.
+- Check active and recent history when practical to avoid collisions.
+- Do not silently inherit a prior worker's callsign.
+- Describe continuation from a handoff explicitly.
+- Use the callsign in substantive comments, reviews, PR descriptions, and handoffs.
+- Do not treat a callsign as authority, competence, continuity, or a private-memory
+  claim.
 
-A callsign is descriptive, disposable attribution. It is not a durable actor ID,
-private-memory claim, authority grant, responsibility record, competence claim,
-or proof that a prior chat has returned.
-
-## Work-selection rule
-
-Prefer, in order:
-
-1. consequential decisions or expiring responsibilities waiting for attention;
-2. independent review or acceptance that can close existing work;
-3. integration, repair, or unblocking of active work;
-4. ready actions that directly advance the current wave;
-5. new exploratory work only when higher-value executable work is unavailable.
-
-Use one implementation owner for overlapping code. Parallel workers should take
-non-overlapping lanes such as independent acceptance, reproduction, research,
-rollout preparation, or evidence reconciliation. A worker must not approve its
-own consequential implementation as the only acceptance signal.
-
-Workers are expected to act independently inside the current scope and authority
-boundary. Do not wait for central assignment, unrelated reviewers, or a full-pod
-check-in when a bounded action is ready and the applicable risk tier is satisfied.
-
-## Autonomous portfolio execution
-
-Maintain a small explicit portfolio instead of stopping for another operator prompt
-at every natural boundary. One lane should normally own the primary outcome. Up to
-three secondary lanes may cover non-conflicting review, repair, integration,
-rollout preparation, reproduction, evidence, documentation, or exploration. Use
-fewer lanes when the primary work is broad, uncertain, or high risk.
-
-For each active or ready lane, keep enough durable context to identify its outcome,
-exact target, implementation or integration owner, file or subsystem fence, risk
-tier, next executable action, and block, wake, stop, or handoff condition. At a
-completion, block, review verdict, CI result, handoff, or integration decision,
-select the next highest-value eligible action without waiting for central
-assignment. When one lane blocks, advance another non-conflicting lane.
-
-Portfolio ownership does not permit hoarding or hidden overlap:
-
-- keep one implementation owner for overlapping code or shared deliverables;
-- declare stacked, partitioned, repair, continuation, and competing work explicitly;
-- do not open a replacement branch merely because another worker is temporarily quiet;
-- expose or release work that no longer receives active attention;
-- keep every lane independently understandable and recoverable.
-
-Quiet or dormant attention does not erase responsibility, provenance, branches,
-findings, or committed effects. A recovery worker may continue, repair, review,
-partition, or deliberately compete only after reconciling canonical state and
-recording the prior holder, exact last evidence, relationship to the prior work,
-overlap fence, newly accepted responsibility, remaining prior responsibility, and
-clearing or integration condition. Claims, leases, approvals, credentials, and
-production authority expire independently and must be reacquired when required.
-
-See `docs/autonomous-portfolio-execution.md` for the accepted rationale,
-evaluation signals, and rollback conditions behind this protocol default.
-
-## Communication and status updates
-
-Write routine updates like a normal teammate. Lead with what changed, what was
-learned, what is blocked, and what happens next.
-
-- Do not append a blanket inventory of deployments, credentials, configuration,
-  production writes, or other actions that were not taken.
-- Mention a non-action only when the human asked about it, it resolves a plausible
-  ambiguity, it explains a blocker or decision, or the next step crosses that
-  authority boundary.
-- Do not repeat an unchanged caution in consecutive updates. One short sentence is
-  enough when a boundary is genuinely relevant.
-- Keep evidence proportional to the work. A documentation edit does not need a
-  production-safety recital; a production rollout does need an exact approval and
-  effect record.
-- Prefer positive, concrete reporting: state the actual files, checks, findings,
-  decisions, and next action instead of listing hypothetical risks far downstream.
-
-Approval and safety rules still apply even when they are not repeated in every
-message. Omitting irrelevant boilerplate is not permission to cross a boundary.
-
-## Risk-tiered review and merge
-
-Choose review depth from demonstrated risk, scope, reversibility, and uncertainty;
-do not choose it from worker headcount.
-
-### Tier 0 — mechanical or documentation-only
-
-Examples include isolated documentation, comments, formatting, generated-file
-refreshes, test fixture corrections, and mechanical configuration with no runtime,
-authority, security, data, deployment, dependency, or public-contract effect.
-
-- Independent review is optional.
-- The author or integration worker may merge after inspecting the exact diff,
-  running relevant checks, confirming the head is unchanged and mergeable, and
-  clearing concrete findings.
-- Use `[skip review]` or `review-exempt` when automated review would add little
-  useful evidence.
-
-### Tier 1 — bounded low-risk runtime or operating-protocol change
-
-Examples include a small local helper, typed renderer, narrow validation repair,
-focused instruction change, or isolated behaviour with straightforward rollback
-and no authorization, privacy, schema, migration, durable-state, data-loss,
-deployment, or broad compatibility boundary.
-
-- Require one independent exact-head `ACCEPT` plus green relevant checks.
-- Once the head is unchanged, mergeable, green, and free of unresolved blocking
-  threads, the integration worker may merge without another ceremonial wait.
-
-### Tier 2 — elevated or broad change
-
-Use this tier for authentication or authorization, privacy, schema or migration,
-durable state machines, exactly-once effects, data retention or deletion,
-cross-project isolation, public protocol changes, dependencies, broad
-compatibility, or changes whose rollback is uncertain.
-
-- Require at least one independent exact-head acceptance and an explicit
-  integration decision.
-- Add a second or specialist review when the change spans multiple high-risk
-  boundaries, evidence conflicts, tests cannot cover the failure mode, or the
-  first reviewer records material residual uncertainty.
-- Competing candidates require an independent integration owner who did not
-  author the selected final revision.
-
-### Tier 3 — consequential operation
-
-Production deployment or enablement, credentials, permission widening,
-destructive data operations, spending, external publication, irreversible
-migration, and comparable real-world effects require contemporaneous human
-approval unless a narrower standing policy explicitly grants them.
-
-A known regression may be accepted as residual risk only when it is bounded,
-reversible, documented, outside safety/authorization/privacy/data-loss
-boundaries, and paired with a clear follow-up or rollback condition. Do not block
-a useful low-risk change merely because it is imperfect; do not downgrade a
-serious finding merely because the diff is small.
-
-After the required evidence exists, merge promptly. Re-fetch the exact head,
-current base, CI, mergeability, reviews, and unresolved threads immediately
-before merging. Do not merge a moved head on stale acceptance.
-
-## Before claiming or editing
-
-- Confirm the exact issue, lane, action, repository, branch, and expected output.
-- Inspect active pull requests and recent commits for overlapping work.
-- Record or respect the current claim generation when Stensibly is available.
-- State the files or subsystem you expect to touch.
-- Classify the review and merge tier before handoff; record why deeper or lighter
-  review is appropriate.
-- Keep Tier 3 actions behind the applicable approval policy.
-
-Until the ChatGPT MCP connection is enabled, GitHub is a temporary coordination
-surface. Do not infer that a GitHub assignee or comment is a Stensibly claim.
-
-## Completion and handoff
-
-A run is incomplete until another worker can continue without its chat transcript.
-Record the subset that materially helps continuation or review:
-
-- completed scope;
-- exact branch, revision, PR, issue, and artifacts;
-- changed files;
-- commands and checks with results;
-- self-review findings;
-- independent review state and selected risk tier;
-- blockers, accepted residual risks, uncertainty, and failed approaches;
-- next owner or eligible continuation;
-- exact next action and wake condition;
-- changed approval or consequential-effect state, when it affects continuation.
-
-Do not pad a handoff with unrelated actions not taken. Release, block, complete,
-merge, or hand off accepted commitments explicitly. Never let a worker simply
-disappear while remaining the only holder of necessary context.
-
-## Descriptive sign-off
-
-Because many workers use the same GitHub account, end substantive comments,
-reviews, pull-request descriptions, checkpoints, and handoffs with the session's
-callsign. The current routine v2 form is:
+Routine sign-off:
 
 ```text
 — <Callsign> · <pod context, if useful>
-  Intention: <current bounded intention, if useful>
+  Intention: <current meaningful outcome, if useful>
 ```
 
-Use expanded provenance only when it helps continuation or review:
+Add exact revisions, run IDs, and work references when they improve review or
+continuation.
 
-```text
-— <Callsign> · <mantle, if any> · <pod context, if useful>
-  Intention: <current bounded intention, if useful>
-  Run: <run ID or chat-local identifier>
-  Work: <project / wave / lane / action>
-  Reviewed revision: <exact commit SHA, when applicable>
-```
+## Work selection
 
-Do not add `Stance` or provider/model/runtime labels to the routine footer. Store
-those as separate run provenance when relevant. The sign-off is attribution
-metadata, not authority, identity continuity, responsibility, or proof of
-competence.
+Prefer, in order:
 
-## Surveys and improvement
+1. the primary current-wave outcome and demonstrated blockers;
+2. integration, deployment, verification, and real dogfood use of accepted work;
+3. independent review or acceptance that closes existing work;
+4. repair or recovery of active or dormant work;
+5. adjacent product work that advances the wave;
+6. exploration when higher-value executable work is unavailable.
 
-When entering stale or confusing work, run a bounded survey before adding prose:
-identify material changes, ready actions, stalled responsibilities, review gaps,
-conflicting guidance, and a possible no-op result. Separate observations from
-recommendations.
+Avoid replacing an active coherent implementation without reconciling it. Parallel
+workers should take non-overlapping implementation, review, deployment, evidence,
+reproduction, or product lanes.
 
-After meaningful work, record reusable findings and improvement proposals with
-provenance. Pod charters, prompts, practices, mantles, and this protocol should
-evolve through versioned, reversible, evidence-backed changes rather than silent
-rewriting.
+## Autonomous portfolio execution
 
-Use `docs/operating-instruction-lifecycle.md` when proposing more or less context,
-revised parallelism, pod tips, resource requests, audit repairs, or another change
-to how workers are instructed. Local pod notes may remain local; promotion into
-this shared protocol requires a reviewed proposal.
+Maintain one primary outcome and up to three useful secondary lanes. Use fewer when
+the primary work is broad or uncertain.
 
-## Pull-request review workflow
+For each lane, keep enough durable context to identify:
 
-- CodeRabbit is already configured to review non-draft pull requests automatically. Do not manually invoke it after every push.
-- Greptile is an opt-in second review and runs only when the human operator applies the `deep-review` label. Do not apply that label or mention `@greptileai` unless explicitly asked.
-- Keep a pull request in draft while actively iterating. Mark it ready when the change is coherent and the checks required by its risk tier pass.
-- Do not request Codex GitHub reviews or mention `@codex review`. Codex usage is reserved for explicit implementation work requested by the human operator.
-- Retrigger CodeRabbit or Greptile only when the human operator asks or when a requested review failed for a transient service reason.
-- Verify every automated finding against the current code. Prioritize demonstrated correctness, authorization, security, data-loss, state-machine, compatibility, and contract issues.
-- Ignore or explain away speculative style, blanket documentation, duplication, and refactoring suggestions that do not improve behavior or reduce a concrete maintenance risk.
-- Do not involve every worker by default. Request only the independent or specialist review justified by the selected tier.
-- An `ACCEPT` applies only to the exact reviewed revision. A bounded documented residual risk may remain; a concrete unresolved blocker may not.
-- Use the `review-exempt` label or `[skip review]` in the title for Tier 0 changes where automated review would add little value.
+- outcome and exact target;
+- current owner and overlap fence;
+- relevant branch, revision, deployment, or evidence;
+- selected risk tier;
+- next executable action;
+- block, wake, recovery, integration, or completion condition.
+
+At completion, block, CI result, review verdict, merge, deployment, or dogfood
+finding, choose the next highest-value eligible action without waiting for central
+assignment.
+
+## Dormant-work recovery
+
+Quiet attention does not erase provenance, responsibility, branches, findings, or
+committed effects. It does loosen presumed exclusivity.
+
+A recovery worker may continue, repair, partition, review, integrate, or create a
+bounded competing candidate after reconciling:
+
+- the prior holder and exact last evidence;
+- current state and overlap;
+- the continuation relationship;
+- newly accepted responsibility;
+- what remains with the prior worker;
+- the clearing or integration condition.
+
+Do not impersonate the prior worker. Keep the work recoverable by another fresh
+chat.
+
+## Risk-tiered review, merge, and deployment
+
+Choose review depth from real consequences, scope, reversibility, and uncertainty.
+Deployment alone does not determine the tier.
+
+### Tier 0 — mechanical
+
+Documentation, formatting, generated refreshes, narrow test fixtures, and
+repository-only configuration with no runtime or public-contract effect.
+
+- Independent review is optional.
+- The author or integration worker may merge after exact diff inspection and
+  relevant checks.
+
+### Tier 1 — bounded internal dogfood change
+
+Small reversible runtime, UI, protocol, deployment, or configuration changes with
+narrow impact and strong verification.
+
+- One independent exact-head acceptance is normally sufficient.
+- Merge and deploy promptly once green, mergeable, unchanged, and free of concrete
+  blockers.
+
+### Tier 2 — elevated internal change
+
+Authentication, authorisation, privacy, schema, durable state, retention,
+cross-project isolation, broad compatibility, dependencies, or uncertain recovery.
+
+- Require at least one independent exact-head acceptance and an explicit
+  integration decision.
+- Add specialist review only when the actual boundaries or residual uncertainty
+  justify it.
+- After acceptance, merge, deploy, and dogfood under `STENSIBLY.md` rather than
+  waiting for ceremonial approval.
+
+### Tier 3 — external or materially consequential effect
+
+Use Tier 3 for effects outside the internal dogfood grant: material spend, access
+widening beyond the operator and participating agents, external publication or
+contact, secret exposure, destructive non-test data operations, irreversible
+migration without recovery, or comparable legal/financial consequences.
+
+Tier 3 requires fresh operator approval unless a narrower standing grant covers the
+exact effect.
+
+Before merging a reviewed change, re-fetch the exact head, current base, CI,
+mergeability, reviews, and unresolved threads. Exact-head acceptance expires when
+the head moves.
+
+## Deployment and failure handling
+
+Deployment is a normal completion step when it is needed to verify or deliver the
+outcome.
+
+- Use protected workflows and environments.
+- Keep secret values out of logs, comments, chat, and retained artifacts.
+- Verify the actual hosted surfaces after deployment.
+- Prefer fix-forward when the state is healthy enough to repair safely.
+- Roll back after a demonstrated regression, failed verification, or unsafe partial
+  state when rollback is the better recovery.
+- Do not disable a working feature merely because disablement appears more
+  conservative.
+
+A rollback plan is evidence of recoverability, not a reason to avoid shipping.
+
+## Communication
+
+Write updates like a teammate:
+
+- lead with what changed, what was learned, and what happens next;
+- report live deployments and product behaviour when relevant;
+- do not append blanket inventories of actions not taken;
+- do not repeat unchanged cautions;
+- mention a boundary only when it changes the next action;
+- distinguish a concrete blocker from an imperfection that can safely ship and be
+  repaired.
+
+## Completion and handoff
+
+A run is incomplete until another worker can continue without the transcript.
+Record the subset that materially helps:
+
+- completed outcome and changed files;
+- exact issue, PR, branch, revision, deployment, and artifacts;
+- tests, checks, dogfood results, and failures;
+- review and integration state;
+- live configuration or effect state when relevant;
+- residual risks and accepted imperfections;
+- exact next action and recovery condition.
+
+Do not pad handoffs with unrelated non-actions. Merge, deploy, complete, release,
+block, or hand off work explicitly.
+
+## Improvement
+
+After meaningful work, record reusable findings and improve the protocol when it
+causes stalls, repeated operator correction, duplicate work, unnecessary approval,
+or missed ambition.
+
+Use `docs/operating-instruction-lifecycle.md` for durable protocol changes, but do
+not let process prevent an operator-directed correction from becoming effective.
+Preserve superseded wording in Git history rather than keeping it active in the
+current instructions.
