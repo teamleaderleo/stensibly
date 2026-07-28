@@ -1,9 +1,4 @@
 from pathlib import Path
-from textwrap import dedent
-
-
-def block(value: str) -> str:
-    return dedent(value).lstrip("\n")
 
 
 def replace_once(path: str, old: str, new: str) -> None:
@@ -18,49 +13,40 @@ def replace_once(path: str, old: str, new: str) -> None:
 replace_once(
     "src/hosted-auth.ts",
     '    if (!payload) throw new ProviderFailure("token_exchange", "malformed_response");\n',
-    block(
-        """
-            if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-              throw new ProviderFailure("token_exchange", "malformed_response");
-            }
-        """
-    ),
+    '''    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new ProviderFailure("token_exchange", "malformed_response");
+    }
+''',
 )
 
 replace_once(
     "test/hosted-auth-github-http-client.test.ts",
-    block(
-        """
-            expectFailure(
-              await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
-              "token_exchange",
-              [EXCHANGE_INPUT.code],
-              "malformed_response",
-            );
+    '''    expectFailure(
+      await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
+      "token_exchange",
+      [EXCHANGE_INPUT.code],
+      "malformed_response",
+    );
 
-            const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
-        """
-    ),
-    block(
-        """
-            expectFailure(
-              await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
-              "token_exchange",
-              [EXCHANGE_INPUT.code],
-              "malformed_response",
-            );
+    const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
+''',
+    '''    expectFailure(
+      await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
+      "token_exchange",
+      [EXCHANGE_INPUT.code],
+      "malformed_response",
+    );
 
-            for (const payload of ["scalar", []]) {
-              const invalidShape = githubClient(singleUseFetch(tokenResponse(payload)));
-              expectFailure(
-                await captureFailure(invalidShape.exchangeCode(EXCHANGE_INPUT)),
-                "token_exchange",
-                [EXCHANGE_INPUT.code, "scalar"],
-                "malformed_response",
-              );
-            }
+    for (const payload of ["scalar", []]) {
+      const invalidShape = githubClient(singleUseFetch(tokenResponse(payload)));
+      expectFailure(
+        await captureFailure(invalidShape.exchangeCode(EXCHANGE_INPUT)),
+        "token_exchange",
+        [EXCHANGE_INPUT.code, "scalar"],
+        "malformed_response",
+      );
+    }
 
-            const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
-        """
-    ),
+    const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
+''',
 )
