@@ -1,0 +1,210 @@
+name: Apply focused provider network repair
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/w01-apply-provider-network-repair-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Apply focused repair
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:120]!r}")
+              target.write_text(text.replace(old, new, 1))
+
+          def replace_section(path: str, start: str, end: str, replacement: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              if text.count(start) != 1 or text.count(end) != 1:
+                  raise SystemExit(f"{path}: section markers are not unique")
+              start_index = text.index(start)
+              end_index = text.index(end, start_index)
+              target.write_text(text[:start_index] + replacement + text[end_index:])
+
+          replace_once(
+              "src/hosted-auth.ts",
+              "const GITHUB_REQUEST_TIMEOUT_MS = 15_000;",
+              "const GITHUB_TOKEN_REQUEST_TIMEOUT_MS = 30_000;\nconst GITHUB_IDENTITY_REQUEST_TIMEOUT_MS = 15_000;",
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '  | "network_failure"',
+              '  | "network_timeout"\n  | "network_exception"',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''      response = await this.fetchImpl("https://github.com/login/oauth/access_token", {
+                method: "POST",
+                headers: {
+                  accept: "application/json",
+                  "content-type": "application/x-www-form-urlencoded",
+                  "user-agent": "Stensibly",
+                },
+                body: new URLSearchParams({
+                  client_id: this.clientId,
+                  client_secret: this.clientSecret,
+                  code: input.code,
+                  redirect_uri: input.redirectUri,
+                  code_verifier: input.codeVerifier,
+                }),
+                signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+              });''',
+              '''      response = await this.fetchImpl("https://github.com/login/oauth/access_token", {
+                method: "POST",
+                headers: {
+                  accept: "application/json",
+                  "content-type": "application/x-www-form-urlencoded",
+                  "user-agent": "Stensibly",
+                },
+                body: new URLSearchParams({
+                  client_id: this.clientId,
+                  client_secret: this.clientSecret,
+                  code: input.code,
+                  redirect_uri: input.redirectUri,
+                  code_verifier: input.codeVerifier,
+                }),
+                signal: AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS),
+              });''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''    } catch {
+                throw new ProviderFailure("token_exchange", "network_failure");
+              }''',
+              '''    } catch (error) {
+                throw new ProviderFailure(
+                  "token_exchange",
+                  providerNetworkFailureReason(error),
+                );
+              }''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''      userResponse = await this.fetchImpl("https://api.github.com/user", {
+                headers,
+                signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+              });''',
+              '''      userResponse = await this.fetchImpl("https://api.github.com/user", {
+                headers,
+                signal: AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS),
+              });''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''    } catch {
+                throw new ProviderFailure("identity_request");
+              }''',
+              '''    } catch (error) {
+                throw new ProviderFailure(
+                  "identity_request",
+                  providerNetworkFailureReason(error),
+                );
+              }''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              "function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {",
+              '''function providerNetworkFailureReason(error: unknown): GitHubProviderFailureReason {
+            const name = typeof error === "object" && error !== null && "name" in error
+              ? (error as { name?: unknown }).name
+              : undefined;
+            return name === "TimeoutError" ? "network_timeout" : "network_exception";
+          }
+
+          function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {''',
+          )
+
+          replace_section(
+              "test/hosted-auth-github-http-client.test.ts",
+              '  test("classifies network failures at the active provider phase", async () => {',
+              '  test("requires an explicit X-OAuth-Scopes header", async () => {',
+              '''  test("separates provider timeouts from other network exceptions", async () => {
+            const cases = [
+              {
+                error: Object.assign(new Error("timeout-sentinel"), { name: "TimeoutError" }),
+                reason: "network_timeout" as const,
+                excluded: "timeout-sentinel",
+              },
+              {
+                error: new TypeError("network-exception-sentinel"),
+                reason: "network_exception" as const,
+                excluded: "network-exception-sentinel",
+              },
+            ];
+
+            for (const testCase of cases) {
+              let calls = 0;
+              const throwingFetch = (async () => {
+                calls += 1;
+                throw testCase.error;
+              }) as unknown as typeof fetch;
+
+              const exchangeClient = githubClient(throwingFetch);
+              expectFailure(
+                await captureFailure(exchangeClient.exchangeCode(EXCHANGE_INPUT)),
+                "token_exchange",
+                [testCase.excluded, EXCHANGE_INPUT.code],
+                testCase.reason,
+              );
+              expect(calls).toBe(1);
+
+              const identityClient = githubClient(throwingFetch);
+              expectFailure(
+                await captureFailure(identityClient.readIdentity(TOKEN)),
+                "identity_request",
+                [testCase.excluded, TOKEN],
+                testCase.reason,
+              );
+              expect(calls).toBe(2);
+            }
+          });
+
+          ''',
+          )
+          PY
+
+          rm .github/workflows/w01-apply-provider-network-repair-v3.yml
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate repair
+        run: |
+          bun test test/hosted-auth-github-http-client.test.ts
+          bun run typecheck
+          git diff --check
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/hosted-auth.ts test/hosted-auth-github-http-client.test.ts .github/workflows/w01-apply-provider-network-repair-v3.yml
+          git commit -m "Split GitHub provider network failures"
+          git push origin HEAD:${{ github.head_ref }}
