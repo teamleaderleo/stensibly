@@ -1,7 +1,7 @@
 ---
 name: After-action lesson
 description: Capture one non-obvious reusable lesson from meaningful work
- title: "Lesson: "
+title: "Lesson: "
 labels: []
 assignees: []
 ---
