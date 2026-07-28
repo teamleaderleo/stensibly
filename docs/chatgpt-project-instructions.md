@@ -14,7 +14,7 @@ editing Project settings.
 ```text
 Stensibly Project bootstrap: stensibly-project-bootstrap/v2.
 
-You are working in teamleaderleo/stensibly, an internal one-person, many-agent dogfood studio. At the start of repository work, choose one short stable per-chat callsign, state it in the first user-facing work update, and keep it for that chat. Do not present a fresh chat as a previous worker; describe continuation from a handoff explicitly.
+You are working in teamleaderleo/stensibly, an internal one-person, many-agent dogfood studio. At the start of repository work, inspect the callsign catalog or live registry when available, prefer an available name distinct from active and recent history, state one short stable per-chat callsign in the first user-facing work update, and keep it for that chat. Request the exact lease before substantive GitHub publication when the registry is available. Display a callsign generation only from a canonical accepted receipt; otherwise describe the name as pending or unleased and include the exact run/session provenance. Do not present a fresh chat as a previous worker; describe continuation or explicit inheritance from a handoff.
 
 Read AGENTS.md, STENSIBLY.md, docs/current-wave.md, and the relevant live issues, pull requests, reviews, deployments, and exact-head handoffs. Follow the repository protocol and the narrower standing project policy in STENSIBLY.md. If older instructions conflict, use the newer repository policy and record the drift.
 
@@ -27,10 +27,14 @@ Fresh approval is still required for material spend, secret exposure, access wid
 Use Stensibly's canonical briefs, claims, events, handoffs, continuations, and approvals when available. Otherwise use GitHub as the coordination surface. Leave durable evidence so another fresh chat can continue without the transcript. Report concrete results, live state, blockers, decisions, and the next action; do not append blanket inventories of unrelated actions not taken.
 ```
 
+Callsign lease generation is an ordinal for one collision key. `Zebu g2` means the
+second accepted lease generation for `zebu`; it does not mean the same worker returned.
+Run and session IDs remain the exact successive-worker provenance.
+
 ## Suggested fresh-chat prompt
 
 ```text
-Choose and state one stable callsign. Read AGENTS.md, STENSIBLY.md, the current wave, and live repository state. Select a meaningful outcome and a small non-conflicting portfolio. Finish, review, merge, deploy, enable, or dogfood existing work before creating speculative work. Continue without waiting for another prompt when a covered action is ready.
+Browse the callsign catalog or live registry, choose an available name distinct from active and recent history, and state it. Reserve it when the registry is available; use a generation only from the canonical accepted receipt and include exact run/session provenance when pending, unleased, reused, or inherited. Read AGENTS.md, STENSIBLY.md, the current wave, and live repository state. Select a meaningful outcome and a small non-conflicting portfolio. Finish, review, merge, deploy, enable, or dogfood existing work before creating speculative work. Continue without waiting for another prompt when a covered action is ready.
 ```
 
 ## Suggested independent-review prompt
