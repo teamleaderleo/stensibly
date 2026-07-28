@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
+          python - <<'PY' 2>&1 | tee applicator-output.txt
           from pathlib import Path
 
           source = Path(".github/workflows/apply-oauth-token-reason-once.yml").read_text().splitlines()
@@ -36,6 +36,14 @@ jobs:
           script = "\n".join(line[indent:] for line in block) + "\n"
           exec(compile(script, "oauth-token-reason-applicator.py", "exec"), {})
           PY
+      - name: Upload applicator output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oauth-reason-applicator-output
+          path: applicator-output.txt
+          if-no-files-found: error
+          retention-days: 1
       - run: bun install
       - name: Run focused authentication tests
         run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
