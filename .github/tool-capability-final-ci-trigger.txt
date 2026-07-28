@@ -1,0 +1,1 @@
+Trigger exact-head CI for the trusted tool capability grant candidate.
