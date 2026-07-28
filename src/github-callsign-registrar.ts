@@ -52,7 +52,10 @@ export async function runGitHubCallsignRegistrar(
   if (issueNumber !== registryIssueNumber) {
     throw new Error(`Callsign registrar only accepts issue #${registryIssueNumber}`);
   }
-  if (!Number.isSafeInteger(commentId) || !body || !commentUrl || !author) {
+  if (
+    typeof commentId !== "number" || !Number.isSafeInteger(commentId)
+    || !body || !commentUrl || !author
+  ) {
     throw new Error("Issue comment event is missing required command fields");
   }
   if (author !== owner) {
