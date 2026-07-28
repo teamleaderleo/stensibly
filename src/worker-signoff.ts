@@ -18,6 +18,7 @@ export interface WorkerMantleSignoffInput {
 
 export interface WorkerSignoffInput {
   callsign: string;
+  callsignLeaseGeneration?: number;
   mantle?: WorkerMantleSignoffInput;
   pod?: string;
   intention?: string;
@@ -27,8 +28,9 @@ export interface WorkerSignoffInput {
 }
 
 export interface WorkerSignoff {
-  version: 2;
+  version: 3;
   callsign: string;
+  callsignLeaseGeneration: number | null;
   mantle: { name: string; version: number } | null;
   pod: string | null;
   intention: string | null;
@@ -43,10 +45,18 @@ export interface WorkerSignoff {
  * authority, ownership, repository access, competence, or review approval.
  *
  * Routine output needs only a callsign, with pod and intention when useful.
- * Run, work, mantle, and revision metadata are optional expanded provenance.
+ * Run, work, mantle, lease generation, and revision metadata are optional
+ * expanded provenance.
+ *
+ * A caller may provide callsignLeaseGeneration only from an accepted canonical
+ * callsign lease. This helper validates the number and renders it; it cannot
+ * prove that a lease exists.
  */
 export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
   const callsign = boundedText(input.callsign, "Worker callsign", limits.callsign);
+  const callsignLeaseGeneration = input.callsignLeaseGeneration === undefined
+    ? null
+    : leaseGeneration(input.callsignLeaseGeneration);
   const mantle = input.mantle === undefined
     ? null
     : {
@@ -67,7 +77,10 @@ export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
     ? null
     : reviewedCommit(input.reviewedRevision);
 
-  const identityParts = [escapeMarkdown(callsign)];
+  const callsignDisplay = callsignLeaseGeneration === null
+    ? escapeMarkdown(callsign)
+    : `${escapeMarkdown(callsign)} g${callsignLeaseGeneration}`;
+  const identityParts = [callsignDisplay];
   if (mantle) {
     identityParts.push(`${escapeMarkdown(mantle.name)} mantle v${mantle.version}`);
   }
@@ -82,8 +95,9 @@ export function buildWorkerSignoff(input: WorkerSignoffInput): WorkerSignoff {
   }
 
   return {
-    version: 2,
+    version: 3,
     callsign,
+    callsignLeaseGeneration,
     mantle,
     pod,
     intention,
@@ -104,6 +118,15 @@ function boundedText(value: string, label: string, maximumLength: number): strin
     throw new RangeError(`${label} must be at most ${maximumLength} characters`);
   }
   return normalized;
+}
+
+function leaseGeneration(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 1_000_000_000) {
+    throw new RangeError(
+      "Callsign lease generation must be an integer from 1 to 1000000000",
+    );
+  }
+  return value;
 }
 
 function mantleVersion(value: number): number {
