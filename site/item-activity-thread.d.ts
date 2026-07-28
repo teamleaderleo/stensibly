@@ -6,6 +6,7 @@ export interface ActivityThreadPayloadEntry {
 export interface ActivityThreadEntry {
   key: string;
   id: string;
+  anchorId: string;
   type: string;
   createdAt: string;
   actorId: string;
@@ -31,6 +32,7 @@ export interface ActivityThreadFilterOption {
   label: string;
 }
 
+export function activityEventAnchorId(eventId: unknown, position?: number): string;
 export function projectActivityThread(events: unknown): ActivityThreadEntry[];
 export function activityThreadFilterOptions(entries: ActivityThreadEntry[]): {
   actors: ActivityThreadFilterOption[];
