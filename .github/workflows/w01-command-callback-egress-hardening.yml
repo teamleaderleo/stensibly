@@ -1,0 +1,141 @@
+name: W01 Command Callback Egress Hardening
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  apply:
+    if: github.event.issue.number == 286 && github.event.comment.body == '/bramble-apply-callback-egress-hardening'
+    name: Apply and verify callback egress hardening
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      hardened_sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Apply exact hardening script
+        id: applicator
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/w01_callback_egress_hardening.py \
+            > .github/w01-callback-egress-apply.log \
+            2>&1
+      - name: Record applicator failure
+        if: steps.applicator.outcome == 'failure'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.existsSync('.github/w01-callback-egress-apply.log')
+              ? fs.readFileSync('.github/w01-callback-egress-apply.log', 'utf8')
+              : 'applicator log unavailable';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 286,
+              body: [
+                '## W01 callback hardening applicator failed',
+                '',
+                `- workflow run: \`${context.runId}\``,
+                '```text',
+                raw.slice(0, 1800).replace(/`/g, "'"),
+                '```',
+                '',
+                '— Bramble · bounded applicator receipt'
+              ].join('\n')
+            });
+      - name: Stop after applicator failure
+        if: steps.applicator.outcome == 'failure'
+        run: exit 1
+      - name: Run exact checks
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+      - name: Commit hardened callback transport
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/hosted-auth.ts test/hosted-auth-github-preflight.test.ts
+          git commit -m "Harden GitHub callback egress diagnostics"
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy and verify callback egress hardening
+    needs: apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: stensibly-worker-production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://api.stensibly.com/health
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.apply.outputs.hardened_sha }}
+      - uses: oven-sh/setup-bun@v2
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Deploy Cloudflare Worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bun run worker:deploy
+      - name: Verify bearer compatibility on both origins
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bun run verify:hosted -- --endpoint https://stensibly-api.leoli-082000.workers.dev
+          bun run verify:hosted
+      - name: Verify enabled OAuth contract on both origins
+        run: |
+          set -euo pipefail
+          bun run verify:oauth -- \
+            --endpoint https://stensibly-api.leoli-082000.workers.dev \
+            --issuer https://api.stensibly.com \
+            --expect enabled
+          bun run verify:oauth -- --expect enabled
+      - name: Record deployment evidence
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 286,
+              body: [
+                '## W01 callback egress hardening deployed',
+                '',
+                `- hardened source: \`${{ needs.apply.outputs.hardened_sha }}\``,
+                `- workflow run: \`${context.runId}\``,
+                '- exact token-endpoint preflight now runs before OAuth state consumption',
+                '- callback state remains retryable when preflight fails',
+                '- token POST uses an explicit serialized form body with no-store/manual controls',
+                '- bounded failures include a safe transport detail and Cloudflare colo',
+                '- bearer compatibility and public OAuth verification passed on both origins',
+                '',
+                '— Bramble · operator-directed fix-forward'
+              ].join('\n')
+            });
