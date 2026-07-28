@@ -161,8 +161,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          bunx wrangler secret list --name stensibly-api --format json \
-            | jq '[.[].name] | sort' > evidence/post-secret-names.json
           cat > /tmp/expected-post-secret-names.json <<'JSON'
           [
             "CONVEX_URL",
@@ -175,12 +173,23 @@ jobs:
             "STENSIBLY_SERVICE_SECRET"
           ]
           JSON
-          diff -u \
-            <(jq -S . /tmp/expected-post-secret-names.json) \
-            <(jq -S . evidence/post-secret-names.json) || {
-              echo "Post-change binding-name set is not the exact approved hosted-auth-only set" >&2
-              exit 1
-            }
+
+          matched=false
+          for attempt in 1 2 3 4 5 6; do
+            bunx wrangler secret list --name stensibly-api --format json \
+              | jq '[.[].name] | sort' > evidence/post-secret-names.json
+            if diff -u \
+              <(jq -S . /tmp/expected-post-secret-names.json) \
+              <(jq -S . evidence/post-secret-names.json); then
+              matched=true
+              break
+            fi
+            if [[ "$attempt" -lt 6 ]]; then sleep 10; fi
+          done
+          if [[ "$matched" != "true" ]]; then
+            echo "Post-change binding-name set is not the exact approved hosted-auth-only set" >&2
+            exit 1
+          fi
 
           bunx wrangler deployments list --name stensibly-api --json > /tmp/post-deployments.json
           jq 'sort_by(.created_on) | last | {deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' \
@@ -191,17 +200,28 @@ jobs:
           STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
         run: |
           set -euo pipefail
-          bun run verify:hosted | tee evidence/post-bearer-canonical.txt
-          bun run verify:hosted -- \
-            --endpoint "$WORKER_ORIGIN" \
-            | tee evidence/post-bearer-worker.txt
-          bun run verify:oauth -- --expect disabled \
-            | tee evidence/post-oauth-canonical.txt
-          bun run verify:oauth -- \
+          retry_capture() {
+            local output="$1"
+            shift
+            for attempt in 1 2 3 4 5 6; do
+              if "$@" > "$output" 2>&1; then
+                cat "$output"
+                return 0
+              fi
+              if [[ "$attempt" -lt 6 ]]; then sleep 10; fi
+            done
+            cat "$output" >&2
+            return 1
+          }
+          retry_capture evidence/post-bearer-canonical.txt bun run verify:hosted
+          retry_capture evidence/post-bearer-worker.txt bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN"
+          retry_capture evidence/post-oauth-canonical.txt bun run verify:oauth -- \
+            --expect disabled
+          retry_capture evidence/post-oauth-worker.txt bun run verify:oauth -- \
             --endpoint "$WORKER_ORIGIN" \
             --issuer "$CANONICAL_ORIGIN" \
-            --expect disabled \
-            | tee evidence/post-oauth-worker.txt
+            --expect disabled
 
       - name: Restore exact pre-change Worker version after any failed mutation
         if: failure() && steps.disable_oauth.outcome != 'skipped'
@@ -214,22 +234,46 @@ jobs:
           bunx wrangler rollback "$EXPECTED_PRECHANGE_VERSION_ID" \
             --name stensibly-api \
             --message "Restore exact pre-change version after failed #410 OAuth disable transition"
-          bunx wrangler secret list --name stensibly-api --format json \
-            | jq '[.[].name] | sort' > evidence/restored-secret-names.json
-          diff -u \
-            <(jq -S . /tmp/expected-pre-secret-names.json) \
-            <(jq -S . evidence/restored-secret-names.json)
-          bun run verify:hosted | tee evidence/restored-bearer-canonical.txt
-          bun run verify:hosted -- \
-            --endpoint "$WORKER_ORIGIN" \
-            | tee evidence/restored-bearer-worker.txt
-          bun run verify:oauth -- --expect enabled \
-            | tee evidence/restored-oauth-canonical.txt
-          bun run verify:oauth -- \
+
+          restored=false
+          for attempt in 1 2 3 4 5 6; do
+            bunx wrangler secret list --name stensibly-api --format json \
+              | jq '[.[].name] | sort' > evidence/restored-secret-names.json
+            if diff -u \
+              <(jq -S . /tmp/expected-pre-secret-names.json) \
+              <(jq -S . evidence/restored-secret-names.json); then
+              restored=true
+              break
+            fi
+            if [[ "$attempt" -lt 6 ]]; then sleep 10; fi
+          done
+          if [[ "$restored" != "true" ]]; then
+            echo "Exact pre-change binding-name set was not restored" >&2
+            exit 1
+          fi
+
+          retry_capture() {
+            local output="$1"
+            shift
+            for attempt in 1 2 3 4 5 6; do
+              if "$@" > "$output" 2>&1; then
+                cat "$output"
+                return 0
+              fi
+              if [[ "$attempt" -lt 6 ]]; then sleep 10; fi
+            done
+            cat "$output" >&2
+            return 1
+          }
+          retry_capture evidence/restored-bearer-canonical.txt bun run verify:hosted
+          retry_capture evidence/restored-bearer-worker.txt bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN"
+          retry_capture evidence/restored-oauth-canonical.txt bun run verify:oauth -- \
+            --expect enabled
+          retry_capture evidence/restored-oauth-worker.txt bun run verify:oauth -- \
             --endpoint "$WORKER_ORIGIN" \
             --issuer "$CANONICAL_ORIGIN" \
-            --expect enabled \
-            | tee evidence/restored-oauth-worker.txt
+            --expect enabled
 
       - name: Record successful transition
         if: success()
