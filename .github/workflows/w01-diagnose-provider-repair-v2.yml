@@ -1,0 +1,56 @@
+name: Diagnose provider repair v2
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/w01-diagnose-provider-repair-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Run extracted patch and capture first mismatch
+        id: patch
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python3 <<'PY' > .github/provider-network-repair-v2-error.txt 2>&1
+          from pathlib import Path
+
+          source = Path('.github/workflows/w01-apply-provider-network-repair-v2.yml').read_text()
+          marker = "          python3 <<'PY'\n"
+          start = source.index(marker) + len(marker)
+          end = source.index("          PY\n", start)
+          lines = source[start:end].splitlines()
+          script = "\n".join(line[10:] if line.startswith("          ") else line for line in lines)
+          exec(compile(script, 'provider-network-repair-v2.py', 'exec'))
+          PY
+          status=$?
+          set -e
+          exit "$status"
+
+      - name: Commit bounded mismatch receipt
+        if: steps.patch.outcome == 'failure'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/provider-network-repair-v2-error.txt
+          git commit -m "Record v2 provider repair mismatch"
+          git push origin HEAD:${{ github.head_ref }}
+
+      - name: Fail after receipt
+        if: steps.patch.outcome == 'failure'
+        run: exit 1
