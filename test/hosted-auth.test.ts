@@ -289,6 +289,7 @@ describe("hosted GitHub OAuth endpoints", () => {
       error: "GitHub authentication failed",
       code: "provider_failure",
       stage: "token_exchange",
+      operation: "exchange",
     }));
     expect(body).not.toContain("secret provider failure");
   });
@@ -351,6 +352,7 @@ describe("hosted GitHub OAuth endpoints", () => {
       code: "provider_failure",
       stage: "token_exchange",
       reason: "bad_verification_code",
+      operation: "exchange",
     }));
     expect(body).not.toContain("provider-description-sentinel");
     expect(body).not.toContain(verifier);

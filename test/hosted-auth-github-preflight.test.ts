@@ -20,8 +20,8 @@ describe("HttpGitHubOAuthClient callback egress hardening", () => {
     expect(requests).toHaveLength(1);
     expect(String(requests[0]?.input)).toBe("https://github.com/login/oauth/access_token");
     expect(requests[0]?.init?.method).toBe("GET");
-    expect(requests[0]?.init?.cache).toBe("no-store");
-    expect(requests[0]?.init?.redirect).toBe("manual");
+    expect(requests[0]?.init?.cache).toBeUndefined();
+    expect(requests[0]?.init?.redirect).toBeUndefined();
     expect(requests[0]?.init?.body).toBeUndefined();
   });
 
@@ -42,8 +42,8 @@ describe("HttpGitHubOAuthClient callback egress hardening", () => {
     await expect(client.exchangeCode(EXCHANGE_INPUT)).resolves.toBe("github-token-sentinel");
     expect(requests).toHaveLength(1);
     expect(typeof requests[0]?.init?.body).toBe("string");
-    expect(requests[0]?.init?.cache).toBe("no-store");
-    expect(requests[0]?.init?.redirect).toBe("manual");
+    expect(requests[0]?.init?.cache).toBeUndefined();
+    expect(requests[0]?.init?.redirect).toBeUndefined();
     const body = new URLSearchParams(String(requests[0]?.init?.body));
     expect(body.get("code")).toBe(EXCHANGE_INPUT.code);
     expect(body.get("redirect_uri")).toBe(EXCHANGE_INPUT.redirectUri);
