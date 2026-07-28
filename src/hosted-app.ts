@@ -17,6 +17,10 @@ import {
   type HostedAuthOptions,
 } from "./hosted-auth.js";
 import type { HostedSessionHttpAuthOptions, StensiblyEnv } from "./http-auth.js";
+import {
+  registerHostedProviderCapacityRoutes,
+  type HostedProviderCapacityOptions,
+} from "./hosted-provider-capacity-api.js";
 import type { WorkLedger } from "./ledger.js";
 import { handleMcpHttpRequest } from "./mcp-http.js";
 import {
@@ -30,6 +34,7 @@ import {
   ConvexTokenProvider,
   type ApiTokenAuthenticator,
 } from "./token-provider.js";
+import { ConvexProviderCapacityService } from "./provider-capacity-convex.js";
 import {
   FAILURE_CATEGORY_HEADER,
   type FailureCategory,
@@ -43,6 +48,7 @@ export interface HostedAppOptions {
   allowedHosts?: string[];
   hostedAuth?: HostedAuthOptions;
   mcpOAuth?: McpOAuthOptions;
+  providerCapacity?: HostedProviderCapacityOptions;
 }
 
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
@@ -79,6 +85,17 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   }));
   if (options.hostedAuth) app.route("/auth", createHostedAuth(options.hostedAuth));
   if (options.mcpOAuth) app.route("/", createMcpOAuth(options.mcpOAuth));
+  if (options.providerCapacity) {
+    registerHostedProviderCapacityRoutes(
+      app,
+      options.authenticator,
+      {
+        required: true,
+        ...(hostedSession ? { hostedSession } : {}),
+      },
+      options.providerCapacity,
+    );
+  }
   app.all("/mcp", async (context) => {
     const response = await handleMcpHttpRequest(context.req.raw, {
       ledger: options.ledger,
@@ -133,7 +150,24 @@ export function createHostedAppFromEnv(
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
     hostedAuth,
     mcpOAuth: mcpOAuthFromEnv(ledger, hostedAuth, env),
+    providerCapacity: providerCapacityFromEnv(ledger, env),
   });
+}
+
+function providerCapacityFromEnv(
+  ledger: ConvexWorkLedger,
+  env: Record<string, string | undefined>,
+): HostedProviderCapacityOptions | undefined {
+  const githubWebhookSecret = trimmed(env.STENSIBLY_GITHUB_WEBHOOK_SECRET);
+  if (!githubWebhookSecret) return undefined;
+  return {
+    service: new ConvexProviderCapacityService({
+      client: ledger.client,
+      serviceSecret: ledger.serviceSecret,
+      workspace: ledger.workspace,
+    }),
+    githubWebhookSecret,
+  };
 }
 
 function hostedSessionOptions(
@@ -245,6 +279,7 @@ function hostedSurfaces(options: HostedAppOptions): string[] {
   const surfaces = ["api-v1", "mcp"];
   if (options.hostedAuth) surfaces.push("auth");
   if (options.mcpOAuth) surfaces.push("oauth");
+  if (options.providerCapacity) surfaces.push("provider-capacity");
   return surfaces;
 }
 
