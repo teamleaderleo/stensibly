@@ -32,7 +32,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Apply exact source and test repair
         working-directory: candidate
-        run: python ../trigger/scripts/apply-oauth-token-reason.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python ../trigger/scripts/apply-oauth-token-reason.py 2>&1 | tee applicator-output.txt
+      - name: Upload applicator output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oauth-reason-standalone-output
+          path: candidate/applicator-output.txt
+          if-no-files-found: error
+          retention-days: 1
       - name: Install dependencies
         working-directory: candidate
         run: bun install
