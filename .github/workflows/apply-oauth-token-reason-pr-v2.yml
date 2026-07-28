@@ -42,7 +42,18 @@ jobs:
           retention-days: 1
       - run: bun install
       - name: Run focused authentication tests
-        run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
+        shell: bash
+        run: |
+          set -o pipefail
+          bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts 2>&1 | tee /tmp/oauth-token-reason-tests.txt
+      - name: Upload focused test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oauth-token-reason-focused-tests
+          path: /tmp/oauth-token-reason-tests.txt
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Run full repository gate
         run: |
           bun run typecheck
