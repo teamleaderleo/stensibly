@@ -189,6 +189,7 @@ export interface ToolCapabilityGrant {
 }
 
 export type ToolCapabilityDenialReason =
+  | "grant_untrusted"
   | "grant_tampered"
   | "request_invalid"
   | "grant_not_yet_active"
@@ -230,6 +231,7 @@ export type ToolCapabilityAuthorization =
 
 export interface AuthorizeToolCapabilityInput {
   now: string;
+  trustedGrantFingerprint: string;
   expectedGeneration: number;
   request: ToolCapabilityRequestInput;
   usageByPermission?: Readonly<Record<string, number>>;
@@ -345,7 +347,6 @@ const highImpactActions = new Set<ToolCapabilityAction>([
 
 interface ArgumentBudget {
   nodes: number;
-  bytes: number;
 }
 
 /** Builds one exact, canonical tool-call request. */
@@ -365,6 +366,13 @@ export function buildToolCapabilityRequest(
   const action = exactEnum(input.action, toolCapabilityActions, "Tool capability action");
   const resource = canonicalResource(action, input.resource);
   const argumentsValue = canonicalArguments(input.arguments);
+  validateActionConstraints({
+    workspace,
+    project,
+    action,
+    resourceInput: input.resource,
+    arguments: argumentsValue,
+  });
   const argumentsFingerprint = sha256(stableJson(argumentsValue));
   const canonical = {
     version: 1 as const,
@@ -379,6 +387,26 @@ export function buildToolCapabilityRequest(
     argumentsFingerprint,
   };
   return deepFreeze({ ...canonical, fingerprint: sha256(stableJson(canonical)) });
+}
+
+/** Builds the exact approval binding for one grant generation and permission. */
+export function buildToolCapabilityApprovalBinding(input: {
+  grantId: string;
+  generation: number;
+  permissionId: string;
+  request: ToolCapabilityRequestInput;
+}): string {
+  if (!isRecord(input)) throw new RangeError("Tool capability approval binding must be an object");
+  const grantId = boundedPrefixedIdentifier(input.grantId, "Grant ID", grantPattern, limits.grantId);
+  const generation = positiveInteger(input.generation, "Grant generation");
+  const permissionId = boundedPrefixedIdentifier(
+    input.permissionId,
+    "Permission ID",
+    permissionPattern,
+    limits.permissionId,
+  );
+  const request = buildToolCapabilityRequest(input.request);
+  return approvalBindingFingerprint(grantId, generation, permissionId, request.fingerprint);
 }
 
 /**
@@ -465,6 +493,9 @@ export function buildToolCapabilityGrant(
       ? 1
       : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
     const approval = canonicalApproval(
+      grantId,
+      generation,
+      permissionId,
       request,
       permissionInput.approval,
       issuedAt,
@@ -503,6 +534,19 @@ export function authorizeToolCapability(
   input: AuthorizeToolCapabilityInput,
 ): ToolCapabilityAuthorization {
   if (!validGrantFingerprint(grant)) return denied(grant, null, "grant_tampered");
+
+  let trustedGrantFingerprint: string;
+  try {
+    trustedGrantFingerprint = boundedFingerprint(
+      input.trustedGrantFingerprint,
+      "Trusted grant fingerprint",
+    );
+  } catch {
+    return denied(grant, null, "grant_untrusted");
+  }
+  if (trustedGrantFingerprint !== grant.fingerprint) {
+    return denied(grant, null, "grant_untrusted");
+  }
 
   let now: string;
   let expectedGeneration: number;
@@ -583,10 +627,21 @@ export function authorizeToolCapability(
 /** Projects grant state without exposing exact arguments or secret material. */
 export function projectToolCapabilityGrant(
   grant: ToolCapabilityGrant,
-  input: { now: string; usageByPermission?: Readonly<Record<string, number>> },
+  input: {
+    now: string;
+    trustedGrantFingerprint: string;
+    usageByPermission?: Readonly<Record<string, number>>;
+  },
 ): ToolCapabilityGrantProjection {
   const now = canonicalTimestamp(input.now, "Projection time");
-  const valid = validGrantFingerprint(grant);
+  let trusted = false;
+  try {
+    trusted = boundedFingerprint(input.trustedGrantFingerprint, "Trusted grant fingerprint")
+      === grant.fingerprint;
+  } catch {
+    trusted = false;
+  }
+  const valid = validGrantFingerprint(grant) && trusted;
   const state = valid ? currentGrantState(grant, now) : "invalid";
   return {
     version: 1,
@@ -602,7 +657,7 @@ export function projectToolCapabilityGrant(
     state,
     issuer: { ...grant.issuer },
     evidenceRefs: [...grant.evidenceRefs],
-    permissions: grant.permissions.map((permission) => {
+    permissions: valid ? grant.permissions.map((permission) => {
       const usedUses = permissionUsage(input.usageByPermission, permission.permissionId);
       return {
         permissionId: permission.permissionId,
@@ -615,7 +670,7 @@ export function projectToolCapabilityGrant(
         usedUses,
         remainingUses: Math.max(0, permission.maxUses - usedUses),
       };
-    }),
+    }) : [],
     includesArguments: false,
     includesSecrets: false,
   };
@@ -690,7 +745,127 @@ function canonicalResource(
   }
 }
 
+function validateActionConstraints(input: {
+  workspace: string;
+  project: string;
+  action: ToolCapabilityAction;
+  resourceInput: ToolCapabilityResourceInput;
+  arguments: { [key: string]: ToolCapabilityJsonValue };
+}): void {
+  switch (input.action) {
+    case "branch.create": {
+      if (input.resourceInput.kind !== "github_branch_prefix") {
+        throw new RangeError("Branch creation requires a branch-prefix resource");
+      }
+      const prefix = boundedBranchPrefix(input.resourceInput.prefix);
+      const branchName = boundedBranchName(
+        requiredArgumentString(input.arguments, "branchName", "Branch name"),
+      );
+      if (branchName === prefix || !branchName.startsWith(prefix)) {
+        throw new RangeError("Branch name must be inside the authorized branch prefix");
+      }
+      boundedSha(
+        requiredArgumentString(input.arguments, "baseSha", "Branch base SHA"),
+        "Branch base SHA",
+      );
+      return;
+    }
+    case "artifact.attach": {
+      if (input.resourceInput.kind !== "stensibly_project") {
+        throw new RangeError("Artifact attachment requires a Stensibly project resource");
+      }
+      const resourceWorkspace = boundedWorkspace(input.resourceInput.workspace, "Resource workspace");
+      const resourceProject = boundedWorkspace(input.resourceInput.project, "Resource project");
+      if (resourceWorkspace !== input.workspace || resourceProject !== input.project) {
+        throw new RangeError("Artifact attachment resource must match the request project scope");
+      }
+      return;
+    }
+    case "merge.execute": {
+      if (input.resourceInput.kind !== "github_pull_request") {
+        throw new RangeError("Merge execution requires an exact pull-request resource");
+      }
+      const expectedHeadSha = boundedSha(
+        requiredArgumentString(input.arguments, "expectedHeadSha", "Expected pull-request head SHA"),
+        "Expected pull-request head SHA",
+      );
+      if (expectedHeadSha !== boundedSha(input.resourceInput.headSha, "Pull request head SHA")) {
+        throw new RangeError("Merge arguments must preserve the authorized pull-request head SHA");
+      }
+      const mergeMethod = requiredArgumentString(input.arguments, "mergeMethod", "Merge method");
+      exactEnum(mergeMethod, ["merge", "squash", "rebase"] as const, "Merge method");
+      return;
+    }
+    case "spend.commit": {
+      if (input.resourceInput.kind !== "spend_budget") {
+        throw new RangeError("Spend commitment requires a spend-budget resource");
+      }
+      const currency = boundedCurrency(
+        requiredArgumentString(input.arguments, "currency", "Spend currency"),
+      );
+      const maximumMinorUnits = positiveInteger(
+        input.resourceInput.maximumMinorUnits,
+        "Maximum spend minor units",
+      );
+      const amountMinorUnits = requiredArgumentInteger(
+        input.arguments,
+        "amountMinorUnits",
+        "Spend amount minor units",
+      );
+      if (currency !== boundedCurrency(input.resourceInput.currency)) {
+        throw new RangeError("Spend arguments must use the authorized currency");
+      }
+      if (amountMinorUnits > maximumMinorUnits) {
+        throw new RangeError("Spend amount exceeds the authorized budget");
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+function requiredArgumentString(
+  argumentsValue: { [key: string]: ToolCapabilityJsonValue },
+  key: string,
+  label: string,
+): string {
+  const value = argumentsValue[key];
+  if (typeof value !== "string") throw new RangeError(`${label} must be a string`);
+  return value;
+}
+
+function requiredArgumentInteger(
+  argumentsValue: { [key: string]: ToolCapabilityJsonValue },
+  key: string,
+  label: string,
+): number {
+  const value = argumentsValue[key];
+  if (!Number.isSafeInteger(value) || typeof value !== "number" || value < 1) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function approvalBindingFingerprint(
+  grantId: string,
+  generation: number,
+  permissionId: string,
+  requestFingerprint: string,
+): string {
+  return sha256(stableJson({
+    version: 1,
+    grantId,
+    generation,
+    permissionId,
+    requestFingerprint,
+  }));
+}
+
 function canonicalApproval(
+  grantId: string,
+  generation: number,
+  permissionId: string,
   request: ToolCapabilityRequest,
   input: ToolCapabilityApprovalInput | undefined,
   issuedAt: string,
@@ -716,8 +891,16 @@ function canonicalApproval(
   }
   const approvalId = boundedIdentifier(input.approvalId, "Approval ID", limits.reference);
   const bindingFingerprint = boundedFingerprint(input.bindingFingerprint, "Approval binding fingerprint");
-  if (bindingFingerprint !== request.fingerprint) {
-    throw new RangeError("Human approval must bind the exact tool capability request fingerprint");
+  const expectedBinding = approvalBindingFingerprint(
+    grantId,
+    generation,
+    permissionId,
+    request.fingerprint,
+  );
+  if (bindingFingerprint !== expectedBinding) {
+    throw new RangeError(
+      "Human approval must bind the exact grant generation, permission, and request",
+    );
   }
   const expiresAt = canonicalTimestamp(input.expiresAt, "Approval expiry");
   if (Date.parse(expiresAt) <= Date.parse(issuedAt)) {
@@ -769,7 +952,7 @@ function canonicalRevocation(
 }
 
 function canonicalArguments(value: unknown): { [key: string]: ToolCapabilityJsonValue } {
-  const budget: ArgumentBudget = { nodes: 0, bytes: 0 };
+  const budget: ArgumentBudget = { nodes: 0 };
   const canonical = canonicalJson(value, "arguments", null, 0, new Set<object>(), budget);
   if (Array.isArray(canonical) || !isRecord(canonical)) {
     throw new RangeError("Tool capability arguments must be a JSON object");
@@ -1016,6 +1199,27 @@ function boundedBranchPrefix(value: string): string {
     throw new RangeError("GitHub branch prefix is invalid");
   }
   return prefix;
+}
+
+function boundedBranchName(value: string): string {
+  const branch = boundedPattern(
+    value,
+    "GitHub branch name",
+    limits.branchPrefix,
+    branchPrefixPattern,
+  );
+  if (
+    branch.startsWith("/")
+    || branch.endsWith("/")
+    || branch.includes("//")
+    || branch.includes("..")
+    || branch.includes("@{")
+    || branch.split("/").some((part) => !part || part === "." || part.endsWith(".lock"))
+    || branch.endsWith(".")
+  ) {
+    throw new RangeError("GitHub branch name is invalid");
+  }
+  return branch;
 }
 
 function boundedSha(value: string, label: string): string {

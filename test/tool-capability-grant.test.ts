@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   authorizeToolCapability,
+  buildToolCapabilityApprovalBinding,
   buildToolCapabilityGrant,
   buildToolCapabilityRequest,
   projectToolCapabilityGrant,
@@ -76,6 +77,7 @@ function authorize(
 ) {
   return authorizeToolCapability(grant, {
     now: NOW,
+    trustedGrantFingerprint: grant.fingerprint,
     expectedGeneration: 3,
     request: requestInput,
     ...overrides,
@@ -85,8 +87,18 @@ function authorize(
 function approvalFor(
   request: ToolCapabilityRequestInput,
   state: "pending" | "approved" | "rejected",
+  overrides: {
+    grantId?: string;
+    generation?: number;
+    permissionId?: string;
+  } = {},
 ): ToolCapabilityApprovalInput {
-  const fingerprint = buildToolCapabilityRequest(request).fingerprint;
+  const fingerprint = buildToolCapabilityApprovalBinding({
+    grantId: overrides.grantId ?? "grant_capability_1",
+    generation: overrides.generation ?? 3,
+    permissionId: overrides.permissionId ?? "permission_merge",
+    request,
+  });
   if (state === "pending") {
     return {
       state,
@@ -144,6 +156,53 @@ describe("tool capability requests", () => {
       ...requestInput,
       action: "merge.execute",
     })).toThrow("requires resource kind github_pull_request");
+  });
+
+  test("enforces branch prefixes, project scope, pull-request heads, and spend caps", () => {
+    expect(() => buildToolCapabilityRequest({
+      ...requestInput,
+      arguments: { branchName: "other/escalated", baseSha: HEAD_SHA },
+    })).toThrow("inside the authorized branch prefix");
+    expect(() => buildToolCapabilityRequest({
+      ...requestInput,
+      arguments: { branchName: "nightjar/valid", baseSha: "main" },
+    })).toThrow("full 40-character SHA");
+
+    expect(() => buildToolCapabilityRequest({
+      ...requestInput,
+      action: "artifact.attach",
+      resource: { kind: "stensibly_project", workspace: "default", project: "foreign" },
+      arguments: { artifactRef: "artifact:bounded" },
+    })).toThrow("match the request project scope");
+
+    const mergeRequest: ToolCapabilityRequestInput = {
+      ...requestInput,
+      action: "merge.execute",
+      resource: {
+        kind: "github_pull_request",
+        owner: "teamleaderleo",
+        repository: "stensibly",
+        number: 453,
+        headSha: HEAD_SHA,
+      },
+      arguments: { mergeMethod: "squash", expectedHeadSha: OTHER_SHA },
+    };
+    expect(() => buildToolCapabilityRequest(mergeRequest)).toThrow(
+      "preserve the authorized pull-request head SHA",
+    );
+
+    expect(() => buildToolCapabilityRequest({
+      ...requestInput,
+      action: "spend.commit",
+      resource: { kind: "spend_budget", currency: "CAD", maximumMinorUnits: 5000 },
+      arguments: { currency: "CAD", amountMinorUnits: 5001 },
+    })).toThrow("exceeds the authorized budget");
+    expect(() => buildToolCapabilityRequest({
+      ...requestInput,
+      action: "spend.commit",
+      resource: { kind: "spend_budget", currency: "CAD", maximumMinorUnits: 5000 },
+      arguments: { currency: "USD", amountMinorUnits: 100 },
+    })).toThrow("authorized currency");
   });
 });
 
@@ -265,7 +324,38 @@ describe("tool capability grants", () => {
       resource: mergeRequest.resource,
       arguments: { mergeMethod: "squash", expectedHeadSha: OTHER_SHA },
       approval: approvalFor(mergeRequest, "approved"),
-    }))).toThrow("bind the exact tool capability request fingerprint");
+    }))).toThrow("Merge arguments must preserve the authorized pull-request head SHA");
+
+    expect(() => buildToolCapabilityGrant(grantInput({
+      permissionId: "permission_merge",
+      action: mergeRequest.action,
+      resource: mergeRequest.resource,
+      arguments: mergeRequest.arguments,
+      approval: approvalFor(mergeRequest, "approved", { generation: 3 }),
+    }, { generation: 4 }))).toThrow(
+      "bind the exact grant generation, permission, and request",
+    );
+  });
+
+  test("requires a server-owned trusted grant fingerprint", () => {
+    const grant = buildToolCapabilityGrant(grantInput());
+    expect(authorizeToolCapability(grant, {
+      now: NOW,
+      trustedGrantFingerprint: `sha256:${"0".repeat(64)}`,
+      expectedGeneration: 3,
+      request: requestInput,
+    })).toMatchObject({ authorized: false, reason: "grant_untrusted" });
+
+    const selfMinted = buildToolCapabilityGrant(grantInput({}, {
+      grantId: "grant_self_minted",
+      issuer: { actorId: "actor:attacker", authorityRef: "authority:invented" },
+    }));
+    expect(authorizeToolCapability(selfMinted, {
+      now: NOW,
+      trustedGrantFingerprint: grant.fingerprint,
+      expectedGeneration: 3,
+      request: requestInput,
+    })).toMatchObject({ authorized: false, reason: "grant_untrusted" });
   });
 
   test("detects altered persisted grants before evaluating a request", () => {
@@ -282,6 +372,7 @@ describe("tool capability grants", () => {
     const grant = buildToolCapabilityGrant(grantInput());
     const projection = projectToolCapabilityGrant(grant, {
       now: NOW,
+      trustedGrantFingerprint: grant.fingerprint,
       usageByPermission: { permission_branch_create: 1 },
     });
     expect(projection).toMatchObject({

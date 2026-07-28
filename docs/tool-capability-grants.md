@@ -38,7 +38,7 @@ The first slice supports bounded resource forms for:
 - exact resource records;
 - spend budgets expressed as currency and maximum minor units.
 
-Actions and resource kinds are paired. For example, `branch.create` requires a GitHub branch-prefix resource, while `merge.execute` requires an exact pull-request number and head SHA. A request cannot turn branch authority into merge authority by changing free-form arguments.
+Actions and resource kinds are paired. Constraint-bearing arguments are also checked against the typed resource: branch names must stay inside the authorized prefix, branch bases must be full SHAs, artifact targets must match the request workspace/project, merge arguments must preserve the exact authorized PR head, and spend amount/currency must remain within the typed budget. A request cannot turn branch authority into merge authority—or a narrow resource into a broader one—through free-form arguments.
 
 ## Argument safety
 
@@ -66,7 +66,13 @@ A grant binds:
 - at most a one-hour lifetime;
 - an optional bounded revocation record.
 
-The evaluator fails closed when the grant is not active, expired, revoked, altered after fingerprinting, or presented with a stale expected generation.
+The evaluator fails closed when the grant is not active, expired, revoked, altered after fingerprinting, presented with a stale expected generation, or not matched by the trusted grant fingerprint supplied from server-owned storage.
+
+## Trust anchor and fingerprints
+
+The record fingerprint is an integrity and replay identifier, **not a signature**. Anyone who can construct a record can also compute a SHA-256 digest. Authorization therefore requires a `trustedGrantFingerprint` obtained from the server-owned accepted-grant record. The executor must supply that value from authoritative storage; it must never accept it from model output or tool-call arguments.
+
+A self-minted grant, or a canonical grant copied from another store, fails with `grant_untrusted` even when its internal digest is valid. The expected generation is likewise supplied from current server state rather than from the requesting model.
 
 ## Uses and atomic consumption
 
@@ -86,7 +92,7 @@ Without that transaction, two concurrent callers could both observe the same rem
 
 High-impact actions currently include merge, deployment execution, credential use, external messages, destructive deletion, and spend commitment.
 
-Those permissions require an approval record whose binding fingerprint exactly equals the full request fingerprint. Pending, rejected, expired, or argument-mismatched approvals fail closed. Approval does not replace the grant: subject, generation, lifetime, resource, arguments, revocation, and budget checks still apply.
+Those permissions require an approval record whose binding fingerprint covers the grant ID, grant generation, permission ID, and full request fingerprint. Pending, rejected, expired, argument-mismatched, permission-mismatched, or generation-replayed approvals fail closed. Approval does not replace the grant: subject, generation, lifetime, resource, arguments, revocation, and budget checks still apply.
 
 Low-impact permissions cannot carry decorative approval records. This prevents unrelated approval text from being mistaken for authorization.
 
@@ -111,7 +117,7 @@ It deliberately omits exact arguments, argument fingerprints, request fingerprin
 
 A later reviewed slice should add:
 
-- append-only grant and revocation storage;
+- append-only grant and revocation storage whose accepted fingerprint is the authorization trust anchor;
 - generation-fenced issuance under current project/run authority;
 - atomic use consumption and idempotent execution receipts;
 - approval-token persistence bound to exact request fingerprints;
