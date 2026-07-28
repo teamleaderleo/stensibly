@@ -38,11 +38,28 @@ jobs:
               line[10:] if line.startswith(" " * 10) else line
               for line in body.splitlines()
           )
-          script = script.replace("from textwrap import dedent\n", "")
-          script = script.replace(
-              'def block(value: str) -> str:\n    return dedent(value).lstrip("\\n")',
-              'def block(value: str) -> str:\n    return value.lstrip("\\n")',
-          )
+          original = '''def replace_once(path: str, old: str, new: str) -> None:
+    file = Path(path)
+    source = file.read_text()
+    if source.count(old) != 1:
+        raise SystemExit(f"{path}: expected one anchor, found {source.count(old)}")
+    file.write_text(source.replace(old, new))'''
+          instrumented = '''_replace_index = 0
+
+def replace_once(path: str, old: str, new: str) -> None:
+    global _replace_index
+    _replace_index += 1
+    file = Path(path)
+    source = file.read_text()
+    count = source.count(old)
+    if count != 1:
+        raise SystemExit(
+            f"anchor #{_replace_index} {path}: expected one anchor, found {count}; old={old[:160]!r}"
+        )
+    file.write_text(source.replace(old, new))'''
+          if script.count(original) != 1:
+              raise SystemExit("could not instrument original patch helper")
+          script = script.replace(original, instrumented)
           exec(compile(script, "wicket-149-envelope", "exec"))
           PY
           git diff --check
