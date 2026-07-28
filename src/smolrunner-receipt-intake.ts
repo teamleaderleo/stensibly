@@ -303,6 +303,13 @@ export const smolRunnerPublicReceiptSchema = z.object({
       message: "Heartbeat lease cannot already be expired at observation time",
     });
   }
+  if (value.state === "queued" && value.queue === null) {
+    context.addIssue({
+      code: "custom",
+      path: ["queue"],
+      message: "Queued state requires queue evidence",
+    });
+  }
   if (value.state === "reserved" && value.reservation === null) {
     context.addIssue({
       code: "custom",
@@ -480,6 +487,11 @@ export function projectSmolRunnerReceiptLiveness(
   now: string,
 ): SmolRunnerReceiptLiveness {
   const canonicalNow = canonicalTimestamp.parse(now);
+  const nowMillis = Date.parse(canonicalNow);
+  const observedAtMillis = Date.parse(transition.observedAt);
+  if (nowMillis < observedAtMillis) {
+    throw new RangeError("Liveness evaluation cannot precede receipt observation");
+  }
   if (terminalStates.has(transition.state)) return { state: "terminal" };
   if (transition.state === "queued") return { state: "queued" };
   if (transition.state === "reserved") return { state: "reserved" };
@@ -488,10 +500,10 @@ export function projectSmolRunnerReceiptLiveness(
   if (transition.heartbeat === null) {
     throw new RangeError("Active receipt liveness requires heartbeat data");
   }
-  const missedHeartbeatAt = Date.parse(transition.observedAt) + transition.heartbeat.intervalSeconds * 3_000;
+  const missedHeartbeatAt = observedAtMillis + transition.heartbeat.intervalSeconds * 3_000;
   const leaseExpiry = Date.parse(transition.heartbeat.leaseExpiresAt);
   const stalledAt = new Date(Math.min(missedHeartbeatAt, leaseExpiry)).toISOString();
-  return Date.parse(canonicalNow) >= Date.parse(stalledAt)
+  return nowMillis >= Date.parse(stalledAt)
     ? { state: "stalled", stalledAt }
     : { state: "active", stalledAt };
 }
