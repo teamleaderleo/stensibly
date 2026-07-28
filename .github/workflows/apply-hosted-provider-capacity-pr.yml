@@ -1,0 +1,62 @@
+name: Apply hosted provider capacity from PR
+
+on:
+  pull_request:
+    branches:
+      - kite/426-hosted-capacity
+    paths:
+      - .github/workflows/apply-hosted-provider-capacity-pr.yml
+      - scripts/apply-hosted-provider-capacity.py
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'kite/426-hosted-capacity-trigger'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: kite/426-hosted-capacity
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply exact hosted capacity source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "origin/${{ github.head_ref }}:scripts/apply-hosted-provider-capacity.py" > /tmp/apply-hosted-provider-capacity.py
+          python /tmp/apply-hosted-provider-capacity.py
+      - run: bun install
+      - name: Run focused provider capacity tests
+        run: |
+          bun test test/coderabbit-capacity.test.ts \
+            test/provider-capacity-convex.test.ts \
+            test/hosted-provider-capacity-api.test.ts
+          bunx vitest run convex/providerCapacities.test.ts
+      - name: Run full repository gate
+        run: |
+          bun run typecheck
+          bun test
+          bun run test:convex
+          bun run worker:check
+      - name: Commit source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Kite"
+          git config user.email "teamleaderleo@users.noreply.github.com"
+          git add \
+            src/provider-capacity.ts \
+            src/provider-capacity-convex.ts \
+            src/hosted-provider-capacity-api.ts \
+            src/hosted-app.ts \
+            src/cloudflare-worker.ts \
+            convex/schema.ts \
+            convex/providerCapacities.ts \
+            convex/providerCapacities.test.ts \
+            test/provider-capacity-convex.test.ts \
+            test/hosted-provider-capacity-api.test.ts
+          git commit -m "Persist CodeRabbit capacity in the hosted control plane"
+          git push origin HEAD:kite/426-hosted-capacity
