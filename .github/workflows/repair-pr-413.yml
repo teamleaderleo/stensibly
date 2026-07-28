@@ -1,7 +1,7 @@
 name: Repair PR 413 on current main
 
 on:
-  push:
+  pull_request:
     branches:
       - plover/403-public-event-reader
 
