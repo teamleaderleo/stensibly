@@ -33,6 +33,11 @@ jobs:
           ref: 6aa890be9fa547e3907c805b312e39917a274221
           path: workerd
 
+      - name: Install workerd compiler dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libc++-dev libc++abi-dev
+
       - name: Apply prototype patch
         run: |
           git -C workerd apply --check \
