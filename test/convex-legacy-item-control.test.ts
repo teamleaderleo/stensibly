@@ -1,139 +1,203 @@
 import { describe, expect, test } from "bun:test";
 import { getFunctionName, type FunctionReference } from "convex/server";
-import { ConvexWorkLedger } from "../src/convex-ledger.ts";
+import {
+  ConvexWorkLedger,
+  HistoryWindowOverflowError,
+  HostedBackendUpgradeRequiredError,
+} from "../src/convex-ledger.ts";
 
-const actorId = "service:supervisor";
 const item = {
-  id: "item_legacy",
+  id: "item_history",
   project: "scrapbook",
   kind: "task" as const,
-  title: "Read an older hosted detail payload",
-  summary: "The old deployment still owns the durable state.",
+  title: "Read bounded hosted history",
   status: "active" as const,
   priority: 70,
-  nextAction: "Project control in the adapter.",
-  claimedBy: actorId,
-  claimExpiresAt: "2099-01-01T00:15:00.000Z",
+  claimedBy: null,
+  claimExpiresAt: null,
   claimGeneration: 4,
   version: 5,
   createdAt: "2099-01-01T00:00:00.000Z",
   updatedAt: "2099-01-01T00:00:00.000Z",
 };
 
-describe("legacy hosted item control compatibility", () => {
-  test("fails closed when an older hosted run cannot prove a trusted live lease", async () => {
+const capability = {
+  version: 1,
+  itemDetailVisibleEventLimit: 100,
+  directVisibleEventLimit: 1_000,
+  physicalEventRowLimit: 5_000,
+  physicalEventByteLimit: 8 * 1024 * 1024,
+  artifactLimit: 100,
+  artifactOverflowCode: "history_window_overflow:artifacts",
+  boundedItemControl: true,
+  boundedDirectEvents: true,
+  boundedArtifacts: true,
+};
+
+const detail = {
+  historyContractVersion: 1,
+  item,
+  control: {
+    schemaVersion: 1,
+    itemId: item.id,
+    itemStatus: item.status,
+    authority: {
+      state: "unclaimed",
+      holderActorId: null,
+      generation: 4,
+      source: "none",
+      leaseExpiresAt: null,
+      allowedOperations: [],
+    },
+    responsibility: {
+      actorId: null,
+      summary: null,
+      nextAction: null,
+      heartbeatExpectedAt: null,
+    },
+    execution: {
+      state: "idle",
+      runId: null,
+      runnerActorId: null,
+      leaseOwnerId: null,
+      leaseExpiresAt: null,
+      lastHeartbeatAt: null,
+    },
+    observedAt: "2099-01-01T00:00:00.000Z",
+  },
+  events: [],
+  eventsTruncated: false,
+  artifacts: [],
+  runs: [],
+  dependencies: [],
+};
+
+function ledgerWith(query: (name: string) => Promise<unknown>) {
+  return new ConvexWorkLedger({
+    client: {
+      query: async (reference: FunctionReference<"query">) => {
+        return await query(getFunctionName(reference));
+      },
+      mutation: async () => {
+        throw new Error("not used");
+      },
+    },
+    serviceSecret: "service-secret",
+    workspace: "default",
+  });
+}
+
+describe("bounded hosted history compatibility", () => {
+  test("fails closed before any history or reservation call when capability is missing", async () => {
     const calls: string[] = [];
-    const ledger = new ConvexWorkLedger({
-      client: {
-        query: async (reference: FunctionReference<"query">) => {
-          const name = getFunctionName(reference);
-          calls.push(name);
-          if (name === "itemControl:get") {
-            throw new Error(
-              "[CONVEX Q(itemControl:get)] [Request ID: legacy] Server Error Could not find public function for 'itemControl:get'.",
-            );
-          }
-          if (name === "itemReservations:list") return [];
-          if (name === "items:get") {
-            return {
-              item,
-              events: [
-                {
-                  id: "evt_old_claim",
-                  itemId: item.id,
-                  actorId,
-                  type: "claim.created",
-                  payload: {
-                    generation: 4,
-                    source: "supervisor_dispatch",
-                  },
-                  createdAt: "2099-01-01T00:00:00.000Z",
-                },
-                {
-                  id: "evt_progress",
-                  itemId: item.id,
-                  actorId,
-                  type: "progress.recorded",
-                  payload: { summary: "Still working." },
-                  createdAt: "2099-01-01T00:01:00.000Z",
-                },
-              ],
-              artifacts: [],
-              runs: [{
-                id: "run_legacy",
-                itemId: item.id,
-                actorId,
-                leaseOwnerId: actorId,
-                status: "running",
-                leaseExpiresAt: null,
-                lastHeartbeatAt: "2099-01-01T00:01:00.000Z",
-              }],
-              dependencies: [],
-            };
-          }
-          throw new Error(`Unexpected query ${name}`);
-        },
-        mutation: async () => {
-          throw new Error("not used");
-        },
-      },
-      serviceSecret: "service-secret",
-      workspace: "default",
+    const ledger = ledgerWith(async (name) => {
+      calls.push(name);
+      if (name === "historyCapabilities:get") {
+        throw new Error(
+          "[CONVEX Q(historyCapabilities:get)] Server Error Could not find public function for 'historyCapabilities:get'.",
+        );
+      }
+      throw new Error(`Unexpected query ${name}`);
     });
 
-    const detail = await ledger.getItem(item.id);
-
-    expect(calls).toEqual([
-      "itemControl:get",
-      "itemReservations:list",
-      "items:get",
-    ]);
-    expect(detail.control).toMatchObject({
-      schemaVersion: 1,
-      authority: {
-        state: "superseded",
-        holderActorId: null,
-        generation: 4,
-        source: "none",
-        allowedOperations: [],
-      },
-      responsibility: {
-        actorId: null,
-        summary: "The old deployment still owns the durable state.",
-        nextAction: "Project control in the adapter.",
-        heartbeatExpectedAt: null,
-      },
-    });
+    await expect(ledger.getItem(item.id)).rejects.toBeInstanceOf(
+      HostedBackendUpgradeRequiredError,
+    );
+    expect(calls).toEqual(["historyCapabilities:get"]);
   });
 
-  test("does not hide authentication, transport, or generic server failures", async () => {
+  test("rejects an incomplete or changed capability contract", async () => {
+    for (const changed of [
+      { ...capability, version: 2 },
+      { ...capability, physicalEventRowLimit: 500 },
+      { ...capability, artifactOverflowCode: "different" },
+      { ...capability, boundedDirectEvents: false },
+    ]) {
+      const calls: string[] = [];
+      const ledger = ledgerWith(async (name) => {
+        calls.push(name);
+        if (name === "historyCapabilities:get") return changed;
+        throw new Error(`Unexpected query ${name}`);
+      });
+
+      await expect(ledger.getItem(item.id)).rejects.toBeInstanceOf(
+        HostedBackendUpgradeRequiredError,
+      );
+      expect(calls).toEqual(["historyCapabilities:get"]);
+    }
+  });
+
+  test("revalidates an accepted capability across bounded item and artifact reads", async () => {
     const calls: string[] = [];
-    const ledger = new ConvexWorkLedger({
-      client: {
-        query: async (reference: FunctionReference<"query">) => {
-          const name = getFunctionName(reference);
-          calls.push(name);
-          if (name === "itemReservations:list") return [];
-          if (name === "itemControl:get") {
-            throw new Error("Hosted backend request failed");
-          }
-          if (name === "items:get") {
-            throw new Error("Legacy fallback must not run");
-          }
-          throw new Error(`Unexpected query ${name}`);
-        },
-        mutation: async () => {
-          throw new Error("not used");
-        },
-      },
-      serviceSecret: "service-secret",
-      workspace: "default",
+    const ledger = ledgerWith(async (name) => {
+      calls.push(name);
+      if (name === "historyCapabilities:get") return capability;
+      if (name === "itemControl:get") return detail;
+      if (name === "itemReservations:list") return [];
+      if (name === "artifacts:list") return [];
+      throw new Error(`Unexpected query ${name}`);
     });
 
-    await expect(ledger.getItem(item.id)).rejects.toThrow("Hosted backend request failed");
-    expect(calls).toEqual([
-      "itemControl:get",
-      "itemReservations:list",
-    ]);
+    await expect(ledger.getItem(item.id)).resolves.toMatchObject({
+      item,
+      historyContractVersion: 1,
+      eventsTruncated: false,
+      reservations: [],
+    });
+    await expect(ledger.listArtifacts(item.id)).resolves.toEqual([]);
+    expect(calls.filter((name) => name === "historyCapabilities:get")).toHaveLength(2);
+    expect(calls).not.toContain("items:get");
+  });
+
+  test("maps missing item control and artifact overflow after capability acceptance", async () => {
+    const itemCalls: string[] = [];
+    const itemLedger = ledgerWith(async (name) => {
+      itemCalls.push(name);
+      if (name === "historyCapabilities:get") return capability;
+      if (name === "itemReservations:list") return [];
+      if (name === "itemControl:get") {
+        throw new Error(
+          "[CONVEX Q(itemControl:get)] Server Error Could not find public function for 'itemControl:get'.",
+        );
+      }
+      throw new Error(`Unexpected query ${name}`);
+    });
+    await expect(itemLedger.getItem(item.id)).rejects.toBeInstanceOf(
+      HostedBackendUpgradeRequiredError,
+    );
+    expect(itemCalls).not.toContain("items:get");
+
+    const artifactLedger = ledgerWith(async (name) => {
+      if (name === "historyCapabilities:get") return capability;
+      if (name === "artifacts:list") {
+        throw new Error("history_window_overflow:artifacts");
+      }
+      throw new Error(`Unexpected query ${name}`);
+    });
+    await expect(artifactLedger.listArtifacts(item.id)).rejects.toBeInstanceOf(
+      HistoryWindowOverflowError,
+    );
+  });
+
+  test("preserves supported-backend transport and reservation failures", async () => {
+    const itemLedger = ledgerWith(async (name) => {
+      if (name === "historyCapabilities:get") return capability;
+      if (name === "itemControl:get") throw new Error("Hosted backend request failed");
+      if (name === "itemReservations:list") return [];
+      throw new Error(`Unexpected query ${name}`);
+    });
+    await expect(itemLedger.getItem(item.id)).rejects.toThrow(
+      "Hosted backend request failed",
+    );
+
+    const reservationLedger = ledgerWith(async (name) => {
+      if (name === "historyCapabilities:get") return capability;
+      if (name === "itemControl:get") return detail;
+      if (name === "itemReservations:list") throw new Error("Reservation query failed");
+      throw new Error(`Unexpected query ${name}`);
+    });
+    await expect(reservationLedger.getItem(item.id)).rejects.toThrow(
+      "Reservation query failed",
+    );
   });
 });

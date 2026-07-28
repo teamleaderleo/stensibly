@@ -12,6 +12,9 @@ export const convexApi = {
     getCurrent: queryRef("projectAttachments:getCurrent"),
     accept: mutationRef("projectAttachments:accept"),
   },
+  historyCapabilities: {
+    get: queryRef("historyCapabilities:get"),
+  },
   items: {
     create: mutationRef("items:create"),
     list: queryRef("items:list"),

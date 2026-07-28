@@ -17,11 +17,6 @@ import type {
   ProposeContinuationInput,
   ResolveContinuationInput,
 } from "./continuations.js";
-import {
-  projectItemControl,
-  type ItemControlEventInput,
-  type ItemControlRunInput,
-} from "./item-control.js";
 import type {
   AttachWorkArtifactInput,
   BlockWorkInput,
@@ -39,6 +34,14 @@ import type {
   WorkLedger,
 } from "./ledger.js";
 
+const HISTORY_CONTRACT_VERSION = 1;
+const ITEM_DETAIL_EVENT_LIMIT = 100;
+const DIRECT_EVENT_LIMIT = 1_000;
+const PHYSICAL_EVENT_ROW_LIMIT = 5_000;
+const PHYSICAL_EVENT_BYTE_LIMIT = 8 * 1024 * 1024;
+const ARTIFACT_LIMIT = 100;
+const ARTIFACT_OVERFLOW_CODE = "history_window_overflow:artifacts";
+
 export interface ConvexCaller {
   query(reference: FunctionReference<"query">, args: Record<string, unknown>): Promise<unknown>;
   mutation(reference: FunctionReference<"mutation">, args: Record<string, unknown>): Promise<unknown>;
@@ -50,8 +53,30 @@ export interface ConvexWorkLedgerOptions {
   workspace?: string;
 }
 
-type HostedItemDetail = Omit<ItemDetail, "reservations">;
-type LegacyHostedItemDetail = Omit<ItemDetail, "control" | "reservations">;
+type HostedItemDetail = Omit<ItemDetail, "reservations"> & {
+  historyContractVersion: 1;
+  eventsTruncated: boolean;
+};
+
+export class HostedBackendUpgradeRequiredError extends Error {
+  readonly code = "hosted_backend_upgrade_required";
+
+  constructor() {
+    super("hosted_backend_upgrade_required: Hosted backend must be upgraded before bounded history can be read");
+    this.name = "HostedBackendUpgradeRequiredError";
+  }
+}
+
+export class HistoryWindowOverflowError extends Error {
+  readonly code = "history_window_overflow";
+  readonly resource: "artifacts";
+
+  constructor(resource: "artifacts") {
+    super(`history_window_overflow: Hosted ${resource} history exceeds the bounded complete window`);
+    this.name = "HistoryWindowOverflowError";
+    this.resource = resource;
+  }
+}
 
 export class ConvexWorkLedger implements
   WorkLedger,
@@ -62,6 +87,7 @@ export class ConvexWorkLedger implements
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
+  private historyCapabilityPromise: Promise<void> | null = null;
 
   constructor(options: ConvexWorkLedgerOptions) {
     this.client = options.client;
@@ -81,21 +107,28 @@ export class ConvexWorkLedger implements
   }
 
   async getItem(id: string): Promise<ItemDetail> {
+    await this.ensureBoundedHistoryCapability();
     const now = Date.now();
-    const detailPromise = this.getHostedItemDetail(id, now);
-    const reservationsPromise = this.client.query(
+    const detail = await this.getHostedItemDetail(id, now);
+    const reservations = await this.client.query(
       convexApi.itemReservations.list,
       this.args({ itemId: id, now }),
-    ) as Promise<ItemReservation[]>;
-    const [detail, reservations] = await Promise.all([
-      detailPromise,
-      reservationsPromise,
-    ]);
+    ) as ItemReservation[];
     return { ...detail, reservations };
   }
 
   async listArtifacts(id: string) {
-    return await this.client.query(convexApi.artifacts.list, this.args({ id })) as Awaited<ReturnType<WorkLedger["listArtifacts"]>>;
+    await this.ensureBoundedHistoryCapability();
+    try {
+      return await this.client.query(
+        convexApi.artifacts.list,
+        this.args({ id }),
+      ) as Awaited<ReturnType<WorkLedger["listArtifacts"]>>;
+    } catch (error) {
+      if (isArtifactHistoryOverflow(error)) throw new HistoryWindowOverflowError("artifacts");
+      if (isMissingArtifactsFunction(error)) throw new HostedBackendUpgradeRequiredError();
+      throw error;
+    }
   }
 
   async attachArtifact(input: AttachWorkArtifactInput) {
@@ -202,25 +235,67 @@ export class ConvexWorkLedger implements
 
   private async getHostedItemDetail(id: string, now: number): Promise<HostedItemDetail> {
     try {
-      return await this.client.query(
+      const value = await this.client.query(
         convexApi.itemControl.get,
         this.args({ id, now }),
-      ) as HostedItemDetail;
+      );
+      const detail = record(value);
+      if (
+        detail?.historyContractVersion !== HISTORY_CONTRACT_VERSION
+        || typeof detail.eventsTruncated !== "boolean"
+      ) {
+        throw new HostedBackendUpgradeRequiredError();
+      }
+      return value as HostedItemDetail;
     } catch (error) {
-      if (!isMissingItemControlFunction(error)) throw error;
-      const legacy = await this.client.query(
-        convexApi.items.get,
-        this.args({ id }),
-      ) as LegacyHostedItemDetail;
-      return {
-        ...legacy,
-        control: projectItemControl({
-          item: legacy.item,
-          events: latestLegacyControlEvents(legacy.events),
-          runs: legacyControlRuns(legacy.runs),
-          now,
-        }),
-      };
+      if (error instanceof HostedBackendUpgradeRequiredError) throw error;
+      if (isArtifactHistoryOverflow(error)) throw new HistoryWindowOverflowError("artifacts");
+      if (isMissingItemControlFunction(error)) throw new HostedBackendUpgradeRequiredError();
+      throw error;
+    }
+  }
+
+  private async ensureBoundedHistoryCapability(): Promise<void> {
+    if (!this.historyCapabilityPromise) {
+      this.historyCapabilityPromise = this.loadBoundedHistoryCapability();
+    }
+    const capability = this.historyCapabilityPromise;
+    try {
+      await capability;
+    } finally {
+      if (this.historyCapabilityPromise === capability) {
+        this.historyCapabilityPromise = null;
+      }
+    }
+  }
+
+  private async loadBoundedHistoryCapability(): Promise<void> {
+    let value: unknown;
+    try {
+      value = await this.client.query(
+        convexApi.historyCapabilities.get,
+        this.args({}),
+      );
+    } catch (error) {
+      if (isMissingHistoryCapabilityFunction(error)) {
+        throw new HostedBackendUpgradeRequiredError();
+      }
+      throw error;
+    }
+    const capability = record(value);
+    if (
+      capability?.version !== HISTORY_CONTRACT_VERSION
+      || capability.itemDetailVisibleEventLimit !== ITEM_DETAIL_EVENT_LIMIT
+      || capability.directVisibleEventLimit !== DIRECT_EVENT_LIMIT
+      || capability.physicalEventRowLimit !== PHYSICAL_EVENT_ROW_LIMIT
+      || capability.physicalEventByteLimit !== PHYSICAL_EVENT_BYTE_LIMIT
+      || capability.artifactLimit !== ARTIFACT_LIMIT
+      || capability.artifactOverflowCode !== ARTIFACT_OVERFLOW_CODE
+      || capability.boundedItemControl !== true
+      || capability.boundedDirectEvents !== true
+      || capability.boundedArtifacts !== true
+    ) {
+      throw new HostedBackendUpgradeRequiredError();
     }
   }
 
@@ -249,58 +324,28 @@ export function createConvexWorkLedgerFromEnv(
   });
 }
 
-function latestLegacyControlEvents(events: unknown): ItemControlEventInput[] {
-  if (!Array.isArray(events)) return [];
-  const latest = new Map<string, { event: ItemControlEventInput; millis: number; index: number }>();
-  for (const [index, value] of events.entries()) {
-    const event = record(value);
-    const type = typeof event?.type === "string" ? event.type : "";
-    if (type !== "claim.created" && type !== "work.handed_off") continue;
-    const createdAt = event?.createdAt;
-    const millis = typeof createdAt === "string" ? Date.parse(createdAt) : Number.NaN;
-    const candidate = {
-      event: {
-        actorId: event?.actorId ?? null,
-        type,
-        payload: event?.payload ?? {},
-        createdAt,
-      },
-      millis: Number.isFinite(millis) ? millis : Number.NEGATIVE_INFINITY,
-      index,
-    };
-    const previous = latest.get(type);
-    if (
-      !previous
-      || candidate.millis > previous.millis
-      || (candidate.millis === previous.millis && candidate.index > previous.index)
-    ) {
-      latest.set(type, candidate);
-    }
-  }
-  return ["claim.created", "work.handed_off"].flatMap((type) => {
-    const candidate = latest.get(type);
-    return candidate ? [candidate.event] : [];
-  });
-}
-
-function legacyControlRuns(runs: unknown): ItemControlRunInput[] {
-  if (!Array.isArray(runs)) return [];
-  return runs.slice(0, 16).flatMap((value) => {
-    const run = record(value);
-    if (!run) return [];
-    return [{
-      actorId: run.actorId ?? null,
-      leaseOwnerId: run.leaseOwnerId ?? null,
-      status: run.status ?? "",
-      leaseExpiresAt: run.leaseExpiresAt ?? null,
-      lastHeartbeatAt: run.lastHeartbeatAt ?? null,
-    }];
-  });
+function isMissingHistoryCapabilityFunction(error: unknown): boolean {
+  return missingFunction(error, "historyCapabilities:get");
 }
 
 function isMissingItemControlFunction(error: unknown): boolean {
+  return missingFunction(error, "itemControl:get");
+}
+
+function isMissingArtifactsFunction(error: unknown): boolean {
+  return missingFunction(error, "artifacts:list");
+}
+
+function missingFunction(error: unknown, name: string): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /Could not find public function for ['"`]itemControl:get['"`]/i.test(message);
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`Could not find public function for ['\"\\x60]${escaped}['\"\\x60]`, "i")
+    .test(message);
+}
+
+function isArtifactHistoryOverflow(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(ARTIFACT_OVERFLOW_CODE);
 }
 
 function record(value: unknown): Record<string, unknown> | null {

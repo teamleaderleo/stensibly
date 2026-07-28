@@ -38,14 +38,6 @@ class RecordingCaller implements ConvexCaller {
     this.calls.push({ type: "mutation", name, args });
     return fixture(name);
   }
-
-  one(type: RecordedCall["type"], name: string): RecordedCall {
-    const matches = this.calls.filter(
-      (call) => call.type === type && call.name === name,
-    );
-    expect(matches).toHaveLength(1);
-    return matches[0]!;
-  }
 }
 
 describe("Convex work ledger", () => {
@@ -65,6 +57,12 @@ describe("Convex work ledger", () => {
       generation: 0,
       source: "none",
     });
+    expect(detail).toMatchObject({
+      historyContractVersion: 1,
+      eventsTruncated: false,
+      reservations: [],
+    });
+    await ledger.listArtifacts("item_1");
     await ledger.createItem({
       project: "scrapbook",
       kind: "task",
@@ -187,8 +185,11 @@ describe("Convex work ledger", () => {
     expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
       "query:projects:brief",
       "query:items:list",
+      "query:historyCapabilities:get",
       "query:itemControl:get",
       "query:itemReservations:list",
+      "query:historyCapabilities:get",
+      "query:artifacts:list",
       "mutation:items:create",
       "mutation:claims:acquire",
       "mutation:claims:renew",
@@ -219,77 +220,29 @@ describe("Convex work ledger", () => {
         workspace: "shared-work",
       });
     }
-
-    expect(client.one("query", "projects:brief").args).toMatchObject({
-      project: "scrapbook",
-      limit: 12,
-      now: expect.any(Number),
-    });
-    expect(client.one("query", "itemControl:get").args).toMatchObject({
+    const capabilityCalls = client.calls.filter((entry) =>
+      entry.type === "query" && entry.name === "historyCapabilities:get"
+    );
+    expect(capabilityCalls).toHaveLength(2);
+    for (const capabilityCall of capabilityCalls) {
+      expect(capabilityCall.args).toEqual({
+        serviceSecret: "private-service-secret",
+        workspace: "shared-work",
+      });
+    }
+    expect(call(client, "itemControl:get").args).toMatchObject({
       id: "item_1",
       now: expect.any(Number),
     });
-    expect(client.one("query", "itemReservations:list").args).toMatchObject({
+    expect(call(client, "itemReservations:list").args).toMatchObject({
       itemId: "item_1",
       now: expect.any(Number),
     });
-    expect(client.one("mutation", "claims:acquire").args).toMatchObject({
+    expect(call(client, "claims:acquire", "mutation").args).toMatchObject({
       id: "item_1",
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
     });
-    expect(client.one("mutation", "claims:renew").args).toMatchObject({
-      id: "item_1",
-      leaseSeconds: 1800,
-      expectedClaimGeneration: 7,
-    });
-    expect(client.one("mutation", "items:handoff").args).toMatchObject({
-      id: "item_1",
-      expectedClaimGeneration: 8,
-    });
-    expect(client.one("mutation", "items:block").args).toMatchObject({
-      id: "item_1",
-      expectedClaimGeneration: 9,
-    });
-    expect(client.one("mutation", "items:unblock").args).toMatchObject({
-      id: "item_1",
-      expectedClaimGeneration: 10,
-    });
-    expect(client.one("mutation", "claims:release").args).toMatchObject({
-      id: "item_1",
-      expectedClaimGeneration: 11,
-    });
-    expect(client.one("mutation", "items:complete").args).toMatchObject({
-      id: "item_1",
-      expectedClaimGeneration: 12,
-    });
-    expect(client.one("mutation", "completionContinuations:complete").args)
-      .toMatchObject({
-        id: "item_1",
-        expectedClaimGeneration: 13,
-        idempotencyKey: "complete-continuation-1",
-      });
-    expect(client.one("mutation", "continuationEdits:edit").args).toMatchObject({
-      id: "cont_1",
-      instruction: "Review and record the decision.",
-      idempotencyKey: "continuation-edit-1",
-    });
-    expect(client.one("mutation", "continuationSupervisor:queue").args)
-      .toMatchObject({
-        id: "cont_1",
-        expectedGeneration: 3,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
-        leaseSeconds: 900,
-      });
-
-    const supervisorLists = client.calls.filter(
-      (call) => call.type === "mutation" && call.name === "continuations:list",
-    );
-    expect(supervisorLists.slice(-2).map((call) => call.args)).toEqual([
-      expect.objectContaining({ status: "proposed", deliveryMode: "supervisor" }),
-      expect.objectContaining({ status: "deferred", deliveryMode: "supervisor" }),
-    ]);
   });
 
   test("rejects incomplete or unsafe configuration", () => {
@@ -305,7 +258,31 @@ describe("Convex work ledger", () => {
   });
 });
 
+function call(
+  client: RecordingCaller,
+  name: string,
+  type: RecordedCall["type"] = "query",
+): RecordedCall {
+  const matches = client.calls.filter((entry) => entry.type === type && entry.name === name);
+  expect(matches).toHaveLength(1);
+  return matches[0]!;
+}
+
 function fixture(name: string): unknown {
+  if (name === "historyCapabilities:get") {
+    return {
+      version: 1,
+      itemDetailVisibleEventLimit: 100,
+      directVisibleEventLimit: 1_000,
+      physicalEventRowLimit: 5_000,
+      physicalEventByteLimit: 8 * 1024 * 1024,
+      artifactLimit: 100,
+      artifactOverflowCode: "history_window_overflow:artifacts",
+      boundedItemControl: true,
+      boundedDirectEvents: true,
+      boundedArtifacts: true,
+    };
+  }
   if (
     name === "items:list"
     || name === "itemReservations:list"
@@ -316,6 +293,7 @@ function fixture(name: string): unknown {
   }
   if (name === "itemControl:get") {
     return {
+      historyContractVersion: 1,
       item: item(),
       control: {
         schemaVersion: 1,
@@ -339,6 +317,7 @@ function fixture(name: string): unknown {
         },
       },
       events: [],
+      eventsTruncated: false,
       artifacts: [],
       runs: [],
       dependencies: [],

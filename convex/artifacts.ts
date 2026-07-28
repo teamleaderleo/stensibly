@@ -11,6 +11,10 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import {
+  assertCompleteArtifactWindow,
+  MAX_PUBLIC_ITEM_ARTIFACTS,
+} from "./lib/itemHistory";
 import { mutation, query } from "./lib/server";
 import {
   actorValidator,
@@ -111,8 +115,10 @@ export const list = query({
     const artifacts = await ctx.db
       .query("artifacts")
       .withIndex("by_item_created", (q) => q.eq("itemId", item._id))
-      .collect();
-    return artifacts.map((artifact) => ({
+      .order("desc")
+      .take(MAX_PUBLIC_ITEM_ARTIFACTS + 1);
+    assertCompleteArtifactWindow(artifacts.length);
+    return [...artifacts].reverse().map((artifact) => ({
       ...publicArtifact(artifact),
       itemId: item.externalId,
     }));

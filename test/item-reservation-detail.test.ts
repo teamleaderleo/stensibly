@@ -44,6 +44,19 @@ const control: ItemControlView = {
   },
 };
 
+const capability = {
+  version: 1,
+  itemDetailVisibleEventLimit: 100,
+  directVisibleEventLimit: 1_000,
+  physicalEventRowLimit: 5_000,
+  physicalEventByteLimit: 8 * 1024 * 1024,
+  artifactLimit: 100,
+  artifactOverflowCode: "history_window_overflow:artifacts",
+  boundedItemControl: true,
+  boundedDirectEvents: true,
+  boundedArtifacts: true,
+};
+
 let store: StensiblyStore | null = null;
 
 afterEach(() => {
@@ -52,7 +65,7 @@ afterEach(() => {
 });
 
 describe("hosted item detail composition", () => {
-  test("combines bounded canonical detail with the reservation query", async () => {
+  test("combines capability-verified canonical detail with the reservation query", async () => {
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const reservations = [{
       id: "res_1",
@@ -90,8 +103,18 @@ describe("hosted item detail composition", () => {
         query: async (reference: FunctionReference<"query">, args) => {
           const name = getFunctionName(reference);
           calls.push({ name, args });
+          if (name === "historyCapabilities:get") return capability;
           if (name === "itemControl:get") {
-            return { item, control, events: [], artifacts: [], runs, dependencies: [] };
+            return {
+              historyContractVersion: 1,
+              item,
+              control,
+              events: [],
+              eventsTruncated: false,
+              artifacts: [],
+              runs,
+              dependencies: [],
+            };
           }
           if (name === "itemReservations:list") return reservations;
           throw new Error(`Unexpected query ${name}`);
@@ -107,8 +130,14 @@ describe("hosted item detail composition", () => {
     const before = Date.now();
     const detail = await ledger.getItem(item.id);
     const after = Date.now();
+    const hostedDetail = detail as typeof detail & {
+      historyContractVersion: 1;
+      eventsTruncated: boolean;
+    };
 
-    expect(detail).toEqual({
+    expect(hostedDetail.historyContractVersion).toBe(1);
+    expect(hostedDetail.eventsTruncated).toBe(false);
+    expect(detail).toMatchObject({
       item,
       control,
       events: [],
@@ -118,11 +147,17 @@ describe("hosted item detail composition", () => {
       runs,
     });
     expect(calls.map((call) => call.name)).toEqual([
+      "historyCapabilities:get",
       "itemControl:get",
       "itemReservations:list",
     ]);
+    const capabilityCall = calls.find((call) => call.name === "historyCapabilities:get")!;
     const itemCall = calls.find((call) => call.name === "itemControl:get")!;
     const reservationCall = calls.find((call) => call.name === "itemReservations:list")!;
+    expect(capabilityCall.args).toEqual({
+      serviceSecret: "service-secret",
+      workspace: "default",
+    });
     expect(itemCall.args).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
