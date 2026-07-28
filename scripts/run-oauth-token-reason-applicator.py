@@ -19,4 +19,13 @@ new = '''def block(value: str) -> str:
 '''
 if source.count(old) != 1:
     raise SystemExit("unexpected OAuth applicator block helper")
-exec(compile(source.replace(old, new, 1), str(applicator), "exec"), {})
+source = source.replace(old, new, 1)
+needle = 'expect(serialized).toBe(JSON.stringify({ stage }));'
+first = source.find(needle)
+second = source.find(needle, first + 1)
+third = source.find(needle, second + 1)
+if first < 0 or second < 0 or third >= 0:
+    raise SystemExit("unexpected serialized OAuth failure expectations")
+replacement = 'expect(serialized).toBe(JSON.stringify({ stage, ...(reason ? { reason } : {}) }));'
+source = source[:second] + replacement + source[second + len(needle):]
+exec(compile(source, str(applicator), "exec"), {})
