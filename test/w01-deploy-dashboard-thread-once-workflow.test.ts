@@ -5,14 +5,11 @@ const workflow = readFileSync(
   new URL("../.github/workflows/w01-deploy-dashboard-thread-once.yml", import.meta.url),
   "utf8",
 );
-const verifier = readFileSync(
-  new URL("../src/verify-dashboard.ts", import.meta.url),
-  "utf8",
-);
 
-describe("W01 attributable dashboard thread deployment", () => {
-  test("runs only for the exact same-repository execution branch", () => {
+describe("W01 attributable dashboard thread promotion", () => {
+  test("runs only for exact same-repository execution PR 441", () => {
     expect(workflow).toContain("pull_request:");
+    expect(workflow).toContain("github.event.pull_request.number == 441");
     expect(workflow).toContain("lantern/409-deploy-dashboard-thread");
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).not.toContain("workflow_dispatch:");
@@ -20,54 +17,49 @@ describe("W01 attributable dashboard thread deployment", () => {
     expect(workflow).toContain('if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]');
   });
 
-  test("pins the accepted source and the complete dashboard site tree", () => {
+  test("pins the accepted site tree and retained staged deployment", () => {
     expect(workflow).toContain(
-      "REQUIRED_SOURCE_SHA: 02e19ee886bcb76a39462eb2e21a37b32bead51c",
+      "REQUIRED_SITE_SOURCE: 02e19ee886bcb76a39462eb2e21a37b32bead51c",
     );
-    expect(workflow).toContain('git rev-parse "$REQUIRED_SOURCE_SHA:site"');
+    expect(workflow).toContain(
+      "STAGED_ORIGIN: https://stensibly-11mfzhs6c-leo-lis-projects.vercel.app",
+    );
+    expect(workflow).toContain('git rev-parse "$REQUIRED_SITE_SOURCE:site"');
     expect(workflow).toContain('git rev-parse "$GITHUB_SHA:site"');
     expect(workflow).toContain("persist-credentials: false");
   });
 
-  test("uses the repaired current-shell verifier before Vercel", () => {
-    expect(verifier).toContain("Stensibly · Shared work");
-    expect(verifier).toContain("item-detail-announcer");
-    expect(workflow.indexOf("verify:dashboard")).toBeLessThan(
-      workflow.indexOf("Validate the existing Vercel project"),
-    );
+  test("reverifies all staged assets with bounded retries before promotion", () => {
+    expect(workflow).toContain("Reverify retained stage with propagation retries");
+    expect(workflow).toContain("for attempt in 1 2 3");
+    expect(workflow).toContain("bun src/dashboard-assets.ts");
+    expect(workflow).toContain("[.[].path] | length == (unique | length)");
+    expect(workflow).toContain('--deployment "$STAGED_ORIGIN"');
+    expect(workflow).toContain("marker");
+    expect(workflow).toContain("stn\\.tok_");
   });
 
-  test("uses protected Vercel inputs and the existing project boundary", () => {
-    expect(workflow).toContain("environment:\n      name: production");
+  test("promotes the retained stage and verifies production", () => {
+    expect(workflow).toContain("vercel@${VERCEL_CLI_VERSION} promote");
+    expect(workflow).toContain('"$STAGED_ORIGIN"');
+    expect(workflow).toContain("Verify production dashboard with propagation retries");
+    expect(workflow).toContain("for attempt in 1 2 3 4 5");
+    expect(workflow).toContain("DASHBOARD_URL: https://www.stensibly.com");
+    expect(workflow).toContain("bun run verify:dashboard");
+  });
+
+  test("does not create another build or staged deployment", () => {
+    expect(workflow).not.toContain("vercel@${VERCEL_CLI_VERSION} build");
+    expect(workflow).not.toContain("vercel@${VERCEL_CLI_VERSION} deploy");
+    expect(workflow).not.toContain("--skip-domain");
+  });
+
+  test("keeps protected values and evidence bounded", () => {
     expect(workflow).toContain("secrets.VERCEL_TOKEN");
     expect(workflow).toContain("secrets.VERCEL_ORG_ID");
     expect(workflow).toContain("secrets.VERCEL_PROJECT_ID");
-    expect(workflow).toContain("EXPECTED_VERCEL_PROJECT: stensibly");
-    expect(workflow).toContain('test "$(jq -r \'.rootDirectory // empty\' /tmp/vercel-project.json)" = "site"');
-  });
-
-  test("gates, stages, verifies, promotes, and verifies production", () => {
-    for (const command of [
-      "bun run typecheck",
-      "bun run test",
-      "bun run test:convex",
-      "bun run worker:check",
-      "vercel@${VERCEL_CLI_VERSION} build",
-      "vercel@${VERCEL_CLI_VERSION} deploy",
-      "--skip-domain",
-      "verify:dashboard",
-      "vercel@${VERCEL_CLI_VERSION} promote",
-      "DASHBOARD_URL: https://www.stensibly.com",
-    ]) {
-      expect(workflow).toContain(command);
-    }
-    expect(workflow).toContain("dashboard-assets.ts");
     expect(workflow).toContain("contains_secret_values: false");
-  });
-
-  test("keeps evidence bounded and does not print protected values", () => {
     expect(workflow).toContain("retention-days: 3");
-    expect(workflow).toContain("w01-dashboard-thread-deploy");
     expect(workflow).not.toContain("echo $VERCEL_TOKEN");
     expect(workflow).not.toContain("echo ${VERCEL_TOKEN}");
   });
