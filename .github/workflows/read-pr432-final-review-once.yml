@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - .github/workflows/read-pr432-final-review-once.yml
-    types: [opened]
+    types: [opened, synchronize]
 
 permissions:
   contents: read
@@ -63,4 +63,5 @@ jobs:
           — Nightjar · Stensibly dogfood
             Intention: make the exact-head review gate machine-readable without changing the candidate
           EOF
-          gh pr comment "$OBSERVER_PR" --body-file /tmp/result.md
+          jq -n --rawfile body /tmp/result.md '{body: $body}' > /tmp/comment.json
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$OBSERVER_PR/comments" --input /tmp/comment.json
