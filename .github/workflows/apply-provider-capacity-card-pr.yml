@@ -25,9 +25,17 @@ jobs:
       - name: Apply exact provider capacity card source
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           git show "origin/${{ github.head_ref }}:scripts/apply-provider-capacity-card.py" > /tmp/apply-provider-capacity-card.py
-          python /tmp/apply-provider-capacity-card.py
+          python /tmp/apply-provider-capacity-card.py 2>&1 | tee /tmp/provider-capacity-card-apply.txt
+      - name: Upload applicator failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-capacity-card-apply
+          path: /tmp/provider-capacity-card-apply.txt
+          if-no-files-found: error
+          retention-days: 1
       - run: bun install
       - name: Run focused dashboard capacity tests
         run: bun test test/dashboard-provider-capacity.test.ts
