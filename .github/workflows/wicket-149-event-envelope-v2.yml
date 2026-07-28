@@ -1,0 +1,74 @@
+name: Build item event envelope candidate v2
+
+on:
+  pull_request:
+    branches:
+      - wicket/149-envelope-executor-v2
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: wicket/149-item-event-envelope
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply corrected bounded envelope slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Wicket Stensibly Worker"
+          git config user.email "teamleaderleo@users.noreply.github.com"
+          git fetch origin main wicket/149-envelope-executor
+          git reset --hard origin/main
+          python3 <<'PY'
+          import subprocess
+
+          raw = subprocess.check_output([
+              "git",
+              "show",
+              "origin/wicket/149-envelope-executor:.github/workflows/wicket-149-event-envelope.yml",
+          ], text=True)
+          body = raw.split("          python3 <<'PY'\n", 1)[1].split("\n          PY\n", 1)[0]
+          script = "\n".join(
+              line[10:] if line.startswith(" " * 10) else line
+              for line in body.splitlines()
+          )
+          script = script.replace("from textwrap import dedent\n", "")
+          script = script.replace(
+              'def block(value: str) -> str:\n    return dedent(value).lstrip("\\n")',
+              'def block(value: str) -> str:\n    return value.lstrip("\\n")',
+          )
+          exec(compile(script, "wicket-149-envelope", "exec"))
+          PY
+          git diff --check
+      - run: bun install
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run test:convex
+      - run: bun run worker:check
+      - name: Publish source candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            src/event-envelope.ts \
+            src/schemas.ts \
+            src/store.ts \
+            src/ledger.ts \
+            src/sqlite-ledger.ts \
+            src/item-detail-sqlite.ts \
+            convex/schema.ts \
+            convex/lib/domain.ts \
+            convex/events.ts \
+            convex/lib/itemHistory.ts \
+            site/item-detail.js \
+            site/item-detail.d.ts \
+            test/event-envelope.test.ts \
+            convex/eventEnvelope.test.ts
+          git commit -m "Add bounded item event envelopes"
+          git push --force-with-lease origin HEAD:wicket/149-item-event-envelope
