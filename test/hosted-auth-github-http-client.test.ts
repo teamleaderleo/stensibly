@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   HttpGitHubOAuthClient,
+  type GitHubProviderFailureReason,
   type GitHubProviderFailureStage,
 } from "../src/hosted-auth.ts";
 
@@ -22,7 +23,44 @@ describe("HttpGitHubOAuthClient", () => {
     ));
 
     const error = await captureFailure(client.exchangeCode(EXCHANGE_INPUT));
-    expectFailure(error, "token_exchange", ["provider-body-sentinel", EXCHANGE_INPUT.code]);
+    expectFailure(
+      error,
+      "token_exchange",
+      ["provider-body-sentinel", EXCHANGE_INPUT.code],
+      "bad_verification_code",
+    );
+  });
+
+  test("classifies the fixed GitHub token rejection reasons", async () => {
+    const reasons: GitHubProviderFailureReason[] = [
+      "incorrect_client_credentials",
+      "redirect_uri_mismatch",
+      "bad_verification_code",
+      "unverified_user_email",
+    ];
+    for (const reason of reasons) {
+      const client = githubClient(singleUseFetch(new Response(JSON.stringify({
+        error: reason,
+        error_description: `provider-${reason}-sentinel`,
+      }), { status: 401 })));
+      expectFailure(
+        await captureFailure(client.exchangeCode(EXCHANGE_INPUT)),
+        "token_exchange",
+        [`provider-${reason}-sentinel`, EXCHANGE_INPUT.code],
+        reason,
+      );
+    }
+
+    const unknown = githubClient(singleUseFetch(new Response(JSON.stringify({
+      error: "application_suspended",
+      error_description: "provider-unknown-sentinel",
+    }), { status: 403 })));
+    expectFailure(
+      await captureFailure(unknown.exchangeCode(EXCHANGE_INPUT)),
+      "token_exchange",
+      ["application_suspended", "provider-unknown-sentinel", EXCHANGE_INPUT.code],
+      "provider_rejection",
+    );
   });
 
   test("classifies malformed token JSON and a missing token", async () => {
@@ -33,6 +71,7 @@ describe("HttpGitHubOAuthClient", () => {
       await captureFailure(malformed.exchangeCode(EXCHANGE_INPUT)),
       "token_exchange",
       [EXCHANGE_INPUT.code],
+      "malformed_response",
     );
 
     const missing = githubClient(singleUseFetch(tokenResponse({ scope: "" })));
@@ -40,6 +79,7 @@ describe("HttpGitHubOAuthClient", () => {
       await captureFailure(missing.exchangeCode(EXCHANGE_INPUT)),
       "token_exchange",
       [EXCHANGE_INPUT.code],
+      "missing_access_token",
     );
   });
 
@@ -81,6 +121,7 @@ describe("HttpGitHubOAuthClient", () => {
       await captureFailure(exchangeClient.exchangeCode(EXCHANGE_INPUT)),
       "token_exchange",
       [networkFailure, EXCHANGE_INPUT.code],
+      "network_failure",
     );
 
     const identityClient = githubClient(throwingFetch);
@@ -203,14 +244,16 @@ function expectFailure(
   error: unknown,
   stage: GitHubProviderFailureStage,
   excluded: string[],
+  reason?: GitHubProviderFailureReason,
 ): void {
   expect(error).toBeInstanceOf(Error);
   expect(error).toMatchObject({
     name: "ProviderFailure",
     message: "GitHub provider failure",
     stage,
+    ...(reason ? { reason } : {}),
   });
   const serialized = JSON.stringify(error);
-  expect(serialized).toBe(JSON.stringify({ stage }));
+  expect(serialized).toBe(JSON.stringify({ stage, ...(reason ? { reason } : {}) }));
   for (const value of excluded) expect(serialized).not.toContain(value);
 }

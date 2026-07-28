@@ -35,6 +35,21 @@ export type GitHubProviderFailureStage =
   | "identity_request"
   | "identity_payload";
 
+export type GitHubProviderFailureReason =
+  | "incorrect_client_credentials"
+  | "redirect_uri_mismatch"
+  | "bad_verification_code"
+  | "unverified_user_email"
+  | "network_failure"
+  | "provider_rejection"
+  | "malformed_response"
+  | "missing_access_token";
+
+interface GitHubProviderFailureDetails {
+  stage: GitHubProviderFailureStage;
+  reason?: GitHubProviderFailureReason;
+}
+
 export interface GitHubOAuthClient {
   exchangeCode(input: {
     code: string;
@@ -171,7 +186,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     } catch (error) {
       return providerBackendError(
         context,
-        providerFailureStage(error, "token_exchange"),
+        providerFailureDetails(error, "token_exchange"),
       );
     }
 
@@ -181,7 +196,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     } catch (error) {
       return providerBackendError(
         context,
-        providerFailureStage(error, "identity_request"),
+        providerFailureDetails(error, "identity_request"),
       );
     }
 
@@ -191,7 +206,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     } catch (error) {
       return providerBackendError(
         context,
-        providerFailureStage(error, "identity_payload"),
+        providerFailureDetails(error, "identity_payload"),
       );
     }
 
@@ -328,19 +343,26 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
         signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       });
     } catch {
-      throw new ProviderFailure("token_exchange");
+      throw new ProviderFailure("token_exchange", "network_failure");
     }
-    if (!response.ok) throw new ProviderFailure("token_exchange");
 
     const payload = await response.json().catch(() => null) as {
       access_token?: unknown;
       scope?: unknown;
+      error?: unknown;
     } | null;
-    const grantedScopes = readGrantedScopes(payload?.scope);
-    if (grantedScopes === null) throw new ProviderFailure("token_exchange");
+    const providerReason = tokenExchangeFailureReason(payload?.error);
+    if (providerReason) throw new ProviderFailure("token_exchange", providerReason);
+    if (!response.ok) throw new ProviderFailure("token_exchange", "provider_rejection");
+    if (!payload) throw new ProviderFailure("token_exchange", "malformed_response");
+
+    const grantedScopes = readGrantedScopes(payload.scope);
+    if (grantedScopes === null) {
+      throw new ProviderFailure("token_exchange", "malformed_response");
+    }
     if (grantedScopes.length > 0) throw new ProviderFailure("unexpected_scope");
 
-    const rawAccessToken = typeof payload?.access_token === "string"
+    const rawAccessToken = typeof payload.access_token === "string"
       ? payload.access_token
       : "";
     const accessToken = rawAccessToken.trim();
@@ -349,7 +371,7 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
       || accessToken !== rawAccessToken
       || /\s/.test(accessToken)
     ) {
-      throw new ProviderFailure("token_exchange");
+      throw new ProviderFailure("token_exchange", "missing_access_token");
     }
     return accessToken;
   }
@@ -418,6 +440,19 @@ function readGrantedScopes(value: unknown): string[] | null {
     .split(",")
     .map((scope) => scope.trim())
     .filter(Boolean);
+}
+
+function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {
+  if (typeof value !== "string") return null;
+  switch (value) {
+    case "incorrect_client_credentials":
+    case "redirect_uri_mismatch":
+    case "bad_verification_code":
+    case "unverified_user_email":
+      return value;
+    default:
+      return "provider_rejection";
+  }
 }
 
 function validProviderAccessToken(value: string): string {
@@ -759,30 +794,35 @@ function authBackendError(context: Context<StensiblyEnv>) {
 
 function providerBackendError(
   context: Context<StensiblyEnv>,
-  stage: GitHubProviderFailureStage,
+  failure: GitHubProviderFailureDetails,
 ) {
   context.header(FAILURE_CATEGORY_HEADER, "request_failure");
   return context.json({
     error: "GitHub authentication failed",
     code: "provider_failure",
-    stage,
+    stage: failure.stage,
+    ...(failure.reason ? { reason: failure.reason } : {}),
   }, 502);
 }
 
-function providerFailureStage(
+function providerFailureDetails(
   error: unknown,
   fallback: GitHubProviderFailureStage,
-): GitHubProviderFailureStage {
-  return error instanceof ProviderFailure ? error.stage : fallback;
+): GitHubProviderFailureDetails {
+  return error instanceof ProviderFailure
+    ? { stage: error.stage, ...(error.reason ? { reason: error.reason } : {}) }
+    : { stage: fallback };
 }
 
 class AuthInputError extends Error {}
 class ProviderFailure extends Error {
   readonly stage: GitHubProviderFailureStage;
+  readonly reason?: GitHubProviderFailureReason;
 
-  constructor(stage: GitHubProviderFailureStage) {
+  constructor(stage: GitHubProviderFailureStage, reason?: GitHubProviderFailureReason) {
     super("GitHub provider failure");
     Object.defineProperty(this, "name", { value: "ProviderFailure" });
     this.stage = stage;
+    if (reason) Object.defineProperty(this, "reason", { value: reason });
   }
 }
