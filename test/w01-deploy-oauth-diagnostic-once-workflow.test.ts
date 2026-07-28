@@ -7,18 +7,22 @@ const workflow = readFileSync(
 );
 
 describe("W01 one-time OAuth callback diagnostic deployment", () => {
-  test("runs only when the workflow is first added to main", () => {
-    expect(workflow).toContain("push:");
+  test("runs only for the exact same-repository execution PR", () => {
+    expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("branches:\n      - main");
+    expect(workflow).toContain("types:\n      - opened\n      - synchronize\n      - reopened");
     expect(workflow).toContain(
-      "paths:\n      - \".github/workflows/w01-deploy-oauth-diagnostic-once.yml\"",
+      "EXECUTION_BRANCH: lantern/402-deploy-diagnostic-pr-run",
     );
     expect(workflow).toContain(
-      "contains(github.event.head_commit.added, '.github/workflows/w01-deploy-oauth-diagnostic-once.yml')",
+      "github.head_ref == 'lantern/402-deploy-diagnostic-pr-run'",
     );
+    expect(workflow).toContain(
+      "github.event.pull_request.head.repo.full_name == github.repository",
+    );
+    expect(workflow).toContain("github.event.pull_request.draft == false");
     expect(workflow).not.toContain("workflow_dispatch:");
     expect(workflow).not.toContain("schedule:");
-    expect(workflow).not.toContain("pull_request:");
     expect(workflow).toContain('if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]');
   });
 
@@ -71,7 +75,10 @@ describe("W01 one-time OAuth callback diagnostic deployment", () => {
     expect(workflow).toContain("restored-oauth-worker.txt");
   });
 
-  test("retains bounded evidence without secret values", () => {
+  test("posts and retains bounded evidence without secret values", () => {
+    expect(workflow).toContain("permissions:\n  contents: read\n  issues: write");
+    expect(workflow).toContain("gh issue comment 402");
+    expect(workflow).toContain("continue-on-error: true");
     expect(workflow).toContain("contains_secret_values: false");
     expect(workflow).toContain("retention-days: 3");
     expect(workflow).toContain("actions/upload-artifact@v4");
