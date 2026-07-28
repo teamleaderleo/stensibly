@@ -4,6 +4,11 @@ const reservationModes = new Set(['exclusive', 'shared']);
 const runStatuses = new Set(['running', 'waiting', 'succeeded', 'failed', 'cancelled']);
 const activeRunStatuses = new Set(['running', 'waiting']);
 const completedStatuses = new Set(['done', 'archived']);
+const itemHistoryContractVersion = 1;
+const maxPublicEventPayloadEntries = 20;
+const maxPublicEventPayloadKeyLength = 80;
+const unsafePayloadKeys = new Set(['__proto__', 'constructor', 'prototype']);
+const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
 export function readItemDetail(payload, expectedItemId = '') {
   if (!isRecord(payload) || !isRecord(payload.item)) {
@@ -26,13 +31,50 @@ export function readItemDetail(payload, expectedItemId = '') {
   if (payload.runs !== undefined && !Array.isArray(payload.runs)) {
     throw new TypeError('The item detail response contains incompatible runs.');
   }
+  const declaresHistoryContract = Object.hasOwn(payload, 'historyContractVersion');
+  const declaresEventCompleteness = Object.hasOwn(payload, 'eventsTruncated');
+  if (declaresHistoryContract || declaresEventCompleteness) {
+    if (payload.historyContractVersion !== itemHistoryContractVersion) {
+      throw new TypeError('The item detail response uses an incompatible history contract.');
+    }
+    if (typeof payload.eventsTruncated !== 'boolean') {
+      throw new TypeError('The item detail response is missing event-history completeness.');
+    }
+  }
   return {
+    historyContractVersion: declaresHistoryContract ? itemHistoryContractVersion : null,
+    eventsTruncated: declaresEventCompleteness ? payload.eventsTruncated : null,
     item: payload.item,
-    events: payload.events.filter(isRecord),
+    events: payload.events.map((event) => readPublicEvent(event, itemId)).filter(Boolean),
     artifacts: payload.artifacts.filter(isRecord),
     dependencies: (payload.dependencies || []).map(readDependency).filter(Boolean),
     reservations: (payload.reservations || []).map(readReservation).filter(Boolean),
     runs: (payload.runs || []).map((run) => readRun(run, itemId)).filter(Boolean),
+  };
+}
+
+export function readPublicEvent(value, expectedItemId = '') {
+  if (!isRecord(value)) return null;
+  const id = boundedTextValue(value.id, 200);
+  const itemId = boundedTextValue(value.itemId, 200);
+  const actorId = nullableBoundedText(value.actorId, 120);
+  const type = boundedTextValue(value.type, 160);
+  const createdAt = timestampValue(value.createdAt);
+  if (
+    !id
+    || !itemId
+    || (expectedItemId && itemId !== expectedItemId)
+    || actorId === undefined
+    || !type
+    || !createdAt
+  ) return null;
+  return {
+    id,
+    itemId,
+    actorId,
+    type,
+    payload: readPublicEventPayload(value.payload),
+    createdAt,
   };
 }
 
@@ -242,6 +284,34 @@ function readRun(value, expectedItemId) {
     endedAt,
     outcome: nullableText(value.outcome),
   };
+}
+
+function readPublicEventPayload(value) {
+  if (!isRecord(value)) return {};
+  const output = {};
+  let retained = 0;
+  for (const [rawKey, entry] of Object.entries(value)) {
+    if (retained >= maxPublicEventPayloadEntries) break;
+    const key = boundedTextValue(rawKey, maxPublicEventPayloadKeyLength);
+    if (!key || unsafePayloadKeys.has(key) || Object.hasOwn(output, key)) continue;
+    output[key] = entry;
+    retained += 1;
+  }
+  return output;
+}
+
+function boundedTextValue(value, maximum) {
+  const output = textValue(value);
+  return output && output.length <= maximum && !unsafeTextPattern.test(output)
+    ? output
+    : '';
+}
+
+function nullableBoundedText(value, maximum) {
+  if (value === null) return null;
+  if (value === undefined) return undefined;
+  const output = boundedTextValue(value, maximum);
+  return output || undefined;
 }
 
 function displayValue(value, maxLength) {

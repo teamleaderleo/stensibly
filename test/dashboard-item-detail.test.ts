@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { createServerApp } from "../src/server-app.ts";
+import { StensiblyStore } from "../src/store.ts";
 import {
   createRequestGate,
   dependencyBlocksCurrent,
   dependencyRelationship,
   payloadEntries,
   readItemDetail,
+  readPublicEvent,
   redactCredentialText,
   reservationCapacityLabel,
   reservationIsFull,
@@ -58,7 +61,16 @@ describe("dashboard item detail response", () => {
     };
     const payload = {
       item: { id: "item_1", title: "Inspect me" },
-      events: [{ id: "evt_1" }, null, "bad"],
+      historyContractVersion: 1,
+      eventsTruncated: false,
+      events: [{
+        id: "evt_1",
+        itemId: "item_1",
+        actorId: "alpha",
+        type: "work.progressed",
+        payload: { summary: "Implemented the bounded reader." },
+        createdAt: "2026-07-25T00:40:00.000Z",
+      }, null, "bad", { id: "evt_bad" }],
       artifacts: [{ id: "art_1" }, []],
       dependencies: [
         validDependency,
@@ -78,8 +90,17 @@ describe("dashboard item detail response", () => {
     };
 
     expect(readItemDetail(payload, "item_1")).toEqual({
+      historyContractVersion: 1,
+      eventsTruncated: false,
       item: payload.item,
-      events: [{ id: "evt_1" }],
+      events: [{
+        id: "evt_1",
+        itemId: "item_1",
+        actorId: "alpha",
+        type: "work.progressed",
+        payload: { summary: "Implemented the bounded reader." },
+        createdAt: "2026-07-25T00:40:00.000Z",
+      }],
       artifacts: [{ id: "art_1" }],
       dependencies: [validDependency],
       reservations: [validReservation],
@@ -87,29 +108,124 @@ describe("dashboard item detail response", () => {
     });
   });
 
-  test("keeps compatibility with item detail responses that predate coordination visibility", () => {
-    expect(readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [] }, "item_1"))
-      .toEqual({
-        item: { id: "item_1" },
-        events: [],
-        artifacts: [],
-        dependencies: [],
-        reservations: [],
-        runs: [],
+  test("preserves legacy unknown completeness and requires an exact declared envelope", () => {
+    const legacy = {
+      item: { id: "item_1" },
+      events: [],
+      artifacts: [],
+    };
+    expect(readItemDetail(legacy, "item_1")).toMatchObject({
+      historyContractVersion: null,
+      eventsTruncated: null,
+      events: [],
+    });
+
+    const hosted = {
+      ...legacy,
+      historyContractVersion: 1,
+      eventsTruncated: false,
+    };
+    expect(readItemDetail(hosted, "item_1")).toMatchObject({
+      historyContractVersion: 1,
+      eventsTruncated: false,
+      events: [],
+    });
+    expect(() => readItemDetail({ ...hosted, historyContractVersion: 2 }, "item_1"))
+      .toThrow("incompatible history contract");
+    expect(() => readItemDetail({ ...hosted, historyContractVersion: undefined }, "item_1"))
+      .toThrow("incompatible history contract");
+    expect(() => readItemDetail({ ...hosted, eventsTruncated: undefined }, "item_1"))
+      .toThrow("missing event-history completeness");
+    expect(() => readItemDetail({ ...legacy, eventsTruncated: false }, "item_1"))
+      .toThrow("incompatible history contract");
+  });
+
+  test("reads the real SQLite API detail with unknown completeness", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const item = store.createItem({
+        project: "scrapbook",
+        kind: "task",
+        title: "Read local history",
+        priority: 50,
+        actor: { id: "leo", name: "Leo", kind: "human" },
       });
+      const app = createServerApp(store);
+      const response = await app.request(`/api/v1/items/${encodeURIComponent(item.id)}`);
+      expect(response.status).toBe(200);
+
+      const detail = readItemDetail(await response.json(), item.id);
+      expect(detail.historyContractVersion).toBeNull();
+      expect(detail.eventsTruncated).toBeNull();
+      expect(detail.item).toMatchObject({ id: item.id, project: "scrapbook" });
+      expect(detail.events.map((event) => event.type)).toContain("item.created");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("keeps attributable public events while dropping malformed cores", () => {
+    const event = (actorId: string) => ({
+      id: `evt_${actorId}`,
+      itemId: "item_1",
+      actorId,
+      type: "review.responded",
+      payload: "legacy prose",
+      createdAt: "2026-07-25T00:00:00.000Z",
+    });
+    expect(readPublicEvent(event("plover"), "item_1")).toEqual({
+      ...event("plover"),
+      payload: {},
+    });
+    expect(readPublicEvent(event("keystone"), "item_1")?.actorId).toBe("keystone");
+    expect(readPublicEvent({ ...event("plover"), actorId: null }, "item_1")?.actorId).toBeNull();
+    const missingActor = { ...event("plover") } as Record<string, unknown>;
+    delete missingActor.actorId;
+    expect(readPublicEvent(missingActor, "item_1")).toBeNull();
+    expect(readPublicEvent({ ...event("plover"), itemId: "item_2" }, "item_1")).toBeNull();
+    expect(readPublicEvent({ ...event("plover"), createdAt: "not-a-time" }, "item_1")).toBeNull();
+    expect(readPublicEvent({ ...event("plover"), type: "bad\nkind" }, "item_1")).toBeNull();
+    expect(readPublicEvent(event("plo\u0085ver"), "item_1")).toBeNull();
+    expect(readPublicEvent(event("plo\u2028ver"), "item_1")).toBeNull();
+    expect(readPublicEvent(event("plo\u202ever"), "item_1")).toBeNull();
+    expect(readPublicEvent(event("plo\u2066ver"), "item_1")).toBeNull();
+  });
+
+  test("bounds public event payload keys without losing the event", () => {
+    const payload = Object.fromEntries([
+      ["constructor", "ignored"],
+      ["bad\u0085key", "ignored"],
+      ["bad\u2066key", "ignored"],
+      ...Array.from({ length: 25 }, (_, index) => [`field_${index}`, index]),
+    ]);
+    const event = readPublicEvent({
+      id: "evt_1",
+      itemId: "item_1",
+      actorId: null,
+      type: "system.updated",
+      payload,
+      createdAt: "2026-07-25T00:00:00.000Z",
+    }, "item_1");
+    expect(event).not.toBeNull();
+    expect(Object.keys(event?.payload || {})).toHaveLength(20);
+    expect(Object.hasOwn(event?.payload || {}, "constructor")).toBe(false);
+    expect(Object.hasOwn(event?.payload || {}, "bad\u0085key")).toBe(false);
+    expect(Object.hasOwn(event?.payload || {}, "bad\u2066key")).toBe(false);
+    expect(event?.payload).toHaveProperty("field_0", 0);
+    expect(event?.payload).not.toHaveProperty("field_20");
   });
 
   test("rejects malformed and mismatched responses", () => {
     expect(() => readItemDetail(null)).toThrow("incompatible item detail");
-    expect(() => readItemDetail({ item: {}, events: [], artifacts: [] })).toThrow("missing an item ID");
-    expect(() => readItemDetail({ item: { id: "item_2" }, events: [], artifacts: [] }, "item_1"))
+    expect(() => readItemDetail({ item: {}, events: [], artifacts: [], historyContractVersion: 1, eventsTruncated: false })).toThrow("missing an item ID");
+    expect(() => readItemDetail({ item: { id: "item_2" }, events: [], artifacts: [], historyContractVersion: 1, eventsTruncated: false }, "item_1"))
       .toThrow("different item");
-    expect(() => readItemDetail({ item: { id: "item_1" }, events: [] })).toThrow("missing events or artifacts");
-    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], dependencies: {} }))
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], historyContractVersion: 1, eventsTruncated: false })).toThrow("missing events or artifacts");
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], dependencies: {}, historyContractVersion: 1, eventsTruncated: false }))
       .toThrow("incompatible dependencies");
-    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], reservations: {} }))
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], reservations: {}, historyContractVersion: 1, eventsTruncated: false }))
       .toThrow("incompatible reservations");
-    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], runs: {} }))
+    expect(() => readItemDetail({ item: { id: "item_1" }, events: [], artifacts: [], runs: {}, historyContractVersion: 1, eventsTruncated: false }))
       .toThrow("incompatible runs");
   });
 });
@@ -182,6 +298,8 @@ describe("dashboard agent run state", () => {
       item: { id: "item_1" },
       events: [],
       artifacts: [],
+      historyContractVersion: 1,
+      eventsTruncated: false,
       runs: [run],
     });
     expect(readItemDetail(payload({ ...base, endedAt: "2026-07-25T00:02:00.000Z" }), "item_1").runs)
