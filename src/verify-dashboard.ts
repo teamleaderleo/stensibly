@@ -18,8 +18,8 @@ const TOKEN_PATTERN = /stn\.tok_[A-Za-z0-9._-]+/i;
 
 export function verifyDashboardHtml(html: string): void {
   const required = [
-    "<title>Stensibly · Agent scrapbook</title>",
-    'content="Stensibly is a shared work-in-progress ledger for humans and agents."',
+    "<title>Stensibly · Shared work</title>",
+    'content="Stensibly keeps shared work visible and resumable for people and agents."',
     'src="/hosted-session-bridge.js"',
     'src="/app.js"',
     'href="/styles.css"',
@@ -29,6 +29,7 @@ export function verifyDashboardHtml(html: string): void {
     'id="connect-form"',
     'id="dashboard"',
     'id="item-detail-dialog"',
+    'id="item-detail-announcer"',
   ];
   for (const marker of required) {
     if (!html.includes(marker)) throw new Error(`dashboard HTML is missing ${marker}`);
