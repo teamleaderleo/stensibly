@@ -67,6 +67,7 @@ jobs:
           git config user.email "teamleaderleo@users.noreply.github.com"
           git add \
             site/provider-capacity.js \
+            site/provider-capacity.d.ts \
             site/provider-capacity-controller.js \
             site/provider-capacity.css \
             site/index.html \
