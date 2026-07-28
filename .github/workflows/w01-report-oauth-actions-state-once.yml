@@ -13,6 +13,7 @@ permissions:
   issues: write
 
 env:
+  REPORT_GENERATION: "2"
   DEPLOYMENT_SHA: 0bb34bafc614c12c40e948bdc78ff72860763907
   OBSERVER_SHA: e9c84926e9bb5e117c21e860a0a6f8f5c2610a97
   DEPLOYMENT_WORKFLOW: w01-deploy-oauth-diagnostic-once.yml
@@ -82,6 +83,7 @@ jobs:
           cat > evidence/issue-comment.md <<EOF
           ## OAuth deployment Actions state
 
+          - Reporter generation: \`$REPORT_GENERATION\`
           - Deployment generation: \`$DEPLOYMENT_SHA\`
           - Deployment run: \`$deployment_id\` — status \`$deployment_status\`, conclusion \`$deployment_conclusion\`
           - Deployment jobs: \`${deployment_steps:-none}\`
