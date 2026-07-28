@@ -1,4 +1,5 @@
 export type ActorKind = 'human' | 'agent' | 'service';
+export type PrincipalKind = 'api_token' | 'account';
 
 export interface ActorSession {
   id: string;
@@ -8,9 +9,10 @@ export interface ActorSession {
 
 export interface PrincipalContext {
   principal: {
-    kind: 'api_token';
+    kind: PrincipalKind;
     name: string;
     workspace: string | null;
+    role?: string;
     scopes: string[];
     projects: string[] | null;
   };

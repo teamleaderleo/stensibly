@@ -23,6 +23,7 @@ const endpointInput = document.querySelector('#connect-form [name="endpoint"]');
 const disconnectButton = document.querySelector('#disconnect-connection');
 let hostedAuthorizationDenied = false;
 
+persistEndpoint(savedEndpoint);
 installSessionMarker(savedEndpoint);
 window.fetch = installHostedSessionFetchBridge({
   fetchImpl: originalFetch,
@@ -64,6 +65,14 @@ function readSavedEndpoint() {
       // The default remains usable when browser storage is unavailable.
     }
     return DEFAULT_ENDPOINT;
+  }
+}
+
+function persistEndpoint(endpoint) {
+  try {
+    localStorage.setItem('stensiblyEndpoint', endpoint);
+  } catch {
+    // The in-memory endpoint still works when browser storage is unavailable.
   }
 }
 
