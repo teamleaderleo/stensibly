@@ -16,9 +16,9 @@
 .detail-claim-actions, .detail-renewal-actions { display: flex; align-items: center; gap: .55rem; }
 
 .detail-claim-actions button, .detail-renewal-actions button {
-  color: #fff;
+  color: var(--on-accent);
   border-color: transparent;
-  background: var(--accent-strong);
+  background: var(--accent-solid);
   box-shadow: 0 .35rem .8rem color-mix(in srgb, var(--accent) 20%, transparent);
   font-weight: 750;
 }

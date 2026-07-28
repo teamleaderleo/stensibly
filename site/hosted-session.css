@@ -1,3 +1,12 @@
+:root {
+  --accent-solid: #5d5478;
+  --on-accent: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root { --accent-solid: #70668b; }
+}
+
 .hosted-sign-in {
   display: grid;
   gap: .6rem;
@@ -12,11 +21,18 @@
 .hosted-sign-in button {
   width: 100%;
   min-height: 3.15rem;
-  color: #fff;
+  color: var(--on-accent);
   border-color: transparent;
-  background: var(--accent-strong);
-  box-shadow: 0 .45rem 1rem color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--accent-solid);
+  box-shadow: 0 .45rem 1rem color-mix(in srgb, var(--accent) 25%, transparent);
   font-weight: 760;
+}
+
+.connection-form-actions button:first-child,
+.actor-form-actions button:first-child,
+.create-item-actions button:first-child {
+  color: var(--on-accent);
+  background: var(--accent-solid);
 }
 
 .hosted-sign-in .secondary {
