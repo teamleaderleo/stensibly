@@ -26,4 +26,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" --jq '.body'
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" --jq '.body' \
+            | awk 'seen { print } /^<\/details>$/ { seen=1 }'
