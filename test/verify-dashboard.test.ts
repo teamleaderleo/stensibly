@@ -14,6 +14,7 @@ const validHtml = `<!doctype html>
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/item-claim.css" />
 <link rel="stylesheet" href="/hosted-session.css" />
+<link rel="stylesheet" href="/login-scrapbook.css" />
 </head><body>
 <button id="github-sign-in"></button>
 <form id="connect-form"></form>
@@ -67,7 +68,7 @@ describe("dashboard asset verification contract", () => {
     }
   });
 
-  test("includes the attributable item activity path", () => {
+  test("includes the attributable item activity and scrapbook login paths", () => {
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/item-detail-controller.js",
       marker: "activityThreadSection",
@@ -79,6 +80,10 @@ describe("dashboard asset verification contract", () => {
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/styles.css",
       marker: ".detail-activity-thread",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/login-scrapbook.css",
+      marker: ".workroom-preview",
     }));
   });
 
