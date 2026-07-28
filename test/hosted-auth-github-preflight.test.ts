@@ -49,6 +49,23 @@ describe("HttpGitHubOAuthClient callback egress hardening", () => {
     expect(body.get("redirect_uri")).toBe(EXCHANGE_INPUT.redirectUri);
     expect(body.get("code_verifier")).toBe(EXCHANGE_INPUT.codeVerifier);
   });
+
+  test("invokes injected fetch without rebinding its receiver", async () => {
+    const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const fetchImpl = (function (
+      this: unknown,
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) {
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      requests.push({ input, init });
+      return Promise.resolve(new Response(null, { status: 405 }));
+    }) as typeof fetch;
+    const client = githubClient(fetchImpl);
+
+    await expect(client.prepareExchange()).resolves.toBeUndefined();
+    expect(requests).toHaveLength(1);
+  });
 });
 
 function githubClient(fetchImpl: typeof fetch): HttpGitHubOAuthClient {

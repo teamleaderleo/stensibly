@@ -12,6 +12,31 @@ def replace_once(path: str, old: str, new: str) -> None:
 
 replace_once(
     "src/hosted-auth.ts",
+    '''export interface HttpGitHubOAuthClientOptions {
+  clientId: string;
+  clientSecret: string;
+  fetch?: typeof fetch;
+}''',
+    '''type GitHubFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
+export interface HttpGitHubOAuthClientOptions {
+  clientId: string;
+  clientSecret: string;
+  fetch?: GitHubFetch;
+}''',
+)
+
+replace_once(
+    "src/hosted-auth.ts",
+    '''  private readonly fetchImpl: typeof fetch;''',
+    '''  private readonly fetchImpl: GitHubFetch;''',
+)
+
+replace_once(
+    "src/hosted-auth.ts",
     '''    this.fetchImpl = options.fetch ?? fetch;''',
     '''    const fetchImpl = options.fetch;
     this.fetchImpl = fetchImpl
