@@ -20,6 +20,12 @@ export interface VisibleEventWindow {
   scannedRows: number;
 }
 
+export interface BoundedPaginationStatus {
+  isDone: boolean;
+  pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+  splitCursor?: string | null;
+}
+
 /**
  * Reads the newest physically bounded candidate page before applying private
  * execution and dependency visibility filters. Convex indexes use their final
@@ -68,11 +74,19 @@ export async function readBoundedVisibleItemEvents(
   return {
     events: [...selected].reverse(),
     truncated:
-      !page.isDone
+      paginationRequiresFurtherInspection(page)
       || page.page.length > MAX_ITEM_EVENT_SCAN_ROWS
       || visibleNewestFirst.length > visibleLimit,
     scannedRows: physicalRows.length,
   };
+}
+
+export function paginationRequiresFurtherInspection(
+  page: BoundedPaginationStatus,
+): boolean {
+  return !page.isDone
+    || page.pageStatus !== null && page.pageStatus !== undefined
+    || (typeof page.splitCursor === "string" && page.splitCursor.length > 0);
 }
 
 export function assertCompleteArtifactWindow(rowCount: number): void {

@@ -188,6 +188,7 @@ describe("Convex work ledger", () => {
       "query:historyCapabilities:get",
       "query:itemControl:get",
       "query:itemReservations:list",
+      "query:historyCapabilities:get",
       "query:artifacts:list",
       "mutation:items:create",
       "mutation:claims:acquire",
@@ -219,10 +220,16 @@ describe("Convex work ledger", () => {
         workspace: "shared-work",
       });
     }
-    expect(call(client, "historyCapabilities:get").args).toEqual({
-      serviceSecret: "private-service-secret",
-      workspace: "shared-work",
-    });
+    const capabilityCalls = client.calls.filter((entry) =>
+      entry.type === "query" && entry.name === "historyCapabilities:get"
+    );
+    expect(capabilityCalls).toHaveLength(2);
+    for (const capabilityCall of capabilityCalls) {
+      expect(capabilityCall.args).toEqual({
+        serviceSecret: "private-service-secret",
+        workspace: "shared-work",
+      });
+    }
     expect(call(client, "itemControl:get").args).toMatchObject({
       id: "item_1",
       now: expect.any(Number),
