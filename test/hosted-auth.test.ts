@@ -287,6 +287,7 @@ describe("hosted GitHub OAuth endpoints", () => {
     expect(body).toBe(JSON.stringify({
       error: "GitHub authentication failed",
       code: "provider_failure",
+      stage: "token_exchange",
     }));
     expect(body).not.toContain("secret provider failure");
   });
