@@ -33,9 +33,14 @@ export interface GitHubWebhookOptions {
 
 const githubDeliveryPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const githubRepositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const githubActorLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[bot\])?$/;
 const gitRevisionPattern = /^[0-9a-f]{40}$/i;
 const controlPattern = /[\u0000-\u001f\u007f-\u009f]/u;
+
+const githubActorLoginSchema = z.string()
+  .min(1)
+  .max(120)
+  .regex(githubActorLoginPattern);
 
 const pullRequestReviewSchema = z.object({
   action: z.enum(["submitted", "edited", "dismissed"]),
@@ -57,7 +62,7 @@ const pullRequestReviewSchema = z.object({
     ]),
   }).passthrough(),
   sender: z.object({
-    login: z.string().regex(githubLoginPattern),
+    login: githubActorLoginSchema,
   }).passthrough().optional(),
 }).passthrough();
 
