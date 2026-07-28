@@ -60,10 +60,13 @@ type GitHubProviderFailureDetail =
   | "error"
   | "non_error";
 
+type GitHubProviderFailureOperation = "preflight" | "exchange" | "identity";
+
 interface GitHubProviderFailureDetails {
   stage: GitHubProviderFailureStage;
   reason?: GitHubProviderFailureReason;
   detail?: GitHubProviderFailureDetail;
+  operation?: GitHubProviderFailureOperation;
 }
 
 export interface GitHubOAuthClient {
@@ -185,7 +188,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
       } catch (error) {
         return providerBackendError(
           context,
-          providerFailureDetails(error, "token_exchange"),
+          { ...providerFailureDetails(error, "token_exchange"), operation: "preflight" },
         );
       }
     }
@@ -215,7 +218,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     } catch (error) {
       return providerBackendError(
         context,
-        providerFailureDetails(error, "token_exchange"),
+        { ...providerFailureDetails(error, "token_exchange"), operation: "exchange" },
       );
     }
 
@@ -225,7 +228,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     } catch (error) {
       return providerBackendError(
         context,
-        providerFailureDetails(error, "identity_request"),
+        { ...providerFailureDetails(error, "identity_request"), operation: "identity" },
       );
     }
 
@@ -235,7 +238,7 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
     } catch (error) {
       return providerBackendError(
         context,
-        providerFailureDetails(error, "identity_payload"),
+        { ...providerFailureDetails(error, "identity_payload"), operation: "identity" },
       );
     }
 
@@ -356,8 +359,6 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
           accept: "application/json",
           "user-agent": "Stensibly",
         },
-        cache: "no-store",
-        redirect: "manual",
         signal: AbortSignal.timeout(GITHUB_TOKEN_PREFLIGHT_TIMEOUT_MS),
       });
     } catch (error) {
@@ -386,8 +387,6 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
           redirect_uri: input.redirectUri,
           code_verifier: input.codeVerifier,
         }).toString(),
-        cache: "no-store",
-        redirect: "manual",
         signal: AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
@@ -908,6 +907,7 @@ function providerBackendError(
     stage: failure.stage,
     ...(failure.reason ? { reason: failure.reason } : {}),
     ...(failure.detail ? { detail: failure.detail } : {}),
+    ...(failure.operation ? { operation: failure.operation } : {}),
     ...(colo ? { colo } : {}),
   }, 502);
 }
