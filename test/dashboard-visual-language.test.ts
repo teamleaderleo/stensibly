@@ -15,17 +15,45 @@ describe("dashboard visual language", () => {
     expect(styles).not.toContain("#d8ff5f");
   });
 
-  test("keeps hosted sign-in primary and advanced token access secondary", async () => {
-    const [html, hostedStyles] = await Promise.all([
+  test("presents hosted sign-in as the scrapbook workroom entrance", async () => {
+    const [html, hostedStyles, loginStyles] = await Promise.all([
       siteFile("index.html"),
       siteFile("hosted-session.css"),
+      siteFile("login-scrapbook.css"),
     ]);
 
-    expect(html).toContain("Shared work, in one place.");
-    expect(html).toContain("People and agents working here");
+    expect(html).toContain("Pick up the work without reopening every chat.");
+    expect(html).toContain("workroom 01");
+    expect(html).toContain('class="workroom-preview"');
+    expect(html).toContain('href="/login-scrapbook.css"');
     expect(html).toContain('id="github-sign-in"');
-    expect(html.indexOf('id="github-sign-in"')).toBeLessThan(html.indexOf("advanced connection"));
+    expect(html).toContain('class="advanced-connection"');
+    expect(html.indexOf('id="github-sign-in"')).toBeLessThan(html.indexOf('class="advanced-connection"'));
+    expect(html.indexOf('id="github-sign-in"')).toBeLessThan(html.indexOf('name="token"'));
     expect(hostedStyles).toContain("var(--accent-solid)");
+    expect(loginStyles).toContain(".workroom-preview");
+    expect(loginStyles).toContain(".advanced-connection summary:focus-visible");
+    expect(loginStyles).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  test("preserves the existing hosted and bearer connection controls", async () => {
+    const html = await siteFile("index.html");
+
+    for (const marker of [
+      'id="connect-form"',
+      'id="hosted-sign-in"',
+      'id="hosted-sign-in-state"',
+      'id="hosted-sign-out"',
+      'name="endpoint"',
+      'name="token"',
+      'id="cancel-connection"',
+      'id="connected-summary"',
+      'id="connection-error"',
+      'id="connection-note"',
+    ]) {
+      expect(html).toContain(marker);
+    }
+    expect(html).toContain("Secure session cookie · no access token pasted into this page");
   });
 
   test("keeps every primary action readable in light and dark schemes", async () => {
