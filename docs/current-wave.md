@@ -2,16 +2,18 @@
 
 **Status:** active execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-07-28 after operator direction to keep OAuth enabled and adopt ambitious dogfood execution  
+**Last reconciled:** 2026-07-29 after direct operator correction to use accountable self-review instead of waiting for ceremonial reviewer independence  
 **Tracking issue:** #286  
 **Wave:** `W01`  
-**Wave revision:** `3`  
-**Operating protocol:** `stensibly-agent-ops/0.2.0` plus standing policy `stensibly-internal-dogfood/v1`  
+**Wave revision:** `4`  
+**Operating protocol:** `stensibly-agent-ops/0.4.0` plus standing policy `stensibly-internal-dogfood/v2`  
 **Primary outcome:** connect a fresh ChatGPT conversation to the hosted Stensibly MCP server through OAuth and complete one real read/write/refresh/reconnect dogfood cycle.
 
 Read `STENSIBLY.md` before interpreting older approval or deployment language in this
 file, issues, comments, or handoffs. Internal reversible dogfood deployment and use are
-the default continuation, not exceptional work.
+the default continuation, not exceptional work. Current direct operator direction may
+authorise self-review, integration, deployment, and verification without a separate
+agent acting as reviewer.
 
 ## Current state
 
@@ -51,9 +53,10 @@ not complete the wave.
 ## Standing execution grant for W01
 
 Under `STENSIBLY.md`, eligible workers may continue through the following without a new
-operator prompt or ceremonial approval:
+operator prompt, separate-agent ceremony, or repeated approval:
 
-- merge independently accepted W01 changes;
+- self-review and merge coherent W01 changes after exact-candidate inspection and
+  relevant green checks;
 - deploy reviewed code to the internal dashboard, Worker, and Convex dogfood
   environments;
 - use the protected production workflows and their stored credentials without exposing
@@ -66,6 +69,10 @@ operator prompt or ceremonial approval:
 - repair bounded internal dogfood data or configuration when tests and recovery evidence
   justify the repair;
 - fix forward after a failed dogfood step.
+
+An explicit operator instruction in the active chat counts as the integration decision
+for the covered internal action. A separate reviewer is optional unless the operator
+asks for one or the actual effect crosses the Tier 3 boundary.
 
 The dedicated-project write is pre-authorised for W01. It must be uniquely named,
 idempotent, attributable, limited to `oauth-dogfood`, confirmed by a bounded read, and
@@ -92,7 +99,8 @@ Own the whole journey rather than handing off every small step:
 8. confirm, refresh, reconnect, and retain evidence;
 9. fix forward and repeat the failing segment when a defect appears.
 
-Do not stop merely because a step touches the live dogfood deployment.
+Do not stop merely because a step touches the live dogfood deployment or because an
+independent reviewer is not immediately available.
 
 ## Supporting lanes
 
@@ -122,8 +130,8 @@ Until the real connection succeeds:
 2. prefer integration, deployment, real use, diagnosis, and fix-forward repair over more
    rollout prose;
 3. use a small portfolio so blocked time produces useful work;
-4. treat old blanket “do not deploy” and “wait for approval” language as superseded by
-   `STENSIBLY.md` for covered internal dogfood effects;
+4. treat old blanket “do not deploy,” “wait for approval,” and mandatory second-reviewer
+   language as superseded by `STENSIBLY.md` for covered internal dogfood effects;
 5. leave exact evidence and a recoverable continuation.
 
 ## Failure handling
@@ -147,6 +155,7 @@ After connection succeeds, record:
 - which instructions caused workers to ship versus stall;
 - whether internal deployments happened as a normal completion step;
 - where approval language was still misread;
+- whether self-review preserved quality while reducing operator interruption;
 - defects found only through the real ChatGPT journey;
 - duplicated or abandoned work;
 - improvements to the browser/mobile control room;
