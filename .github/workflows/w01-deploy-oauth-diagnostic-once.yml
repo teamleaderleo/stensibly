@@ -1,14 +1,20 @@
 name: W01 deploy OAuth callback diagnostic once
 
 on:
-  push:
+  pull_request:
     branches:
       - main
+    types:
+      - opened
+      - synchronize
+      - reopened
     paths:
       - ".github/workflows/w01-deploy-oauth-diagnostic-once.yml"
+      - "test/w01-deploy-oauth-diagnostic-once-workflow.test.ts"
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: stensibly-worker-production
@@ -16,13 +22,18 @@ concurrency:
 
 env:
   REQUIRED_SOURCE_SHA: 06b17e1ce80b702a836078f6e88746666bb25046
+  EXECUTION_BRANCH: lantern/402-deploy-diagnostic-pr-run
   CANONICAL_ORIGIN: https://api.stensibly.com
   WORKER_ORIGIN: https://stensibly-api.leoli-082000.workers.dev
 
 jobs:
   deploy-diagnostic:
     name: Deploy and verify bounded OAuth callback diagnosis
-    if: contains(github.event.head_commit.added, '.github/workflows/w01-deploy-oauth-diagnostic-once.yml')
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.head_ref == 'lantern/402-deploy-diagnostic-pr-run' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -45,6 +56,10 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
             echo "This one-time production generation cannot be rerun" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_HEAD_REF" != "$EXECUTION_BRANCH" ]]; then
+            echo "Unexpected execution branch: $GITHUB_HEAD_REF" >&2
             exit 1
           fi
           git merge-base --is-ancestor "$REQUIRED_SOURCE_SHA" "$GITHUB_SHA" || {
@@ -135,7 +150,7 @@ jobs:
           bunx wrangler deployments list --name stensibly-api --json > /tmp/post-deployments.json
           jq 'sort_by(.created_on) | last | {deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' /tmp/post-deployments.json > evidence/post-deployment.json
           jq -n \
-            --arg version "w01-oauth-callback-diagnostic-deploy/v1" \
+            --arg version "w01-oauth-callback-diagnostic-deploy/v2" \
             --arg sourceSha "$DEPLOY_SHA" \
             --arg requiredSource "$REQUIRED_SOURCE_SHA" \
             --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -165,6 +180,39 @@ jobs:
           bun run verify:hosted -- --endpoint "$WORKER_ORIGIN" | tee evidence/restored-bearer-worker.txt
           bun run verify:oauth -- --expect enabled | tee evidence/restored-oauth-canonical.txt
           bun run verify:oauth -- --endpoint "$WORKER_ORIGIN" --issuer "$CANONICAL_ORIGIN" --expect enabled | tee evidence/restored-oauth-worker.txt
+
+      - name: Post bounded execution result to issue 402
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          post_deployment="not_recorded"
+          post_version="not_recorded"
+          if [[ -f evidence/post-deployment.json ]]; then
+            post_deployment="$(jq -r '.deployment_id' evidence/post-deployment.json)"
+            post_version="$(jq -r '.version_id' evidence/post-deployment.json)"
+          fi
+          cat > /tmp/issue-comment.md <<EOF
+          ## OAuth callback diagnostic execution
+
+          - Execution PR: #${{ github.event.pull_request.number }}
+          - Workflow run: \`$RUN_ID\` — \`$JOB_STATUS\`
+          - Run URL: $RUN_URL
+          - Required diagnostic source: \`$REQUIRED_SOURCE_SHA\`
+          - Active deployment recorded: \`$post_deployment\`
+          - Active version recorded: \`$post_version\`
+
+          A successful result means bearer compatibility and the 5/5 enabled OAuth contract passed on both fixed origins. A failed result should be inspected at the named failed step; automatic recovery runs after a post-deployment verification failure.
+
+          — Lantern · Foundry
+            Intention: deploy the bounded diagnostic and continue from the real callback stage
+          EOF
+          gh issue comment 402 --body-file /tmp/issue-comment.md
 
       - name: Upload bounded deployment evidence
         if: always()
