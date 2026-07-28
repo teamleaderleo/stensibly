@@ -68,7 +68,7 @@ describe("dashboard asset verification contract", () => {
     }
   });
 
-  test("includes the attributable item activity and scrapbook login paths", () => {
+  test("includes the attributable item activity and login paths", () => {
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/item-detail-controller.js",
       marker: "activityThreadSection",
@@ -83,7 +83,7 @@ describe("dashboard asset verification contract", () => {
     }));
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/login-scrapbook.css",
-      marker: ".workroom-preview",
+      marker: ".login-card",
     }));
   });
 

@@ -1,297 +1,119 @@
+body {
+  background: var(--bg);
+}
+
+.mark {
+  background: var(--accent-soft);
+  box-shadow: none;
+  transform: none;
+}
+
 .hero-login {
-  grid-template-columns: minmax(0, 1.14fr) minmax(22rem, .76fr);
-  gap: clamp(1.5rem, 4.4vw, 4.5rem);
-  align-items: stretch;
-  margin-top: clamp(.4rem, 2vw, 1.35rem);
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 25rem);
+  gap: clamp(2rem, 7vw, 7rem);
+  align-items: center;
+  min-height: calc(100vh - 10rem);
+  margin: 0;
 }
 
 .hero-copy {
-  display: flex;
   min-width: 0;
-  flex-direction: column;
-  justify-content: center;
-  padding: clamp(.35rem, 1.4vw, 1.2rem) 0;
-}
-
-.hero-register {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .55rem 1rem;
-  margin-bottom: clamp(1.5rem, 4vw, 3.15rem);
-  color: var(--muted);
-  font: 720 .61rem ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .15em;
-  text-transform: uppercase;
-}
-
-.hero-register span {
-  display: inline-flex;
-  align-items: center;
-  gap: .48rem;
-}
-
-.hero-register span::before {
-  content: "";
-  width: .42rem;
-  height: .42rem;
-  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line));
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent-soft) 76%, var(--panel));
-  box-shadow: inset 0 0 0 .12rem color-mix(in srgb, var(--panel) 65%, transparent);
 }
 
 .hero-login .eyebrow {
-  margin-bottom: .8rem;
-  font: 760 .68rem ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-
-.hero-login h1 {
-  max-width: 13ch;
-  font-size: clamp(2.8rem, 5.8vw, 5.8rem);
-  line-height: .96;
-  letter-spacing: -.061em;
-}
-
-.hero-login .lede {
-  max-width: 38rem;
-  margin-top: 1.2rem;
-  font-size: clamp(1rem, 1.25vw, 1.14rem);
-  line-height: 1.65;
-}
-
-.workroom-preview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: .65rem;
-  margin-top: clamp(1.6rem, 3.2vw, 2.6rem);
-}
-
-.workroom-preview article {
-  position: relative;
-  min-width: 0;
-  min-height: 9.8rem;
-  overflow: hidden;
-  padding: .92rem .95rem 1rem;
-  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
-  border-radius: 1.05rem;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.28), transparent 62%),
-    color-mix(in srgb, var(--panel) 82%, transparent);
-  box-shadow: 0 .75rem 1.7rem rgb(var(--shadow) / .055);
-}
-
-.workroom-preview article::after {
-  content: "";
-  position: absolute;
-  inset: auto .9rem .7rem auto;
-  width: 1.6rem;
-  height: .18rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 40%, transparent);
-  opacity: .55;
-}
-
-.workroom-preview article:nth-child(2) {
-  transform: rotate(.35deg) translateY(.15rem);
-}
-
-.workroom-preview article:nth-child(3) {
-  transform: rotate(-.28deg);
-}
-
-.workroom-preview article > span {
-  color: color-mix(in srgb, var(--muted) 72%, transparent);
-  font: 720 .58rem ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .13em;
-}
-
-.workroom-preview strong {
-  display: block;
-  margin-top: .62rem;
-  font-size: .86rem;
-  letter-spacing: -.012em;
-}
-
-.workroom-preview p {
-  margin: .48rem 0 0;
-  color: var(--muted);
-  font-size: .73rem;
-  line-height: 1.48;
-}
-
-.hero-login .connection {
-  align-self: center;
-  width: min(100%, 31rem);
-  justify-self: end;
-  padding: 1.15rem;
-  border-color: color-mix(in srgb, var(--line) 86%, var(--accent));
-  border-radius: 1.45rem;
-  background:
-    linear-gradient(148deg, rgba(255,255,255,.44), transparent 48%),
-    color-mix(in srgb, var(--panel) 96%, transparent);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.54),
-    0 1.8rem 4.5rem rgb(var(--shadow) / .12);
-}
-
-.hero-login .connection::before {
-  top: -.48rem;
-  width: 4.15rem;
-  height: 1rem;
-  border-color: color-mix(in srgb, var(--accent) 15%, var(--line));
-  border-radius: .08rem;
-  background: color-mix(in srgb, var(--accent-soft) 65%, var(--paper));
-  box-shadow: 0 .22rem .5rem rgb(var(--shadow) / .06);
-  opacity: .83;
-  transform: translateX(-50%) rotate(-1.7deg);
-}
-
-.connection-heading {
-  display: grid;
-  gap: .23rem;
-}
-
-.connection-kicker {
-  color: var(--muted);
-  font: 720 .58rem ui-monospace, SFMono-Regular, Menlo, monospace !important;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-
-.hero-login .connection-head {
-  align-items: flex-start;
-  padding: .25rem .15rem .05rem;
-}
-
-.hero-login .connection-head strong {
-  font-size: 1.08rem;
-  letter-spacing: -.022em;
-}
-
-.connection-state-pill {
-  flex: 0 0 auto;
-  min-height: 1.75rem;
-  padding: .34rem .52rem;
-  border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-2) 64%, transparent);
-  font-size: .58rem !important;
-  font-weight: 720 !important;
-  letter-spacing: .08em;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.hero-login .connection form {
-  gap: .8rem;
-  margin-top: 1rem;
-}
-
-.hero-login .hosted-sign-in {
-  gap: .8rem;
-  padding: .95rem;
-  border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
-  border-radius: 1.08rem;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.27), transparent 62%),
-    color-mix(in srgb, var(--accent-soft) 50%, var(--panel));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.38);
-}
-
-.hosted-sign-in-copy {
-  display: grid;
-  gap: .36rem;
-}
-
-.hosted-sign-in-label {
-  width: max-content;
-  padding: .24rem .42rem;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 999px;
-  color: var(--accent-strong);
-  background: color-mix(in srgb, var(--panel) 74%, transparent);
-  font: 760 .56rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin: 0 0 .75rem;
+  font: 700 .68rem ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .12em;
   text-transform: uppercase;
 }
 
-.hero-login .hosted-sign-in p {
-  font-size: .75rem;
-  line-height: 1.55;
+.hero-login h1 {
+  max-width: none;
+  margin: 0;
+  font-size: clamp(3.2rem, 8vw, 7rem);
+  line-height: .94;
+  letter-spacing: -.065em;
 }
 
-.hero-login .hosted-sign-in button {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: .72rem;
-  min-height: 3.45rem;
-  padding: .78rem .9rem;
-  border-radius: .86rem;
-  text-align: left;
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.16),
-    0 .65rem 1.4rem color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-.hero-login .hosted-sign-in button svg {
-  width: 1.18rem;
-  height: 1.18rem;
-}
-
-.hero-login .hosted-sign-in button .button-arrow {
-  font-size: 1rem;
-  transition: transform 140ms ease;
-}
-
-.hero-login .hosted-sign-in button:hover:not(:disabled) .button-arrow {
-  transform: translate(.12rem, -.12rem);
-}
-
-.hero-login .hosted-sign-in .secondary {
-  display: block;
-  min-height: 2.65rem;
-  text-align: center;
+.login-card {
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--panel);
   box-shadow: none;
 }
 
-.hosted-session-note {
-  padding-left: 1.05rem;
-  font-size: .64rem !important;
-  position: relative;
+.login-card::before {
+  display: none;
 }
 
-.hosted-session-note::before {
-  content: "";
-  position: absolute;
-  top: .46rem;
-  left: .08rem;
-  width: .46rem;
-  height: .46rem;
-  border: 1px solid color-mix(in srgb, var(--done-ink) 34%, var(--line));
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--done) 58%, var(--panel));
+.login-card .connection-head {
+  align-items: center;
+  padding: 0 0 .8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.login-card .connection-head strong {
+  font-size: 1rem;
+}
+
+.login-card #connection-state {
+  color: var(--muted);
+  font: .65rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.login-card form {
+  gap: .75rem;
+  margin-top: .85rem;
+}
+
+.login-card .hosted-sign-in {
+  gap: .65rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.login-card .hosted-sign-in p {
+  margin: 0;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.4;
+}
+
+.login-card .hosted-sign-in button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .65rem;
+  min-height: 3rem;
+  padding: .72rem .85rem;
+  border-radius: .7rem;
+  box-shadow: none;
+  text-align: center;
+}
+
+.login-card .hosted-sign-in button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.login-card .hosted-sign-in .secondary {
+  min-height: 2.6rem;
 }
 
 .advanced-connection {
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: .88rem;
-  background: color-mix(in srgb, var(--panel) 62%, transparent);
+  border-top: 1px solid var(--line);
 }
 
 .advanced-connection summary {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: .8rem;
-  min-height: 2.75rem;
-  padding: .68rem .76rem;
+  padding: .75rem 0 0;
   color: var(--muted);
   cursor: pointer;
+  font-size: .72rem;
   list-style: none;
 }
 
@@ -300,214 +122,82 @@
 }
 
 .advanced-connection summary::after {
-  content: "+";
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  color: var(--accent-strong);
-  font: 700 1rem ui-monospace, SFMono-Regular, Menlo, monospace;
-  transition: transform 140ms ease;
+  content: " +";
 }
 
 .advanced-connection[open] summary::after {
-  transform: rotate(45deg);
-}
-
-.advanced-connection summary span {
-  color: var(--text);
-  font-size: .73rem;
-  font-weight: 700;
-}
-
-.advanced-connection summary small {
-  grid-column: 1;
-  color: var(--muted);
-  font: .58rem ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .07em;
-  text-transform: uppercase;
+  content: " −";
 }
 
 .advanced-connection summary:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 .2rem color-mix(in srgb, var(--focus) 24%, transparent);
+  outline: 2px solid var(--focus);
+  outline-offset: .3rem;
 }
 
 .advanced-connection-body {
   display: grid;
-  gap: .72rem;
-  padding: .78rem;
+  gap: .7rem;
+  padding-top: .8rem;
+}
+
+.login-card .connection-form-actions {
+  display: flex;
+  gap: .5rem;
+}
+
+.login-card .connection-note {
+  margin: .75rem 0 0;
+  padding-top: .7rem;
   border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--input) 56%, var(--panel));
-}
-
-.advanced-connection-body .advanced-connection-copy {
-  margin-bottom: .1rem;
-}
-
-.hero-login .connection-note {
-  position: relative;
-  margin: .78rem .15rem 0;
-  padding-top: .72rem;
-  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-  font-size: .64rem;
-  line-height: 1.5;
-}
-
-.hero-login + .dashboard,
-.hero-login ~ .dashboard {
-  margin-top: .5rem;
+  color: var(--muted);
+  font-size: .65rem;
 }
 
 .hero-login ~ .disconnected {
-  max-width: 36rem;
-  margin: .35rem 0 0;
-  padding: .78rem 1rem;
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--line) 74%, transparent);
-  border-radius: .85rem;
-  text-align: left;
-  background: color-mix(in srgb, var(--panel) 48%, transparent);
+  display: none;
 }
 
-.hero-login ~ .disconnected p {
-  font-size: .75rem;
-}
-
-.hero-login ~ .disconnected span {
-  margin-top: .22rem;
-  font-size: .67rem;
-  line-height: 1.45;
-}
-
-@media (prefers-color-scheme: dark) {
-  .workroom-preview article,
-  .hero-login .connection,
-  .hero-login .hosted-sign-in {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.055), 0 1.45rem 3.6rem rgba(0,0,0,.25);
-  }
-
-  .hero-login .connection::before {
-    box-shadow: 0 .25rem .65rem rgba(0,0,0,.23);
-  }
-}
-
-@media (max-width: 1050px) {
+@media (max-width: 760px) {
   .hero-login {
-    grid-template-columns: minmax(0, 1fr) minmax(21rem, .82fr);
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    min-height: auto;
+    padding: 2rem 0 3rem;
+  }
+
+  .hero-login h1 {
+    font-size: clamp(3rem, 18vw, 5rem);
+  }
+
+  .login-card {
+    max-width: 30rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    margin-bottom: 1rem;
+  }
+
+  .hero-login {
     gap: 1.5rem;
+    padding-top: 1rem;
   }
 
-  .workroom-preview {
-    grid-template-columns: 1fr;
-    max-width: 35rem;
+  .login-card {
+    padding: .85rem;
   }
 
-  .workroom-preview article {
-    min-height: 0;
-  }
-
-  .workroom-preview article:nth-child(2),
-  .workroom-preview article:nth-child(3) {
-    transform: none;
-  }
-}
-
-@media (max-width: 900px) {
-  .hero-login {
-    grid-template-columns: 1fr;
-    gap: 1.6rem;
-  }
-
-  .hero-register {
-    margin-bottom: 1.5rem;
-  }
-
-  .hero-login h1 {
-    max-width: 14ch;
-  }
-
-  .workroom-preview {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    max-width: none;
-  }
-
-  .hero-login .connection {
-    width: 100%;
-    justify-self: stretch;
-  }
-}
-
-@media (max-width: 680px) {
-  .workroom-preview {
-    grid-template-columns: 1fr;
-  }
-
-  .workroom-preview article {
-    min-height: 0;
-  }
-}
-
-@media (max-width: 560px) {
-  .hero-login {
-    margin-top: 0;
-  }
-
-  .hero-copy {
-    padding-top: 0;
-  }
-
-  .hero-register {
-    gap: .45rem .8rem;
-    margin-bottom: 1.15rem;
-    font-size: .54rem;
-  }
-
-  .hero-login h1 {
-    font-size: clamp(2.55rem, 14vw, 3.65rem);
-  }
-
-  .hero-login .lede {
-    margin-top: .95rem;
-  }
-
-  .workroom-preview {
-    margin-top: 1.25rem;
-  }
-
-  .hero-login .connection {
-    padding: .82rem;
-    border-radius: 1.12rem;
-  }
-
-  .hero-login .connection-head {
-    gap: .65rem;
-  }
-
-  .connection-state-pill {
-    padding-inline: .42rem;
-    font-size: .52rem !important;
-  }
-
-  .hero-login .hosted-sign-in {
-    padding: .78rem;
-  }
-
-  .advanced-connection summary {
-    min-height: 3rem;
-  }
-
-  .hero-login ~ .disconnected {
-    margin-top: 0;
+  .login-card .connection-form-actions,
+  .login-card .connected-actions {
+    flex-direction: column;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workroom-preview article:nth-child(2),
-  .workroom-preview article:nth-child(3) {
-    transform: none;
-  }
-
-  .hero-login .hosted-sign-in button .button-arrow,
-  .advanced-connection summary::after {
-    transition: none;
+  .login-card *,
+  .login-card *::before,
+  .login-card *::after {
+    transition: none !important;
   }
 }

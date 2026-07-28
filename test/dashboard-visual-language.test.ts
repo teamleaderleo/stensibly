@@ -15,25 +15,39 @@ describe("dashboard visual language", () => {
     expect(styles).not.toContain("#d8ff5f");
   });
 
-  test("presents hosted sign-in as the scrapbook workroom entrance", async () => {
-    const [html, hostedStyles, loginStyles] = await Promise.all([
+  test("keeps hosted sign-in simple, flat, and primary", async () => {
+    const [html, hostedStyles, loginStyles, bridge] = await Promise.all([
       siteFile("index.html"),
       siteFile("hosted-session.css"),
       siteFile("login-scrapbook.css"),
+      siteFile("hosted-session-bridge.js"),
     ]);
+    const loginSurface = `${html}\n${loginStyles}\n${bridge}`;
 
-    expect(html).toContain("Pick up the work without reopening every chat.");
-    expect(html).toContain("workroom 01");
-    expect(html).toContain('class="workroom-preview"');
+    expect(html).toContain("<h1>Shared work.</h1>");
+    expect(html).toContain('class="connection login-card"');
     expect(html).toContain('href="/login-scrapbook.css"');
     expect(html).toContain('id="github-sign-in"');
     expect(html).toContain('class="advanced-connection"');
     expect(html.indexOf('id="github-sign-in"')).toBeLessThan(html.indexOf('class="advanced-connection"'));
     expect(html.indexOf('id="github-sign-in"')).toBeLessThan(html.indexOf('name="token"'));
     expect(hostedStyles).toContain("var(--accent-solid)");
-    expect(loginStyles).toContain(".workroom-preview");
+    expect(loginStyles).toContain(".login-card");
     expect(loginStyles).toContain(".advanced-connection summary:focus-visible");
     expect(loginStyles).toContain("@media (prefers-reduced-motion: reduce)");
+
+    for (const removed of [
+      "workroom-preview",
+      "hero-register",
+      "Recommended",
+      "workroom 01",
+      "calm project desk",
+      "quiet",
+    ]) {
+      expect(loginSurface).not.toContain(removed);
+    }
+    expect(loginStyles).not.toContain("gradient(");
+    expect(loginStyles).not.toContain("rotate(");
   });
 
   test("preserves the existing hosted and bearer connection controls", async () => {
@@ -53,7 +67,7 @@ describe("dashboard visual language", () => {
     ]) {
       expect(html).toContain(marker);
     }
-    expect(html).toContain("Secure session cookie · no access token pasted into this page");
+    expect(html).toContain("Tokens are not saved.");
   });
 
   test("keeps every primary action readable in light and dark schemes", async () => {
