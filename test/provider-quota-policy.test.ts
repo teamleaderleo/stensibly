@@ -79,6 +79,31 @@ describe("adaptive provider quota admission", () => {
     });
   });
 
+  test("uses a hard forecast as reserve pressure without pretending capacity is already spent", () => {
+    const pressured = snapshot({
+      observedUnits: 95,
+      recentStartsLastHour: 10,
+      expiringNextHourUnits: 0,
+    });
+
+    expect(evaluateProviderQuotaAdmission(policy, pressured, request())).toMatchObject({
+      effectiveUnits: 95,
+      forecastUnits: 105,
+      pressureBand: "reserve_only",
+      remainingUnits: 5,
+      action: "queue",
+      reason: "protected_reserve",
+    });
+    expect(evaluateProviderQuotaAdmission(
+      policy,
+      pressured,
+      request({ requestClass: "rollback" }),
+    )).toMatchObject({
+      action: "admit",
+      projectedUnitsAfterAdmission: 96,
+    });
+  });
+
   test("lets production continue in metered pressure while optional previews queue", () => {
     const metered = snapshot({ observedUnits: 60, recentStartsLastHour: 0 });
 
