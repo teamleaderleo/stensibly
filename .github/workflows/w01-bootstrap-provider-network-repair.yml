@@ -36,6 +36,11 @@ jobs:
           end = source.index("          PY\n", start)
           lines = source[start:end].splitlines()
           script = "\n".join(line[10:] if line.startswith("          ") else line for line in lines)
+          bad = "'''  | \"network_failure\"\n  | \"provider_rejection\";'''"
+          good = "'''  | \"network_failure\"'''"
+          if script.count(bad) != 1:
+              raise SystemExit(f'expected one stale enum guard, found {script.count(bad)}')
+          script = script.replace(bad, good, 1)
           exec(compile(script, 'provider-network-repair.py', 'exec'))
           PY
 
