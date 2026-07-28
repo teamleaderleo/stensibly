@@ -101,37 +101,31 @@ export function createDefaultVercelQuotaPolicy(accountBoundary: string): Provide
 }
 
 export function parseProviderQuotaPolicy(value: ProviderQuotaPolicy): ProviderQuotaPolicy {
-  const provider = boundedText(value.provider, "Provider");
-  const accountBoundary = boundedText(value.accountBoundary, "Account boundary");
-  const rollingWindowSeconds = positiveInteger(
-    value.rollingWindowSeconds,
-    "Rolling window seconds",
-  );
-  const meteredAt = nonNegativeInteger(value.meteredAt, "Metered threshold");
-  const queuedAt = positiveInteger(value.queuedAt, "Queued threshold");
-  const reserveOnlyAt = positiveInteger(value.reserveOnlyAt, "Reserve-only threshold");
-  const hardLimit = positiveInteger(value.hardLimit, "Hard limit");
-  const maxSnapshotAgeSeconds = positiveInteger(
-    value.maxSnapshotAgeSeconds,
-    "Maximum snapshot age seconds",
-  );
+  const policy = {
+    provider: boundedText(value.provider, "Provider"),
+    accountBoundary: boundedText(value.accountBoundary, "Account boundary"),
+    rollingWindowSeconds: positiveInteger(
+      value.rollingWindowSeconds,
+      "Rolling window seconds",
+    ),
+    meteredAt: nonNegativeInteger(value.meteredAt, "Metered threshold"),
+    queuedAt: positiveInteger(value.queuedAt, "Queued threshold"),
+    reserveOnlyAt: positiveInteger(value.reserveOnlyAt, "Reserve-only threshold"),
+    hardLimit: positiveInteger(value.hardLimit, "Hard limit"),
+    maxSnapshotAgeSeconds: positiveInteger(
+      value.maxSnapshotAgeSeconds,
+      "Maximum snapshot age seconds",
+    ),
+  };
 
-  if (!(meteredAt < queuedAt && queuedAt < reserveOnlyAt && reserveOnlyAt < hardLimit)) {
+  if (!(policy.meteredAt < policy.queuedAt
+    && policy.queuedAt < policy.reserveOnlyAt
+    && policy.reserveOnlyAt < policy.hardLimit)) {
     throw new RangeError(
       "Provider quota thresholds must satisfy meteredAt < queuedAt < reserveOnlyAt < hardLimit",
     );
   }
-
-  return {
-    provider,
-    accountBoundary,
-    rollingWindowSeconds,
-    meteredAt,
-    queuedAt,
-    reserveOnlyAt,
-    hardLimit,
-    maxSnapshotAgeSeconds,
-  };
+  return policy;
 }
 
 export function evaluateProviderQuotaAdmission(
@@ -143,12 +137,15 @@ export function evaluateProviderQuotaAdmission(
   const snapshot = parseSnapshot(rawSnapshot);
   const request = parseRequest(rawRequest);
 
-  const committedUnits = snapshot.activeReservationUnits + snapshot.unreconciledStartedUnits;
-  const effectiveUnits = clampToSafeInteger(
+  const committedUnits = safeInteger(
+    snapshot.activeReservationUnits + snapshot.unreconciledStartedUnits,
+    "Committed units",
+  );
+  const effectiveUnits = safeInteger(
     snapshot.observedUnits + committedUnits + snapshot.uncertaintyUnits,
     "Effective units",
   );
-  const forecastUnits = clampToSafeInteger(
+  const forecastUnits = safeInteger(
     Math.max(
       effectiveUnits,
       effectiveUnits - snapshot.expiringNextHourUnits + snapshot.recentStartsLastHour,
@@ -160,16 +157,16 @@ export function evaluateProviderQuotaAdmission(
     snapshot.evaluatedAt,
     policy.maxSnapshotAgeSeconds,
   );
-  const rawPressureBand = classifyPressureBand(forecastUnits, policy);
+  const rawPressureBand = classifyPressureBand(effectiveUnits, forecastUnits, policy);
   const pressureBand = applyFreshnessFloor(rawPressureBand, snapshotFreshness);
   const pressureUnits = Math.max(forecastUnits, minimumUnitsForBand(pressureBand, policy));
   const remainingUnits = Math.max(0, policy.hardLimit - effectiveUnits);
-  const projectedUnitsAfterAdmission = clampToSafeInteger(
+  const projectedUnitsAfterAdmission = safeInteger(
     effectiveUnits + request.units,
     "Projected units after admission",
   );
 
-  const base = {
+  const base: Omit<ProviderQuotaAdmission, "action" | "reason" | "requiresLease"> = {
     provider: policy.provider,
     accountBoundary: policy.accountBoundary,
     pressureBand,
@@ -185,42 +182,35 @@ export function evaluateProviderQuotaAdmission(
     nextCapacityAt: snapshot.nextCapacityAt ?? null,
   };
 
-  if (!request.ready) {
-    return decision(base, "hold", "request_not_ready");
-  }
+  if (!request.ready) return decision(base, "hold", "request_not_ready");
   if (request.equivalentActiveRequest) {
     return decision(base, "coalesce", "equivalent_request_active");
   }
-  if (effectiveUnits >= policy.hardLimit || pressureBand === "closed") {
+  if (effectiveUnits >= policy.hardLimit) {
     return decision(base, "defer", "hard_limit_reached");
   }
   if (request.units > remainingUnits) {
     return decision(base, "defer", "insufficient_headroom");
   }
 
-  if (pressureBand === "open") {
-    return decision(base, "admit", "immediate_capacity_available");
+  switch (pressureBand) {
+    case "open":
+      return decision(base, "admit", "immediate_capacity_available");
+    case "metered":
+      return request.requestClass === "preview"
+        ? decision(base, "queue", "preview_metered")
+        : decision(base, "admit", "immediate_capacity_available");
+    case "queued":
+      return isPriorityBypass(request.requestClass)
+        ? decision(base, "admit", "immediate_capacity_available")
+        : decision(base, "queue", "routine_queue_required");
+    case "reserve_only":
+      return isPriorityBypass(request.requestClass)
+        ? decision(base, "admit", "immediate_capacity_available")
+        : decision(base, "queue", "protected_reserve");
+    case "closed":
+      return decision(base, "defer", "hard_limit_reached");
   }
-
-  if (pressureBand === "metered") {
-    return request.requestClass === "preview"
-      ? decision(base, "queue", "preview_metered")
-      : decision(base, "admit", "immediate_capacity_available");
-  }
-
-  if (pressureBand === "queued") {
-    return isPriorityBypass(request.requestClass)
-      ? decision(base, "admit", "immediate_capacity_available")
-      : decision(base, "queue", "routine_queue_required");
-  }
-
-  if (pressureBand === "reserve_only") {
-    return isPriorityBypass(request.requestClass)
-      ? decision(base, "admit", "immediate_capacity_available")
-      : decision(base, "queue", "protected_reserve");
-  }
-
-  return decision(base, "defer", "hard_limit_reached");
 }
 
 function parseSnapshot(value: ProviderQuotaSnapshot): ProviderQuotaSnapshot {
@@ -231,7 +221,6 @@ function parseSnapshot(value: ProviderQuotaSnapshot): ProviderQuotaSnapshot {
   if (observedAt !== null && Date.parse(observedAt) > Date.parse(evaluatedAt)) {
     throw new RangeError("Provider observation time cannot be later than evaluation time");
   }
-
   const nextCapacityAt = value.nextCapacityAt === undefined || value.nextCapacityAt === null
     ? null
     : canonicalTimestamp(value.nextCapacityAt, "Next capacity time");
@@ -290,13 +279,14 @@ function classifySnapshotFreshness(
 }
 
 function classifyPressureBand(
-  units: number,
+  effectiveUnits: number,
+  forecastUnits: number,
   policy: ProviderQuotaPolicy,
 ): ProviderPressureBand {
-  if (units >= policy.hardLimit) return "closed";
-  if (units >= policy.reserveOnlyAt) return "reserve_only";
-  if (units >= policy.queuedAt) return "queued";
-  if (units >= policy.meteredAt) return "metered";
+  if (effectiveUnits >= policy.hardLimit) return "closed";
+  if (forecastUnits >= policy.reserveOnlyAt) return "reserve_only";
+  if (forecastUnits >= policy.queuedAt) return "queued";
+  if (forecastUnits >= policy.meteredAt) return "metered";
   return "open";
 }
 
@@ -313,7 +303,9 @@ function maximumBand(
   left: ProviderPressureBand,
   right: ProviderPressureBand,
 ): ProviderPressureBand {
-  return providerPressureBands.indexOf(left) >= providerPressureBands.indexOf(right) ? left : right;
+  return providerPressureBands.indexOf(left) >= providerPressureBands.indexOf(right)
+    ? left
+    : right;
 }
 
 function minimumUnitsForBand(
@@ -335,7 +327,9 @@ function minimumUnitsForBand(
 }
 
 function isPriorityBypass(requestClass: ProviderRequestClass): boolean {
-  return requestClass === "rollback" || requestClass === "incident" || requestClass === "operator";
+  return requestClass === "rollback"
+    || requestClass === "incident"
+    || requestClass === "operator";
 }
 
 function decision(
@@ -343,12 +337,7 @@ function decision(
   action: ProviderAdmissionAction,
   reason: ProviderQuotaAdmission["reason"],
 ): ProviderQuotaAdmission {
-  return {
-    ...base,
-    action,
-    reason,
-    requiresLease: action === "admit",
-  };
+  return { ...base, action, reason, requiresLease: action === "admit" };
 }
 
 function boundedText(value: unknown, label: string): string {
@@ -374,7 +363,7 @@ function positiveInteger(value: unknown, label: string): number {
   return parsed;
 }
 
-function clampToSafeInteger(value: number, label: string): number {
+function safeInteger(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new RangeError(`${label} exceeds the supported safe integer range`);
   }
@@ -382,7 +371,9 @@ function clampToSafeInteger(value: number, label: string): number {
 }
 
 function canonicalTimestamp(value: unknown, label: string): string {
-  if (typeof value !== "string" || !timestampPattern.test(value) || !Number.isFinite(Date.parse(value))) {
+  if (typeof value !== "string"
+    || !timestampPattern.test(value)
+    || !Number.isFinite(Date.parse(value))) {
     throw new TypeError(`${label} must be an ISO-8601 UTC timestamp`);
   }
   return new Date(value).toISOString();
