@@ -1,0 +1,363 @@
+name: Apply provider network repair v2
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/w01-apply-provider-network-repair-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Apply exact source and test repair
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:100]!r}")
+              target.write_text(text.replace(old, new, 1))
+
+          def replace_section(path: str, start: str, end: str, replacement: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              if text.count(start) != 1 or text.count(end) != 1:
+                  raise SystemExit(f"{path}: section markers are not unique")
+              start_index = text.index(start)
+              end_index = text.index(end, start_index)
+              target.write_text(text[:start_index] + replacement + text[end_index:])
+
+          replace_once(
+              "src/hosted-auth.ts",
+              "  FAILURE_CATEGORY_HEADER,\n  REQUEST_ID_HEADER,",
+              "  FAILURE_CATEGORY_HEADER,\n  PROVIDER_FAILURE_REASON_HEADER,\n  REQUEST_ID_HEADER,",
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              "const GITHUB_REQUEST_TIMEOUT_MS = 15_000;",
+              "const GITHUB_TOKEN_REQUEST_TIMEOUT_MS = 30_000;\nconst GITHUB_IDENTITY_REQUEST_TIMEOUT_MS = 15_000;",
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '  | "network_failure"',
+              '  | "network_timeout"\n  | "network_exception"',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              "signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),",
+              "signal: AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS),",
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''    } catch {
+                throw new ProviderFailure("token_exchange", "network_failure");
+              }''',
+              '''    } catch (error) {
+                throw new ProviderFailure(
+                  "token_exchange",
+                  providerNetworkFailureReason(error),
+                );
+              }''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              "signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),",
+              "signal: AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS),",
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''    } catch {
+                throw new ProviderFailure("identity_request");
+              }''',
+              '''    } catch (error) {
+                throw new ProviderFailure(
+                  "identity_request",
+                  providerNetworkFailureReason(error),
+                );
+              }''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              "function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {",
+              '''function providerNetworkFailureReason(error: unknown): GitHubProviderFailureReason {
+            const name = typeof error === "object" && error !== null && "name" in error
+              ? (error as { name?: unknown }).name
+              : undefined;
+            return name === "TimeoutError" ? "network_timeout" : "network_exception";
+          }
+
+          function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {''',
+          )
+          replace_once(
+              "src/hosted-auth.ts",
+              '''  context.header(FAILURE_CATEGORY_HEADER, "request_failure");
+            return context.json({''',
+              '''  context.header(FAILURE_CATEGORY_HEADER, "request_failure");
+            if (failure.reason) {
+              context.header(PROVIDER_FAILURE_REASON_HEADER, failure.reason);
+            }
+            return context.json({''',
+          )
+
+          replace_once(
+              "src/worker-observability.ts",
+              '''export const FAILURE_CATEGORY_HEADER = "x-stensibly-failure-category";
+          export const REQUEST_ID_HEADER = "x-request-id";''',
+              '''export const FAILURE_CATEGORY_HEADER = "x-stensibly-failure-category";
+          export const PROVIDER_FAILURE_REASON_HEADER = "x-stensibly-provider-failure-reason";
+          export const REQUEST_ID_HEADER = "x-request-id";''',
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              '''export type RouteClass = "health" | "rest_v1" | "mcp" | "other";
+
+          export interface RequestLogRecord {''',
+              '''export type RouteClass = "health" | "rest_v1" | "mcp" | "other";
+
+          export type SafeProviderFailureReason =
+            | "incorrect_client_credentials"
+            | "redirect_uri_mismatch"
+            | "bad_verification_code"
+            | "unverified_user_email"
+            | "network_timeout"
+            | "network_exception"
+            | "provider_rejection"
+            | "malformed_response"
+            | "missing_access_token";
+
+          export interface RequestLogRecord {''',
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              "  failureCategory?: FailureCategory;\n}",
+              "  failureCategory?: FailureCategory;\n  providerFailureReason?: SafeProviderFailureReason;\n  colo?: string;\n}",
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              "  const headers = new Headers(request.headers);",
+              "  const colo = cloudflareColo(request);\n  const headers = new Headers(request.headers);",
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              '''  const explicitCategory = parseFailureCategory(
+              responseHeaders.get(FAILURE_CATEGORY_HEADER),
+            );
+            responseHeaders.delete(FAILURE_CATEGORY_HEADER);''',
+              '''  const explicitCategory = parseFailureCategory(
+              responseHeaders.get(FAILURE_CATEGORY_HEADER),
+            );
+            const providerFailureReason = parseProviderFailureReason(
+              responseHeaders.get(PROVIDER_FAILURE_REASON_HEADER),
+            );
+            responseHeaders.delete(FAILURE_CATEGORY_HEADER);
+            responseHeaders.delete(PROVIDER_FAILURE_REASON_HEADER);''',
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              "    ...(failureCategory ? { failureCategory } : {}),\n  };",
+              "    ...(failureCategory ? { failureCategory } : {}),\n    ...(providerFailureReason ? { providerFailureReason } : {}),\n    ...(colo ? { colo } : {}),\n  };",
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              "export function classifyRoute(pathname: string): RouteClass {",
+              '''export function cloudflareColo(request: Request): string | null {
+            const cf = (request as Request & { cf?: unknown }).cf;
+            if (!cf || typeof cf !== "object") return null;
+            const value = (cf as { colo?: unknown }).colo;
+            if (typeof value !== "string") return null;
+            const normalized = value.trim().toUpperCase();
+            return /^[A-Z0-9]{3}$/.test(normalized) ? normalized : null;
+          }
+
+          export function classifyRoute(pathname: string): RouteClass {''',
+          )
+          replace_once(
+              "src/worker-observability.ts",
+              "function parseFailureCategory(value: string | null): FailureCategory | undefined {",
+              '''function parseProviderFailureReason(
+            value: string | null,
+          ): SafeProviderFailureReason | undefined {
+            if (!value) return undefined;
+            const reasons: SafeProviderFailureReason[] = [
+              "incorrect_client_credentials",
+              "redirect_uri_mismatch",
+              "bad_verification_code",
+              "unverified_user_email",
+              "network_timeout",
+              "network_exception",
+              "provider_rejection",
+              "malformed_response",
+              "missing_access_token",
+            ];
+            return reasons.includes(value as SafeProviderFailureReason)
+              ? value as SafeProviderFailureReason
+              : undefined;
+          }
+
+          function parseFailureCategory(value: string | null): FailureCategory | undefined {''',
+          )
+
+          replace_section(
+              "test/hosted-auth-github-http-client.test.ts",
+              '  test("classifies network failures at the active provider phase", async () => {',
+              '  test("requires an explicit X-OAuth-Scopes header", async () => {',
+              '''  test("separates provider timeouts from other network exceptions", async () => {
+            const cases = [
+              {
+                error: Object.assign(new Error("timeout-sentinel"), { name: "TimeoutError" }),
+                reason: "network_timeout" as const,
+                excluded: "timeout-sentinel",
+              },
+              {
+                error: new TypeError("network-exception-sentinel"),
+                reason: "network_exception" as const,
+                excluded: "network-exception-sentinel",
+              },
+            ];
+
+            for (const testCase of cases) {
+              let calls = 0;
+              const throwingFetch = (async () => {
+                calls += 1;
+                throw testCase.error;
+              }) as unknown as typeof fetch;
+
+              const exchangeClient = githubClient(throwingFetch);
+              expectFailure(
+                await captureFailure(exchangeClient.exchangeCode(EXCHANGE_INPUT)),
+                "token_exchange",
+                [testCase.excluded, EXCHANGE_INPUT.code],
+                testCase.reason,
+              );
+              expect(calls).toBe(1);
+
+              const identityClient = githubClient(throwingFetch);
+              expectFailure(
+                await captureFailure(identityClient.readIdentity(TOKEN)),
+                "identity_request",
+                [testCase.excluded, TOKEN],
+                testCase.reason,
+              );
+              expect(calls).toBe(2);
+            }
+          });
+
+          ''',
+          )
+
+          replace_once(
+              "test/worker-observability.test.ts",
+              '''  FAILURE_CATEGORY_HEADER,
+            REQUEST_ID_HEADER,
+            acceptedRequestId,
+            classifyRoute,''',
+              '''  FAILURE_CATEGORY_HEADER,
+            PROVIDER_FAILURE_REASON_HEADER,
+            REQUEST_ID_HEADER,
+            acceptedRequestId,
+            classifyRoute,
+            cloudflareColo,''',
+          )
+          replace_once(
+              "test/worker-observability.test.ts",
+              '  test("classifies public routes without logging path parameters", () => {',
+              '''  test("accepts only bounded Cloudflare colo values", () => {
+            const request = new Request("https://api.example/health");
+            Object.defineProperty(request, "cf", { value: { colo: " lax " } });
+            expect(cloudflareColo(request)).toBe("LAX");
+
+            const unsafe = new Request("https://api.example/health");
+            Object.defineProperty(unsafe, "cf", { value: { colo: "private-colo" } });
+            expect(cloudflareColo(unsafe)).toBeNull();
+          });
+
+            test("classifies public routes without logging path parameters", () => {''',
+          )
+          replace_once(
+              "test/worker-observability.test.ts",
+              '''    const response = await observeWorkerRequest(
+                new Request("https://api.example/api/v1/items?project=private", {
+                  headers: {
+                    authorization: `Bearer ${rawToken}`,
+                    "x-request-id": "client-123",
+                  },
+                }),''',
+              '''    const request = new Request("https://api.example/api/v1/items?project=private", {
+                headers: {
+                  authorization: `Bearer ${rawToken}`,
+                  "x-request-id": "client-123",
+                },
+              });
+              Object.defineProperty(request, "cf", { value: { colo: "LAX" } });
+              const response = await observeWorkerRequest(
+                request,''',
+          )
+          replace_once(
+              "test/worker-observability.test.ts",
+              '''      outcome: "success",
+              }]);''',
+              '''      outcome: "success",
+                colo: "LAX",
+              }]);''',
+          )
+          replace_once(
+              "test/worker-observability.test.ts",
+              '        headers: { [FAILURE_CATEGORY_HEADER]: "convex_failure" },',
+              '''        headers: {
+                  [FAILURE_CATEGORY_HEADER]: "convex_failure",
+                  [PROVIDER_FAILURE_REASON_HEADER]: "network_timeout",
+                },''',
+          )
+          replace_once(
+              "test/worker-observability.test.ts",
+              '''    expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBeNull();
+              expect(records[0]?.failureCategory).toBe("convex_failure");''',
+              '''    expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBeNull();
+              expect(response.headers.get(PROVIDER_FAILURE_REASON_HEADER)).toBeNull();
+              expect(records[0]?.failureCategory).toBe("convex_failure");
+              expect(records[0]?.providerFailureReason).toBe("network_timeout");''',
+          )
+          PY
+
+          rm -f .github/provider-network-repair-error.txt
+          rm -f .github/workflows/w01-apply-provider-network-repair.yml
+          rm -f .github/workflows/w01-bootstrap-provider-network-repair.yml
+          rm -f .github/workflows/w01-apply-provider-network-repair-v2.yml
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate repair
+        run: |
+          bun test test/hosted-auth-github-http-client.test.ts test/worker-observability.test.ts
+          bun run typecheck
+          git diff --check
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Split GitHub provider network failures"
+          git push origin HEAD:${{ github.head_ref }}
