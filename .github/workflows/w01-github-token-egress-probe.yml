@@ -140,6 +140,17 @@ jobs:
           script: |
             const canonical = process.env.CANONICAL_RESULT || '{"ok":false,"stage":"workflow","reason":"probe_not_run"}';
             const fallback = process.env.FALLBACK_RESULT || '{"ok":false,"stage":"workflow","reason":"probe_not_run"}';
+            const evidence = [
+              '<!-- w01-token-egress-result:start -->',
+              '## Latest bounded GitHub token egress result',
+              '',
+              `- source commit: \`${context.sha}\``,
+              `- workflow run: \`${context.runId}\``,
+              `- canonical: \`${canonical}\``,
+              `- Worker fallback: \`${fallback}\``,
+              '- request used the configured GitHub client credentials with a deliberately invalid authorization code; no credential, provider body, or token was retained',
+              '<!-- w01-token-egress-result:end -->'
+            ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -155,6 +166,22 @@ jobs:
                 '',
                 '— Bramble · bounded provider diagnosis'
               ].join('\n')
+            });
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 286
+            });
+            const current = issue.data.body || '';
+            const withoutPrior = current.replace(
+              /\n?<!-- w01-token-egress-result:start -->[\s\S]*?<!-- w01-token-egress-result:end -->\n?/g,
+              '\n'
+            ).trimEnd();
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 286,
+              body: `${withoutPrior}\n\n${evidence}\n`
             });
 
       - name: Record probe cleanup deployment
