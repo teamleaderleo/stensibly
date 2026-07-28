@@ -27,6 +27,7 @@ jobs:
         run: |
           npx --no-install tsc -p tsconfig.eslint.json --pretty false > tsc-observed.txt 2>&1
           npx --no-install eslint receiver-eslint-matrix.fixture.ts --format json > eslint-observed.json 2>&1 || true
+          npx --no-install eslint --config eslint.custom.config.mjs receiver-eslint-matrix.fixture.ts --format json > custom-rule-observed.json 2>&1 || true
           {
             echo "node $(node --version)"
             echo "typescript $(npx --no-install tsc --version)"
@@ -38,6 +39,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add docs/research/issue-474-lane-b/eslint-observed.json \
+                  docs/research/issue-474-lane-b/custom-rule-observed.json \
                   docs/research/issue-474-lane-b/tsc-observed.txt \
                   docs/research/issue-474-lane-b/tool-versions-observed.txt
           git diff --cached --quiet && exit 0
