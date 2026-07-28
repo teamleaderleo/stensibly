@@ -1,3 +1,12 @@
+export interface PublicItemEventPayload {
+  id: string;
+  itemId: string;
+  actorId: string | null;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface ItemDependencyPayload {
   id: string;
   direction: "incoming" | "outgoing";
@@ -42,8 +51,10 @@ export interface ItemRunPayload {
 }
 
 export interface ItemDetailPayload {
+  historyContractVersion: 1;
+  eventsTruncated: boolean;
   item: Record<string, unknown>;
-  events: Array<Record<string, unknown>>;
+  events: PublicItemEventPayload[];
   artifacts: Array<Record<string, unknown>>;
   dependencies: ItemDependencyPayload[];
   reservations: ItemReservationPayload[];
@@ -62,6 +73,7 @@ export interface RequestGate {
 }
 
 export function readItemDetail(payload: unknown, expectedItemId?: string): ItemDetailPayload;
+export function readPublicEvent(value: unknown, expectedItemId?: string): PublicItemEventPayload | null;
 export function dependencyRelationship(dependency: Partial<ItemDependencyPayload>): string;
 export function dependencyBlocksCurrent(dependency: Partial<ItemDependencyPayload>): boolean;
 export function reservationCapacityLabel(reservation: Partial<ItemReservationPayload>): string;
