@@ -18,7 +18,8 @@ const OAUTH_COOKIE_PATH = "/auth/github/callback";
 const DEFAULT_SESSION_SECONDS = 60 * 60 * 24 * 30;
 const DEFAULT_STATE_SECONDS = 10 * 60;
 const MAX_SESSION_SECONDS = 60 * 60 * 24 * 90;
-const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
+const GITHUB_TOKEN_REQUEST_TIMEOUT_MS = 30_000;
+const GITHUB_IDENTITY_REQUEST_TIMEOUT_MS = 15_000;
 
 export interface GitHubIdentity {
   subject: string;
@@ -40,7 +41,8 @@ export type GitHubProviderFailureReason =
   | "redirect_uri_mismatch"
   | "bad_verification_code"
   | "unverified_user_email"
-  | "network_failure"
+  | "network_timeout"
+  | "network_exception"
   | "provider_rejection"
   | "malformed_response"
   | "missing_access_token";
@@ -340,10 +342,13 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
           redirect_uri: input.redirectUri,
           code_verifier: input.codeVerifier,
         }),
-        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS),
       });
-    } catch {
-      throw new ProviderFailure("token_exchange", "network_failure");
+    } catch (error) {
+      throw new ProviderFailure(
+        "token_exchange",
+        providerNetworkFailureReason(error),
+      );
     }
 
     const payload = await response.json().catch(() => null) as {
@@ -390,10 +395,13 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
     try {
       userResponse = await this.fetchImpl("https://api.github.com/user", {
         headers,
-        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS),
       });
-    } catch {
-      throw new ProviderFailure("identity_request");
+    } catch (error) {
+      throw new ProviderFailure(
+        "identity_request",
+        providerNetworkFailureReason(error),
+      );
     }
     if (!userResponse.ok) throw new ProviderFailure("identity_request");
 
@@ -442,6 +450,13 @@ function readGrantedScopes(value: unknown): string[] | null {
     .split(",")
     .map((scope) => scope.trim())
     .filter(Boolean);
+}
+
+function providerNetworkFailureReason(error: unknown): GitHubProviderFailureReason {
+  const name = typeof error === "object" && error !== null && "name" in error
+    ? (error as { name?: unknown }).name
+    : undefined;
+  return name === "TimeoutError" ? "network_timeout" : "network_exception";
 }
 
 function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {

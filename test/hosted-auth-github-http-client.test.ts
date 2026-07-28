@@ -120,26 +120,45 @@ describe("HttpGitHubOAuthClient", () => {
     expectFailure(error, "identity_request", [TOKEN, "identity-provider-body-sentinel"]);
   });
 
-  test("classifies network failures at the active provider phase", async () => {
-    const networkFailure = "network-failure-sentinel";
-    const throwingFetch = (async () => {
-      throw new TypeError(networkFailure);
-    }) as unknown as typeof fetch;
+  test("separates provider timeouts from other network exceptions", async () => {
+    const cases = [
+      {
+        error: Object.assign(new Error("timeout-sentinel"), { name: "TimeoutError" }),
+        reason: "network_timeout" as const,
+        excluded: "timeout-sentinel",
+      },
+      {
+        error: new TypeError("network-exception-sentinel"),
+        reason: "network_exception" as const,
+        excluded: "network-exception-sentinel",
+      },
+    ];
 
-    const exchangeClient = githubClient(throwingFetch);
-    expectFailure(
-      await captureFailure(exchangeClient.exchangeCode(EXCHANGE_INPUT)),
-      "token_exchange",
-      [networkFailure, EXCHANGE_INPUT.code],
-      "network_failure",
-    );
+    for (const testCase of cases) {
+      let calls = 0;
+      const throwingFetch = (async () => {
+        calls += 1;
+        throw testCase.error;
+      }) as unknown as typeof fetch;
 
-    const identityClient = githubClient(throwingFetch);
-    expectFailure(
-      await captureFailure(identityClient.readIdentity(TOKEN)),
-      "identity_request",
-      [networkFailure, TOKEN],
-    );
+      const exchangeClient = githubClient(throwingFetch);
+      expectFailure(
+        await captureFailure(exchangeClient.exchangeCode(EXCHANGE_INPUT)),
+        "token_exchange",
+        [testCase.excluded, EXCHANGE_INPUT.code],
+        testCase.reason,
+      );
+      expect(calls).toBe(1);
+
+      const identityClient = githubClient(throwingFetch);
+      expectFailure(
+        await captureFailure(identityClient.readIdentity(TOKEN)),
+        "identity_request",
+        [testCase.excluded, TOKEN],
+        testCase.reason,
+      );
+      expect(calls).toBe(2);
+    }
   });
 
   test("requires an explicit X-OAuth-Scopes header", async () => {
