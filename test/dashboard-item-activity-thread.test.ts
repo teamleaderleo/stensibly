@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  activityEventAnchorId,
   activityThreadFilterOptions,
   filterActivityThread,
   projectActivityThread,
@@ -41,6 +42,24 @@ describe("dashboard item activity thread projection", () => {
         value: actorCallsignKey("github:13091533", "Tern"),
         label: "Tern · github:13091533",
       },
+    ]);
+  });
+
+  test("derives stable collision-safe anchors from exact public event IDs", () => {
+    expect(activityEventAnchorId("evt_review/1", 0)).toBe("activity-event-evt_review%2F1");
+    expect(activityEventAnchorId("evt_review%2F1", 0)).toBe("activity-event-evt_review%252F1");
+    expect(activityEventAnchorId("", 4)).toBe("activity-event-5");
+    expect(activityEventAnchorId("bad\u202eid", 2)).toBe("activity-event-3");
+
+    const entries = projectActivityThread([
+      { id: "evt_first", type: "work.progress", payload: {} },
+      { id: "evt_review/1", type: "review.requested", payload: {} },
+      { type: "legacy.event", payload: {} },
+    ]);
+    expect(entries.map((entry) => entry.anchorId)).toEqual([
+      "activity-event-evt_first",
+      "activity-event-evt_review%2F1",
+      "activity-event-3",
     ]);
   });
 

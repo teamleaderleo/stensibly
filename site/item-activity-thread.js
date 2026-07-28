@@ -21,6 +21,13 @@ const projectedPayloadKeys = new Set([
 ]);
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
+export function activityEventAnchorId(eventId, position = 0) {
+  const id = safeText(eventId, 200);
+  if (id) return `activity-event-${encodeURIComponent(id)}`;
+  const fallback = Number.isInteger(position) && position >= 0 ? position + 1 : 1;
+  return `activity-event-${fallback}`;
+}
+
 export function projectActivityThread(events) {
   if (!Array.isArray(events)) return [];
   const projected = [];
@@ -73,6 +80,7 @@ export function projectActivityThread(events) {
     projected.push({
       key: id || `event-${index + 1}`,
       id,
+      anchorId: activityEventAnchorId(id, index),
       type,
       createdAt: safeText(event.createdAt, 80),
       actorId,
@@ -176,15 +184,26 @@ function renderEntries(entries) {
   return entries.map((entry) => {
     const row = node('li', 'detail-thread-entry');
     row.dataset.depth = '0';
-    row.id = `activity-event-${entry.position + 1}`;
+    row.id = entry.anchorId;
 
     const head = node('div', 'detail-thread-head');
     const eventName = node('strong');
     eventName.textContent = redactCredentialText(entry.type);
+    const headMeta = node('span', 'detail-thread-author');
     const when = node('time');
     when.textContent = formatTimestamp(entry.createdAt) || 'unknown time';
     if (entry.createdAt) when.dateTime = entry.createdAt;
-    head.append(eventName, when);
+    const permalink = node('a', 'detail-thread-badge');
+    permalink.href = `#${entry.anchorId}`;
+    permalink.textContent = 'permalink';
+    permalink.setAttribute(
+      'aria-label',
+      entry.id
+        ? `Permalink to event ${redactCredentialText(entry.id)}`
+        : `Permalink to activity entry ${entry.position + 1}`,
+    );
+    headMeta.append(when, permalink);
+    head.append(eventName, headMeta);
     row.append(head);
 
     const author = node('div', 'detail-thread-author');
