@@ -41,7 +41,18 @@ jobs:
       - name: Run focused dashboard capacity tests
         run: bun test test/dashboard-provider-capacity.test.ts
       - name: Run typecheck
-        run: bun run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          bun run typecheck 2>&1 | tee /tmp/provider-capacity-card-typecheck.txt
+      - name: Upload typecheck failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-capacity-card-typecheck
+          path: /tmp/provider-capacity-card-typecheck.txt
+          if-no-files-found: error
+          retention-days: 1
       - name: Run full Bun suite
         run: bun run test
       - name: Run full Convex suite
