@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { registerHostedProviderCapacityRoutes } from "../src/hosted-provider-capacity-api.ts";
 import type { StensiblyEnv } from "../src/http-auth.ts";
+import { ProviderCapacityConflictError } from "../src/provider-capacity.ts";
 import type { ProviderCapacityService } from "../src/provider-capacity-convex.ts";
 
 const secret = "hosted-provider-capacity-secret";
@@ -16,22 +17,7 @@ describe("hosted CodeRabbit capacity API", () => {
         ingested = input;
         return {
           duplicate: false,
-          observation: {
-            id: "capacity_1",
-            provider: "coderabbit",
-            deliveryId: input.deliveryId,
-            sourceCommentId: input.sourceCommentId,
-            repository: input.repository,
-            pullRequestNumber: input.pullRequestNumber,
-            subjectLogin: input.subjectLogin,
-            subjectBasis: "pull_request_author_proxy",
-            state: input.state,
-            remaining: input.remaining,
-            limit: input.limit,
-            refillAt: input.refillAt,
-            observedAt: input.observedAt,
-            receivedAt: input.receivedAt,
-          },
+          observation: observationFromInput(input),
         };
       },
       async snapshot(repository, subjectLogin) {
@@ -83,6 +69,59 @@ describe("hosted CodeRabbit capacity API", () => {
     });
   });
 
+  test("rejects invalid signatures before storage and maps altered delivery conflicts", async () => {
+    let calls = 0;
+    const service: ProviderCapacityService = {
+      async ingestCodeRabbit(input) {
+        calls += 1;
+        if (calls > 1) {
+          throw new ProviderCapacityConflictError(
+            "GitHub delivery identity was reused with different provider capacity content",
+          );
+        }
+        return {
+          duplicate: false,
+          observation: observationFromInput(input),
+        };
+      },
+      async snapshot() {
+        throw new Error("not expected");
+      },
+    };
+    const app = appWith(service);
+    const firstBody = JSON.stringify(payload("Reviews are available now."));
+
+    const invalid = await app.request("/webhooks/github", {
+      method: "POST",
+      headers: {
+        ...signedHeaders(firstBody, "delivery-replay"),
+        "x-hub-signature-256": `sha256=${"0".repeat(64)}`,
+      },
+      body: firstBody,
+    });
+    expect(invalid.status).toBe(401);
+    expect(await invalid.json()).toMatchObject({ code: "unauthorized" });
+    expect(calls).toBe(0);
+
+    const accepted = await app.request("/webhooks/github", {
+      method: "POST",
+      headers: signedHeaders(firstBody, "delivery-replay"),
+      body: firstBody,
+    });
+    expect(accepted.status).toBe(202);
+    expect(calls).toBe(1);
+
+    const alteredBody = JSON.stringify(payload("0/1 reviews remaining, refill in 1 hour."));
+    const conflict = await app.request("/webhooks/github", {
+      method: "POST",
+      headers: signedHeaders(alteredBody, "delivery-replay"),
+      body: alteredBody,
+    });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: "conflict" });
+    expect(calls).toBe(2);
+  });
+
   test("ignores human and unrecognised bot prose without mutating capacity", async () => {
     let calls = 0;
     const service: ProviderCapacityService = {
@@ -132,6 +171,27 @@ function appWith(service: ProviderCapacityService) {
     { service, githubWebhookSecret: secret, now: () => now },
   );
   return app;
+}
+
+function observationFromInput(
+  input: Parameters<ProviderCapacityService["ingestCodeRabbit"]>[0],
+) {
+  return {
+    id: "capacity_1",
+    provider: "coderabbit" as const,
+    deliveryId: input.deliveryId,
+    sourceCommentId: input.sourceCommentId,
+    repository: input.repository,
+    pullRequestNumber: input.pullRequestNumber,
+    subjectLogin: input.subjectLogin,
+    subjectBasis: "pull_request_author_proxy" as const,
+    state: input.state,
+    remaining: input.remaining,
+    limit: input.limit,
+    refillAt: input.refillAt,
+    observedAt: input.observedAt,
+    receivedAt: input.receivedAt,
+  };
 }
 
 function payload(body: string, actor = "coderabbitai[bot]") {
