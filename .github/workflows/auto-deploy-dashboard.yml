@@ -2,7 +2,9 @@ name: Budget Dashboard Production Deployment
 
 on:
   schedule:
-    - cron: '17 */2 * * *'
+    # Fixed release windows. GitHub cron is UTC: approximately 9:17, 13:17,
+    # 17:17, and 21:17 Pacific during daylight time; one hour earlier in winter.
+    - cron: '17 0,4,16,20 * * *'
 
 permissions:
   actions: write
@@ -14,13 +16,15 @@ concurrency:
 
 env:
   MAX_AUTO_DEPLOYS_PER_24H: '4'
+  MIN_SECONDS_BETWEEN_AUTO_DEPLOYS: '10800'
+  FRONTEND_PATH_PATTERN: '^site/'
 
 jobs:
   dispatch:
-    name: Queue one relevant deployment within budget
+    name: Queue one verified frontend release within budget
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect deployment state and dispatch when needed
+      - name: Inspect release state and dispatch when needed
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -44,7 +48,7 @@ jobs:
             )] | length' <<< "${runs_json}"
           )"
           if [ "${active_count}" -gt 0 ]; then
-            echo "::notice title=Dashboard deployment coalesced::A guarded deployment is already active; no additional run was queued."
+            echo "::notice title=Dashboard release coalesced::A guarded production release is already active; no additional run was queued."
             exit 0
           fi
 
@@ -56,56 +60,81 @@ jobs:
             ] | length' <<< "${runs_json}"
           )"
           if [ "${recent_count}" -ge "${MAX_AUTO_DEPLOYS_PER_24H}" ]; then
-            echo "::notice title=Dashboard deployment budget reached::${recent_count} guarded deployment runs were already created in the last 24 hours; automatic dispatch is capped at ${MAX_AUTO_DEPLOYS_PER_24H}."
+            echo "::notice title=Dashboard release budget reached::${recent_count} guarded production runs were already created in the last 24 hours; automatic releases are capped at ${MAX_AUTO_DEPLOYS_PER_24H}."
             exit 0
           fi
 
-          latest_success_sha="$(
-            jq -r '[.workflow_runs[] | select(.conclusion == "success")]
+          latest_success="$(
+            jq -c '[.workflow_runs[] | select(.conclusion == "success")]
               | sort_by(.created_at)
-              | last
-              | .head_sha // empty' <<< "${runs_json}"
+              | last // {}' <<< "${runs_json}"
           )"
+          latest_success_sha="$(jq -r '.head_sha // empty' <<< "${latest_success}")"
+          latest_success_created_at="$(jq -r '.created_at // empty' <<< "${latest_success}")"
           current_sha="${GITHUB_SHA}"
-          if [ -n "${latest_success_sha}" ] && [ "${latest_success_sha}" = "${current_sha}" ]; then
-            echo "::notice title=Dashboard already current::The latest successful guarded deployment already covers ${current_sha}."
+
+          if [ -z "${latest_success_sha}" ] || [ -z "${latest_success_created_at}" ]; then
+            echo "::warning title=Dashboard release baseline required::No successful guarded production release is available as a comparison baseline. Automatic release was skipped; establish the baseline through the manual guarded workflow."
             exit 0
           fi
 
-          should_dispatch=false
-          if [ -z "${latest_success_sha}" ]; then
-            should_dispatch=true
-          else
-            compare_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/compare/${latest_success_sha}...${current_sha}?per_page=100"
-            if ! compare_json="$(curl --fail-with-body --silent --show-error "${api_headers[@]}" "${compare_url}")"; then
-              echo "::warning title=Dashboard comparison unavailable::Could not compare the latest successful deployment with main. Automatic deployment was skipped to preserve quota; use the guarded manual workflow for an urgent release."
-              exit 0
-            fi
-
-            compare_status="$(jq -r '.status // "unknown"' <<< "${compare_json}")"
-            total_commits="$(jq -r '.total_commits // 0' <<< "${compare_json}")"
-            if [ "${compare_status}" = "diverged" ] || [ "${total_commits}" -gt 250 ]; then
-              should_dispatch=true
-            else
-              relevant_count="$(
-                jq '[.files[]?.filename | select(test(
-                  "^(site/|src/dashboard-assets\\.ts$|src/dashboard-deployment-diagnostics\\.ts$|src/verify-dashboard\\.ts$|package\\.json$|bun\\.lock$|tsconfig\\.json$|\\.github/workflows/(deploy-dashboard|auto-deploy-dashboard)\\.yml$)"
-                ))] | length' <<< "${compare_json}"
-              )"
-              if [ "${relevant_count}" -gt 0 ]; then
-                should_dispatch=true
-              fi
-            fi
-          fi
-
-          if [ "${should_dispatch}" != true ]; then
-            echo "::notice title=No dashboard release needed::Main has no dashboard-relevant changes since the latest successful guarded deployment."
+          if [ "${latest_success_sha}" = "${current_sha}" ]; then
+            echo "::notice title=Dashboard already current::The latest successful guarded release already covers ${current_sha}."
             exit 0
           fi
+
+          latest_success_epoch="$(date -u -d "${latest_success_created_at}" +%s)"
+          now_epoch="$(date -u +%s)"
+          elapsed_seconds="$((now_epoch - latest_success_epoch))"
+          if [ "${elapsed_seconds}" -lt "${MIN_SECONDS_BETWEEN_AUTO_DEPLOYS}" ]; then
+            next_epoch="$((latest_success_epoch + MIN_SECONDS_BETWEEN_AUTO_DEPLOYS))"
+            next_time="$(date -u -d "@${next_epoch}" +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "::notice title=Dashboard release cooldown::The last successful production release is too recent. The next automatic release is eligible after ${next_time}."
+            exit 0
+          fi
+
+          compare_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/compare/${latest_success_sha}...${current_sha}?per_page=100"
+          if ! compare_json="$(curl --fail-with-body --silent --show-error "${api_headers[@]}" "${compare_url}")"; then
+            echo "::warning title=Dashboard comparison unavailable::Could not compare the latest successful release with main. Automatic release was skipped to preserve quota; use the guarded manual workflow for an urgent release."
+            exit 0
+          fi
+
+          compare_status="$(jq -r '.status // "unknown"' <<< "${compare_json}")"
+          total_commits="$(jq -r '.total_commits // 0' <<< "${compare_json}")"
+          if [ "${compare_status}" != "ahead" ] && [ "${compare_status}" != "identical" ]; then
+            echo "::warning title=Dashboard history needs review::The release baseline and main are ${compare_status}; automatic release was skipped rather than guessing."
+            exit 0
+          fi
+          if [ "${total_commits}" -gt 250 ]; then
+            echo "::warning title=Dashboard comparison too large::More than 250 commits separate production from main. Automatic release was skipped so a bounded manual review can establish a fresh baseline."
+            exit 0
+          fi
+
+          frontend_files="$(
+            jq -r --arg pattern "${FRONTEND_PATH_PATTERN}" '.files[]?.filename | select(test($pattern))' <<< "${compare_json}"
+          )"
+          if [ -z "${frontend_files}" ]; then
+            echo "::notice title=No frontend release needed::Main has no deployable site/ changes since the latest successful production release. Backend, policy, test, dependency, and workflow churn stays in GitHub Actions."
+            exit 0
+          fi
+
+          {
+            echo "## Dashboard automatic release decision"
+            echo
+            echo "- decision: dispatch one guarded production release"
+            echo "- release window: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "- rolling production usage before dispatch: ${recent_count}/${MAX_AUTO_DEPLOYS_PER_24H}"
+            echo "- production baseline: \`${latest_success_sha}\`"
+            echo "- candidate: \`${current_sha}\`"
+            echo "- deployable frontend files:"
+            while IFS= read -r file; do
+              [ -n "${file}" ] && echo "  - \`${file}\`"
+            done <<< "${frontend_files}"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${api_headers[@]}" \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-dashboard.yml/dispatches" \
             --data '{"ref":"main"}'
-          echo "::notice title=Dashboard deployment queued::Queued one guarded production deployment for ${current_sha}; ${recent_count}/${MAX_AUTO_DEPLOYS_PER_24H} runs were already counted in the rolling budget."
+          echo "::notice title=Dashboard production release queued::Queued one guarded release for ${current_sha}; ${recent_count}/${MAX_AUTO_DEPLOYS_PER_24H} runs were already counted in the rolling budget."

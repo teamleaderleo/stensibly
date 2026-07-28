@@ -4,10 +4,10 @@ const workflow = await Bun.file(
   new URL("../.github/workflows/auto-deploy-dashboard.yml", import.meta.url),
 ).text();
 
-describe("quota-aware dashboard production dispatch", () => {
-  test("uses a lightweight two-hour reconciliation schedule instead of every push", () => {
+describe("frontend-window dashboard production dispatch", () => {
+  test("uses four fixed release windows instead of reacting to every push", () => {
     expect(workflow).toContain("schedule:");
-    expect(workflow).toContain("cron: '17 */2 * * *'");
+    expect(workflow).toContain("cron: '17 0,4,16,20 * * *'");
     expect(workflow).not.toContain("push:");
     expect(workflow).not.toContain("pull_request:");
   });
@@ -21,36 +21,48 @@ describe("quota-aware dashboard production dispatch", () => {
     expect(workflow).not.toContain("persist-credentials");
   });
 
-  test("coalesces active runs and enforces a rolling production budget", () => {
+  test("coalesces active runs and enforces daily and cooldown budgets", () => {
     expect(workflow).toContain("MAX_AUTO_DEPLOYS_PER_24H: '4'");
+    expect(workflow).toContain("MIN_SECONDS_BETWEEN_AUTO_DEPLOYS: '10800'");
     for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
       expect(workflow).toContain(`.status == \"${status}\"`);
     }
     expect(workflow).toContain("date -u -d '24 hours ago' +%s");
     expect(workflow).toContain("fromdateiso8601");
-    expect(workflow).toContain("Dashboard deployment budget reached");
+    expect(workflow).toContain("Dashboard release budget reached");
+    expect(workflow).toContain("Dashboard release cooldown");
   });
 
-  test("dispatches only for dashboard-relevant changes since the last success", () => {
-    expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/runs");
-    expect(workflow).toContain(".conclusion == \"success\"");
-    expect(workflow).toContain("/compare/${latest_success_sha}...${current_sha}");
-    for (const marker of [
-      "site/",
-      "src/dashboard-assets",
-      "src/dashboard-deployment-diagnostics",
-      "src/verify-dashboard",
-      "package",
-      "bun",
-      "tsconfig",
+  test("automatically releases only deployable site changes", () => {
+    expect(workflow).toContain("FRONTEND_PATH_PATTERN: '^site/'");
+    expect(workflow).toContain("--arg pattern \"${FRONTEND_PATH_PATTERN}\"");
+    expect(workflow).toContain("No frontend release needed");
+    expect(workflow).toContain("Backend, policy, test, dependency, and workflow churn stays in GitHub Actions");
+
+    for (const broadMarker of [
+      "src/dashboard-assets\\.ts$",
+      "src/dashboard-deployment-diagnostics\\.ts$",
+      "src/verify-dashboard\\.ts$",
+      "package\\.json$",
+      "bun\\.lock$",
+      "tsconfig\\.json$",
       "deploy-dashboard|auto-deploy-dashboard",
     ]) {
-      expect(workflow).toContain(marker);
+      expect(workflow).not.toContain(broadMarker);
     }
-    expect(workflow).toContain("No dashboard release needed");
   });
 
-  test("retains the exact guarded main deployment target", () => {
+  test("fails closed when the release baseline cannot be bounded", () => {
+    expect(workflow).toContain("Dashboard release baseline required");
+    expect(workflow).toContain("Dashboard comparison unavailable");
+    expect(workflow).toContain("Dashboard history needs review");
+    expect(workflow).toContain("Dashboard comparison too large");
+    expect(workflow).toContain('compare_status}" != "ahead"');
+    expect(workflow).toContain('total_commits}" -gt 250');
+  });
+
+  test("retains the exact guarded main production target", () => {
+    expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/runs");
     expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/dispatches");
     expect(workflow).toContain("--data '{\"ref\":\"main\"}'");
     expect(workflow).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
