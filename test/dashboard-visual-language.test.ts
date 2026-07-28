@@ -25,7 +25,29 @@ describe("dashboard visual language", () => {
     expect(html).toContain("People and agents working here");
     expect(html).toContain('id="github-sign-in"');
     expect(html.indexOf('id="github-sign-in"')).toBeLessThan(html.indexOf("advanced connection"));
-    expect(hostedStyles).toContain("var(--accent-strong)");
+    expect(hostedStyles).toContain("var(--accent-solid)");
+  });
+
+  test("keeps every primary action readable in light and dark schemes", async () => {
+    const [hostedStyles, claimStyles] = await Promise.all([
+      siteFile("hosted-session.css"),
+      siteFile("item-claim.css"),
+    ]);
+
+    expect(hostedStyles).toContain("--accent-solid: #5d5478");
+    expect(hostedStyles).toContain("--accent-solid: #70668b");
+    expect(hostedStyles).toContain("--on-accent: #fff");
+    expect(hostedStyles).toContain(".connection-form-actions button:first-child");
+    expect(hostedStyles).toContain(".actor-form-actions button:first-child");
+    expect(hostedStyles).toContain(".create-item-actions button:first-child");
+    expect(hostedStyles).toContain("color: var(--on-accent)");
+    expect(hostedStyles).toContain("background: var(--accent-solid)");
+    expect(claimStyles).toContain(".detail-claim-actions button, .detail-renewal-actions button");
+    expect(claimStyles).toContain("color: var(--on-accent)");
+    expect(claimStyles).toContain("background: var(--accent-solid)");
+
+    expect(contrastRatio("#5d5478", "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio("#70668b", "#ffffff")).toBeGreaterThanOrEqual(4.5);
   });
 
   test("keeps dynamically loaded item actions inside the same palette", async () => {
@@ -38,7 +60,7 @@ describe("dashboard visual language", () => {
     ].map(siteFile));
     const combined = actionStyles.join("\n");
 
-    expect(combined).toContain("var(--accent-strong)");
+    expect(combined).toContain("var(--accent-solid)");
     expect(combined).toContain("var(--danger-soft)");
     expect(combined).not.toContain("#ffc0aa");
     expect(combined).not.toContain("rgba(255,154,118");
@@ -60,3 +82,18 @@ describe("dashboard visual language", () => {
     }
   });
 });
+
+function contrastRatio(background: string, foreground: string): number {
+  const light = relativeLuminance(foreground);
+  const dark = relativeLuminance(background);
+  return (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05);
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = hex.slice(1).match(/.{2}/g)?.map((value) => Number.parseInt(value, 16) / 255);
+  if (!channels || channels.length !== 3) throw new Error(`Invalid colour: ${hex}`);
+  const [red = 0, green = 0, blue = 0] = channels.map((value) =>
+    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  );
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
