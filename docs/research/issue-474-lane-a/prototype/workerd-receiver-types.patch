@@ -1,0 +1,180 @@
+diff --git a/types/src/generator/structure.ts b/types/src/generator/structure.ts
+--- a/types/src/generator/structure.ts
++++ b/types/src/generator/structure.ts
+@@ -44,6 +44,21 @@ export function createMethodPartial(
+     method.args.toArray(),
+     /* forMethod */ true
+   );
++  // JSG registers ordinary instance methods with an owning V8 Signature. Encode
++  // that receiver requirement in TypeScript so calls through unrelated objects
++  // fail before deployment. Static methods have no holder object and remain
++  // receiver-free.
++  if (!method.static) {
++    params.unshift(
++      f.createParameterDeclaration(
++        /* modifiers */ undefined,
++        /* dotDotToken */ undefined,
++        'this',
++        /* questionToken */ undefined,
++        f.createTypeReferenceNode(getTypeName(fullyQualifiedParentName))
++      )
++    );
++  }
+   const result = createTypeNode(method.returnType);
+   return [modifiers, name, params, result];
+ }
+diff --git a/types/src/transforms/globals.ts b/types/src/transforms/globals.ts
+--- a/types/src/transforms/globals.ts
++++ b/types/src/transforms/globals.ts
+@@ -71,6 +71,48 @@ function createInlineVisitor(
+   return visitor;
+ }
+ 
++// JSG instance methods carry an explicit owning `this` parameter after type
++// generation. When one of those methods is copied into the Worker global scope,
++// preserve the Web IDL call forms for global operations:
++//
++// - bare/detached calls (`this` is `undefined`);
++// - `.call(null, ...)`;
++// - calls through `globalThis`.
++//
++// Methods without an explicit receiver are intentionally detachable (including
++// static methods) and are copied unchanged.
++function createGlobalFunctionParameters(
++  ctx: ts.TransformationContext,
++  parameters: readonly ts.ParameterDeclaration[]
++): readonly ts.ParameterDeclaration[] {
++  const receiver = parameters[0];
++  if (
++    receiver === undefined ||
++    !ts.isIdentifier(receiver.name) ||
++    receiver.name.text !== "this"
++  ) {
++    return parameters;
++  }
++
++  const receiverType = ctx.factory.createUnionTypeNode([
++    ctx.factory.createTypeQueryNode(
++      ctx.factory.createIdentifier("globalThis")
++    ),
++    ctx.factory.createLiteralTypeNode(ctx.factory.createNull()),
++    ctx.factory.createKeywordTypeNode(ts.SyntaxKind.VoidKeyword),
++  ]);
++  const globalReceiver = ctx.factory.updateParameterDeclaration(
++    receiver,
++    receiver.modifiers,
++    receiver.dotDotDotToken,
++    receiver.name,
++    receiver.questionToken,
++    receiverType,
++    receiver.initializer
++  );
++  return [globalReceiver, ...parameters.slice(1)];
++}
++
+ // Call with each potential method/property that could be extracted into a
+ // global function/const.
+ export function maybeExtractGlobalNode(
+@@ -82,12 +117,13 @@ export function maybeExtractGlobalNode(
+     (ts.isMethodSignature(node) || ts.isMethodDeclaration(node)) &&
+     ts.isIdentifier(node.name)
+   ) {
++    const parameters = createGlobalFunctionParameters(ctx, node.parameters);
+     return ctx.factory.createFunctionDeclaration(
+       modifiers,
+       /* asteriskToken */ undefined,
+       node.name,
+       node.typeParameters,
+-      node.parameters,
++      parameters,
+       node.type,
+       /* body */ undefined
+     );
+diff --git a/types/test/transforms/globals.spec.ts b/types/test/transforms/globals.spec.ts
+--- a/types/test/transforms/globals.spec.ts
++++ b/types/test/transforms/globals.spec.ts
+@@ -19,9 +19,10 @@ test("createGlobalScopeTransformer: extracts global scope", () => {
+ };
+ declare class EventTarget<EventMap extends Record<string, Event> = Record<string, Event>> {
+     constructor();
+-    addEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void; // MethodDeclaration
+-    removeEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void; // MethodDeclaration
+-    dispatchEvent(event: EventMap[keyof EventMap]): void; // MethodDeclaration
++    addEventListener<Type extends keyof EventMap>(this: EventTarget<EventMap>, type: Type, handler: (event: EventMap[Type]) => void): void; // MethodDeclaration
++    removeEventListener<Type extends keyof EventMap>(this: EventTarget<EventMap>, type: Type, handler: (event: EventMap[Type]) => void): void; // MethodDeclaration
++    dispatchEvent(this: EventTarget<EventMap>, event: EventMap[keyof EventMap]): void; // MethodDeclaration
++    static detachable(value: string): string; // Static MethodDeclaration
+ }
+ declare class WorkerGlobalScope extends EventTarget<WorkerGlobalScopeEventMap> {
+     thing: string; // PropertyDeclaration
+@@ -37,7 +38,8 @@ declare abstract class Console {
+ }
+ interface ServiceWorkerGlobalScope extends WorkerGlobalScope {
+     DOMException: typeof DOMException; // PropertySignature
+-    btoa(value: string): string; // MethodSignature
++    btoa(this: ServiceWorkerGlobalScope, value: string): string; // MethodSignature
++    intentionallyReceiverFree(value: string): string; // MethodSignature
+     crypto: Crypto; // PropertySignature
+     get console(): Console; // GetAccessorDeclaration
+ }
+@@ -60,13 +62,15 @@ interface ServiceWorkerGlobalScope extends WorkerGlobalScope {
+     output,
+     // Extracted global nodes inserted after ServiceWorkerGlobalScope
+     source +
+-      `declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
+-declare function removeEventListener<Type extends keyof WorkerGlobalScopeEventMap>(type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
+-declare function dispatchEvent(event: WorkerGlobalScopeEventMap[keyof WorkerGlobalScopeEventMap]): void;
++      `declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
++declare function removeEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
++declare function dispatchEvent(this: typeof globalThis | null | void, event: WorkerGlobalScopeEventMap[keyof WorkerGlobalScopeEventMap]): void;
++declare function detachable(value: string): string;
+ declare const thing: string;
+ declare const CONSTANT: 42;
+ declare const property: number;
+-declare function btoa(value: string): string;
++declare function btoa(this: typeof globalThis | null | void, value: string): string;
++declare function intentionallyReceiverFree(value: string): string;
+ declare const crypto: Crypto;
+ declare const console: Console;
+ `
+diff --git a/types/test/types/fetch-receiver.ts b/types/test/types/fetch-receiver.ts
+new file mode 100644
+--- /dev/null
++++ b/types/test/types/fetch-receiver.ts
+@@ -0,0 +1,36 @@
++const url = "data:text/plain,receiver-ok";
++
++fetch(url);
++globalThis.fetch(url);
++self.fetch(url);
++
++const detached = fetch;
++detached(url);
++detached.call(undefined, url);
++detached.call(null, url);
++detached.call(globalThis, url);
++
++// @ts-expect-error An unrelated object is not a legal Worker global receiver.
++detached.call({}, url);
++
++const holder = { fetch: detached };
++// @ts-expect-error Property-call syntax supplies holder as the receiver.
++holder.fetch(url);
++
++class Client {
++  fetchImpl = fetch;
++
++  run() {
++    // @ts-expect-error The client instance is not a legal Worker global receiver.
++    return this.fetchImpl(url);
++  }
++}
++
++// Static functions and explicitly receiver-free declarations remain detachable.
++declare namespace ReceiverFixture {
++  function detachable(value: string): string;
++}
++
++const detachable = ReceiverFixture.detachable;
++detachable("ok");
++({ detachable }).detachable("ok");
