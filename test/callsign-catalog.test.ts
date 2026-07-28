@@ -108,7 +108,7 @@ describe("callsign reservation request", () => {
   test("builds a deterministic non-accepting request", () => {
     const first = buildCallsignReservationRequest({
       workspace: "Default",
-      requestedCallsign: " rook ",
+      requestedCallsign: " Rook ",
       workerSessionId: "chatgpt.rook.1",
       runId: "run_rook_1",
       requestId: "callsign:run_rook_1:rook",
@@ -129,7 +129,7 @@ describe("callsign reservation request", () => {
     expect(first).toMatchObject({
       version: 1,
       workspace: "default",
-      requestedCallsign: "rook",
+      requestedCallsign: "Rook",
       collisionKey: "rook",
       requestsReservation: true,
       reservationAccepted: false,
