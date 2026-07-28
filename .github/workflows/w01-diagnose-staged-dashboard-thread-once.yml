@@ -1,0 +1,263 @@
+name: W01 diagnose staged dashboard thread once
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: stensibly-dashboard-staged-diagnosis
+  cancel-in-progress: false
+
+env:
+  STAGED_ORIGIN: https://stensibly-11mfzhs6c-leo-lis-projects.vercel.app
+  VERCEL_CLI_VERSION: 56.5.0
+
+jobs:
+  diagnose-staged-dashboard:
+    name: Diagnose the retained staged dashboard
+    if: >-
+      github.event.pull_request.head.ref == 'lantern/409-diagnose-staged-dashboard-thread' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://www.stensibly.com
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate read-only diagnostic inputs
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            echo "This one-time staged diagnosis cannot be rerun" >&2
+            exit 1
+          fi
+          safe_origin="$(
+            bun src/dashboard-deployment-diagnostics.ts \
+              --safe-vercel-origin "$STAGED_ORIGIN"
+          )"
+          test "$safe_origin" = "$STAGED_ORIGIN"
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing protected input: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pull and validate existing Vercel project settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@${VERCEL_CLI_VERSION} pull \
+            --yes \
+            --environment=production \
+            --token="$VERCEL_TOKEN"
+          jq --exit-status \
+            --arg project "$VERCEL_PROJECT_ID" \
+            --arg org "$VERCEL_ORG_ID" \
+            '.projectId == $project and .orgId == $org' \
+            .vercel/project.json > /dev/null
+
+      - name: Diagnose staged HTML and canonical assets
+        id: diagnose
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p evidence /tmp/staged-assets
+          printf 'path\tfetch_status\tmedia_type\tbytes\tmarker_found\ttoken_shape_found\n' \
+            > evidence/assets.tsv
+
+          html_fetch_status=passed
+          html_content_type=""
+          if ! html_content_type="$(
+            npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
+              --deployment "$STAGED_ORIGIN" \
+              --fail --silent --show-error \
+              --output /tmp/staged-index.html \
+              --write-out '%{content_type}\n'
+          )"; then
+            html_fetch_status=failed
+          fi
+          html_content_type="$(printf '%s\n' "$html_content_type" | tr -d '\r' | tail -n 1 | cut -c1-160)"
+          html_media_type="${html_content_type%%;*}"
+          html_media_type="$(printf '%s' "$html_media_type" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          html_bytes=0
+          if [[ -f /tmp/staged-index.html ]]; then html_bytes="$(wc -c < /tmp/staged-index.html | tr -d ' ')"; fi
+
+          html_verifier_status=not_run
+          : > evidence/html-verifier.txt
+          if [[ "$html_fetch_status" = passed ]]; then
+            if bun run verify:dashboard -- \
+              --html-file /tmp/staged-index.html \
+              > evidence/html-verifier.txt 2>&1; then
+              html_verifier_status=passed
+            else
+              html_verifier_status=failed
+            fi
+          fi
+
+          bun src/dashboard-assets.ts > /tmp/dashboard-assets.json
+          jq --exit-status '
+            type == "array"
+            and length > 0
+            and ([.[].path] | length == (unique | length))
+            and all(.[];
+              (.path | type == "string")
+              and (.path | test("^/[A-Za-z0-9._/-]+$"))
+              and (.kind == "css" or .kind == "javascript" or .kind == "svg")
+              and (.contentTypes | type == "array")
+              and (.contentTypes | length > 0)
+              and (.marker | type == "string")
+              and (.marker | length > 0)
+            )
+          ' /tmp/dashboard-assets.json > /dev/null
+
+          asset_failures=0
+          while IFS=$'\t' read -r asset kind allowed_content_types marker; do
+            output="/tmp/staged-assets/$(printf '%s' "$asset" | tr '/.' '__')"
+            fetch_status=passed
+            content_type=""
+            if ! content_type="$(
+              npx --yes vercel@${VERCEL_CLI_VERSION} curl "$asset" \
+                --deployment "$STAGED_ORIGIN" \
+                --fail --silent --show-error \
+                --output "$output" \
+                --write-out '%{content_type}\n'
+            )"; then
+              fetch_status=failed
+            fi
+            content_type="$(printf '%s\n' "$content_type" | tr -d '\r' | tail -n 1 | cut -c1-160)"
+            media_type="${content_type%%;*}"
+            media_type="$(printf '%s' "$media_type" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            bytes=0
+            marker_found=false
+            token_shape_found=false
+            if [[ -f "$output" ]]; then
+              bytes="$(wc -c < "$output" | tr -d ' ')"
+              if grep --fixed-strings --quiet -- "$marker" "$output"; then marker_found=true; fi
+              if grep --extended-regexp --quiet 'stn\.tok_[A-Za-z0-9._-]+' "$output"; then token_shape_found=true; fi
+            fi
+
+            content_type_allowed=false
+            if [[ -n "$media_type" ]] && printf '%s\n' "$allowed_content_types" \
+              | tr ',' '\n' \
+              | grep --fixed-strings --ignore-case --line-regexp --quiet -- "$media_type"; then
+              content_type_allowed=true
+            fi
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "$asset" "$fetch_status" "${media_type:-missing}" "$bytes" "$marker_found" "$token_shape_found" \
+              >> evidence/assets.tsv
+
+            if [[ "$fetch_status" != passed || "$content_type_allowed" != true || "$bytes" -eq 0 || "$marker_found" != true || "$token_shape_found" != false ]]; then
+              asset_failures=$((asset_failures + 1))
+            fi
+          done < <(jq -r '.[] | [.path, .kind, (.contentTypes | join(",")), .marker] | @tsv' /tmp/dashboard-assets.json)
+
+          jq -Rn '
+            [inputs | split("\t")] as $rows
+            | ($rows[0]) as $header
+            | [range(1; $rows | length) as $index
+                | ($rows[$index]) as $row
+                | reduce range(0; $header | length) as $column
+                    ({}; .[$header[$column]] = $row[$column])]
+          ' < evidence/assets.tsv > evidence/assets.json
+
+          jq -n \
+            --arg format "stensibly-staged-dashboard-diagnosis/v1" \
+            --arg stagedOrigin "$STAGED_ORIGIN" \
+            --arg htmlFetch "$html_fetch_status" \
+            --arg htmlMediaType "${html_media_type:-missing}" \
+            --argjson htmlBytes "$html_bytes" \
+            --arg htmlVerifier "$html_verifier_status" \
+            --argjson assetFailures "$asset_failures" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{format: $format, staged_origin: $stagedOrigin, html: {fetch: $htmlFetch, media_type: $htmlMediaType, bytes: $htmlBytes, verifier: $htmlVerifier}, asset_failures: $assetFailures, completed_at: $completedAt, contains_secret_values: false}' \
+            > evidence/result.json
+
+          mismatch=false
+          if [[ "$html_fetch_status" != passed || "$html_media_type" != text/html || "$html_bytes" -eq 0 || "$html_verifier_status" != passed || "$asset_failures" -ne 0 ]]; then
+            mismatch=true
+          fi
+          echo "mismatch=$mismatch" >> "$GITHUB_OUTPUT"
+
+      - name: Post bounded diagnosis to issue 403
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          html_fetch="$(jq -r '.html.fetch' evidence/result.json)"
+          html_type="$(jq -r '.html.media_type' evidence/result.json)"
+          html_verifier="$(jq -r '.html.verifier' evidence/result.json)"
+          failures="$(jq -r '.asset_failures' evidence/result.json)"
+          failed_rows="$(awk -F '\t' 'NR > 1 && ($2 != "passed" || $3 == "missing" || $4 == 0 || $5 != "true" || $6 != "false") {print "- `" $1 "`: fetch=" $2 ", type=" $3 ", bytes=" $4 ", marker=" $5 ", token_shape=" $6}' evidence/assets.tsv)"
+          if [[ -z "$failed_rows" ]]; then failed_rows="- none"; fi
+          verifier_detail="$(head -c 500 evidence/html-verifier.txt | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g')"
+
+          cat > /tmp/comment.md <<EOF
+          ## Staged attributable-dashboard diagnosis
+
+          - Workflow run: \`${GITHUB_RUN_ID}\`
+          - Run URL: ${RUN_URL}
+          - Staged origin: ${STAGED_ORIGIN}
+          - HTML fetch: \`${html_fetch}\`
+          - HTML media type: \`${html_type}\`
+          - HTML verifier: \`${html_verifier}\`
+          - Asset failures: \`${failures}\`
+          - HTML verifier detail: \`${verifier_detail:-none}\`
+
+          Failing asset rows:
+
+          ${failed_rows}
+
+          This job made no deployment, promotion, configuration, or production-domain change.
+
+          — Lantern · Foundry
+            Intention: identify the exact staged mismatch and fix forward without another blind deployment
+          EOF
+          gh issue comment 403 --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
+
+      - name: Upload bounded staged diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-staged-dashboard-thread-diagnosis
+          path: evidence
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Fail when the staged deployment mismatches the contract
+        if: steps.diagnose.outputs.mismatch == 'true'
+        run: |
+          echo "The retained staged deployment does not match the current dashboard verification contract" >&2
+          exit 1
