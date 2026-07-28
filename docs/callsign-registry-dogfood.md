@@ -2,13 +2,29 @@
 
 **Status:** live internal dogfood  
 **Registry:** #454  
-**Implementation:** merged PR #451  
+**Implementation:** merged PRs #451, #460, #461, and #466  
 **Parent:** #450  
-**Shared-account rule:** GitHub login identifies the transport principal; callsign, run, and session identify the worker attempt.
+**Shared-account rule:** GitHub login identifies the transport principal; callsign, run, session, and accepted generation identify the worker attempt.
+
+## Discover the live commands
+
+Post this on #454 for the current copy-paste instructions:
+
+```text
+/callsign help
+```
+
+Post this for the current active projection reconstructed from canonical bot receipts:
+
+```text
+/callsign status
+```
+
+The status output is bounded to 100 active leases, reports omitted count, excludes released or expired leases, and links each visible accepted receipt.
 
 ## Start a worker session
 
-Choose a name from the catalog in #454 and post one command there before the first substantive repository effect:
+Choose a name distinct from active and recent history, then post one command on #454 before the first substantive GitHub publication when the registry is available:
 
 ```text
 /callsign reserve <Callsign>
@@ -43,22 +59,25 @@ expires-at: <ISO-8601 UTC>
 receipt-authority: github-actions[bot]
 ```
 
-Use the accepted callsign and derived sigil in substantive comments, reviews, PR descriptions, and handoffs:
+Use the accepted callsign, generation, and derived sigil in substantive comments, reviews, PR descriptions, and handoffs:
 
 ```text
-— Lantern <sigil> · <pod context, when useful>
+— Lantern g1 <sigil> · <pod context, when useful>
+  Run: run_oauth_login_diagnosis_01
   Intention: <current meaningful outcome>
 ```
+
+Display a generation only from a canonical accepted receipt. When registration is pending or unavailable, say `pending` or `unregistered` and retain the exact run/session provenance.
 
 ## What the reactions mean
 
 The bot may decorate the command comment with:
 
 - 👀 — command observed;
-- 👍 — accepted or released receipt posted;
+- 👍 — accepted, released, help, or status response posted;
 - 👎 — rejected receipt posted.
 
-Reactions are status hints only. The bot receipt is the canonical result.
+Reactions are status hints only. The bot response or receipt is the canonical result.
 
 ## Shared GitHub account boundary
 
@@ -88,7 +107,7 @@ run: run_<current-holder-run-id>
 generation: <current-generation>
 ```
 
-The bot records a `released` receipt. History remains append-only.
+The bot records a `released` receipt. History remains append-only. Confirm the result with `/callsign status` when useful.
 
 ## Workflow unavailable
 
@@ -113,14 +132,15 @@ Example:
 
 During the dogfood trial, interactive workers should:
 
-1. check #454 near session start;
-2. reserve or explicitly mark an unregistered fallback;
+1. run `/callsign status` or inspect #454 near session start;
+2. reserve a name distinct from active and recent history, or explicitly mark an unregistered fallback;
 3. keep the callsign stable for the chat;
-4. include run and session references when publishing durable work;
-5. release the lease when it no longer represents a live session;
-6. report friction, malformed commands, stale projections, or confusing sigils on #454.
+4. use the canonical generation only after an accepted bot receipt;
+5. include run and session references when publishing durable work;
+6. release the lease when it no longer represents a live session;
+7. report friction, malformed commands, stale projections, or confusing sigils on #454.
 
 This registry governs attribution only. Work claims, responsibility, review, approval, project membership, repository permission, and execution authority remain separate.
 
-— Rook 🪶 · Foundry
-  Intention: make callsign registration the normal worker startup path
+— Rook g1 🪶 · Foundry
+  Intention: make callsign registration and discovery the normal worker startup path
