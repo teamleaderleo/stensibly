@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createHostedAuth,
+  HttpGitHubOAuthClient,
   type GitHubIdentity,
   type GitHubOAuthClient,
 } from "../src/hosted-auth.ts";
@@ -290,6 +291,66 @@ describe("hosted GitHub OAuth endpoints", () => {
       stage: "token_exchange",
     }));
     expect(body).not.toContain("secret provider failure");
+  });
+
+  test("returns a bounded token reason and reuses the exact PKCE verifier", async () => {
+    const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const github = new HttpGitHubOAuthClient({
+      clientId: "github-client-id",
+      clientSecret: "github-client-secret",
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({ input, init });
+        return new Response(JSON.stringify({
+          error: "bad_verification_code",
+          error_description: "provider-description-sentinel",
+        }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+    const app = createHostedAuth(options(new FakeAccountService(), github));
+
+    const started = await app.request("/github/start");
+    const authorize = new URL(started.headers.get("location") ?? "");
+    const state = authorize.searchParams.get("state") ?? "";
+    const cookie = cookieValue(started, "__Secure-stensibly-oauth-state");
+    const verifier = cookie.slice(cookie.lastIndexOf(".") + 1);
+    const challengeBytes = new Uint8Array(await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(verifier),
+    ));
+    let challengeBinary = "";
+    for (const byte of challengeBytes) challengeBinary += String.fromCharCode(byte);
+    const expectedChallenge = btoa(challengeBinary)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+    expect(authorize.searchParams.get("code_challenge")).toBe(expectedChallenge);
+
+    const failed = await app.request(
+      `/github/callback?code=valid-code&state=${encodeURIComponent(state)}`,
+      { headers: { cookie: `__Secure-stensibly-oauth-state=${cookie}` } },
+    );
+    expect(failed.status).toBe(502);
+    expect(requests).toHaveLength(1);
+    expect(String(requests[0]?.input)).toBe("https://github.com/login/oauth/access_token");
+    const exchangeBody = new URLSearchParams(String(requests[0]?.init?.body));
+    expect(exchangeBody.get("code_verifier")).toBe(verifier);
+    expect(exchangeBody.get("redirect_uri")).toBe(
+      "https://api.stensibly.com/auth/github/callback",
+    );
+
+    const body = JSON.stringify(await failed.json());
+    expect(body).toBe(JSON.stringify({
+      error: "GitHub authentication failed",
+      code: "provider_failure",
+      stage: "token_exchange",
+      reason: "bad_verification_code",
+    }));
+    expect(body).not.toContain("provider-description-sentinel");
+    expect(body).not.toContain(verifier);
+    expect(body).not.toContain("valid-code");
   });
 });
 
