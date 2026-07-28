@@ -79,12 +79,11 @@ async function githubTokenEgressProbe(
   env: CloudflareBindings,
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
-  const presentedCapability = request.headers.get("x-stensibly-diagnostic")
-    ?? requestUrl.searchParams.get("cap");
-  if (
-    request.method !== "POST"
-    || presentedCapability !== W01_GITHUB_TOKEN_EGRESS_CAPABILITY
-  ) {
+  const headerAuthorized = request.method === "POST"
+    && request.headers.get("x-stensibly-diagnostic") === W01_GITHUB_TOKEN_EGRESS_CAPABILITY;
+  const queryAuthorized = request.method === "GET"
+    && requestUrl.searchParams.get("cap") === W01_GITHUB_TOKEN_EGRESS_CAPABILITY;
+  if (!headerAuthorized && !queryAuthorized) {
     return diagnosticJson({ error: "Not found" }, 404);
   }
   const clientId = env.GITHUB_OAUTH_CLIENT_ID?.trim();
