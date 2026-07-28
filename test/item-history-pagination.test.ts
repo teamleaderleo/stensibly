@@ -21,7 +21,7 @@ describe("bounded item history pagination status", () => {
   test("accepts only an ordinary completed page as complete", () => {
     expect(paginationRequiresFurtherInspection({
       isDone: true,
-      pageStatus: "Done",
+      pageStatus: null,
       splitCursor: null,
     })).toBe(false);
     expect(paginationRequiresFurtherInspection({
