@@ -1,4 +1,5 @@
 const ACTOR_KINDS = ['human', 'agent', 'service'];
+const PRINCIPAL_KINDS = ['api_token', 'account'];
 
 export function readPrincipal(payload) {
   if (!isRecord(payload) || !isRecord(payload.principal) || !isRecord(payload.capabilities)) {
@@ -7,13 +8,17 @@ export function readPrincipal(payload) {
 
   const principal = payload.principal;
   const capabilities = payload.capabilities;
-  if (principal.kind !== 'api_token') throw new TypeError('The principal kind is unsupported.');
-  const name = readRequiredString(principal.name, 'The principal response is missing a token name.', 160);
+  const kind = typeof principal.kind === 'string' ? principal.kind.trim() : '';
+  if (!PRINCIPAL_KINDS.includes(kind)) throw new TypeError('The principal kind is unsupported.');
+  const name = readRequiredString(principal.name, 'The principal response is missing a name.', 160);
   const workspace = readNullableString(principal.workspace, 'The principal workspace is invalid.', 160);
   const scopes = readStringList(principal.scopes, 'The principal scopes are invalid.', 40);
   const projects = principal.projects === null
     ? null
     : readStringList(principal.projects, 'The principal project boundary is invalid.', 80);
+  const role = kind === 'account'
+    ? readRequiredString(principal.role, 'The account principal role is invalid.', 80)
+    : undefined;
 
   for (const key of ['read', 'write', 'admin']) {
     if (typeof capabilities[key] !== 'boolean') {
@@ -22,7 +27,14 @@ export function readPrincipal(payload) {
   }
 
   return {
-    principal: { kind: 'api_token', name, workspace, scopes, projects },
+    principal: {
+      kind,
+      name,
+      workspace,
+      ...(role === undefined ? {} : { role }),
+      scopes,
+      projects,
+    },
     capabilities: {
       read: capabilities.read,
       write: capabilities.write,
