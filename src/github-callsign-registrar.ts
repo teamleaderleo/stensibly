@@ -5,6 +5,7 @@ import {
   formatGitHubCallsignReceipt,
   parseGitHubCallsignCommand,
   parseGitHubCallsignReceipt,
+  projectGitHubCallsignRegistry,
   type ParsedGitHubCallsignReceipt,
 } from "./github-callsign-registry.ts";
 
@@ -30,8 +31,13 @@ interface GitHubIssueComment {
   user: { login: string } | null;
 }
 
+export type GitHubCallsignMetaCommand = "help" | "status";
+
 const githubApiVersion = "2022-11-28";
 const registryIssueNumber = 454;
+const statusLeaseLimit = 100;
+const unsafeMetaTextPattern =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
 export async function runGitHubCallsignRegistrar(
   env: Record<string, string | undefined> = process.env,
@@ -65,6 +71,23 @@ export async function runGitHubCallsignRegistrar(
   const client = new GitHubClient({ token, owner, repo });
   await client.addReaction(commentId, "eyes");
 
+  const metaCommand = parseGitHubCallsignMetaCommand(body);
+  if (metaCommand === "help") {
+    await client.createIssueComment(issueNumber, formatGitHubCallsignHelp());
+    await client.addReaction(commentId, "+1");
+    return;
+  }
+
+  if (metaCommand === "status") {
+    const receipts = await readCanonicalReceipts(client, issueNumber);
+    await client.createIssueComment(
+      issueNumber,
+      formatGitHubCallsignStatus(receipts, new Date().toISOString()),
+    );
+    await client.addReaction(commentId, "+1");
+    return;
+  }
+
   let command;
   try {
     command = parseGitHubCallsignCommand(body);
@@ -80,6 +103,100 @@ export async function runGitHubCallsignRegistrar(
     return;
   }
 
+  const receipts = await readCanonicalReceipts(client, issueNumber);
+  const decision = decideGitHubCallsignCommand({
+    command,
+    requestComment: commentUrl,
+    receipts,
+    evaluatedAt: new Date().toISOString(),
+  });
+
+  if (decision.outcome !== "replay" && decision.receipt) {
+    await client.createIssueComment(issueNumber, formatGitHubCallsignReceipt(decision.receipt));
+  }
+  await client.addReaction(commentId, decision.reaction);
+}
+
+export function parseGitHubCallsignMetaCommand(body: string): GitHubCallsignMetaCommand | null {
+  if (typeof body !== "string" || unsafeMetaTextPattern.test(body)) return null;
+  const normalized = body.replace(/\r\n/gu, "\n").trim();
+  const firstParagraph = normalized.split(/\n\s*\n/u, 1)[0]?.trim() ?? "";
+  if (firstParagraph === "/callsign help") return "help";
+  if (firstParagraph === "/callsign status") return "status";
+  return null;
+}
+
+export function formatGitHubCallsignHelp(): string {
+  return [
+    "callsign-help/v0",
+    "",
+    "Reserve a callsign:",
+    "```text",
+    "/callsign reserve <Callsign>",
+    "run: run_<unique-run-id>",
+    "session: <unique-worker-session-id>",
+    "ttl: 24h",
+    "```",
+    "",
+    "Release the exact active generation:",
+    "```text",
+    "/callsign release <Callsign>",
+    "run: run_<current-holder-run-id>",
+    "generation: <current-generation>",
+    "```",
+    "",
+    "Show the live receipt projection:",
+    "```text",
+    "/callsign status",
+    "```",
+    "",
+    "Worker quickstart: `docs/callsign-registry-dogfood.md`.",
+    "",
+    "`teamleaderleo` is the shared transport principal. Callsign, run, session, and accepted generation identify the worker attempt.",
+  ].join("\n");
+}
+
+export function formatGitHubCallsignStatus(
+  receipts: readonly ParsedGitHubCallsignReceipt[],
+  evaluatedAt: string,
+): string {
+  const projection = projectGitHubCallsignRegistry(receipts, evaluatedAt);
+  const visible = projection.activeLeases.slice(0, statusLeaseLimit);
+  const omitted = Math.max(0, projection.activeLeases.length - visible.length);
+  const lines = [
+    "callsign-status/v0",
+    `evaluated-at: ${projection.evaluatedAt}`,
+    `active-count: ${projection.activeLeases.length}`,
+    `shown-count: ${visible.length}`,
+    `omitted-count: ${omitted}`,
+    "",
+  ];
+
+  if (visible.length === 0) {
+    lines.push("_No active callsign leases._");
+  } else {
+    lines.push(
+      "| Callsign | Sigil | Run | Session | Generation | Expires | Receipt |",
+      "| --- | --- | --- | --- | ---: | --- | --- |",
+    );
+    for (const lease of visible) {
+      lines.push(
+        `| ${tableCell(lease.callsign)} | ${tableCell(lease.sigil)} | \`${tableCell(lease.runId)}\` | \`${tableCell(lease.sessionId)}\` | ${lease.generation} | \`${tableCell(lease.expiresAt)}\` | [receipt](${lease.receiptCommentUrl}) |`,
+      );
+    }
+  }
+
+  lines.push(
+    "",
+    "This projection is reconstructed from valid `github-actions[bot]` receipts. GitHub username and reactions do not identify workers.",
+  );
+  return lines.join("\n");
+}
+
+async function readCanonicalReceipts(
+  client: GitHubClient,
+  issueNumber: number,
+): Promise<ParsedGitHubCallsignReceipt[]> {
   const comments = await client.listIssueComments(issueNumber);
   const receipts: ParsedGitHubCallsignReceipt[] = [];
   for (const comment of comments) {
@@ -95,18 +212,7 @@ export async function runGitHubCallsignRegistrar(
       console.warn(`Ignoring malformed bot receipt ${comment.id}: ${boundedError(error)}`);
     }
   }
-
-  const decision = decideGitHubCallsignCommand({
-    command,
-    requestComment: commentUrl,
-    receipts,
-    evaluatedAt: new Date().toISOString(),
-  });
-
-  if (decision.outcome !== "replay" && decision.receipt) {
-    await client.createIssueComment(issueNumber, formatGitHubCallsignReceipt(decision.receipt));
-  }
-  await client.addReaction(commentId, decision.reaction);
+  return receipts;
 }
 
 class GitHubClient {
@@ -174,6 +280,10 @@ function requiredEnv(
   const value = env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function tableCell(value: string): string {
+  return value.replace(/\|/gu, "\\|").replace(/[\r\n]+/gu, " ");
 }
 
 function boundedError(error: unknown): string {
