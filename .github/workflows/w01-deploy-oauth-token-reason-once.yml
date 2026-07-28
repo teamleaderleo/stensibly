@@ -86,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           bun run typecheck
-          bun test
+          bun run test
           bun run test:convex
           bun run worker:check
 
