@@ -1,0 +1,176 @@
+name: W01 deploy OAuth callback diagnostic once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/w01-deploy-oauth-diagnostic-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-worker-production
+  cancel-in-progress: false
+
+env:
+  REQUIRED_SOURCE_SHA: 06b17e1ce80b702a836078f6e88746666bb25046
+  CANONICAL_ORIGIN: https://api.stensibly.com
+  WORKER_ORIGIN: https://stensibly-api.leoli-082000.workers.dev
+
+jobs:
+  deploy-diagnostic:
+    name: Deploy and verify bounded OAuth callback diagnosis
+    if: contains(github.event.head_commit.added, '.github/workflows/w01-deploy-oauth-diagnostic-once.yml')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://api.stensibly.com/health
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate one-time source and protected inputs
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            echo "This one-time production generation cannot be rerun" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$REQUIRED_SOURCE_SHA" "$GITHUB_SHA" || {
+            echo "Deployment revision does not contain the accepted callback diagnostic" >&2
+            exit 1
+          }
+          missing=0
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN STENSIBLY_READ_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required protected input: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run exact source gate
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Capture pre-deployment recovery point
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          bunx wrangler deployments list --name stensibly-api --json > /tmp/deployments.json
+          jq -e 'sort_by(.created_on) | last | (.versions | length) == 1 and .versions[0].percentage == 100' /tmp/deployments.json >/dev/null
+          jq -r 'sort_by(.created_on) | last | .versions[0].version_id' /tmp/deployments.json > evidence/pre-version.txt
+          jq 'sort_by(.created_on) | last | {deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' /tmp/deployments.json > evidence/pre-deployment.json
+
+      - name: Verify current enabled baseline
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bun run verify:hosted | tee evidence/pre-bearer-canonical.txt
+          bun run verify:hosted -- --endpoint "$WORKER_ORIGIN" | tee evidence/pre-bearer-worker.txt
+          bun run verify:oauth -- --expect enabled | tee evidence/pre-oauth-canonical.txt
+          bun run verify:oauth -- --endpoint "$WORKER_ORIGIN" --issuer "$CANONICAL_ORIGIN" --expect enabled | tee evidence/pre-oauth-worker.txt
+
+      - name: Deploy accepted diagnostic to the dogfood Worker
+        id: deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bun run worker:deploy
+
+      - name: Verify deployed bearer and enabled OAuth state
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          verify_with_retry() {
+            local label="$1"
+            shift
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$attempt" -lt 5 ]]; then
+                sleep 10
+              fi
+            done
+            echo "$label failed after propagation retries" >&2
+            return 1
+          }
+          verify_with_retry bearer-canonical bun run verify:hosted | tee evidence/post-bearer-canonical.txt
+          verify_with_retry bearer-worker bun run verify:hosted -- --endpoint "$WORKER_ORIGIN" | tee evidence/post-bearer-worker.txt
+          verify_with_retry oauth-canonical bun run verify:oauth -- --expect enabled | tee evidence/post-oauth-canonical.txt
+          verify_with_retry oauth-worker bun run verify:oauth -- --endpoint "$WORKER_ORIGIN" --issuer "$CANONICAL_ORIGIN" --expect enabled | tee evidence/post-oauth-worker.txt
+
+      - name: Record deployed revision
+        if: success()
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bunx wrangler deployments list --name stensibly-api --json > /tmp/post-deployments.json
+          jq 'sort_by(.created_on) | last | {deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' /tmp/post-deployments.json > evidence/post-deployment.json
+          jq -n \
+            --arg version "w01-oauth-callback-diagnostic-deploy/v1" \
+            --arg sourceSha "$DEPLOY_SHA" \
+            --arg requiredSource "$REQUIRED_SOURCE_SHA" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, status: "deployed_verified", source_sha: $sourceSha, required_source_sha: $requiredSource, completed_at: $completedAt, oauth_state: "enabled", bearer_verified: true, contains_secret_values: false}' \
+            > evidence/result.json
+          {
+            echo "## W01 OAuth callback diagnostic deployed"
+            echo
+            echo "- Source: \`$DEPLOY_SHA\`"
+            echo "- Required diagnostic source: \`$REQUIRED_SOURCE_SHA\`"
+            echo "- Bearer compatibility: passed on both origins"
+            echo "- Enabled OAuth contract: 5/5 on both origins"
+            echo "- Next: retry GitHub login and retain only the bounded callback stage if it fails"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore the exact pre-deployment Worker after failed verification
+        if: failure() && steps.deploy.outcome != 'skipped'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          pre_version="$(cat evidence/pre-version.txt)"
+          bunx wrangler rollback "$pre_version" --name stensibly-api --message "Restore pre-diagnostic Worker after failed W01 verification"
+          bun run verify:hosted | tee evidence/restored-bearer-canonical.txt
+          bun run verify:hosted -- --endpoint "$WORKER_ORIGIN" | tee evidence/restored-bearer-worker.txt
+          bun run verify:oauth -- --expect enabled | tee evidence/restored-oauth-canonical.txt
+          bun run verify:oauth -- --endpoint "$WORKER_ORIGIN" --issuer "$CANONICAL_ORIGIN" --expect enabled | tee evidence/restored-oauth-worker.txt
+
+      - name: Upload bounded deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-oauth-callback-diagnostic-deploy
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 3
