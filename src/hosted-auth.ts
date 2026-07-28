@@ -334,21 +334,29 @@ export function createHostedAuth(options: HostedAuthOptions): Hono<StensiblyEnv>
   return app;
 }
 
+type GitHubFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export interface HttpGitHubOAuthClientOptions {
   clientId: string;
   clientSecret: string;
-  fetch?: typeof fetch;
+  fetch?: GitHubFetch;
 }
 
 export class HttpGitHubOAuthClient implements GitHubOAuthClient {
   private readonly clientId: string;
   private readonly clientSecret: string;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: GitHubFetch;
 
   constructor(options: HttpGitHubOAuthClientOptions) {
     this.clientId = required(options.clientId, "GitHub OAuth client id");
     this.clientSecret = required(options.clientSecret, "GitHub OAuth client secret");
-    this.fetchImpl = options.fetch ?? fetch;
+    const fetchImpl = options.fetch;
+    this.fetchImpl = fetchImpl
+      ? (input, init) => fetchImpl(input, init)
+      : (input, init) => globalThis.fetch(input, init);
   }
 
   async prepareExchange(): Promise<void> {
