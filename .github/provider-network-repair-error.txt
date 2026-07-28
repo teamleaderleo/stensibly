@@ -1,0 +1,1 @@
+src/hosted-auth.ts: expected one match, found 0: '        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),\n    });\n  } catc'
