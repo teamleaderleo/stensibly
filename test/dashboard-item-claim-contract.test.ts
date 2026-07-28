@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 const index = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
 const app = await Bun.file(new URL("../site/app.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-detail-controller.js", import.meta.url)).text();
+const activityThread = await Bun.file(new URL("../site/item-activity-thread.js", import.meta.url)).text();
 const helper = await Bun.file(new URL("../site/item-claim.js", import.meta.url)).text();
 const declaration = await Bun.file(new URL("../site/item-detail-controller.d.ts", import.meta.url)).text();
 const claimStyles = await Bun.file(new URL("../site/item-claim.css", import.meta.url)).text();
@@ -59,10 +60,11 @@ describe("dashboard claim integration", () => {
 
   test("preserves existing item-detail privacy guards", () => {
     expect(controller).toContain("subtitle.textContent = redactCredentialText(itemId)");
-    expect(controller).toContain("actor · ${text(event.actorId)}");
+    expect(activityThread).toContain("actor · ${entry.actorId}");
     expect(controller).toContain("error.textContent = redactCredentialText(message)");
     expect(controller).toContain("Number.isNaN(date.getTime()) ? redactCredentialText(value)");
     expect(controller).not.toContain("innerHTML");
+    expect(activityThread).not.toContain("innerHTML");
   });
 
   test("loads responsive claim presentation", () => {

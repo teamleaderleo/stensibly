@@ -16,6 +16,7 @@ import {
   safeArtifactHref,
   safeRequestId,
 } from './item-detail.js';
+import { activityThreadSection } from './item-activity-thread.js';
 import { reservationSection } from './item-reservations.js';
 import { runSection } from './item-runs.js';
 
@@ -211,7 +212,7 @@ export function createItemDetailController({
       reservationSection(detail.reservations),
       runSection(detail.runs),
       claimSection(item),
-      eventSection(detail.events),
+      activityThreadSection(detail.events, { eventsTruncated: detail.eventsTruncated }),
       artifactSection(detail.artifacts),
     );
     body.replaceChildren(fragment);
@@ -446,38 +447,6 @@ export function createItemDetailController({
   function clearClaimError(node) {
     node.textContent = '';
     node.hidden = true;
-  }
-
-  function eventSection(events) {
-    const section = sectionBlock(`Event history · ${events.length}`);
-    if (!events.length) {
-      section.append(emptyBlock('No events have been recorded for this item.'));
-      return section;
-    }
-    const list = element('ol', 'detail-events');
-    for (const event of [...events].reverse()) {
-      const row = element('li', 'detail-event');
-      const head = element('div', 'detail-event-head');
-      const eventName = element('strong');
-      eventName.textContent = text(event.type, 'event');
-      const when = element('time');
-      when.textContent = formatTimestamp(event.createdAt) || 'unknown time';
-      if (typeof event.createdAt === 'string') when.dateTime = event.createdAt;
-      head.append(eventName, when);
-      row.append(head);
-      const actor = element('p', 'detail-event-actor');
-      actor.textContent = event.actorId ? `actor · ${text(event.actorId)}` : 'system event';
-      row.append(actor);
-      const entries = payloadEntries(event.payload);
-      if (entries.length) {
-        const payload = element('dl', 'detail-payload');
-        for (const entry of entries) appendTerm(payload, entry.key, entry.value);
-        row.append(payload);
-      }
-      list.append(row);
-    }
-    section.append(list);
-    return section;
   }
 
   function artifactSection(artifacts) {

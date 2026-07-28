@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 const html = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
 const app = await Bun.file(new URL("../site/app.js", import.meta.url)).text();
 const controller = await Bun.file(new URL("../site/item-detail-controller.js", import.meta.url)).text();
+const activityThread = await Bun.file(new URL("../site/item-activity-thread.js", import.meta.url)).text();
 const reservations = await Bun.file(new URL("../site/item-reservations.js", import.meta.url)).text();
 const runs = await Bun.file(new URL("../site/item-runs.js", import.meta.url)).text();
 const styles = await Bun.file(new URL("../site/styles.css", import.meta.url)).text();
@@ -21,6 +22,7 @@ describe("dashboard item detail integration", () => {
 
   test("renders server content with DOM text APIs and guarded links", () => {
     expect(controller).toContain("document.createElement");
+    expect(activityThread).toContain("document.createElement");
     expect(controller).toContain("textContent");
     expect(controller).toContain("safeArtifactHref");
     expect(controller).toContain("noreferrer noopener");
@@ -29,6 +31,7 @@ describe("dashboard item detail integration", () => {
     expect(runs).toContain("document.createElement");
     expect(runs).toContain("textContent");
     expect(controller).not.toContain("innerHTML");
+    expect(activityThread).not.toContain("innerHTML");
     expect(reservations).not.toContain("innerHTML");
     expect(runs).not.toContain("innerHTML");
   });
@@ -65,6 +68,20 @@ describe("dashboard item detail integration", () => {
     expect(styles).toContain(".detail-runs");
     expect(styles).toContain(".detail-run-active");
     expect(styles).toContain(".detail-run-failed");
+  });
+
+
+  test("renders attributable public activity with explicit-only relationships and filters", () => {
+    expect(controller).toContain("activityThreadSection(detail.events");
+    expect(activityThread).toContain("replyToEventId");
+    expect(activityThread).toContain("causedByEventId");
+    expect(activityThread).toContain("Filter activity thread");
+    expect(activityThread).toContain("Partial history");
+    expect(activityThread).toContain("reset filters");
+    expect(activityThread).not.toContain("window.open");
+    expect(styles).toContain(".detail-activity-thread");
+    expect(styles).toContain(".detail-thread-filters");
+    expect(styles).toContain(".detail-history-partial");
   });
 
   test("guards stale responses and supports close, retry, and focus restoration", () => {
