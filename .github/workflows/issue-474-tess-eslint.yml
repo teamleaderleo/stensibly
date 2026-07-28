@@ -1,0 +1,45 @@
+name: Issue 474 Tess ESLint matrix
+
+on:
+  push:
+    branches:
+      - research/issue-474-lane-b
+    paths:
+      - docs/research/issue-474-lane-b/**
+      - .github/workflows/issue-474-tess-eslint.yml
+
+permissions:
+  contents: write
+
+jobs:
+  matrix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned research tools
+        run: npm install --no-save eslint@10.7.0 typescript-eslint@8.65.0 typescript@5.8.3
+      - name: Run compiler and lint matrices
+        working-directory: docs/research/issue-474-lane-b
+        run: |
+          npx --no-install tsc -p tsconfig.eslint.json --pretty false > tsc-observed.txt 2>&1
+          npx --no-install eslint receiver-eslint-matrix.fixture.ts --format json > eslint-observed.json || true
+          {
+            echo "node $(node --version)"
+            echo "typescript $(npx --no-install tsc --version)"
+            echo "eslint $(npx --no-install eslint --version)"
+            echo "typescript-eslint 8.65.0"
+          } > tool-versions-observed.txt
+      - name: Commit observed output
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/research/issue-474-lane-b/eslint-observed.json \
+                  docs/research/issue-474-lane-b/tsc-observed.txt \
+                  docs/research/issue-474-lane-b/tool-versions-observed.txt
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(research): record Tess matrix output"
+          git push
