@@ -6,6 +6,7 @@ on:
       - nightjar/402-token-exchange-reason
     paths:
       - .github/workflows/apply-oauth-token-reason-pr.yml
+      - scripts/apply-oauth-token-reason.py
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -16,48 +17,37 @@ jobs:
     if: github.head_ref == 'nightjar/402-token-reason-pr-trigger'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout execution source
+        uses: actions/checkout@v6
+        with:
+          ref: nightjar/402-token-reason-pr-trigger
+          path: trigger
+          fetch-depth: 0
+      - name: Checkout candidate branch
+        uses: actions/checkout@v6
         with:
           ref: nightjar/402-token-exchange-reason
+          path: candidate
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
-      - name: Execute the reviewed exact-replacement applicator
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY' 2>&1 | tee applicator-output.txt
-          from pathlib import Path
-
-          source = Path(".github/workflows/apply-oauth-token-reason-once.yml").read_text().splitlines()
-          start = source.index("          from pathlib import Path")
-          end = source.index("          PY", start)
-          block = source[start:end]
-          indent = min(len(line) - len(line.lstrip()) for line in block if line.strip())
-          script = "\n".join(line[indent:] for line in block) + "\n"
-          script = script.replace(
-              'raise SystemExit(f"expected one match in {path}, found {count}")',
-              'raise SystemExit(f"expected one match in {path}, found {count}: {old[:160]!r}")',
-          )
-          exec(compile(script, "oauth-token-reason-applicator.py", "exec"), {})
-          PY
-      - name: Upload applicator output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: oauth-reason-applicator-output
-          path: applicator-output.txt
-          if-no-files-found: error
-          retention-days: 1
-      - run: bun install
+      - name: Apply exact source and test repair
+        working-directory: candidate
+        run: python ../trigger/scripts/apply-oauth-token-reason.py
+      - name: Install dependencies
+        working-directory: candidate
+        run: bun install
       - name: Run focused authentication tests
+        working-directory: candidate
         run: bun test test/hosted-auth-github-http-client.test.ts test/hosted-auth.test.ts
       - name: Run full repository gate
+        working-directory: candidate
         run: |
           bun run typecheck
           bun test
           bun run test:convex
           bun run worker:check
       - name: Commit source-only candidate and remove branch applicators
+        working-directory: candidate
         shell: bash
         run: |
           set -euo pipefail
