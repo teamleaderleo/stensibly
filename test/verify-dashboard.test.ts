@@ -9,8 +9,8 @@ import {
 
 const validHtml = `<!doctype html>
 <html><head>
-<title>Stensibly · Agent scrapbook</title>
-<meta name="description" content="Stensibly is a shared work-in-progress ledger for humans and agents." />
+<title>Stensibly · Shared work</title>
+<meta name="description" content="Stensibly keeps shared work visible and resumable for people and agents." />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/item-claim.css" />
 <link rel="stylesheet" href="/hosted-session.css" />
@@ -19,6 +19,7 @@ const validHtml = `<!doctype html>
 <form id="connect-form"></form>
 <section id="dashboard"></section>
 <dialog id="item-detail-dialog"></dialog>
+<p id="item-detail-announcer"></p>
 <script src="/hosted-session-bridge.js" type="module"></script>
 <script src="/app.js" type="module"></script>
 </body></html>`;
@@ -34,9 +35,18 @@ describe("dashboard HTML verification", () => {
     expect(() => verifyDashboardHtml(validHtml)).not.toThrow();
   });
 
-  test("rejects missing UI markers and token-shaped values", () => {
-    expect(() => verifyDashboardHtml(validHtml.replace('id="dashboard"', 'id="missing"'))).toThrow("dashboard");
-    expect(() => verifyDashboardHtml(validHtml + "stn.tok_deadbeef.secret")).toThrow("token-shaped");
+  test("accepts the checked-in dashboard shell", async () => {
+    const source = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
+    expect(() => verifyDashboardHtml(source)).not.toThrow();
+  });
+
+  test("rejects retired shell copy, missing UI markers, and token-shaped values", () => {
+    expect(() => verifyDashboardHtml(validHtml.replace("Shared work", "Agent scrapbook")))
+      .toThrow("Shared work");
+    expect(() => verifyDashboardHtml(validHtml.replace('id="dashboard"', 'id="missing"')))
+      .toThrow("dashboard");
+    expect(() => verifyDashboardHtml(validHtml + "stn.tok_deadbeef.secret"))
+      .toThrow("token-shaped");
   });
 });
 
@@ -55,6 +65,21 @@ describe("dashboard asset verification contract", () => {
       expect(source, `${asset.path} should contain ${asset.marker}`).toContain(asset.marker);
       expect(asset.contentTypes.length).toBeGreaterThan(0);
     }
+  });
+
+  test("includes the attributable item activity path", () => {
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/item-detail-controller.js",
+      marker: "activityThreadSection",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/item-activity-thread.js",
+      marker: "projectActivityThread",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/styles.css",
+      marker: ".detail-activity-thread",
+    }));
   });
 
   test("serializes the same manifest consumed by staged verification", () => {
@@ -86,7 +111,7 @@ describe("dashboard URL verification", () => {
     await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow("content type");
 
     const badAssetType = fullFixtures();
-    badAssetType.set("/styles.css", [":root {}", "text/plain"]);
+    badAssetType.set("/styles.css", [".detail-activity-thread {}", "text/plain"]);
     globalThis.fetch = mockFetch(badAssetType);
     await expect(verifyDashboardUrl("https://www.stensibly.com")).rejects.toThrow(
       "https://www.stensibly.com/styles.css returned unexpected content type text/plain",
