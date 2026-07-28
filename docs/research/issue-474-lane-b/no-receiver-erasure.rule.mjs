@@ -41,6 +41,27 @@ function contextualTypeErasesReceiver(checker, contextualType, location) {
   });
 }
 
+function isValueReference(node) {
+  const parent = node.parent;
+  if (!parent) return false;
+
+  if (parent.type === "Property" && parent.key === node && !parent.computed) {
+    return false;
+  }
+  if (
+    parent.type === "MemberExpression" &&
+    parent.property === node &&
+    !parent.computed
+  ) {
+    return false;
+  }
+  if (parent.type === "VariableDeclarator" && parent.id === node) {
+    return false;
+  }
+
+  return true;
+}
+
 export default createRule({
   name: "no-receiver-erasure",
   meta: {
@@ -60,6 +81,8 @@ export default createRule({
 
     return {
       Identifier(node) {
+        if (!isValueReference(node)) return;
+
         const tsNode = services.esTreeNodeToTSNodeMap.get(node);
         if (!ts.isExpression(tsNode)) return;
 
