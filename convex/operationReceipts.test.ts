@@ -89,7 +89,7 @@ describe("hosted operation receipts", () => {
     expect(JSON.stringify(recordedArtifact)).not.toContain("privateNote");
   });
 
-  test("hides missing and cross-project operation records", async () => {
+  test("holds missing and cross-project records without exposing key occupancy", async () => {
     const t = convexTest(schema, modules);
     await t.mutation(convexApi.items.create, {
       serviceSecret: secret,
@@ -105,21 +105,24 @@ describe("hosted operation receipts", () => {
     const expectedUnknown = {
       status: "unknown",
       reconciliation: {
-        retry: "same_request_same_key",
-        nextAction: "retry_same_request_same_key",
+        retry: "hold",
+        nextAction: "verify_project_scope_before_retry",
       },
     };
-    expect(await t.query(convexApi.operationReceipts.get, {
+    const missing = await t.query(convexApi.operationReceipts.get, {
       serviceSecret: secret,
       workspace,
       project: "alpha",
       idempotencyKey: "missing-key",
-    })).toMatchObject(expectedUnknown);
-    expect(await t.query(convexApi.operationReceipts.get, {
+    }) as any;
+    const crossProject = await t.query(convexApi.operationReceipts.get, {
       serviceSecret: secret,
       workspace,
       project: "beta",
       idempotencyKey: "hosted-alpha-private",
-    })).toMatchObject(expectedUnknown);
+    }) as any;
+    expect(missing).toMatchObject(expectedUnknown);
+    expect(crossProject).toMatchObject(expectedUnknown);
+    expect(missing.reconciliation).toEqual(crossProject.reconciliation);
   });
 });
