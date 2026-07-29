@@ -1,0 +1,125 @@
+diff --git a/types/test/transforms/overrides/index.spec.ts b/types/test/transforms/overrides/index.spec.ts
+--- a/types/test/transforms/overrides/index.spec.ts
++++ b/types/test/transforms/overrides/index.spec.ts
+@@ -170,7 +170,7 @@ test('createOverrideDefineTransformer: applies method overrides', () => {
+   root1.fullyQualifiedName = 'workerd::api::Root1';
+   root1.tsRoot = true;
+   {
+-    const members = root1._initMembers(7);
++    const members = root1._initMembers(9);
+@@ -211,8 +211,22 @@ test('createOverrideDefineTransformer: applies method overrides', () => {
+     methodThing.name = 'thing';
+     methodThing._initArgs(1).get(0).boolt = true;
+     methodThing._initReturnType().boolt = true;
++
++    const methodReceiverFree = members.get(7)._initMethod();
++    methodReceiverFree.name = 'receiverFree';
++    methodReceiverFree._initArgs(1).get(0)._initString().name = 'kj::String';
++    methodReceiverFree._initReturnType()._initString().name = 'kj::String';
++
++    const methodCustomReceiver = members.get(8)._initMethod();
++    methodCustomReceiver.name = 'customReceiver';
++    methodCustomReceiver._initArgs(1).get(0)._initString().name = 'kj::String';
++    methodCustomReceiver._initReturnType()._initString().name = 'kj::String';
+   }
++  root1.tsDefine = 'interface CustomReceiver { readonly customReceiver: true; }';
+@@ -228,18 +242,24 @@ test('createOverrideDefineTransformer: applies method overrides', () => {
+ 
+     deleteAll: never;
+ 
+     get<T>(key: string, type: "json"): Promise<T | null>;
++
++    receiverFree(this: void, value: string): string;
++    customReceiver(this: CustomReceiver, value: string): string;
+   }`;
+ 
+   assert.strictEqual(
+     printDefinitionsWithOverrides(root),
+-    `declare abstract class Root1 {
+-    one(): number;
++    `interface CustomReceiver {
++    readonly customReceiver: true;
++}
++declare abstract class Root1 {
++    one(this: Root1): number;
+     static one(): 1;
+-    two(): 2;
++    two(this: Root1): 2;
+     static two(): number;
+-    get(key: string, type: "text"): Promise<string | null>;
+-    get(key: string, type: "arrayBuffer"): Promise<ArrayBuffer | null>;
+-    get<T>(key: string, type: "json"): Promise<T | null>;
+-    thing(param0: boolean): boolean;
++    get(this: Root1, key: string, type: "text"): Promise<string | null>;
++    get(this: Root1, key: string, type: "arrayBuffer"): Promise<ArrayBuffer | null>;
++    get<T>(this: Root1, key: string, type: "json"): Promise<T | null>;
++    thing(this: Root1, param0: boolean): boolean;
++    receiverFree(this: void, value: string): string;
++    customReceiver(this: CustomReceiver, value: string): string;
+ }
+ `
+   );
+@@ -289,10 +309,10 @@ test('createOverrideDefineTransformer: applies type parameter overrides', () => {
+     `interface RenamedStruct<Type extends string = string> {
+     type: Type;
+ }
+ interface Root1<R> {
+-    get(): RenamedStruct;
+-    read(): Promise<R>;
++    get(this: Root1<R>): RenamedStruct;
++    read(this: Root1<R>): Promise<R>;
+ }
+ `
+   );
+ });
+diff --git a/types/test/transforms/globals.spec.ts b/types/test/transforms/globals.spec.ts
+--- a/types/test/transforms/globals.spec.ts
++++ b/types/test/transforms/globals.spec.ts
+@@ -8,6 +8,8 @@ test("createGlobalScopeTransformer: extracts global scope", () => {
+   const source = `
++interface CustomReceiver { readonly customReceiver: true; }
++
+ type WorkerGlobalScopeEventMap = {
+     fetch: Event;
+ };
+@@ -40,6 +42,7 @@ interface ServiceWorkerGlobalScope extends WorkerGlobalScope {
+     DOMException: typeof DOMException; // PropertySignature
+     btoa(this: ServiceWorkerGlobalScope, value: string): string; // MethodSignature
+     intentionallyReceiverFree(this: void, value: string): string; // MethodSignature
++    customReceiver(this: CustomReceiver, value: string): string; // MethodSignature
+     crypto: Crypto; // PropertySignature
+     get console(): Console; // GetAccessorDeclaration
+ }
+@@ -68,6 +71,7 @@ declare function detachable(value: string): string;
+ declare const CONSTANT: 42;
+ declare const property: number;
+ declare function btoa(this: ServiceWorkerGlobalScope | typeof globalThis | null | void, value: string): string;
+ declare function intentionallyReceiverFree(this: void, value: string): string;
++declare function customReceiver(this: CustomReceiver, value: string): string;
+ declare const crypto: Crypto;
+ declare const console: Console;
+ `
+   );
+ });
+diff --git a/types/test/types/fetch-receiver.ts b/types/test/types/fetch-receiver.ts
+--- a/types/test/types/fetch-receiver.ts
++++ b/types/test/types/fetch-receiver.ts
+@@ -19,6 +19,20 @@ fromSelf.apply(globalThis, [url]);
+ // @ts-expect-error An unrelated object is not a legal Worker global receiver.
+ fromSelf.apply({}, [url]);
+ 
++const fromSelfBoundUndefined = fromSelf.bind(undefined);
++const fromSelfBoundNull = fromSelf.bind(null);
++const fromSelfBoundGlobal = fromSelf.bind(globalThis);
++const fromSelfBoundSelf = fromSelf.bind(self);
++fromSelfBoundUndefined(url);
++fromSelfBoundNull(url);
++fromSelfBoundGlobal(url);
++fromSelfBoundSelf(url);
++
++// @ts-expect-error An unrelated object cannot be bound as the receiver.
++fromSelf.bind({});
++
+ const selfHolder = { fetch: fromSelf };
+ // @ts-expect-error Property-call syntax supplies selfHolder as the receiver.
+ selfHolder.fetch(url);
