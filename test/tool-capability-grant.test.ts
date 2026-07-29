@@ -286,6 +286,7 @@ describe("tool capability grants", () => {
 
     expect(() => buildToolCapabilityGrant(grantInput({
       permissionId: "permission_merge",
+      maxUses: 1,
       action: mergeRequest.action,
       resource: mergeRequest.resource,
       arguments: mergeRequest.arguments,
@@ -295,6 +296,7 @@ describe("tool capability grants", () => {
     for (const state of ["pending", "rejected"] as const) {
       const grant = buildToolCapabilityGrant(grantInput({
         permissionId: "permission_merge",
+        maxUses: 1,
         action: mergeRequest.action,
         resource: mergeRequest.resource,
         arguments: mergeRequest.arguments,
@@ -308,6 +310,7 @@ describe("tool capability grants", () => {
 
     const approved = buildToolCapabilityGrant(grantInput({
       permissionId: "permission_merge",
+      maxUses: 1,
       action: mergeRequest.action,
       resource: mergeRequest.resource,
       arguments: mergeRequest.arguments,
@@ -320,6 +323,7 @@ describe("tool capability grants", () => {
 
     expect(() => buildToolCapabilityGrant(grantInput({
       permissionId: "permission_merge",
+      maxUses: 1,
       action: mergeRequest.action,
       resource: mergeRequest.resource,
       arguments: { mergeMethod: "squash", expectedHeadSha: OTHER_SHA },
@@ -328,6 +332,7 @@ describe("tool capability grants", () => {
 
     expect(() => buildToolCapabilityGrant(grantInput({
       permissionId: "permission_merge",
+      maxUses: 1,
       action: mergeRequest.action,
       resource: mergeRequest.resource,
       arguments: mergeRequest.arguments,
@@ -462,5 +467,176 @@ describe("tool capability canonical ordering", () => {
     expect(firstGrant.evidenceRefs).toEqual(["ref:Z", "ref:a"]);
     expect(firstGrant.permissions.map((entry) => entry.permissionId))
       .toEqual(["permission_Z", "permission_a"]);
+  });
+});
+
+
+describe("tool capability authority boundaries", () => {
+  test("keeps high-impact approvals one-shot", () => {
+    const mergeRequest: ToolCapabilityRequestInput = {
+      ...requestInput,
+      action: "merge.execute",
+      resource: {
+        kind: "github_pull_request",
+        owner: "teamleaderleo",
+        repository: "stensibly",
+        number: 453,
+        headSha: HEAD_SHA,
+      },
+      arguments: { mergeMethod: "squash", expectedHeadSha: HEAD_SHA },
+    };
+    const approvedMerge = approvalFor(mergeRequest, "approved");
+
+    expect(() => buildToolCapabilityGrant(grantInput({
+      permissionId: "permission_merge",
+      action: mergeRequest.action,
+      resource: mergeRequest.resource,
+      arguments: mergeRequest.arguments,
+      maxUses: 2,
+      approval: approvedMerge,
+    }))).toThrow("must be limited to one use");
+
+    const mergeGrant = buildToolCapabilityGrant(grantInput({
+      permissionId: "permission_merge",
+      maxUses: 1,
+      action: mergeRequest.action,
+      resource: mergeRequest.resource,
+      arguments: mergeRequest.arguments,
+      approval: approvedMerge,
+    }));
+    expect(authorize(mergeGrant, { request: mergeRequest })).toMatchObject({
+      authorized: true,
+      remainingUsesAfterAuthorization: 0,
+    });
+    expect(authorize(mergeGrant, {
+      request: mergeRequest,
+      usageByPermission: { permission_merge: 1 },
+    })).toMatchObject({ authorized: false, reason: "budget_exhausted" });
+
+    const spendRequest: ToolCapabilityRequestInput = {
+      ...requestInput,
+      action: "spend.commit",
+      resource: { kind: "spend_budget", currency: "GBP", maximumMinorUnits: 5000 },
+      arguments: { currency: "GBP", amountMinorUnits: 5000 },
+    };
+    const spendGrant = buildToolCapabilityGrant(grantInput({
+      permissionId: "permission_spend",
+      maxUses: 1,
+      action: spendRequest.action,
+      resource: spendRequest.resource,
+      arguments: spendRequest.arguments,
+      approval: approvalFor(spendRequest, "approved", { permissionId: "permission_spend" }),
+    }));
+    expect(authorize(spendGrant, { request: spendRequest })).toMatchObject({
+      authorized: true,
+      remainingUsesAfterAuthorization: 0,
+    });
+    expect(authorize(spendGrant, {
+      request: spendRequest,
+      usageByPermission: { permission_spend: 1 },
+    })).toMatchObject({ authorized: false, reason: "budget_exhausted" });
+  });
+
+  test("classifies subject mismatches and malformed authorization inputs", () => {
+    const grant = buildToolCapabilityGrant(grantInput());
+    const mismatches: Array<[Partial<ToolCapabilityRequestInput>, string]> = [
+      [{ workspace: "other" }, "workspace_mismatch"],
+      [{ project: "other" }, "project_mismatch"],
+      [{ actorId: "actor:other" }, "actor_mismatch"],
+      [{ workerSessionId: "worker:other" }, "worker_session_mismatch"],
+      [{ runId: "run_capability_2" }, "run_mismatch"],
+    ];
+    for (const [requestOverride, reason] of mismatches) {
+      expect(authorize(grant, {
+        request: { ...requestInput, ...requestOverride },
+      })).toMatchObject({ authorized: false, reason });
+    }
+    expect(authorize(grant, { now: "invalid" })).toMatchObject({
+      authorized: false,
+      reason: "request_invalid",
+    });
+    for (const used of [-1, 1.5]) {
+      expect(authorize(grant, {
+        usageByPermission: { permission_branch_create: used },
+      })).toMatchObject({ authorized: false, reason: "request_invalid" });
+    }
+  });
+
+  test("fails closed for expired approvals and invalid projections", () => {
+    const mergeRequest: ToolCapabilityRequestInput = {
+      ...requestInput,
+      action: "merge.execute",
+      resource: {
+        kind: "github_pull_request",
+        owner: "teamleaderleo",
+        repository: "stensibly",
+        number: 453,
+        headSha: HEAD_SHA,
+      },
+      arguments: { mergeMethod: "squash", expectedHeadSha: HEAD_SHA },
+    };
+    for (const state of ["pending", "approved"] as const) {
+      const approval = approvalFor(mergeRequest, state);
+      const grant = buildToolCapabilityGrant(grantInput({
+        permissionId: "permission_merge",
+        maxUses: 1,
+        action: mergeRequest.action,
+        resource: mergeRequest.resource,
+        arguments: mergeRequest.arguments,
+        approval: { ...approval, expiresAt: "2026-07-29T00:15:00.000Z" },
+      }));
+      expect(authorize(grant, { request: mergeRequest })).toMatchObject({
+        authorized: false,
+        reason: "approval_expired",
+      });
+    }
+
+    const grant = buildToolCapabilityGrant(grantInput());
+    const invalidProjections = [
+      projectToolCapabilityGrant(grant, {
+        now: "invalid",
+        trustedGrantFingerprint: grant.fingerprint,
+      }),
+      projectToolCapabilityGrant(grant, {
+        now: NOW,
+        trustedGrantFingerprint: `sha256:${"0".repeat(64)}`,
+      }),
+      projectToolCapabilityGrant(grant, {
+        now: NOW,
+        trustedGrantFingerprint: grant.fingerprint,
+        usageByPermission: { permission_branch_create: -1 },
+      }),
+    ];
+    for (const projection of invalidProjections) {
+      expect(projection).toMatchObject({
+        state: "invalid",
+        grantId: null,
+        workspace: null,
+        project: null,
+        actorId: null,
+        workerSessionId: null,
+        runId: null,
+        generation: null,
+        issuedAt: null,
+        expiresAt: null,
+        issuer: null,
+        evidenceRefs: [],
+        permissions: [],
+        includesArguments: false,
+        includesSecrets: false,
+      });
+    }
+  });
+
+  test("rejects invisible unsafe text characters", () => {
+    for (const character of ["\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufeff"]) {
+      expect(() => buildToolCapabilityRequest({
+        ...requestInput,
+        arguments: {
+          branchName: `nightjar/unsafe${character}branch`,
+          baseSha: HEAD_SHA,
+        },
+      })).toThrow("unsafe characters");
+    }
   });
 });

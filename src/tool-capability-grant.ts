@@ -246,20 +246,20 @@ export type ToolCapabilityGrantState =
 
 export interface ToolCapabilityGrantProjection {
   version: 1;
-  grantId: string;
-  workspace: string;
-  project: string;
-  actorId: string;
-  workerSessionId: string;
-  runId: string;
-  generation: number;
-  issuedAt: string;
-  expiresAt: string;
+  grantId: string | null;
+  workspace: string | null;
+  project: string | null;
+  actorId: string | null;
+  workerSessionId: string | null;
+  runId: string | null;
+  generation: number | null;
+  issuedAt: string | null;
+  expiresAt: string | null;
   state: ToolCapabilityGrantState;
   issuer: {
     actorId: string;
     authorityRef: string;
-  };
+  } | null;
   evidenceRefs: string[];
   permissions: Array<{
     permissionId: string;
@@ -313,7 +313,7 @@ const githubRepositoryPattern = /^[A-Za-z0-9_.-]+$/;
 const branchPrefixPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const shaPattern = /^[a-f0-9]{40}$/;
 const currencyPattern = /^[A-Z]{3}$/;
-const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const forbiddenObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
 const secretKeyPattern = /(secret|password|token|authorization|cookie|private.?key|credential)/iu;
 const executableKeyPattern = /(command|shell|script|argv|executable)/iu;
@@ -492,6 +492,9 @@ export function buildToolCapabilityGrant(
     const maxUses = permissionInput.maxUses === undefined
       ? 1
       : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+    if (highImpactActions.has(request.action) && maxUses !== 1) {
+      throw new RangeError(`High-impact action ${request.action} must be limited to one use`);
+    }
     const approval = canonicalApproval(
       grantId,
       generation,
@@ -633,31 +636,23 @@ export function projectToolCapabilityGrant(
     usageByPermission?: Readonly<Record<string, number>>;
   },
 ): ToolCapabilityGrantProjection {
-  const now = canonicalTimestamp(input.now, "Projection time");
-  let trusted = false;
+  if (!validGrantFingerprint(grant)) return invalidToolCapabilityGrantProjection();
+
+  let now: string;
   try {
-    trusted = boundedFingerprint(input.trustedGrantFingerprint, "Trusted grant fingerprint")
-      === grant.fingerprint;
+    now = canonicalTimestamp(input.now, "Projection time");
+    const trusted = boundedFingerprint(
+      input.trustedGrantFingerprint,
+      "Trusted grant fingerprint",
+    ) === grant.fingerprint;
+    if (!trusted) return invalidToolCapabilityGrantProjection();
   } catch {
-    trusted = false;
+    return invalidToolCapabilityGrantProjection();
   }
-  const valid = validGrantFingerprint(grant) && trusted;
-  const state = valid ? currentGrantState(grant, now) : "invalid";
-  return {
-    version: 1,
-    grantId: grant.grantId,
-    workspace: grant.workspace,
-    project: grant.project,
-    actorId: grant.actorId,
-    workerSessionId: grant.workerSessionId,
-    runId: grant.runId,
-    generation: grant.generation,
-    issuedAt: grant.issuedAt,
-    expiresAt: grant.expiresAt,
-    state,
-    issuer: { ...grant.issuer },
-    evidenceRefs: [...grant.evidenceRefs],
-    permissions: valid ? grant.permissions.map((permission) => {
+
+  let permissions: ToolCapabilityGrantProjection["permissions"];
+  try {
+    permissions = grant.permissions.map((permission) => {
       const usedUses = permissionUsage(input.usageByPermission, permission.permissionId);
       return {
         permissionId: permission.permissionId,
@@ -670,7 +665,47 @@ export function projectToolCapabilityGrant(
         usedUses,
         remainingUses: Math.max(0, permission.maxUses - usedUses),
       };
-    }) : [],
+    });
+  } catch {
+    return invalidToolCapabilityGrantProjection();
+  }
+
+  return {
+    version: 1,
+    grantId: grant.grantId,
+    workspace: grant.workspace,
+    project: grant.project,
+    actorId: grant.actorId,
+    workerSessionId: grant.workerSessionId,
+    runId: grant.runId,
+    generation: grant.generation,
+    issuedAt: grant.issuedAt,
+    expiresAt: grant.expiresAt,
+    state: currentGrantState(grant, now),
+    issuer: { ...grant.issuer },
+    evidenceRefs: [...grant.evidenceRefs],
+    permissions,
+    includesArguments: false,
+    includesSecrets: false,
+  };
+}
+
+function invalidToolCapabilityGrantProjection(): ToolCapabilityGrantProjection {
+  return {
+    version: 1,
+    grantId: null,
+    workspace: null,
+    project: null,
+    actorId: null,
+    workerSessionId: null,
+    runId: null,
+    generation: null,
+    issuedAt: null,
+    expiresAt: null,
+    state: "invalid",
+    issuer: null,
+    evidenceRefs: [],
+    permissions: [],
     includesArguments: false,
     includesSecrets: false,
   };

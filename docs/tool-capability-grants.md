@@ -92,6 +92,8 @@ Without that transaction, two concurrent callers could both observe the same rem
 
 High-impact actions currently include merge, deployment execution, credential use, external messages, destructive deletion, and spend commitment.
 
+Every high-impact permission is one-shot. `maxUses` must equal one, so one approval can authorize one merge, deployment, credential use, external message, destructive deletion, or spend commitment. Repeated effects require a newly issued permission and approval. Spend budgets are therefore bounded per approved effect and cannot multiply through one grant.
+
 Those permissions require an approval record whose binding fingerprint covers the grant ID, grant generation, permission ID, and full request fingerprint. Pending, rejected, expired, argument-mismatched, permission-mismatched, or generation-replayed approvals fail closed. Approval does not replace the grant: subject, generation, lifetime, resource, arguments, revocation, and budget checks still apply.
 
 Low-impact permissions cannot carry decorative approval records. This prevents unrelated approval text from being mistaken for authorization.
@@ -111,7 +113,7 @@ A later protected executor may resolve that handle after authorization. It must 
 - approval state;
 - maximum, used, and remaining use counts.
 
-It deliberately omits exact arguments, argument fingerprints, request fingerprints, and secret values.
+It deliberately omits exact arguments, argument fingerprints, request fingerprints, and secret values. Invalid grant fingerprints, trust anchors, projection times, or usage counters return a content-minimised `state: invalid` projection with nullable subject and lifetime fields plus empty evidence and permissions.
 
 ## Follow-up hosted boundary
 
