@@ -21,7 +21,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Install exact probe dependencies
         working-directory: probes/mcp-stateful-replay-v130
-        run: bun install --frozen-lockfile=false
+        run: bun install
       - name: Run SDK 1.30 replay probe
         working-directory: probes/mcp-stateful-replay-v130
         run: bun run probe
