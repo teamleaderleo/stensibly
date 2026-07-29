@@ -68,7 +68,7 @@ export function createMcpReleaseManifest(
     };
   }).sort((left, right) => left.name.localeCompare(right.name));
 
-  const body = {
+  const body: Omit<McpReleaseManifest, "digest"> = {
     schemaVersion: MCP_RELEASE_MANIFEST_SCHEMA_VERSION,
     tools: canonicalTools,
   };
@@ -350,7 +350,7 @@ function canonicalValue(value: unknown, schemaKey?: string): unknown {
 }
 
 function canonicalJson(value: unknown): string {
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "undefined";
 }
 
 function normalizeToolName(value: string): string {
