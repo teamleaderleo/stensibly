@@ -46,20 +46,6 @@ jobs:
                   raise SystemExit('revocation table marker missing or duplicated')
               source = source.replace(marker, index + '\n' + marker, 1)
 
-          malformed = '''      if (
-                record.fingerprint !== grant.fingerprint
-                || record.acceptanceRef !== acceptanceRef
-                || record.acceptedBy !== acceptedBy
-              ) {'''
-          formatted = '''      if (
-          record.fingerprint !== grant.fingerprint
-          || record.acceptanceRef !== acceptanceRef
-          || record.acceptedBy !== acceptedBy
-        ) {'''
-          if malformed in source:
-              source = source.replace(malformed, formatted, 1)
-          source_path.write_text(source)
-
           test_path = Path('test/tool-capability-grants-sqlite.test.ts')
           tests = test_path.read_text()
           test_name = 'enforces one current grant row at the SQLite boundary'
@@ -146,6 +132,7 @@ jobs:
           git config user.name "Quill capability reviewer"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/harden-519-current-clock-contract.yml
+          git rm .stensibly/harden-519-trigger.txt
           git add src/tool-capability-grants-sqlite.ts test/tool-capability-grants-sqlite.test.ts docs/tool-capability-grant-persistence.md
           git commit -m "fix: enforce durable grant storage invariants"
           git push "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/stensibly.git" HEAD:mercury/453-capability-grant-sqlite
