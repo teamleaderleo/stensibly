@@ -1,0 +1,60 @@
+name: Align #511 aliases with attachment contract
+
+on:
+  push:
+    branches:
+      - lumen/492-github-repository-aliases
+    paths:
+      - .github/workflows/patch-511-remove-scp.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/492-github-repository-aliases
+      - name: Remove unsupported SCP shorthand
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-issue-context-sqlite.ts")
+          text = source.read_text()
+          old = '''  const plain = /^([^/:]+)\\/([^/]+)$/.exec(normalized);
+            const scp = /^(?:git@)?github\\.com:([^/]+)\\/([^/]+)$/i.exec(normalized);
+            if (scp) {
+              owner = scp[1];
+              repository = scp[2];
+            } else if (plain) {
+              owner = plain[1];
+              repository = plain[2];
+            } else {'''
+          new = '''  const plain = /^([^/:]+)\\/([^/]+)$/.exec(normalized);
+            if (plain) {
+              owner = plain[1];
+              repository = plain[2];
+            } else {'''
+          if text.count(old) != 1:
+              raise SystemExit("expected SCP parser block exactly once")
+          source.write_text(text.replace(old, new))
+
+          test = Path("test/github-issue-context-repository-alias.test.ts")
+          test_text = test.read_text()
+          unsupported = '    "git@github.com:teamleaderleo/stensibly.git",\n'
+          if test_text.count(unsupported) != 1:
+              raise SystemExit("expected SCP test case exactly once")
+          test.write_text(test_text.replace(unsupported, ""))
+
+          Path(".github/workflows/patch-511-remove-scp.yml").unlink()
+          PY
+      - name: Commit contract-aligned repair
+        run: |
+          git config user.name "Lumen"
+          git config user.email "cheerleaderleo@outlook.com"
+          git add src/github-issue-context-sqlite.ts test/github-issue-context-repository-alias.test.ts .github/workflows/patch-511-remove-scp.yml
+          git commit -m "Align repository aliases with attachment contract"
+          git push origin HEAD:lumen/492-github-repository-aliases
