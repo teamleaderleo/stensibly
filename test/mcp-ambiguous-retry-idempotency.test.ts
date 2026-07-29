@@ -124,7 +124,7 @@ describe("MCP ambiguous mutation retry", () => {
         { ...request, title: "Changed request under the same key" },
       );
       expect(changed.isError).toBe(true);
-      expect(changed.text).toMatch(/another operation/i);
+      expect(changed.text).toMatch(/different operation/i);
       expect(createItemCalls).toBe(3);
 
       const afterConflict = await callTool<Array<{ id: string }>>(
