@@ -13,6 +13,11 @@ import type { WorkLedger } from "./ledger.js";
 import { createMcpServer } from "./mcp.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 import {
+  MCP_FAILURE_STAGE_HEADER,
+  type McpFailureStage,
+  withMcpDiagnostics,
+} from "./mcp-diagnostics.js";
+import {
   FAILURE_CATEGORY_HEADER,
   type FailureCategory,
 } from "./worker-observability.js";
@@ -83,6 +88,15 @@ export async function handleMcpHttpRequest(
   request: Request,
   options: McpHttpOptions,
 ): Promise<Response> {
+  const diagnosticRequest = request.clone();
+  const response = await handleMcpHttpRequestCore(request, options);
+  return await withMcpDiagnostics(diagnosticRequest, response);
+}
+
+async function handleMcpHttpRequestCore(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
   if (request.method !== "POST") {
     return jsonRpcError(405, -32000, "Method not allowed.", null, {
       Allow: "POST",
@@ -126,13 +140,16 @@ export async function handleMcpHttpRequest(
   if (denial) return denial;
 
   let server: ReturnType<typeof createMcpServer> | undefined;
+  let failureStage: McpFailureStage = "server_construction";
   try {
     server = (options.createServer ?? createMcpServer)(options.ledger);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
+    failureStage = "transport_connection";
     await server.connect(transport);
+    failureStage = "request_execution";
     return await transport.handleRequest(request, { parsedBody: body });
   } catch {
     return jsonRpcError(
@@ -140,7 +157,7 @@ export async function handleMcpHttpRequest(
       -32603,
       "Internal server error",
       requestId(body),
-      {},
+      { [MCP_FAILURE_STAGE_HEADER]: failureStage },
       "mcp_failure",
     );
   } finally {

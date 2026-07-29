@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  MCP_TOOL_COUNT_HEADER,
+  MCP_TOOL_MANIFEST_FINGERPRINT,
+  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+  MCP_TOOL_NAMES,
+} from "../src/mcp-diagnostics.ts";
+import {
   formatResults,
   parseVerifyHostedArgs,
   redactSecrets,
@@ -151,7 +157,11 @@ describe("hosted verifier checks", () => {
             capabilities: {},
             serverInfo: { name: "stensibly", version: "0.0.1" },
           },
-        }, 200, { "x-request-id": "mcp-success" });
+        }, 200, {
+          "x-request-id": "mcp-success",
+          [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
+          [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+        });
       }
       throw new Error(`Unexpected request: ${requestUrl}`);
     };
@@ -168,6 +178,7 @@ describe("hosted verifier checks", () => {
     expect(results[0]?.detail).toContain(
       "workerVersion=123e4567-e89b-12d3-a456-426614174000",
     );
+    expect(results[4]?.detail).toContain(`manifest=${MCP_TOOL_MANIFEST_FINGERPRINT}`);
     expect(calls).toHaveLength(5);
     const output = formatResults(results);
     expect(output).not.toContain(token);
