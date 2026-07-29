@@ -1,0 +1,142 @@
+name: Repair PR 465 canonical ordering
+
+on:
+  push:
+    branches:
+      - nightjar/453-tool-capability-grants
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nightjar/453-tool-capability-grants
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply bounded repair
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/tool-capability-grant.ts')
+          source = source_path.read_text()
+          replacements = {
+              '.sort((left, right) => left.permissionId.localeCompare(right.permissionId));':
+                  '.sort((left, right) => compareUnicodeCodeUnits(left.permissionId, right.permissionId));',
+              'entries.sort(([left], [right]) => left.localeCompare(right))':
+                  'entries.sort(([left], [right]) => compareUnicodeCodeUnits(left, right))',
+              'result.sort((left, right) => left.localeCompare(right));':
+                  'result.sort(compareUnicodeCodeUnits);',
+              'Object.keys(value).sort((left, right) => left.localeCompare(right));':
+                  'Object.keys(value).sort(compareUnicodeCodeUnits);',
+          }
+          for old, new in replacements.items():
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one occurrence of {old!r}, found {count}')
+              source = source.replace(old, new)
+
+          marker = 'function stableJson(value: ToolCapabilityJsonValue): string {'
+          comparator = '''/** Version 1 canonical ordering uses direct UTF-16 code-unit comparison. */
+          function compareUnicodeCodeUnits(left: string, right: string): number {
+            return left < right ? -1 : left > right ? 1 : 0;
+          }
+
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit('stableJson marker missing or duplicated')
+          source = source.replace(marker, comparator + marker)
+          if 'localeCompare' in source:
+              raise SystemExit('security-relevant localeCompare remains')
+          source_path.write_text(source)
+
+          test_path = Path('test/tool-capability-grant.test.ts')
+          tests = test_path.read_text()
+          test_marker = 'describe("tool capability canonical ordering"'
+          if test_marker not in tests:
+              tests += r'''
+
+          describe("tool capability canonical ordering", () => {
+            test("uses Unicode code-unit order across requests and grants", () => {
+              const firstRequest = buildToolCapabilityRequest({
+                ...requestInput,
+                arguments: {
+                  branchName: "nightjar/453-tool-capability-grants",
+                  baseSha: HEAD_SHA,
+                  a: 2,
+                  Z: 1,
+                },
+              });
+              const secondRequest = buildToolCapabilityRequest({
+                ...requestInput,
+                arguments: {
+                  Z: 1,
+                  a: 2,
+                  baseSha: HEAD_SHA,
+                  branchName: "nightjar/453-tool-capability-grants",
+                },
+              });
+
+              expect(firstRequest.fingerprint).toBe(secondRequest.fingerprint);
+              expect(Object.keys(firstRequest.arguments).filter((key) => key === "Z" || key === "a"))
+                .toEqual(["Z", "a"]);
+
+              const firstGrant = buildToolCapabilityGrant(grantInput({}, {
+                evidenceRefs: ["ref:a", "ref:Z"],
+                permissions: [
+                  permission({ permissionId: "permission_a" }),
+                  permission({ permissionId: "permission_Z" }),
+                ],
+              }));
+              const secondGrant = buildToolCapabilityGrant(grantInput({}, {
+                evidenceRefs: ["ref:Z", "ref:a"],
+                permissions: [
+                  permission({ permissionId: "permission_Z" }),
+                  permission({ permissionId: "permission_a" }),
+                ],
+              }));
+
+              expect(firstGrant.fingerprint).toBe(secondGrant.fingerprint);
+              expect(firstGrant.evidenceRefs).toEqual(["ref:Z", "ref:a"]);
+              expect(firstGrant.permissions.map((entry) => entry.permissionId))
+                .toEqual(["permission_Z", "permission_a"]);
+            });
+          });
+          '''
+          test_path.write_text(tests)
+
+          doc_path = Path('docs/tool-capability-grants.md')
+          docs = doc_path.read_text()
+          heading = '## Version 1 canonical ordering'
+          if heading not in docs:
+              docs += '''
+
+          ## Version 1 canonical ordering
+
+          Version 1 fingerprints sort every security-relevant object key, evidence reference,
+          and permission identifier with direct UTF-16 code-unit comparison:
+          `left < right ? -1 : left > right ? 1 : 0`.
+
+          Locale-aware collation is excluded from the fingerprint contract. Runtime locale,
+          ICU data, operating-system configuration, and future collation upgrades therefore
+          cannot change the canonical byte sequence or SHA-256 identity for equivalent input.
+          '''
+          doc_path.write_text(docs)
+          PY
+      - name: Validate focused repair
+        run: |
+          bun install --frozen-lockfile
+          bun test test/tool-capability-grant.test.ts
+          bun run typecheck
+      - name: Commit repaired candidate and remove applicator
+        run: |
+          git config user.name "Quill reliability worker"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/repair-465-canonical-order.yml
+          git add src/tool-capability-grant.ts test/tool-capability-grant.test.ts docs/tool-capability-grants.md
+          git commit -m "fix: make capability fingerprints runtime-deterministic"
+          git push origin HEAD:nightjar/453-tool-capability-grants
