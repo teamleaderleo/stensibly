@@ -69,11 +69,26 @@ jobs:
             python3 docs/research/issue-474-lane-a/prototype/normalize-unified-diff.py \
               "docs/research/issue-474-lane-a/prototype/$patch" \
               "normalized-patches/$patch"
-            git -C workerd apply --ignore-space-change --ignore-whitespace --check \
-              "../normalized-patches/$patch"
-            git -C workerd apply --ignore-space-change --ignore-whitespace \
-              "../normalized-patches/$patch"
           done
+
+          git -C workerd apply --check \
+            ../normalized-patches/workerd-receiver-types.patch
+          git -C workerd apply \
+            ../normalized-patches/workerd-receiver-types.patch
+
+          git -C workerd apply --exclude=types/test/index.spec.ts --check \
+            ../normalized-patches/workerd-receiver-types-followup.patch
+          git -C workerd apply --exclude=types/test/index.spec.ts \
+            ../normalized-patches/workerd-receiver-types-followup.patch
+
+          git -C workerd apply --check \
+            ../normalized-patches/workerd-receiver-types-review-fixes.patch
+          git -C workerd apply \
+            ../normalized-patches/workerd-receiver-types-review-fixes.patch
+
+          python3 docs/research/issue-474-lane-a/prototype/update-index-fixture.py \
+            workerd
+
           git -C workerd diff --check
           git -C workerd diff --binary > workerd-receiver-types-combined.patch
 
