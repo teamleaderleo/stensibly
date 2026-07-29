@@ -47,6 +47,7 @@ export function readProviderCapacity(payload, expectedScope) {
   const nextAvailableAt = nullableTimestamp(value.nextAvailableAt, 'Next available time');
   const source = readSource(value.source);
   validateObservedTimes(observedAt, receivedAt, staleAt, refillAt);
+  validateActiveReceiptBoundary(value.state, receivedAt, staleAt);
 
   if (value.state === 'available') {
     if (
@@ -175,6 +176,17 @@ function validateObservedTimes(observedAt, receivedAt, staleAt, refillAt) {
     if (refill <= observed || stale > refill) {
       throw new TypeError('Capacity refill timing is inconsistent.');
     }
+  }
+}
+
+function validateActiveReceiptBoundary(state, receivedAt, staleAt) {
+  if (
+    (state === 'available' || state === 'unavailable')
+    && receivedAt !== null
+    && staleAt !== null
+    && Date.parse(receivedAt) >= Date.parse(staleAt)
+  ) {
+    throw new TypeError('Active capacity receipt must precede its stale boundary.');
   }
 }
 
