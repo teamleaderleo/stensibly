@@ -22,6 +22,7 @@ export interface McpHttpOptions {
   allowedHosts?: string[];
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
+  createServer?: typeof createMcpServer;
 }
 
 interface AccessRule {
@@ -123,19 +124,29 @@ export async function handleMcpHttpRequest(
   const denial = await authorizePayload(options.ledger, principal, body);
   if (denial) return denial;
 
-  const server = createMcpServer(options.ledger);
+  const server = (options.createServer ?? createMcpServer)(options.ledger);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
-
   try {
     await server.connect(transport);
     return await transport.handleRequest(request, { parsedBody: body });
   } catch {
-    return jsonRpcError(500, -32603, "Internal server error", requestId(body));
+    return jsonRpcError(
+      500,
+      -32603,
+      "Internal server error",
+      requestId(body),
+      {},
+      "mcp_failure",
+    );
   } finally {
-    await server.close();
+    try {
+      await server.close();
+    } catch {
+      // Cleanup failure must never replace a result already produced by the MCP handler.
+    }
   }
 }
 
