@@ -7,6 +7,9 @@
   "workers_dev": true,
   "preview_urls": true,
   "minify": true,
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
   "vars": {
     "STENSIBLY_WORKSPACE": "default",
     "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app",
