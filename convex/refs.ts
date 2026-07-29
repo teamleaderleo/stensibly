@@ -48,6 +48,9 @@ export const convexApi = {
     record: mutationRef("events:record"),
     list: queryRef("events:list"),
   },
+  operationReceipts: {
+    get: queryRef("operationReceipts:get"),
+  },
   artifacts: {
     attach: mutationRef("artifacts:attach"),
     list: queryRef("artifacts:list"),

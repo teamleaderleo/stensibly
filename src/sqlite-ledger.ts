@@ -58,6 +58,11 @@ import type {
   WorkLedger,
 } from "./ledger.js";
 import type {
+  OperationReceiptInput,
+  OperationReceiptLedger,
+} from "./operation-receipt-contracts.js";
+import { getSqliteOperationReceipt } from "./operation-receipts-sqlite.js";
+import type {
   AcceptProjectAttachmentInput,
   ProjectAttachmentLedger,
 } from "./project-attachment-ledger.js";
@@ -89,7 +94,8 @@ export class SqliteWorkLedger implements
   CompletionContinuationLedger,
   ContinuationSupervisorLedger,
   RunnerLedger,
-  ProjectAttachmentLedger
+  ProjectAttachmentLedger,
+  OperationReceiptLedger
 {
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
@@ -103,6 +109,10 @@ export class SqliteWorkLedger implements
     reconcileStaleRunItems(this.store);
     expireClaims(this.store);
     return getProjectBrief(this.store, project, limit);
+  }
+
+  async getOperationReceipt(input: OperationReceiptInput) {
+    return getSqliteOperationReceipt(this.store, input);
   }
 
   async getProjectAttachment(project: string) {
