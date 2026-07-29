@@ -53,6 +53,23 @@ jobs:
           Path('/tmp/repair-465.py').write_text('\n'.join(repaired) + '\n')
           PY
           python3 /tmp/repair-465.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/tool-capability-grant.test.ts')
+          lines = path.read_text().splitlines()
+          result = []
+          for index, line in enumerate(lines):
+              result.append(line)
+              if 'permissionId: "permission_merge",' not in line and 'permissionId: "permission_spend",' not in line:
+                  continue
+              window = lines[index + 1:index + 12]
+              if any('maxUses:' in candidate for candidate in window):
+                  continue
+              indent = line[:len(line) - len(line.lstrip())]
+              result.append(f'{indent}maxUses: 1,')
+          path.write_text('\n'.join(result) + '\n')
+          PY
       - name: Validate repair
         run: |
           bun install --frozen-lockfile
