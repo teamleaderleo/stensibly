@@ -31,52 +31,17 @@ jobs:
 
           path = Path('src/tool-capability-grants-sqlite.ts')
           source = path.read_text()
-          old = '''        if (authorization.authorized) {
-            const permission = current.grant.permissions.find((candidate) =>
-              candidate.permissionId === authorization.permissionId
-            );
-            if (!permission) {
-              throw new Error("Authorized permission is absent from the accepted grant");
-            }
-            const consumedUses = tryConsumePermissionUse(
-              store,
-              current,
-              authorization.permissionId,
-              permission.maxUses,
-              now,
-            );
-            authorization = consumedUses === null
-              ? denied(grantId, request.fingerprint, "budget_exhausted")
-              : {
-                ...authorization,
-                remainingUsesAfterAuthorization: permission.maxUses - consumedUses,
-              };
-          }'''
-          new = '''        if (authorization.authorized) {
-            const authorized = authorization;
-            const permission = current.grant.permissions.find((candidate) =>
-              candidate.permissionId === authorized.permissionId
-            );
-            if (!permission) {
-              throw new Error("Authorized permission is absent from the accepted grant");
-            }
-            const consumedUses = tryConsumePermissionUse(
-              store,
-              current,
-              authorized.permissionId,
-              permission.maxUses,
-              now,
-            );
-            authorization = consumedUses === null
-              ? denied(grantId, request.fingerprint, "budget_exhausted")
-              : {
-                ...authorized,
-                remainingUsesAfterAuthorization: permission.maxUses - consumedUses,
-              };
-          }'''
-          if source.count(old) != 1:
-              raise SystemExit('authorized branch anchor missing or duplicated')
-          path.write_text(source.replace(old, new))
+          branch = '        if (authorization.authorized) {\n'
+          if source.count(branch) != 1:
+              raise SystemExit('authorized branch marker missing or duplicated')
+          source = source.replace(branch, branch + '          const authorized = authorization;\n')
+          if source.count('authorization.permissionId') != 2:
+              raise SystemExit('authorization permission references changed')
+          source = source.replace('authorization.permissionId', 'authorized.permissionId')
+          if source.count('...authorization,') != 1:
+              raise SystemExit('authorization spread reference changed')
+          source = source.replace('...authorization,', '...authorized,')
+          path.write_text(source)
           PY
       - name: Validate repair
         run: |
