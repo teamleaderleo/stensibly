@@ -664,11 +664,7 @@ function canonicalGitHubRepository(value: string): string | null {
   let repository: string | undefined;
 
   const plain = /^([^/:]+)\/([^/]+)$/.exec(normalized);
-  const scp = /^(?:git@)?github\.com:([^/]+)\/([^/]+)$/i.exec(normalized);
-  if (scp) {
-    owner = scp[1];
-    repository = scp[2];
-  } else if (plain) {
+  if (plain) {
     owner = plain[1];
     repository = plain[2];
   } else {
