@@ -73,7 +73,7 @@ describe("ChatGPT app action snapshot", () => {
     for (const tool of snapshot.legacySnapshot.tools) {
       expect(snapshot.tools).toContain(tool);
       const input = snapshot.legacySnapshot.topLevelInputs[tool];
-      expect(input).toBeDefined();
+      if (!input) throw new Error(`Missing frozen input checkpoint for ${tool}`);
       expect(new Set(input.properties).size).toBe(input.properties.length);
       expect(new Set(input.required).size).toBe(input.required.length);
       for (const required of input.required) expect(input.properties).toContain(required);
