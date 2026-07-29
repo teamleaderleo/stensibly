@@ -1,6 +1,5 @@
 {
-  "snapshotVersion": 2,
-  "compatibilityEpoch": 1,
+  "snapshotVersion": 3,
   "manifestVersion": 1,
   "toolCount": 26,
   "toolManifestFingerprint": "sha256:ecbae4d7efe2b6757b321a80d301fe06b81e70641717ddd682f9ceab0d4165bb",
@@ -32,8 +31,8 @@
     "survey_workspace",
     "unblock_work"
   ],
-  "compatibilityPolicy": "preserve_approved_tool_names_and_frozen_inputs",
-  "newToolNamesAllowedDuringIncident": false,
+  "compatibilityPolicy": "allow_additive_tool_growth_preserve_existing_inputs",
+  "additiveToolNamesAllowed": true,
   "legacySnapshot": {
     "toolCount": 25,
     "tools": [
@@ -91,7 +90,8 @@
       "unblock_work": { "properties": ["id", "actor", "idempotencyKey", "expectedClaimGeneration", "nextAction"], "required": ["id", "actor", "expectedClaimGeneration"] }
     }
   },
-  "requiredAdminActionAfterBackwardCompatibleChange": "none",
+  "requiredAdminActionAfterCompatibleExistingActionChange": "none",
+  "requiredAdminActionToUseNewActions": "refresh_or_recreate_chatgpt_app",
   "requiredAdminActionAfterBreakingChange": "refresh_or_recreate_chatgpt_app",
   "reviewedOn": "2026-07-29"
 }
