@@ -579,6 +579,71 @@ describe("stored capability integrity", () => {
     }
   });
 
+  test("detects tampered admission accepted-grant references", () => {
+  const tamperCases: Array<{
+    name: string;
+    apply: (target: StensiblyStore, admissionId: string, grantRowId: string) => void;
+  }> = [
+    {
+      name: "fingerprint",
+      apply(target, admissionId) {
+        target.db.query(`
+          UPDATE tool_capability_admissions
+          SET accepted_grant_fingerprint = ?1
+          WHERE id = ?2
+        `).run(`sha256:${"0".repeat(64)}`, admissionId);
+      },
+    },
+    {
+      name: "generation",
+      apply(target, admissionId) {
+        target.db.query(`
+          UPDATE tool_capability_admissions
+          SET accepted_grant_generation = 99
+          WHERE id = ?1
+        `).run(admissionId);
+      },
+    },
+    {
+      name: "missing-row",
+      apply(target, _admissionId, grantRowId) {
+        target.db.query(`DELETE FROM tool_capability_grants WHERE id = ?1`).run(grantRowId);
+      },
+    },
+  ];
+
+  for (const tamper of tamperCases) {
+    const isolated = new StensiblyStore(":memory:");
+    try {
+      const isolatedGrant = grant();
+      const accepted = acceptSqliteToolCapabilityGrant(isolated, {
+        workspace: "default",
+        project: "scrapbook",
+        grant: isolatedGrant,
+        expectedCurrentGeneration: null,
+        acceptanceRef: `accept:reference-${tamper.name}`,
+        acceptedBy: "actor:mercury",
+      }, clockAt(ACCEPTED_AT));
+      const admission = reserveSqliteToolCapabilityUse(isolated, {
+        workspace: "default",
+        project: "scrapbook",
+        grantId: isolatedGrant.grantId,
+        expectedGeneration: 1,
+        request: requestInput,
+        idempotencyKey: `admission:reference-${tamper.name}`,
+      }, clockAt(NOW));
+      tamper.apply(isolated, admission.record.id, accepted.record.id);
+      expect(() => listSqliteToolCapabilityAdmissions(isolated, {
+        workspace: "default",
+        project: "scrapbook",
+        grantId: isolatedGrant.grantId,
+      })).toThrow("accepted grant reference");
+    } finally {
+      isolated.close();
+    }
+  }
+});
+
   test("keeps workspace and project admission histories isolated", () => {
     accept(grant());
     reserve("admission:default");

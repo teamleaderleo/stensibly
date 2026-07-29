@@ -663,7 +663,7 @@ export function reserveSqliteToolCapabilityUse(
       idempotencyKey,
     );
     if (existing) {
-      const record = mapAdmissionRecord(existing);
+      const record = mapAdmissionRecord(store, existing);
       if (record.attemptFingerprint !== attemptFingerprint) {
         throw new ToolCapabilityGrantStorageConflictError(
           `Tool admission idempotency key ${idempotencyKey} was reused with altered content`,
@@ -761,7 +761,7 @@ export function reserveSqliteToolCapabilityUse(
     );
     const inserted = getAdmissionRowById(store, id);
     if (!inserted) throw new Error("Tool capability admission disappeared");
-    return { record: mapAdmissionRecord(inserted), replayed: false };
+    return { record: mapAdmissionRecord(store, inserted), replayed: false };
   })();
 }
 
@@ -811,7 +811,7 @@ export function listSqliteToolCapabilityAdmissions(
       AND project_id = ?2
       AND grant_id = ?3
     ORDER BY sequence ASC
-  `).all(workspace, project, grantId).map(mapAdmissionRecord);
+  `).all(workspace, project, grantId).map((row) => mapAdmissionRecord(store, row));
 }
 
 function validateAcceptedGrant(value: ToolCapabilityGrant): ToolCapabilityGrant {
@@ -1008,7 +1008,10 @@ function mapRevocationRecord(row: RevocationRow): SqliteToolCapabilityRevocation
   };
 }
 
-function mapAdmissionRecord(row: AdmissionRow): SqliteToolCapabilityAdmissionRecord {
+function mapAdmissionRecord(
+  store: StensiblyStore,
+  row: AdmissionRow,
+): SqliteToolCapabilityAdmissionRecord {
   let parsed: unknown;
   try {
     parsed = JSON.parse(row.authorization_json);
@@ -1018,7 +1021,35 @@ function mapAdmissionRecord(row: AdmissionRow): SqliteToolCapabilityAdmissionRec
   if (hash(row.authorization_json) !== row.authorization_sha256) {
     throw new Error(`Stored tool admission ${row.id} authorization fingerprint is invalid`);
   }
+  const acceptedGrantGeneration = row.accepted_grant_generation === null
+    ? null
+    : positiveInteger(row.accepted_grant_generation, "Stored accepted grant generation");
+  const acceptedGrantFingerprint = row.accepted_grant_fingerprint === null
+    ? null
+    : boundedFingerprint(
+      row.accepted_grant_fingerprint,
+      "Stored accepted grant fingerprint",
+    );
+  if ((acceptedGrantGeneration === null) !== (acceptedGrantFingerprint === null)) {
+    throw new Error(`Stored tool admission ${row.id} accepted grant reference is incomplete`);
+  }
+  if (acceptedGrantGeneration !== null && acceptedGrantFingerprint !== null) {
+    const acceptedRow = getGrantRowByGeneration(
+      store,
+      row.workspace_id,
+      row.project_id,
+      row.grant_id,
+      acceptedGrantGeneration,
+    );
+    if (!acceptedRow || acceptedRow.fingerprint !== acceptedGrantFingerprint) {
+      throw new Error(`Stored tool admission ${row.id} accepted grant reference is invalid`);
+    }
+    mapGrantRecord(acceptedRow);
+  }
   const authorization = validateStoredAuthorization(parsed, row);
+  if (authorization.authorized && acceptedGrantGeneration === null) {
+    throw new Error(`Stored tool admission ${row.id} authorized without an accepted grant`);
+  }
   return {
     id: row.id,
     workspace: row.workspace_id,
@@ -1036,15 +1067,8 @@ function mapAdmissionRecord(row: AdmissionRow): SqliteToolCapabilityAdmissionRec
       row.expected_generation,
       "Stored expected grant generation",
     ),
-    acceptedGrantGeneration: row.accepted_grant_generation === null
-      ? null
-      : positiveInteger(row.accepted_grant_generation, "Stored accepted grant generation"),
-    acceptedGrantFingerprint: row.accepted_grant_fingerprint === null
-      ? null
-      : boundedFingerprint(
-        row.accepted_grant_fingerprint,
-        "Stored accepted grant fingerprint",
-      ),
+    acceptedGrantGeneration,
+    acceptedGrantFingerprint,
     requestFingerprint: boundedFingerprint(
       row.request_fingerprint,
       "Stored request fingerprint",

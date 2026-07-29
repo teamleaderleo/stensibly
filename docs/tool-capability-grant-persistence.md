@@ -136,7 +136,7 @@ Every table is explicitly scoped by workspace and project. Grant IDs, generation
 
 Reads validate:
 
-- full canonical grant rehydration, fingerprints, duplicated row metadata, and the one-current-row SQLite invariant;
+- full canonical grant rehydration, fingerprints, duplicated row metadata, the one-current-row SQLite invariant, and every admission accepted-grant reference against the exact immutable generation row;
 - revocation field syntax and timestamps;
 - authorization JSON fingerprints;
 - authorization grant and request identities.
