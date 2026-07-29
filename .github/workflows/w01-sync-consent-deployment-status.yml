@@ -1,0 +1,111 @@
+name: W01 sync consent deployment status
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/w01-sync-consent-deployment-status.yml"
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: w01-consent-deployment-status
+  cancel-in-progress: true
+
+env:
+  TARGET_WORKFLOW: w01-deploy-consent-origin-fix-once.yml
+  TARGET_ISSUE: "286"
+  STATUS_MARKER: "<!-- w01-consent-deployment-status -->"
+
+jobs:
+  sync:
+    name: Sync consent deployment status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read latest deployment run and update issue status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          runs="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$TARGET_WORKFLOW/runs?event=push&branch=main&per_page=1")"
+          run_json="$(jq -c '.workflow_runs[0] // empty' <<< "$runs")"
+
+          if [[ -n "$run_json" ]]; then
+            run_id="$(jq -r '.id' <<< "$run_json")"
+            status="$(jq -r '.status' <<< "$run_json")"
+            conclusion="$(jq -r '.conclusion // "pending"' <<< "$run_json")"
+            head_sha="$(jq -r '.head_sha' <<< "$run_json")"
+            run_url="$(jq -r '.html_url' <<< "$run_json")"
+            created_at="$(jq -r '.created_at' <<< "$run_json")"
+            updated_at="$(jq -r '.updated_at' <<< "$run_json")"
+          else
+            run_id="none"
+            status="absent"
+            conclusion="pending"
+            head_sha="none"
+            run_url="https://github.com/$GITHUB_REPOSITORY/actions/workflows/$TARGET_WORKFLOW"
+            created_at="unknown"
+            updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+
+          cat > /tmp/comment.md <<EOF
+          $STATUS_MARKER
+          ## W01 consent deployment status
+
+          - Workflow: \`$TARGET_WORKFLOW\`
+          - Latest run: \`$run_id\`
+          - Head: \`$head_sha\`
+          - Status: \`$status\`
+          - Conclusion: \`$conclusion\`
+          - Created: \`$created_at\`
+          - Updated: \`$updated_at\`
+          - Run: $run_url
+
+          This status is refreshed automatically every five minutes and can also be refreshed manually from GitHub Actions.
+
+          — Lumen · W01 status sync
+          EOF
+
+          comment_id="$(gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            "repos/$GITHUB_REPOSITORY/issues/$TARGET_ISSUE/comments?per_page=100" \
+            --jq '.[] | select(.body | contains("<!-- w01-consent-deployment-status -->")) | .id' \
+            | head -n 1)"
+          jq -n --rawfile body /tmp/comment.md '{body: $body}' > /tmp/comment.json
+
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              --input /tmp/comment.json >/dev/null
+          else
+            gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "repos/$GITHUB_REPOSITORY/issues/$TARGET_ISSUE/comments" \
+              --input /tmp/comment.json >/dev/null
+          fi
+
+          {
+            echo "## W01 consent deployment status"
+            echo
+            echo "- Run: \`$run_id\`"
+            echo "- Status: \`$status\`"
+            echo "- Conclusion: \`$conclusion\`"
+            echo "- Head: \`$head_sha\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$status" == "completed" && "$conclusion" != "success" ]]; then
+            echo "The latest consent deployment completed unsuccessfully" >&2
+            exit 1
+          fi
