@@ -31,33 +31,17 @@ jobs:
 
           source_path = Path('src/tool-capability-grants-sqlite.ts')
           source = source_path.read_text()
-          index_anchor = '''    CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
-              ON tool_capability_grants(workspace_id, project_id, grant_id, is_current, sequence DESC);
-          '''
-          index_replacement = '''    CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
+          index_anchor = '''CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
+              ON tool_capability_grants(workspace_id, project_id, grant_id, is_current, sequence DESC);'''
+          index_replacement = '''CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
               ON tool_capability_grants(workspace_id, project_id, grant_id, is_current, sequence DESC);
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_capability_grant_one_current
               ON tool_capability_grants(workspace_id, project_id, grant_id)
-              WHERE is_current = 1;
-          '''
+              WHERE is_current = 1;'''
           if source.count(index_anchor) != 1:
               raise SystemExit('current grant index anchor missing or duplicated')
-          source = source.replace(index_anchor, index_replacement)
-
-          malformed = '''      if (
-              record.fingerprint !== grant.fingerprint
-              || record.acceptanceRef !== acceptanceRef
-              || record.acceptedBy !== acceptedBy
-            ) {'''
-          formatted = '''      if (
-                record.fingerprint !== grant.fingerprint
-                || record.acceptanceRef !== acceptanceRef
-                || record.acceptedBy !== acceptedBy
-              ) {'''
-          if source.count(malformed) != 1:
-              raise SystemExit('same-generation formatting anchor missing or duplicated')
-          source_path.write_text(source.replace(malformed, formatted))
+          source_path.write_text(source.replace(index_anchor, index_replacement))
 
           test_path = Path('test/tool-capability-grants-sqlite.test.ts')
           tests = test_path.read_text()
@@ -77,8 +61,7 @@ jobs:
           '''
           if tests.count(marker) != 1:
               raise SystemExit('acceptance describe marker missing or duplicated')
-          tests = tests.replace(marker, test_case)
-          test_path.write_text(tests)
+          test_path.write_text(tests.replace(marker, test_case))
 
           docs_path = Path('docs/tool-capability-grant-persistence.md')
           docs = docs_path.read_text()
