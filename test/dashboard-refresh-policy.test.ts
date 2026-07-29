@@ -40,6 +40,8 @@ describe("hosted dashboard refresh policy", () => {
   test("normalizes malformed persisted levels before indexing the delay ladder", () => {
     expect(normalizeDashboardRefreshLevel(undefined)).toBe(0);
     expect(normalizeDashboardRefreshLevel("NaN")).toBe(0);
+    expect(normalizeDashboardRefreshLevel("2junk")).toBe(0);
+    expect(normalizeDashboardRefreshLevel("1.5")).toBe(0);
     expect(normalizeDashboardRefreshLevel("-1")).toBe(0);
     expect(normalizeDashboardRefreshLevel("2")).toBe(2);
     expect(normalizeDashboardRefreshLevel("999999")).toBe(3);
