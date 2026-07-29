@@ -693,8 +693,9 @@ export function reserveSqliteToolCapabilityUse(
           usageByPermission,
         });
         if (authorization.authorized) {
+          const authorized = authorization;
           const permission = current.grant.permissions.find((candidate) =>
-            candidate.permissionId === authorization.permissionId
+            candidate.permissionId === authorized.permissionId
           );
           if (!permission) {
             throw new Error("Authorized permission is absent from the accepted grant");
@@ -702,14 +703,14 @@ export function reserveSqliteToolCapabilityUse(
           const consumedUses = tryConsumePermissionUse(
             store,
             current,
-            authorization.permissionId,
+            authorized.permissionId,
             permission.maxUses,
             now,
           );
           authorization = consumedUses === null
             ? denied(grantId, request.fingerprint, "budget_exhausted")
             : {
-              ...authorization,
+              ...authorized,
               remainingUsesAfterAuthorization: permission.maxUses - consumedUses,
             };
         }
@@ -1272,7 +1273,6 @@ function sameRevocation(
     && record.grantId === candidate.grantId
     && record.generation === candidate.expectedGeneration
     && record.grantFingerprint === candidate.expectedFingerprint
-    && record.revokedAt === candidate.revokedAt
     && record.revokedBy === candidate.revokedBy
     && record.reasonCode === candidate.reasonCode
     && record.idempotencyKey === candidate.idempotencyKey;
