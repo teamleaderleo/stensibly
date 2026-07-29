@@ -1,4 +1,10 @@
 import { parseToken } from "./token-provider.js";
+import {
+  PROCESSING_STAGE_HEADER,
+  WORKER_VERSION_CREATED_AT_HEADER,
+  WORKER_VERSION_ID_HEADER,
+  WORKER_VERSION_TAG_HEADER,
+} from "./worker-observability.js";
 
 const DEFAULT_ENDPOINT = "https://api.stensibly.com";
 const DEFAULT_ORIGIN = "https://www.stensibly.com";
@@ -6,6 +12,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const TOKEN_PATTERN = /stn\.tok_[a-f0-9]{32}\.[A-Za-z0-9_-]{40,}/g;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const DIAGNOSTIC_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
 
 export interface VerifyHostedOptions {
   endpoint: string;
@@ -116,7 +123,8 @@ export async function verifyHosted(
     if (!isRecord(body) || body.backend !== "convex") {
       throw responseError(response, `Expected backend=convex; received ${jsonPreview(body)}`);
     }
-    return "200 backend=convex";
+    const workerVersionId = requireWorkerReceipt(response);
+    return `200 backend=convex workerVersion=${workerVersionId}`;
   }));
 
   results.push(await runCheck("unauthenticated REST", normalized, async () => {
@@ -350,6 +358,32 @@ function requireHeaderToken(response: Response, header: string, expected: string
       `Expected ${header} to include ${expected}; received ${raw || "missing"}`,
     );
   }
+}
+
+function requireWorkerReceipt(response: Response): string {
+  const stage = response.headers.get(PROCESSING_STAGE_HEADER)?.trim();
+  if (stage !== "response_produced") {
+    throw responseError(
+      response,
+      `Expected ${PROCESSING_STAGE_HEADER}=response_produced; received ${stage || "missing"}`,
+    );
+  }
+
+  const versionId = response.headers.get(WORKER_VERSION_ID_HEADER)?.trim();
+  if (!versionId || !DIAGNOSTIC_VALUE_PATTERN.test(versionId)) {
+    throw responseError(
+      response,
+      `Expected a bounded ${WORKER_VERSION_ID_HEADER}; received ${versionId || "missing"}`,
+    );
+  }
+
+  for (const header of [WORKER_VERSION_TAG_HEADER, WORKER_VERSION_CREATED_AT_HEADER]) {
+    const value = response.headers.get(header)?.trim();
+    if (value && !DIAGNOSTIC_VALUE_PATTERN.test(value)) {
+      throw responseError(response, `Received malformed ${header}`);
+    }
+  }
+  return versionId;
 }
 
 function responseError(response: Response, message: string): Error {
