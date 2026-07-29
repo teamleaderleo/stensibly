@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import {
+  attachArtifactRequestFingerprint,
+} from "./idempotency-request-fingerprint.js";
 import { actorSchema, type ActorInput } from "./schemas.js";
 import { ConflictError, NotFoundError, StensiblyStore } from "./store.js";
 
@@ -69,6 +72,17 @@ export function attachArtifact(
   },
 ): Artifact {
   ensureArtifactSchema(store);
+  const metadata = input.metadata ?? {};
+  const mimeType = input.mimeType ?? null;
+  const requestFingerprint = attachArtifactRequestFingerprint({
+    itemId: input.itemId,
+    actorId: input.actor.id,
+    kind: input.kind,
+    label: input.label,
+    uri: input.uri,
+    mimeType,
+    metadata,
+  });
 
   const transaction = store.db.transaction(() => {
     if (input.idempotencyKey) {
@@ -81,7 +95,12 @@ export function attachArtifact(
         if (existingEvent.type !== "artifact.attached") {
           throw new ConflictError("Idempotency key already belongs to another operation");
         }
-        const payload = JSON.parse(existingEvent.payload_json) as { artifactId?: unknown };
+        const payload = parsePayload(existingEvent.payload_json);
+        if (payload.requestFingerprint !== requestFingerprint) {
+          throw new ConflictError(
+            "Idempotency key was already used for a different artifact request",
+          );
+        }
         if (typeof payload.artifactId !== "string") {
           throw new ConflictError("Artifact idempotency record is incomplete");
         }
@@ -107,8 +126,8 @@ export function attachArtifact(
         input.kind,
         input.label,
         input.uri,
-        input.mimeType ?? null,
-        JSON.stringify(input.metadata ?? {}),
+        mimeType,
+        JSON.stringify(metadata),
         now,
       );
 
@@ -127,6 +146,7 @@ export function attachArtifact(
           kind: input.kind,
           label: input.label,
           uri: input.uri,
+          requestFingerprint,
         }),
         input.idempotencyKey ?? null,
         now,
@@ -193,6 +213,19 @@ function upsertActor(store: StensiblyStore, actor: ActorInput, now: string): voi
         updated_at = excluded.updated_at
     `)
     .run(actor.id, actor.name, actor.kind, now);
+}
+
+function parsePayload(value: string): Record<string, unknown> {
+  try {
+    const payload = JSON.parse(value) as unknown;
+    return isRecord(payload) ? payload : {};
+  } catch {
+    return {};
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function mapArtifact(row: ArtifactRow): Artifact {
