@@ -1,0 +1,92 @@
+.provider-capacity {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.provider-capacity-head,
+.provider-capacity-form,
+.provider-capacity-details {
+  display: flex;
+  align-items: end;
+  gap: .75rem;
+}
+
+.provider-capacity-head {
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: .8rem;
+}
+
+.provider-capacity-head h3 { margin: .15rem 0 0; }
+
+#provider-capacity-status {
+  padding: .3rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.provider-capacity[data-state="available"] #provider-capacity-status {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.provider-capacity[data-state="unavailable"] #provider-capacity-status {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.provider-capacity-form { flex-wrap: wrap; }
+.provider-capacity-form label { flex: 1 1 14rem; }
+.provider-capacity-form input { width: 100%; }
+.provider-capacity-form button { flex: 0 0 auto; }
+
+#provider-capacity-scope,
+.provider-capacity-note,
+.provider-capacity-error {
+  margin: .7rem 0 0;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.provider-capacity-details {
+  align-items: stretch;
+  flex-wrap: wrap;
+  margin-top: .85rem;
+}
+
+.provider-capacity-details > div {
+  flex: 1 1 13rem;
+  padding: .7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+}
+
+.provider-capacity-details span {
+  display: block;
+  margin-bottom: .25rem;
+  color: var(--muted);
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.provider-capacity-details strong,
+.provider-capacity-details a {
+  font-size: .84rem;
+  line-height: 1.4;
+}
+
+.provider-capacity-error { color: var(--danger); }
+
+@media (max-width: 640px) {
+  .provider-capacity-form { align-items: stretch; }
+  .provider-capacity-form button { width: 100%; }
+}

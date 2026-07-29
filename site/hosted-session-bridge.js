@@ -8,6 +8,7 @@ import {
   isHostedSessionSentinel,
   revokeHostedSession,
 } from './hosted-session.js';
+import { installProviderCapacityCard } from './provider-capacity-entry.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const STORAGE_KEY = 'stensiblyToken';
@@ -31,6 +32,7 @@ window.fetch = installHostedSessionFetchBridge({
   sentinel,
   onHostedAccessDenied: preserveHostedSignOut,
 });
+installProviderCapacityCard();
 
 signInButton?.addEventListener('click', beginGithubSignIn);
 hostedSignOutButton?.addEventListener('click', signOutHostedSession, { capture: true });
