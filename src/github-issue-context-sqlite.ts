@@ -409,7 +409,8 @@ function prepareAcceptance(
       "GitHub issue context must bind the current accepted project attachment",
     );
   }
-  if (!attachment.snapshot.contract.repositories.includes(
+  if (!attachmentDeclaresGitHubRepository(
+    attachment.snapshot.contract.repositories,
     input.snapshot.reference.repositoryFullName,
   )) {
     throw new GitHubIssueContextConflictError(
@@ -644,6 +645,67 @@ function canonicalInstructionSources(
     };
   });
   return sources.sort((left, right) => codeUnitCompare(left.path, right.path));
+}
+
+function attachmentDeclaresGitHubRepository(
+  repositories: readonly string[],
+  repositoryFullName: string,
+): boolean {
+  const target = canonicalGitHubRepository(repositoryFullName);
+  return target !== null && repositories.some((repository) =>
+    canonicalGitHubRepository(repository) === target
+  );
+}
+
+function canonicalGitHubRepository(value: string): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.normalize("NFKC").trim();
+  let owner: string | undefined;
+  let repository: string | undefined;
+
+  const plain = /^([^/:]+)\/([^/]+)$/.exec(normalized);
+  const scp = /^(?:git@)?github\.com:([^/]+)\/([^/]+)$/i.exec(normalized);
+  if (scp) {
+    owner = scp[1];
+    repository = scp[2];
+  } else if (plain) {
+    owner = plain[1];
+    repository = plain[2];
+  } else {
+    let url: URL;
+    try {
+      url = new URL(normalized);
+    } catch {
+      return null;
+    }
+    if (
+      url.hostname.toLowerCase() !== "github.com"
+      || !["http:", "https:", "ssh:"].includes(url.protocol)
+      || url.password
+      || url.search
+      || url.hash
+    ) return null;
+    if (
+      (url.protocol === "http:" || url.protocol === "https:") && url.username
+    ) return null;
+    if (url.protocol === "ssh:" && url.username && url.username !== "git") return null;
+    if (url.port && url.port !== "22") return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length !== 2) return null;
+    [owner, repository] = parts;
+  }
+
+  repository = repository?.replace(/\.git$/i, "");
+  if (
+    !owner
+    || !repository
+    || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner)
+    || !/^[A-Za-z0-9_.-]{1,100}$/.test(repository)
+    || repository === "."
+    || repository === ".."
+    || repository.includes("..")
+  ) return null;
+  return `${owner.toLowerCase()}/${repository.toLowerCase()}`;
 }
 
 function boundedSourcePath(value: string): string {
