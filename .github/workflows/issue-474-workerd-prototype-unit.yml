@@ -7,6 +7,12 @@ on:
     paths:
       - .github/workflows/issue-474-workerd-prototype-unit.yml
       - docs/research/issue-474-lane-a/prototype/**
+  pull_request:
+    branches:
+      - research/issue-474-lane-a
+    paths:
+      - .github/workflows/issue-474-workerd-prototype-unit.yml
+      - docs/research/issue-474-lane-a/prototype/**
   workflow_dispatch:
 
 permissions:
