@@ -20,6 +20,7 @@ export function verifyDashboardHtml(html: string): void {
   const required = [
     "<title>Stensibly · Shared work</title>",
     'content="Stensibly keeps shared work visible and resumable for people and agents."',
+    'href="/favicon.ico"',
     'src="/hosted-session-bridge.js"',
     'src="/app.js"',
     'href="/styles.css"',

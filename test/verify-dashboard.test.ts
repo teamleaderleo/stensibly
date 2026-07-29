@@ -11,6 +11,7 @@ const validHtml = `<!doctype html>
 <html><head>
 <title>Stensibly · Shared work</title>
 <meta name="description" content="Stensibly keeps shared work visible and resumable for people and agents." />
+<link rel="icon" href="/favicon.ico" sizes="any" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/item-claim.css" />
 <link rel="stylesheet" href="/hosted-session.css" />
