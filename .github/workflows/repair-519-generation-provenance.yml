@@ -1,0 +1,84 @@
+name: Repair PR 519 generation provenance
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-pr-519-generation-provenance
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: mercury/453-capability-grant-sqlite
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Bind generation replay to acceptance provenance
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/tool-capability-grants-sqlite.ts')
+          source = source_path.read_text()
+          condition = '      if (record.fingerprint !== grant.fingerprint) {'
+          replacement = '''      if (
+                record.fingerprint !== grant.fingerprint
+                || record.acceptanceRef !== acceptanceRef
+                || record.acceptedBy !== acceptedBy
+              ) {'''
+          message = '`Grant ${grant.grantId} generation ${grant.generation} was reused with altered content`'
+          message_replacement = '`Grant ${grant.grantId} generation ${grant.generation} was reused with altered content or acceptance provenance`'
+          if source.count(condition) != 1:
+              raise SystemExit('same-generation replay condition missing or duplicated')
+          if source.count(message) != 1:
+              raise SystemExit('same-generation conflict message missing or duplicated')
+          source = source.replace(condition, replacement).replace(message, message_replacement)
+          source_path.write_text(source)
+
+          test_path = Path('test/tool-capability-grants-sqlite.test.ts')
+          tests = test_path.read_text()
+          anchor = '''    expect(() => accept(firstGrant, null, {
+              acceptedBy: "actor:other",
+            })).toThrow("acceptance reference");
+          '''
+          addition = '''    expect(() => accept(firstGrant, null, {
+              acceptedBy: "actor:other",
+            })).toThrow("acceptance reference");
+            expect(() => accept(firstGrant, null, {
+              acceptanceRef: "accept:other-reference",
+            })).toThrow("acceptance provenance");
+            expect(() => accept(firstGrant, null, {
+              acceptanceRef: "accept:other-actor-reference",
+              acceptedBy: "actor:other",
+            })).toThrow("acceptance provenance");
+          '''
+          if tests.count(anchor) != 1:
+              raise SystemExit('acceptance provenance test anchor missing or duplicated')
+          test_path.write_text(tests.replace(anchor, addition))
+          PY
+      - name: Validate repair
+        run: |
+          bun install --frozen-lockfile
+          bun test test/tool-capability-grants-sqlite.test.ts
+          bun run typecheck
+      - name: Commit repair and remove helper
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "Quill capability reviewer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/repair-519-generation-provenance.yml
+          git add src/tool-capability-grants-sqlite.ts test/tool-capability-grants-sqlite.test.ts
+          git commit -m "fix: bind generation replay to acceptance provenance"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/stensibly.git" HEAD:mercury/453-capability-grant-sqlite
