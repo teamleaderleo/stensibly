@@ -71,6 +71,7 @@ describe("MCP ambiguous mutation retry", () => {
       const receipt = await callTool<{
         status: string;
         operation: string;
+        eventId: string;
         itemId: string;
         result: { kind: string; id: string };
         reconciliation: { retry: string; nextAction: string; itemId: string };
@@ -99,13 +100,12 @@ describe("MCP ambiguous mutation retry", () => {
 
       const detail = await callTool<{
         item: { id: string; title: string };
-        events: Array<{ type: string; idempotencyKey?: string }>;
+        events: Array<{ id: string; type: string }>;
       }>(reconnectedApp, token.token, 6, "get_item", { id: receipt.itemId });
       expect(detail.item).toMatchObject({ id: receipt.itemId, title: request.title });
-      expect(detail.events.filter((event) => event.type === "item.created")).toHaveLength(1);
-      expect(
-        detail.events.filter((event) => event.idempotencyKey === idempotencyKey),
-      ).toHaveLength(1);
+      const createdEvents = detail.events.filter((event) => event.type === "item.created");
+      expect(createdEvents).toHaveLength(1);
+      expect(createdEvents[0]?.id).toBe(receipt.eventId);
 
       const work = await callTool<Array<{ id: string }>>(
         reconnectedApp,
