@@ -445,9 +445,16 @@ function boundedSlug(value: unknown, label: string, maxLength: number): string {
 }
 
 function canonicalTimestamp(value: unknown): string {
-  if (typeof value !== "string") throw new Error("observedAt must be an ISO timestamp");
+  if (
+    typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
+  ) {
+    throw new Error("observedAt must be a canonical UTC ISO timestamp");
+  }
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) throw new Error("observedAt must be an ISO timestamp");
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("observedAt must be a canonical UTC ISO timestamp");
+  }
   return new Date(timestamp).toISOString();
 }
 
