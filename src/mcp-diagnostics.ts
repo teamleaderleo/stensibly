@@ -48,6 +48,11 @@ const manifestJson = JSON.stringify({
 export const MCP_TOOL_MANIFEST_FINGERPRINT = `sha256:${createHash("sha256")
   .update(manifestJson)
   .digest("hex")}`;
+export const MCP_TOOL_MANIFEST_REVISION = MCP_TOOL_MANIFEST_FINGERPRINT.slice(
+  "sha256:".length,
+  "sha256:".length + 12,
+);
+export const MCP_SERVER_VERSION = `0.0.1+manifest.${MCP_TOOL_MANIFEST_REVISION}`;
 
 export type McpFailureStage =
   | "method_validation"
