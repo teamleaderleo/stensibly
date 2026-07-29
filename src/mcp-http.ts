@@ -368,7 +368,7 @@ function validateOrigin(request: Request, allowedOrigins: string[]): Response | 
     -32001,
     `Origin is not allowed: ${origin}`,
     null,
-    {},
+    { [MCP_FAILURE_STAGE_HEADER]: "origin_validation" },
     "cors_rejection",
   );
 }
@@ -377,7 +377,14 @@ function validateHost(request: Request, allowedHosts?: string[]): Response | nul
   if (!allowedHosts || allowedHosts.length === 0) return null;
   const host = request.headers.get("host");
   if (host && allowedHosts.includes(host)) return null;
-  return jsonRpcError(403, -32001, `Host is not allowed: ${host ?? "missing"}`, null);
+  return jsonRpcError(
+  403,
+  -32001,
+  `Host is not allowed: ${host ?? "missing"}`,
+  null,
+  { [MCP_FAILURE_STAGE_HEADER]: "host_validation" },
+  "request_failure",
+);
 }
 
 function parseBearerToken(authorization: string | null): string | null {
