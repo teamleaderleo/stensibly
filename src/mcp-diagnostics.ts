@@ -185,13 +185,15 @@ function diagnosticData(input: {
     manifestToolCount: MCP_TOOL_NAMES.length,
     ...(input.method ? { method: input.method } : {}),
     ...(input.tool ? { tool: input.tool } : {}),
-    ...(input.method === "tools/call"
+    ...(writeMayHaveExecuted
       ? { idempotencyKeyPresent: input.idempotencyKeyPresent }
       : {}),
   };
 }
 
-function failureLayer(category: FailureCategory): McpFailureDiagnosticData["layer"] {
+function failureLayer(
+  category: FailureCategory,
+): McpFailureDiagnosticData["layer"] {
   if (category === "auth_failure") return "authentication";
   if (category === "authorization_failure") return "authorization";
   if (category === "convex_failure") return "token_authority";
@@ -200,106 +202,117 @@ function failureLayer(category: FailureCategory): McpFailureDiagnosticData["laye
 }
 
 function failureStage(
-  header: string | null,
+  explicit: string | null,
   status: number,
   code: unknown,
   category: FailureCategory,
 ): McpFailureStage {
-  if (isMcpFailureStage(header)) return header;
-  if (category === "convex_failure") return "token_authority";
+  if (isFailureStage(explicit)) return explicit;
+  if (status === 405) return "method_validation";
+  if (code === -32700) return "payload_parse";
   if (category === "auth_failure") return "authentication";
   if (category === "authorization_failure") return "authorization";
-  if (code === -32700) return "payload_parse";
-  if (status === 405) return "method_validation";
-  if (code === -32602) return "request_validation";
-  return "request_execution";
-}
-
-function isMcpFailureStage(value: string | null): value is McpFailureStage {
-  return value === "method_validation"
-    || value === "origin_validation"
-    || value === "host_validation"
-    || value === "token_authority"
-    || value === "authentication"
-    || value === "payload_parse"
-    || value === "authorization"
-    || value === "server_construction"
-    || value === "transport_connection"
-    || value === "request_execution"
-    || value === "request_validation";
+  if (category === "convex_failure") return "token_authority";
+  if (category === "mcp_failure") return "request_execution";
+  return "request_validation";
 }
 
 function failureCategory(value: string | null, status: number): FailureCategory {
-  if (value === "auth_failure") return value;
-  if (value === "authorization_failure") return value;
-  if (value === "convex_failure") return value;
-  if (value === "mcp_failure") return value;
-  if (value === "cors_rejection") return value;
-  if (value === "request_failure") return value;
-  if (value === "gateway_failure") return value;
+  const categories: FailureCategory[] = [
+    "auth_failure",
+    "authorization_failure",
+    "cors_rejection",
+    "convex_failure",
+    "mcp_failure",
+    "gateway_failure",
+    "request_failure",
+  ];
+  if (value && categories.includes(value as FailureCategory)) {
+    return value as FailureCategory;
+  }
   if (status === 401) return "auth_failure";
   if (status === 403) return "authorization_failure";
-  return "gateway_failure";
+  return "mcp_failure";
 }
 
-function isWriteTool(tool: string | undefined): boolean {
-  return tool === "attach_artifact"
-    || tool === "create_item"
-    || tool === "claim_work"
-    || tool === "renew_claim"
-    || tool === "handoff_work"
-    || tool === "block_work"
-    || tool === "unblock_work"
-    || tool === "release_work"
-    || tool === "record_event"
-    || tool === "complete_work"
-    || tool === "propose_continuation"
-    || tool === "edit_continuation"
-    || tool === "resolve_continuation"
-    || tool === "queue_continuation_for_supervisor"
-    || tool === "run_continuation_supervisor_policy";
+function isFailureStage(value: string | null): value is McpFailureStage {
+  return [
+    "method_validation",
+    "origin_validation",
+    "host_validation",
+    "token_authority",
+    "authentication",
+    "payload_parse",
+    "authorization",
+    "server_construction",
+    "transport_connection",
+    "request_execution",
+    "request_validation",
+  ].includes(value ?? "");
 }
 
 async function readRequestPayload(request: Request): Promise<unknown> {
   try {
-    return await request.clone().json();
+    return await request.json();
   } catch {
     return null;
   }
 }
 
 function requestMethod(payload: unknown): string | undefined {
-  return isRecord(payload) && typeof payload.method === "string"
-    ? payload.method
-    : undefined;
+  if (!isRecord(payload) || typeof payload.method !== "string") return undefined;
+  const method = payload.method.trim();
+  return /^[a-z][a-z0-9/._-]{0,79}$/.test(method) ? method : undefined;
 }
 
 function requestTool(payload: unknown): string | undefined {
   if (!isRecord(payload) || payload.method !== "tools/call" || !isRecord(payload.params)) {
     return undefined;
   }
-  return typeof payload.params.name === "string" ? payload.params.name : undefined;
+  const name = payload.params.name;
+  return typeof name === "string" && MCP_TOOL_NAMES.includes(name as typeof MCP_TOOL_NAMES[number])
+    ? name
+    : undefined;
 }
 
 function requestHasIdempotencyKey(payload: unknown): boolean {
   if (!isRecord(payload) || payload.method !== "tools/call" || !isRecord(payload.params)) {
     return false;
   }
-  const args = isRecord(payload.params.arguments) ? payload.params.arguments : {};
-  return typeof args.idempotencyKey === "string" && args.idempotencyKey.trim().length > 0;
+  const args = payload.params.arguments;
+  if (!isRecord(args)) return false;
+  const value = args.idempotencyKey;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isWriteTool(tool: string | undefined): boolean {
+  return tool !== undefined && [
+    "attach_artifact",
+    "create_item",
+    "claim_work",
+    "renew_claim",
+    "handoff_work",
+    "block_work",
+    "unblock_work",
+    "release_work",
+    "record_event",
+    "complete_work",
+    "propose_continuation",
+    "edit_continuation",
+    "resolve_continuation",
+    "queue_continuation_for_supervisor",
+    "run_continuation_supervisor_policy",
+  ].includes(tool);
 }
 
 function acceptedRequestId(value: string | null): string | null {
   if (!value) return null;
   const normalized = value.trim();
-  if (!normalized || normalized.length > 200 || /[\u0000-\u001f\u007f-\u009f]/u.test(normalized)) {
-    return null;
-  }
-  return normalized;
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(normalized) ? normalized : null;
 }
 
 function isJsonResponse(response: Response): boolean {
-  return response.headers.get("content-type")?.toLowerCase().includes("application/json") ?? false;
+  return (response.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
 }
 
 function copyResponse(response: Response, headers: Headers): Response {
@@ -310,6 +323,6 @@ function copyResponse(response: Response, headers: Headers): Response {
   });
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
