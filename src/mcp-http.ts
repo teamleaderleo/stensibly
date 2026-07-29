@@ -40,6 +40,7 @@ interface AccessRule {
 const readTools = new Set([
   "get_brief",
   "get_project_attachment",
+  "get_github_project_context",
   "get_operation_receipt",
   "survey_workspace",
   "list_work",
@@ -253,6 +254,7 @@ async function resolveAccessRule(
   if (
     toolName === "get_brief"
     || toolName === "get_project_attachment"
+    || toolName === "get_github_project_context"
     || toolName === "get_operation_receipt"
     || toolName === "create_item"
   ) {
