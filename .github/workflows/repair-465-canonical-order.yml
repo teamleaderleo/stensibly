@@ -1,9 +1,11 @@
 name: Repair PR 465 canonical ordering
 
 on:
-  push:
+  pull_request:
     branches:
-      - nightjar/453-tool-capability-grants
+      - main
+    types:
+      - synchronize
 
 permissions:
   contents: write
