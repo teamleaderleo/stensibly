@@ -82,7 +82,7 @@ describe("SQLite operation receipts", () => {
     }
   });
 
-  test("returns unknown for missing and cross-project keys", async () => {
+  test("holds missing and cross-project keys without exposing key occupancy", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);
 
@@ -99,18 +99,21 @@ describe("SQLite operation receipts", () => {
       const expectedUnknown = {
         status: "unknown",
         reconciliation: {
-          retry: "same_request_same_key",
-          nextAction: "retry_same_request_same_key",
+          retry: "hold",
+          nextAction: "verify_project_scope_before_retry",
         },
       };
-      expect(await ledger.getOperationReceipt({
+      const missing = await ledger.getOperationReceipt({
         project: "alpha",
         idempotencyKey: "missing-key",
-      })).toMatchObject(expectedUnknown);
-      expect(await ledger.getOperationReceipt({
+      });
+      const crossProject = await ledger.getOperationReceipt({
         project: "beta",
         idempotencyKey: "alpha-private-key",
-      })).toMatchObject(expectedUnknown);
+      });
+      expect(missing).toMatchObject(expectedUnknown);
+      expect(crossProject).toMatchObject(expectedUnknown);
+      expect(missing.reconciliation).toEqual(crossProject.reconciliation);
     } finally {
       store.close();
     }
