@@ -1,0 +1,1 @@
+Trigger exact-head CI for the validated MCP gateway diagnostic repair.
