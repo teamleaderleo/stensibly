@@ -79,102 +79,261 @@ describe("MCP work surface", () => {
       }>(client, "get_brief", { project: "scrapbook", limit: 5 });
       expect(brief.project).toBe("scrapbook");
       expect(brief.counts.total).toBe(1);
-      expect(brief.ready[0]?.id).toBe(created.id);
+      expect(brief.ready.map((item) => item.id)).toEqual([created.id]);
 
       const claimed = await call<{
         status: string;
-        claim: { holder: { id: string }; generation: number };
+        claimedBy: string;
+        claimExpiresAt: string;
+        claimGeneration: number;
       }>(client, "claim_work", {
         id: created.id,
         actor: agent,
-        leaseSeconds: 120,
-        idempotencyKey: "mcp-claim-1",
+        leaseSeconds: 900,
       });
-      expect(claimed.status).toBe("claimed");
-      expect(claimed.claim.holder.id).toBe(agent.id);
-      expect(claimed.claim.generation).toBe(1);
+      expect(claimed).toMatchObject({ status: "active", claimedBy: agent.id });
 
       const renewed = await call<{
-        claim: { generation: number };
+        claimExpiresAt: string;
+        claimGeneration: number;
       }>(client, "renew_claim", {
         id: created.id,
         actor: agent,
-        expectedClaimGeneration: claimed.claim.generation,
-        leaseSeconds: 120,
-        idempotencyKey: "mcp-renew-1",
+        leaseSeconds: 1800,
+        expectedClaimGeneration: claimed.claimGeneration,
       });
-      expect(renewed.claim.generation).toBe(2);
+      expect(Date.parse(renewed.claimExpiresAt)).toBeGreaterThan(
+        Date.parse(claimed.claimExpiresAt),
+      );
+      expect(renewed.claimGeneration).toBe(claimed.claimGeneration + 1);
+
+      const competing = await client.callTool({
+        name: "claim_work",
+        arguments: { id: created.id, actor: leo, leaseSeconds: 900 },
+      });
+      expect(competing.isError).toBe(true);
+
+      const missingSemanticGeneration = await client.callTool({
+        name: "handoff_work",
+        arguments: {
+          id: created.id,
+          actor: agent,
+          summary: "Missing generation.",
+          nextAction: "Should fail validation.",
+        },
+      });
+      expect(missingSemanticGeneration.isError).toBe(true);
+
+      const event = await call<{ type: string }>(client, "record_event", {
+        id: created.id,
+        actor: agent,
+        type: "progress.recorded",
+        payload: { summary: "The async protocol path works." },
+      });
+      expect(event.type).toBe("progress.recorded");
+
+      const artifact = await call<{ id: string; kind: string }>(
+        client,
+        "attach_artifact",
+        {
+          id: created.id,
+          actor: agent,
+          kind: "commit",
+          label: "MCP implementation",
+          uri: "git:teamleaderleo/stensibly@mcp123",
+          metadata: { sha: "mcp123" },
+          idempotencyKey: "mcp-artifact-1",
+        },
+      );
+      expect(artifact.kind).toBe("commit");
 
       const handedOff = await call<{
         status: string;
+        claimedBy: null;
         claimGeneration: number;
       }>(client, "handoff_work", {
         id: created.id,
         actor: agent,
-        expectedClaimGeneration: renewed.claim.generation,
-        summary: "Browser agent left a handoff.",
-        nextAction: "Leo should reclaim this.",
+        expectedClaimGeneration: renewed.claimGeneration,
+        summary: "The protocol path works and needs a human pass.",
+        nextAction: "Review the visible wording.",
         toActorId: leo.id,
-        idempotencyKey: "mcp-handoff-1",
       });
-      expect(handedOff).toMatchObject({ status: "ready", claimGeneration: 3 });
+      expect(handedOff).toMatchObject({
+        status: "ready",
+        claimedBy: null,
+        claimGeneration: renewed.claimGeneration + 1,
+      });
 
-      const leoClaim = await call<{
-        claim: { generation: number };
-      }>(client, "claim_work", {
+      const leoClaim = await call<{ claimGeneration: number }>(client, "claim_work", {
         id: created.id,
         actor: leo,
-        leaseSeconds: 120,
-        idempotencyKey: "mcp-claim-2",
+        leaseSeconds: 900,
       });
-      expect(leoClaim.claim.generation).toBe(4);
-
-      const blocked = await call<{
-        status: string;
-        claimGeneration: number;
-      }>(client, "block_work", {
-        id: created.id,
-        actor: leo,
-        expectedClaimGeneration: leoClaim.claim.generation,
-        reason: "Need a better shelf.",
-        nextAction: "Find the shelf.",
-        idempotencyKey: "mcp-block-1",
+      const blocked = await call<{ status: string; claimGeneration: number }>(
+        client,
+        "block_work",
+        {
+          id: created.id,
+          actor: leo,
+          expectedClaimGeneration: leoClaim.claimGeneration,
+          reason: "Needs a sample client configuration.",
+          nextAction: "Add one client example.",
+        },
+      );
+      expect(blocked).toMatchObject({
+        status: "blocked",
+        claimGeneration: leoClaim.claimGeneration + 1,
       });
-      expect(blocked).toMatchObject({ status: "blocked", claimGeneration: 5 });
 
-      const unblocked = await call<{
-        status: string;
-        claimGeneration: number;
-      }>(client, "unblock_work", {
-        id: created.id,
-        actor: leo,
-        expectedClaimGeneration: blocked.claimGeneration,
-        nextAction: "Use the new shelf.",
-        idempotencyKey: "mcp-unblock-1",
+      const unblocked = await call<{ status: string; claimGeneration: number }>(
+        client,
+        "unblock_work",
+        {
+          id: created.id,
+          actor: leo,
+          expectedClaimGeneration: blocked.claimGeneration,
+          nextAction: "Finish the sample and close the work.",
+        },
+      );
+      expect(unblocked).toMatchObject({
+        status: "ready",
+        claimGeneration: blocked.claimGeneration + 1,
       });
-      expect(unblocked).toMatchObject({ status: "ready", claimGeneration: 6 });
 
-      const finalClaim = await call<{
-        claim: { generation: number };
-      }>(client, "claim_work", {
+      const finalClaim = await call<{ claimGeneration: number }>(client, "claim_work", {
         id: created.id,
         actor: agent,
-        leaseSeconds: 120,
-        idempotencyKey: "mcp-claim-3",
+        leaseSeconds: 900,
       });
-      expect(finalClaim.claim.generation).toBe(7);
-
       const completed = await call<{
         status: string;
+        summary: string;
         claimGeneration: number;
       }>(client, "complete_work", {
         id: created.id,
         actor: agent,
-        expectedClaimGeneration: finalClaim.claim.generation,
-        summary: "The shelf is ready.",
-        idempotencyKey: "mcp-complete-1",
+        expectedClaimGeneration: finalClaim.claimGeneration,
+        summary: "Handled through the protocol.",
       });
-      expect(completed).toMatchObject({ status: "done", claimGeneration: 8 });
+      expect(completed).toMatchObject({
+        status: "done",
+        summary: "Handled through the protocol.",
+        claimGeneration: finalClaim.claimGeneration + 1,
+      });
+
+      const proposed = await call<{
+        id: string;
+        status: string;
+        generation: number;
+      }>(client, "propose_continuation", {
+        sourceItemId: created.id,
+        title: "Review the result",
+        rationale: "A human should inspect the completed protocol flow.",
+        instruction: "Review the completed item and approve any follow-up fixes.",
+        action: { kind: "request_decision", decisionType: "review_result" },
+        evidence: [{
+          kind: "commit",
+          label: "Implementation",
+          uri: "git:repo@mcp123",
+        }],
+        actor: agent,
+        approvalMode: "human",
+        deliveryMode: "current_conversation",
+        idempotencyKey: "mcp-continuation-1",
+      });
+      expect(proposed).toMatchObject({ status: "proposed", generation: 1 });
+
+      const edited = await call<{
+        status: string;
+        generation: number;
+        instruction: string;
+      }>(client, "edit_continuation", {
+        id: proposed.id,
+        actor: leo,
+        expectedGeneration: proposed.generation,
+        instruction: "Review the completed item and record a merge decision.",
+        note: "Clarify the expected output.",
+        idempotencyKey: "mcp-continuation-edit-1",
+      });
+      expect(edited).toMatchObject({
+        status: "proposed",
+        generation: 2,
+        instruction: "Review the completed item and record a merge decision.",
+      });
+
+      const listed = await call<Array<{ id: string }>>(
+        client,
+        "list_continuations",
+        { sourceItemId: created.id },
+      );
+      expect(listed.map((continuation) => continuation.id)).toEqual([
+        proposed.id,
+      ]);
+
+      const approved = await call<{ status: string; generation: number }>(
+        client,
+        "resolve_continuation",
+        {
+          id: proposed.id,
+          actor: leo,
+          command: "approve",
+          expectedGeneration: edited.generation,
+          idempotencyKey: "mcp-continuation-approve-1",
+        },
+      );
+      expect(approved).toMatchObject({ status: "approved", generation: 3 });
+
+      const consumed = await call<{
+        status: string;
+        generation: number;
+        result: { decisionId: string; conversationRef: string };
+      }>(client, "resolve_continuation", {
+        id: proposed.id,
+        actor: agent,
+        command: "consume",
+        expectedGeneration: approved.generation,
+        result: {
+          decisionId: "decision_mcp_review",
+          conversationRef: "chatgpt:conversation:mcp-review",
+        },
+        idempotencyKey: "mcp-continuation-consume-1",
+      });
+      expect(consumed).toMatchObject({
+        status: "consumed",
+        generation: 4,
+        result: {
+          decisionId: "decision_mcp_review",
+          conversationRef: "chatgpt:conversation:mcp-review",
+        },
+      });
+
+      const readBack = await call<{
+        status: string;
+        result: { decisionId: string };
+      }>(client, "get_continuation", { id: proposed.id });
+      expect(readBack).toMatchObject({
+        status: "consumed",
+        result: { decisionId: "decision_mcp_review" },
+      });
+
+      const detail = await call<{
+        item: { status: string };
+        events: Array<{ type: string }>;
+        artifacts: Array<{ id: string }>;
+      }>(client, "get_item", { id: created.id });
+      expect(detail.item.status).toBe("done");
+      expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
+      expect(detail.events.map((entry) => entry.type)).toContain("item.completed");
+      expect(detail.events.map((entry) => entry.type)).toContain(
+        "continuation.edited",
+      );
+      expect(detail.events.map((entry) => entry.type)).toContain(
+        "continuation.approved",
+      );
+      expect(detail.events.map((entry) => entry.type)).toContain(
+        "continuation.consumed",
+      );
     } finally {
       await client.close();
       await server.close();
@@ -183,14 +342,26 @@ describe("MCP work surface", () => {
   });
 });
 
-async function call<T>(
+async function call<T = unknown>(
   client: Client,
   name: string,
   args: Record<string, unknown>,
 ): Promise<T> {
   const result = await client.callTool({ name, arguments: args });
-  if (result.isError) throw new Error(JSON.stringify(result.content));
-  const text = result.content.find((entry) => entry.type === "text");
-  if (!text || text.type !== "text") throw new Error("MCP tool did not return text");
-  return JSON.parse(text.text) as T;
+  if (result.isError) {
+    throw new Error(textContent(result));
+  }
+  return JSON.parse(textContent(result)) as T;
+}
+
+function textContent(result: unknown): string {
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content) || content.length === 0) {
+    throw new Error("MCP result had no content");
+  }
+  const first = content[0] as { type?: unknown; text?: unknown };
+  if (first.type !== "text" || typeof first.text !== "string") {
+    throw new Error("MCP result did not contain text");
+  }
+  return first.text;
 }
