@@ -30,8 +30,8 @@ export interface UnknownOperationReceipt {
   project: string;
   idempotencyKey: string;
   reconciliation: {
-    retry: "same_request_same_key";
-    nextAction: "retry_same_request_same_key";
+    retry: "hold";
+    nextAction: "verify_project_scope_before_retry";
   };
 }
 
@@ -77,8 +77,8 @@ export function unknownOperationReceipt(
     project: input.project,
     idempotencyKey: input.idempotencyKey,
     reconciliation: {
-      retry: "same_request_same_key",
-      nextAction: "retry_same_request_same_key",
+      retry: "hold",
+      nextAction: "verify_project_scope_before_retry",
     },
   };
 }
