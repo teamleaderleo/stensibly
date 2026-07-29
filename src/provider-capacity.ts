@@ -82,6 +82,92 @@ export interface IngestCodeRabbitCapacityInput {
   receivedAt: string;
 }
 
+export function projectCodeRabbitCapacityObservation(
+  observation: CodeRabbitCapacityObservation | null,
+  repository: string,
+  subjectLogin: string,
+  now = Date.now(),
+  availableFreshnessMs = DEFAULT_AVAILABLE_CAPACITY_FRESHNESS_MS,
+): CodeRabbitCapacitySnapshot {
+  validateRepository(repository);
+  validateLogin(subjectLogin);
+  if (!Number.isFinite(now)) throw new RangeError("Capacity snapshot time must be finite");
+  boundedInteger(
+    availableFreshnessMs,
+    "Available provider capacity freshness",
+    1_000,
+    60 * 60 * 1_000,
+  );
+  if (!observation) return emptySnapshot(repository, subjectLogin);
+
+  const observedAtMs = parseTimestamp(
+    observation.observedAt,
+    "Provider capacity observation time",
+  );
+  const refillAtMs = observation.refillAt === null
+    ? null
+    : parseTimestamp(observation.refillAt, "Provider capacity refill time");
+  if (observation.state === "unavailable" && refillAtMs === null) {
+    throw new RangeError("Unavailable provider capacity requires a refill time");
+  }
+  const availableStaleAtMs = Math.min(
+    observedAtMs + availableFreshnessMs,
+    refillAtMs ?? Number.POSITIVE_INFINITY,
+  );
+  const staleAtMs = observation.state === "available"
+    ? availableStaleAtMs
+    : refillAtMs!;
+  const common = {
+    provider: "coderabbit" as const,
+    repository,
+    subjectLogin,
+    subjectBasis: observation.subjectBasis,
+    remaining: observation.remaining,
+    limit: observation.limit,
+    observedAt: observation.observedAt,
+    receivedAt: observation.receivedAt,
+    staleAt: new Date(staleAtMs).toISOString(),
+    refillAt: observation.refillAt,
+    source: {
+      pullRequestNumber: observation.pullRequestNumber,
+      commentId: observation.sourceCommentId,
+    },
+  };
+
+  if (refillAtMs !== null && now >= refillAtMs) {
+    return {
+      ...common,
+      state: "unknown",
+      reason: "refill_window_elapsed",
+      nextAvailableAt: null,
+    };
+  }
+  if (observation.state === "unavailable") {
+    return {
+      ...common,
+      state: "unavailable",
+      reason: observation.remaining === 0
+        ? "quota_exhausted"
+        : "provider_reported_unavailable",
+      nextAvailableAt: observation.refillAt,
+    };
+  }
+  if (now >= availableStaleAtMs) {
+    return {
+      ...common,
+      state: "unknown",
+      reason: "observation_stale",
+      nextAvailableAt: null,
+    };
+  }
+  return {
+    ...common,
+    state: "available",
+    reason: null,
+    nextAvailableAt: null,
+  };
+}
+
 export interface ProviderCapacityStoreOptions {
   maxStoredObservations?: number;
   availableFreshnessMs?: number;
@@ -230,76 +316,13 @@ export class SqliteProviderCapacityStore {
     subjectLogin: string,
     now = Date.now(),
   ): CodeRabbitCapacitySnapshot {
-    validateRepository(repository);
-    validateLogin(subjectLogin);
-    if (!Number.isFinite(now)) throw new RangeError("Capacity snapshot time must be finite");
-
-    const observation = this.latest(repository, subjectLogin);
-    if (!observation) {
-      return emptySnapshot(repository, subjectLogin);
-    }
-
-    const observedAtMs = Date.parse(observation.observedAt);
-    const refillAtMs = observation.refillAt === null
-      ? null
-      : Date.parse(observation.refillAt);
-    const availableStaleAtMs = Math.min(
-      observedAtMs + this.availableFreshnessMs,
-      refillAtMs ?? Number.POSITIVE_INFINITY,
-    );
-    const staleAtMs = observation.state === "available"
-      ? availableStaleAtMs
-      : refillAtMs!;
-    const staleAt = new Date(staleAtMs).toISOString();
-    const common = {
-      provider: "coderabbit" as const,
+    return projectCodeRabbitCapacityObservation(
+      this.latest(repository, subjectLogin),
       repository,
       subjectLogin,
-      subjectBasis: observation.subjectBasis,
-      remaining: observation.remaining,
-      limit: observation.limit,
-      observedAt: observation.observedAt,
-      receivedAt: observation.receivedAt,
-      staleAt,
-      refillAt: observation.refillAt,
-      source: {
-        pullRequestNumber: observation.pullRequestNumber,
-        commentId: observation.sourceCommentId,
-      },
-    };
-
-    if (refillAtMs !== null && now >= refillAtMs) {
-      return {
-        ...common,
-        state: "unknown",
-        reason: "refill_window_elapsed",
-        nextAvailableAt: null,
-      };
-    }
-    if (observation.state === "unavailable") {
-      return {
-        ...common,
-        state: "unavailable",
-        reason: observation.remaining === 0
-          ? "quota_exhausted"
-          : "provider_reported_unavailable",
-        nextAvailableAt: observation.refillAt,
-      };
-    }
-    if (now >= availableStaleAtMs) {
-      return {
-        ...common,
-        state: "unknown",
-        reason: "observation_stale",
-        nextAvailableAt: null,
-      };
-    }
-    return {
-      ...common,
-      state: "available",
-      reason: null,
-      nextAvailableAt: null,
-    };
+      now,
+      this.availableFreshnessMs,
+    );
   }
 
   private latest(repository: string, subjectLogin: string): CodeRabbitCapacityObservation | null {
