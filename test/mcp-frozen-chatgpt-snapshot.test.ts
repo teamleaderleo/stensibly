@@ -50,11 +50,11 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
       );
       for (const name of snapshot.legacySnapshot.tools) {
         const tool = current.get(name);
-        expect(tool, `missing frozen action ${name}`).toBeDefined();
+        if (!tool) throw new Error(`Missing frozen action ${name}`);
         const baseline = snapshot.legacySnapshot.topLevelInputs[name];
-        expect(baseline, `missing frozen input checkpoint for ${name}`).toBeDefined();
+        if (!baseline) throw new Error(`Missing frozen input checkpoint for ${name}`);
 
-        const inputSchema = asRecord(tool?.inputSchema, `${name} input schema`);
+        const inputSchema = asRecord(tool.inputSchema, `${name} input schema`);
         const properties = asRecord(
           inputSchema.properties,
           `${name} input properties`,
