@@ -1,0 +1,169 @@
+name: Build clean gateway diagnostic repair
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/rivet-build-gateway-diagnostic-repair.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rivet-build-gateway-diagnostic-repair
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: rivet/490-gateway-repair-builder
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply focused repair to latest main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_one(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              target.write_text(text.replace(old, new))
+
+          replace_one(
+              "src/mcp-http.ts",
+              '''    {},
+    "cors_rejection",
+  );
+''',
+              '''    { [MCP_FAILURE_STAGE_HEADER]: "origin_validation" },
+    "cors_rejection",
+  );
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''  return jsonRpcError(403, -32001, `Host is not allowed: ${host ?? "missing"}`, null);
+''',
+              '''  return jsonRpcError(
+    403,
+    -32001,
+    `Host is not allowed: ${host ?? "missing"}`,
+    null,
+    { [MCP_FAILURE_STAGE_HEADER]: "host_validation" },
+    "request_failure",
+  );
+''',
+          )
+
+          marker = '''  test("returns typed stage and reconciliation guidance for gateway MCP failures", async () => {'''
+          insertion = r'''  test("classifies rejected Origin and Host as non-retryable gateway validation", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const app = createServerApp(store, {
+        mcp: {
+          allowedOrigins: ["https://allowed.example"],
+          allowedHosts: ["api.example"],
+        },
+      });
+
+      const originDenied = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          host: "api.example",
+          origin: "https://rejected.example",
+          "x-request-id": "diag-origin-rejection",
+        },
+        body: JSON.stringify(initializeMessage(3)),
+      });
+      expect(originDenied.status).toBe(403);
+      expect(originDenied.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("origin_validation");
+      expect(await failureData(originDenied)).toMatchObject({
+        layer: "gateway",
+        stage: "origin_validation",
+        requestId: "diag-origin-rejection",
+        retryable: false,
+        reconciliation: "not_required",
+        recommendedAction: "fix_request",
+        method: "initialize",
+      });
+
+      const hostDenied = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          host: "rejected.example",
+          origin: "https://allowed.example",
+          "x-request-id": "diag-host-rejection",
+        },
+        body: JSON.stringify(initializeMessage(4)),
+      });
+      expect(hostDenied.status).toBe(403);
+      expect(hostDenied.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("host_validation");
+      expect(await failureData(hostDenied)).toMatchObject({
+        layer: "gateway",
+        stage: "host_validation",
+        requestId: "diag-host-rejection",
+        retryable: false,
+        reconciliation: "not_required",
+        recommendedAction: "fix_request",
+        method: "initialize",
+      });
+    } finally {
+      store.close();
+    }
+  });
+
+'''
+          target = Path("test/mcp-diagnostics.test.ts")
+          text = target.read_text()
+          if text.count(marker) != 1:
+              raise SystemExit("diagnostics insertion marker mismatch")
+          text = text.replace(marker, insertion + marker)
+          helper_marker = '''async function writeFailureDiagnostic(
+'''
+          helper = r'''async function failureData(response: Response): Promise<Record<string, unknown>> {
+  const payload = await response.json() as {
+    error?: { data?: Record<string, unknown> };
+  };
+  if (!payload.error?.data) throw new Error("Missing MCP failure diagnostics");
+  return payload.error.data;
+}
+
+'''
+          if text.count(helper_marker) != 1:
+              raise SystemExit("diagnostics helper marker mismatch")
+          target.write_text(text.replace(helper_marker, helper + helper_marker))
+          PY
+
+      - name: Run exact repository checks
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish clean repair branch
+        run: |
+          set -euo pipefail
+          git config user.name "teamleaderleo"
+          git config user.email "13091533+teamleaderleo@users.noreply.github.com"
+          git add src/mcp-http.ts test/mcp-diagnostics.test.ts
+          git commit -m "Fix gateway diagnostic classifications"
+          git push --force origin HEAD:rivet/490-gateway-diagnostic-repair
