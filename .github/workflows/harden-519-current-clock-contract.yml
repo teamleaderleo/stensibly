@@ -1,6 +1,11 @@
 name: Harden PR 519 current row and clock contract
 
 on:
+  push:
+    branches:
+      - mercury/453-capability-grant-sqlite
+    paths:
+      - .github/workflows/harden-519-current-clock-contract.yml
   pull_request:
     branches:
       - main
