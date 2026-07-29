@@ -213,7 +213,7 @@ describe("Stensibly stateful MCP result replay", () => {
         "changed-key conflict request",
       );
       expect(isToolError(changedEnvelope)).toBe(true);
-      expect(readToolText(changedEnvelope)).toMatch(/different operation/i);
+      expect(readToolText(changedEnvelope)).toMatch(/different .*request/i);
       expect(handlerCalls).toBe(3);
       expect(store.listItems({ project })).toHaveLength(1);
       expect(countCreatedEvents(store)).toBe(1);
