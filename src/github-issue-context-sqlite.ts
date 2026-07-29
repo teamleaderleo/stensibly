@@ -128,6 +128,7 @@ const reasonCodePattern = /^[a-z0-9][a-z0-9._-]*$/;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/;
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const MAX_OBSERVATION_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 
 export class GitHubIssueContextConflictError extends Error {
   constructor(message: string) {
@@ -446,6 +447,10 @@ function prepareAcceptance(
   if (syncStatus === "synchronized" && degradedReasonCode !== null) {
     throw new RangeError("Synchronized GitHub issue context cannot carry a degraded reason");
   }
+  const observedAt = canonicalTimestamp(input.observedAt, "GitHub observation time");
+  if (Date.parse(observedAt) > Date.now() + MAX_OBSERVATION_FUTURE_SKEW_MS) {
+    throw new RangeError("GitHub observation time cannot be in the future");
+  }
 
   return {
     workspace,
@@ -458,7 +463,7 @@ function prepareAcceptance(
       : boundedIdentifier(input.syncCursor, "GitHub synchronization cursor", limits.cursor),
     degradedReasonCode,
     observationRef: boundedIdentifier(input.observationRef, "GitHub observation reference"),
-    observedAt: canonicalTimestamp(input.observedAt, "GitHub observation time"),
+    observedAt,
     acceptedBy: boundedIdentifier(input.acceptedBy, "GitHub context accepting actor"),
   };
 }
