@@ -33,10 +33,30 @@ jobs:
           ref: 6aa890be9fa547e3907c805b312e39917a274221
           path: workerd
 
-      - name: Install workerd compiler dependencies
+      - name: Install workerd LLVM 19 toolchain
+        working-directory: workerd
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libc++-dev libc++abi-dev
+          export DEBIAN_FRONTEND=noninteractive
+          wget https://apt.llvm.org/llvm.sh
+          sed -i '/apt-get install/d' llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang-19 \
+            lld-19 \
+            libunwind-19 \
+            libc++abi1-19 \
+            libc++1-19 \
+            libc++-19-dev \
+            libclang-rt-19-dev \
+            llvm-19
+          sudo ln -sf /usr/bin/llvm-symbolizer-19 /usr/bin/llvm-symbolizer
+          sudo ln -sf /usr/bin/llvm-profdata-19 /usr/bin/llvm-profdata
+          sudo ln -sf /usr/bin/llvm-cov-19 /usr/bin/llvm-cov
+          echo "build:linux --repo_env=CC=/usr/lib/llvm-19/bin/clang" >> .bazelrc
+          echo "build:linux --linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld" >> .bazelrc
+          echo "build:linux --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld" >> .bazelrc
+          echo "build:linux --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar" >> .bazelrc
 
       - name: Apply prototype patch
         run: |
