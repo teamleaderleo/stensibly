@@ -40,7 +40,11 @@ describe("hosted CodeRabbit capacity API", () => {
       },
     };
     const app = appWith(service);
-    const body = JSON.stringify(payload("Reviews are available now."));
+    const body = JSON.stringify(payload(
+      "Reviews are available now.",
+      "coderabbitai[bot]",
+      "dependabot[bot]",
+    ));
     const accepted = await app.request("/webhooks/github", {
       method: "POST",
       headers: signedHeaders(body, "delivery-capacity"),
@@ -54,7 +58,7 @@ describe("hosted CodeRabbit capacity API", () => {
     });
     expect(ingested).toMatchObject({
       repository: "teamleaderleo/stensibly",
-      subjectLogin: "teamleaderleo",
+      subjectLogin: "dependabot[bot]",
       sourceCommentId: "5104466293",
     });
 
@@ -65,7 +69,11 @@ describe("hosted CodeRabbit capacity API", () => {
     });
     expect(preflight.status).toBe(200);
     expect(await preflight.json()).toMatchObject({
-      capacity: { state: "available", subjectBasis: "pull_request_author_proxy" },
+      capacity: {
+        state: "available",
+        subjectLogin: "dependabot[bot]",
+        subjectBasis: "pull_request_author_proxy",
+      },
     });
   });
 
@@ -194,14 +202,18 @@ function observationFromInput(
   };
 }
 
-function payload(body: string, actor = "coderabbitai[bot]") {
+function payload(
+  body: string,
+  actor = "coderabbitai[bot]",
+  subjectLogin = "teamleaderleo",
+) {
   return {
     action: "created",
     repository: { full_name: "teamleaderleo/stensibly" },
     issue: {
       number: 421,
       pull_request: { url: "https://api.github.com/repos/teamleaderleo/stensibly/pulls/421" },
-      user: { login: "teamleaderleo" },
+      user: { login: subjectLogin },
     },
     comment: {
       id: 5_104_466_293,
@@ -225,5 +237,5 @@ function signedHeaders(body: string, delivery: string) {
 
 function capacityPath() {
   return "/api/v1/provider-capacities/coderabbit"
-    + "?repository=teamleaderleo%2Fstensibly&subject=teamleaderleo";
+    + "?repository=teamleaderleo%2Fstensibly&subject=dependabot%5Bbot%5D";
 }
