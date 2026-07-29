@@ -455,7 +455,14 @@ function canonicalTimestamp(value: unknown): string {
   if (!Number.isFinite(timestamp)) {
     throw new Error("observedAt must be a canonical UTC ISO timestamp");
   }
-  return new Date(timestamp).toISOString();
+  const canonical = new Date(timestamp).toISOString();
+  const supplied = value.endsWith("Z") && !value.includes(".")
+    ? value.replace(/Z$/, ".000Z")
+    : value;
+  if (canonical !== supplied) {
+    throw new Error("observedAt must be a canonical UTC ISO timestamp");
+  }
+  return canonical;
 }
 
 function optionalDiagnosticId(value: unknown, label: string): string | undefined {
