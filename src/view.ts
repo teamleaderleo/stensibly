@@ -47,10 +47,7 @@ export function renderBoard(items: Item[]): string {
         margin: 0;
         min-height: 100vh;
         color: var(--text);
-        background:
-          radial-gradient(circle at 12% -20%, rgba(216, 255, 95, .11), transparent 32rem),
-          radial-gradient(circle at 96% 8%, rgba(154, 199, 255, .08), transparent 28rem),
-          var(--bg);
+        background: var(--bg);
       }
       button, input, select { font: inherit; }
       button { cursor: pointer; }
@@ -71,7 +68,7 @@ export function renderBoard(items: Item[]): string {
         height: 2.7rem;
         border: 1px solid #3a3a42;
         border-radius: .8rem;
-        background: linear-gradient(145deg, #202027, #111114);
+        background: var(--panel-2);
         color: var(--accent);
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-weight: 800;
@@ -168,7 +165,7 @@ export function renderBoard(items: Item[]): string {
         padding: .78rem;
         border: 1px solid #33333a;
         border-radius: .68rem;
-        background: linear-gradient(155deg, #1c1c21, #151519 70%);
+        background: var(--panel);
       }
       .card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--status-color); opacity: .8; }
       .card-head { display: flex; justify-content: space-between; gap: .5rem; }

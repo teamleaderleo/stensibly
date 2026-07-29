@@ -13,9 +13,7 @@
   padding: .85rem;
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
   border-radius: .9rem;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.22), transparent 64%),
-    color-mix(in srgb, var(--accent-soft) 72%, var(--panel));
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel));
 }
 
 .hosted-sign-in button {
