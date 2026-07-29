@@ -26,6 +26,7 @@
     "worker:deploy": "wrangler deploy",
     "worker:tail": "wrangler tail",
     "test": "bun test ./test/*.test.ts",
+    "test:runtime-parity": "bun scripts/verify-runtime-parity.mjs",
     "test:convex": "vitest run",
     "typecheck": "bunx tsc --noEmit"
   },

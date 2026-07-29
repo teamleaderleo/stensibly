@@ -41,3 +41,24 @@ jobs:
             convex-test-output.txt
             worker-check-output.txt
           if-no-files-found: ignore
+
+  runtime-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+      - run: bun install
+      - name: Run Bun, Node, and native workerd receiver checks
+        run: |
+          set -o pipefail
+          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
+      - name: Upload runtime parity diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-parity-diagnostics
+          path: runtime-parity-output.txt
+          if-no-files-found: ignore
