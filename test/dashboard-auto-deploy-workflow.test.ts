@@ -26,7 +26,7 @@ describe("automatic dashboard production dispatch", () => {
     }
   });
 
-  test("has only the authority needed to inspect and dispatch workflows", () => {
+  test("has only the authority needed to dispatch the guarded workflow", () => {
     expect(workflow).toContain("actions: write");
     expect(workflow).toContain("contents: read");
     expect(workflow).not.toContain("secrets.");
@@ -35,20 +35,17 @@ describe("automatic dashboard production dispatch", () => {
     expect(workflow).not.toContain("persist-credentials");
   });
 
-  test("coalesces only while a deployment is already active", () => {
-    for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
-      expect(workflow).toContain(`.status == "${status}"`);
-    }
-    expect(workflow).toContain("Dashboard deployment coalesced");
+  test("does not delay or drop a relevant main push", () => {
     expect(workflow).not.toContain("MAX_AUTO_DEPLOYS_PER_24H");
     expect(workflow).not.toContain("MIN_SECONDS_BETWEEN_AUTO_DEPLOYS");
     expect(workflow).not.toContain("24 hours ago");
     expect(workflow).not.toContain("release window");
     expect(workflow).not.toContain("cooldown");
+    expect(workflow).not.toContain("active_count");
+    expect(workflow).not.toContain("deployment coalesced");
   });
 
-  test("retains the guarded main production target", () => {
-    expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/runs");
+  test("dispatches the guarded main production target", () => {
     expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/dispatches");
     expect(workflow).toContain("--data '{\"ref\":\"main\"}'");
     expect(workflow).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
