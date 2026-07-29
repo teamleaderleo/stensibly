@@ -162,7 +162,7 @@ describe("accepted repository instruction identity", () => {
 });
 
 describe("SQLite GitHub issue context", () => {
-  test("accepts one current record and deduplicates exact replay", () => {
+  test("accepts one current record and deduplicates exact observation replay", () => {
     const acceptedAttachment = attachment();
     const first = acceptSqliteGitHubIssueContext(
       store,
@@ -187,10 +187,7 @@ describe("SQLite GitHub issue context", () => {
 
     const replay = acceptSqliteGitHubIssueContext(
       store,
-      acceptanceInput(acceptedAttachment, {
-        syncCursor: "cursor:ignored-replay",
-        observationRef: "github:api:issue:403:observation:replay",
-      }),
+      acceptanceInput(acceptedAttachment),
     );
     expect(replay.replayed).toBe(true);
     expect(replay.record.id).toBe(first.record.id);
@@ -199,6 +196,47 @@ describe("SQLite GitHub issue context", () => {
       project: "scrapbook",
       externalId: first.record.externalId,
     })).toHaveLength(1);
+  });
+
+  test("records synchronization degradation without inventing a provider revision", () => {
+    const acceptedAttachment = attachment();
+    const first = acceptSqliteGitHubIssueContext(store, acceptanceInput(acceptedAttachment));
+    const degraded = acceptSqliteGitHubIssueContext(store, acceptanceInput(acceptedAttachment, {
+      syncStatus: "degraded",
+      degradedReasonCode: "connector-unavailable",
+      syncCursor: null,
+      observationRef: "github:cached:issue:403:observation:2",
+      observedAt: "2026-07-29T11:40:00.000Z",
+    }));
+
+    expect(degraded).toMatchObject({
+      replayed: false,
+      record: {
+        outcome: "synchronization_updated",
+        syncStatus: "degraded",
+        degradedReasonCode: "connector-unavailable",
+        isCurrent: true,
+      },
+    });
+    expect(degraded.record.snapshot.sourceRevision).toBe(first.record.snapshot.sourceRevision);
+    expect(getCurrentSqliteGitHubIssueContext(store, {
+      workspace: "default",
+      project: "scrapbook",
+      externalId: first.record.externalId,
+    })?.id).toBe(degraded.record.id);
+    expect(listSqliteGitHubIssueContextHistory(store, {
+      workspace: "default",
+      project: "scrapbook",
+      externalId: first.record.externalId,
+    }).map((entry) => entry.outcome)).toEqual(["initial", "synchronization_updated"]);
+  });
+
+  test("rejects altered reuse of one observation reference", () => {
+    const acceptedAttachment = attachment();
+    acceptSqliteGitHubIssueContext(store, acceptanceInput(acceptedAttachment));
+    expect(() => acceptSqliteGitHubIssueContext(store, acceptanceInput(acceptedAttachment, {
+      syncCursor: "cursor:changed-under-one-observation",
+    }))).toThrow("observation reference");
   });
 
   test("replaces current state for newer provider content and retains stale evidence", () => {
