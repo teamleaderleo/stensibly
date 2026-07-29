@@ -1,0 +1,77 @@
+name: Apply idempotency scope repair once
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: >-
+      github.event.pull_request.head.ref == 'mica/490-idempotency-scope-exec' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out product branch
+        uses: actions/checkout@v6
+        with:
+          ref: mica/490-idempotency-scope
+          path: source
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Check out execution branch
+        uses: actions/checkout@v6
+        with:
+          ref: mica/490-idempotency-scope-exec
+          path: executor
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply exact repair
+        working-directory: source
+        run: python3 ../executor/scripts/apply-idempotency-scope.py
+
+      - name: Install locked dependencies
+        working-directory: source
+        run: bun install --frozen-lockfile
+
+      - name: Run focused and repository gates
+        working-directory: source
+        run: |
+          set -euo pipefail
+          bun test ./test/idempotency-scope.test.ts
+          bunx vitest run convex/idempotencyScope.test.ts
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Push source-only candidate
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git config user.name "Mica Stensibly worker"
+          git config user.email "teamleaderleo@users.noreply.github.com"
+          git add \
+            src/sqlite-idempotency-scope.ts \
+            src/sqlite-ledger.ts \
+            convex/lib/domain.ts \
+            convex/items.ts \
+            convex/claims.ts \
+            convex/events.ts \
+            convex/artifacts.ts \
+            test/idempotency-scope.test.ts \
+            convex/idempotencyScope.test.ts
+          git diff --cached --check
+          git commit -m "Fail closed on cross-scope idempotency replay"
+          git push origin HEAD:mica/490-idempotency-scope
