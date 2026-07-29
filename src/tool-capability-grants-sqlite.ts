@@ -1,14 +1,23 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   authorizeToolCapability,
+  buildToolCapabilityGrant,
   buildToolCapabilityRequest,
   projectToolCapabilityGrant,
+  type ToolCapabilityApprovalInput,
   type ToolCapabilityAuthorization,
   type ToolCapabilityDenialReason,
   type ToolCapabilityGrant,
+  type ToolCapabilityGrantInput,
   type ToolCapabilityRequestInput,
+  type ToolCapabilityResourceInput,
+  type ToolCapabilityResourceKind,
 } from "./tool-capability-grant.js";
 import type { StensiblyStore } from "./store.js";
+
+export interface ToolCapabilityGrantStoreOptions {
+  clock?: () => Date;
+}
 
 export interface AcceptSqliteToolCapabilityGrantInput {
   workspace: string;
@@ -44,7 +53,6 @@ export interface RevokeSqliteToolCapabilityGrantInput {
   grantId: string;
   expectedGeneration: number;
   expectedFingerprint: string;
-  revokedAt: string;
   revokedBy: string;
   reasonCode: string;
   idempotencyKey: string;
@@ -74,7 +82,6 @@ export interface ReserveSqliteToolCapabilityUseInput {
   project: string;
   grantId: string;
   expectedGeneration: number;
-  now: string;
   request: ToolCapabilityRequestInput;
   idempotencyKey: string;
 }
@@ -134,6 +141,10 @@ interface UsageRow {
   used_uses: number;
 }
 
+interface ConsumedUsageRow {
+  used_uses: number;
+}
+
 interface AdmissionRow {
   sequence: number;
   id: string;
@@ -164,6 +175,27 @@ const reasonCodePattern = /^[a-z0-9][a-z0-9._-]*$/;
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/;
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
+const denialReasons = new Set<ToolCapabilityDenialReason>([
+  "grant_untrusted",
+  "grant_tampered",
+  "request_invalid",
+  "grant_not_yet_active",
+  "grant_expired",
+  "grant_revoked",
+  "generation_mismatch",
+  "workspace_mismatch",
+  "project_mismatch",
+  "actor_mismatch",
+  "worker_session_mismatch",
+  "run_mismatch",
+  "action_not_allowed",
+  "resource_not_allowed",
+  "arguments_not_allowed",
+  "approval_required",
+  "approval_rejected",
+  "approval_expired",
+  "budget_exhausted",
+]);
 
 export class ToolCapabilityGrantStorageConflictError extends Error {
   constructor(message: string) {
@@ -272,6 +304,7 @@ export function ensureToolCapabilityGrantSchema(store: StensiblyStore): void {
 export function acceptSqliteToolCapabilityGrant(
   store: StensiblyStore,
   input: AcceptSqliteToolCapabilityGrantInput,
+  options: ToolCapabilityGrantStoreOptions = {},
 ): SqliteToolCapabilityGrantAcceptance {
   ensureToolCapabilityGrantSchema(store);
   const workspace = boundedWorkspace(input.workspace, "Workspace");
@@ -297,7 +330,7 @@ export function acceptSqliteToolCapabilityGrant(
     );
     if (existingAcceptance) {
       const record = mapGrantRecord(existingAcceptance);
-      if (record.fingerprint !== grant.fingerprint) {
+      if (record.fingerprint !== grant.fingerprint || record.acceptedBy !== acceptedBy) {
         throw new ToolCapabilityGrantStorageConflictError(
           `Grant acceptance reference ${acceptanceRef} was reused with altered content`,
         );
@@ -364,7 +397,7 @@ export function acceptSqliteToolCapabilityGrant(
     }
 
     const id = `accepted_grant_${randomUUID()}`;
-    const acceptedAt = new Date().toISOString();
+    const acceptedAt = serverTimestamp(options, "Grant acceptance time");
     store.db.query(`
       INSERT INTO tool_capability_grants (
         id,
@@ -439,6 +472,7 @@ export function listSqliteToolCapabilityGrantHistory(
 export function revokeSqliteToolCapabilityGrant(
   store: StensiblyStore,
   input: RevokeSqliteToolCapabilityGrantInput,
+  options: ToolCapabilityGrantStoreOptions = {},
 ): SqliteToolCapabilityRevocationAcceptance {
   ensureToolCapabilityGrantSchema(store);
   const workspace = boundedWorkspace(input.workspace, "Workspace");
@@ -452,7 +486,7 @@ export function revokeSqliteToolCapabilityGrant(
     input.expectedFingerprint,
     "Expected grant fingerprint",
   );
-  const revokedAt = canonicalTimestamp(input.revokedAt, "Grant revocation time");
+  const revokedAt = serverTimestamp(options, "Grant revocation time");
   const revokedBy = boundedIdentifier(input.revokedBy, "Revoking actor");
   const reasonCode = boundedReasonCode(input.reasonCode);
   const idempotencyKey = boundedIdentifier(
@@ -540,7 +574,6 @@ export function revokeSqliteToolCapabilityGrant(
     }
 
     const id = `grant_revocation_${randomUUID()}`;
-    const recordedAt = new Date().toISOString();
     store.db.query(`
       INSERT INTO tool_capability_revocations (
         id,
@@ -566,7 +599,7 @@ export function revokeSqliteToolCapabilityGrant(
       revokedBy,
       reasonCode,
       idempotencyKey,
-      recordedAt,
+      revokedAt,
     );
     const inserted = getRevocationRowById(store, id);
     if (!inserted) throw new Error("Tool capability revocation disappeared");
@@ -590,6 +623,7 @@ export function getSqliteToolCapabilityRevocation(
 export function reserveSqliteToolCapabilityUse(
   store: StensiblyStore,
   input: ReserveSqliteToolCapabilityUseInput,
+  options: ToolCapabilityGrantStoreOptions = {},
 ): SqliteToolCapabilityAdmissionResult {
   ensureToolCapabilityGrantSchema(store);
   const workspace = boundedWorkspace(input.workspace, "Workspace");
@@ -599,7 +633,6 @@ export function reserveSqliteToolCapabilityUse(
     input.expectedGeneration,
     "Expected grant generation",
   );
-  const now = canonicalTimestamp(input.now, "Tool admission time");
   const idempotencyKey = boundedIdentifier(
     input.idempotencyKey,
     "Tool admission idempotency key",
@@ -611,7 +644,6 @@ export function reserveSqliteToolCapabilityUse(
     project,
     grantId,
     expectedGeneration,
-    now,
     requestFingerprint: request.fingerprint,
   }));
 
@@ -632,6 +664,7 @@ export function reserveSqliteToolCapabilityUse(
       return { record, replayed: true };
     }
 
+    const now = serverTimestamp(options, "Tool admission time");
     const current = getCurrentSqliteToolCapabilityGrant(store, {
       workspace,
       project,
@@ -660,13 +693,30 @@ export function reserveSqliteToolCapabilityUse(
           usageByPermission,
         });
         if (authorization.authorized) {
-          consumePermissionUse(store, current, authorization.permissionId, now);
+          const permission = current.grant.permissions.find((candidate) =>
+            candidate.permissionId === authorization.permissionId
+          );
+          if (!permission) {
+            throw new Error("Authorized permission is absent from the accepted grant");
+          }
+          const consumedUses = tryConsumePermissionUse(
+            store,
+            current,
+            authorization.permissionId,
+            permission.maxUses,
+            now,
+          );
+          authorization = consumedUses === null
+            ? denied(grantId, request.fingerprint, "budget_exhausted")
+            : {
+              ...authorization,
+              remainingUsesAfterAuthorization: permission.maxUses - consumedUses,
+            };
         }
       }
     }
 
     const id = `tool_admission_${randomUUID()}`;
-    const recordedAt = new Date().toISOString();
     const authorizationJson = JSON.stringify(authorization);
     const authorizationSha256 = hash(authorizationJson);
     store.db.query(`
@@ -698,7 +748,7 @@ export function reserveSqliteToolCapabilityUse(
       request.fingerprint,
       authorizationSha256,
       authorizationJson,
-      recordedAt,
+      now,
     );
     const inserted = getAdmissionRowById(store, id);
     if (!inserted) throw new Error("Tool capability admission disappeared");
@@ -761,14 +811,138 @@ function validateAcceptedGrant(value: ToolCapabilityGrant): ToolCapabilityGrant 
   if (grant.revocation !== null) {
     throw new RangeError("Accepted grants must be immutable and unrevoked; use the revocation ledger");
   }
-  const projection = projectToolCapabilityGrant(grant, {
-    now: grant.issuedAt,
-    trustedGrantFingerprint: grant.fingerprint,
+  const rebuilt = rebuildAcceptedGrant(grant);
+  const projection = projectToolCapabilityGrant(rebuilt, {
+    now: rebuilt.issuedAt,
+    trustedGrantFingerprint: rebuilt.fingerprint,
   });
-  if (projection.state === "invalid" || projection.grantId !== grant.grantId) {
-    throw new RangeError("Accepted tool capability grant fingerprint is invalid");
+  if (
+    projection.state === "invalid"
+    || projection.grantId !== rebuilt.grantId
+    || stableJson(rebuilt) !== stableJson(grant)
+  ) {
+    throw new RangeError("Accepted tool capability grant fingerprint or canonical shape is invalid");
   }
-  return deepFreeze(structuredClone(grant));
+  return rebuilt;
+}
+
+function rebuildAcceptedGrant(grant: ToolCapabilityGrant): ToolCapabilityGrant {
+  const input: ToolCapabilityGrantInput = {
+    grantId: grant.grantId,
+    workspace: grant.workspace,
+    project: grant.project,
+    actorId: grant.actorId,
+    workerSessionId: grant.workerSessionId,
+    runId: grant.runId,
+    generation: grant.generation,
+    issuedAt: grant.issuedAt,
+    expiresAt: grant.expiresAt,
+    issuer: grant.issuer,
+    evidenceRefs: grant.evidenceRefs,
+    permissions: grant.permissions.map((permission) => ({
+      permissionId: permission.permissionId,
+      action: permission.request.action,
+      resource: parseResourceKey(
+        permission.request.resource.kind,
+        permission.request.resource.key,
+      ),
+      arguments: permission.request.arguments,
+      maxUses: permission.maxUses,
+      approval: approvalInput(permission.approval),
+    })),
+  };
+  return buildToolCapabilityGrant(input);
+}
+
+function approvalInput(
+  approval: ToolCapabilityGrant["permissions"][number]["approval"],
+): ToolCapabilityApprovalInput | undefined {
+  if (approval.state === "not_required") return undefined;
+  if (approval.state === "pending") {
+    return {
+      state: approval.state,
+      approvalId: approval.approvalId,
+      bindingFingerprint: approval.bindingFingerprint,
+      expiresAt: approval.expiresAt,
+    };
+  }
+  return {
+    state: approval.state,
+    approvalId: approval.approvalId,
+    bindingFingerprint: approval.bindingFingerprint,
+    decidedBy: approval.decidedBy,
+    decidedAt: approval.decidedAt,
+    expiresAt: approval.expiresAt,
+  };
+}
+
+function parseResourceKey(
+  kind: ToolCapabilityResourceKind,
+  key: string,
+): ToolCapabilityResourceInput {
+  let match: RegExpExecArray | null;
+  switch (kind) {
+    case "github_repository":
+      match = /^github:repository:([^/]+)\/(.+)$/.exec(key);
+      if (match) return { kind, owner: match[1]!, repository: match[2]! };
+      break;
+    case "github_branch_prefix":
+      match = /^github:branch-prefix:([^/]+)\/([^:]+):(.+)$/.exec(key);
+      if (match) {
+        return { kind, owner: match[1]!, repository: match[2]!, prefix: match[3]! };
+      }
+      break;
+    case "github_pull_request":
+      match = /^github:pull-request:([^/]+)\/([^#]+)#([1-9][0-9]*)@([a-f0-9]{40})$/.exec(key);
+      if (match) {
+        return {
+          kind,
+          owner: match[1]!,
+          repository: match[2]!,
+          number: Number(match[3]),
+          headSha: match[4]!,
+        };
+      }
+      break;
+    case "stensibly_project":
+      match = /^stensibly:project:([^/]+)\/(.+)$/.exec(key);
+      if (match) return { kind, workspace: match[1]!, project: match[2]! };
+      break;
+    case "deployment_environment":
+      match = /^deployment:environment:([^@]+)@([a-f0-9]{40})$/.exec(key);
+      if (match) return { kind, environment: match[1]!, sourceSha: match[2]! };
+      break;
+    case "credential_handle":
+      match = /^credential:handle:(.+)$/.exec(key);
+      if (match) return { kind, handle: match[1]! };
+      break;
+    case "external_recipient":
+      match = /^external:recipient:([^:]+):(.+)$/.exec(key);
+      if (match) return { kind, provider: match[1]!, recipientRef: match[2]! };
+      break;
+    case "resource_record":
+      match = /^resource:([^:]+):([^:]+):(.+)$/.exec(key);
+      if (match) {
+        return {
+          kind,
+          system: match[1]!,
+          resourceType: match[2]!,
+          resourceId: match[3]!,
+        };
+      }
+      break;
+    case "spend_budget":
+      match = /^spend:([A-Z]{3}):([1-9][0-9]*)$/.exec(key);
+      if (match) {
+        return {
+          kind,
+          currency: match[1]!,
+          maximumMinorUnits: Number(match[2]),
+        };
+      }
+      break;
+  }
+  throw new RangeError(`Tool capability resource key ${key} is invalid for ${kind}`);
 }
 
 function mapGrantRecord(row: GrantRow): SqliteToolCapabilityGrantRecord {
@@ -796,9 +970,9 @@ function mapGrantRecord(row: GrantRow): SqliteToolCapabilityGrantRecord {
     generation: row.generation,
     fingerprint: row.fingerprint,
     grant,
-    acceptanceRef: row.acceptance_ref,
-    acceptedBy: row.accepted_by,
-    acceptedAt: row.accepted_at,
+    acceptanceRef: boundedIdentifier(row.acceptance_ref, "Stored grant acceptance reference"),
+    acceptedBy: boundedIdentifier(row.accepted_by, "Stored grant accepting actor"),
+    acceptedAt: canonicalTimestamp(row.accepted_at, "Stored grant acceptance time"),
     isCurrent: row.is_current === 1,
   };
 }
@@ -809,8 +983,11 @@ function mapRevocationRecord(row: RevocationRow): SqliteToolCapabilityRevocation
     workspace: row.workspace_id,
     project: row.project_id,
     grantId: row.grant_id,
-    generation: row.generation,
-    grantFingerprint: row.grant_fingerprint,
+    generation: positiveInteger(row.generation, "Stored grant generation"),
+    grantFingerprint: boundedFingerprint(
+      row.grant_fingerprint,
+      "Stored grant fingerprint",
+    ),
     revokedAt: canonicalTimestamp(row.revoked_at, "Stored grant revocation time"),
     revokedBy: boundedIdentifier(row.revoked_by, "Stored revoking actor"),
     reasonCode: boundedReasonCode(row.reason_code),
@@ -837,13 +1014,32 @@ function mapAdmissionRecord(row: AdmissionRow): SqliteToolCapabilityAdmissionRec
     id: row.id,
     workspace: row.workspace_id,
     project: row.project_id,
-    idempotencyKey: row.idempotency_key,
-    attemptFingerprint: row.attempt_fingerprint,
+    idempotencyKey: boundedIdentifier(
+      row.idempotency_key,
+      "Stored admission idempotency key",
+    ),
+    attemptFingerprint: boundedFingerprint(
+      row.attempt_fingerprint,
+      "Stored admission attempt fingerprint",
+    ),
     grantId: row.grant_id,
-    expectedGeneration: row.expected_generation,
-    acceptedGrantGeneration: row.accepted_grant_generation,
-    acceptedGrantFingerprint: row.accepted_grant_fingerprint,
-    requestFingerprint: row.request_fingerprint,
+    expectedGeneration: positiveInteger(
+      row.expected_generation,
+      "Stored expected grant generation",
+    ),
+    acceptedGrantGeneration: row.accepted_grant_generation === null
+      ? null
+      : positiveInteger(row.accepted_grant_generation, "Stored accepted grant generation"),
+    acceptedGrantFingerprint: row.accepted_grant_fingerprint === null
+      ? null
+      : boundedFingerprint(
+        row.accepted_grant_fingerprint,
+        "Stored accepted grant fingerprint",
+      ),
+    requestFingerprint: boundedFingerprint(
+      row.request_fingerprint,
+      "Stored request fingerprint",
+    ),
     authorization,
     recordedAt: canonicalTimestamp(row.recorded_at, "Stored admission time"),
   };
@@ -868,6 +1064,8 @@ function validateStoredAuthorization(
       || value.consumesUse !== true
       || !Number.isSafeInteger(value.remainingUsesAfterAuthorization)
       || value.remainingUsesAfterAuthorization < 0
+      || row.accepted_grant_generation !== value.generation
+      || row.accepted_grant_fingerprint === null
     ) {
       throw new Error(`Stored tool admission ${row.id} authorization is invalid`);
     }
@@ -875,6 +1073,7 @@ function validateStoredAuthorization(
     typeof value.grantId !== "string"
     || (value.requestFingerprint !== null && typeof value.requestFingerprint !== "string")
     || typeof value.reason !== "string"
+    || !denialReasons.has(value.reason as ToolCapabilityDenialReason)
   ) {
     throw new Error(`Stored tool admission ${row.id} denial is invalid`);
   }
@@ -906,13 +1105,23 @@ function getUsageByPermission(
   return Object.fromEntries(rows.map((row) => [row.permission_id, row.used_uses]));
 }
 
-function consumePermissionUse(
+function tryConsumePermissionUse(
   store: StensiblyStore,
   grant: SqliteToolCapabilityGrantRecord,
   permissionId: string,
+  maxUses: number,
   now: string,
-): void {
-  store.db.query(`
+): number | null {
+  const row = store.db.query<ConsumedUsageRow, [
+    string,
+    string,
+    string,
+    number,
+    string,
+    string,
+    string,
+    number,
+  ]>(`
     INSERT INTO tool_capability_permission_usage (
       workspace_id,
       project_id,
@@ -933,7 +1142,9 @@ function consumePermissionUse(
     ) DO UPDATE SET
       used_uses = tool_capability_permission_usage.used_uses + 1,
       updated_at = excluded.updated_at
-  `).run(
+    WHERE tool_capability_permission_usage.used_uses < ?8
+    RETURNING used_uses
+  `).get(
     grant.workspace,
     grant.project,
     grant.grantId,
@@ -941,7 +1152,9 @@ function consumePermissionUse(
     grant.fingerprint,
     permissionId,
     now,
+    maxUses,
   );
+  return row?.used_uses ?? null;
 }
 
 function getGrantRowById(store: StensiblyStore, id: string): GrantRow | null {
@@ -1078,6 +1291,17 @@ function denied(
   };
 }
 
+function serverTimestamp(
+  options: ToolCapabilityGrantStoreOptions,
+  label: string,
+): string {
+  const value = (options.clock ?? (() => new Date()))();
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    throw new RangeError(`${label} clock returned an invalid date`);
+  }
+  return value.toISOString();
+}
+
 function boundedWorkspace(value: string, label: string): string {
   return boundedPattern(value, label, limits.workspace, workspacePattern).toLowerCase();
 }
@@ -1149,12 +1373,6 @@ function stableJson(value: unknown): string {
   if (!isRecord(value)) throw new RangeError("Canonical JSON value is invalid");
   const keys = Object.keys(value).sort(codeUnitCompare);
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
-  return Object.freeze(value);
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
