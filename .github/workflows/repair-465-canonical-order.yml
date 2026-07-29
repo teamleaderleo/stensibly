@@ -87,19 +87,21 @@ jobs:
               expect(Object.keys(firstRequest.arguments).filter((key) => key === "Z" || key === "a"))
                 .toEqual(["Z", "a"]);
 
+              const permissionA = permission({
+                permissionId: "permission_a",
+                arguments: { branchName: "nightjar/a", baseSha: HEAD_SHA },
+              });
+              const permissionZ = permission({
+                permissionId: "permission_Z",
+                arguments: { branchName: "nightjar/Z", baseSha: HEAD_SHA },
+              });
               const firstGrant = buildToolCapabilityGrant(grantInput({}, {
                 evidenceRefs: ["ref:a", "ref:Z"],
-                permissions: [
-                  permission({ permissionId: "permission_a" }),
-                  permission({ permissionId: "permission_Z" }),
-                ],
+                permissions: [permissionA, permissionZ],
               }));
               const secondGrant = buildToolCapabilityGrant(grantInput({}, {
                 evidenceRefs: ["ref:Z", "ref:a"],
-                permissions: [
-                  permission({ permissionId: "permission_Z" }),
-                  permission({ permissionId: "permission_a" }),
-                ],
+                permissions: [permissionZ, permissionA],
               }));
 
               expect(firstGrant.fingerprint).toBe(secondGrant.fingerprint);
