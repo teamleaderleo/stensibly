@@ -4,12 +4,19 @@ import {
   normalizeEndpoint,
   readItems,
 } from './connection.js';
+import {
+  DASHBOARD_VISIBILITY_WAKE_MS,
+  dashboardItemsFingerprint,
+  dashboardRefreshDelay,
+  dashboardRefreshMode,
+  nextDashboardRefreshLevel,
+  normalizeDashboardRefreshLevel,
+} from './dashboard-refresh-policy.js';
 import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
-const REFRESH_INTERVAL_MS = 15000;
 
 const form = document.querySelector('#connect-form');
 const dashboard = document.querySelector('#dashboard');
@@ -34,6 +41,9 @@ const columns = [
 
 let items = [];
 let refreshTimer;
+let refreshLevel = normalizeDashboardRefreshLevel(sessionStorage.stensiblyRefreshLevel);
+let refreshFingerprint = sessionStorage.stensiblyItemsFingerprint || '';
+let lastSuccessfulUpdateLabel = '';
 let requestGeneration = 0;
 let connected = false;
 let endpoint = savedEndpoint();
@@ -59,7 +69,7 @@ itemDetail = createItemDetailController({
   }),
   reportConnectionIssue: (message) => showConnectedIssue(message),
   onChanged: async () => {
-    await refreshCurrent();
+    await refreshCurrent({ interactive: true });
   },
 });
 itemCreate = createItemCreateController({
@@ -91,6 +101,7 @@ document.querySelector('#change-connection').addEventListener('click', beginConn
 document.querySelector('#disconnect-connection').addEventListener('click', disconnect);
 cancelConnection.addEventListener('click', cancelConnectionChange);
 projectFilter.addEventListener('change', render);
+document.addEventListener('visibilitychange', handleVisibilityChange);
 
 if (token && isPlausibleToken(token)) {
   void refreshCurrent({ initial: true });
@@ -139,6 +150,7 @@ async function connect(event) {
   if (endpointChanged || tokenChanged) {
     itemDetail.reset();
     sessionContext.reset();
+    resetRefreshPolicy();
   }
   setConnectionStatus('connecting');
   try {
@@ -146,7 +158,7 @@ async function connect(event) {
     if (!isCurrentRequest(requestId)) return;
     endpoint = candidateEndpoint;
     token = candidateToken;
-    items = nextItems;
+    acceptRefreshResult(nextItems, { initial: true });
     connected = true;
     localStorage.stensiblyEndpoint = endpoint;
     sessionStorage.stensiblyToken = token;
@@ -169,6 +181,7 @@ async function connect(event) {
       items = [];
       itemDetail.reset();
       sessionContext.reset();
+      resetRefreshPolicy();
     }
     showConnectionForm(message, {
       keepDashboard: connected,
@@ -182,6 +195,10 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     showConnectionForm();
     return;
   }
+  if (!interactive && !initial && document.hidden) {
+    scheduleRefresh();
+    return;
+  }
 
   clearRefreshTimer();
   const requestId = beginRequest();
@@ -190,7 +207,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
   try {
     const nextItems = await loadItems(endpoint, token);
     if (!isCurrentRequest(requestId)) return;
-    items = nextItems;
+    acceptRefreshResult(nextItems, { interactive, initial });
     connected = true;
     updateDashboard();
     showConnectedState();
@@ -206,6 +223,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
       items = [];
       itemDetail.reset();
       sessionContext.reset();
+      resetRefreshPolicy();
       showConnectionForm(message);
       return;
     }
@@ -306,6 +324,7 @@ function disconnect() {
   clearStoredToken();
   connected = false;
   items = [];
+  resetRefreshPolicy();
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
   showConnectionForm();
@@ -390,16 +409,70 @@ function setConnectionStatus(label, isError = false) {
   connectionState.classList.toggle('error', isError);
 }
 
+function acceptRefreshResult(nextItems, { interactive = false, initial = false } = {}) {
+  const nextFingerprint = dashboardItemsFingerprint(nextItems);
+  refreshLevel = nextDashboardRefreshLevel({
+    previousFingerprint: refreshFingerprint,
+    nextFingerprint,
+    currentLevel: refreshLevel,
+    interactive,
+    initial,
+  });
+  refreshFingerprint = nextFingerprint;
+  items = nextItems;
+  sessionStorage.stensiblyRefreshLevel = String(refreshLevel);
+  sessionStorage.stensiblyItemsFingerprint = refreshFingerprint;
+}
+
+function resetRefreshPolicy() {
+  refreshLevel = 0;
+  refreshFingerprint = '';
+  lastSuccessfulUpdateLabel = '';
+  sessionStorage.removeItem('stensiblyRefreshLevel');
+  sessionStorage.removeItem('stensiblyItemsFingerprint');
+}
+
 function updateDashboard() {
   populateProjects();
   render();
-  lastUpdated.textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  lastSuccessfulUpdateLabel = new Date().toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
   itemDetail.reconcile();
 }
 
 function scheduleRefresh() {
   clearRefreshTimer();
-  refreshTimer = setTimeout(() => void refreshCurrent(), REFRESH_INTERVAL_MS);
+  if (!connected) return;
+  if (document.hidden) {
+    renderRefreshMode(dashboardRefreshMode({ hidden: true, level: refreshLevel }));
+    return;
+  }
+  const delay = dashboardRefreshDelay(refreshLevel);
+  renderRefreshMode(dashboardRefreshMode({ hidden: false, level: refreshLevel }));
+  refreshTimer = setTimeout(() => void refreshCurrent(), delay);
+}
+
+function handleVisibilityChange() {
+  clearRefreshTimer();
+  if (!connected) return;
+  if (document.hidden) {
+    renderRefreshMode(dashboardRefreshMode({ hidden: true, level: refreshLevel }));
+    return;
+  }
+  renderRefreshMode(dashboardRefreshMode({ hidden: false, level: refreshLevel, waking: true }));
+  refreshTimer = setTimeout(
+    () => void refreshCurrent(),
+    DASHBOARD_VISIBILITY_WAKE_MS,
+  );
+}
+
+function renderRefreshMode(mode) {
+  const updated = lastSuccessfulUpdateLabel
+    ? `updated ${lastSuccessfulUpdateLabel}`
+    : 'waiting for update';
+  lastUpdated.textContent = `${updated} · ${mode}`;
 }
 
 function clearRefreshTimer() {
