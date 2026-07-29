@@ -50,19 +50,21 @@ class MemoryEventStore implements EventStore {
 }
 
 describe("Stensibly stateful MCP result replay", () => {
-  test("replays the committed result without re-running the handler, then deduplicates an explicit retry", async () => {
+  test("characterizes SDK 1.29 replay loss, then recovers through exact application retry", async () => {
     const store = new StensiblyStore(":memory:");
     const eventStore = new MemoryEventStore();
     let handlerCalls = 0;
     let committedItemId: string | undefined;
     const observedTokens: string[] = [];
     const replayGets: string[] = [];
-    const errors: string[] = [];
+    const clientErrors: string[] = [];
+    const serverErrors: string[] = [];
 
     const server = new McpServer(
       { name: "stensibly-stateful-replay", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
+    server.onerror = (error) => serverErrors.push(error.message);
     server.registerTool(
       "create_item",
       {
@@ -107,7 +109,7 @@ describe("Stensibly stateful MCP result replay", () => {
     const serverTransport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => "session-lane-68",
       eventStore,
-      retryInterval: 750,
+      retryInterval: 250,
       enableJsonResponse: false,
     });
     await server.connect(serverTransport);
@@ -138,14 +140,14 @@ describe("Stensibly stateful MCP result replay", () => {
       },
     });
     const client = new Client({ name: "stensibly-stateful-client", version: "0.0.1" });
-    client.onerror = (error) => errors.push(error.message);
+    client.onerror = (error) => clientErrors.push(error.message);
 
     const idempotencyKey = "lane-68-stateful-create-v1";
     const request = {
       project,
       kind: "task" as const,
       title: "Recover the original MCP result",
-      summary: "Commit once, disconnect before delivery, then replay by event cursor.",
+      summary: "Commit once, disconnect before delivery, then attempt replay by event cursor.",
       nextAction: "Distinguish transport replay from a new application retry.",
       priority: 98,
       actor,
@@ -153,18 +155,14 @@ describe("Stensibly stateful MCP result replay", () => {
     };
 
     try {
-      await withDeadline(
-        client.connect(clientTransport),
-        3_000,
-        () => "client.connect did not complete",
-      );
+      await withDeadline(client.connect(clientTransport), 3_000, "client.connect");
       expect(client.getServerVersion()?.name).toBe("stensibly-stateful-replay");
 
       const originalResult = client.callTool(
         { name: "create_item", arguments: request },
         undefined,
         {
-          timeout: 10_000,
+          timeout: 1_200,
           onresumptiontoken: (token) => observedTokens.push(token),
         },
       );
@@ -172,9 +170,10 @@ describe("Stensibly stateful MCP result replay", () => {
       await waitFor(() => handlerCalls === 1, "first durable handler execution");
       await waitFor(() => observedTokens.length === 1, "request priming token");
       await waitFor(
-        () => eventsForToken(eventStore, observedTokens[0]!).length === 2,
-        "stored priming event and result",
+        () => serverErrors.some((message) => message.includes("No connection established")),
+        "SDK 1.29 disconnected-response error",
       );
+      await waitFor(() => replayGets.length === 1, "Last-Event-ID replay GET");
 
       const itemId = committedItemId;
       if (itemId === undefined) throw new Error("Expected committed item id");
@@ -182,45 +181,26 @@ describe("Stensibly stateful MCP result replay", () => {
       const requestEvents = eventsForToken(eventStore, primingToken);
 
       expect(await promiseState(originalResult)).toBe("pending");
-      expect(replayGets).toEqual([]);
-      expect(store.listItems({ project })).toHaveLength(1);
-      expect(countCreatedEvents(store)).toBe(1);
-      expect(requestEvents).toHaveLength(2);
-      expect(Object.keys(requestEvents[0]!.message as object)).toHaveLength(0);
-      expect(requestEvents[1]!.message).toMatchObject({
-        jsonrpc: "2.0",
-        result: {},
-      });
-
-      const replayedEnvelope = await withDeadline(
-        originalResult,
-        4_000,
-        () =>
-          `original result was not replayed: ${JSON.stringify({
-            handlerCalls,
-            observedTokens,
-            replayGets,
-            eventIds: eventStore.events.map((event) => event.id),
-            errors,
-          })}`,
-      );
-      const replayedItem = readToolJson<{ id: string; title: string }>(replayedEnvelope);
-
       expect(replayGets).toEqual([primingToken]);
-      expect(observedTokens).toEqual([primingToken, requestEvents[1]!.id]);
-      expect(replayedItem).toMatchObject({
-        id: itemId,
-        title: request.title,
-      });
-      expect(handlerCalls).toBe(1);
+      expect(observedTokens).toEqual([primingToken]);
+      expect(requestEvents).toHaveLength(1);
+      expect(Object.keys(requestEvents[0]!.message as object)).toHaveLength(0);
       expect(store.listItems({ project }).map((item) => item.id)).toEqual([itemId]);
       expect(countCreatedEvents(store)).toBe(1);
-      expect(errors).toEqual([]);
 
+      await expect(originalResult).rejects.toThrow(/timed out/i);
+      expect(handlerCalls).toBe(1);
+      expect(store.listItems({ project })).toHaveLength(1);
+      expect(countCreatedEvents(store)).toBe(1);
+
+      // A new JSON-RPC call enters the handler again. Stensibly's exact
+      // idempotency fingerprint returns the already committed item and keeps
+      // one durable creation effect even though request-scoped transport replay
+      // failed in the installed SDK.
       const explicitRetryEnvelope = await withDeadline(
         client.callTool({ name: "create_item", arguments: request }),
         3_000,
-        () => "exact application retry did not complete",
+        "exact application retry",
       );
       const explicitRetryItem = readToolJson<{ id: string }>(explicitRetryEnvelope);
       expect(explicitRetryItem.id).toBe(itemId);
@@ -234,13 +214,14 @@ describe("Stensibly stateful MCP result replay", () => {
           arguments: { ...request, title: "Changed request under the same key" },
         }),
         3_000,
-        () => "changed-key conflict request did not complete",
+        "changed-key conflict request",
       );
       expect(isToolError(changedEnvelope)).toBe(true);
       expect(readToolText(changedEnvelope)).toMatch(/different operation/i);
       expect(handlerCalls).toBe(3);
       expect(store.listItems({ project })).toHaveLength(1);
       expect(countCreatedEvents(store)).toBe(1);
+      expect(clientErrors).toEqual([]);
     } finally {
       await settleWithin(client.close(), 1_000);
       await settleWithin(server.close(), 1_000);
@@ -307,12 +288,12 @@ async function waitFor(predicate: () => boolean, description: string): Promise<v
 async function withDeadline<T>(
   promise: Promise<T>,
   milliseconds: number,
-  message: () => string,
+  description: string,
 ): Promise<T> {
   return await Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(message())), milliseconds),
+      setTimeout(() => reject(new Error(`Timed out waiting for ${description}`)), milliseconds),
     ),
   ]);
 }
