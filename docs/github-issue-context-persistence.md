@@ -84,6 +84,8 @@ Provider and observation timestamps help classify freshness but do not grant aut
 
 Reusing one observation reference with altered issue identity, snapshot, instructions, synchronization state, cursor, observation time, or actor fails closed with `GitHubIssueContextConflictError`.
 
+An observation time more than five minutes ahead of the accepting process clock is rejected. This bounded skew allowance prevents a far-future observation from pinning current state while tolerating ordinary clock drift.
+
 Provider revision and observation identity remain separate:
 
 - the same issue and source revision with changed content is altered-revision reuse and fails closed;
