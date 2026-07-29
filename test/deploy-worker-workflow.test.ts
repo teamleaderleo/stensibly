@@ -9,7 +9,8 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("branches:");
     expect(workflow).toContain("- main");
     expect(workflow).toContain('"src/**"');
-    expect(workflow).toContain('"wrangler.toml"');
+    expect(workflow).toContain('"wrangler.jsonc"');
+    expect(workflow).not.toContain('"wrangler.toml"');
     expect(workflow).toContain('"package.json"');
     expect(workflow).toContain('"bun.lock"');
     expect(workflow).toContain("workflow_dispatch:");

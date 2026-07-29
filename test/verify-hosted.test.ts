@@ -96,7 +96,7 @@ describe("hosted verifier checks", () => {
     expect(calls).toBe(0);
   });
 
-  test("verifies health, auth, CORS, items, and MCP initialize", async () => {
+  test("verifies health, Worker receipt, auth, CORS, items, and MCP initialize", async () => {
     const calls: Array<{ url: URL; init: RequestInit }> = [];
     const fetchImpl: FetchLike = async (input, init = {}) => {
       const requestUrl = new URL(String(input));
@@ -105,6 +105,10 @@ describe("hosted verifier checks", () => {
       if (requestUrl.pathname === "/health") {
         return jsonResponse({ ok: true, backend: "convex" }, 200, {
           "x-request-id": "health-success",
+          "x-stensibly-processing-stage": "response_produced",
+          "x-stensibly-worker-version-id": "123e4567-e89b-12d3-a456-426614174000",
+          "x-stensibly-worker-version-tag": "main.5179d439",
+          "x-stensibly-worker-version-created-at": "2026-07-29T11:40:00.000Z",
         });
       }
       if (requestUrl.pathname === "/api/v1/items" && init.method === "OPTIONS") {
@@ -161,10 +165,37 @@ describe("hosted verifier checks", () => {
 
     expect(results).toHaveLength(5);
     expect(results.every((result) => result.ok)).toBe(true);
+    expect(results[0]?.detail).toContain(
+      "workerVersion=123e4567-e89b-12d3-a456-426614174000",
+    );
     expect(calls).toHaveLength(5);
     const output = formatResults(results);
     expect(output).not.toContain(token);
     expect(output).not.toContain("requestId=");
+  });
+
+  test("fails health verification when the Worker receipt is missing", async () => {
+    const fetchImpl: FetchLike = async (input) => {
+      const requestUrl = new URL(String(input));
+      if (requestUrl.pathname === "/health") {
+        return jsonResponse({ ok: true, backend: "convex" }, 200, {
+          "x-request-id": "missing-receipt",
+        });
+      }
+      return jsonResponse({ error: "later check" }, 500, {
+        "x-request-id": "later-check",
+      });
+    };
+
+    const results = await verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(results[0]).toMatchObject({ name: "health", ok: false });
+    expect(results[0]?.detail).toContain("x-stensibly-processing-stage=response_produced");
+    expect(results[0]?.detail).toContain("requestId=missing-receipt");
   });
 
   test("runs every check, redacts failures, and includes valid request IDs", async () => {

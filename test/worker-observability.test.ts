@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   FAILURE_CATEGORY_HEADER,
+  PROCESSING_STAGE_HEADER,
   REQUEST_ID_HEADER,
+  WORKER_VERSION_CREATED_AT_HEADER,
+  WORKER_VERSION_ID_HEADER,
+  WORKER_VERSION_TAG_HEADER,
   acceptedRequestId,
   classifyRoute,
   observeWorkerRequest,
@@ -49,6 +53,7 @@ describe("Worker request logging", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get(REQUEST_ID_HEADER)).toBe("client-123");
+    expect(response.headers.get(PROCESSING_STAGE_HEADER)).toBe("response_produced");
     expect(records).toEqual([{
       event: "request.complete",
       requestId: "client-123",
@@ -57,11 +62,70 @@ describe("Worker request logging", () => {
       status: 200,
       durationMs: 6,
       outcome: "success",
+      processingStage: "response_produced",
     }]);
     const serialized = JSON.stringify(records);
     expect(serialized).not.toContain(rawToken);
     expect(serialized).not.toContain("private");
     expect(serialized).not.toContain("authorization");
+  });
+
+  test("returns bounded Worker version receipts in headers and safe logs", async () => {
+    const records: RequestLogRecord[] = [];
+    const response = await observeWorkerRequest(
+      new Request("https://api.example/mcp", { method: "POST" }),
+      async () => Response.json({ jsonrpc: "2.0", result: {}, id: 1 }),
+      {
+        createRequestId: () => "versioned-request",
+        log: (record) => records.push(record),
+        workerVersion: {
+          id: "123e4567-e89b-12d3-a456-426614174000",
+          tag: "main.5179d439",
+          createdAt: "2026-07-29T11:40:00.000Z",
+        },
+      },
+    );
+
+    expect(response.headers.get(REQUEST_ID_HEADER)).toBe("versioned-request");
+    expect(response.headers.get(PROCESSING_STAGE_HEADER)).toBe("response_produced");
+    expect(response.headers.get(WORKER_VERSION_ID_HEADER)).toBe(
+      "123e4567-e89b-12d3-a456-426614174000",
+    );
+    expect(response.headers.get(WORKER_VERSION_TAG_HEADER)).toBe("main.5179d439");
+    expect(response.headers.get(WORKER_VERSION_CREATED_AT_HEADER)).toBe(
+      "2026-07-29T11:40:00.000Z",
+    );
+    expect(records[0]).toMatchObject({
+      requestId: "versioned-request",
+      route: "mcp",
+      processingStage: "response_produced",
+      workerVersionId: "123e4567-e89b-12d3-a456-426614174000",
+      workerVersionTag: "main.5179d439",
+      workerVersionCreatedAt: "2026-07-29T11:40:00.000Z",
+    });
+  });
+
+  test("omits malformed Worker version metadata without changing the response", async () => {
+    const records: RequestLogRecord[] = [];
+    const response = await observeWorkerRequest(
+      new Request("https://api.example/health"),
+      async () => Response.json({ ok: true }),
+      {
+        createRequestId: () => "invalid-version-request",
+        log: (record) => records.push(record),
+        workerVersion: {
+          id: "contains spaces",
+          tag: "unsafe\r\ntag",
+          createdAt: "2026-07-29T11:40:00.000Z",
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get(WORKER_VERSION_ID_HEADER)).toBeNull();
+    expect(response.headers.get(WORKER_VERSION_TAG_HEADER)).toBeNull();
+    expect(response.headers.get(WORKER_VERSION_CREATED_AT_HEADER)).toBeNull();
+    expect(records[0]?.workerVersionId).toBeUndefined();
   });
 
   test("generates a request ID when the incoming value is unsafe", async () => {
