@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
 import {
   MCP_FAILURE_STAGE_HEADER,
+  MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
   MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+  MCP_TOOL_MANIFEST_REVISION,
   MCP_TOOL_NAMES,
   withMcpDiagnostics,
 } from "../src/mcp-diagnostics.ts";
@@ -15,9 +17,13 @@ import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
 const protocolVersion = "2025-06-18";
 
 describe("MCP connector diagnostics", () => {
-  test("publishes one stable manifest fingerprint that matches tools/list", async () => {
+  test("publishes one stable manifest identity that matches initialize and tools/list", async () => {
     const store = new StensiblyStore(":memory:");
     try {
+      expect(MCP_TOOL_MANIFEST_REVISION).toMatch(/^[a-f0-9]{12}$/);
+      expect(MCP_SERVER_VERSION).toBe(`0.0.1+manifest.${MCP_TOOL_MANIFEST_REVISION}`);
+      expect(MCP_TOOL_MANIFEST_FINGERPRINT).toContain(MCP_TOOL_MANIFEST_REVISION);
+
       const token = createApiToken(store, {
         name: "Manifest diagnostics reader",
         scopes: ["read"],
@@ -29,6 +35,13 @@ describe("MCP connector diagnostics", () => {
         MCP_TOOL_MANIFEST_FINGERPRINT,
       );
       expect(initialized.headers.get(MCP_TOOL_COUNT_HEADER)).toBe(String(MCP_TOOL_NAMES.length));
+      const initializedPayload = await initialized.json() as {
+        result?: { serverInfo?: { name?: unknown; version?: unknown } };
+      };
+      expect(initializedPayload.result?.serverInfo).toEqual({
+        name: "stensibly",
+        version: MCP_SERVER_VERSION,
+      });
 
       const listed = await mcpRequest(app, token.token, {
         jsonrpc: "2.0",
