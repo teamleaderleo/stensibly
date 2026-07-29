@@ -1,0 +1,60 @@
+name: Apply site icon assets
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.head_ref == 'lantern/527-site-icons'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply exact resized favicon
+        run: python3 scripts/apply-site-icons.py
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate candidate
+        run: |
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run verify:dashboard -- --html-file site/index.html
+
+      - name: Commit product candidate and remove applicator
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "stensibly-applicator"
+          git config user.email "actions@users.noreply.github.com"
+
+          git add \
+            site/index.html \
+            site/favicon.ico \
+            src/verify-dashboard.ts \
+            test/verify-dashboard.test.ts \
+            test/site-icon.test.ts
+
+          git rm \
+            .github/workflows/apply-site-icons-once.yml \
+            scripts/apply-site-icons.py \
+            scripts/favicon.ico.b64
+
+          git commit -m "Use supplied artwork for site favicon"
+          git push origin "HEAD:${HEAD_BRANCH}"
