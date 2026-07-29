@@ -42,7 +42,7 @@ jobs:
                   raise SystemExit(f'expected one occurrence of {old!r}, found {count}')
               source = source.replace(old, new)
 
-          marker = 'function stableJson(value: ToolCapabilityJsonValue): string {'
+          marker = 'function stableJson(value: unknown): string {'
           comparator = '''/** Version 1 canonical ordering uses direct UTF-16 code-unit comparison. */
           function compareUnicodeCodeUnits(left: string, right: string): number {
             return left < right ? -1 : left > right ? 1 : 0;
