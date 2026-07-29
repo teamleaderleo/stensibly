@@ -31,22 +31,19 @@ jobs:
 
           path = Path('src/tool-capability-grants-sqlite.ts')
           source = path.read_text()
-          old = '''      if (record.fingerprint !== grant.fingerprint) {
-                throw new ToolCapabilityGrantStorageConflictError(
-                  `Grant acceptance reference ${acceptanceRef} was reused with altered content`,
-                );
-              }'''
-          new = '''      if (
+          comparison = '      if (record.fingerprint !== grant.fingerprint) {'
+          replacement = '''      if (
                 record.fingerprint !== grant.fingerprint
                 || record.acceptedBy !== acceptedBy
-              ) {
-                throw new ToolCapabilityGrantStorageConflictError(
-                  `Grant acceptance reference ${acceptanceRef} was reused with altered content or accepting actor`,
-                );
-              }'''
-          if source.count(old) != 1:
-              raise SystemExit('acceptance replay anchor missing or duplicated')
-          path.write_text(source.replace(old, new))
+              ) {'''
+          message = '`Grant acceptance reference ${acceptanceRef} was reused with altered content`'
+          message_replacement = '`Grant acceptance reference ${acceptanceRef} was reused with altered content or accepting actor`'
+          if source.count(comparison) != 1:
+              raise SystemExit('acceptance comparison anchor missing or duplicated')
+          if source.count(message) != 1:
+              raise SystemExit('acceptance conflict message missing or duplicated')
+          source = source.replace(comparison, replacement).replace(message, message_replacement)
+          path.write_text(source)
           PY
       - name: Validate repair
         run: |
