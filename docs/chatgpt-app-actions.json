@@ -1,8 +1,8 @@
 {
   "snapshotVersion": 3,
   "manifestVersion": 1,
-  "toolCount": 26,
-  "toolManifestFingerprint": "sha256:ecbae4d7efe2b6757b321a80d301fe06b81e70641717ddd682f9ceab0d4165bb",
+  "toolCount": 27,
+  "toolManifestFingerprint": "sha256:0e7353a9a48b1b9d6d618a8a4a19b4520a97ba54f1ba4c91fb54294fbbe6f516",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -12,6 +12,7 @@
     "edit_continuation",
     "get_brief",
     "get_continuation",
+    "get_github_project_context",
     "get_item",
     "get_operation_receipt",
     "get_project_attachment",
