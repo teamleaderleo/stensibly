@@ -24,11 +24,8 @@ replace_once(
 
 replace_once(
     ROOT / "src" / "verify-dashboard.ts",
-    '''    'content="Stensibly keeps shared work visible and resumable for people and agents."',
-    'src="/hosted-session-bridge.js"', ''',
-    '''    'content="Stensibly keeps shared work visible and resumable for people and agents."',
-    'href="/favicon.ico"',
-    'src="/hosted-session-bridge.js"', ''',
+    '    \'content="Stensibly keeps shared work visible and resumable for people and agents."\',',
+    '    \'content="Stensibly keeps shared work visible and resumable for people and agents."\',\n    \'href="/favicon.ico"\',',
 )
 
 replace_once(
