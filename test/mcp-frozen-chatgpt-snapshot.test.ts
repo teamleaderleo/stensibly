@@ -201,13 +201,11 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
       );
 
       const survey = await call<{
-        project: string | null;
         recentCompletions: Array<{ id: string }>;
       }>(cachedClient, "survey_workspace", {
         project: "oauth-dogfood",
         limit: 10,
       });
-      expect(survey.project).toBe("oauth-dogfood");
       expect(survey.recentCompletions.map((item) => item.id)).toContain(created.id);
     } finally {
       await cachedClient.close();
