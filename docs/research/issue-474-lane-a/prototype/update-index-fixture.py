@@ -77,7 +77,7 @@ def main() -> int:
     text = replace_last(
         text,
         "    addEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void;",
-        """    addEventListener<Type extends keyof EventMap>(this: EventTarget<EventMap>, type: Type, handler: (event: EventMap[Type]) => void): void;
+        """    addEventListener<Type extends keyof EventMap>(this: EventTarget, type: Type, handler: (event: EventMap[Type]) => void): void;
     receiverFree(this: void, value: string): string;
     static detachable(param0: string): string;""",
         "EventTarget expected output",
@@ -99,7 +99,6 @@ declare const prop: Promise<number>;
 }
 declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: EventTarget<WorkerGlobalScopeEventMap> | typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
 declare function receiverFree(this: void, value: string): string;
-declare function detachable(param0: string): string;
 declare function things(this: ServiceWorkerGlobalScope | typeof globalThis | null | void, param0: boolean): IterableIterator<string>;
 declare const prop: Promise<number>;
 """,
