@@ -1,0 +1,69 @@
+name: Recover PR 465 authority repair
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+    paths:
+      - .github/workflows/recover-465-authority-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recover-pr-465-authority-repair
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: github.event.pull_request.head.ref == 'nightjar/453-tool-capability-grants'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: nightjar/453-tool-capability-grants
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Repair multiline maxUses anchor
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/repair-465-authority-boundary.yml')
+          text = path.read_text()
+          old = '''          max_uses_anchor = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+            const approval = canonicalApproval('''
+          max_uses_replacement = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+            if (highImpactActions.has(request.action) && maxUses !== 1) {
+              throw new RangeError(`High-impact action ${request.action} must be limited to one use`);
+            }
+            const approval = canonicalApproval('''
+          '''
+          new = '''          max_uses_anchor = '''    const maxUses = permissionInput.maxUses === undefined
+              ? 1
+              : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+            const approval = canonicalApproval('''
+          max_uses_replacement = '''    const maxUses = permissionInput.maxUses === undefined
+              ? 1
+              : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+            if (highImpactActions.has(request.action) && maxUses !== 1) {
+              throw new RangeError(`High-impact action ${request.action} must be limited to one use`);
+            }
+            const approval = canonicalApproval('''
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('authority repair anchor block missing or duplicated')
+          path.write_text(text.replace(old, new))
+          PY
+      - name: Commit recovered applicator and self-remove
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "Nightjar recovery"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/recover-465-authority-repair.yml
+          git add .github/workflows/repair-465-authority-boundary.yml
+          git commit -m "fix: recover PR 465 authority repair applicator"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/stensibly.git" HEAD:nightjar/453-tool-capability-grants
