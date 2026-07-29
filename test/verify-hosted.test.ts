@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
   MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
@@ -102,7 +103,7 @@ describe("hosted verifier checks", () => {
     expect(calls).toBe(0);
   });
 
-  test("verifies health, Worker receipt, auth, CORS, items, and MCP initialize", async () => {
+  test("verifies health, Worker receipt, auth, CORS, items, and versioned MCP initialize", async () => {
     const calls: Array<{ url: URL; init: RequestInit }> = [];
     const fetchImpl: FetchLike = async (input, init = {}) => {
       const requestUrl = new URL(String(input));
@@ -155,7 +156,7 @@ describe("hosted verifier checks", () => {
           result: {
             protocolVersion: "2025-06-18",
             capabilities: {},
-            serverInfo: { name: "stensibly", version: "0.0.1" },
+            serverInfo: { name: "stensibly", version: MCP_SERVER_VERSION },
           },
         }, 200, {
           "x-request-id": "mcp-success",
@@ -178,11 +179,65 @@ describe("hosted verifier checks", () => {
     expect(results[0]?.detail).toContain(
       "workerVersion=123e4567-e89b-12d3-a456-426614174000",
     );
+    expect(results[4]?.detail).toContain(`version=${MCP_SERVER_VERSION}`);
     expect(results[4]?.detail).toContain(`manifest=${MCP_TOOL_MANIFEST_FINGERPRINT}`);
     expect(calls).toHaveLength(5);
     const output = formatResults(results);
     expect(output).not.toContain(token);
     expect(output).not.toContain("requestId=");
+  });
+
+  test("fails MCP verification when the server manifest version is stale", async () => {
+    const fetchImpl: FetchLike = async (input, init = {}) => {
+      const requestUrl = new URL(String(input));
+      if (requestUrl.pathname === "/health") {
+        return jsonResponse({ ok: true, backend: "convex" }, 200, {
+          "x-request-id": "health-success",
+          "x-stensibly-processing-stage": "response_produced",
+          "x-stensibly-worker-version-id": "123e4567-e89b-12d3-a456-426614174000",
+        });
+      }
+      if (requestUrl.pathname === "/api/v1/items" && init.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "access-control-allow-origin": "https://www.stensibly.com",
+            "access-control-allow-headers": "Authorization, Content-Type",
+            "access-control-allow-methods": "GET, OPTIONS",
+          },
+        });
+      }
+      if (requestUrl.pathname === "/api/v1/items") {
+        if (!new Headers(init.headers).has("authorization")) {
+          return jsonResponse({}, 401, { "www-authenticate": "Bearer" });
+        }
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          serverInfo: { name: "stensibly", version: "0.0.1" },
+        },
+      }, 200, {
+        "x-request-id": "stale-server-version",
+        [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
+        [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+      });
+    };
+
+    const results = await verifyHosted({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(results[4]).toMatchObject({ name: "remote MCP initialize", ok: false });
+    expect(results[4]?.detail).toContain(`Expected MCP serverInfo.version=${MCP_SERVER_VERSION}`);
+    expect(results[4]?.detail).toContain("received 0.0.1");
+    expect(results[4]?.detail).toContain("requestId=stale-server-version");
   });
 
   test("fails health verification when the Worker receipt is missing", async () => {
