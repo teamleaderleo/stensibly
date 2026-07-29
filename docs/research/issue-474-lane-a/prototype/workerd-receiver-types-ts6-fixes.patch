@@ -1,0 +1,117 @@
+diff --git a/types/src/transforms/globals.ts b/types/src/transforms/globals.ts
+--- a/types/src/transforms/globals.ts
++++ b/types/src/transforms/globals.ts
+@@ -145,6 +145,16 @@ function createGlobalFunctionParameters(
+   return [globalReceiver, ...parameters.slice(1)];
+ }
+ 
++function updateMethodParameters(
++  ctx: ts.TransformationContext,
++  node: ts.MethodSignature,
++  parameters: readonly ts.ParameterDeclaration[]
++): ts.MethodSignature;
++function updateMethodParameters(
++  ctx: ts.TransformationContext,
++  node: ts.MethodDeclaration,
++  parameters: readonly ts.ParameterDeclaration[]
++): ts.MethodDeclaration;
+ function updateMethodParameters(
+   ctx: ts.TransformationContext,
+   node: ts.MethodSignature | ts.MethodDeclaration,
+@@ -159,7 +169,7 @@ function updateMethodParameters(
+       node.name,
+       node.questionToken,
+       node.typeParameters,
+-      parameters,
++      ctx.factory.createNodeArray(parameters),
+       node.type
+     );
+   }
+@@ -171,7 +181,7 @@ function updateMethodParameters(
+     node.name,
+     node.questionToken,
+     node.typeParameters,
+-    parameters,
++    ctx.factory.createNodeArray(parameters),
+     node.type,
+     node.body
+   );
+@@ -181,26 +191,35 @@ function widenContextGlobalScopeDeclaration(
+   ctx: ts.TransformationContext,
+   node: ts.InterfaceDeclaration | ts.ClassDeclaration
+ ): ts.InterfaceDeclaration | ts.ClassDeclaration {
+-  const members = node.members.map((member) => {
+-    if (ts.isMethodSignature(member) || ts.isMethodDeclaration(member)) {
+-      const parameters = createGlobalFunctionParameters(ctx, member.parameters);
+-      return updateMethodParameters(ctx, member, parameters);
+-    }
+-    return member;
+-  });
+   if (ts.isInterfaceDeclaration(node)) {
++    const members = node.members.map((member) => {
++      if (ts.isMethodSignature(member)) {
++        const parameters = createGlobalFunctionParameters(ctx, member.parameters);
++        return updateMethodParameters(ctx, member, parameters);
++      }
++      return member;
++    });
+     return ctx.factory.updateInterfaceDeclaration(
+       node,
+       node.modifiers,
+       node.name,
+       node.typeParameters,
+       node.heritageClauses,
+-      members
++      ctx.factory.createNodeArray(members)
+     );
+   }
++  const members = node.members.map((member) => {
++    if (ts.isMethodDeclaration(member)) {
++      const parameters = createGlobalFunctionParameters(ctx, member.parameters);
++      return updateMethodParameters(ctx, member, parameters);
++    }
++    return member;
++  });
+   return ctx.factory.updateClassDeclaration(
+     node,
+     node.modifiers,
+     node.name,
+     node.typeParameters,
+     node.heritageClauses,
+-    members
++    ctx.factory.createNodeArray(members)
+   );
+ }
+diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/overrides/index.ts
+--- a/types/src/transforms/overrides/index.ts
++++ b/types/src/transforms/overrides/index.ts
+@@ -187,7 +187,9 @@ function inheritGeneratedReceiver<Member extends ts.ClassElement | ts.TypeElemen
+   if (!ts.isMethodDeclaration(override) && !ts.isMethodSignature(override)) {
+     return override;
+   }
+-  const parameters = [cloneParameter(receiver), ...override.parameters];
++  const parameters = ts.factory.createNodeArray([
++    cloneParameter(receiver),
++    ...override.parameters,
++  ]);
+   if (ts.isMethodDeclaration(override)) {
+     return ts.factory.updateMethodDeclaration(
+       override,
+@@ -200,7 +202,7 @@ function inheritGeneratedReceiver<Member extends ts.ClassElement | ts.TypeElemen
+       parameters,
+       override.type,
+       override.body
+-    ) as Member;
++    ) as unknown as Member;
+   }
+   if (ts.isMethodSignature(override)) {
+     return ts.factory.updateMethodSignature(
+@@ -212,7 +214,7 @@ function inheritGeneratedReceiver<Member extends ts.ClassElement | ts.TypeElemen
+       override.typeParameters,
+       parameters,
+       override.type
+-    ) as Member;
++    ) as unknown as Member;
+   }
+   return override;
+ }
