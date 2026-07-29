@@ -47,8 +47,7 @@ jobs:
           authorization_anchor = '''  const authorization = validateStoredAuthorization(parsed, row);
             return {
           '''
-          authorization_replacement = '''  const authorization = validateStoredAuthorization(parsed, row);
-            const acceptedGrantGeneration = row.accepted_grant_generation === null
+          authorization_replacement = '''  const acceptedGrantGeneration = row.accepted_grant_generation === null
               ? null
               : positiveInteger(row.accepted_grant_generation, "Stored accepted grant generation");
             const acceptedGrantFingerprint = row.accepted_grant_fingerprint === null
@@ -73,6 +72,7 @@ jobs:
               }
               mapGrantRecord(acceptedRow);
             }
+            const authorization = validateStoredAuthorization(parsed, row);
             if (authorization.authorized && acceptedGrantGeneration === null) {
               throw new Error(`Stored tool admission ${row.id} authorized without an accepted grant`);
             }
