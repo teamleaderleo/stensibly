@@ -29,6 +29,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           source_path = Path('src/tool-capability-grants-sqlite.ts')
           source = source_path.read_text()
@@ -81,22 +82,25 @@ jobs:
               raise SystemExit('authorization return anchor missing or duplicated')
           source = source.replace(authorization_anchor, authorization_replacement, 1)
 
-          inline_reference = '''    acceptedGrantGeneration: row.accepted_grant_generation === null
-              ? null
-              : positiveInteger(row.accepted_grant_generation, "Stored accepted grant generation"),
-            acceptedGrantFingerprint: row.accepted_grant_fingerprint === null
-              ? null
-              : boundedFingerprint(
-                row.accepted_grant_fingerprint,
-                "Stored accepted grant fingerprint",
-              ),
-          '''
-          local_reference = '''    acceptedGrantGeneration,
-            acceptedGrantFingerprint,
-          '''
-          if source.count(inline_reference) != 1:
-              raise SystemExit('inline accepted grant reference missing or duplicated')
-          source_path.write_text(source.replace(inline_reference, local_reference, 1))
+          reference_pattern = re.compile(
+              r'    acceptedGrantGeneration: row\.accepted_grant_generation === null\n'
+              r'      \? null\n'
+              r'      : positiveInteger\(row\.accepted_grant_generation, "Stored accepted grant generation"\),\n'
+              r'    acceptedGrantFingerprint: row\.accepted_grant_fingerprint === null\n'
+              r'      \? null\n'
+              r'      : boundedFingerprint\(\n'
+              r'        row\.accepted_grant_fingerprint,\n'
+              r'        "Stored accepted grant fingerprint",\n'
+              r'      \),\n'
+          )
+          source, count = reference_pattern.subn(
+              '    acceptedGrantGeneration,\n    acceptedGrantFingerprint,\n',
+              source,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'expected one inline accepted grant reference, found {count}')
+          source_path.write_text(source)
 
           test_path = Path('test/tool-capability-grants-sqlite.test.ts')
           tests = test_path.read_text()
