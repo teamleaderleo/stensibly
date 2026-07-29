@@ -64,7 +64,8 @@ jobs:
           for patch in \
             workerd-receiver-types.patch \
             workerd-receiver-types-followup.patch \
-            workerd-receiver-types-review-fixes.patch
+            workerd-receiver-types-review-fixes.patch \
+            workerd-receiver-types-ts6-fixes.patch
           do
             python3 docs/research/issue-474-lane-a/prototype/normalize-unified-diff.py \
               "docs/research/issue-474-lane-a/prototype/$patch" \
@@ -81,16 +82,21 @@ jobs:
           git -C workerd apply --exclude=types/test/index.spec.ts \
             ../normalized-patches/workerd-receiver-types-followup.patch
 
-          git -C workerd apply --check \
-            ../normalized-patches/workerd-receiver-types-review-fixes.patch
-          git -C workerd apply \
-            ../normalized-patches/workerd-receiver-types-review-fixes.patch
+          for patch in \
+            workerd-receiver-types-review-fixes.patch \
+            workerd-receiver-types-ts6-fixes.patch
+          do
+            git -C workerd apply --check "../normalized-patches/$patch"
+            git -C workerd apply "../normalized-patches/$patch"
+          done
 
           python3 docs/research/issue-474-lane-a/prototype/update-index-fixture.py \
             workerd
 
           git -C workerd diff --check
-          git -C workerd diff --binary > workerd-receiver-types-combined.patch
+          git -C workerd add -N types/test/types/fetch-receiver.ts
+          git -C workerd diff --binary -- . ':(exclude).bazelrc' \
+            > workerd-receiver-types-combined.patch
 
       - name: Upload combined review patch
         uses: actions/upload-artifact@v4
