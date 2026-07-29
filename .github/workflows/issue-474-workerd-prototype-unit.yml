@@ -59,7 +59,8 @@ jobs:
             workerd-receiver-types.patch \
             workerd-receiver-types-followup.patch \
             workerd-receiver-types-review-fixes.patch \
-            workerd-receiver-types-ts6-fixes.patch
+            workerd-receiver-types-ts6-fixes.patch \
+            workerd-receiver-types-inherited-global.patch
           do
             python3 docs/research/issue-474-lane-a/prototype/normalize-unified-diff.py \
               "docs/research/issue-474-lane-a/prototype/$patch" \
@@ -70,6 +71,7 @@ jobs:
             ../normalized-patches/workerd-receiver-types-followup.patch
           git -C workerd apply ../normalized-patches/workerd-receiver-types-review-fixes.patch
           git -C workerd apply ../normalized-patches/workerd-receiver-types-ts6-fixes.patch
+          git -C workerd apply ../normalized-patches/workerd-receiver-types-inherited-global.patch
           python3 docs/research/issue-474-lane-a/prototype/update-index-fixture.py workerd
           git -C workerd diff --check
 
