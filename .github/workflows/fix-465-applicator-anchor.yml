@@ -1,4 +1,4 @@
-name: Fix PR 465 applicator anchor
+name: Run repaired PR 465 applicator
 
 on:
   pull_request:
@@ -11,11 +11,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: fix-pr-465-applicator-anchor
+  group: run-repaired-pr-465-applicator
   cancel-in-progress: false
 
 jobs:
-  fix:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -23,37 +23,49 @@ jobs:
           ref: nightjar/453-tool-capability-grants
           fetch-depth: 0
           persist-credentials: false
-      - name: Replace indentation-sensitive anchor
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Extract and run repaired product patch
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('.github/workflows/repair-465-authority-boundary.yml')
-          lines = path.read_text().splitlines()
-          start = next(i for i, line in enumerate(lines) if 'max_uses_anchor =' in line)
-          end = next(
-              i for i, line in enumerate(lines[start:], start)
+          workflow = Path('.github/workflows/repair-465-authority-boundary.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(workflow) if line.strip() == "python3 - <<'PY'") + 1
+          end = next(i for i, line in enumerate(workflow[start:], start) if line.strip() == 'PY')
+          script = [line[10:] if line.startswith('          ') else line for line in workflow[start:end]]
+
+          anchor_start = next(i for i, line in enumerate(script) if 'max_uses_anchor =' in line)
+          anchor_end = next(
+              i for i, line in enumerate(script[anchor_start:], anchor_start)
               if 'source = source.replace(max_uses_anchor, max_uses_replacement)' in line
           )
           replacement = [
-              "          approval_anchor = '    const approval = canonicalApproval('",
-              "          approval_insertion = '''    if (highImpactActions.has(request.action) && maxUses !== 1) {",
-              "              throw new RangeError(`High-impact action ${request.action} must be limited to one use`);",
-              "            }",
-              "            const approval = canonicalApproval('''",
-              "          if source.count(approval_anchor) != 1:",
-              "              raise SystemExit('approval anchor missing or duplicated')",
-              "          source = source.replace(approval_anchor, approval_insertion)",
+              "approval_anchor = '    const approval = canonicalApproval('",
+              "approval_insertion = '''    if (highImpactActions.has(request.action) && maxUses !== 1) {",
+              "      throw new RangeError(`High-impact action ${request.action} must be limited to one use`);",
+              "    }",
+              "    const approval = canonicalApproval('''",
+              "if source.count(approval_anchor) != 1:",
+              "    raise SystemExit('approval anchor missing or duplicated')",
+              "source = source.replace(approval_anchor, approval_insertion)",
           ]
-          path.write_text('\n'.join(lines[:start] + replacement + lines[end + 1:]) + '\n')
+          repaired = script[:anchor_start] + replacement + script[anchor_end + 1:]
+          Path('/tmp/repair-465.py').write_text('\n'.join(repaired) + '\n')
           PY
-      - name: Commit applicator repair and remove helper
+          python3 /tmp/repair-465.py
+      - name: Validate repair
+        run: |
+          bun install --frozen-lockfile
+          bun test test/tool-capability-grant.test.ts
+          bun run typecheck
+      - name: Commit product repair and remove applicators
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           git config user.name "Quill capability repair"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/fix-465-applicator-anchor.yml
-          git add .github/workflows/repair-465-authority-boundary.yml
-          git commit -m "chore: make capability repair anchor exact"
+          git rm .github/workflows/repair-465-authority-boundary.yml
+          git add src/tool-capability-grant.ts test/tool-capability-grant.test.ts docs/tool-capability-grants.md
+          git commit -m "fix: bind high-impact grants to one approved effect"
           git push "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/stensibly.git" HEAD:nightjar/453-tool-capability-grants
