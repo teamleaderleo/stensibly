@@ -14,6 +14,7 @@ export interface SqliteIdempotencyExpectation {
   operation: string;
   itemId?: string;
   actorId?: string | null;
+  requestFingerprint?: string;
   payload?: unknown;
   payloadSubset?: Record<string, unknown>;
 }
@@ -44,6 +45,8 @@ export function requireMatchingSqliteIdempotency(
     || row.type !== expected.operation
     || (expected.itemId !== undefined && row.item_id !== expected.itemId)
     || (Object.hasOwn(expected, "actorId") && row.actor_id !== expected.actorId)
+    || (expected.requestFingerprint !== undefined
+      && (!isRecord(payload) || payload.requestFingerprint !== expected.requestFingerprint))
     || (Object.hasOwn(expected, "payload") && stableJson(payload) !== stableJson(expected.payload))
     || (expected.payloadSubset !== undefined && !containsSubset(payload, expected.payloadSubset));
   if (mismatch) {
