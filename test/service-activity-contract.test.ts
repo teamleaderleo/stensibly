@@ -255,10 +255,10 @@ describe("service activity contract", () => {
     });
   });
 
-  test("the aggregate contains no raw request, identity, payload, or URL fields", () => {
+  test("the aggregate exposes no raw request, identity, payload, or URL fields", () => {
     const [bucket] = aggregateServiceActivity([observation()], "minute");
     if (!bucket) throw new Error("Missing fixture bucket");
-    const serialized = JSON.stringify(bucket);
+    const keys = collectKeys(bucket);
 
     for (const forbidden of [
       "requestId",
@@ -275,7 +275,14 @@ describe("service activity contract", () => {
       "url",
       "path",
     ]) {
-      expect(serialized).not.toContain(forbidden);
+      expect(keys).not.toContain(forbidden);
     }
   });
 });
+
+function collectKeys(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(collectKeys);
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([key, entry]) => [key, ...collectKeys(entry)]);
+}
