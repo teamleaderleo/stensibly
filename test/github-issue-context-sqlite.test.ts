@@ -279,7 +279,10 @@ describe("SQLite GitHub issue context", () => {
   });
 
   test("keeps workspace, project, repository, and issue identities isolated", () => {
-    const scrapbook = attachment("scrapbook");
+    const scrapbook = attachment("scrapbook", [
+      "teamleaderleo/stensibly",
+      "teamleaderleo/another",
+    ]);
     const other = attachment("other");
     const defaultRecord = acceptSqliteGitHubIssueContext(store, acceptanceInput(scrapbook));
     const otherWorkspace = acceptSqliteGitHubIssueContext(store, acceptanceInput(scrapbook, {
