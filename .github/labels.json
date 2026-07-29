@@ -20,6 +20,26 @@
     "description": "Observation or question requiring bounded investigation before commitment"
   },
   {
+    "name": "type:roadmap",
+    "color": "5319e7",
+    "description": "Parent plan or index coordinating several related work lanes"
+  },
+  {
+    "name": "type:incident",
+    "color": "b60205",
+    "description": "Active failure cluster, degraded service, or recovery record"
+  },
+  {
+    "name": "type:decision",
+    "color": "7057ff",
+    "description": "Bounded product, policy, or contract choice requiring a durable verdict"
+  },
+  {
+    "name": "type:research",
+    "color": "c2e0c6",
+    "description": "Planned evidence gathering, comparison, standards study, or upstream inquiry"
+  },
+  {
     "name": "area:product",
     "color": "1f6feb",
     "description": "Product model, user experience, or feature surface"
@@ -55,6 +75,76 @@
     "description": "Deployment, monitoring, recovery, capacity, or production operations"
   },
   {
+    "name": "area:api",
+    "color": "0366d6",
+    "description": "REST endpoints, public request contracts, handlers, or client API behaviour"
+  },
+  {
+    "name": "area:mcp",
+    "color": "0b7285",
+    "description": "MCP tools, transport, manifests, sessions, or client interoperability"
+  },
+  {
+    "name": "area:github",
+    "color": "24292f",
+    "description": "GitHub issues, pull requests, repositories, webhooks, or context integration"
+  },
+  {
+    "name": "area:providers",
+    "color": "6f42c1",
+    "description": "External provider adapters, connections, credentials, capabilities, or quotas"
+  },
+  {
+    "name": "area:data",
+    "color": "0052cc",
+    "description": "Schemas, persistence, events, migrations, integrity, or reconciliation"
+  },
+  {
+    "name": "area:dashboard",
+    "color": "1d76db",
+    "description": "Control room, browser dashboard, item detail, or operator-facing views"
+  },
+  {
+    "name": "area:frontend",
+    "color": "54aeff",
+    "description": "Browser interaction, styling, assets, responsiveness, or visual behaviour"
+  },
+  {
+    "name": "area:workers",
+    "color": "a371f7",
+    "description": "Runner adapters, worker lifecycle, enrolment, routing, or execution profiles"
+  },
+  {
+    "name": "integration:github",
+    "color": "24292f",
+    "description": "Material dependency on GitHub platform behaviour or APIs"
+  },
+  {
+    "name": "integration:chatgpt",
+    "color": "10a37f",
+    "description": "Material dependency on ChatGPT apps, connectors, actions, or conversation hosting"
+  },
+  {
+    "name": "integration:cloudflare",
+    "color": "f6821f",
+    "description": "Material dependency on Cloudflare Workers, workerd, routing, or deployment"
+  },
+  {
+    "name": "integration:convex",
+    "color": "ee342f",
+    "description": "Material dependency on Convex storage, functions, auth, or deployment"
+  },
+  {
+    "name": "integration:vercel",
+    "color": "000000",
+    "description": "Material dependency on Vercel builds, hosting, previews, or deployment"
+  },
+  {
+    "name": "integration:coderabbit",
+    "color": "7c3aed",
+    "description": "Material dependency on CodeRabbit review behaviour or capacity"
+  },
+  {
     "name": "concern:security",
     "color": "b60205",
     "description": "Security, authority, abuse resistance, or unsafe-effect concern"
@@ -83,6 +173,36 @@
     "name": "concern:creative-experiment",
     "color": "fef2c0",
     "description": "Evidence-seeking creative experiment or novel direction"
+  },
+  {
+    "name": "concern:reliability",
+    "color": "d93f0b",
+    "description": "Failure recovery, retry safety, stale state, availability, or resilience concern"
+  },
+  {
+    "name": "concern:observability",
+    "color": "006b75",
+    "description": "Diagnostics, receipts, tracing, auditability, monitoring, or explanation concern"
+  },
+  {
+    "name": "concern:usability",
+    "color": "bfdadc",
+    "description": "Setup friction, discoverability, comprehension, or interaction-flow concern"
+  },
+  {
+    "name": "concern:accessibility",
+    "color": "c5f015",
+    "description": "Accessible interaction, semantics, contrast, keyboard, or assistive-technology concern"
+  },
+  {
+    "name": "concern:cost",
+    "color": "f9d0c4",
+    "description": "Provider quota, review capacity, compute use, or material operating-cost concern"
+  },
+  {
+    "name": "concern:data-integrity",
+    "color": "8b0000",
+    "description": "Idempotency, concurrency, ordering, invariants, or durable-state correctness concern"
   },
   {
     "name": "triage:needed",
