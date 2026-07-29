@@ -11,11 +11,11 @@ export function dashboardItemsFingerprint(items) {
 }
 
 export function normalizeDashboardRefreshLevel(value) {
-  const parsed = Number.parseInt(String(value ?? '0'), 10);
-  if (!Number.isFinite(parsed)) return 0;
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) return 0;
   return Math.min(
     DASHBOARD_REFRESH_DELAYS_MS.length - 1,
-    Math.max(0, Math.trunc(parsed)),
+    Math.max(0, parsed),
   );
 }
 
