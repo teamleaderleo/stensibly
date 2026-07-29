@@ -3,6 +3,7 @@ import { createApiToken } from "../src/auth.ts";
 import { createMcpServer } from "../src/mcp.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
 
 const protocolVersion = "2025-06-18";
 const actor = {
@@ -149,6 +150,36 @@ describe("remote MCP cleanup", () => {
       }
 
       expect(closeAttempts).toBe(15);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("classifies server construction failures as MCP failures", async () => {
+    const store = new StensiblyStore(":memory:");
+
+    try {
+      const token = createApiToken(store, {
+        name: "Factory failure reader",
+        scopes: ["read"],
+        projects: ["oauth-dogfood"],
+      });
+      const app = createServerApp(store, {
+        mcp: {
+          createServer() {
+            throw new Error("synthetic server construction failure");
+          },
+        },
+      });
+
+      const response = await mcpRequest(app, token.token, initializeMessage(99));
+      expect(response.status).toBe(500);
+      expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBe("mcp_failure");
+      expect(await response.json()).toEqual({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: 99,
+      });
     } finally {
       store.close();
     }
