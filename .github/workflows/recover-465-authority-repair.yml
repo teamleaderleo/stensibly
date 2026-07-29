@@ -33,15 +33,15 @@ jobs:
 
           path = Path('.github/workflows/repair-465-authority-boundary.yml')
           text = path.read_text()
-          old = '''          max_uses_anchor = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+          old = r"""          max_uses_anchor = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
             const approval = canonicalApproval('''
           max_uses_replacement = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
             if (highImpactActions.has(request.action) && maxUses !== 1) {
               throw new RangeError(`High-impact action ${request.action} must be limited to one use`);
             }
             const approval = canonicalApproval('''
-          '''
-          new = '''          max_uses_anchor = '''    const maxUses = permissionInput.maxUses === undefined
+          """
+          new = r"""          max_uses_anchor = '''    const maxUses = permissionInput.maxUses === undefined
               ? 1
               : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
             const approval = canonicalApproval('''
@@ -52,7 +52,7 @@ jobs:
               throw new RangeError(`High-impact action ${request.action} must be limited to one use`);
             }
             const approval = canonicalApproval('''
-          '''
+          """
           if text.count(old) != 1:
               raise SystemExit('authority repair anchor block missing or duplicated')
           path.write_text(text.replace(old, new))
