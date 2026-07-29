@@ -104,20 +104,16 @@ jobs:
               raise SystemExit('unsafe text pattern marker missing or duplicated')
           source = source.replace(old_unsafe, new_unsafe)
 
-          old_max_uses = '''    const maxUses = permissionInput.maxUses === undefined
-              ? 1
-              : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+          max_uses_anchor = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
             const approval = canonicalApproval('''
-          new_max_uses = '''    const maxUses = permissionInput.maxUses === undefined
-              ? 1
-              : boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
+          max_uses_replacement = ''': boundedInteger(permissionInput.maxUses, "Permission maximum uses", 1, limits.maxUses);
             if (highImpactActions.has(request.action) && maxUses !== 1) {
               throw new RangeError(`High-impact action ${request.action} must be limited to one use`);
             }
             const approval = canonicalApproval('''
-          if source.count(old_max_uses) != 1:
-              raise SystemExit('maxUses marker missing or duplicated')
-          source = source.replace(old_max_uses, new_max_uses)
+          if source.count(max_uses_anchor) != 1:
+              raise SystemExit('maxUses anchor missing or duplicated')
+          source = source.replace(max_uses_anchor, max_uses_replacement)
 
           old_projection = '''/** Projects grant state without exposing exact arguments or secret material. */
           export function projectToolCapabilityGrant(
