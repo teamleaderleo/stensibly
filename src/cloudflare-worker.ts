@@ -3,7 +3,16 @@ import {
   enforceOAuthRegistrationAdmission,
   type OAuthRegistrationRateLimiter,
 } from "./mcp-oauth-registration-admission.js";
-import { observeWorkerRequest } from "./worker-observability.js";
+import {
+  observeWorkerRequest,
+  type WorkerVersionReceipt,
+} from "./worker-observability.js";
+
+export interface CloudflareWorkerVersionMetadata {
+  id: string;
+  tag?: string;
+  timestamp?: string;
+}
 
 export interface CloudflareBindings {
   CONVEX_URL: string;
@@ -25,6 +34,7 @@ export interface CloudflareBindings {
   STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS?: string;
   STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS?: string;
   OAUTH_REGISTRATION_RATE_LIMITER?: OAuthRegistrationRateLimiter;
+  CF_VERSION_METADATA?: CloudflareWorkerVersionMetadata;
 }
 
 const worker = {
@@ -43,7 +53,10 @@ const worker = {
         if (admissionRejection) return admissionRejection;
         return await createHostedAppFromEnv(stringEnvironment(env)).fetch(observedRequest);
       },
-      { allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS) },
+      {
+        allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
+        workerVersion: workerVersionReceipt(env.CF_VERSION_METADATA),
+      },
     );
   },
 };
@@ -57,6 +70,20 @@ function oauthConfigurationPresent(env: CloudflareBindings): boolean {
     || env.STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS?.trim()
     || env.STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS?.trim()
   );
+}
+
+function workerVersionReceipt(
+  metadata: CloudflareWorkerVersionMetadata | undefined,
+): WorkerVersionReceipt | undefined {
+  const id = metadata?.id?.trim();
+  if (!id) return undefined;
+  const tag = metadata?.tag?.trim();
+  const createdAt = metadata?.timestamp?.trim();
+  return {
+    id,
+    ...(tag ? { tag } : {}),
+    ...(createdAt ? { createdAt } : {}),
+  };
 }
 
 function stringEnvironment(env: CloudflareBindings): Record<string, string | undefined> {
