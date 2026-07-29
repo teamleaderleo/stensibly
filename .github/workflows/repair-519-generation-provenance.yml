@@ -48,13 +48,8 @@ jobs:
 
           test_path = Path('test/tool-capability-grants-sqlite.test.ts')
           tests = test_path.read_text()
-          anchor = '''    expect(() => accept(firstGrant, null, {
-              acceptedBy: "actor:other",
-            })).toThrow("acceptance reference");
-          '''
-          addition = '''    expect(() => accept(firstGrant, null, {
-              acceptedBy: "actor:other",
-            })).toThrow("acceptance reference");
+          anchor = '\n    const altered = grant(1, {}, {\n'
+          addition = '''
             expect(() => accept(firstGrant, null, {
               acceptanceRef: "accept:other-reference",
             })).toThrow("acceptance provenance");
@@ -62,9 +57,11 @@ jobs:
               acceptanceRef: "accept:other-actor-reference",
               acceptedBy: "actor:other",
             })).toThrow("acceptance provenance");
+
+            const altered = grant(1, {}, {
           '''
           if tests.count(anchor) != 1:
-              raise SystemExit('acceptance provenance test anchor missing or duplicated')
+              raise SystemExit('altered-generation test anchor missing or duplicated')
           test_path.write_text(tests.replace(anchor, addition))
           PY
       - name: Validate repair
