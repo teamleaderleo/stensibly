@@ -4,7 +4,10 @@ import {
 } from "../src/github-issue-context-sqlite.ts";
 import { buildGitHubIssueContext } from "../src/github-issue-context.ts";
 import { getSqliteGitHubProjectContext } from "../src/github-project-context.ts";
-import { acceptSqliteProjectAttachment } from "../src/project-attachments-sqlite.ts";
+import {
+  acceptSqliteProjectAttachment,
+  ensureProjectAttachmentSchema,
+} from "../src/project-attachments-sqlite.ts";
 import { compileProjectContract, renderProjectContract } from "../src/project-contract.ts";
 import { StensiblyStore } from "../src/store.ts";
 
@@ -38,6 +41,7 @@ function issue(number: number, title: string, sourceRevision: string, updatedAt:
 }
 
 function seedGitHubContext(store: StensiblyStore): void {
+  ensureProjectAttachmentSchema(store);
   const attachment = acceptSqliteProjectAttachment(store, {
     project: "scrapbook",
     snapshot: compileProjectContract(renderProjectContract({
