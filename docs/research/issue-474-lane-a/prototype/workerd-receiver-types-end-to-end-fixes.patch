@@ -1,0 +1,217 @@
+diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/overrides/index.ts
+--- a/types/src/transforms/overrides/index.ts
++++ b/types/src/transforms/overrides/index.ts
+@@ -175,6 +175,64 @@ function cloneParameter(
+   );
+ }
+ 
++function specializeReceiver(
++  receiver: ts.ParameterDeclaration,
++  typeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined
++): ts.ParameterDeclaration {
++  if (
++    typeParameters === undefined ||
++    typeParameters.length === 0 ||
++    receiver.type === undefined ||
++    !ts.isTypeReferenceNode(receiver.type) ||
++    receiver.type.typeArguments !== undefined
++  ) {
++    return receiver;
++  }
++  const typeArguments = typeParameters.map((parameter) =>
++    ts.factory.createTypeReferenceNode(parameter.name)
++  );
++  const type = ts.factory.updateTypeReferenceNode(
++    receiver.type,
++    receiver.type.typeName,
++    typeArguments
++  );
++  return ts.factory.updateParameterDeclaration(
++    receiver,
++    receiver.modifiers,
++    receiver.dotDotDotToken,
++    receiver.name,
++    receiver.questionToken,
++    type,
++    receiver.initializer
++  );
++}
++
++function specializeMemberReceiver<
++  Member extends ts.ClassElement | ts.TypeElement,
++>(
++  member: Member,
++  typeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined
++): Member {
++  const receiver = getThisParameter(member);
++  if (receiver === undefined) return member;
++  const parameters = ts.factory.createNodeArray([
++    specializeReceiver(receiver, typeParameters),
++    ...member.parameters.slice(1),
++  ]);
++  if (ts.isMethodDeclaration(member)) {
++    return ts.factory.updateMethodDeclaration(
++      member,
++      member.modifiers,
++      member.asteriskToken,
++      member.name,
++      member.questionToken,
++      member.typeParameters,
++      parameters,
++      member.type,
++      member.body
++    ) as unknown as Member;
++  }
++  if (ts.isMethodSignature(member)) {
++    return ts.factory.updateMethodSignature(
++      member,
++      member.modifiers,
++      member.name,
++      member.questionToken,
++      member.typeParameters,
++      parameters,
++      member.type
++    ) as unknown as Member;
++  }
++  return member;
++}
++
+ // Overrides predate generated receiver parameters, so an omitted `this` in a
+ // legacy override should inherit the generated receiver. An explicit receiver
+ // (including `this: void`) is treated as an intentional policy override.
+@@ -227,9 +285,12 @@ function mergeMembers<Member extends ts.ClassElement | ts.TypeElement>(
+   generated: ts.NodeArray<Member>,
+   overrides: ts.NodeArray<ts.ClassElement>,
+-  transformer: (member: ts.ClassElement) => Member
++  transformer: (member: ts.ClassElement) => Member,
++  typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration>
+ ): Member[] {
+-  const result = [...generated];
++  const result = generated.map((member) =>
++    specializeMemberReceiver(member, typeParameters)
++  );
+   const grouped = groupMembersByKey(overrides);
+   for (const [key, overrideMembers] of grouped) {
+@@ -402,15 +463,21 @@ function createOverrideDefineVisitor(
+     if (ts.isClassDeclaration(node) && node.name !== undefined) {
+       defines = maybeGetDefines(overrideCtx.program, node.name.text);
+       node = applyOverride(ctx, overrideCtx, node, (node, override) => {
++        const typeParameters = override.typeParameters ?? node.typeParameters;
+         return ctx.factory.updateClassDeclaration(
+           node,
+           node.modifiers,
+           override.name,
+-          override.typeParameters ?? node.typeParameters,
++          typeParameters,
+           override.heritageClauses ?? node.heritageClauses,
+-          mergeMembers(node.members, override.members, (member) => member)
++          mergeMembers(
++            node.members,
++            override.members,
++            (member) => member,
++            typeParameters
++          )
+         );
+       });
+     } else if (ts.isInterfaceDeclaration(node)) {
+       defines = maybeGetDefines(overrideCtx.program, node.name.text);
+       node = applyOverride(ctx, overrideCtx, node, (node, override) => {
+         assert(override.name !== undefined);
++        const typeParameters = override.typeParameters ?? node.typeParameters;
+         return ctx.factory.updateInterfaceDeclaration(
+           node,
+           node.modifiers,
+           override.name,
+-          override.typeParameters ?? node.typeParameters,
++          typeParameters,
+           override.heritageClauses ?? node.heritageClauses,
+-          mergeMembers(node.members, override.members, (member) =>
+-            classToTypeElement(ctx, member)
++          mergeMembers(
++            node.members,
++            override.members,
++            (member) => classToTypeElement(ctx, member),
++            typeParameters
+           )
+         );
+       });
+diff --git a/types/src/transforms/globals.ts b/types/src/transforms/globals.ts
+--- a/types/src/transforms/globals.ts
++++ b/types/src/transforms/globals.ts
+@@ -41,12 +41,30 @@ export function createGlobalScopeTransformer(
+ ): ts.TransformerFactory<ts.SourceFile> {
+   return (ctx) => {
+     return (node) => {
+-      const visitor = createGlobalScopeVisitor(ctx, checker);
++      const declarations = collectNamedDeclarations(node);
++      const visitor = createGlobalScopeVisitor(ctx, checker, declarations);
+       return ts.visitEachChild(node, visitor, ctx);
+     };
+   };
+ }
+ 
++function collectNamedDeclarations(
++  sourceFile: ts.SourceFile
++): Map<string, ts.InterfaceDeclaration | ts.ClassDeclaration> {
++  const declarations = new Map<
++    string,
++    ts.InterfaceDeclaration | ts.ClassDeclaration
++  >();
++  const visitor = (node: ts.Node): void => {
++    if (
++      (ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)) &&
++      node.name !== undefined
++    ) {
++      declarations.set(node.name.text, node);
++    }
++    ts.forEachChild(node, visitor);
++  };
++  visitor(sourceFile);
++  return declarations;
++}
++
+ // Copy type nodes everywhere they are referenced
+ function createInlineVisitor(
+@@ -318,7 +336,8 @@ function createGlobalScopeVisitor(
+   ctx: ts.TransformationContext,
+-  checker: ts.TypeChecker
++  checker: ts.TypeChecker,
++  declarations: Map<string, ts.InterfaceDeclaration | ts.ClassDeclaration>
+ ): ts.Visitor {
+@@ -351,15 +370,20 @@ function createGlobalScopeVisitor(
+ 
+         for (const superType of clause.types) {
+-          const superTypeSymbol = checker.getSymbolAtLocation(
+-            superType.expression
+-          );
+-          assert(superTypeSymbol !== undefined);
+-          const superTypeDeclarations = superTypeSymbol.getDeclarations();
+-          assert.strictEqual(superTypeDeclarations?.length, 1);
+-          const superTypeDeclaration = superTypeDeclarations[0];
+-          assert(
+-            ts.isInterfaceDeclaration(superTypeDeclaration) ||
+-              ts.isClassDeclaration(superTypeDeclaration)
+-          );
++          let superTypeDeclaration:
++            | ts.InterfaceDeclaration
++            | ts.ClassDeclaration
++            | undefined;
++          if (ts.isIdentifier(superType.expression)) {
++            superTypeDeclaration = declarations.get(superType.expression.text);
++          }
++          if (superTypeDeclaration === undefined) {
++            const superTypeSymbol = checker.getSymbolAtLocation(
++              superType.expression
++            );
++            assert(superTypeSymbol !== undefined);
++            const superTypeDeclarations = superTypeSymbol.getDeclarations();
++            assert.strictEqual(superTypeDeclarations?.length, 1);
++            const declaration = superTypeDeclarations[0];
++            assert(
++              ts.isInterfaceDeclaration(declaration) ||
++                ts.isClassDeclaration(declaration)
++            );
++            superTypeDeclaration = declaration;
++          }
+           nodes.push(
+             // Pass any defined type arguments for inlining in extracted nodes
