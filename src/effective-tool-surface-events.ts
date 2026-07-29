@@ -17,22 +17,22 @@ export interface RecordEffectiveToolSurfaceEventInput {
   ledger: Pick<WorkLedger, "recordEvent">;
   run: Pick<
     WorkRun,
-    "id" | "itemId" | "generation" | "runnerType" | "runnerProfile"
+    "id" | "itemId" | "actorId" | "generation" | "runnerType" | "runnerProfile"
   >;
   snapshot: EffectiveToolSurfaceSnapshot;
   previousSnapshot?: EffectiveToolSurfaceSnapshot;
-  actor?: ActorInput;
+  actor: ActorInput;
 }
 
 /**
- * Persists one bounded observation through the existing cross-backend item
- * event contract. Capability display names, raw provenance values, and the raw
- * external surface reference are deliberately excluded.
+ * Persists one bounded, actor-attributed runner observation through the
+ * existing cross-backend item event contract. This is evidence reported by the
+ * runner, not server verification that a host actually bound every capability.
  */
 export async function recordEffectiveToolSurfaceEvent(
   input: RecordEffectiveToolSurfaceEventInput,
 ): Promise<ItemEvent> {
-  validateRunBinding(input.run, input.snapshot, input.previousSnapshot);
+  validateRunBinding(input.run, input.snapshot, input.previousSnapshot, input.actor);
   const reconciliation = reconcileEffectiveToolSurface(
     input.snapshot,
     input.previousSnapshot,
@@ -40,7 +40,7 @@ export async function recordEffectiveToolSurfaceEvent(
   const payload = buildPayload(input.run, input.snapshot, reconciliation);
   return input.ledger.recordEvent({
     id: input.run.itemId,
-    ...(input.actor ? { actor: input.actor } : {}),
+    actor: input.actor,
     type: EFFECTIVE_TOOL_SURFACE_EVENT_TYPE,
     payload,
     idempotencyKey: eventIdempotencyKey(input.run.itemId, input.snapshot),
@@ -72,6 +72,7 @@ function buildPayload(
     run: {
       id: run.id,
       itemId: run.itemId,
+      actorId: run.actorId,
       generation: run.generation,
       runnerType: run.runnerType,
       runnerProfile: run.runnerProfile,
@@ -112,6 +113,9 @@ function buildPayload(
       recommendedRecoveryAction: reconciliation.recommendedRecoveryAction,
     },
     evidencePolicy: {
+      observationAuthority: "runner_report",
+      reportedByActorId: run.actorId,
+      serverVerifiedExecutableBindings: false,
       containsCapabilityDisplayNames: false,
       containsRawProvenance: false,
       containsExternalSurfaceReference: false,
@@ -126,7 +130,11 @@ function validateRunBinding(
   run: RecordEffectiveToolSurfaceEventInput["run"],
   snapshot: EffectiveToolSurfaceSnapshot,
   previous: EffectiveToolSurfaceSnapshot | undefined,
+  actor: ActorInput,
 ): void {
+  if (actor.id !== run.actorId) {
+    throw new RangeError("Tool-surface reporter does not match the durable run actor");
+  }
   if (snapshot.runId !== run.id) {
     throw new RangeError("Tool-surface snapshot run ID does not match the durable run");
   }
