@@ -177,6 +177,10 @@ export function ensureGitHubIssueContextSchema(store: StensiblyStore): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issue_context_observation
       ON github_issue_contexts(workspace_id, project_id, observation_ref);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issue_context_single_current
+      ON github_issue_contexts(workspace_id, project_id, external_id)
+      WHERE is_current = 1;
+
     CREATE INDEX IF NOT EXISTS idx_github_issue_context_current
       ON github_issue_contexts(workspace_id, project_id, external_id, is_current, sequence DESC);
 
@@ -257,7 +261,12 @@ export function acceptSqliteGitHubIssueContext(
       project: prepared.project,
       externalId: prepared.snapshot.reference.externalId,
     });
-    const classification = classifyAcceptance(current, prepared.snapshot, prepared.instructionSet.id);
+    const classification = classifyAcceptance(
+      current,
+      prepared.snapshot,
+      prepared.instructionSet.id,
+      prepared.observedAt,
+    );
     if (classification.isCurrent) {
       store.db.query(`
         UPDATE github_issue_contexts
@@ -472,6 +481,7 @@ function classifyAcceptance(
   current: GitHubIssueContextRecord | null,
   snapshot: GitHubIssueContext,
   instructionSetId: string,
+  observedAt: string,
 ): { outcome: GitHubIssueContextAcceptanceOutcome; isCurrent: boolean } {
   if (!current) return { outcome: "initial", isCurrent: true };
   const comparison = compareGitHubIssueContexts(current.snapshot, snapshot);
@@ -489,9 +499,12 @@ function classifyAcceptance(
     case "updated":
       return { outcome: "updated", isCurrent: true };
     case "identical":
-      return current.instructionSet.id === instructionSetId
-        ? { outcome: "synchronization_updated", isCurrent: true }
-        : { outcome: "instruction_rebound", isCurrent: true };
+      if (current.instructionSet.id !== instructionSetId) {
+        return { outcome: "instruction_rebound", isCurrent: true };
+      }
+      return Date.parse(observedAt) < Date.parse(current.observedAt)
+        ? { outcome: "stale", isCurrent: false }
+        : { outcome: "synchronization_updated", isCurrent: true };
   }
 }
 

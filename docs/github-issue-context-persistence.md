@@ -70,13 +70,13 @@ The SQLite transaction classifies each write as one of:
 
 - `initial` — first current observation for the scoped issue;
 - `updated` — changed provider revision with a non-stale provider `updatedAt`;
-- `stale` — changed provider revision whose provider `updatedAt` predates the current view;
+- `stale` — changed provider content whose provider `updatedAt` predates the current view, or unchanged provider content and instructions whose observation time predates the current synchronization evidence;
 - `instruction_rebound` — identical provider content accepted under a changed instruction set;
-- `synchronization_updated` — identical provider content and instructions accepted through a new observation, including a synchronized/degraded transition.
+- `synchronization_updated` — identical provider content and instructions accepted through a new, non-older observation, including a synchronized/degraded transition.
 
 Current replacement is transactional. `initial`, `updated`, `instruction_rebound`, and `synchronization_updated` rows become current and clear the prior current flag. A `stale` row remains durable evidence but never replaces the current accepted view.
 
-Provider timestamps help classify freshness but do not grant authority. A later synchronization adapter must still use provider cursors, ETags, delivery identities, or exact fetched revisions where available.
+Provider and observation timestamps help classify freshness but do not grant authority. A later synchronization adapter must still use provider cursors, ETags, delivery identities, or exact fetched revisions where available.
 
 ## Observation replay and conflict rules
 
@@ -89,6 +89,7 @@ Provider revision and observation identity remain separate:
 - the same issue and source revision with changed content is altered-revision reuse and fails closed;
 - the same provider revision and content may be observed again under a new observation reference;
 - a new observation can change synchronized context to degraded, or degraded context back to synchronized, without inventing a GitHub source revision;
+- an observation older than the current synchronization evidence is retained as stale history and cannot regress the current view;
 - the same snapshot and provider revision may be accepted under a changed instruction set as `instruction_rebound`.
 
 This separation prevents an idempotent provider snapshot from hiding connector or synchronization failure.
@@ -102,7 +103,7 @@ Each acceptance records either:
 
 A synchronized row cannot carry a degraded reason. The optional cursor and observation reference are evidence only. This slice does not create polling, webhook intake, retries, or provider reachability checks.
 
-A connector outage may therefore append a new degraded observation while retaining the same last-known GitHub snapshot and source revision. That degraded row becomes the current Stensibly view, while the public GitHub issue remains the recovery source.
+A connector outage may therefore append a new degraded observation while retaining the same last-known GitHub snapshot and source revision. That degraded row becomes the current Stensibly view only when its observation is not older than the current synchronization evidence; delayed older observations remain durable non-current history. The public GitHub issue remains the recovery source.
 
 ## Integrity checks
 
