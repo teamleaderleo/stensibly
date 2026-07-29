@@ -9,6 +9,7 @@ import {
   normalizeWorkspace,
   publicItem,
   requireMatchingIdempotency,
+  requireSameIdempotentItem,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
@@ -37,8 +38,11 @@ export const acquire = mutation({
       "claim.created",
     );
     if (existing) {
-      const item = await ctx.db.get("items", existing.itemId);
-      if (!item) throw new Error("Idempotent item no longer exists");
+      const item = await requireSameIdempotentItem(ctx, existing, {
+        itemExternalId: args.id,
+        actorExternalId: args.actor.id,
+        payloadSubset: { leaseSeconds: args.leaseSeconds },
+      });
       return await publicItem(ctx, item);
     }
 
@@ -114,8 +118,14 @@ export const renew = mutation({
       "claim.renewed",
     );
     if (existing) {
-      const item = await ctx.db.get("items", existing.itemId);
-      if (!item) throw new Error("Idempotent item no longer exists");
+      const item = await requireSameIdempotentItem(ctx, existing, {
+        itemExternalId: args.id,
+        actorExternalId: args.actor.id,
+        payloadSubset: {
+          leaseSeconds: args.leaseSeconds,
+          generation: args.expectedClaimGeneration,
+        },
+      });
       return await publicItem(ctx, item);
     }
 
@@ -192,8 +202,11 @@ export const release = mutation({
       "claim.released",
     );
     if (existing) {
-      const item = await ctx.db.get("items", existing.itemId);
-      if (!item) throw new Error("Idempotent item no longer exists");
+      const item = await requireSameIdempotentItem(ctx, existing, {
+        itemExternalId: args.id,
+        actorExternalId: args.actor.id,
+        payloadSubset: { generation: args.expectedClaimGeneration },
+      });
       return await publicItem(ctx, item);
     }
 

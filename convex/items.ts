@@ -20,6 +20,7 @@ import {
   publicEvent,
   publicItem,
   requireMatchingIdempotency,
+  requireSameIdempotentItem,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
@@ -51,6 +52,7 @@ export const create = mutation({
     const workspace = await ensureWorkspace(ctx, workspaceSlug);
     if (!workspace) throw new Error("Failed to create workspace");
 
+    const projectSlug = assertSlug(args.project, "Project");
     const existing = await requireMatchingIdempotency(
       ctx,
       workspace._id,
@@ -58,12 +60,18 @@ export const create = mutation({
       "item.created",
     );
     if (existing) {
-      const item = await ctx.db.get("items", existing.itemId);
-      if (!item) throw new Error("Idempotent item no longer exists");
+      const item = await requireSameIdempotentItem(ctx, existing, {
+        projectSlug,
+        actorExternalId: args.actor?.id ?? null,
+        payloadSubset: {
+          project: projectSlug,
+          kind: args.kind,
+          title: args.title.trim(),
+        },
+      });
       return await publicItem(ctx, item);
     }
 
-    const projectSlug = assertSlug(args.project, "Project");
     const project = await ensureProject(ctx, workspace._id, workspaceSlug, projectSlug);
     if (!project) throw new Error("Failed to create project");
     const actor = args.actor ? await upsertActor(ctx, workspace._id, args.actor) : null;

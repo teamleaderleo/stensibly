@@ -8,6 +8,7 @@ import {
   normalizeWorkspace,
   publicEvent,
   requireMatchingIdempotency,
+  requireSameIdempotentItem,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
@@ -43,7 +44,14 @@ export const record = mutation({
       args.idempotencyKey,
       type,
     );
-    if (existing) return { ...publicEvent(existing), itemId: args.id };
+    if (existing) {
+      const item = await requireSameIdempotentItem(ctx, existing, {
+        itemExternalId: args.id,
+        actorExternalId: args.actor?.id ?? null,
+        payload: args.payload,
+      });
+      return { ...publicEvent(existing), itemId: item.externalId };
+    }
 
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
     const actor = args.actor ? await upsertActor(ctx, workspace._id, args.actor) : null;

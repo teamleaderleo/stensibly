@@ -8,6 +8,7 @@ import {
   normalizeWorkspace,
   publicArtifact,
   requireMatchingIdempotency,
+  requireSameIdempotentItem,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
@@ -46,6 +47,15 @@ export const attach = mutation({
       "artifact.attached",
     );
     if (existing) {
+      const item = await requireSameIdempotentItem(ctx, existing, {
+        itemExternalId: args.id,
+        actorExternalId: args.actor.id,
+        payloadSubset: {
+          kind: args.kind,
+          label: args.label.trim(),
+          uri: args.uri.trim(),
+        },
+      });
       const artifactExternalId = (existing.payload as { artifactId?: unknown }).artifactId;
       if (typeof artifactExternalId !== "string") {
         throw new Error("Artifact idempotency record is incomplete");
@@ -54,8 +64,10 @@ export const attach = mutation({
         .query("artifacts")
         .withIndex("by_external_id", (q) => q.eq("externalId", artifactExternalId))
         .unique();
-      if (!artifact) throw new Error("Idempotent artifact no longer exists");
-      return { ...publicArtifact(artifact), itemId: args.id };
+      if (!artifact || artifact.itemId !== item._id) {
+        throw new Error("Idempotent artifact no longer exists");
+      }
+      return { ...publicArtifact(artifact), itemId: item.externalId };
     }
 
     const item = await getItemByExternalId(ctx, workspace._id, args.id);
