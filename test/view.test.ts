@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Item } from "../src/store.ts";
-import { renderBoard } from "../src/view.ts";
+import {
+  NORMALIZE_IDLE_REFRESH_INDEX_EXPRESSION,
+  renderBoard,
+} from "../src/view.ts";
 
 const baseItem: Item = {
   id: "item-1",
@@ -58,6 +61,32 @@ describe("dashboard view", () => {
     expect(html).toContain("Active");
     expect(html).toContain("Blocked");
     expect(html).toContain("Done");
+  });
+
+  test("renders visibility-aware idle polling with immediate interactive reloads", () => {
+    const html = renderBoard([baseItem]);
+
+    expect(html).toContain("const refreshDelays = [20000, 45000, 90000, 180000]");
+    expect(html).toContain("normalizeIdleRefreshIndex");
+    expect(html).toContain("previousFingerprint === boardFingerprint");
+    expect(html).toContain("auto paused · hidden");
+    expect(html).toContain("auto paused · draft");
+    expect(html).toContain("document.addEventListener('visibilitychange'");
+    expect(html).toContain("recordReload('background')");
+    expect(html).toContain("recordReload('interactive')");
+    expect(html).not.toContain("setInterval(() => {");
+  });
+
+  test("clamps malformed and out-of-range persisted refresh indexes", () => {
+    const normalize = new Function(
+      `return (${NORMALIZE_IDLE_REFRESH_INDEX_EXPRESSION});`,
+    )() as (value: string | null | undefined, maxIndex: number) => number;
+
+    expect(normalize("NaN", 3)).toBe(0);
+    expect(normalize("-1", 3)).toBe(0);
+    expect(normalize("999999", 3)).toBe(3);
+    expect(normalize("2", 3)).toBe(2);
+    expect(normalize(undefined, 3)).toBe(0);
   });
 
   test("escapes item content and omits archived work", () => {

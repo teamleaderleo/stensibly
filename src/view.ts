@@ -1,5 +1,11 @@
 import type { Item, ItemStatus } from "./store.js";
 
+export const NORMALIZE_IDLE_REFRESH_INDEX_EXPRESSION = `(value, maxIndex) => {
+  const parsed = Number.parseInt(value || "0", 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(Math.max(Math.trunc(parsed), 0), maxIndex);
+}`;
+
 const columns: Array<{ status: ItemStatus; label: string; hint: string }> = [
   { status: "ready", label: "Ready", hint: "waiting for a willing creature" },
   { status: "active", label: "Active", hint: "currently being interfered with" },
@@ -18,6 +24,10 @@ export function renderBoard(items: Item[]): string {
   const recent = [...visible]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 8);
+  const boardFingerprint = [...visible]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((item) => `${item.id}:${item.version}:${item.status}:${item.updatedAt}`)
+    .join("|");
 
   return `<!doctype html>
 <html lang="en">
@@ -274,8 +284,28 @@ export function renderBoard(items: Item[]): string {
       const actor = { id: actorId, name: actorId, kind: 'human' };
       const projectFilter = document.querySelector('#project-filter');
       const autoButton = document.querySelector('#auto-refresh');
+      const liveLabel = document.querySelector('#live-label');
+      const titleInput = document.querySelector('#new-item input[name=title]');
+      const boardFingerprint = ${JSON.stringify(boardFingerprint)};
+      const refreshDelays = [20000, 45000, 90000, 180000];
+      const normalizeIdleRefreshIndex = ${NORMALIZE_IDLE_REFRESH_INDEX_EXPRESSION};
+      const previousFingerprint = sessionStorage.stensiblyBoardFingerprint;
+      const refreshReason = sessionStorage.stensiblyRefreshReason;
+      let idleRefreshes = normalizeIdleRefreshIndex(
+        sessionStorage.stensiblyIdleRefreshes,
+        refreshDelays.length - 1,
+      );
       let autoRefresh = sessionStorage.stensiblyAutoRefresh !== 'off';
       let refreshTimer;
+
+      if (refreshReason === 'background' && previousFingerprint === boardFingerprint) {
+        idleRefreshes = Math.min(idleRefreshes + 1, refreshDelays.length - 1);
+      } else {
+        idleRefreshes = 0;
+      }
+      sessionStorage.stensiblyBoardFingerprint = boardFingerprint;
+      sessionStorage.stensiblyIdleRefreshes = String(idleRefreshes);
+      sessionStorage.removeItem('stensiblyRefreshReason');
 
       async function request(path, body) {
         const response = await fetch(path, {
@@ -316,14 +346,43 @@ export function renderBoard(items: Item[]): string {
         });
       }
 
-      function configureAutoRefresh() {
-        clearInterval(refreshTimer);
+      function recordReload(reason) {
+        sessionStorage.stensiblyRefreshReason = reason;
+        location.reload();
+      }
+
+      function configureAutoRefresh({ wake = false } = {}) {
+        clearTimeout(refreshTimer);
         autoButton.textContent = autoRefresh ? 'auto · on' : 'auto · off';
         autoButton.setAttribute('aria-pressed', String(autoRefresh));
         sessionStorage.stensiblyAutoRefresh = autoRefresh ? 'on' : 'off';
-        if (autoRefresh) refreshTimer = setInterval(() => {
-          if (!document.hidden && !document.querySelector('#new-item input[name=title]').value) location.reload();
-        }, 20000);
+
+        if (!autoRefresh) {
+          liveLabel.textContent = 'auto refresh off';
+          return;
+        }
+        if (document.hidden) {
+          liveLabel.textContent = 'auto paused · hidden';
+          return;
+        }
+        if (titleInput.value) {
+          liveLabel.textContent = 'auto paused · draft';
+          return;
+        }
+
+        const delay = wake ? 1000 : refreshDelays[idleRefreshes];
+        liveLabel.textContent = wake
+          ? 'auto · waking'
+          : idleRefreshes > 0
+            ? 'auto · idle ' + Math.round(delay / 1000) + 's'
+            : 'auto · ' + Math.round(delay / 1000) + 's';
+        refreshTimer = setTimeout(() => {
+          if (document.hidden || titleInput.value) {
+            configureAutoRefresh();
+            return;
+          }
+          recordReload('background');
+        }, delay);
       }
 
       document.querySelector('#new-item').addEventListener('submit', async (event) => {
@@ -336,7 +395,7 @@ export function renderBoard(items: Item[]): string {
             kind: form.get('kind'),
             actor,
           });
-          location.reload();
+          recordReload('interactive');
         } catch (error) {
           alert(error.message);
         }
@@ -351,7 +410,7 @@ export function renderBoard(items: Item[]): string {
           const action = button.dataset.action;
           const body = action === 'claim' ? { actor, leaseSeconds: 900 } : { actor };
           await request('/api/items/' + encodeURIComponent(id) + '/' + action, body);
-          location.reload();
+          recordReload('interactive');
         } catch (error) {
           button.disabled = false;
           alert(error.message);
@@ -359,8 +418,10 @@ export function renderBoard(items: Item[]): string {
       });
 
       projectFilter.addEventListener('change', applyProjectFilter);
-      document.querySelector('#refresh').addEventListener('click', () => location.reload());
-      autoButton.addEventListener('click', () => { autoRefresh = !autoRefresh; configureAutoRefresh(); });
+      titleInput.addEventListener('input', () => configureAutoRefresh());
+      document.addEventListener('visibilitychange', () => configureAutoRefresh({ wake: !document.hidden }));
+      document.querySelector('#refresh').addEventListener('click', () => recordReload('interactive'));
+      autoButton.addEventListener('click', () => { autoRefresh = !autoRefresh; configureAutoRefresh({ wake: autoRefresh }); });
       updateTimes();
       applyProjectFilter();
       configureAutoRefresh();
