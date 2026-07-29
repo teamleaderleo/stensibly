@@ -4,14 +4,20 @@ const workflowPath = new URL("../.github/workflows/deploy-worker.yml", import.me
 const workflow = await Bun.file(workflowPath).text();
 
 describe("production Worker deployment workflow", () => {
-  test("is manual, main-only, serialized, and environment-gated", () => {
+  test("deploys relevant main changes automatically and keeps manual recovery", () => {
+    expect(workflow).toContain("push:");
+    expect(workflow).toContain("branches:");
+    expect(workflow).toContain("- main");
+    expect(workflow).toContain('"src/**"');
+    expect(workflow).toContain('"wrangler.toml"');
+    expect(workflow).toContain('"package.json"');
+    expect(workflow).toContain('"bun.lock"');
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("Require main branch");
     expect(workflow).toContain("refs/heads/main");
     expect(workflow).toContain("group: stensibly-worker-production");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("name: production");
-    expect(workflow).not.toMatch(/^\s*push:/m);
   });
 
   test("runs checks before entering the production environment", () => {
@@ -43,12 +49,15 @@ describe("production Worker deployment workflow", () => {
       .toBeLessThan(workflow.indexOf("bun run worker:deploy"));
   });
 
-  test("uses a typed declared OAuth state without accepting network targets", () => {
+  test("keeps OAuth enabled for automatic deployments", () => {
     expect(workflow).toContain("oauth_expectation:");
     expect(workflow).toContain("type: choice");
+    expect(workflow).toContain("default: enabled");
     expect(workflow).toContain("- disabled");
     expect(workflow).toContain("- enabled");
-    expect(workflow).toContain("OAUTH_EXPECTATION: ${{ inputs.oauth_expectation }}");
+    expect(workflow).toContain(
+      "OAUTH_EXPECTATION: ${{ github.event_name == 'workflow_dispatch' && inputs.oauth_expectation || 'enabled' }}",
+    );
     expect(workflow).not.toContain("inputs.endpoint");
     expect(workflow).not.toContain("inputs.issuer");
   });
