@@ -128,6 +128,7 @@ const reasonCodePattern = /^[a-z0-9][a-z0-9._-]*$/;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/;
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const MAX_OBSERVATION_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 
 export class GitHubIssueContextConflictError extends Error {
   constructor(message: string) {
@@ -176,6 +177,10 @@ export function ensureGitHubIssueContextSchema(store: StensiblyStore): void {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issue_context_observation
       ON github_issue_contexts(workspace_id, project_id, observation_ref);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issue_context_single_current
+      ON github_issue_contexts(workspace_id, project_id, external_id)
+      WHERE is_current = 1;
 
     CREATE INDEX IF NOT EXISTS idx_github_issue_context_current
       ON github_issue_contexts(workspace_id, project_id, external_id, is_current, sequence DESC);
@@ -257,7 +262,12 @@ export function acceptSqliteGitHubIssueContext(
       project: prepared.project,
       externalId: prepared.snapshot.reference.externalId,
     });
-    const classification = classifyAcceptance(current, prepared.snapshot, prepared.instructionSet.id);
+    const classification = classifyAcceptance(
+      current,
+      prepared.snapshot,
+      prepared.instructionSet.id,
+      prepared.observedAt,
+    );
     if (classification.isCurrent) {
       store.db.query(`
         UPDATE github_issue_contexts
@@ -438,6 +448,10 @@ function prepareAcceptance(
   if (syncStatus === "synchronized" && degradedReasonCode !== null) {
     throw new RangeError("Synchronized GitHub issue context cannot carry a degraded reason");
   }
+  const observedAt = canonicalTimestamp(input.observedAt, "GitHub observation time");
+  if (Date.parse(observedAt) > Date.now() + MAX_OBSERVATION_FUTURE_SKEW_MS) {
+    throw new RangeError("GitHub observation time cannot be in the future");
+  }
 
   return {
     workspace,
@@ -450,7 +464,7 @@ function prepareAcceptance(
       : boundedIdentifier(input.syncCursor, "GitHub synchronization cursor", limits.cursor),
     degradedReasonCode,
     observationRef: boundedIdentifier(input.observationRef, "GitHub observation reference"),
-    observedAt: canonicalTimestamp(input.observedAt, "GitHub observation time"),
+    observedAt,
     acceptedBy: boundedIdentifier(input.acceptedBy, "GitHub context accepting actor"),
   };
 }
@@ -473,6 +487,7 @@ function classifyAcceptance(
   current: GitHubIssueContextRecord | null,
   snapshot: GitHubIssueContext,
   instructionSetId: string,
+  observedAt: string,
 ): { outcome: GitHubIssueContextAcceptanceOutcome; isCurrent: boolean } {
   if (!current) return { outcome: "initial", isCurrent: true };
   const comparison = compareGitHubIssueContexts(current.snapshot, snapshot);
@@ -490,9 +505,12 @@ function classifyAcceptance(
     case "updated":
       return { outcome: "updated", isCurrent: true };
     case "identical":
-      return current.instructionSet.id === instructionSetId
-        ? { outcome: "synchronization_updated", isCurrent: true }
-        : { outcome: "instruction_rebound", isCurrent: true };
+      if (current.instructionSet.id !== instructionSetId) {
+        return { outcome: "instruction_rebound", isCurrent: true };
+      }
+      return Date.parse(observedAt) < Date.parse(current.observedAt)
+        ? { outcome: "stale", isCurrent: false }
+        : { outcome: "synchronization_updated", isCurrent: true };
   }
 }
 
