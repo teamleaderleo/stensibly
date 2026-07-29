@@ -104,21 +104,22 @@ diff --git a/types/test/transforms/globals.spec.ts b/types/test/transforms/globa
 diff --git a/types/test/types/fetch-receiver.ts b/types/test/types/fetch-receiver.ts
 --- a/types/test/types/fetch-receiver.ts
 +++ b/types/test/types/fetch-receiver.ts
-@@ -19,6 +19,20 @@ fromSelf.apply(globalThis, [url]);
+@@ -19,6 +19,19 @@ fromSelf.apply(globalThis, [url]);
  // @ts-expect-error An unrelated object is not a legal Worker global receiver.
  fromSelf.apply({}, [url]);
  
++// Bunyan native matrix: bind(undefined/null/globalThis), then invoke, succeeds.
 +const fromSelfBoundUndefined = fromSelf.bind(undefined);
 +const fromSelfBoundNull = fromSelf.bind(null);
 +const fromSelfBoundGlobal = fromSelf.bind(globalThis);
-+const fromSelfBoundSelf = fromSelf.bind(self);
 +fromSelfBoundUndefined(url);
 +fromSelfBoundNull(url);
 +fromSelfBoundGlobal(url);
-+fromSelfBoundSelf(url);
 +
++// Bunyan native matrix: bind(unrelated), then invoke, throws Illegal invocation.
++// The generated declaration should reject the invalid receiver at bind time.
 +// @ts-expect-error An unrelated object cannot be bound as the receiver.
-+fromSelf.bind({});
++fromSelf.bind({})(url);
 +
  const selfHolder = { fetch: fromSelf };
  // @ts-expect-error Property-call syntax supplies selfHolder as the receiver.
