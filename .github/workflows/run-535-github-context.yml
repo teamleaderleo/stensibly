@@ -1,0 +1,55 @@
+name: Run PR 535 GitHub context integration
+
+on:
+  push:
+    branches:
+      - mercury/492-github-project-context-recovery
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run-pr-535-github-context
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: mercury/492-github-project-context-recovery
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Execute bounded integration patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/apply-535-github-context.yml').read_text()
+          start = "          python3 - <<'PY'\n"
+          end = "\n          PY\n"
+          if workflow.count(start) != 1 or workflow.count(end) != 1:
+              raise SystemExit('embedded integration script markers are invalid')
+          script = workflow.split(start, 1)[1].split(end, 1)[0]
+          exec(compile(textwrap.dedent(script), 'apply-535-github-context.py', 'exec'))
+          PY
+      - name: Validate integration
+        run: |
+          bun install --frozen-lockfile
+          bun test test/mcp-github-project-context.test.ts test/github-issue-context-sqlite.test.ts test/chatgpt-app-actions-snapshot.test.ts
+          bun run typecheck
+      - name: Commit product integration and remove helpers
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "Mercury GitHub context integration"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-535-github-context.yml
+          git rm .github/workflows/run-535-github-context.yml
+          git rm .stensibly/pr-535-trigger.txt
+          git add src/github-issue-context-sqlite.ts src/sqlite-ledger.ts src/mcp.ts src/mcp-http.ts src/mcp-diagnostics.ts docs/chatgpt-app-actions.json docs/chatgpt-app-recovery.md docs/github-issue-context-persistence.md docs/mcp-connector-diagnostics.md
+          git commit -m "feat: expose accepted GitHub project context"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/stensibly.git" HEAD:mercury/492-github-project-context-recovery
