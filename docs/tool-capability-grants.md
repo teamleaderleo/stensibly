@@ -129,3 +129,14 @@ A later reviewed slice should add:
 - adversarial executor tests against prompt injection and data exfiltration.
 
 The hosted layer must treat this pure evaluator as necessary but not sufficient. Assignment, callsign, model identity, repository text, and an issue comment remain descriptive inputs; none of them independently creates a valid grant.
+
+
+## Version 1 canonical ordering
+
+Version 1 fingerprints sort every security-relevant object key, evidence reference,
+and permission identifier with direct UTF-16 code-unit comparison:
+`left < right ? -1 : left > right ? 1 : 0`.
+
+Locale-aware collation is excluded from the fingerprint contract. Runtime locale,
+ICU data, operating-system configuration, and future collation upgrades therefore
+cannot change the canonical byte sequence or SHA-256 identity for equivalent input.

@@ -414,3 +414,53 @@ describe("tool capability grants", () => {
     });
   });
 });
+
+
+describe("tool capability canonical ordering", () => {
+  test("uses Unicode code-unit order across requests and grants", () => {
+    const firstRequest = buildToolCapabilityRequest({
+      ...requestInput,
+      arguments: {
+        branchName: "nightjar/453-tool-capability-grants",
+        baseSha: HEAD_SHA,
+        a: 2,
+        Z: 1,
+      },
+    });
+    const secondRequest = buildToolCapabilityRequest({
+      ...requestInput,
+      arguments: {
+        Z: 1,
+        a: 2,
+        baseSha: HEAD_SHA,
+        branchName: "nightjar/453-tool-capability-grants",
+      },
+    });
+
+    expect(firstRequest.fingerprint).toBe(secondRequest.fingerprint);
+    expect(Object.keys(firstRequest.arguments).filter((key) => key === "Z" || key === "a"))
+      .toEqual(["Z", "a"]);
+
+    const permissionA = permission({
+      permissionId: "permission_a",
+      arguments: { branchName: "nightjar/a", baseSha: HEAD_SHA },
+    });
+    const permissionZ = permission({
+      permissionId: "permission_Z",
+      arguments: { branchName: "nightjar/Z", baseSha: HEAD_SHA },
+    });
+    const firstGrant = buildToolCapabilityGrant(grantInput({}, {
+      evidenceRefs: ["ref:a", "ref:Z"],
+      permissions: [permissionA, permissionZ],
+    }));
+    const secondGrant = buildToolCapabilityGrant(grantInput({}, {
+      evidenceRefs: ["ref:Z", "ref:a"],
+      permissions: [permissionZ, permissionA],
+    }));
+
+    expect(firstGrant.fingerprint).toBe(secondGrant.fingerprint);
+    expect(firstGrant.evidenceRefs).toEqual(["ref:Z", "ref:a"]);
+    expect(firstGrant.permissions.map((entry) => entry.permissionId))
+      .toEqual(["permission_Z", "permission_a"]);
+  });
+});

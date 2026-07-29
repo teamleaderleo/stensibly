@@ -502,7 +502,7 @@ export function buildToolCapabilityGrant(
       expiresAt,
     );
     return { permissionId, request, maxUses, approval } satisfies ToolCapabilityPermission;
-  }).sort((left, right) => left.permissionId.localeCompare(right.permissionId));
+  }).sort((left, right) => compareUnicodeCodeUnits(left.permissionId, right.permissionId));
 
   const revocation = input.revocation === undefined
     ? null
@@ -1009,7 +1009,7 @@ function canonicalJson(
       throw new RangeError(`Tool capability ${path} has too many keys`);
     }
     const result: { [key: string]: ToolCapabilityJsonValue } = {};
-    for (const [entryKey, entryValue] of entries.sort(([left], [right]) => left.localeCompare(right))) {
+    for (const [entryKey, entryValue] of entries.sort(([left], [right]) => compareUnicodeCodeUnits(left, right))) {
       boundedArgumentKey(entryKey, path);
       if (forbiddenObjectKeys.has(entryKey)) {
         throw new RangeError(`Tool capability ${path} contains a forbidden key`);
@@ -1135,7 +1135,7 @@ function canonicalReferenceList(values: readonly string[], label: string): strin
   if (new Set(result).size !== result.length) {
     throw new RangeError(`${label} references must be unique`);
   }
-  return result.sort((left, right) => left.localeCompare(right));
+  return result.sort(compareUnicodeCodeUnits);
 }
 
 function boundedWorkspace(value: string, label: string): string {
@@ -1289,6 +1289,11 @@ function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+/** Version 1 canonical ordering uses direct UTF-16 code-unit comparison. */
+function compareUnicodeCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function stableJson(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
@@ -1299,7 +1304,7 @@ function stableJson(value: unknown): string {
   }
   if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
   if (!isRecord(value)) throw new RangeError("Canonical JSON value is invalid");
-  const entries = Object.keys(value).sort((left, right) => left.localeCompare(right));
+  const entries = Object.keys(value).sort(compareUnicodeCodeUnits);
   return `{${entries.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
 }
 
