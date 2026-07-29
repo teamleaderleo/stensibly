@@ -14,6 +14,13 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
+def replace_last(text: str, old: str, new: str, label: str) -> str:
+    index = text.rfind(old)
+    if index == -1:
+        raise RuntimeError(f"{label}: expected a match")
+    return text[:index] + new + text[index + len(old) :]
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} WORKERD_ROOT", file=sys.stderr)
@@ -67,20 +74,12 @@ def main() -> int:
         "EventTarget override",
     )
 
-    text = replace_once(
+    text = replace_last(
         text,
-        """declare class EventTarget<EventMap extends Record<string, Event> = Record<string, Event>> {
-    constructor();
-    addEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void;
-}
-""",
-        """declare class EventTarget<EventMap extends Record<string, Event> = Record<string, Event>> {
-    constructor();
-    addEventListener<Type extends keyof EventMap>(this: EventTarget<EventMap>, type: Type, handler: (event: EventMap[Type]) => void): void;
+        "    addEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void;",
+        """    addEventListener<Type extends keyof EventMap>(this: EventTarget<EventMap>, type: Type, handler: (event: EventMap[Type]) => void): void;
     receiverFree(this: void, value: string): string;
-    static detachable(param0: string): string;
-}
-""",
+    static detachable(param0: string): string;""",
         "EventTarget expected output",
     )
 
