@@ -101,11 +101,11 @@ function sha256Hex(input: string): string {
       words[index] = view.getUint32(offset + index * 4, false);
     }
     for (let index = 16; index < 64; index += 1) {
-      const x = words[index - 15];
-      const y = words[index - 2];
+      const x = words[index - 15]!;
+      const y = words[index - 2]!;
       const sigma0 = rotateRight(x, 7) ^ rotateRight(x, 18) ^ (x >>> 3);
       const sigma1 = rotateRight(y, 17) ^ rotateRight(y, 19) ^ (y >>> 10);
-      words[index] = (words[index - 16] + sigma0 + words[index - 7] + sigma1) >>> 0;
+      words[index] = (words[index - 16]! + sigma0 + words[index - 7]! + sigma1) >>> 0;
     }
 
     let a = h0;
@@ -120,7 +120,9 @@ function sha256Hex(input: string): string {
     for (let index = 0; index < 64; index += 1) {
       const bigSigma1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
       const choose = (e & f) ^ (~e & g);
-      const first = (h + bigSigma1 + choose + SHA256_CONSTANTS[index] + words[index]) >>> 0;
+      const first = (
+        h + bigSigma1 + choose + SHA256_CONSTANTS[index]! + words[index]!
+      ) >>> 0;
       const bigSigma0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
       const majority = (a & b) ^ (a & c) ^ (b & c);
       const second = (bigSigma0 + majority) >>> 0;
@@ -168,7 +170,4 @@ const SHA256_CONSTANTS = new Uint32Array([
   0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
   0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
   0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-  0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-]);
+  0x391c0c... 
