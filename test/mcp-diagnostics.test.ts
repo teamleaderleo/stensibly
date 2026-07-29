@@ -52,6 +52,64 @@ describe("MCP connector diagnostics", () => {
     }
   });
 
+  test("classifies rejected Origin and Host as non-retryable gateway validation", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const app = createServerApp(store, {
+        mcp: {
+          allowedOrigins: ["https://allowed.example"],
+          allowedHosts: ["api.example"],
+        },
+      });
+
+      const originDenied = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          host: "api.example",
+          origin: "https://rejected.example",
+          "x-request-id": "diag-origin-rejection",
+        },
+        body: JSON.stringify(initializeMessage(3)),
+      });
+      expect(originDenied.status).toBe(403);
+      expect(originDenied.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("origin_validation");
+      expect(await failureData(originDenied)).toMatchObject({
+        layer: "gateway",
+        stage: "origin_validation",
+        requestId: "diag-origin-rejection",
+        retryable: false,
+        reconciliation: "not_required",
+        recommendedAction: "fix_request",
+        method: "initialize",
+      });
+
+      const hostDenied = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          host: "rejected.example",
+          origin: "https://allowed.example",
+          "x-request-id": "diag-host-rejection",
+        },
+        body: JSON.stringify(initializeMessage(4)),
+      });
+      expect(hostDenied.status).toBe(403);
+      expect(hostDenied.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("host_validation");
+      expect(await failureData(hostDenied)).toMatchObject({
+        layer: "gateway",
+        stage: "host_validation",
+        requestId: "diag-host-rejection",
+        retryable: false,
+        reconciliation: "not_required",
+        recommendedAction: "fix_request",
+        method: "initialize",
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   test("returns typed stage and reconciliation guidance for gateway MCP failures", async () => {
     const store = new StensiblyStore(":memory:");
     try {
@@ -131,6 +189,14 @@ describe("MCP connector diagnostics", () => {
     });
   });
 });
+
+async function failureData(response: Response): Promise<Record<string, unknown>> {
+  const payload = await response.json() as {
+    error?: { data?: Record<string, unknown> };
+  };
+  if (!payload.error?.data) throw new Error("Missing MCP failure diagnostics");
+  return payload.error.data;
+}
 
 async function writeFailureDiagnostic(
   tool: string,
