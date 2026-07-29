@@ -4,13 +4,13 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current checkpoint
 
-Current `main` defines **26** public MCP tools with manifest fingerprint:
+Current `main` defines **27** public MCP tools with manifest fingerprint:
 
 ```text
-sha256:ecbae4d7efe2b6757b321a80d301fe06b81e70641717ddd682f9ceab0d4165bb
+sha256:0e7353a9a48b1b9d6d618a8a4a19b4520a97ba54f1ba4c91fb54294fbbe6f516
 ```
 
-The incident conversation exposed **25** Stensibly actions. The missing action is `get_operation_receipt`, added after the earlier ChatGPT app scan.
+The incident conversation exposed **25** Stensibly actions. Current additive actions absent from that older snapshot are `get_operation_receipt` and `get_github_project_context`.
 
 OpenAI keeps the approved tools and inputs for a custom MCP app as a snapshot. Server changes are not automatically added to that snapshot. This does not require Stensibly to stop adding tools.
 
@@ -22,7 +22,7 @@ Stensibly's compatibility rule is:
 - an existing optional input does not become required without an explicit migration;
 - adding a tool may require a ChatGPT refresh only for clients that want to use that new tool.
 
-The 25-action snapshot cannot call `get_operation_receipt`. Use a unique idempotency key and reconcile an ambiguous write through `get_item`, `list_work`, `get_brief`, or another bounded read already present in that snapshot.
+The 25-action snapshot cannot call `get_operation_receipt` or `get_github_project_context`. Use a unique idempotency key and reconcile an ambiguous write through `get_item`, `list_work`, `get_brief`, or another bounded read already present in that snapshot. Read GitHub issue context directly through GitHub until the newer Stensibly action is visible.
 
 Stensibly's OAuth authorization metadata advertises `offline_access`, `authorization_code`, and `refresh_token`, with refresh tokens enabled by default. A clean failure before network dispatch points toward ChatGPT app or conversation-host state rather than token refresh.
 
