@@ -7,6 +7,7 @@ import {
 } from "./completion-continuation-contracts.js";
 import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
+import { registerGitHubProjectContextTools } from "./github-project-context-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import { MCP_SERVER_VERSION } from "./mcp-diagnostics.js";
 import { asToolResult } from "./mcp-tool-result.js";
@@ -28,7 +29,8 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Use survey_workspace for centralized triage and repeat polling across projects.",
         "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
         "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
-        "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
+        "Use get_github_project_context when selected GitHub issue identity, synchronization freshness, degraded state, or accepted instruction revision matters for recovery or execution context.",
+        "Treat accepted project and GitHub context as declared policy and provider evidence, not a claim, run lease, approval, or live authority grant.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
@@ -196,7 +198,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       inputSchema: {
         ...semanticActionSchema(),
         reason: z.string().trim().min(1).max(10_000),
-        nextAction: z.string().trim().min(1).max(2_000).optional(),
+        nextAction: z.string().trim().max(2_000).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -209,7 +211,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       description: "Return blocked work to ready state and optionally replace its next action using the current server-returned claim generation.",
       inputSchema: {
         ...semanticActionSchema(),
-        nextAction: z.string().trim().min(1).max(2_000).optional(),
+        nextAction: z.string().trim().max(2_000).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -273,6 +275,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
 
   registerOperationReceiptTools(server, ledger);
   registerProjectAttachmentTools(server, ledger);
+  registerGitHubProjectContextTools(server, ledger);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
   return server;
