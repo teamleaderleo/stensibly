@@ -85,6 +85,27 @@ consequences leave the standing internal-dogfood boundary and require Tier 3 tre
 Do not manufacture independence by changing callsigns, sessions, or agent labels. The
 point is accountable inspection and evidence, not ceremony.
 
+## Automation and delivery default
+
+Relevant changes merged to `main` should deploy automatically after the repository's
+validation gates pass. Manual dispatch is a recovery and exceptional-control path, not
+the normal release mechanism.
+
+Because this repository is public, do not treat GitHub Actions runner usage as a scarce
+resource by default. Do not add fixed release windows, cooldowns, daily run budgets,
+one-time trigger workflows, polling observers, or status-sync automation solely to
+reduce Actions usage or avoid merging a ready change.
+
+Status reporting may supplement delivery, but it must not replace or delay the actual
+deployment. When the operator says to ship, merge, deploy, or “set it up to go,” prefer
+the direct path: inspect the exact diff, confirm relevant green checks, merge promptly,
+let the automatic deployment run, and fix forward from concrete failures.
+
+Coalescing is appropriate while an identical deployment target is already active.
+Additional throttling requires a demonstrated provider limit, material spend, safety
+constraint, or explicit operator request. Do not infer a provider quota from GitHub
+Actions usage alone.
+
 ## Deployment is not automatically Tier 3
 
 The word `production` in this repository often means the live internal dogfood
@@ -152,6 +173,8 @@ The following interpretations are superseded for this project:
 - “The author cannot review or integrate their own internal dogfood change.”
 - “Every authentication or Tier 2 repair needs a different agent even while the
   operator is actively directing the work.”
+- “Conserve public-repository GitHub Actions by delaying otherwise-ready deployments.”
+- “Create an observer workflow instead of fixing or running the deployment.”
 
 When older instructions conflict with this file, apply this narrower standing project
 policy and record the conflict for later cleanup.
