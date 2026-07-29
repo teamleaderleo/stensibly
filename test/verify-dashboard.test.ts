@@ -69,7 +69,7 @@ describe("dashboard asset verification contract", () => {
     }
   });
 
-  test("includes the attributable item activity and login paths", () => {
+  test("includes the attributable activity, login, and provider-capacity paths", () => {
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/item-detail-controller.js",
       marker: "activityThreadSection",
@@ -85,6 +85,22 @@ describe("dashboard asset verification contract", () => {
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/login-scrapbook.css",
       marker: ".login-card",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/provider-capacity-entry.js",
+      marker: "installProviderCapacityCard",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/provider-capacity-controller.js",
+      marker: "createProviderCapacityController",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/provider-capacity.js",
+      marker: "readProviderCapacity",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/provider-capacity.css",
+      marker: ".provider-capacity",
     }));
   });
 
