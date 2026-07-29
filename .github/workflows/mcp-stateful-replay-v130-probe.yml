@@ -1,0 +1,27 @@
+name: MCP stateful replay v1.30 probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'probes/mcp-stateful-replay-v130/**'
+      - 'src/store.ts'
+      - '.github/workflows/mcp-stateful-replay-v130-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay-v130:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - name: Install exact probe dependencies
+        working-directory: probes/mcp-stateful-replay-v130
+        run: bun install --frozen-lockfile=false
+      - name: Run SDK 1.30 replay probe
+        working-directory: probes/mcp-stateful-replay-v130
+        run: bun run probe
