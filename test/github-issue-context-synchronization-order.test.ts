@@ -161,6 +161,13 @@ describe("GitHub issue synchronization observation ordering", () => {
     ]);
   });
 
+  test("rejects an observation timestamp far enough ahead to pin current state", () => {
+    const acceptedAttachment = attachment();
+    expect(() => acceptSqliteGitHubIssueContext(store, contextInput(acceptedAttachment, {
+      observedAt: "2099-01-01T00:00:00.000Z",
+    }))).toThrow("cannot be in the future");
+  });
+
   test("enforces one current row per scoped GitHub issue in SQLite", () => {
     const acceptedAttachment = attachment();
     const initial = acceptSqliteGitHubIssueContext(store, contextInput(acceptedAttachment));
