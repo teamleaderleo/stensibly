@@ -9,6 +9,12 @@ import {
   type StensiblyEnv,
 } from "./http-auth.js";
 import {
+  ProviderCapacityConflictError,
+  ProviderCapacityStorageError,
+  SqliteProviderCapacityStore,
+  parseCodeRabbitCapacityComment,
+} from "./provider-capacity.js";
+import {
   DEFAULT_ACKNOWLEDGED_RETENTION_MS,
   DEFAULT_MAX_PROVIDER_EVENTS,
   MAX_PROVIDER_EVENT_LIST,
@@ -42,6 +48,11 @@ const githubActorLoginSchema = z.string()
   .max(120)
   .regex(githubActorLoginPattern);
 
+const githubTimestampSchema = z.string()
+  .min(1)
+  .max(64)
+  .refine((value) => Number.isFinite(Date.parse(value)), "Timestamp must be valid");
+
 const pullRequestReviewSchema = z.object({
   action: z.enum(["submitted", "edited", "dismissed"]),
   repository: z.object({
@@ -66,6 +77,32 @@ const pullRequestReviewSchema = z.object({
   }).passthrough().optional(),
 }).passthrough();
 
+const issueCommentSchema = z.object({
+  action: z.enum(["created", "edited", "deleted"]),
+  repository: z.object({
+    full_name: z.string().min(3).max(200).regex(githubRepositoryPattern),
+  }).passthrough(),
+  issue: z.object({
+    number: z.number().int().positive(),
+    pull_request: z.object({}).passthrough().optional(),
+    user: z.object({
+      login: githubActorLoginSchema,
+    }).passthrough(),
+  }).passthrough(),
+  comment: z.object({
+    id: z.number().int().positive(),
+    body: z.string().max(100_000).nullable(),
+    created_at: githubTimestampSchema,
+    updated_at: githubTimestampSchema,
+    user: z.object({
+      login: githubActorLoginSchema,
+    }).passthrough(),
+  }).passthrough(),
+  sender: z.object({
+    login: githubActorLoginSchema,
+  }).passthrough(),
+}).passthrough();
+
 const acknowledgementActorSchema = z.string()
   .trim()
   .min(1)
@@ -88,6 +125,7 @@ export function registerGitHubProviderEventRoutes(
     maxStoredEvents: normalized.maxStoredEvents,
     acknowledgedRetentionMs: normalized.acknowledgedRetentionMs,
   });
+  const capacities = new SqliteProviderCapacityStore(store);
 
   app.post("/webhooks/github", async (context) => {
     const deliveryId = context.req.header("X-GitHub-Delivery");
@@ -129,7 +167,7 @@ export function registerGitHubProviderEventRoutes(
       }, 401);
     }
 
-    if (eventType !== "pull_request_review") {
+    if (eventType !== "pull_request_review" && eventType !== "issue_comment") {
       return context.json({
         accepted: false,
         ignored: true,
@@ -147,10 +185,56 @@ export function registerGitHubProviderEventRoutes(
       }, 400);
     }
 
-    const parsed = pullRequestReviewSchema.safeParse(rawPayload);
+    if (eventType === "pull_request_review") {
+      const parsed = pullRequestReviewSchema.safeParse(rawPayload);
+      if (!parsed.success) {
+        return context.json({
+          error: "GitHub pull_request_review payload is malformed",
+          code: "invalid_request",
+          issues: parsed.error.issues.slice(0, 20).map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        }, 400);
+      }
+
+      const payload = parsed.data;
+      const externalObjectId = String(payload.review.id);
+      const repository = payload.repository.full_name;
+      const subjectNumber = payload.pull_request.number;
+      const revision = payload.review.commit_id.toLowerCase();
+      const actor = payload.sender?.login ?? null;
+      const summary = boundedSummary(
+        `GitHub pull request review ${payload.action} on ${repository}#${subjectNumber} (${payload.review.state})`,
+      );
+
+      try {
+        const result = events.ingestGitHubPullRequestReview({
+          deliveryId,
+          payloadDigest: createHash("sha256").update(bodyResult).digest("hex"),
+          externalObjectId,
+          repository,
+          subjectNumber,
+          action: payload.action,
+          revision,
+          actor,
+          summary,
+          receivedAt: new Date(normalized.now()).toISOString(),
+        });
+        return context.json({
+          accepted: true,
+          duplicate: result.duplicate,
+          event: result.event,
+        }, result.duplicate ? 200 : 202);
+      } catch (error) {
+        return providerEventError(context, error);
+      }
+    }
+
+    const parsed = issueCommentSchema.safeParse(rawPayload);
     if (!parsed.success) {
       return context.json({
-        error: "GitHub pull_request_review payload is malformed",
+        error: "GitHub issue_comment payload is malformed",
         code: "invalid_request",
         issues: parsed.error.issues.slice(0, 20).map((issue) => ({
           path: issue.path.join("."),
@@ -160,35 +244,49 @@ export function registerGitHubProviderEventRoutes(
     }
 
     const payload = parsed.data;
-    const externalObjectId = String(payload.review.id);
-    const repository = payload.repository.full_name;
-    const subjectNumber = payload.pull_request.number;
-    const revision = payload.review.commit_id.toLowerCase();
-    const actor = payload.sender?.login ?? null;
-    const summary = boundedSummary(
-      `GitHub pull request review ${payload.action} on ${repository}#${subjectNumber} (${payload.review.state})`,
+    if (!payload.issue.pull_request || payload.action === "deleted") {
+      return ignoredCapacityComment(context, "not_pull_request_capacity_observation");
+    }
+    if (
+      payload.comment.user.login !== "coderabbitai[bot]"
+      || payload.sender.login !== "coderabbitai[bot]"
+    ) {
+      return ignoredCapacityComment(context, "not_coderabbit_capacity_observation");
+    }
+    if (payload.comment.body === null) {
+      return ignoredCapacityComment(context, "missing_coderabbit_capacity_body");
+    }
+
+    const capacity = parseCodeRabbitCapacityComment(
+      payload.comment.body,
+      payload.comment.updated_at,
     );
+    if (!capacity) {
+      return ignoredCapacityComment(context, "unrecognised_coderabbit_capacity_observation");
+    }
 
     try {
-      const result = events.ingestGitHubPullRequestReview({
+      const result = capacities.ingestCodeRabbit({
         deliveryId,
         payloadDigest: createHash("sha256").update(bodyResult).digest("hex"),
-        externalObjectId,
-        repository,
-        subjectNumber,
-        action: payload.action,
-        revision,
-        actor,
-        summary,
+        sourceCommentId: String(payload.comment.id),
+        repository: payload.repository.full_name,
+        pullRequestNumber: payload.issue.number,
+        subjectLogin: payload.issue.user.login,
+        state: capacity.state,
+        remaining: capacity.remaining,
+        limit: capacity.limit,
+        refillAt: capacity.refillAt,
+        observedAt: payload.comment.updated_at,
         receivedAt: new Date(normalized.now()).toISOString(),
       });
       return context.json({
         accepted: true,
         duplicate: result.duplicate,
-        event: result.event,
+        capacityObservation: result.observation,
       }, result.duplicate ? 200 : 202);
     } catch (error) {
-      return providerEventError(context, error);
+      return providerCapacityError(context, error);
     }
   });
 
@@ -231,6 +329,34 @@ export function registerGitHubProviderEventRoutes(
       });
     } catch (error) {
       return providerEventError(context, error);
+    }
+  });
+
+  api.get("/provider-capacities/coderabbit", (context) => {
+    const denied = requireHttpAccess(context, "admin");
+    if (denied) return denied;
+
+    const repository = context.req.query("repository");
+    const subjectLogin = context.req.query("subject");
+    if (!repository || !subjectLogin) {
+      return context.json({
+        error: "CodeRabbit capacity requires repository and subject query parameters",
+        code: "invalid_request",
+      }, 400);
+    }
+
+    try {
+      return context.json({
+        capacity: capacities.snapshot(repository, subjectLogin, normalized.now()),
+      });
+    } catch (error) {
+      if (error instanceof RangeError) {
+        return context.json({
+          error: "CodeRabbit capacity query is malformed",
+          code: "invalid_request",
+        }, 400);
+      }
+      return providerCapacityError(context, error);
     }
   });
 
@@ -415,6 +541,17 @@ function boundedSummary(summary: string): string {
   return summary.length <= 300 ? summary : `${summary.slice(0, 299)}…`;
 }
 
+function ignoredCapacityComment(
+  context: Context<StensiblyEnv>,
+  reason: string,
+): Response {
+  return context.json({
+    accepted: false,
+    ignored: true,
+    reason,
+  }, 202);
+}
+
 function providerEventError(
   context: Context<StensiblyEnv>,
   error: unknown,
@@ -434,6 +571,32 @@ function providerEventError(
   }
   return context.json({
     error: "Provider event storage failed",
+    code: "backend_failure",
+  }, 500);
+}
+
+function providerCapacityError(
+  context: Context<StensiblyEnv>,
+  error: unknown,
+): Response {
+  if (error instanceof ProviderCapacityConflictError) {
+    return context.json({ error: error.message, code: "conflict" }, 409);
+  }
+  if (error instanceof ProviderCapacityStorageError) {
+    context.header("Retry-After", "60");
+    return context.json({
+      error: "Provider capacity observation storage is at capacity",
+      code: "temporarily_unavailable",
+    }, 503);
+  }
+  if (error instanceof RangeError) {
+    return context.json({
+      error: "Provider capacity observation is invalid",
+      code: "invalid_request",
+    }, 400);
+  }
+  return context.json({
+    error: "Provider capacity observation storage failed",
     code: "backend_failure",
   }, 500);
 }
