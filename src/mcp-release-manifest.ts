@@ -243,10 +243,7 @@ function schemaAcceptsPreviousInputs(
     }
   }
 
-  if (previous.additionalProperties !== false && candidate.additionalProperties === false) {
-    reasons.push(`${path}: additional properties are no longer accepted`);
-    compatible = false;
-  }
+  compatible = compareAdditionalProperties(previous, candidate, path, reasons) && compatible;
 
   compatible = compareLowerBound(previous, candidate, "minimum", path, reasons) && compatible;
   compatible = compareLowerBound(previous, candidate, "exclusiveMinimum", path, reasons) && compatible;
@@ -268,8 +265,8 @@ function schemaAcceptsPreviousInputs(
 
   const conservativeKeywords = [
     "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentRequired",
-    "dependentSchemas", "propertyNames", "contains", "minContains", "maxContains",
-    "unevaluatedProperties", "unevaluatedItems", "prefixItems", "items",
+    "dependentSchemas", "propertyNames", "patternProperties", "contains", "minContains",
+    "maxContains", "unevaluatedProperties", "unevaluatedItems", "prefixItems", "items",
   ];
   for (const keyword of conservativeKeywords) {
     if (canonicalJson(previous[keyword]) !== canonicalJson(candidate[keyword])) {
@@ -279,6 +276,40 @@ function schemaAcceptsPreviousInputs(
   }
 
   return compatible;
+}
+
+function compareAdditionalProperties(
+  previous: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+  path: string,
+  reasons: string[],
+): boolean {
+  const prior = previous.additionalProperties;
+  const next = candidate.additionalProperties;
+  if (canonicalJson(prior) === canonicalJson(next)) return true;
+
+  if (next === false) {
+    reasons.push(`${path}: additional properties are no longer accepted`);
+    return false;
+  }
+  if (prior === false && (next === undefined || next === true || isRecord(next))) {
+    reasons.push(`${path}: additional properties were broadened`);
+    return true;
+  }
+  if (isRecord(next)) {
+    if (!isRecord(prior)) {
+      reasons.push(`${path}.*: unrestricted additional properties became schema-constrained`);
+      return false;
+    }
+    return schemaAcceptsPreviousInputs(prior, next, `${path}.*`, reasons);
+  }
+  if (next === undefined || next === true) {
+    if (isRecord(prior)) reasons.push(`${path}: additional-property schema was removed`);
+    return true;
+  }
+
+  reasons.push(`${path}: additionalProperties changed and requires compatibility review`);
+  return false;
 }
 
 function compareLowerBound(
