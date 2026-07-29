@@ -1,0 +1,214 @@
+name: W01 deploy consent origin fix once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/w01-deploy-consent-origin-fix-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-worker-production
+  cancel-in-progress: false
+
+env:
+  REPAIR_COMMIT: 02697a4ba15b9c129d854a90acc63ccabaa6fc2d
+  CANONICAL_ORIGIN: https://api.stensibly.com
+  WORKER_ORIGIN: https://stensibly-api.leoli-082000.workers.dev
+
+jobs:
+  deploy:
+    name: Deploy and verify consent origin repair
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://api.stensibly.com/health
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate one-time execution and protected inputs
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            echo "This production deployment cannot be rerun; create a new reviewed generation" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$REPAIR_COMMIT" "$GITHUB_SHA" || {
+            echo "The merged consent-origin repair is absent from this deployment candidate" >&2
+            exit 1
+          }
+          missing=0
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN STENSIBLY_READ_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required production environment secret: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Run exact source gate
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Capture current Worker recovery version
+        id: prechange
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          bunx wrangler deployments list --name stensibly-api --json > /tmp/deployments.json
+          latest="$(jq -c 'sort_by(.created_on) | last' /tmp/deployments.json)"
+          jq -e '(.versions | length) == 1 and .versions[0].percentage == 100' \
+            <<< "$latest" >/dev/null || {
+              echo "Active Worker deployment is not a single 100% version" >&2
+              exit 1
+            }
+          previous_version="$(jq -r '.versions[0].version_id' <<< "$latest")"
+          echo "previous_version=$previous_version" >> "$GITHUB_OUTPUT"
+          jq '{deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' \
+            <<< "$latest" > evidence/pre-deployment.json
+
+      - name: Verify enabled pre-change state
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          bun run verify:hosted | tee evidence/pre-bearer-canonical.txt
+          bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN" \
+            | tee evidence/pre-bearer-worker.txt
+          bun run verify:oauth -- --expect enabled \
+            | tee evidence/pre-oauth-canonical.txt
+          bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect enabled \
+            | tee evidence/pre-oauth-worker.txt
+
+      - name: Deploy Cloudflare Worker
+        id: deploy_worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bun run worker:deploy
+
+      - name: Verify deployed bearer and OAuth surfaces
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          retry_capture() {
+            local output="$1"
+            shift
+            for attempt in 1 2 3 4 5 6; do
+              if "$@" > "$output" 2>&1; then
+                cat "$output"
+                return 0
+              fi
+              if [[ "$attempt" -lt 6 ]]; then sleep 10; fi
+            done
+            cat "$output" >&2
+            return 1
+          }
+          retry_capture evidence/post-bearer-worker.txt bun run verify:hosted -- \
+            --endpoint "$WORKER_ORIGIN"
+          retry_capture evidence/post-bearer-canonical.txt bun run verify:hosted
+          retry_capture evidence/post-oauth-worker.txt bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect enabled
+          retry_capture evidence/post-oauth-canonical.txt bun run verify:oauth -- \
+            --expect enabled
+
+      - name: Roll back after a failed deployment or verification
+        if: failure() && steps.deploy_worker.outcome != 'skipped'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+          PREVIOUS_VERSION: ${{ steps.prechange.outputs.previous_version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PREVIOUS_VERSION" ]]; then
+            echo "Recovery version is unavailable" >&2
+            exit 1
+          fi
+          bunx wrangler rollback "$PREVIOUS_VERSION" \
+            --name stensibly-api \
+            --message "Restore pre-#484 Worker after failed consent-origin deployment"
+
+          retry() {
+            for attempt in 1 2 3 4 5 6; do
+              if "$@"; then return 0; fi
+              if [[ "$attempt" -lt 6 ]]; then sleep 10; fi
+            done
+            return 1
+          }
+          retry bun run verify:hosted
+          retry bun run verify:hosted -- --endpoint "$WORKER_ORIGIN"
+          retry bun run verify:oauth -- --expect enabled
+          retry bun run verify:oauth -- \
+            --endpoint "$WORKER_ORIGIN" \
+            --issuer "$CANONICAL_ORIGIN" \
+            --expect enabled
+
+      - name: Record successful deployment
+        if: success()
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          PREVIOUS_VERSION: ${{ steps.prechange.outputs.previous_version }}
+        run: |
+          set -euo pipefail
+          bunx wrangler deployments list --name stensibly-api --json > /tmp/post-deployments.json
+          latest="$(jq -c 'sort_by(.created_on) | last' /tmp/post-deployments.json)"
+          jq '{deployment_id: .id, version_id: .versions[0].version_id, percentage: .versions[0].percentage, created_on: .created_on}' \
+            <<< "$latest" > evidence/post-deployment.json
+          jq -n \
+            --arg version "w01-deploy-consent-origin-fix-once/v1" \
+            --arg deploySha "$DEPLOY_SHA" \
+            --arg repairCommit "$REPAIR_COMMIT" \
+            --arg recoveryVersion "$PREVIOUS_VERSION" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, status: "deployed_verified", deploy_sha: $deploySha, repair_commit: $repairCommit, recovery_version: $recoveryVersion, completed_at: $completedAt, contains_secret_values: false}' \
+            > evidence/result.json
+          {
+            echo "## W01 consent-origin repair deployed"
+            echo
+            echo "- Commit: \`$DEPLOY_SHA\`"
+            echo "- Repair ancestor: \`$REPAIR_COMMIT\`"
+            echo "- Bearer compatibility: passed on both origins"
+            echo "- Enabled public OAuth contract: passed on both origins"
+            echo "- Recovery version: \`$PREVIOUS_VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bounded deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w01-deploy-consent-origin-fix-once
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 3
