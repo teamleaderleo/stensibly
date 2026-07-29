@@ -199,3 +199,70 @@ function initializeMessage(id: number) {
     },
   };
 }
+
+
+describe("MCP gateway validation diagnostics", () => {
+  test("classifies origin and Host denials as exact gateway validation failures", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const token = createApiToken(store, {
+        name: "Gateway diagnostics reader",
+        scopes: ["read"],
+      });
+      const app = createServerApp(store, {
+        mcp: {
+          allowedOrigins: ["https://allowed.example"],
+          allowedHosts: ["allowed.example"],
+        },
+      });
+      const cases = [
+        {
+          requestId: "diag-origin-validation",
+          stage: "origin_validation",
+          origin: "https://blocked.example",
+          host: "allowed.example",
+        },
+        {
+          requestId: "diag-host-validation",
+          stage: "host_validation",
+          origin: "https://allowed.example",
+          host: "blocked.example",
+        },
+      ] as const;
+
+      for (const entry of cases) {
+        const response = await app.request("/mcp", {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token.token}`,
+            "content-type": "application/json",
+            "mcp-protocol-version": protocolVersion,
+            "x-request-id": entry.requestId,
+            origin: entry.origin,
+            host: entry.host,
+          },
+          body: JSON.stringify(initializeMessage(31)),
+        });
+        expect(response.status).toBe(403);
+        expect(response.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe(entry.stage);
+        const payload = await response.json() as {
+          error?: { data?: Record<string, unknown> };
+        };
+        expect(payload.error?.data).toEqual({
+          layer: "gateway",
+          stage: entry.stage,
+          requestId: entry.requestId,
+          retryable: false,
+          reconciliation: "not_required",
+          recommendedAction: "fix_request",
+          manifestFingerprint: MCP_TOOL_MANIFEST_FINGERPRINT,
+          manifestToolCount: MCP_TOOL_NAMES.length,
+          method: "initialize",
+        });
+      }
+    } finally {
+      store.close();
+    }
+  });
+});
