@@ -170,8 +170,11 @@ function validateObservedTimes(observedAt, receivedAt, staleAt, refillAt) {
   if (observed > received + 5 * 60 * 1_000 || stale <= observed) {
     throw new TypeError('Capacity observation timing is inconsistent.');
   }
-  if (refillAt !== null && Date.parse(refillAt) <= observed) {
-    throw new TypeError('Capacity refill timing is inconsistent.');
+  if (refillAt !== null) {
+    const refill = Date.parse(refillAt);
+    if (refill <= observed || stale > refill) {
+      throw new TypeError('Capacity refill timing is inconsistent.');
+    }
   }
 }
 
