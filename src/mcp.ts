@@ -31,7 +31,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
-        "Use the same idempotency key for an exact mutation retry. When a mutation response is ambiguous, call get_operation_receipt before choosing whether to retry.",
+        "Use the same idempotency key for an exact mutation retry. When a mutation response is ambiguous, call get_operation_receipt before choosing whether to retry. A recorded receipt means do not retry; an unknown receipt means hold and verify the original project scope before any retry.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
