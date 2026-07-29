@@ -200,7 +200,6 @@ function initializeMessage(id: number) {
   };
 }
 
-
 describe("MCP gateway validation diagnostics", () => {
   test("classifies origin and Host denials as exact gateway validation failures", async () => {
     const store = new StensiblyStore(":memory:");
