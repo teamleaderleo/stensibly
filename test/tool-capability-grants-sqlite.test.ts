@@ -126,6 +126,17 @@ function reserve(
 }
 
 describe("SQLite tool capability grant acceptance", () => {
+  test("enforces one current grant row at the SQLite boundary", () => {
+    ensureToolCapabilityGrantSchema(store);
+    const index = store.db.query<{
+      name: string;
+      unique: number;
+      partial: number;
+    }, []>(`PRAGMA index_list('tool_capability_grants')`).all()
+      .find((entry) => entry.name === "idx_tool_capability_grant_one_current");
+    expect(index).toMatchObject({ unique: 1, partial: 1 });
+  });
+
   test("accepts one immutable current generation and deduplicates exact replay", () => {
     const firstGrant = grant();
     const first = accept(firstGrant);

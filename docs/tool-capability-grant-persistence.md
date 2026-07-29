@@ -28,7 +28,7 @@ Assignment, issue text, model identity, callsign, repository instructions, and a
 
 `acceptSqliteToolCapabilityGrant()` accepts only grants that:
 
-- have a valid canonical fingerprint;
+- rebuild exactly through the canonical grant builder with no extra or altered fields;
 - are immutable and contain no embedded revocation;
 - match the explicit workspace and project storage scope;
 - use a positive generation;
@@ -40,11 +40,11 @@ Acceptance is append-only and generation-fenced:
 
 - the first generation requires `expectedCurrentGeneration: null`;
 - a higher generation requires the exact current generation;
-- exact acceptance replay returns the existing record;
+- exact acceptance replay requires the original acceptance reference and accepting actor, then returns the existing record;
 - reuse of one acceptance reference with altered content conflicts;
 - reuse of one grant ID and generation with another fingerprint conflicts;
 - stale or non-increasing generations conflict;
-- a higher generation transaction clears the previous current flag and installs one new current record.
+- a higher generation transaction clears the previous current flag and installs one new current record; a partial unique SQLite index enforces at most one current row per scoped grant.
 
 Historical generations remain readable and retain their original accepted fingerprint, actor, evidence, and permission set.
 
@@ -57,7 +57,7 @@ A revocation binds:
 - workspace and project;
 - grant ID and generation;
 - exact accepted grant fingerprint;
-- effective UTC time within the grant lifetime;
+- server-observed effective UTC time within the grant lifetime;
 - revoking actor;
 - bounded reason code;
 - idempotency key.
@@ -75,20 +75,19 @@ This slice does not yet terminate active runs or invalidate derived credentials.
 - workspace and project;
 - grant ID;
 - expected generation;
-- current UTC time;
 - one typed `ToolCapabilityRequestInput`;
 - one idempotency key.
 
-Before the transaction begins, the typed request builder validates and canonicalizes the request. Raw malformed objects, unsafe paths, secret-looking values, shell fields, or invalid URLs fail at that boundary and are not retained.
+Before the transaction begins, the typed request builder validates and canonicalizes the request. Acceptance, revocation, admission, and record times come from an internal server clock dependency and are never request or tool arguments. Raw malformed objects, unsafe paths, secret-looking values, shell fields, or invalid URLs fail at that boundary and are not retained.
 
 Inside one SQLite transaction the ledger:
 
-1. checks exact idempotency replay;
-2. loads the current accepted grant and server-owned fingerprint;
+1. checks exact idempotency replay before consulting the current clock;
+2. reads the server clock, then loads the current accepted grant and server-owned fingerprint;
 3. checks an effective revocation;
 4. loads current per-permission use counts;
 5. calls the pure evaluator;
-6. atomically increments the authorized permission use once;
+6. conditionally increments the authorized permission use only while the stored count remains below the exact grant maximum;
 7. records a bounded authorization or denial result.
 
 The admission API does not accept a trusted fingerprint argument. It cannot be persuaded to authorize a self-minted grant by copying a digest into a tool request.
@@ -104,10 +103,9 @@ An admission attempt fingerprint binds:
 - workspace and project;
 - grant ID;
 - expected generation;
-- canonical authorization time;
 - exact request fingerprint.
 
-Repeating the same idempotency key and attempt returns the original admission record and does not consume another use. Reusing the key with changed time, generation, grant, subject, resource, action, or arguments conflicts before use consumption.
+Repeating the same idempotency key and attempt returns the original admission record and does not consume another use, even when replayed later. Reusing the key with a changed generation, grant, subject, resource, action, or arguments conflicts before use consumption.
 
 The stored admission contains no exact request arguments. It retains only:
 
@@ -138,7 +136,7 @@ Every table is explicitly scoped by workspace and project. Grant IDs, generation
 
 Reads validate:
 
-- canonical grant fingerprints and duplicated row metadata;
+- full canonical grant rehydration, fingerprints, duplicated row metadata, and the one-current-row SQLite invariant;
 - revocation field syntax and timestamps;
 - authorization JSON fingerprints;
 - authorization grant and request identities.

@@ -230,6 +230,10 @@ export function ensureToolCapabilityGrantSchema(store: StensiblyStore): void {
     CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
       ON tool_capability_grants(workspace_id, project_id, grant_id, is_current, sequence DESC);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_capability_grant_one_current
+    ON tool_capability_grants(workspace_id, project_id, grant_id)
+    WHERE is_current = 1;
+
     CREATE TABLE IF NOT EXISTS tool_capability_revocations (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL UNIQUE,
