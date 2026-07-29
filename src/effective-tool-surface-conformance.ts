@@ -90,27 +90,17 @@ export interface EffectiveToolSurfaceConformanceReport {
   sideEffectsPerformed: false;
 }
 
-const limits = {
-  identifier: 160,
-  version: 160,
-  steps: 64,
-} as const;
-
+const limits = { identifier: 160, version: 160, steps: 64 } as const;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
 
-/**
- * Runs one deterministic, side-effect-free tool-surface lifecycle scenario.
- *
- * Every step must preserve the canonical run and required-capability set. The
- * external surface, transport, client build, model profile, adapter version,
- * and observed catalogue may change between lifecycle transitions.
- */
+/** Runs one deterministic, side-effect-free tool-surface lifecycle scenario. */
 export function runEffectiveToolSurfaceConformanceScenario(
   input: EffectiveToolSurfaceConformanceScenarioInput,
 ): EffectiveToolSurfaceConformanceReport {
-  if (!isRecord(input)) throw new RangeError("Tool-surface conformance scenario must be an object");
-
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new RangeError("Tool-surface conformance scenario must be an object");
+  }
   const scenarioId = boundedIdentifier(input.scenarioId, "Scenario ID");
   const suiteVersion = boundedText(input.suiteVersion, "Suite version", limits.version);
   if (!Array.isArray(input.steps) || input.steps.length < 1 || input.steps.length > limits.steps) {
@@ -120,17 +110,19 @@ export function runEffectiveToolSurfaceConformanceScenario(
   const stepIds = new Set<string>();
   const snapshotIds = new Set<string>();
   const results: EffectiveToolSurfaceConformanceStepResult[] = [];
-  let previous: EffectiveToolSurfaceSnapshot | undefined;
   let first: EffectiveToolSurfaceSnapshot | undefined;
+  let previous: EffectiveToolSurfaceSnapshot | undefined;
   let previousObservedAt = Number.NEGATIVE_INFINITY;
 
-  for (const [index, rawStep] of input.steps.entries()) {
-    if (!isRecord(rawStep)) throw new RangeError(`Scenario step ${index + 1} must be an object`);
-    const stepId = boundedIdentifier(rawStep.stepId, `Scenario step ${index + 1} ID`);
+  for (const [index, step] of input.steps.entries()) {
+    if (typeof step !== "object" || step === null || Array.isArray(step)) {
+      throw new RangeError(`Scenario step ${index + 1} must be an object`);
+    }
+    const stepId = boundedIdentifier(step.stepId, `Scenario step ${index + 1} ID`);
     if (stepIds.has(stepId)) throw new RangeError(`Scenario step ID ${stepId} is duplicated`);
     stepIds.add(stepId);
 
-    const snapshot = buildEffectiveToolSurfaceSnapshot(rawStep.snapshot);
+    const snapshot = buildEffectiveToolSurfaceSnapshot(step.snapshot);
     if (snapshotIds.has(snapshot.snapshotId)) {
       throw new RangeError(`Snapshot ID ${snapshot.snapshotId} is duplicated`);
     }
@@ -146,9 +138,8 @@ export function runEffectiveToolSurfaceConformanceScenario(
     else validateLifecycleIdentity(first, previous, snapshot);
 
     const reconciliation = reconcileEffectiveToolSurface(snapshot, previous);
-    const expectation = normalizeExpectation(rawStep.expect, index + 1);
+    const expectation = normalizeExpectation(step.expect, index + 1);
     const mismatches = compareExpectation(expectation, reconciliation);
-
     results.push({
       stepId,
       snapshotId: snapshot.snapshotId,
@@ -177,7 +168,7 @@ export function runEffectiveToolSurfaceConformanceScenario(
   };
   for (const step of results) stateCounts[step.state] += 1;
 
-  const evidenceFingerprint = sha256(stableJson({
+  const evidenceFingerprint = sha256(JSON.stringify({
     version: 1,
     scenarioId,
     suiteVersion,
@@ -249,11 +240,13 @@ function normalizeExpectation(
   input: EffectiveToolSurfaceConformanceExpectationInput,
   index: number,
 ): EffectiveToolSurfaceConformanceExpectationInput {
-  if (!isRecord(input)) throw new RangeError(`Scenario step ${index} expectation must be an object`);
-  if (!(["healthy", "changed", "degraded", "recovered"] as const).includes(input.state)) {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new RangeError(`Scenario step ${index} expectation must be an object`);
+  }
+  if (!( ["healthy", "changed", "degraded", "recovered"] as const).includes(input.state)) {
     throw new RangeError(`Scenario step ${index} expected state is invalid`);
   }
-  if (!(["allow", "block_or_reroute"] as const).includes(input.dispatchDecision)) {
+  if (!( ["allow", "block_or_reroute"] as const).includes(input.dispatchDecision)) {
     throw new RangeError(`Scenario step ${index} expected dispatch decision is invalid`);
   }
   if (typeof input.surfaceChanged !== "boolean") {
@@ -271,14 +264,12 @@ function normalizeExpectation(
     input.degradedClasses,
     `Scenario step ${index} expected degraded class`,
   );
-  const recommendedRecoveryAction = input.recommendedRecoveryAction;
   if (
-    recommendedRecoveryAction !== null
-    && !toolSurfaceRecoveryActions.includes(recommendedRecoveryAction)
+    input.recommendedRecoveryAction !== null
+    && !toolSurfaceRecoveryActions.includes(input.recommendedRecoveryAction)
   ) {
     throw new RangeError(`Scenario step ${index} expected recovery action is invalid`);
   }
-
   return {
     state: input.state,
     dispatchDecision: input.dispatchDecision,
@@ -286,7 +277,7 @@ function normalizeExpectation(
     missingRequiredCapabilities,
     catalogueOnlyRequiredCapabilities,
     degradedClasses,
-    recommendedRecoveryAction,
+    recommendedRecoveryAction: input.recommendedRecoveryAction,
   };
 }
 
@@ -295,38 +286,28 @@ function compareExpectation(
   actual: EffectiveToolSurfaceReconciliation,
 ): EffectiveToolSurfaceConformanceMismatch[] {
   const mismatches: EffectiveToolSurfaceConformanceMismatch[] = [];
-  compareScalar(mismatches, "state_mismatch", expected.state, actual.state);
-  compareScalar(
-    mismatches,
-    "dispatch_decision_mismatch",
-    expected.dispatchDecision,
-    actual.dispatchDecision,
-  );
-  compareScalar(
-    mismatches,
-    "surface_changed_mismatch",
-    String(expected.surfaceChanged),
-    String(actual.surfaceChanged),
-  );
-  compareScalar(
+  compare(mismatches, "state_mismatch", expected.state, actual.state);
+  compare(mismatches, "dispatch_decision_mismatch", expected.dispatchDecision, actual.dispatchDecision);
+  compare(mismatches, "surface_changed_mismatch", String(expected.surfaceChanged), String(actual.surfaceChanged));
+  compare(
     mismatches,
     "missing_required_mismatch",
     refsText(expected.missingRequiredCapabilities),
     refsText(actual.missingRequiredCapabilities),
   );
-  compareScalar(
+  compare(
     mismatches,
     "catalogue_only_required_mismatch",
     refsText(expected.catalogueOnlyRequiredCapabilities ?? []),
     refsText(actual.catalogueOnlyRequiredCapabilities),
   );
-  compareScalar(
+  compare(
     mismatches,
     "degraded_classes_mismatch",
     classesText(expected.degradedClasses),
     classesText(actual.degradedClasses),
   );
-  compareScalar(
+  compare(
     mismatches,
     "recovery_action_mismatch",
     expected.recommendedRecoveryAction ?? "none",
@@ -335,7 +316,7 @@ function compareExpectation(
   return mismatches;
 }
 
-function compareScalar(
+function compare(
   mismatches: EffectiveToolSurfaceConformanceMismatch[],
   code: EffectiveToolSurfaceConformanceMismatchCode,
   expected: string,
@@ -351,7 +332,9 @@ function normalizeRefs(
   if (!Array.isArray(input)) throw new RangeError(`${label} list must be an array`);
   const seen = new Set<string>();
   const refs = input.map((entry, index) => {
-    if (!isRecord(entry)) throw new RangeError(`${label} ${index + 1} must be an object`);
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new RangeError(`${label} ${index + 1} must be an object`);
+    }
     if (!effectiveToolSurfaceClasses.includes(entry.class)) {
       throw new RangeError(`${label} ${index + 1} class is invalid`);
     }
@@ -414,14 +397,6 @@ function boundedText(value: unknown, label: string, maximum: number): string {
   return normalized;
 }
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(value);
-}
-
 function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
