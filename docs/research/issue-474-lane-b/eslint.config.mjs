@@ -1,7 +1,10 @@
 import tseslint from "typescript-eslint";
 
 export default tseslint.config({
-  files: ["receiver-eslint-matrix.fixture.ts"],
+  files: [
+    "receiver-eslint-matrix.fixture.ts",
+    "generated-receiver-eslint-matrix.fixture.ts",
+  ],
   languageOptions: {
     parser: tseslint.parser,
     parserOptions: {
