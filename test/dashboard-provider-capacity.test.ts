@@ -128,6 +128,10 @@ describe("dashboard provider capacity reader", () => {
     expect(() => readProviderCapacity(response({
       staleAt: "2026-07-28T13:00:00.000Z",
     }), scope)).toThrow("timing is inconsistent");
+    expect(() => readProviderCapacity(response({
+      staleAt: "2026-07-28T13:05:00.000Z",
+      refillAt: "2026-07-28T13:04:00.000Z",
+    }), scope)).toThrow("refill timing is inconsistent");
   });
 });
 
