@@ -5,41 +5,25 @@ const coderabbit = readFileSync(new URL("../.coderabbit.yaml", import.meta.url),
 const policy = readFileSync(new URL("../docs/review-capacity-gate.md", import.meta.url), "utf8");
 const template = readFileSync(new URL("../.github/pull_request_template.md", import.meta.url), "utf8");
 
-describe("scarce review capacity gate", () => {
-  test("keeps automatic CodeRabbit review disabled", () => {
+describe("opt-in CodeRabbit reviews", () => {
+  test("keeps automatic review disabled without skip-review machinery", () => {
     expect(coderabbit).toContain("auto_review:\n    enabled: false");
-    expect(coderabbit).not.toContain("auto_review:\n    enabled: true");
-    expect(coderabbit).toContain("docs/review-capacity-gate.md");
+    expect(coderabbit).not.toContain("review-exempt");
+    expect(coderabbit).not.toContain("[skip review]");
   });
 
-  test("makes execution-only pull requests categorically ineligible", () => {
-    for (const marker of [
-      "execution-only or one-use pull requests",
-      "[execution][skip review]",
-      "review-exempt",
-      "never mark it ready for review",
-      "close it promptly",
-    ]) {
-      expect(policy).toContain(marker);
-    }
+  test("reserves manual review for consequential uncertain changes", () => {
+    expect(policy).toContain("off by default");
+    expect(policy).toContain("Do not request it for routine work");
+    expect(policy).toContain("genuinely consequential");
+    expect(policy).toContain("meaningful uncertainty remains");
+    expect(policy).toContain("Use at most one review");
   });
 
-  test("requires a named residual risk and decision-changing value", () => {
-    for (const marker of [
-      "A residual risk is named precisely",
-      "reasonably likely to find a defect",
-      "change the merge, deployment, or recovery decision",
-      "Why self-review is insufficient",
-      "Decision this review can change",
-    ]) {
-      expect(policy).toContain(marker);
-    }
-  });
-
-  test("puts the no-review default in every new pull request", () => {
-    expect(template).toContain("Default: do not request CodeRabbit review");
-    expect(template).toContain("Review classification: `no-review`");
-    expect(template).toContain("Execution-only PRs");
-    expect(template).toContain("Review spend");
+  test("keeps the pull request template lightweight", () => {
+    expect(template).toContain("CodeRabbit review is opt-in");
+    expect(template).not.toContain("Review classification");
+    expect(template).not.toContain("Review spend");
+    expect(template).not.toContain("Execution-only PRs");
   });
 });
