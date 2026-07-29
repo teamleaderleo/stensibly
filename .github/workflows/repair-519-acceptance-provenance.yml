@@ -1,0 +1,65 @@
+name: Repair PR 519 acceptance provenance
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-pr-519-acceptance-provenance
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: mercury/453-capability-grant-sqlite
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Bind acceptance replay to the accepting actor
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/tool-capability-grants-sqlite.ts')
+          source = path.read_text()
+          old = '''      if (record.fingerprint !== grant.fingerprint) {
+                throw new ToolCapabilityGrantStorageConflictError(
+                  `Grant acceptance reference ${acceptanceRef} was reused with altered content`,
+                );
+              }'''
+          new = '''      if (
+                record.fingerprint !== grant.fingerprint
+                || record.acceptedBy !== acceptedBy
+              ) {
+                throw new ToolCapabilityGrantStorageConflictError(
+                  `Grant acceptance reference ${acceptanceRef} was reused with altered content or accepting actor`,
+                );
+              }'''
+          if source.count(old) != 1:
+              raise SystemExit('acceptance replay anchor missing or duplicated')
+          path.write_text(source.replace(old, new))
+          PY
+      - name: Validate repair
+        run: |
+          bun install --frozen-lockfile
+          bun test test/tool-capability-grants-sqlite.test.ts
+          bun run typecheck
+      - name: Commit repair and remove helper
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "Quill capability reviewer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/repair-519-acceptance-provenance.yml
+          git add src/tool-capability-grants-sqlite.ts
+          git commit -m "fix: bind grant acceptance replay to actor"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/stensibly.git" HEAD:mercury/453-capability-grant-sqlite
