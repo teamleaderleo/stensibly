@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
+import { createItemRequestFingerprint } from "./idempotency-request-fingerprint.js";
 import type { ActorInput, CreateItemInput } from "./schemas.js";
 
 export type ItemStatus = "ready" | "active" | "blocked" | "done" | "archived";
@@ -208,10 +209,23 @@ export class StensiblyStore {
   }
 
   createItem(input: CreateItemInput, idempotencyKey?: string): Item {
+    const actorId = input.actor?.id ?? null;
+    const requestFingerprint = createItemRequestFingerprint({
+      project: input.project,
+      kind: input.kind,
+      title: input.title,
+      summary: input.summary ?? null,
+      nextAction: input.nextAction ?? null,
+      priority: input.priority,
+      actorId,
+    });
     const transaction = this.db.transaction(() => {
       if (idempotencyKey) {
         const existing = this.findIdempotentEvent(idempotencyKey);
-        if (existing) return this.getItem(existing.item_id);
+        if (existing) {
+          requireSameCreateRequest(existing, actorId, requestFingerprint);
+          return this.getItem(existing.item_id);
+        }
       }
 
       const now = new Date().toISOString();
@@ -247,12 +261,13 @@ export class StensiblyStore {
 
       this.appendEvent({
         itemId: id,
-        actorId: input.actor?.id ?? null,
+        actorId,
         type: "item.created",
         payload: {
           kind: input.kind,
           title: input.title,
           project: input.project,
+          requestFingerprint,
         },
         idempotencyKey,
         now,
@@ -570,6 +585,23 @@ function itemGeneration(value: number): number {
     throw new RangeError("Expected claim generation must be a non-negative integer");
   }
   return value;
+}
+
+function requireSameCreateRequest(
+  existing: EventRow,
+  expectedActorId: string | null,
+  expectedFingerprint: string,
+): void {
+  const payload = parseEventPayload(existing.payload_json);
+  if (
+    existing.type !== "item.created"
+    || existing.actor_id !== expectedActorId
+    || payload.requestFingerprint !== expectedFingerprint
+  ) {
+    throw new ConflictError(
+      "Idempotency key was already used for a different item creation request",
+    );
+  }
 }
 
 function requireSameReplayEvent(
