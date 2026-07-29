@@ -73,6 +73,7 @@ function sources(overrides: Partial<Record<string, string>> = {}): RepositoryIns
 }
 
 function attachment(project = "scrapbook", repositories = ["teamleaderleo/stensibly"]) {
+  ensureGitHubIssueContextSchema(store);
   return acceptSqliteProjectAttachment(store, {
     project,
     snapshot: compileProjectContract(renderProjectContract({
