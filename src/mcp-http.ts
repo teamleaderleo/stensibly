@@ -124,12 +124,13 @@ export async function handleMcpHttpRequest(
   const denial = await authorizePayload(options.ledger, principal, body);
   if (denial) return denial;
 
-  const server = (options.createServer ?? createMcpServer)(options.ledger);
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  });
+  let server: ReturnType<typeof createMcpServer> | undefined;
   try {
+    server = (options.createServer ?? createMcpServer)(options.ledger);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
     await server.connect(transport);
     return await transport.handleRequest(request, { parsedBody: body });
   } catch {
@@ -142,10 +143,12 @@ export async function handleMcpHttpRequest(
       "mcp_failure",
     );
   } finally {
-    try {
-      await server.close();
-    } catch {
-      // Cleanup failure must never replace a result already produced by the MCP handler.
+    if (server) {
+      try {
+        await server.close();
+      } catch {
+        // Cleanup failure must never replace a result already produced by the MCP handler.
+      }
     }
   }
 }
