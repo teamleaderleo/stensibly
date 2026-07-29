@@ -13,6 +13,7 @@ import {
   verifyAccessToken,
   verifyDetached,
 } from "./mcp-oauth-crypto.js";
+import { isAllowedMcpConsentRequest } from "./mcp-consent-security.js";
 import {
   MAX_REGISTRATION_BODY_BYTES,
   authorizationInputError,
@@ -182,7 +183,11 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
   });
 
   app.post("/oauth/consent", async (context) => {
-    if (context.req.header("origin") !== normalized.issuer) {
+    if (!isAllowedMcpConsentRequest({
+      origin: context.req.header("origin"),
+      secFetchSite: context.req.header("sec-fetch-site"),
+      secFetchMode: context.req.header("sec-fetch-mode"),
+    }, normalized.issuer)) {
       return oauthJsonError(context, 403, "access_denied", "Consent origin is not allowed");
     }
     let form: URLSearchParams;
