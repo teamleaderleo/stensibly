@@ -1,0 +1,688 @@
+name: Apply MCP manifest diagnostics
+
+on:
+  push:
+    branches:
+      - rivet/490-mcp-manifest-diagnostics
+    paths:
+      - ".github/workflows/rivet-apply-490-mcp-diagnostics.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rivet-490-mcp-manifest-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: rivet/490-mcp-manifest-diagnostics
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply bounded diagnostics patch
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_one(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              target.write_text(text.replace(old, new))
+
+          Path("src/mcp-diagnostics.ts").write_text(r'''import { createHash } from "node:crypto";
+import {
+  FAILURE_CATEGORY_HEADER,
+  REQUEST_ID_HEADER,
+  type FailureCategory,
+} from "./worker-observability.js";
+
+export const MCP_TOOL_MANIFEST_VERSION = 1;
+export const MCP_TOOL_MANIFEST_FINGERPRINT_HEADER =
+  "x-stensibly-mcp-tool-manifest-fingerprint";
+export const MCP_TOOL_COUNT_HEADER = "x-stensibly-mcp-tool-count";
+export const MCP_FAILURE_STAGE_HEADER = "x-stensibly-mcp-failure-stage";
+
+export const MCP_TOOL_NAMES = [
+  "attach_artifact",
+  "block_work",
+  "claim_work",
+  "complete_work",
+  "create_item",
+  "edit_continuation",
+  "get_brief",
+  "get_continuation",
+  "get_item",
+  "get_project_attachment",
+  "get_runner_context",
+  "handoff_work",
+  "list_artifacts",
+  "list_continuation_inbox",
+  "list_continuations",
+  "list_work",
+  "propose_continuation",
+  "queue_continuation_for_supervisor",
+  "record_event",
+  "release_work",
+  "renew_claim",
+  "resolve_continuation",
+  "run_continuation_supervisor_policy",
+  "survey_workspace",
+  "unblock_work",
+] as const;
+
+const manifestJson = JSON.stringify({
+  version: MCP_TOOL_MANIFEST_VERSION,
+  tools: MCP_TOOL_NAMES,
+});
+
+export const MCP_TOOL_MANIFEST_FINGERPRINT = `sha256:${createHash("sha256")
+  .update(manifestJson)
+  .digest("hex")}`;
+
+export type McpFailureStage =
+  | "method_validation"
+  | "origin_validation"
+  | "host_validation"
+  | "token_authority"
+  | "authentication"
+  | "payload_parse"
+  | "authorization"
+  | "server_construction"
+  | "transport_connection"
+  | "request_execution"
+  | "request_validation";
+
+export interface McpFailureDiagnosticData {
+  layer: "gateway" | "authentication" | "authorization" | "token_authority" | "mcp";
+  stage: McpFailureStage;
+  requestId: string;
+  retryable: boolean;
+  reconciliation: "not_required" | "safe_to_retry" | "read_after_write_before_retry";
+  recommendedAction:
+    | "fix_request"
+    | "reauthenticate"
+    | "request_scope_or_project_access"
+    | "retry_with_same_request_id"
+    | "reconcile_by_idempotency_key_before_retry";
+  manifestFingerprint: string;
+  manifestToolCount: number;
+  method?: string;
+  tool?: string;
+}
+
+export async function withMcpDiagnostics(
+  request: Request,
+  response: Response,
+): Promise<Response> {
+  const headers = new Headers(response.headers);
+  headers.set(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER, MCP_TOOL_MANIFEST_FINGERPRINT);
+  headers.set(MCP_TOOL_COUNT_HEADER, String(MCP_TOOL_NAMES.length));
+
+  const requestId = acceptedRequestId(request.headers.get(REQUEST_ID_HEADER));
+  if (!requestId || response.status < 400 || !isJsonResponse(response)) {
+    return copyResponse(response, headers);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    return copyResponse(response, headers);
+  }
+  if (!isRecord(payload) || !isRecord(payload.error) || payload.error.data !== undefined) {
+    return copyResponse(response, headers);
+  }
+
+  const requestPayload = await readRequestPayload(request);
+  const method = requestMethod(requestPayload);
+  const tool = requestTool(requestPayload);
+  const category = failureCategory(headers.get(FAILURE_CATEGORY_HEADER), response.status);
+  const stage = failureStage(
+    headers.get(MCP_FAILURE_STAGE_HEADER),
+    response.status,
+    payload.error.code,
+    category,
+  );
+  payload.error = {
+    ...payload.error,
+    data: diagnosticData({ category, stage, requestId, method, tool }),
+  };
+
+  return new Response(JSON.stringify(payload), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function diagnosticData(input: {
+  category: FailureCategory;
+  stage: McpFailureStage;
+  requestId: string;
+  method?: string;
+  tool?: string;
+}): McpFailureDiagnosticData {
+  const writeMayHaveExecuted = input.stage === "request_execution"
+    && input.method === "tools/call"
+    && isWriteTool(input.tool);
+  const retryable = !writeMayHaveExecuted && (
+    input.category === "convex_failure"
+    || input.category === "mcp_failure"
+    || input.category === "gateway_failure"
+  );
+  const reconciliation = writeMayHaveExecuted
+    ? "read_after_write_before_retry"
+    : retryable
+    ? "safe_to_retry"
+    : "not_required";
+  const recommendedAction = writeMayHaveExecuted
+    ? "reconcile_by_idempotency_key_before_retry"
+    : input.category === "auth_failure"
+    ? "reauthenticate"
+    : input.category === "authorization_failure"
+    ? "request_scope_or_project_access"
+    : retryable
+    ? "retry_with_same_request_id"
+    : "fix_request";
+
+  return {
+    layer: failureLayer(input.category),
+    stage: input.stage,
+    requestId: input.requestId,
+    retryable,
+    reconciliation,
+    recommendedAction,
+    manifestFingerprint: MCP_TOOL_MANIFEST_FINGERPRINT,
+    manifestToolCount: MCP_TOOL_NAMES.length,
+    ...(input.method ? { method: input.method } : {}),
+    ...(input.tool ? { tool: input.tool } : {}),
+  };
+}
+
+function failureLayer(
+  category: FailureCategory,
+): McpFailureDiagnosticData["layer"] {
+  if (category === "auth_failure") return "authentication";
+  if (category === "authorization_failure") return "authorization";
+  if (category === "convex_failure") return "token_authority";
+  if (category === "mcp_failure") return "mcp";
+  return "gateway";
+}
+
+function failureStage(
+  explicit: string | null,
+  status: number,
+  code: unknown,
+  category: FailureCategory,
+): McpFailureStage {
+  if (isFailureStage(explicit)) return explicit;
+  if (status === 405) return "method_validation";
+  if (code === -32700) return "payload_parse";
+  if (category === "auth_failure") return "authentication";
+  if (category === "authorization_failure") return "authorization";
+  if (category === "convex_failure") return "token_authority";
+  if (category === "mcp_failure") return "request_execution";
+  return "request_validation";
+}
+
+function failureCategory(value: string | null, status: number): FailureCategory {
+  const categories: FailureCategory[] = [
+    "auth_failure",
+    "authorization_failure",
+    "cors_rejection",
+    "convex_failure",
+    "mcp_failure",
+    "gateway_failure",
+    "request_failure",
+  ];
+  if (value && categories.includes(value as FailureCategory)) {
+    return value as FailureCategory;
+  }
+  if (status === 401) return "auth_failure";
+  if (status === 403) return "authorization_failure";
+  return "mcp_failure";
+}
+
+function isFailureStage(value: string | null): value is McpFailureStage {
+  return [
+    "method_validation",
+    "origin_validation",
+    "host_validation",
+    "token_authority",
+    "authentication",
+    "payload_parse",
+    "authorization",
+    "server_construction",
+    "transport_connection",
+    "request_execution",
+    "request_validation",
+  ].includes(value ?? "");
+}
+
+async function readRequestPayload(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
+function requestMethod(payload: unknown): string | undefined {
+  if (!isRecord(payload) || typeof payload.method !== "string") return undefined;
+  const method = payload.method.trim();
+  return /^[a-z][a-z0-9/._-]{0,79}$/.test(method) ? method : undefined;
+}
+
+function requestTool(payload: unknown): string | undefined {
+  if (!isRecord(payload) || payload.method !== "tools/call" || !isRecord(payload.params)) {
+    return undefined;
+  }
+  const name = payload.params.name;
+  return typeof name === "string" && MCP_TOOL_NAMES.includes(name as typeof MCP_TOOL_NAMES[number])
+    ? name
+    : undefined;
+}
+
+function isWriteTool(tool: string | undefined): boolean {
+  return tool !== undefined && [
+    "attach_artifact",
+    "create_item",
+    "claim_work",
+    "renew_claim",
+    "handoff_work",
+    "block_work",
+    "unblock_work",
+    "release_work",
+    "record_event",
+    "complete_work",
+    "propose_continuation",
+    "edit_continuation",
+    "resolve_continuation",
+    "queue_continuation_for_supervisor",
+    "run_continuation_supervisor_policy",
+  ].includes(tool);
+}
+
+function acceptedRequestId(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(normalized) ? normalized : null;
+}
+
+function isJsonResponse(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
+}
+
+function copyResponse(response: Response, headers: Headers): Response {
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+''')
+
+          replace_one(
+              "src/mcp-http.ts",
+              '''import {
+  FAILURE_CATEGORY_HEADER,
+  type FailureCategory,
+} from "./worker-observability.js";
+''',
+              '''import {
+  MCP_FAILURE_STAGE_HEADER,
+  type McpFailureStage,
+  withMcpDiagnostics,
+} from "./mcp-diagnostics.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+  type FailureCategory,
+} from "./worker-observability.js";
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''export async function handleMcpHttpRequest(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
+''',
+              '''export async function handleMcpHttpRequest(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
+  const diagnosticRequest = request.clone();
+  const response = await handleMcpHttpHttpRequestCore(request, options);
+  return await withMcpDiagnostics(diagnosticRequest, response);
+}
+
+async function handleMcpHttpHttpRequestCore(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''  let server: ReturnType<typeof createMcpServer> | undefined;
+  try {
+    server = (options.createServer ?? createMcpServer)(options.ledger);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    return await transport.handleRequest(request, { parsedBody: body });
+  } catch {
+    return jsonRpcError(
+      500,
+      -32603,
+      "Internal server error",
+      requestId(body),
+      {},
+      "mcp_failure",
+    );
+''',
+              '''  let server: ReturnType<typeof createMcpServer> | undefined;
+  let failureStage: McpFailureStage = "server_construction";
+  try {
+    server = (options.createServer ?? createMcpServer)(options.ledger);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    failureStage = "transport_connection";
+    await server.connect(transport);
+    failureStage = "request_execution";
+    return await transport.handleRequest(request, { parsedBody: body });
+  } catch {
+    return jsonRpcError(
+      500,
+      -32603,
+      "Internal server error",
+      requestId(body),
+      { [MCP_FAILURE_STAGE_HEADER]: failureStage },
+      "mcp_failure",
+    );
+''',
+          )
+
+          replace_one(
+              "src/verify-hosted.ts",
+              '''import { parseToken } from "./token-provider.js";
+''',
+              '''import {
+  MCP_TOOL_COUNT_HEADER,
+  MCP_TOOL_MANIFEST_FINGERPRINT,
+  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+  MCP_TOOL_NAMES,
+} from "./mcp-diagnostics.js";
+import { parseToken } from "./token-provider.js";
+''',
+          )
+          replace_one(
+              "src/verify-hosted.ts",
+              '''    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly`;
+''',
+              '''    const manifestFingerprint = requireMcpManifestReceipt(response);
+    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly manifest=${manifestFingerprint}`;
+''',
+          )
+          replace_one(
+              "src/verify-hosted.ts",
+              '''function responseError(response: Response, message: string): Error {
+''',
+              '''function requireMcpManifestReceipt(response: Response): string {
+  const fingerprint = response.headers
+    .get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)
+    ?.trim();
+  if (fingerprint !== MCP_TOOL_MANIFEST_FINGERPRINT) {
+    throw responseError(
+      response,
+      `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${MCP_TOOL_MANIFEST_FINGERPRINT}; received ${fingerprint || "missing"}`,
+    );
+  }
+  const count = response.headers.get(MCP_TOOL_COUNT_HEADER)?.trim();
+  if (count !== String(MCP_TOOL_NAMES.length)) {
+    throw responseError(
+      response,
+      `Expected ${MCP_TOOL_COUNT_HEADER}=${MCP_TOOL_NAMES.length}; received ${count || "missing"}`,
+    );
+  }
+  return fingerprint;
+}
+
+function responseError(response: Response, message: string): Error {
+''',
+          )
+
+          replace_one(
+              "test/verify-hosted.test.ts",
+              '''import { describe, expect, test } from "bun:test";
+''',
+              '''import { describe, expect, test } from "bun:test";
+import {
+  MCP_TOOL_COUNT_HEADER,
+  MCP_TOOL_MANIFEST_FINGERPRINT,
+  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+  MCP_TOOL_NAMES,
+} from "../src/mcp-diagnostics.ts";
+''',
+          )
+          replace_one(
+              "test/verify-hosted.test.ts",
+              '''        }, 200, { "x-request-id": "mcp-success" });
+''',
+              '''        }, 200, {
+          "x-request-id": "mcp-success",
+          [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
+          [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+        });
+''',
+          )
+          replace_one(
+              "test/verify-hosted.test.ts",
+              '''    expect(calls).toHaveLength(5);
+''',
+              '''    expect(results[4]?.detail).toContain(`manifest=${MCP_TOOL_MANIFEST_FINGERPRINT}`);
+    expect(calls).toHaveLength(5);
+''',
+          )
+
+          Path("test/mcp-diagnostics.test.ts").write_text(r'''import { describe, expect, test } from "bun:test";
+import { createApiToken } from "../src/auth.ts";
+import {
+  MCP_FAILURE_STAGE_HEADER,
+  MCP_TOOL_COUNT_HEADER,
+  MCP_TOOL_MANIFEST_FINGERPRINT,
+  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+  MCP_TOOL_NAMES,
+} from "../src/mcp-diagnostics.ts";
+import { createServerApp } from "../src/server-app.ts";
+import { StensiblyStore } from "../src/store.ts";
+
+const protocolVersion = "2025-06-18";
+
+describe("MCP connector diagnostics", () => {
+  test("publishes one stable manifest fingerprint that matches tools/list", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const token = createApiToken(store, {
+        name: "Manifest diagnostics reader",
+        scopes: ["read"],
+      });
+      const app = createServerApp(store);
+      const initialized = await mcpRequest(app, token.token, initializeMessage(1));
+      expect(initialized.status).toBe(200);
+      expect(initialized.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
+        MCP_TOOL_MANIFEST_FINGERPRINT,
+      );
+      expect(initialized.headers.get(MCP_TOOL_COUNT_HEADER)).toBe(String(MCP_TOOL_NAMES.length));
+
+      const listed = await mcpRequest(app, token.token, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      });
+      const payload = await listed.json() as {
+        result?: { tools?: Array<{ name?: unknown }> };
+      };
+      const names = (payload.result?.tools ?? [])
+        .map((tool) => tool.name)
+        .filter((name): name is string => typeof name === "string")
+        .sort();
+      expect(names).toEqual([...MCP_TOOL_NAMES]);
+      expect(listed.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
+        MCP_TOOL_MANIFEST_FINGERPRINT,
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  test("returns typed stage and reconciliation guidance for gateway MCP failures", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const token = createApiToken(store, {
+        name: "Failure diagnostics reader",
+        scopes: ["read"],
+      });
+      const app = createServerApp(store, {
+        mcp: {
+          createServer() {
+            throw new Error("synthetic construction failure");
+          },
+        },
+      });
+      const response = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token.token}`,
+          "content-type": "application/json",
+          "mcp-protocol-version": protocolVersion,
+          "x-request-id": "diag-construction-1",
+        },
+        body: JSON.stringify(initializeMessage(9)),
+      });
+      expect(response.status).toBe(500);
+      expect(response.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("server_construction");
+      expect(response.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
+        MCP_TOOL_MANIFEST_FINGERPRINT,
+      );
+      const payload = await response.json() as {
+        error?: { data?: Record<string, unknown> };
+      };
+      expect(payload.error?.data).toEqual({
+        layer: "mcp",
+        stage: "server_construction",
+        requestId: "diag-construction-1",
+        retryable: true,
+        reconciliation: "safe_to_retry",
+        recommendedAction: "retry_with_same_request_id",
+        manifestFingerprint: MCP_TOOL_MANIFEST_FINGERPRINT,
+        manifestToolCount: MCP_TOOL_NAMES.length,
+        method: "initialize",
+      });
+    } finally {
+      store.close();
+    }
+  });
+});
+
+async function mcpRequest(
+  app: ReturnType<typeof createServerApp>,
+  token: string,
+  body: unknown,
+): Promise<Response> {
+  return await app.request("/mcp", {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "mcp-protocol-version": protocolVersion,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function initializeMessage(id: number) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: {
+      protocolVersion,
+      capabilities: {},
+      clientInfo: { name: "mcp-diagnostics-test", version: "0.0.1" },
+    },
+  };
+}
+''')
+
+          Path("docs/mcp-connector-diagnostics.md").write_text(r'''# MCP connector diagnostics
+
+Stensibly exposes bounded diagnostics that separate a ChatGPT connector-host failure from a request that reached the Worker and MCP server.
+
+Every `/mcp` response carries:
+
+- `x-stensibly-mcp-tool-manifest-fingerprint`: SHA-256 identity of the exact ordered tool-name manifest;
+- `x-stensibly-mcp-tool-count`: the number of tools represented by that manifest;
+- the existing Worker request ID, deployed Worker version, and `response_produced` receipt when the Cloudflare gateway handled the request.
+
+The manifest contains tool names only. It excludes descriptions, schemas, arguments, tokens, projects, item identifiers, payloads, and private content.
+
+Gateway-generated JSON-RPC failures also include bounded `error.data` when a valid `x-request-id` is present. The data identifies:
+
+- responsible layer and processing stage;
+- request ID;
+- whether direct retry is safe;
+- whether a possible write must be reconciled by idempotency/read-after-write before retry;
+- a bounded recommended action;
+- the manifest fingerprint and tool count;
+- an allowlisted MCP method and known tool name when available.
+
+This does not repair a ChatGPT registry failure that happens before network dispatch. In that case no Worker receipt or manifest header can exist, which is itself the diagnostic distinction. A discovered schema set can be compared with the server manifest only after a request reaches `/mcp`.
+
+`bun run verify:hosted` requires the exact manifest fingerprint and tool count on MCP initialization, so automatic Worker deployment fails verification if the deployed tool registry and repository contract drift.
+''')
+          PY
+
+      - name: Run exact repository checks
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Commit implementation and remove applicator
+        run: |
+          set -euo pipefail
+          rm .github/workflows/rivet-apply-490-mcp-diagnostics.yml
+          git config user.name "teamleaderleo"
+          git config user.email "13091533+teamleaderleo@users.noreply.github.com"
+          git add src/mcp-diagnostics.ts src/mcp-http.ts src/verify-hosted.ts \
+            test/mcp-diagnostics.test.ts test/verify-hosted.test.ts \
+            docs/mcp-connector-diagnostics.md \
+            .github/workflows/rivet-apply-490-mcp-diagnostics.yml
+          git commit -m "Expose MCP manifest and typed failure diagnostics"
+          git push origin HEAD:rivet/490-mcp-manifest-diagnostics
