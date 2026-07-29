@@ -22,6 +22,7 @@ describe("GitHub issue repository attachment identity", () => {
     "https://github.com/teamleaderleo/stensibly",
     "https://github.com/teamleaderleo/stensibly.git",
     "ssh://git@github.com/teamleaderleo/stensibly.git",
+    "ssh://git@github.com:22/teamleaderleo/stensibly.git",
   ])("accepts canonical GitHub repository declaration %s", (repository) => {
     const store = createStore();
     const project = `alias-${stores.length}`;
