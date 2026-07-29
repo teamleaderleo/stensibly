@@ -86,6 +86,7 @@ import {
   type ListWorkRunsInput,
   type TransitionWorkRunInput,
 } from "./runs.js";
+import { requireMatchingSqliteIdempotency } from "./sqlite-idempotency-scope.js";
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
 
@@ -157,6 +158,18 @@ export class SqliteWorkLedger implements
   }
 
   async attachArtifact(input: AttachWorkArtifactInput) {
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "artifact.attached",
+      itemId: input.id,
+      actorId: input.actor.id,
+      payloadSubset: {
+        kind: input.kind,
+        label: input.label,
+        uri: input.uri,
+      },
+    });
     const replay = hasRecordedIdempotencyKey(this.store, input.idempotencyKey);
     const artifact = attachArtifact(this.store, {
       itemId: input.id,
@@ -176,12 +189,29 @@ export class SqliteWorkLedger implements
 
   async createItem(input: CreateWorkInput) {
     const { idempotencyKey, ...item } = input;
+    requireMatchingSqliteIdempotency(this.store, idempotencyKey, {
+      project: item.project,
+      operation: "item.created",
+      payloadSubset: {
+        project: item.project,
+        kind: item.kind,
+        title: item.title,
+      },
+    });
     return this.store.createItem(item, idempotencyKey);
   }
 
   async claimWork(input: ClaimWorkInput) {
     reconcileStaleRunItems(this.store);
     expireClaims(this.store);
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "claim.created",
+      itemId: input.id,
+      actorId: input.actor.id,
+      payloadSubset: { leaseSeconds: input.leaseSeconds },
+    });
     return this.store.claimItem(
       input.id,
       input.actor,
@@ -191,6 +221,17 @@ export class SqliteWorkLedger implements
   }
 
   async renewClaim(input: RenewClaimInput) {
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "claim.renewed",
+      itemId: input.id,
+      actorId: input.actor.id,
+      payloadSubset: {
+        leaseSeconds: input.leaseSeconds,
+        generation: input.expectedClaimGeneration,
+      },
+    });
     return renewClaim(
       this.store,
       input.id,
@@ -202,20 +243,49 @@ export class SqliteWorkLedger implements
   }
 
   async handoffWork(input: HandoffWorkInput) {
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "work.handed_off",
+      itemId: input.id,
+      actorId: input.actor.id,
+    });
     return handoffWork(this.store, input);
   }
 
   async blockWork(input: BlockWorkInput) {
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "work.blocked",
+      itemId: input.id,
+      actorId: input.actor.id,
+    });
     return blockWork(this.store, input);
   }
 
   async unblockWork(input: UnblockWorkInput) {
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "work.unblocked",
+      itemId: input.id,
+      actorId: input.actor.id,
+    });
     return unblockWork(this.store, input);
   }
 
   async releaseWork(input: ClaimActionInput) {
     reconcileStaleRunItems(this.store);
     expireClaims(this.store);
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "claim.released",
+      itemId: input.id,
+      actorId: input.actor.id,
+      payloadSubset: { generation: input.expectedClaimGeneration },
+    });
     return this.store.releaseItem(
       input.id,
       input.actor,
@@ -226,6 +296,14 @@ export class SqliteWorkLedger implements
 
   async recordEvent(input: RecordWorkEventInput) {
     assertPublicRecordableItemEventType(input.type);
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: input.type,
+      itemId: input.id,
+      actorId: input.actor?.id ?? null,
+      payload: input.payload,
+    });
     const replay = hasRecordedIdempotencyKey(this.store, input.idempotencyKey);
     const event = this.store.recordEvent({
       itemId: input.id,
@@ -240,6 +318,13 @@ export class SqliteWorkLedger implements
 
   async completeWork(input: CompleteWorkInput) {
     reconcileStaleRunItems(this.store);
+    const item = this.store.getItem(input.id);
+    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {
+      project: item.project,
+      operation: "item.completed",
+      itemId: input.id,
+      actorId: input.actor.id,
+    });
     return completeFencedWork(this.store, input);
   }
 

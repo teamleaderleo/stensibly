@@ -192,6 +192,63 @@ export async function requireMatchingIdempotency(
   return existing;
 }
 
+export async function requireSameIdempotentItem(
+  ctx: QueryContext,
+  event: any,
+  expected: {
+    projectSlug?: string;
+    itemExternalId?: string;
+    actorExternalId?: string | null;
+    payload?: unknown;
+    payloadSubset?: Record<string, unknown>;
+  },
+) {
+  const item = await ctx.db.get("items", event.itemId);
+  if (!item) throw new Error("Idempotent item no longer exists");
+  const project = await ctx.db.get("projects", item.projectId);
+  const mismatch = !project
+    || (expected.projectSlug !== undefined && project.slug !== expected.projectSlug)
+    || (expected.itemExternalId !== undefined && item.externalId !== expected.itemExternalId)
+    || (Object.hasOwn(expected, "actorExternalId")
+      && (event.actorExternalId ?? null) !== expected.actorExternalId)
+    || (Object.hasOwn(expected, "payload")
+      && stableJson(event.payload) !== stableJson(expected.payload))
+    || (expected.payloadSubset !== undefined
+      && !containsRecordSubset(event.payload, expected.payloadSubset));
+  if (mismatch) {
+    throw new Error("Idempotency key already belongs to another operation");
+  }
+  return item;
+}
+
+function containsRecordSubset(value: unknown, subset: Record<string, unknown>): boolean {
+  if (!isPlainRecord(value)) return false;
+  return Object.entries(subset).every(([key, expected]) =>
+    Object.hasOwn(value, key) && stableJson(value[key]) === stableJson(expected)
+  );
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (isPlainRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
+  }
+  return value;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 export async function appendEvent(
   ctx: MutationContext,
   input: {
