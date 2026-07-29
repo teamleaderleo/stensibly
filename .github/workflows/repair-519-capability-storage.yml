@@ -1,0 +1,119 @@
+name: Repair PR 519 capability storage
+
+on:
+  push:
+    branches:
+      - mercury/453-capability-grant-sqlite
+    paths:
+      - .github/workflows/repair-519-capability-storage.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: mercury/453-capability-grant-sqlite
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Apply bounded source and documentation repair
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/tool-capability-grants-sqlite.ts")
+          source = source_path.read_text()
+          old = '''        if (authorization.authorized) {
+            const permission = current.grant.permissions.find((candidate) =>
+              candidate.permissionId === authorization.permissionId
+            );
+            if (!permission) {
+              throw new Error("Authorized permission is absent from the accepted grant");
+            }
+            const consumedUses = tryConsumePermissionUse(
+              store,
+              current,
+              authorization.permissionId,
+              permission.maxUses,
+              now,
+            );
+            authorization = consumedUses === null
+              ? denied(grantId, request.fingerprint, "budget_exhausted")
+              : {
+                ...authorization,
+                remainingUsesAfterAuthorization: permission.maxUses - consumedUses,
+              };
+          }
+'''
+          new = '''        if (authorization.authorized) {
+            const authorized = authorization;
+            const permission = current.grant.permissions.find((candidate) =>
+              candidate.permissionId === authorized.permissionId
+            );
+            if (!permission) {
+              throw new Error("Authorized permission is absent from the accepted grant");
+            }
+            const consumedUses = tryConsumePermissionUse(
+              store,
+              current,
+              authorized.permissionId,
+              permission.maxUses,
+              now,
+            );
+            authorization = consumedUses === null
+              ? denied(grantId, request.fingerprint, "budget_exhausted")
+              : {
+                ...authorized,
+                remainingUsesAfterAuthorization: permission.maxUses - consumedUses,
+              };
+          }
+'''
+          if source.count(old) != 1:
+              raise SystemExit("authorization narrowing anchor mismatch")
+          source = source.replace(old, new)
+
+          old = '''    && record.revokedAt === candidate.revokedAt
+    && record.revokedBy === candidate.revokedBy
+'''
+          new = '''    && record.revokedBy === candidate.revokedBy
+'''
+          if source.count(old) != 1:
+              raise SystemExit("revocation replay anchor mismatch")
+          source = source.replace(old, new)
+          source_path.write_text(source)
+
+          docs_path = Path("docs/tool-capability-grant-persistence.md")
+          docs = docs_path.read_text()
+          replacements = {
+            "- have a valid canonical fingerprint;": "- rebuild exactly through the canonical grant builder with no extra or altered fields;",
+            "- effective UTC time within the grant lifetime;": "- server-observed effective UTC time within the grant lifetime;",
+            "- current UTC time;\n": "",
+            "Before the transaction begins, the typed request builder validates and canonicalizes the request.": "Before the transaction begins, the typed request builder validates and canonicalizes the request. Authorization, acceptance, revocation, and record times come from an internal server clock dependency and are not request or tool arguments.",
+            "1. checks exact idempotency replay;\n2. loads the current accepted grant and server-owned fingerprint;": "1. checks exact idempotency replay before consulting the current clock;\n2. reads the server clock, then loads the current accepted grant and server-owned fingerprint;",
+            "6. atomically increments the authorized permission use once;": "6. conditionally increments the authorized permission use only while the stored count remains below the exact grant maximum;",
+            "- canonical authorization time;\n": "",
+            "Repeating the same idempotency key and attempt returns the original admission record and does not consume another use. Reusing the key with changed time, generation, grant, subject, resource, action, or arguments conflicts before use consumption.": "Repeating the same idempotency key and attempt returns the original admission record and does not consume another use, even when replayed later. Reusing the key with a changed generation, grant, subject, resource, action, or arguments conflicts before use consumption.",
+            "- canonical grant fingerprints and duplicated row metadata;": "- full canonical grant rehydration, fingerprints, and duplicated row metadata;",
+          }
+          for old, new in replacements.items():
+              if old not in docs:
+                  raise SystemExit(f"documentation anchor missing: {old}")
+              docs = docs.replace(old, new, 1)
+          docs_path.write_text(docs)
+          PY
+      - name: Validate focused repair
+        run: |
+          bun run typecheck
+          bun test ./test/tool-capability-grants-sqlite.test.ts
+      - name: Commit product repair and remove applicator
+        run: |
+          rm .github/workflows/repair-519-capability-storage.yml
+          git config user.name "Mercury Stensibly dogfood"
+          git config user.email "teamleaderleo@users.noreply.github.com"
+          git add src/tool-capability-grants-sqlite.ts test/tool-capability-grants-sqlite.test.ts docs/tool-capability-grant-persistence.md .github/workflows/repair-519-capability-storage.yml
+          git commit -m "Repair capability storage authority boundaries"
+          git push origin HEAD:mercury/453-capability-grant-sqlite
