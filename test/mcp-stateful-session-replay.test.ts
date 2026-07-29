@@ -64,7 +64,7 @@ describe("Stensibly stateful MCP result replay", () => {
       { name: "stensibly-stateful-replay", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.onerror = (error) => serverErrors.push(error.message);
+    server.server.onerror = (error) => serverErrors.push(error.message);
     server.registerTool(
       "create_item",
       {
@@ -193,10 +193,6 @@ describe("Stensibly stateful MCP result replay", () => {
       expect(store.listItems({ project })).toHaveLength(1);
       expect(countCreatedEvents(store)).toBe(1);
 
-      // A new JSON-RPC call enters the handler again. Stensibly's exact
-      // idempotency fingerprint returns the already committed item and keeps
-      // one durable creation effect even though request-scoped transport replay
-      // failed in the installed SDK.
       const explicitRetryEnvelope = await withDeadline(
         client.callTool({ name: "create_item", arguments: request }),
         3_000,
