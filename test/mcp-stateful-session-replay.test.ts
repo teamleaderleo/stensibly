@@ -11,7 +11,6 @@ import { z } from "zod";
 import { StensiblyStore } from "../src/store.ts";
 
 const project = "oauth-dogfood";
-const protocolVersion = "2025-11-25";
 const actor = {
   id: "kestrel:stateful-replay",
   name: "Kestrel Stateful Replay",
@@ -56,12 +55,8 @@ describe("Stensibly stateful MCP result replay", () => {
     const eventStore = new MemoryEventStore();
     let handlerCalls = 0;
     let committedItemId: string | undefined;
-    const scheduled: Array<{
-      reconnect: () => void;
-      delay: number;
-      attempt: number;
-    }> = [];
     const observedTokens: string[] = [];
+    const replayGets: string[] = [];
     const errors: string[] = [];
 
     const server = new McpServer(
@@ -117,9 +112,10 @@ describe("Stensibly stateful MCP result replay", () => {
     const serverTransport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => "session-lane-68",
       eventStore,
-      retryInterval: 1,
+      // Keep the first result pending long enough to inspect the durable state,
+      // then let the installed SDK's real timer issue the resumed GET.
+      retryInterval: 750,
       enableJsonResponse: false,
-      keepAliveMs: 0,
     });
     await server.connect(serverTransport);
 
@@ -129,11 +125,15 @@ describe("Stensibly stateful MCP result replay", () => {
       init?: RequestInit,
     ): Promise<Response> => {
       const request = new Request(input, init);
+      const lastEventId = request.headers.get("last-event-id");
       // Client.connect() may open the optional standalone legacy GET. This
       // fixture isolates request-scoped replay, so decline only GETs without a
       // replay cursor and route every other request through the real transport.
-      if (request.method === "GET" && !request.headers.has("last-event-id")) {
+      if (request.method === "GET" && lastEventId === null) {
         return new Response(null, { status: 405 });
+      }
+      if (request.method === "GET" && lastEventId !== null) {
+        replayGets.push(lastEventId);
       }
       return await serverTransport.handleRequest(request);
     };
@@ -145,10 +145,6 @@ describe("Stensibly stateful MCP result replay", () => {
         maxReconnectionDelay: 10,
         reconnectionDelayGrowFactor: 2,
         maxRetries: 2,
-      },
-      reconnectionScheduler(reconnect, delay, attempt) {
-        scheduled.push({ reconnect, delay, attempt });
-        return () => {};
       },
     });
     const client = new Client({ name: "stensibly-stateful-client", version: "0.0.1" });
@@ -180,34 +176,40 @@ describe("Stensibly stateful MCP result replay", () => {
       );
 
       await waitFor(() => handlerCalls === 1, "first durable handler execution");
-      await waitFor(() => scheduled.length === 1, "request replay schedule");
+      await waitFor(() => observedTokens.length === 1, "request priming token");
+      await waitFor(
+        () => eventsForToken(eventStore, observedTokens[0]!).length === 2,
+        "stored priming event and result",
+      );
+
+      const itemId = committedItemId;
+      if (itemId === undefined) throw new Error("Expected committed item id");
+      const primingToken = observedTokens[0]!;
+      const requestEvents = eventsForToken(eventStore, primingToken);
 
       expect(await promiseState(originalResult)).toBe("pending");
+      expect(replayGets).toEqual([]);
       expect(store.listItems({ project })).toHaveLength(1);
       expect(countCreatedEvents(store)).toBe(1);
-      expect(committedItemId).toBeDefined();
-      expect(observedTokens).toEqual(["event-1"]);
-      expect(scheduled[0]).toMatchObject({ delay: 1, attempt: 0 });
-
-      scheduled.shift()!.reconnect();
-      const replayedEnvelope = await originalResult;
-      const replayedItem = readToolJson<{ id: string; title: string }>(replayedEnvelope);
-
-      expect(replayedItem).toMatchObject({
-        id: committedItemId,
-        title: request.title,
-      });
-      expect(handlerCalls).toBe(1);
-      expect(store.listItems({ project }).map((item) => item.id)).toEqual([
-        committedItemId,
-      ]);
-      expect(countCreatedEvents(store)).toBe(1);
-      expect(eventStore.events).toHaveLength(2);
-      expect(eventStore.events[0]?.message).toEqual({});
-      expect(eventStore.events[1]?.message).toMatchObject({
+      expect(requestEvents).toHaveLength(2);
+      expect(Object.keys(requestEvents[0]!.message as object)).toHaveLength(0);
+      expect(requestEvents[1]!.message).toMatchObject({
         jsonrpc: "2.0",
         result: {},
       });
+
+      const replayedEnvelope = await originalResult;
+      const replayedItem = readToolJson<{ id: string; title: string }>(replayedEnvelope);
+
+      expect(replayGets).toEqual([primingToken]);
+      expect(observedTokens).toEqual([primingToken, requestEvents[1]!.id]);
+      expect(replayedItem).toMatchObject({
+        id: itemId,
+        title: request.title,
+      });
+      expect(handlerCalls).toBe(1);
+      expect(store.listItems({ project }).map((item) => item.id)).toEqual([itemId]);
+      expect(countCreatedEvents(store)).toBe(1);
       expect(errors).toEqual([]);
 
       // This is a new JSON-RPC call, not transport replay. The handler runs a
@@ -218,7 +220,7 @@ describe("Stensibly stateful MCP result replay", () => {
         arguments: request,
       });
       const explicitRetryItem = readToolJson<{ id: string }>(explicitRetryEnvelope);
-      expect(explicitRetryItem.id).toBe(committedItemId);
+      expect(explicitRetryItem.id).toBe(itemId);
       expect(handlerCalls).toBe(2);
       expect(store.listItems({ project })).toHaveLength(1);
       expect(countCreatedEvents(store)).toBe(1);
@@ -227,7 +229,7 @@ describe("Stensibly stateful MCP result replay", () => {
         name: "create_item",
         arguments: { ...request, title: "Changed request under the same key" },
       });
-      expect(changedEnvelope.isError).toBe(true);
+      expect(isToolError(changedEnvelope)).toBe(true);
       expect(readToolText(changedEnvelope)).toMatch(/different operation/i);
       expect(handlerCalls).toBe(3);
       expect(store.listItems({ project })).toHaveLength(1);
@@ -240,6 +242,12 @@ describe("Stensibly stateful MCP result replay", () => {
   });
 });
 
+function eventsForToken(eventStore: MemoryEventStore, eventId: string) {
+  const primingEvent = eventStore.events.find((event) => event.id === eventId);
+  if (primingEvent === undefined) throw new Error(`Missing event ${eventId}`);
+  return eventStore.events.filter((event) => event.streamId === primingEvent.streamId);
+}
+
 function countCreatedEvents(store: StensiblyStore): number {
   return store.db
     .query<{ count: number }, []>(
@@ -248,19 +256,25 @@ function countCreatedEvents(store: StensiblyStore): number {
     .get()!.count;
 }
 
-function readToolText(envelope: {
-  content?: Array<{ type?: unknown; text?: unknown }>;
-}): string {
-  const first = envelope.content?.[0];
+function isToolError(envelope: unknown): boolean {
+  if (typeof envelope !== "object" || envelope === null) return false;
+  return (envelope as { isError?: unknown }).isError === true;
+}
+
+function readToolText(envelope: unknown): string {
+  if (typeof envelope !== "object" || envelope === null) {
+    throw new Error("MCP tool result was not an object");
+  }
+  const content = (envelope as { content?: unknown }).content;
+  if (!Array.isArray(content)) throw new Error("MCP tool result had no content array");
+  const first = content[0] as { type?: unknown; text?: unknown } | undefined;
   if (first?.type !== "text" || typeof first.text !== "string") {
     throw new Error("MCP tool result did not contain text");
   }
   return first.text;
 }
 
-function readToolJson<T>(envelope: {
-  content?: Array<{ type?: unknown; text?: unknown }>;
-}): T {
+function readToolJson<T>(envelope: unknown): T {
   return JSON.parse(readToolText(envelope)) as T;
 }
 
