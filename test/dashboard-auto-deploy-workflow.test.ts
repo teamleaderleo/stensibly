@@ -4,12 +4,26 @@ const workflow = await Bun.file(
   new URL("../.github/workflows/auto-deploy-dashboard.yml", import.meta.url),
 ).text();
 
-describe("frontend-window dashboard production dispatch", () => {
-  test("uses four fixed release windows instead of reacting to every push", () => {
-    expect(workflow).toContain("schedule:");
-    expect(workflow).toContain("cron: '17 0,4,16,20 * * *'");
-    expect(workflow).not.toContain("push:");
-    expect(workflow).not.toContain("pull_request:");
+describe("automatic dashboard production dispatch", () => {
+  test("reacts immediately to deployable main changes", () => {
+    expect(workflow).toContain("push:");
+    expect(workflow).toContain("branches:");
+    expect(workflow).toContain("- main");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("schedule:");
+
+    for (const path of [
+      '"site/**"',
+      '"src/dashboard-assets.ts"',
+      '"src/dashboard-deployment-diagnostics.ts"',
+      '"src/verify-dashboard.ts"',
+      '"package.json"',
+      '"bun.lock"',
+      '".github/workflows/deploy-dashboard.yml"',
+      '".github/workflows/auto-deploy-dashboard.yml"',
+    ]) {
+      expect(workflow).toContain(path);
+    }
   });
 
   test("has only the authority needed to inspect and dispatch workflows", () => {
@@ -21,47 +35,19 @@ describe("frontend-window dashboard production dispatch", () => {
     expect(workflow).not.toContain("persist-credentials");
   });
 
-  test("coalesces active runs and enforces daily and cooldown budgets", () => {
-    expect(workflow).toContain("MAX_AUTO_DEPLOYS_PER_24H: '4'");
-    expect(workflow).toContain("MIN_SECONDS_BETWEEN_AUTO_DEPLOYS: '10800'");
+  test("coalesces only while a deployment is already active", () => {
     for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
-      expect(workflow).toContain(`.status == \"${status}\"`);
+      expect(workflow).toContain(`.status == "${status}"`);
     }
-    expect(workflow).toContain("date -u -d '24 hours ago' +%s");
-    expect(workflow).toContain("fromdateiso8601");
-    expect(workflow).toContain("Dashboard release budget reached");
-    expect(workflow).toContain("Dashboard release cooldown");
+    expect(workflow).toContain("Dashboard deployment coalesced");
+    expect(workflow).not.toContain("MAX_AUTO_DEPLOYS_PER_24H");
+    expect(workflow).not.toContain("MIN_SECONDS_BETWEEN_AUTO_DEPLOYS");
+    expect(workflow).not.toContain("24 hours ago");
+    expect(workflow).not.toContain("release window");
+    expect(workflow).not.toContain("cooldown");
   });
 
-  test("automatically releases only deployable site changes", () => {
-    expect(workflow).toContain("FRONTEND_PATH_PATTERN: '^site/'");
-    expect(workflow).toContain("--arg pattern \"${FRONTEND_PATH_PATTERN}\"");
-    expect(workflow).toContain("No frontend release needed");
-    expect(workflow).toContain("Backend, policy, test, dependency, and workflow churn stays in GitHub Actions");
-
-    for (const broadMarker of [
-      "src/dashboard-assets\\.ts$",
-      "src/dashboard-deployment-diagnostics\\.ts$",
-      "src/verify-dashboard\\.ts$",
-      "package\\.json$",
-      "bun\\.lock$",
-      "tsconfig\\.json$",
-      "deploy-dashboard|auto-deploy-dashboard",
-    ]) {
-      expect(workflow).not.toContain(broadMarker);
-    }
-  });
-
-  test("fails closed when the release baseline cannot be bounded", () => {
-    expect(workflow).toContain("Dashboard release baseline required");
-    expect(workflow).toContain("Dashboard comparison unavailable");
-    expect(workflow).toContain("Dashboard history needs review");
-    expect(workflow).toContain("Dashboard comparison too large");
-    expect(workflow).toContain('compare_status}" != "ahead"');
-    expect(workflow).toContain('total_commits}" -gt 250');
-  });
-
-  test("retains the exact guarded main production target", () => {
+  test("retains the guarded main production target", () => {
     expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/runs");
     expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/dispatches");
     expect(workflow).toContain("--data '{\"ref\":\"main\"}'");
