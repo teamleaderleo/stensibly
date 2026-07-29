@@ -31,22 +31,36 @@ jobs:
 
           source_path = Path('src/tool-capability-grants-sqlite.ts')
           source = source_path.read_text()
-          index_anchor = '''CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
-              ON tool_capability_grants(workspace_id, project_id, grant_id, is_current, sequence DESC);'''
-          index_replacement = '''CREATE INDEX IF NOT EXISTS idx_tool_capability_grant_current
-              ON tool_capability_grants(workspace_id, project_id, grant_id, is_current, sequence DESC);
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_capability_grant_one_current
+          index = '''    CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_capability_grant_one_current
               ON tool_capability_grants(workspace_id, project_id, grant_id)
-              WHERE is_current = 1;'''
-          if source.count(index_anchor) != 1:
-              raise SystemExit('current grant index anchor missing or duplicated')
-          source_path.write_text(source.replace(index_anchor, index_replacement))
+              WHERE is_current = 1;
+          '''
+          marker = '    CREATE TABLE IF NOT EXISTS tool_capability_revocations ('
+          if 'idx_tool_capability_grant_one_current' not in source:
+              if source.count(marker) != 1:
+                  raise SystemExit('revocation table marker missing or duplicated')
+              source = source.replace(marker, index + '\n' + marker, 1)
+
+          malformed = '''      if (
+                record.fingerprint !== grant.fingerprint
+                || record.acceptanceRef !== acceptanceRef
+                || record.acceptedBy !== acceptedBy
+              ) {'''
+          formatted = '''      if (
+          record.fingerprint !== grant.fingerprint
+          || record.acceptanceRef !== acceptanceRef
+          || record.acceptedBy !== acceptedBy
+        ) {'''
+          if malformed in source:
+              source = source.replace(malformed, formatted, 1)
+          source_path.write_text(source)
 
           test_path = Path('test/tool-capability-grants-sqlite.test.ts')
           tests = test_path.read_text()
-          marker = 'describe("SQLite tool capability grant acceptance", () => {\n'
-          test_case = '''describe("SQLite tool capability grant acceptance", () => {
+          test_name = 'enforces one current grant row at the SQLite boundary'
+          if test_name not in tests:
+              marker = 'describe("SQLite tool capability grant acceptance", () => {\n'
+              addition = '''describe("SQLite tool capability grant acceptance", () => {
             test("enforces one current grant row at the SQLite boundary", () => {
               ensureToolCapabilityGrantSchema(store);
               const index = store.db.query<{
@@ -59,29 +73,60 @@ jobs:
             });
 
           '''
-          if tests.count(marker) != 1:
-              raise SystemExit('acceptance describe marker missing or duplicated')
-          test_path.write_text(tests.replace(marker, test_case))
+              if tests.count(marker) != 1:
+                  raise SystemExit('acceptance describe marker missing or duplicated')
+              tests = tests.replace(marker, addition, 1)
+          test_path.write_text(tests)
 
           docs_path = Path('docs/tool-capability-grant-persistence.md')
           docs = docs_path.read_text()
-          replacements = {
-            '- have a valid canonical fingerprint;': '- rebuild exactly through the canonical grant builder with no extra or altered fields;',
-            '- exact acceptance replay returns the existing record;': '- exact acceptance replay requires the original acceptance reference and accepting actor, then returns the existing record;',
-            '- a higher generation transaction clears the previous current flag and installs one new current record.': '- a higher generation transaction clears the previous current flag and installs one new current record; a partial unique SQLite index enforces at most one current row per scoped grant.',
-            '- effective UTC time within the grant lifetime;': '- server-observed effective UTC time within the grant lifetime;',
-            '- current UTC time;\n': '',
-            'Before the transaction begins, the typed request builder validates and canonicalizes the request.': 'Before the transaction begins, the typed request builder validates and canonicalizes the request. Acceptance, revocation, admission, and record times come from an internal server clock dependency and are never request or tool arguments.',
-            '1. checks exact idempotency replay;\n2. loads the current accepted grant and server-owned fingerprint;': '1. checks exact idempotency replay before consulting the current clock;\n2. reads the server clock, then loads the current accepted grant and server-owned fingerprint;',
-            '6. atomically increments the authorized permission use once;': '6. conditionally increments the authorized permission use only while the stored count remains below the exact grant maximum;',
-            '- canonical authorization time;\n': '',
-            'Repeating the same idempotency key and attempt returns the original admission record and does not consume another use. Reusing the key with changed time, generation, grant, subject, resource, action, or arguments conflicts before use consumption.': 'Repeating the same idempotency key and attempt returns the original admission record and does not consume another use, even when replayed later. Reusing the key with a changed generation, grant, subject, resource, action, or arguments conflicts before use consumption.',
-            '- canonical grant fingerprints and duplicated row metadata;': '- full canonical grant rehydration, fingerprints, duplicated row metadata, and the one-current-row SQLite invariant;',
-          }
-          for old, new in replacements.items():
+
+          def replace_or_keep(old, new):
+              global docs
+              if new in docs:
+                  return
               if docs.count(old) != 1:
                   raise SystemExit(f'documentation anchor missing or duplicated: {old}')
-              docs = docs.replace(old, new)
+              docs = docs.replace(old, new, 1)
+
+          replace_or_keep(
+              '- have a valid canonical fingerprint;',
+              '- rebuild exactly through the canonical grant builder with no extra or altered fields;',
+          )
+          replace_or_keep(
+              '- exact acceptance replay returns the existing record;',
+              '- exact acceptance replay requires the original acceptance reference and accepting actor, then returns the existing record;',
+          )
+          replace_or_keep(
+              '- a higher generation transaction clears the previous current flag and installs one new current record.',
+              '- a higher generation transaction clears the previous current flag and installs one new current record; a partial unique SQLite index enforces at most one current row per scoped grant.',
+          )
+          replace_or_keep(
+              '- effective UTC time within the grant lifetime;',
+              '- server-observed effective UTC time within the grant lifetime;',
+          )
+          docs = docs.replace('- current UTC time;\n', '', 1)
+          replace_or_keep(
+              'Before the transaction begins, the typed request builder validates and canonicalizes the request.',
+              'Before the transaction begins, the typed request builder validates and canonicalizes the request. Acceptance, revocation, admission, and record times come from an internal server clock dependency and are never request or tool arguments.',
+          )
+          replace_or_keep(
+              '1. checks exact idempotency replay;\n2. loads the current accepted grant and server-owned fingerprint;',
+              '1. checks exact idempotency replay before consulting the current clock;\n2. reads the server clock, then loads the current accepted grant and server-owned fingerprint;',
+          )
+          replace_or_keep(
+              '6. atomically increments the authorized permission use once;',
+              '6. conditionally increments the authorized permission use only while the stored count remains below the exact grant maximum;',
+          )
+          docs = docs.replace('- canonical authorization time;\n', '', 1)
+          replace_or_keep(
+              'Repeating the same idempotency key and attempt returns the original admission record and does not consume another use. Reusing the key with changed time, generation, grant, subject, resource, action, or arguments conflicts before use consumption.',
+              'Repeating the same idempotency key and attempt returns the original admission record and does not consume another use, even when replayed later. Reusing the key with a changed generation, grant, subject, resource, action, or arguments conflicts before use consumption.',
+          )
+          replace_or_keep(
+              '- canonical grant fingerprints and duplicated row metadata;',
+              '- full canonical grant rehydration, fingerprints, duplicated row metadata, and the one-current-row SQLite invariant;',
+          )
           docs_path.write_text(docs)
           PY
       - name: Validate hardening
