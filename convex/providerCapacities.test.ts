@@ -86,6 +86,27 @@ describe("hosted provider capacity observations", () => {
     expect(JSON.stringify(replay)).not.toContain("commentBody");
   });
 
+  test("accepts a bounded bot pull-request author proxy", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    const inserted = await t.mutation(ingestRef, input({
+      deliveryId: "delivery-bot-subject",
+      payloadDigest: "9".repeat(64),
+      subjectLogin: "dependabot[bot]",
+    })) as any;
+    expect(inserted).toMatchObject({
+      duplicate: false,
+      observation: { subjectLogin: "dependabot[bot]" },
+    });
+    expect(await t.query(latestRef, {
+      ...queryArgs(),
+      subjectLogin: "dependabot[bot]",
+    })).toMatchObject({
+      subjectLogin: "dependabot[bot]",
+      subjectBasis: "pull_request_author_proxy",
+    });
+  });
+
   test("requires the service boundary", async () => {
     const t = convexTest(schema, modules);
     await seedWorkspace(t);
