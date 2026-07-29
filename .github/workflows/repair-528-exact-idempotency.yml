@@ -1,0 +1,380 @@
+name: Apply exact idempotency repair
+
+on:
+  push:
+    branches:
+      - forge/528-exact-idempotency-requests
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: forge/528-exact-idempotency-requests
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Apply bounded source and test repair
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              p.write_text(text.replace(old, new))
+
+          replace_once(
+              "src/store.ts",
+              'import { randomUUID } from "node:crypto";\nimport type { ActorInput, CreateItemInput } from "./schemas.js";',
+              'import { randomUUID } from "node:crypto";\nimport { canonicalCreateItemIdempotencyRequest } from "./idempotency-request-canonical.js";\nimport { idempotencyRequestFingerprint } from "./idempotency-request-fingerprint.js";\nimport type { ActorInput, CreateItemInput } from "./schemas.js";',
+          )
+          replace_once(
+              "src/store.ts",
+              '''  createItem(input: CreateItemInput, idempotencyKey?: string): Item {\n    const transaction = this.db.transaction(() => {\n      if (idempotencyKey) {\n        const existing = this.findIdempotentEvent(idempotencyKey);\n        if (existing) return this.getItem(existing.item_id);\n      }''',
+              '''  createItem(input: CreateItemInput, idempotencyKey?: string): Item {\n    const requestFingerprint = idempotencyRequestFingerprint(\n      canonicalCreateItemIdempotencyRequest(input),\n    );\n    const transaction = this.db.transaction(() => {\n      if (idempotencyKey) {\n        const existing = this.findIdempotentEvent(idempotencyKey);\n        if (existing) {\n          requireSameIdempotencyRequest(existing, "item.created", requestFingerprint);\n          return this.getItem(existing.item_id);\n        }\n      }''',
+          )
+          replace_once(
+              "src/store.ts",
+              '''        payload: {\n          kind: input.kind,\n          title: input.title,\n          project: input.project,\n        },''',
+              '''        payload: {\n          kind: input.kind,\n          title: input.title,\n          project: input.project,\n          requestFingerprint,\n        },''',
+          )
+          replace_once(
+              "src/store.ts",
+              '''function requireSameReplayEvent(\n  existing: EventRow,''',
+              '''function requireSameIdempotencyRequest(\n  existing: EventRow,\n  operation: string,\n  requestFingerprint: string,\n): void {\n  const payload = parseEventPayload(existing.payload_json);\n  if (\n    existing.type !== operation\n    || payload.requestFingerprint !== requestFingerprint\n  ) {\n    throw new ConflictError(\n      "Idempotency key was already used for a different item operation",\n    );\n  }\n}\n\nfunction requireSameReplayEvent(\n  existing: EventRow,''',
+          )
+
+          replace_once(
+              "src/artifacts.ts",
+              'import { actorSchema, type ActorInput } from "./schemas.js";',
+              'import { canonicalAttachArtifactIdempotencyRequest } from "./idempotency-request-canonical.js";\nimport { idempotencyRequestFingerprint } from "./idempotency-request-fingerprint.js";\nimport { actorSchema, type ActorInput } from "./schemas.js";',
+          )
+          replace_once(
+              "src/artifacts.ts",
+              '''  ensureArtifactSchema(store);\n\n  const transaction = store.db.transaction(() => {''',
+              '''  ensureArtifactSchema(store);\n  const requestFingerprint = idempotencyRequestFingerprint(\n    canonicalAttachArtifactIdempotencyRequest(input),\n  );\n\n  const transaction = store.db.transaction(() => {''',
+          )
+          replace_once(
+              "src/artifacts.ts",
+              '''        const payload = JSON.parse(existingEvent.payload_json) as { artifactId?: unknown };\n        if (typeof payload.artifactId !== "string") {\n          throw new ConflictError("Artifact idempotency record is incomplete");\n        }\n        return getArtifact(store, payload.artifactId);''',
+              '''        const payload = JSON.parse(existingEvent.payload_json) as {\n          artifactId?: unknown;\n          requestFingerprint?: unknown;\n        };\n        if (\n          typeof payload.artifactId !== "string"\n          || payload.requestFingerprint !== requestFingerprint\n        ) {\n          throw new ConflictError("Artifact idempotency record is incomplete or altered");\n        }\n        return getArtifact(store, payload.artifactId);''',
+          )
+          replace_once(
+              "src/artifacts.ts",
+              '''          label: input.label,\n          uri: input.uri,\n        }),''',
+              '''          label: input.label,\n          uri: input.uri,\n          requestFingerprint,\n        }),''',
+          )
+
+          replace_once(
+              "src/sqlite-ledger.ts",
+              'import { requireMatchingSqliteIdempotency } from "./sqlite-idempotency-scope.js";',
+              'import { canonicalAttachArtifactIdempotencyRequest, canonicalCreateItemIdempotencyRequest } from "./idempotency-request-canonical.js";\nimport { idempotencyRequestFingerprint } from "./idempotency-request-fingerprint.js";\nimport { requireMatchingSqliteIdempotency } from "./sqlite-idempotency-scope.js";',
+          )
+          replace_once(
+              "src/sqlite-ledger.ts",
+              '''  async attachArtifact(input: AttachWorkArtifactInput) {\n    const item = this.store.getItem(input.id);\n    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {''',
+              '''  async attachArtifact(input: AttachWorkArtifactInput) {\n    const item = this.store.getItem(input.id);\n    const requestFingerprint = idempotencyRequestFingerprint(\n      canonicalAttachArtifactIdempotencyRequest({\n        itemId: input.id,\n        actor: input.actor,\n        kind: input.kind,\n        label: input.label,\n        uri: input.uri,\n        ...(input.mimeType ? { mimeType: input.mimeType } : {}),\n        metadata: input.metadata,\n      }),\n    );\n    requireMatchingSqliteIdempotency(this.store, input.idempotencyKey, {''',
+          )
+          replace_once(
+              "src/sqlite-ledger.ts",
+              '''      payloadSubset: {\n        kind: input.kind,\n        label: input.label,\n        uri: input.uri,\n      },''',
+              '''      payloadSubset: { requestFingerprint },''',
+          )
+          replace_once(
+              "src/sqlite-ledger.ts",
+              '''  async createItem(input: CreateWorkInput) {\n    const { idempotencyKey, ...item } = input;\n    requireMatchingSqliteIdempotency(this.store, idempotencyKey, {''',
+              '''  async createItem(input: CreateWorkInput) {\n    const { idempotencyKey, ...item } = input;\n    const requestFingerprint = idempotencyRequestFingerprint(\n      canonicalCreateItemIdempotencyRequest(item),\n    );\n    requireMatchingSqliteIdempotency(this.store, idempotencyKey, {''',
+          )
+          replace_once(
+              "src/sqlite-ledger.ts",
+              '''      payloadSubset: {\n        project: item.project,\n        kind: item.kind,\n        title: item.title,\n      },''',
+              '''      payloadSubset: { requestFingerprint },''',
+          )
+
+          replace_once(
+              "convex/items.ts",
+              'import { v } from "convex/values";',
+              'import { v } from "convex/values";\nimport { canonicalCreateItemIdempotencyRequest } from "../src/idempotency-request-canonical";\nimport { idempotencyRequestFingerprint } from "./lib/idempotencyRequestFingerprint";',
+          )
+          replace_once(
+              "convex/items.ts",
+              '''    const projectSlug = assertSlug(args.project, "Project");\n    const existing = await requireMatchingIdempotency(''',
+              '''    const projectSlug = assertSlug(args.project, "Project");\n    const title = assertText(args.title, "Title", 240);\n    const summary = assertOptionalText(args.summary, "Summary", 10_000);\n    const nextAction = assertOptionalText(args.nextAction, "Next action", 2_000);\n    const priority = assertPriority(args.priority);\n    const actorInput = args.actor\n      ? {\n          ...args.actor,\n          id: assertText(args.actor.id, "Actor id", 120),\n          name: assertText(args.actor.name, "Actor name", 160),\n        }\n      : undefined;\n    const requestFingerprint = await idempotencyRequestFingerprint(\n      canonicalCreateItemIdempotencyRequest({\n        project: projectSlug,\n        kind: args.kind,\n        title,\n        ...(summary !== undefined ? { summary } : {}),\n        ...(nextAction !== undefined ? { nextAction } : {}),\n        priority,\n        ...(actorInput ? { actor: actorInput } : {}),\n      }),\n    );\n    const existing = await requireMatchingIdempotency(''',
+          )
+          replace_once(
+              "convex/items.ts",
+              '''        actorExternalId: args.actor?.id ?? null,\n        payloadSubset: {\n          project: projectSlug,\n          kind: args.kind,\n          title: args.title.trim(),\n        },''',
+              '''        actorExternalId: actorInput?.id ?? null,\n        payloadSubset: { requestFingerprint },''',
+          )
+          replace_once(
+              "convex/items.ts",
+              '''    const actor = args.actor ? await upsertActor(ctx, workspace._id, args.actor) : null;''',
+              '''    const actor = actorInput ? await upsertActor(ctx, workspace._id, actorInput) : null;''',
+          )
+          replace_once(
+              "convex/items.ts",
+              '''      title: assertText(args.title, "Title", 240),\n      summary: assertOptionalText(args.summary, "Summary", 10_000),''',
+              '''      title,\n      summary,''',
+          )
+          replace_once(
+              "convex/items.ts",
+              '''      priority: assertPriority(args.priority),\n      nextAction: assertOptionalText(args.nextAction, "Next action", 2_000),''',
+              '''      priority,\n      nextAction,''',
+          )
+          replace_once(
+              "convex/items.ts",
+              '''        title: args.title.trim(),\n      },''',
+              '''        title,\n        requestFingerprint,\n      },''',
+          )
+
+          replace_once(
+              "convex/artifacts.ts",
+              'import { v } from "convex/values";',
+              'import { v } from "convex/values";\nimport { canonicalAttachArtifactIdempotencyRequest } from "../src/idempotency-request-canonical";\nimport { idempotencyRequestFingerprint } from "./lib/idempotencyRequestFingerprint";',
+          )
+          replace_once(
+              "convex/artifacts.ts",
+              '''    const existing = await requireMatchingIdempotency(''',
+              '''    const label = assertText(args.label, "Artifact label", 240);\n    const uri = assertText(args.uri, "Artifact URI", 4_096);\n    const mimeType = assertOptionalText(args.mimeType, "MIME type", 255);\n    const actorInput = {\n      ...args.actor,\n      id: assertText(args.actor.id, "Actor id", 120),\n      name: assertText(args.actor.name, "Actor name", 160),\n    };\n    const requestFingerprint = await idempotencyRequestFingerprint(\n      canonicalAttachArtifactIdempotencyRequest({\n        itemId: args.id,\n        actor: actorInput,\n        kind: args.kind,\n        label,\n        uri,\n        ...(mimeType !== undefined ? { mimeType } : {}),\n        metadata: args.metadata,\n      }),\n    );\n    const existing = await requireMatchingIdempotency(''',
+          )
+          replace_once(
+              "convex/artifacts.ts",
+              '''        actorExternalId: args.actor.id,\n        payloadSubset: {\n          kind: args.kind,\n          label: args.label.trim(),\n          uri: args.uri.trim(),\n        },''',
+              '''        actorExternalId: actorInput.id,\n        payloadSubset: { requestFingerprint },''',
+          )
+          replace_once(
+              "convex/artifacts.ts",
+              '''    const actor = await upsertActor(ctx, workspace._id, args.actor);''',
+              '''    const actor = await upsertActor(ctx, workspace._id, actorInput);''',
+          )
+          replace_once(
+              "convex/artifacts.ts",
+              '''      label: assertText(args.label, "Artifact label", 240),\n      uri: assertText(args.uri, "Artifact URI", 4_096),\n      mimeType: assertOptionalText(args.mimeType, "MIME type", 255),''',
+              '''      label,\n      uri,\n      mimeType,''',
+          )
+          replace_once(
+              "convex/artifacts.ts",
+              '''        label: args.label.trim(),\n        uri: args.uri.trim(),\n      },''',
+              '''        label,\n        uri,\n        requestFingerprint,\n      },''',
+          )
+
+          Path("test/idempotency-exact-request.test.ts").write_text(r'''import { describe, expect, test } from "bun:test";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
+import { StensiblyStore } from "../src/store.ts";
+
+const actor = { id: "exact-agent", name: "Exact Agent", kind: "agent" as const };
+
+describe("SQLite exact idempotency requests", () => {
+  test("binds every durable create field and fails closed on legacy records", async () => {
+    const store = new StensiblyStore(":memory:");
+    const ledger = new SqliteWorkLedger(store);
+    try {
+      const base = {
+        project: "alpha",
+        kind: "task" as const,
+        title: "Exact create",
+        summary: "Original summary",
+        nextAction: "Original next action",
+        priority: 73,
+        actor,
+        idempotencyKey: "exact-create-key",
+      };
+      const created = await ledger.createItem(base);
+      expect((await ledger.createItem(base)).id).toBe(created.id);
+
+      for (const altered of [
+        { summary: "Changed summary" },
+        { nextAction: "Changed next action" },
+        { priority: 74 },
+        { actor: { ...actor, name: "Changed Actor" } },
+      ]) {
+        await expect(ledger.createItem({ ...base, ...altered })).rejects.toThrow("different operation");
+      }
+      expect(store.listItems({ project: "alpha" })).toHaveLength(1);
+
+      const legacy = store.createItem({
+        project: "alpha",
+        kind: "task",
+        title: "Legacy record",
+        priority: 50,
+        actor,
+      });
+      store.recordEvent({
+        itemId: legacy.id,
+        actor,
+        type: "item.created",
+        payload: { project: "alpha", kind: "task", title: "Legacy record" },
+        idempotencyKey: "legacy-create-key",
+      });
+      await expect(ledger.createItem({
+        project: "alpha",
+        kind: "task",
+        title: "Legacy record",
+        priority: 50,
+        actor,
+        idempotencyKey: "legacy-create-key",
+      })).rejects.toThrow("different operation");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("binds MIME type and canonical metadata for artifacts", async () => {
+    const store = new StensiblyStore(":memory:");
+    const ledger = new SqliteWorkLedger(store);
+    try {
+      const item = await ledger.createItem({
+        project: "alpha",
+        kind: "task",
+        title: "Artifact exactness",
+        priority: 50,
+        actor,
+        idempotencyKey: "artifact-parent",
+      });
+      const base = {
+        id: item.id,
+        actor,
+        kind: "document" as const,
+        label: "Evidence",
+        uri: "https://example.test/evidence",
+        mimeType: "application/json",
+        metadata: { nested: { b: 2, a: 1 }, visible: true },
+        idempotencyKey: "exact-artifact-key",
+      };
+      const artifact = await ledger.attachArtifact(base);
+      const replay = await ledger.attachArtifact({
+        ...base,
+        metadata: { visible: true, nested: { a: 1, b: 2 } },
+      });
+      expect(replay.id).toBe(artifact.id);
+      await expect(ledger.attachArtifact({
+        ...base,
+        mimeType: "text/plain",
+      })).rejects.toThrow("different operation");
+      await expect(ledger.attachArtifact({
+        ...base,
+        metadata: { nested: { a: 1, b: 3 }, visible: true },
+      })).rejects.toThrow("different operation");
+      expect(await ledger.listArtifacts(item.id)).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+});
+''')
+
+          Path("convex/idempotencyExactRequest.test.ts").write_text(r'''import { convexTest } from "convex-test";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { convexApi } from "./refs";
+import schema from "./schema";
+import { modules } from "./test.setup";
+
+const secret = "test-service-secret";
+const workspace = "exact-request-test";
+const actor = { id: "exact-agent", name: "Exact Agent", kind: "agent" as const };
+
+beforeEach(() => vi.stubEnv("STENSIBLY_SERVICE_SECRET", secret));
+
+describe("hosted exact idempotency requests", () => {
+  test("binds every durable create field", async () => {
+    const t = convexTest(schema, modules);
+    const base = {
+      serviceSecret: secret,
+      workspace,
+      project: "alpha",
+      kind: "task" as const,
+      title: "Exact create",
+      summary: "Original summary",
+      nextAction: "Original next action",
+      priority: 73,
+      actor,
+      idempotencyKey: "hosted-exact-create",
+    };
+    const created = await t.mutation(convexApi.items.create, base) as any;
+    expect((await t.mutation(convexApi.items.create, base) as any).id).toBe(created.id);
+    for (const altered of [
+      { summary: "Changed summary" },
+      { nextAction: "Changed next action" },
+      { priority: 74 },
+      { actor: { ...actor, name: "Changed Actor" } },
+    ]) {
+      await expect(t.mutation(convexApi.items.create, { ...base, ...altered }))
+        .rejects.toThrow("another operation");
+    }
+    expect(await t.query(convexApi.items.list, {
+      serviceSecret: secret,
+      workspace,
+      project: "alpha",
+      limit: 20,
+    })).toHaveLength(1);
+  });
+
+  test("binds MIME type and canonical metadata for artifacts", async () => {
+    const t = convexTest(schema, modules);
+    const item = await t.mutation(convexApi.items.create, {
+      serviceSecret: secret,
+      workspace,
+      project: "alpha",
+      kind: "task",
+      title: "Artifact exactness",
+      priority: 50,
+      actor,
+      idempotencyKey: "hosted-artifact-parent",
+    }) as any;
+    const base = {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+      actor,
+      kind: "document" as const,
+      label: "Evidence",
+      uri: "https://example.test/evidence",
+      mimeType: "application/json",
+      metadata: { nested: { b: 2, a: 1 }, visible: true },
+      idempotencyKey: "hosted-exact-artifact",
+    };
+    const artifact = await t.mutation(convexApi.artifacts.attach, base) as any;
+    const replay = await t.mutation(convexApi.artifacts.attach, {
+      ...base,
+      metadata: { visible: true, nested: { a: 1, b: 2 } },
+    }) as any;
+    expect(replay.id).toBe(artifact.id);
+    await expect(t.mutation(convexApi.artifacts.attach, {
+      ...base,
+      mimeType: "text/plain",
+    })).rejects.toThrow("another operation");
+    await expect(t.mutation(convexApi.artifacts.attach, {
+      ...base,
+      metadata: { nested: { a: 1, b: 3 }, visible: true },
+    })).rejects.toThrow("another operation");
+    expect(await t.query(convexApi.artifacts.list, {
+      serviceSecret: secret,
+      workspace,
+      id: item.id,
+    })).toHaveLength(1);
+  });
+});
+''')
+          PY
+      - name: Validate focused repair
+        run: |
+          bun run typecheck
+          bun test test/idempotency-exact-request.test.ts test/idempotency-scope.test.ts
+          bunx vitest run convex/idempotencyExactRequest.test.ts convex/idempotencyScope.test.ts
+      - name: Remove applicator and commit
+        run: |
+          rm .github/workflows/repair-528-exact-idempotency.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Bind idempotency to exact create and artifact requests"
+          git push origin HEAD:forge/528-exact-idempotency-requests
