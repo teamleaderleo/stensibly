@@ -60,6 +60,19 @@ describe("dashboard view", () => {
     expect(html).toContain("Done");
   });
 
+  test("renders visibility-aware idle polling with immediate interactive reloads", () => {
+    const html = renderBoard([baseItem]);
+
+    expect(html).toContain("const refreshDelays = [20000, 45000, 90000, 180000]");
+    expect(html).toContain("previousFingerprint === boardFingerprint");
+    expect(html).toContain("auto paused · hidden");
+    expect(html).toContain("auto paused · draft");
+    expect(html).toContain("document.addEventListener('visibilitychange'");
+    expect(html).toContain("recordReload('background')");
+    expect(html).toContain("recordReload('interactive')");
+    expect(html).not.toContain("setInterval(() => {");
+  });
+
   test("escapes item content and omits archived work", () => {
     const html = renderBoard([
       {
