@@ -7,6 +7,6 @@
     "zod": "4.1.12"
   },
   "scripts": {
-    "probe": "bun run probe.mjs"
+    "probe": "bun run probe-fixed.mjs"
   }
 }
