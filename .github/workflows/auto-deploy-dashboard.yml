@@ -28,7 +28,7 @@ jobs:
     name: Queue latest verified dashboard release
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch unless a dashboard deployment is active
+      - name: Dispatch guarded dashboard production workflow
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -39,22 +39,6 @@ jobs:
             --header "Authorization: Bearer ${GITHUB_TOKEN}"
             --header "X-GitHub-Api-Version: 2022-11-28"
           )
-          runs_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-dashboard.yml/runs?branch=main&per_page=20"
-          runs_json="$(curl --fail-with-body --silent --show-error "${api_headers[@]}" "${runs_url}")"
-
-          active_count="$(
-            jq '[.workflow_runs[] | select(
-              .status == "requested"
-              or .status == "waiting"
-              or .status == "pending"
-              or .status == "queued"
-              or .status == "in_progress"
-            )] | length' <<< "${runs_json}"
-          )"
-          if [ "${active_count}" -gt 0 ]; then
-            echo "::notice title=Dashboard deployment coalesced::A dashboard production run is already active. The next relevant main push will dispatch the latest revision."
-            exit 0
-          fi
 
           curl --fail-with-body --silent --show-error \
             --request POST \
@@ -68,5 +52,6 @@ jobs:
             echo "- source event: \`${GITHUB_EVENT_NAME}\`"
             echo "- candidate branch: \`main\`"
             echo "- triggering revision: \`${GITHUB_SHA}\`"
+            echo "- delivery: guarded production workflow queued immediately"
           } >> "${GITHUB_STEP_SUMMARY}"
           echo "::notice title=Dashboard production deployment queued::Queued the guarded deployment workflow for the latest main revision."
