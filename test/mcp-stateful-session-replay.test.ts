@@ -50,7 +50,7 @@ class MemoryEventStore implements EventStore {
 }
 
 describe("Stensibly stateful MCP result replay", () => {
-  test("characterizes SDK 1.29 replay loss, then recovers through exact application retry", async () => {
+  test("replays the committed result without re-running the handler, then deduplicates an exact retry", async () => {
     const store = new StensiblyStore(":memory:");
     const eventStore = new MemoryEventStore();
     let handlerCalls = 0;
@@ -147,7 +147,7 @@ describe("Stensibly stateful MCP result replay", () => {
       project,
       kind: "task" as const,
       title: "Recover the original MCP result",
-      summary: "Commit once, disconnect before delivery, then attempt replay by event cursor.",
+      summary: "Commit once, disconnect before delivery, then replay by event cursor.",
       nextAction: "Distinguish transport replay from a new application retry.",
       priority: 98,
       actor,
@@ -162,36 +162,36 @@ describe("Stensibly stateful MCP result replay", () => {
         { name: "create_item", arguments: request },
         undefined,
         {
-          timeout: 1_200,
+          timeout: 3_000,
           onresumptiontoken: (token) => observedTokens.push(token),
         },
       );
 
       await waitFor(() => handlerCalls === 1, "first durable handler execution");
-      await waitFor(() => observedTokens.length === 1, "request priming token");
-      await waitFor(
-        () => serverErrors.some((message) => message.includes("No connection established")),
-        "SDK 1.29 disconnected-response error",
-      );
+      await waitFor(() => observedTokens.length >= 1, "request priming token");
       await waitFor(() => replayGets.length === 1, "Last-Event-ID replay GET");
 
+      const originalEnvelope = await withDeadline(
+        originalResult,
+        3_000,
+        "replayed original result",
+      );
+      const originalItem = readToolJson<{ id: string }>(originalEnvelope);
       const itemId = committedItemId;
       if (itemId === undefined) throw new Error("Expected committed item id");
       const primingToken = observedTokens[0]!;
       const requestEvents = eventsForToken(eventStore, primingToken);
 
-      expect(await promiseState(originalResult)).toBe("pending");
+      expect(originalItem.id).toBe(itemId);
       expect(replayGets).toEqual([primingToken]);
-      expect(observedTokens).toEqual([primingToken]);
-      expect(requestEvents).toHaveLength(1);
+      expect(observedTokens).toHaveLength(2);
+      expect(requestEvents).toHaveLength(2);
       expect(Object.keys(requestEvents[0]!.message as object)).toHaveLength(0);
+      expect("result" in requestEvents[1]!.message).toBe(true);
+      expect(handlerCalls).toBe(1);
       expect(store.listItems({ project }).map((item) => item.id)).toEqual([itemId]);
       expect(countCreatedEvents(store)).toBe(1);
-
-      await expect(originalResult).rejects.toThrow(/timed out/i);
-      expect(handlerCalls).toBe(1);
-      expect(store.listItems({ project })).toHaveLength(1);
-      expect(countCreatedEvents(store)).toBe(1);
+      expect(serverErrors).toEqual([]);
 
       const explicitRetryEnvelope = await withDeadline(
         client.callTool({ name: "create_item", arguments: request }),
@@ -260,16 +260,6 @@ function readToolText(envelope: unknown): string {
 
 function readToolJson<T>(envelope: unknown): T {
   return JSON.parse(readToolText(envelope)) as T;
-}
-
-async function promiseState(promise: Promise<unknown>): Promise<"pending" | "settled"> {
-  return await Promise.race([
-    promise.then(
-      () => "settled" as const,
-      () => "settled" as const,
-    ),
-    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 20)),
-  ]);
 }
 
 async function waitFor(predicate: () => boolean, description: string): Promise<void> {
