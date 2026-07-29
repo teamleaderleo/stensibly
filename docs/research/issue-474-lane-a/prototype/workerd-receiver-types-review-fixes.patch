@@ -1,0 +1,13 @@
+diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/overrides/index.ts
+--- a/types/src/transforms/overrides/index.ts
++++ b/types/src/transforms/overrides/index.ts
+@@ -184,6 +184,9 @@ function inheritGeneratedReceiver<Member extends ts.ClassElement | ts.TypeElemen
+   if (receiver === undefined || getThisParameter(override) !== undefined) {
+     return override;
+   }
++  if (!ts.isMethodDeclaration(override) && !ts.isMethodSignature(override)) {
++    return override;
++  }
+   const parameters = [cloneParameter(receiver), ...override.parameters];
+   if (ts.isMethodDeclaration(override)) {
+     return ts.factory.updateMethodDeclaration(
