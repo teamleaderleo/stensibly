@@ -6,9 +6,11 @@ import {
   MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
   MCP_TOOL_NAMES,
+  withMcpDiagnostics,
 } from "../src/mcp-diagnostics.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
 
 const protocolVersion = "2025-06-18";
 
@@ -98,7 +100,75 @@ describe("MCP connector diagnostics", () => {
       store.close();
     }
   });
+
+  test("distinguishes keyed and unkeyed writes when execution may have completed", async () => {
+    const keyed = await writeFailureDiagnostic("create_item", {
+      project: "oauth-dogfood",
+      title: "Ambiguous keyed write",
+      idempotencyKey: "diagnostic-write-key",
+    }, "diag-keyed-write");
+    expect(keyed).toMatchObject({
+      stage: "request_execution",
+      retryable: false,
+      reconciliation: "read_after_write_before_retry",
+      recommendedAction: "reconcile_by_idempotency_key_before_retry",
+      tool: "create_item",
+      idempotencyKeyPresent: true,
+    });
+
+    const unkeyed = await writeFailureDiagnostic(
+      "run_continuation_supervisor_policy",
+      { project: "oauth-dogfood" },
+      "diag-unkeyed-write",
+    );
+    expect(unkeyed).toMatchObject({
+      stage: "request_execution",
+      retryable: false,
+      reconciliation: "read_after_write_before_retry",
+      recommendedAction: "read_after_write_before_retry",
+      tool: "run_continuation_supervisor_policy",
+      idempotencyKeyPresent: false,
+    });
+  });
 });
+
+async function writeFailureDiagnostic(
+  tool: string,
+  args: Record<string, unknown>,
+  requestId: string,
+): Promise<Record<string, unknown>> {
+  const request = new Request("https://api.example/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": requestId,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: tool, arguments: args },
+    }),
+  });
+  const response = new Response(JSON.stringify({
+    jsonrpc: "2.0",
+    error: { code: -32603, message: "Internal server error" },
+    id: 1,
+  }), {
+    status: 500,
+    headers: {
+      "content-type": "application/json",
+      [FAILURE_CATEGORY_HEADER]: "mcp_failure",
+      [MCP_FAILURE_STAGE_HEADER]: "request_execution",
+    },
+  });
+  const diagnosed = await withMcpDiagnostics(request, response);
+  const payload = await diagnosed.json() as {
+    error?: { data?: Record<string, unknown> };
+  };
+  if (!payload.error?.data) throw new Error("Missing MCP failure diagnostics");
+  return payload.error.data;
+}
 
 async function mcpRequest(
   app: ReturnType<typeof createServerApp>,
