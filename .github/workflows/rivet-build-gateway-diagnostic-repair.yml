@@ -1,6 +1,11 @@
 name: Build clean gateway diagnostic repair
 
 on:
+  push:
+    branches:
+      - rivet/490-gateway-repair-builder
+    paths:
+      - ".github/workflows/rivet-build-gateway-diagnostic-repair.yml"
   pull_request:
     branches:
       - main
