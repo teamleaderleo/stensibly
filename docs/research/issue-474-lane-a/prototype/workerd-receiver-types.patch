@@ -141,7 +141,7 @@ diff --git a/types/test/types/fetch-receiver.ts b/types/test/types/fetch-receive
 new file mode 100644
 --- /dev/null
 +++ b/types/test/types/fetch-receiver.ts
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,55 @@
 +const url = "data:text/plain,receiver-ok";
 +
 +fetch(url);
@@ -156,6 +156,26 @@ new file mode 100644
 +
 +// @ts-expect-error An unrelated object is not a legal Worker global receiver.
 +detached.call({}, url);
++
++detached.apply(undefined, [url]);
++detached.apply(null, [url]);
++detached.apply(globalThis, [url]);
++
++// @ts-expect-error An unrelated object is not a legal Worker global receiver.
++detached.apply({}, [url]);
++
++const boundUndefined = detached.bind(undefined);
++const boundNull = detached.bind(null);
++const boundGlobal = detached.bind(globalThis);
++boundUndefined(url);
++boundNull(url);
++boundGlobal(url);
++
++// A valid bound receiver makes the result safe to install on another object.
++({ fetch: boundGlobal }).fetch(url);
++
++// @ts-expect-error An unrelated object cannot be bound as the receiver.
++detached.bind({});
 +
 +const holder = { fetch: detached };
 +// @ts-expect-error Property-call syntax supplies holder as the receiver.
