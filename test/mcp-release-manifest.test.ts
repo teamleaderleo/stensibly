@@ -135,6 +135,57 @@ describe("MCP release manifests", () => {
     });
   });
 
+  test("classifies schema-valued additional properties and patterns conservatively", () => {
+    const unrestricted = createMcpReleaseManifest([
+      tool("record_event", {
+        type: "object",
+        properties: { type: { type: "string" } },
+      }),
+    ]);
+    const constrained = createMcpReleaseManifest([
+      tool("record_event", {
+        type: "object",
+        properties: { type: { type: "string" } },
+        additionalProperties: { type: "string" },
+      }),
+    ]);
+    const unrestrictedDiff = diffMcpReleaseManifests(unrestricted, constrained);
+    expect(unrestrictedDiff.classification).toBe("breaking-contract-change");
+    expect(unrestrictedDiff.changes[0]?.reasons).toContain(
+      "$.*: unrestricted additional properties became schema-constrained",
+    );
+
+    const broadSchema = createMcpReleaseManifest([
+      tool("record_event", {
+        type: "object",
+        additionalProperties: { type: "string", maxLength: 100 },
+      }),
+    ]);
+    const narrowSchema = createMcpReleaseManifest([
+      tool("record_event", {
+        type: "object",
+        additionalProperties: { type: "string", maxLength: 10 },
+      }),
+    ]);
+    const narrowedDiff = diffMcpReleaseManifests(broadSchema, narrowSchema);
+    expect(narrowedDiff.classification).toBe("breaking-contract-change");
+    expect(narrowedDiff.changes[0]?.reasons).toContain(
+      "$.*: maxLength became more restrictive",
+    );
+
+    const patterned = createMcpReleaseManifest([
+      tool("record_event", {
+        type: "object",
+        patternProperties: { "^x-": { type: "string" } },
+      }),
+    ]);
+    const patternDiff = diffMcpReleaseManifests(unrestricted, patterned);
+    expect(patternDiff.classification).toBe("breaking-contract-change");
+    expect(patternDiff.changes[0]?.reasons).toContain(
+      "$: patternProperties changed and requires compatibility review",
+    );
+  });
+
   test("classifies required inputs, narrowed enums, and removals as breaking", () => {
     const previous = createMcpReleaseManifest([
       tool("create_item", {
