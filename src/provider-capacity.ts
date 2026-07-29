@@ -8,7 +8,7 @@ const MAX_PRUNE_PER_INGEST = 1_000;
 const controlPattern = /[\u0000-\u001f\u007f-\u009f]/u;
 const deliveryPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[bot\])?$/;
 const digestPattern = /^[0-9a-f]{64}$/i;
 
 export type ProviderCapacityState = "available" | "unavailable" | "unknown";
