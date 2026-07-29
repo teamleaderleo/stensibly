@@ -20,6 +20,36 @@
     "description": "Observation or question requiring bounded investigation before commitment"
   },
   {
+    "name": "type:roadmap",
+    "color": "5319e7",
+    "description": "Parent plan or index coordinating several related work lanes"
+  },
+  {
+    "name": "type:incident",
+    "color": "b60205",
+    "description": "Active failure cluster, degraded service, or recovery record"
+  },
+  {
+    "name": "type:decision",
+    "color": "7057ff",
+    "description": "Bounded product, policy, or contract choice requiring a durable verdict"
+  },
+  {
+    "name": "type:research",
+    "color": "c2e0c6",
+    "description": "Planned evidence gathering, comparison, standards study, or upstream inquiry"
+  },
+  {
+    "name": "type:programme",
+    "color": "4c1d95",
+    "description": "Active multi-lane delivery programme coordinating sustained execution"
+  },
+  {
+    "name": "type:tracker",
+    "color": "57606a",
+    "description": "Living current-state record, queue, register, or operational index"
+  },
+  {
     "name": "area:product",
     "color": "1f6feb",
     "description": "Product model, user experience, or feature surface"
@@ -27,17 +57,17 @@
   {
     "name": "area:runtime",
     "color": "0969da",
-    "description": "Runtime, persistence, execution, scheduling, or data-path behaviour"
+    "description": "Runtime, persistence, execution, concurrency, or data-path behaviour"
   },
   {
     "name": "area:oauth",
     "color": "6639ba",
-    "description": "Authentication, OAuth, identity, sessions, or access-token flows"
+    "description": "OAuth protocol, consent, registration, token exchange, refresh, or callback flows"
   },
   {
     "name": "area:coordination",
     "color": "218bff",
-    "description": "Workers, pods, responsibility, authority, review, or handoff coordination"
+    "description": "Pods, responsibility, claims, reviews, handoffs, or collaborative work coordination"
   },
   {
     "name": "area:ci",
@@ -53,6 +83,126 @@
     "name": "area:operations",
     "color": "57606a",
     "description": "Deployment, monitoring, recovery, capacity, or production operations"
+  },
+  {
+    "name": "area:api",
+    "color": "0366d6",
+    "description": "REST endpoints, public request contracts, handlers, or client API behaviour"
+  },
+  {
+    "name": "area:mcp",
+    "color": "0b7285",
+    "description": "MCP tools, transport, manifests, sessions, or client interoperability"
+  },
+  {
+    "name": "area:github",
+    "color": "24292f",
+    "description": "GitHub issues, pull requests, repositories, webhooks, or context integration"
+  },
+  {
+    "name": "area:providers",
+    "color": "6f42c1",
+    "description": "External provider adapters, connections, credentials, capabilities, or quotas"
+  },
+  {
+    "name": "area:data",
+    "color": "0052cc",
+    "description": "Schemas, persistence, events, migrations, integrity, or reconciliation"
+  },
+  {
+    "name": "area:dashboard",
+    "color": "1d76db",
+    "description": "Control room, browser dashboard, item detail, or operator-facing views"
+  },
+  {
+    "name": "area:frontend",
+    "color": "54aeff",
+    "description": "Browser interaction, styling, assets, responsiveness, or visual behaviour"
+  },
+  {
+    "name": "area:workers",
+    "color": "a371f7",
+    "description": "Runner adapters, worker lifecycle, enrolment, profiles, or execution attempts"
+  },
+  {
+    "name": "area:identity",
+    "color": "0e7490",
+    "description": "Accounts, actors, principals, memberships, sessions, or credential identity"
+  },
+  {
+    "name": "area:authorization",
+    "color": "7f1d1d",
+    "description": "Scopes, capability grants, approvals, revocation, access policy, or enforcement"
+  },
+  {
+    "name": "area:scheduling",
+    "color": "b45309",
+    "description": "Queues, dispatch, wake conditions, fairness, reservations, or backpressure"
+  },
+  {
+    "name": "area:messaging",
+    "color": "be185d",
+    "description": "Message delivery, notifications, inbox/outbox, acknowledgements, or response threads"
+  },
+  {
+    "name": "area:knowledge",
+    "color": "365314",
+    "description": "Context packs, memory, captures, traces, evaluation, or institutional learning"
+  },
+  {
+    "name": "integration:github",
+    "color": "24292f",
+    "description": "Material dependency on GitHub platform behaviour or APIs"
+  },
+  {
+    "name": "integration:chatgpt",
+    "color": "10a37f",
+    "description": "Material dependency on ChatGPT apps, connectors, actions, or conversation hosting"
+  },
+  {
+    "name": "integration:openai",
+    "color": "412991",
+    "description": "Material dependency on OpenAI APIs, SDKs, models, or platform services"
+  },
+  {
+    "name": "integration:cloudflare",
+    "color": "f6821f",
+    "description": "Material dependency on Cloudflare Workers, workerd, routing, or deployment"
+  },
+  {
+    "name": "integration:convex",
+    "color": "ee342f",
+    "description": "Material dependency on Convex storage, functions, auth, or deployment"
+  },
+  {
+    "name": "integration:vercel",
+    "color": "000000",
+    "description": "Material dependency on Vercel builds, hosting, previews, or deployment"
+  },
+  {
+    "name": "integration:coderabbit",
+    "color": "7c3aed",
+    "description": "Material dependency on CodeRabbit review behaviour or capacity"
+  },
+  {
+    "name": "integration:bun",
+    "color": "fbf0df",
+    "description": "Material dependency on Bun runtime, package tooling, compatibility, or behaviour"
+  },
+  {
+    "name": "mode:hosted",
+    "color": "0969da",
+    "description": "Specific to the hosted Convex, Worker, and deployed service path"
+  },
+  {
+    "name": "mode:local",
+    "color": "6e7781",
+    "description": "Specific to the local SQLite or self-hosted compatibility path"
+  },
+  {
+    "name": "mode:cross-mode",
+    "color": "8250df",
+    "description": "Requires aligned behaviour across hosted and local compatibility modes"
   },
   {
     "name": "concern:security",
@@ -83,6 +233,51 @@
     "name": "concern:creative-experiment",
     "color": "fef2c0",
     "description": "Evidence-seeking creative experiment or novel direction"
+  },
+  {
+    "name": "concern:reliability",
+    "color": "d93f0b",
+    "description": "Failure recovery, retry safety, stale state, availability, or resilience concern"
+  },
+  {
+    "name": "concern:observability",
+    "color": "006b75",
+    "description": "Diagnostics, receipts, tracing, auditability, monitoring, or explanation concern"
+  },
+  {
+    "name": "concern:usability",
+    "color": "bfdadc",
+    "description": "End-user discoverability, comprehension, workflow, or interaction-flow concern"
+  },
+  {
+    "name": "concern:accessibility",
+    "color": "c5f015",
+    "description": "Accessible interaction, semantics, contrast, keyboard, or assistive-technology concern"
+  },
+  {
+    "name": "concern:cost",
+    "color": "f9d0c4",
+    "description": "Provider quota, review capacity, compute use, or material operating-cost concern"
+  },
+  {
+    "name": "concern:data-integrity",
+    "color": "8b0000",
+    "description": "Idempotency, concurrency, ordering, invariants, or durable-state correctness concern"
+  },
+  {
+    "name": "concern:isolation",
+    "color": "5319e7",
+    "description": "Workspace, project, tenant, resource, credential, or cross-scope isolation concern"
+  },
+  {
+    "name": "concern:provenance",
+    "color": "0e8a16",
+    "description": "Attribution, source identity, revision, lineage, evidence, or causal-reference concern"
+  },
+  {
+    "name": "concern:developer-experience",
+    "color": "bfd4f2",
+    "description": "Contributor setup, SDK ergonomics, debugging, local tooling, or repository workflow concern"
   },
   {
     "name": "triage:needed",
