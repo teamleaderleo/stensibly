@@ -55,6 +55,14 @@ function installSessionMarker(endpoint) {
   }
 }
 
+function activateHostedSession() {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, sentinel);
+  } catch {
+    // The OAuth redirect can still proceed when browser storage is unavailable.
+  }
+}
+
 function readSavedEndpoint() {
   try {
     return normalizeEndpoint(localStorage.getItem('stensiblyEndpoint') || DEFAULT_ENDPOINT);
@@ -76,19 +84,13 @@ function persistEndpoint(endpoint) {
   }
 }
 
-function selectedEndpoint() {
-  const candidate = endpointInput?.value || localStorage.getItem('stensiblyEndpoint') || DEFAULT_ENDPOINT;
-  return normalizeEndpoint(candidate);
-}
-
 function beginGithubSignIn() {
   clearError();
   try {
-    const endpoint = selectedEndpoint();
-    if (!isDefaultHostedEndpoint(endpoint, DEFAULT_ENDPOINT)) {
-      throw new TypeError('GitHub sign-in only works with api.stensibly.com. Use an API token for another endpoint.');
-    }
-    localStorage.setItem('stensiblyEndpoint', endpoint);
+    const endpoint = DEFAULT_ENDPOINT;
+    persistEndpoint(endpoint);
+    activateHostedSession();
+    if (endpointInput) endpointInput.value = endpoint;
     if (signInButton) signInButton.disabled = true;
     if (signInState) signInState.textContent = 'Opening GitHub…';
     const returnTo = new URL(window.location.pathname || '/', window.location.origin).toString();
