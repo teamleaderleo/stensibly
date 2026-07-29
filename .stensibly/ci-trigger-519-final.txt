@@ -1,1 +1,0 @@
-Trusted exact-head CI trigger for PR #519.
