@@ -198,7 +198,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       inputSchema: {
         ...semanticActionSchema(),
         reason: z.string().trim().min(1).max(10_000),
-        nextAction: z.string().trim().max(2_000).optional(),
+        nextAction: z.string().trim().min(1).max(2_000).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
@@ -211,7 +211,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
       description: "Return blocked work to ready state and optionally replace its next action using the current server-returned claim generation.",
       inputSchema: {
         ...semanticActionSchema(),
-        nextAction: z.string().trim().max(2_000).optional(),
+        nextAction: z.string().trim().min(1).max(2_000).optional(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
