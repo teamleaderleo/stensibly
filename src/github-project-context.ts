@@ -1,7 +1,7 @@
 import { parseGitHubIssueExternalId } from "./github-issue-context.js";
 import {
+  ensureGitHubIssueContextSchema,
   getCurrentSqliteGitHubIssueContext,
-  listCurrentSqliteGitHubIssueContexts,
   listSqliteGitHubIssueContextHistory,
   type GitHubIssueContextRecord,
 } from "./github-issue-context-sqlite.js";
@@ -146,14 +146,10 @@ export function getSqliteGitHubProjectContext(
     : parseGitHubIssueExternalId(input.externalId).externalId;
 
   const records = requestedExternalId === null
-    ? listCurrentSqliteGitHubIssueContexts(store, {
-      workspace: "default",
-      project,
-      limit,
-    })
+    ? listCurrentRecords(store, project, limit)
     : currentRecord(store, project, requestedExternalId);
-  const issues = records.map(projectIssueContext);
-  const history = requestedExternalId === null
+  const issues: GitHubIssueContextProjection[] = records.map(projectIssueContext);
+  const history: GitHubIssueContextHistoryProjection[] = requestedExternalId === null
     ? []
     : listSqliteGitHubIssueContextHistory(store, {
       workspace: "default",
@@ -177,6 +173,38 @@ export function getSqliteGitHubProjectContext(
       guidance: recoveryGuidance.map((entry) => ({ ...entry })),
     },
   };
+}
+
+function listCurrentRecords(
+  store: StensiblyStore,
+  project: string,
+  limit: number,
+): GitHubIssueContextRecord[] {
+  ensureGitHubIssueContextSchema(store);
+  const identities = store.db.query<
+    { external_id: string },
+    [string, string, number]
+  >(`
+    SELECT external_id
+    FROM github_issue_contexts
+    WHERE workspace_id = ?1
+      AND project_id = ?2
+      AND is_current = 1
+    ORDER BY external_id ASC
+    LIMIT ?3
+  `).all("default", project, limit);
+
+  return identities.map(({ external_id }) => {
+    const record = getCurrentSqliteGitHubIssueContext(store, {
+      workspace: "default",
+      project,
+      externalId: external_id,
+    });
+    if (!record) {
+      throw new Error(`Current GitHub issue context ${external_id} disappeared during projection`);
+    }
+    return record;
+  });
 }
 
 function currentRecord(
