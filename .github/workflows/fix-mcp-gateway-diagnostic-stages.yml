@@ -33,24 +33,10 @@ jobs:
 
           path = Path('src/mcp-http.ts')
           source = path.read_text()
-          old_origin = '''  return jsonRpcError(
-            403,
-            -32001,
-            `Origin is not allowed: ${origin}`,
-            null,
-            {},
-            "cors_rejection",
-          );'''
-          new_origin = '''  return jsonRpcError(
-            403,
-            -32001,
-            `Origin is not allowed: ${origin}`,
-            null,
-            { [MCP_FAILURE_STAGE_HEADER]: "origin_validation" },
-            "cors_rejection",
-          );'''
-          old_host = '''  return jsonRpcError(403, -32001, `Host is not allowed: ${host ?? "missing"}`, null);'''
-          new_host = '''  return jsonRpcError(
+          origin_marker = '    null,\n    {},\n    "cors_rejection",'
+          origin_replacement = '    null,\n    { [MCP_FAILURE_STAGE_HEADER]: "origin_validation" },\n    "cors_rejection",'
+          host_marker = '  return jsonRpcError(403, -32001, `Host is not allowed: ${host ?? "missing"}`, null);'
+          host_replacement = '''  return jsonRpcError(
             403,
             -32001,
             `Host is not allowed: ${host ?? "missing"}`,
@@ -58,11 +44,11 @@ jobs:
             { [MCP_FAILURE_STAGE_HEADER]: "host_validation" },
             "request_failure",
           );'''
-          if source.count(old_origin) != 1:
+          if source.count(origin_marker) != 1:
               raise SystemExit('origin denial marker missing or duplicated')
-          if source.count(old_host) != 1:
+          if source.count(host_marker) != 1:
               raise SystemExit('host denial marker missing or duplicated')
-          path.write_text(source.replace(old_origin, new_origin).replace(old_host, new_host))
+          path.write_text(source.replace(origin_marker, origin_replacement).replace(host_marker, host_replacement))
           PY
 
           cat > test/mcp-gateway-validation-diagnostics.test.ts <<'EOF'
