@@ -1,0 +1,76 @@
+name: Issue 474 workerd receiver unit checks
+
+on:
+  push:
+    branches:
+      - research/issue-474-workerd-prototype
+    paths:
+      - .github/workflows/issue-474-workerd-prototype-unit.yml
+      - docs/research/issue-474-lane-a/prototype/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out Stensibly prototype
+        uses: actions/checkout@v4
+
+      - name: Check out pinned workerd source
+        uses: actions/checkout@v4
+        with:
+          repository: cloudflare/workerd
+          ref: 6aa890be9fa547e3907c805b312e39917a274221
+          path: workerd
+
+      - name: Install workerd LLVM 19 toolchain
+        working-directory: workerd
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          wget https://apt.llvm.org/llvm.sh
+          sed -i '/apt-get install/d' llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang-19 lld-19 libunwind-19 libc++abi1-19 libc++1-19 \
+            libc++-19-dev libclang-rt-19-dev llvm-19
+          sudo ln -sf /usr/bin/llvm-symbolizer-19 /usr/bin/llvm-symbolizer
+          sudo ln -sf /usr/bin/llvm-profdata-19 /usr/bin/llvm-profdata
+          sudo ln -sf /usr/bin/llvm-cov-19 /usr/bin/llvm-cov
+          echo "build:linux --repo_env=CC=/usr/lib/llvm-19/bin/clang" >> .bazelrc
+          echo "build:linux --linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld" >> .bazelrc
+          echo "build:linux --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld" >> .bazelrc
+          echo "build:linux --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar" >> .bazelrc
+
+      - name: Apply prototype
+        run: |
+          mkdir -p normalized-patches
+          for patch in \
+            workerd-receiver-types.patch \
+            workerd-receiver-types-followup.patch \
+            workerd-receiver-types-review-fixes.patch \
+            workerd-receiver-types-ts6-fixes.patch
+          do
+            python3 docs/research/issue-474-lane-a/prototype/normalize-unified-diff.py \
+              "docs/research/issue-474-lane-a/prototype/$patch" \
+              "normalized-patches/$patch"
+          done
+          git -C workerd apply ../normalized-patches/workerd-receiver-types.patch
+          git -C workerd apply --exclude=types/test/index.spec.ts \
+            ../normalized-patches/workerd-receiver-types-followup.patch
+          git -C workerd apply ../normalized-patches/workerd-receiver-types-review-fixes.patch
+          git -C workerd apply ../normalized-patches/workerd-receiver-types-ts6-fixes.patch
+          python3 docs/research/issue-474-lane-a/prototype/update-index-fixture.py workerd
+          git -C workerd diff --check
+
+      - name: Run focused unit targets
+        working-directory: workerd
+        run: |
+          bazelisk test \
+            //types:test/index.spec \
+            //types:test/transforms/globals.spec \
+            --test_output=errors
