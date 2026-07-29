@@ -64,13 +64,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  background:
-    linear-gradient(rgba(74, 66, 57, .035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(74, 66, 57, .035) 1px, transparent 1px),
-    radial-gradient(circle at 12% -8%, rgba(170, 151, 190, .18), transparent 31rem),
-    radial-gradient(circle at 92% 2%, rgba(128, 159, 183, .13), transparent 27rem),
-    var(--bg);
-  background-size: 32px 32px, 32px 32px, auto, auto, auto;
+  background: var(--bg);
 }
 body:has(dialog[open]) { overflow: hidden; }
 a { color: inherit; text-decoration: none; }
@@ -93,7 +87,7 @@ button { cursor: pointer; }
   border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
   border-radius: .9rem;
   color: var(--accent-strong);
-  background: linear-gradient(135deg, rgba(255,255,255,.44), transparent 58%), var(--accent-soft);
+  background: var(--accent-soft);
   box-shadow: 0 .45rem 1.2rem rgb(var(--shadow) / .1);
   font: 800 1rem ui-monospace, SFMono-Regular, Menlo, monospace;
   transform: rotate(-1.5deg);
@@ -177,7 +171,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .status-muted { --status: var(--panel-2); --status-ink: var(--muted); }
 .count { min-width: 1.7rem; padding: .18rem .42rem; text-align: center; border: 1px solid color-mix(in srgb, var(--status-ink) 22%, transparent); border-radius: 999px; color: var(--status-ink); background: var(--status); font: 750 .71rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cards { display: grid; gap: .62rem; }
-.card { position: relative; width: 100%; overflow: hidden; padding: .82rem; text-align: left; border: 1px solid var(--line); border-radius: .85rem; background: linear-gradient(145deg, rgba(255,255,255,.28), transparent 62%), var(--input); box-shadow: 0 .35rem .85rem rgb(var(--shadow) / .055); }
+.card { position: relative; width: 100%; overflow: hidden; padding: .82rem; text-align: left; border: 1px solid var(--line); border-radius: .85rem; background: var(--input); box-shadow: 0 .35rem .85rem rgb(var(--shadow) / .055); }
 .card:hover { border-color: color-mix(in srgb, var(--status-ink) 32%, var(--line)); box-shadow: 0 .6rem 1.15rem rgb(var(--shadow) / .09); transform: translateY(-1px); }
 .card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: .25rem; background: var(--status); }
 .card-top, .card-meta { display: flex; justify-content: space-between; gap: .55rem; color: var(--muted); font: .65rem ui-monospace, SFMono-Regular, Menlo, monospace; }

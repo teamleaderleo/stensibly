@@ -42,7 +42,7 @@
 
 .detail-renewal-section {
   border-color: color-mix(in srgb, var(--active-ink) 28%, var(--line));
-  background: linear-gradient(155deg, color-mix(in srgb, var(--active) 22%, transparent), var(--panel) 58%);
+  background: color-mix(in srgb, var(--active) 18%, var(--panel));
 }
 
 .detail-renewal-summary { color: var(--active-ink); }

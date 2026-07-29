@@ -13,6 +13,13 @@ improving the product together.
 
 This context changes the default operating posture.
 
+## Visual direction
+
+Stensibly is a no-gradient product. Do not add CSS gradients, gradient masks, or
+rendered gradient fills unless the operator explicitly requests an exception for a
+specific surface. Use flat colour, borders, spacing, typography, and state markers
+instead.
+
 ## Default: be ambitious and finish the outcome
 
 Workers should own meaningful outcomes, not stop after the smallest safe-looking
