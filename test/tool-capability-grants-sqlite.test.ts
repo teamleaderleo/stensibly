@@ -21,6 +21,7 @@ import { StensiblyStore } from "../src/store.ts";
 
 const HEAD_SHA = "a".repeat(40);
 const NOW = "2026-07-29T00:20:00.000Z";
+const ACCEPTED_AT = "2026-07-29T00:05:00.000Z";
 
 const requestInput: ToolCapabilityRequestInput = {
   workspace: "default",
@@ -48,6 +49,10 @@ beforeEach(() => {
 });
 
 afterEach(() => store.close());
+
+function clockAt(value: string) {
+  return { clock: () => new Date(value) };
+}
 
 function permission(
   overrides: Partial<ToolCapabilityPermissionInput> = {},
@@ -91,6 +96,7 @@ function accept(
   acceptedGrant = grant(),
   expectedCurrentGeneration: number | null = null,
   overrides: Partial<Parameters<typeof acceptSqliteToolCapabilityGrant>[1]> = {},
+  acceptedAt = ACCEPTED_AT,
 ) {
   return acceptSqliteToolCapabilityGrant(store, {
     workspace: "default",
@@ -100,23 +106,23 @@ function accept(
     acceptanceRef: `accept:${acceptedGrant.grantId}:${acceptedGrant.generation}`,
     acceptedBy: "actor:mercury",
     ...overrides,
-  });
+  }, clockAt(acceptedAt));
 }
 
 function reserve(
   idempotencyKey: string,
   overrides: Partial<Parameters<typeof reserveSqliteToolCapabilityUse>[1]> = {},
+  at = NOW,
 ) {
   return reserveSqliteToolCapabilityUse(store, {
     workspace: "default",
     project: "scrapbook",
     grantId: "grant_storage_1",
     expectedGeneration: 1,
-    now: NOW,
     request: requestInput,
     idempotencyKey,
     ...overrides,
-  });
+  }, clockAt(at));
 }
 
 describe("SQLite tool capability grant acceptance", () => {
@@ -131,13 +137,15 @@ describe("SQLite tool capability grant acceptance", () => {
         grantId: "grant_storage_1",
         generation: 1,
         fingerprint: firstGrant.fingerprint,
+        acceptedAt: ACCEPTED_AT,
         isCurrent: true,
       },
     });
 
-    const replay = accept(firstGrant);
+    const replay = accept(firstGrant, null, {}, "2026-07-29T00:10:00.000Z");
     expect(replay.replayed).toBe(true);
     expect(replay.record.id).toBe(first.record.id);
+    expect(replay.record.acceptedAt).toBe(ACCEPTED_AT);
     expect(listSqliteToolCapabilityGrantHistory(store, {
       workspace: "default",
       project: "scrapbook",
@@ -197,13 +205,21 @@ describe("SQLite tool capability grant acceptance", () => {
       expectedCurrentGeneration: null,
       acceptanceRef: "accept:foreign-scope",
       acceptedBy: "actor:mercury",
-    })).toThrow("must match the storage scope");
+    }, clockAt(ACCEPTED_AT))).toThrow("must match the storage scope");
   });
 
-  test("rejects tampered and embedded-revocation grants", () => {
+  test("rejects tampered, noncanonical, and embedded-revocation grants", () => {
     const tampered = structuredClone(grant());
     tampered.permissions[0]!.maxUses = 99;
-    expect(() => accept(tampered)).toThrow("fingerprint is invalid");
+    expect(() => accept(tampered)).toThrow("canonical shape is invalid");
+
+    const extraField = structuredClone(grant()) as ReturnType<typeof grant> & { extra?: string };
+    extraField.extra = "unreviewed";
+    const canonical = structuredClone(grant());
+    extraField.fingerprint = canonical.fingerprint;
+    expect(() => accept(extraField, null, {
+      acceptanceRef: "accept:extra-field",
+    })).toThrow("canonical shape is invalid");
 
     const revokedGrant = buildToolCapabilityGrant({
       grantId: "grant_revoked_embedded",
@@ -231,7 +247,7 @@ describe("SQLite tool capability grant acceptance", () => {
 });
 
 describe("atomic SQLite tool admission", () => {
-  test("atomically consumes uses and makes exact replay free", () => {
+  test("atomically consumes uses and makes exact replay free across clock changes", () => {
     const accepted = accept(grant());
     const first = reserve("admission:one");
     expect(first).toMatchObject({
@@ -239,6 +255,7 @@ describe("atomic SQLite tool admission", () => {
       record: {
         acceptedGrantGeneration: 1,
         acceptedGrantFingerprint: accepted.record.fingerprint,
+        recordedAt: NOW,
         authorization: {
           authorized: true,
           permissionId: "permission_branch_create",
@@ -255,9 +272,14 @@ describe("atomic SQLite tool admission", () => {
       permissionId: "permission_branch_create",
     })).toBe(1);
 
-    const replay = reserve("admission:one");
+    const replay = reserve(
+      "admission:one",
+      {},
+      "2026-07-29T00:59:59.000Z",
+    );
     expect(replay.replayed).toBe(true);
     expect(replay.record.id).toBe(first.record.id);
+    expect(replay.record.recordedAt).toBe(NOW);
     expect(getSqliteToolCapabilityPermissionUsage(store, {
       workspace: "default",
       project: "scrapbook",
@@ -294,7 +316,7 @@ describe("atomic SQLite tool admission", () => {
     const accepted = accept(grant());
     reserve("admission:stable");
     expect(() => reserve("admission:stable", {
-      now: "2026-07-29T00:21:00.000Z",
+      expectedGeneration: 2,
     })).toThrow("was reused with altered content");
     expect(getSqliteToolCapabilityPermissionUsage(store, {
       workspace: "default",
@@ -306,7 +328,7 @@ describe("atomic SQLite tool admission", () => {
     })).toBe(1);
   });
 
-  test("records bounded denials without a caller-supplied trust fingerprint", () => {
+  test("records bounded denials without caller-supplied trust or time", () => {
     const missing = reserve("admission:no-grant");
     expect(missing.record).toMatchObject({
       acceptedGrantGeneration: null,
@@ -369,41 +391,49 @@ describe("atomic SQLite tool admission", () => {
 });
 
 describe("SQLite tool capability revocation", () => {
-  test("binds revocation to current fingerprint and denies at the effective time", () => {
+  test("binds revocation to current fingerprint and denies from server effective time", () => {
     const accepted = accept(grant());
+    expect(reserve(
+      "admission:before-revocation",
+      {},
+      "2026-07-29T00:29:59.000Z",
+    ).record.authorization).toMatchObject({ authorized: true });
+
     const revoked = revokeSqliteToolCapabilityGrant(store, {
       workspace: "default",
       project: "scrapbook",
       grantId: accepted.record.grantId,
       expectedGeneration: accepted.record.generation,
       expectedFingerprint: accepted.record.fingerprint,
-      revokedAt: "2026-07-29T00:30:00.000Z",
       revokedBy: "actor:supervisor",
       reasonCode: "run-superseded",
       idempotencyKey: "revoke:grant-storage-1",
-    });
+    }, clockAt("2026-07-29T00:30:00.000Z"));
     expect(revoked).toMatchObject({
       replayed: false,
-      record: { reasonCode: "run-superseded" },
+      record: {
+        reasonCode: "run-superseded",
+        revokedAt: "2026-07-29T00:30:00.000Z",
+      },
     });
-    expect(revokeSqliteToolCapabilityGrant(store, {
+    const replay = revokeSqliteToolCapabilityGrant(store, {
       workspace: "default",
       project: "scrapbook",
       grantId: accepted.record.grantId,
       expectedGeneration: accepted.record.generation,
       expectedFingerprint: accepted.record.fingerprint,
-      revokedAt: "2026-07-29T00:30:00.000Z",
       revokedBy: "actor:supervisor",
       reasonCode: "run-superseded",
       idempotencyKey: "revoke:grant-storage-1",
-    }).replayed).toBe(true);
+    }, clockAt("2026-07-29T00:40:00.000Z"));
+    expect(replay.replayed).toBe(true);
+    expect(replay.record.id).toBe(revoked.record.id);
 
-    expect(reserve("admission:before-revocation", {
-      now: "2026-07-29T00:29:59.000Z",
-    }).record.authorization).toMatchObject({ authorized: true });
-    expect(reserve("admission:after-revocation", {
-      now: "2026-07-29T00:30:00.000Z",
-    }).record.authorization).toMatchObject({
+    expect(reserve(
+      "admission:after-revocation",
+      {},
+      "2026-07-29T00:30:00.000Z",
+    ).record.authorization).toMatchObject({
       authorized: false,
       reason: "grant_revoked",
     });
@@ -423,11 +453,12 @@ describe("SQLite tool capability revocation", () => {
       grantId: accepted.record.grantId,
       expectedGeneration: 1,
       expectedFingerprint: `sha256:${"0".repeat(64)}`,
-      revokedAt: "2026-07-29T00:30:00.000Z",
       revokedBy: "actor:supervisor",
       reasonCode: "wrong-fingerprint",
       idempotencyKey: "revoke:wrong-fingerprint",
-    })).toThrow("current generation and fingerprint");
+    }, clockAt("2026-07-29T00:30:00.000Z"))).toThrow(
+      "current generation and fingerprint",
+    );
 
     revokeSqliteToolCapabilityGrant(store, {
       workspace: "default",
@@ -435,22 +466,22 @@ describe("SQLite tool capability revocation", () => {
       grantId: accepted.record.grantId,
       expectedGeneration: 1,
       expectedFingerprint: accepted.record.fingerprint,
-      revokedAt: "2026-07-29T00:30:00.000Z",
       revokedBy: "actor:supervisor",
       reasonCode: "run-superseded",
       idempotencyKey: "revoke:stable",
-    });
+    }, clockAt("2026-07-29T00:30:00.000Z"));
     expect(() => revokeSqliteToolCapabilityGrant(store, {
       workspace: "default",
       project: "scrapbook",
       grantId: accepted.record.grantId,
       expectedGeneration: 1,
       expectedFingerprint: accepted.record.fingerprint,
-      revokedAt: "2026-07-29T00:31:00.000Z",
       revokedBy: "actor:supervisor",
       reasonCode: "changed",
       idempotencyKey: "revoke:stable",
-    })).toThrow("was reused with altered content");
+    }, clockAt("2026-07-29T00:31:00.000Z"))).toThrow(
+      "was reused with altered content",
+    );
 
     const secondStore = new StensiblyStore(":memory:");
     try {
@@ -462,18 +493,19 @@ describe("SQLite tool capability revocation", () => {
         expectedCurrentGeneration: null,
         acceptanceRef: "accept:second-store",
         acceptedBy: "actor:mercury",
-      });
+      }, clockAt(ACCEPTED_AT));
       expect(() => revokeSqliteToolCapabilityGrant(secondStore, {
         workspace: "default",
         project: "scrapbook",
         grantId: secondAccepted.record.grantId,
         expectedGeneration: 1,
         expectedFingerprint: secondAccepted.record.fingerprint,
-        revokedAt: "2026-07-29T01:00:01.000Z",
         revokedBy: "actor:supervisor",
         reasonCode: "too-late",
         idempotencyKey: "revoke:too-late",
-      })).toThrow("within the grant lifetime");
+      }, clockAt("2026-07-29T01:00:01.000Z"))).toThrow(
+        "within the grant lifetime",
+      );
     } finally {
       secondStore.close();
     }
@@ -504,16 +536,15 @@ describe("stored capability integrity", () => {
         expectedCurrentGeneration: null,
         acceptanceRef: "accept:isolated",
         acceptedBy: "actor:mercury",
-      });
+      }, clockAt(ACCEPTED_AT));
       const admission = reserveSqliteToolCapabilityUse(isolated, {
         workspace: "default",
         project: "scrapbook",
         grantId: isolatedGrant.grantId,
         expectedGeneration: 1,
-        now: NOW,
         request: requestInput,
         idempotencyKey: "admission:isolated",
-      });
+      }, clockAt(NOW));
       isolated.db.query(`
         UPDATE tool_capability_admissions
         SET authorization_json = ?1
