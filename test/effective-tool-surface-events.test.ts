@@ -13,6 +13,7 @@ import { createWorkRun } from "../src/runs.ts";
 import { StensiblyStore } from "../src/store.ts";
 
 const runner = { id: "agent:surface", name: "Surface Runner", kind: "agent" as const };
+const otherRunner = { id: "agent:other-surface", name: "Other Surface Runner", kind: "agent" as const };
 const supervisor = { id: "service:surface", name: "Surface Supervisor", kind: "service" as const };
 const required = [
   { class: "native_core", id: "shell.exec" },
@@ -29,7 +30,7 @@ const fullClasses = {
 } as const;
 
 describe("durable effective tool-surface events", () => {
-  test("records one content-minimised event and replays the exact snapshot", async () => {
+  test("records one content-minimised attributed event and replays the exact snapshot", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const ledger = new SqliteWorkLedger(store);
@@ -83,6 +84,7 @@ describe("durable effective tool-surface events", () => {
         run: {
           id: run.id,
           itemId: item.id,
+          actorId: runner.id,
           generation: run.generation,
           runnerType: "chatgpt",
           runnerProfile: "gpt-5.6-thinking",
@@ -98,6 +100,9 @@ describe("durable effective tool-surface events", () => {
           consequentialCallsAllowed: true,
         },
         evidencePolicy: {
+          observationAuthority: "runner_report",
+          reportedByActorId: runner.id,
+          serverVerifiedExecutableBindings: false,
           containsCapabilityDisplayNames: false,
           containsRawProvenance: false,
           containsExternalSurfaceReference: false,
@@ -119,7 +124,7 @@ describe("durable effective tool-surface events", () => {
     }
   });
 
-  test("persists degradation and recovery without exposing non-required capability IDs", async () => {
+  test("persists degradation without exposing non-required capability IDs", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const ledger = new SqliteWorkLedger(store);
@@ -165,6 +170,7 @@ describe("durable effective tool-surface events", () => {
         run,
         snapshot: degraded,
         previousSnapshot: previous,
+        actor: runner,
       });
       const payload = event.payload as {
         reconciliation: Record<string, unknown>;
@@ -189,7 +195,7 @@ describe("durable effective tool-surface events", () => {
     }
   });
 
-  test("rejects snapshots that are not bound to the durable run", async () => {
+  test("rejects reports that are not attributable and bound to the durable run", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const ledger = new SqliteWorkLedger(store);
@@ -211,12 +217,20 @@ describe("durable effective tool-surface events", () => {
       await expect(recordEffectiveToolSurfaceEvent({
         ledger,
         run,
+        snapshot: buildSnapshot(run.id, run.generation),
+        actor: otherRunner,
+      })).rejects.toThrow("reporter does not match");
+      await expect(recordEffectiveToolSurfaceEvent({
+        ledger,
+        run,
         snapshot: buildSnapshot("run_other", run.generation),
+        actor: runner,
       })).rejects.toThrow("run ID does not match");
       await expect(recordEffectiveToolSurfaceEvent({
         ledger,
         run,
         snapshot: buildSnapshot(run.id, run.generation + 1),
+        actor: runner,
       })).rejects.toThrow("generation does not match");
       await expect(recordEffectiveToolSurfaceEvent({
         ledger,
@@ -225,6 +239,7 @@ describe("durable effective tool-surface events", () => {
           ...snapshotInput(run.id, run.generation),
           runnerAdapter: "other-runner",
         }),
+        actor: runner,
       })).rejects.toThrow("adapter does not match");
     } finally {
       store.close();
