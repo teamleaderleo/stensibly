@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "src/**"
-      - "wrangler.toml"
+      - "wrangler.jsonc"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/deploy-worker.yml"
