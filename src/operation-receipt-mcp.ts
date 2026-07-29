@@ -11,7 +11,7 @@ export function registerOperationReceiptTools(
   server.registerTool(
     "get_operation_receipt",
     {
-      description: "Reconcile an ambiguous idempotent operation by project and key. Returns a bounded durable work-item event record when one exists; otherwise returns guidance to retry the exact same request with the same key.",
+      description: "Reconcile an ambiguous idempotent operation by project and key. Returns a bounded durable work-item event record when one exists. An unknown result is intentionally ambiguous across missing and cross-project keys; verify the original project scope before any retry.",
       inputSchema: {
         project: z
           .string()
