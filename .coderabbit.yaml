@@ -18,8 +18,11 @@ reviews:
     docstrings:
       mode: "off"
 
+  # Review capacity is scarce. Reviews are requested manually only after the
+  # repository eligibility gate in docs/review-capacity-gate.md is satisfied.
+  # In particular, execution-only and one-use PRs never receive CodeRabbit review.
   auto_review:
-    enabled: true
+    enabled: false
     auto_incremental_review: false
     auto_pause_after_reviewed_commits: 10
     drafts: false
