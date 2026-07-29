@@ -18,7 +18,7 @@
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
     "verify:dashboard": "bun src/verify-dashboard.ts",
     "audit:membership": "bun src/provider-membership-audit-cli.ts",
-    "convex:dev": "convex dev",
+    "convex:dev": "convex dev --dev-deployment local",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
     "worker:dev": "wrangler dev",
@@ -31,7 +31,7 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "convex": "^1.42.3",
     "hono": "^4.0.0",
     "zod": "^4.0.0"
