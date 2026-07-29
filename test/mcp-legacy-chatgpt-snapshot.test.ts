@@ -6,35 +6,35 @@ import { createMcpServer } from "../src/mcp.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 
-interface FrozenToolInputs {
+interface LegacyToolInputs {
   properties: string[];
   required: string[];
 }
 
-interface FrozenSnapshot {
+interface ActionSnapshot {
   legacySnapshot: {
     toolCount: number;
     tools: string[];
-    topLevelInputs: Record<string, FrozenToolInputs>;
+    topLevelInputs: Record<string, LegacyToolInputs>;
   };
 }
 
 const snapshot = JSON.parse(
   readFileSync(new URL("../docs/chatgpt-app-actions.json", import.meta.url), "utf8"),
-) as FrozenSnapshot;
+) as ActionSnapshot;
 
 const actor = {
-  id: "chatgpt:frozen-25",
-  name: "Frozen ChatGPT Snapshot",
+  id: "chatgpt:legacy-25",
+  name: "Legacy ChatGPT Snapshot",
   kind: "agent" as const,
 };
 
-describe("frozen ChatGPT MCP snapshot compatibility", () => {
-  test("preserves every legacy action and accepted top-level input", async () => {
+describe("legacy ChatGPT MCP snapshot compatibility", () => {
+  test("preserves every legacy action and accepted top-level input while allowing new actions", async () => {
     const store = new StensiblyStore(":memory:");
     const server = createMcpServer(new SqliteWorkLedger(store));
     const client = new Client(
-      { name: "chatgpt-frozen-schema-check", version: "25-actions" },
+      { name: "chatgpt-legacy-schema-check", version: "25-actions" },
       { capabilities: {} },
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -50,9 +50,9 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
       );
       for (const name of snapshot.legacySnapshot.tools) {
         const tool = current.get(name);
-        if (!tool) throw new Error(`Missing frozen action ${name}`);
+        if (!tool) throw new Error(`Missing legacy action ${name}`);
         const baseline = snapshot.legacySnapshot.topLevelInputs[name];
-        if (!baseline) throw new Error(`Missing frozen input checkpoint for ${name}`);
+        if (!baseline) throw new Error(`Missing legacy input checkpoint for ${name}`);
 
         const inputSchema = asRecord(tool.inputSchema, `${name} input schema`);
         const properties = asRecord(
@@ -63,7 +63,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
         for (const property of baseline.properties) {
           expect(
             currentProperties,
-            `${name} removed frozen input ${property}`,
+            `${name} removed legacy input ${property}`,
           ).toContain(property);
         }
 
@@ -75,6 +75,8 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
           ).toContain(property);
         }
       }
+
+      expect(listed.tools.length).toBeGreaterThanOrEqual(snapshot.legacySnapshot.toolCount);
     } finally {
       await client.close();
       await server.close();
@@ -82,7 +84,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
     }
   });
 
-  test("runs the cached 25-action lifecycle after server recreation without rediscovery", async () => {
+  test("runs a cached 25-action lifecycle after server recreation without rediscovery", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);
     const firstServer = createMcpServer(ledger);
@@ -101,7 +103,6 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
       for (const legacyName of snapshot.legacySnapshot.tools) {
         expect(firstNames).toContain(legacyName);
       }
-      expect(firstNames).toContain("get_operation_receipt");
     } finally {
       await firstClient.close();
       await firstServer.close();
@@ -109,7 +110,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
 
     const secondServer = createMcpServer(new SqliteWorkLedger(store));
     const cachedClient = new Client(
-      { name: "chatgpt-cached-frozen-actions", version: "25-actions" },
+      { name: "chatgpt-cached-legacy-actions", version: "25-actions" },
       { capabilities: {} },
     );
     const [cachedClientTransport, secondServerTransport] =
@@ -120,17 +121,17 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
       await cachedClient.connect(cachedClientTransport);
 
       // Deliberately do not call listTools(). This client behaves as though ChatGPT
-      // retained the earlier approved action snapshot across a server reconnect.
+      // retained an earlier approved action snapshot across a server reconnect.
       const created = await call<{
         id: string;
         status: string;
         claimGeneration: number;
       }>(cachedClient, "create_item", {
         project: "oauth-dogfood",
-        title: "Frozen snapshot compatibility lifecycle",
+        title: "Legacy snapshot compatibility lifecycle",
         nextAction: "Complete the cached-action lifecycle.",
         actor,
-        idempotencyKey: "frozen-25-create-1",
+        idempotencyKey: "legacy-25-create-1",
       });
       expect(created.status).toBe("ready");
 
@@ -148,7 +149,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
           id: created.id,
           actor,
           leaseSeconds: 900,
-          idempotencyKey: "frozen-25-claim-1",
+          idempotencyKey: "legacy-25-claim-1",
         },
       );
       expect(claimed.status).toBe("active");
@@ -158,7 +159,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
         actor,
         type: "compatibility.proved",
         payload: { snapshot: 25, rediscovered: false },
-        idempotencyKey: "frozen-25-event-1",
+        idempotencyKey: "legacy-25-event-1",
       });
       expect(event.type).toBe("compatibility.proved");
 
@@ -171,7 +172,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
           kind: "issue",
           label: "P0 connector reliability",
           uri: "https://github.com/teamleaderleo/stensibly/issues/490",
-          idempotencyKey: "frozen-25-artifact-1",
+          idempotencyKey: "legacy-25-artifact-1",
         },
       );
       expect(artifact.kind).toBe("issue");
@@ -184,7 +185,7 @@ describe("frozen ChatGPT MCP snapshot compatibility", () => {
           actor,
           expectedClaimGeneration: claimed.claimGeneration,
           summary: "Cached legacy actions remained executable after reconnect.",
-          idempotencyKey: "frozen-25-complete-1",
+          idempotencyKey: "legacy-25-complete-1",
         },
       );
       expect(completed.status).toBe("done");

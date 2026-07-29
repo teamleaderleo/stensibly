@@ -6,26 +6,26 @@ import {
   MCP_TOOL_NAMES,
 } from "../src/mcp-diagnostics.ts";
 
-interface FrozenToolInputs {
+interface LegacyToolInputs {
   properties: string[];
   required: string[];
 }
 
 interface ChatGptAppActionSnapshot {
   snapshotVersion: number;
-  compatibilityEpoch: number;
   manifestVersion: number;
   toolCount: number;
   toolManifestFingerprint: string;
   tools: string[];
   compatibilityPolicy: string;
-  newToolNamesAllowedDuringIncident: boolean;
+  additiveToolNamesAllowed: boolean;
   legacySnapshot: {
     toolCount: number;
     tools: string[];
-    topLevelInputs: Record<string, FrozenToolInputs>;
+    topLevelInputs: Record<string, LegacyToolInputs>;
   };
-  requiredAdminActionAfterBackwardCompatibleChange: string;
+  requiredAdminActionAfterCompatibleExistingActionChange: string;
+  requiredAdminActionToUseNewActions: string;
   requiredAdminActionAfterBreakingChange: string;
   reviewedOn: string;
 }
@@ -38,29 +38,29 @@ function readSnapshot(): ChatGptAppActionSnapshot {
 }
 
 describe("ChatGPT app action snapshot", () => {
-  test("freezes the approved 26-action compatibility epoch while #490 is open", () => {
+  test("tracks the current manifest without blocking additive tool growth", () => {
     const snapshot = readSnapshot();
 
-    expect(snapshot.snapshotVersion).toBe(2);
-    expect(snapshot.compatibilityEpoch).toBe(1);
+    expect(snapshot.snapshotVersion).toBe(3);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
-    expect(snapshot.toolCount).toBe(26);
-    expect(MCP_TOOL_NAMES).toHaveLength(26);
     expect(snapshot.toolCount).toBe(MCP_TOOL_NAMES.length);
     expect(snapshot.toolManifestFingerprint).toBe(MCP_TOOL_MANIFEST_FINGERPRINT);
     expect(snapshot.tools).toEqual([...MCP_TOOL_NAMES]);
     expect(snapshot.compatibilityPolicy).toBe(
-      "preserve_approved_tool_names_and_frozen_inputs",
+      "allow_additive_tool_growth_preserve_existing_inputs",
     );
-    expect(snapshot.newToolNamesAllowedDuringIncident).toBe(false);
-    expect(snapshot.requiredAdminActionAfterBackwardCompatibleChange).toBe("none");
+    expect(snapshot.additiveToolNamesAllowed).toBe(true);
+    expect(snapshot.requiredAdminActionAfterCompatibleExistingActionChange).toBe("none");
+    expect(snapshot.requiredAdminActionToUseNewActions).toBe(
+      "refresh_or_recreate_chatgpt_app",
+    );
     expect(snapshot.requiredAdminActionAfterBreakingChange).toBe(
       "refresh_or_recreate_chatgpt_app",
     );
     expect(snapshot.reviewedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("keeps the pre-receipt 25-action snapshot as an explicit compatibility target", () => {
+  test("keeps the pre-receipt 25-action snapshot as a compatibility target", () => {
     const snapshot = readSnapshot();
 
     expect(snapshot.legacySnapshot.toolCount).toBe(25);
@@ -73,23 +73,24 @@ describe("ChatGPT app action snapshot", () => {
     for (const tool of snapshot.legacySnapshot.tools) {
       expect(snapshot.tools).toContain(tool);
       const input = snapshot.legacySnapshot.topLevelInputs[tool];
-      if (!input) throw new Error(`Missing frozen input checkpoint for ${tool}`);
+      if (!input) throw new Error(`Missing legacy input checkpoint for ${tool}`);
       expect(new Set(input.properties).size).toBe(input.properties.length);
       expect(new Set(input.required).size).toBe(input.required.length);
       for (const required of input.required) expect(input.properties).toContain(required);
     }
   });
 
-  test("keeps the host-side recovery and coexistence procedure attached to the snapshot", () => {
+  test("keeps recovery guidance attached without prescribing a tool freeze", () => {
     const snapshot = readSnapshot();
     const recovery = readFileSync(recoveryPath, "utf8");
 
     expect(recovery).toContain(String(snapshot.toolCount));
-    expect(recovery).toContain(String(snapshot.legacySnapshot.toolCount));
     expect(recovery).toContain(snapshot.toolManifestFingerprint);
-    expect(recovery).toContain("backward-compatible");
+    expect(recovery).toContain("additive tool growth is allowed");
     expect(recovery).toContain("GitHub read → Stensibly read → GitHub read");
     expect(recovery).toContain("before network dispatch");
     expect(recovery).toContain("HAR");
+    expect(recovery).not.toContain("public action list stays at 26");
+    expect(recovery).not.toContain("proposed 27th public tool should be reworked");
   });
 });
