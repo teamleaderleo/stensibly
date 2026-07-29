@@ -1,3 +1,9 @@
+import {
+  MCP_TOOL_COUNT_HEADER,
+  MCP_TOOL_MANIFEST_FINGERPRINT,
+  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+  MCP_TOOL_NAMES,
+} from "./mcp-diagnostics.js";
 import { parseToken } from "./token-provider.js";
 import {
   PROCESSING_STAGE_HEADER,
@@ -211,7 +217,8 @@ export async function verifyHosted(
         `Expected MCP serverInfo.name=stensibly; received ${jsonPreview(body)}`,
       );
     }
-    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly`;
+    const manifestFingerprint = requireMcpManifestReceipt(response);
+    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly manifest=${manifestFingerprint}`;
   }));
 
   return results;
@@ -384,6 +391,26 @@ function requireWorkerReceipt(response: Response): string {
     }
   }
   return versionId;
+}
+
+function requireMcpManifestReceipt(response: Response): string {
+  const fingerprint = response.headers
+    .get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)
+    ?.trim();
+  if (fingerprint !== MCP_TOOL_MANIFEST_FINGERPRINT) {
+    throw responseError(
+      response,
+      `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${MCP_TOOL_MANIFEST_FINGERPRINT}; received ${fingerprint || "missing"}`,
+    );
+  }
+  const count = response.headers.get(MCP_TOOL_COUNT_HEADER)?.trim();
+  if (count !== String(MCP_TOOL_NAMES.length)) {
+    throw responseError(
+      response,
+      `Expected ${MCP_TOOL_COUNT_HEADER}=${MCP_TOOL_NAMES.length}; received ${count || "missing"}`,
+    );
+  }
+  return fingerprint;
 }
 
 function responseError(response: Response, message: string): Error {
