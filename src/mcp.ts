@@ -9,6 +9,7 @@ import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
+import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
 import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
 import {
   actorSchema,
@@ -30,6 +31,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
+        "Use the same idempotency key for an exact mutation retry. When a mutation response is ambiguous, call get_operation_receipt before choosing whether to retry.",
         "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
         "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
         "Record discoveries and progress as events so another actor can continue.",
@@ -268,6 +270,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
     }),
   );
 
+  registerOperationReceiptTools(server, ledger);
   registerProjectAttachmentTools(server, ledger);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
