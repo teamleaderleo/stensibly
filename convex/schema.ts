@@ -484,6 +484,44 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 
+  providerCapacityObservations: defineTable({
+    workspaceId: v.id("workspaces"),
+    provider: v.literal("coderabbit"),
+    payloadDigest: v.string(),
+    sourceCommentId: v.string(),
+    repository: v.string(),
+    pullRequestNumber: v.number(),
+    subjectLogin: v.string(),
+    subjectBasis: v.literal("pull_request_author_proxy"),
+    providerState: v.union(v.literal("available"), v.literal("unavailable")),
+    remaining: v.union(v.number(), v.null()),
+    quotaLimit: v.union(v.number(), v.null()),
+    refillAt: v.union(v.number(), v.null()),
+    observedAt: v.number(),
+    receivedAt: v.number(),
+  })
+    .index("by_workspace_payload", ["workspaceId", "provider", "payloadDigest"])
+    .index("by_workspace_subject_observed", [
+      "workspaceId",
+      "provider",
+      "repository",
+      "subjectLogin",
+      "observedAt",
+      "receivedAt",
+    ])
+    .index("by_workspace_received", ["workspaceId", "receivedAt"]),
+
+  providerCapacityDeliveries: defineTable({
+    workspaceId: v.id("workspaces"),
+    provider: v.literal("coderabbit"),
+    deliveryId: v.string(),
+    payloadDigest: v.string(),
+    observationId: v.id("providerCapacityObservations"),
+    createdAt: v.number(),
+  })
+    .index("by_workspace_delivery", ["workspaceId", "provider", "deliveryId"])
+    .index("by_observation", ["observationId", "createdAt"]),
+
   apiTokens: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
