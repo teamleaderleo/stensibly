@@ -1,0 +1,74 @@
+diff --git a/types/src/transforms/globals.ts b/types/src/transforms/globals.ts
+--- a/types/src/transforms/globals.ts
++++ b/types/src/transforms/globals.ts
+@@ -205,6 +205,54 @@ function widenContextGlobalScopeDeclaration(
+   );
+ }
+ 
++function hasStaticModifier(node: ts.Node): boolean {
++  return (
++    ts.canHaveModifiers(node) &&
++    ts.getModifiers(node)?.some(
++      (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword
++    ) === true
++  );
++}
++
++// The global transformer shares the checker created before override transforms
++// run. Inherited declarations can therefore resolve to the original override
++// source, where legacy method overrides omit the generated receiver. Recover the
++// declaration owner here, before widening it to the context-global call set.
++function ensureOwningReceiver(
++  ctx: ts.TransformationContext,
++  owner: ts.InterfaceDeclaration | ts.ClassDeclaration,
++  member: ts.TypeElement | ts.ClassElement
++): ts.TypeElement | ts.ClassElement {
++  if (
++    (!ts.isMethodSignature(member) && !ts.isMethodDeclaration(member)) ||
++    hasStaticModifier(member)
++  ) {
++    return member;
++  }
++  const receiver = member.parameters[0];
++  if (
++    receiver !== undefined &&
++    ts.isIdentifier(receiver.name) &&
++    receiver.name.text === "this"
++  ) {
++    return member;
++  }
++  assert(owner.name !== undefined);
++  const typeArguments = owner.typeParameters?.map((parameter) =>
++    ctx.factory.createTypeReferenceNode(parameter.name)
++  );
++  const ownerType = ctx.factory.createTypeReferenceNode(owner.name, typeArguments);
++  const ownerReceiver = ctx.factory.createParameterDeclaration(
++    /* modifiers */ undefined,
++    /* dotDotDotToken */ undefined,
++    "this",
++    /* questionToken */ undefined,
++    ownerType
++  );
++  const parameters = ctx.factory.createNodeArray([
++    ownerReceiver,
++    ...member.parameters,
++  ]);
++  if (ts.isMethodSignature(member)) {
++    return updateMethodParameters(ctx, member, parameters);
++  }
++  return updateMethodParameters(ctx, member, parameters);
++}
++
+ // Call with each potential method/property that could be extracted into a
+ // global function/const.
+ export function maybeExtractGlobalNode(
+@@ -291,7 +339,8 @@ function createGlobalScopeVisitor(
+       ctx.factory.createToken(ts.SyntaxKind.DeclareKeyword),
+     ];
+     for (const member of node.members) {
+-      const maybeNode = maybeExtractGlobalNode(ctx, member, modifiers);
++      const receiverAwareMember = ensureOwningReceiver(ctx, node, member);
++      const maybeNode = maybeExtractGlobalNode(ctx, receiverAwareMember, modifiers);
+       if (maybeNode !== undefined) {
+         nodes.push(ts.visitNode(maybeNode, inlineVisitor));
+       }
