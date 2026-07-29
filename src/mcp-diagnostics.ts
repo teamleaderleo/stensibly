@@ -21,6 +21,7 @@ export const MCP_TOOL_NAMES = [
   "get_brief",
   "get_continuation",
   "get_item",
+  "get_operation_receipt",
   "get_project_attachment",
   "get_runner_context",
   "handoff_work",
@@ -72,11 +73,13 @@ export interface McpFailureDiagnosticData {
     | "reauthenticate"
     | "request_scope_or_project_access"
     | "retry_with_same_request_id"
-    | "reconcile_by_idempotency_key_before_retry";
+    | "reconcile_by_idempotency_key_before_retry"
+    | "read_after_write_before_retry";
   manifestFingerprint: string;
   manifestToolCount: number;
   method?: string;
   tool?: string;
+  idempotencyKeyPresent?: boolean;
 }
 
 export async function withMcpDiagnostics(
@@ -105,6 +108,7 @@ export async function withMcpDiagnostics(
   const requestPayload = await readRequestPayload(request);
   const method = requestMethod(requestPayload);
   const tool = requestTool(requestPayload);
+  const idempotencyKeyPresent = requestHasIdempotencyKey(requestPayload);
   const category = failureCategory(headers.get(FAILURE_CATEGORY_HEADER), response.status);
   const stage = failureStage(
     headers.get(MCP_FAILURE_STAGE_HEADER),
@@ -114,7 +118,14 @@ export async function withMcpDiagnostics(
   );
   payload.error = {
     ...payload.error,
-    data: diagnosticData({ category, stage, requestId, method, tool }),
+    data: diagnosticData({
+      category,
+      stage,
+      requestId,
+      method,
+      tool,
+      idempotencyKeyPresent,
+    }),
   };
 
   return new Response(JSON.stringify(payload), {
@@ -130,6 +141,7 @@ function diagnosticData(input: {
   requestId: string;
   method?: string;
   tool?: string;
+  idempotencyKeyPresent: boolean;
 }): McpFailureDiagnosticData {
   const writeMayHaveExecuted = input.stage === "request_execution"
     && input.method === "tools/call"
@@ -145,7 +157,9 @@ function diagnosticData(input: {
     ? "safe_to_retry"
     : "not_required";
   const recommendedAction = writeMayHaveExecuted
-    ? "reconcile_by_idempotency_key_before_retry"
+    ? input.idempotencyKeyPresent
+      ? "reconcile_by_idempotency_key_before_retry"
+      : "read_after_write_before_retry"
     : input.category === "auth_failure"
     ? "reauthenticate"
     : input.category === "authorization_failure"
@@ -165,6 +179,9 @@ function diagnosticData(input: {
     manifestToolCount: MCP_TOOL_NAMES.length,
     ...(input.method ? { method: input.method } : {}),
     ...(input.tool ? { tool: input.tool } : {}),
+    ...(writeMayHaveExecuted
+      ? { idempotencyKeyPresent: input.idempotencyKeyPresent }
+      : {}),
   };
 }
 
@@ -250,6 +267,16 @@ function requestTool(payload: unknown): string | undefined {
   return typeof name === "string" && MCP_TOOL_NAMES.includes(name as typeof MCP_TOOL_NAMES[number])
     ? name
     : undefined;
+}
+
+function requestHasIdempotencyKey(payload: unknown): boolean {
+  if (!isRecord(payload) || payload.method !== "tools/call" || !isRecord(payload.params)) {
+    return false;
+  }
+  const args = payload.params.arguments;
+  if (!isRecord(args)) return false;
+  const value = args.idempotencyKey;
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isWriteTool(tool: string | undefined): boolean {
