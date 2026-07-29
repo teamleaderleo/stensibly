@@ -1,5 +1,11 @@
 import type { Item, ItemStatus } from "./store.js";
 
+export const NORMALIZE_IDLE_REFRESH_INDEX_EXPRESSION = `(value, maxIndex) => {
+  const parsed = Number.parseInt(value || "0", 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(Math.max(Math.trunc(parsed), 0), maxIndex);
+}`;
+
 const columns: Array<{ status: ItemStatus; label: string; hint: string }> = [
   { status: "ready", label: "Ready", hint: "waiting for a willing creature" },
   { status: "active", label: "Active", hint: "currently being interfered with" },
@@ -282,9 +288,13 @@ export function renderBoard(items: Item[]): string {
       const titleInput = document.querySelector('#new-item input[name=title]');
       const boardFingerprint = ${JSON.stringify(boardFingerprint)};
       const refreshDelays = [20000, 45000, 90000, 180000];
+      const normalizeIdleRefreshIndex = ${NORMALIZE_IDLE_REFRESH_INDEX_EXPRESSION};
       const previousFingerprint = sessionStorage.stensiblyBoardFingerprint;
       const refreshReason = sessionStorage.stensiblyRefreshReason;
-      let idleRefreshes = Number.parseInt(sessionStorage.stensiblyIdleRefreshes || '0', 10);
+      let idleRefreshes = normalizeIdleRefreshIndex(
+        sessionStorage.stensiblyIdleRefreshes,
+        refreshDelays.length - 1,
+      );
       let autoRefresh = sessionStorage.stensiblyAutoRefresh !== 'off';
       let refreshTimer;
 
