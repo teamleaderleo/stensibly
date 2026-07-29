@@ -11,6 +11,7 @@
   },
   "include": [
     "receiver-eslint-matrix.fixture.ts",
-    "generated-receiver-eslint-matrix.fixture.ts"
+    "generated-receiver-eslint-matrix.fixture.ts",
+    "self-fetch-bunyan-matrix.fixture.ts"
   ]
 }
