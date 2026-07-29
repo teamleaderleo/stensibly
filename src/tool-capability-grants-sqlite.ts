@@ -347,9 +347,13 @@ export function acceptSqliteToolCapabilityGrant(
     );
     if (sameGeneration) {
       const record = mapGrantRecord(sameGeneration);
-      if (record.fingerprint !== grant.fingerprint) {
+      if (
+      record.fingerprint !== grant.fingerprint
+      || record.acceptanceRef !== acceptanceRef
+      || record.acceptedBy !== acceptedBy
+    ) {
         throw new ToolCapabilityGrantStorageConflictError(
-          `Grant ${grant.grantId} generation ${grant.generation} was reused with altered content`,
+          `Grant ${grant.grantId} generation ${grant.generation} was reused with altered content or acceptance provenance`,
         );
       }
       return { record, replayed: true };

@@ -160,7 +160,15 @@ describe("SQLite tool capability grant acceptance", () => {
       acceptedBy: "actor:other",
     })).toThrow("acceptance reference");
 
-    const altered = grant(1, {}, {
+  expect(() => accept(firstGrant, null, {
+    acceptanceRef: "accept:other-reference",
+  })).toThrow("acceptance provenance");
+  expect(() => accept(firstGrant, null, {
+    acceptanceRef: "accept:other-actor-reference",
+    acceptedBy: "actor:other",
+  })).toThrow("acceptance provenance");
+
+  const altered = grant(1, {}, {
       evidenceRefs: ["issue:453", "altered:evidence"],
     });
     expect(() => accept(altered, null, {
