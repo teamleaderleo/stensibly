@@ -12,7 +12,7 @@ const actor = {
 };
 
 describe("remote operation receipts", () => {
-  test("allows project-scoped reads and rejects missing scope or project access", async () => {
+  test("allows project-scoped reads, holds unknown keys, and rejects missing scope or project access", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);
 
@@ -52,26 +52,45 @@ describe("remote operation receipts", () => {
         operation: "item.created",
         itemId: item.id,
         result: { kind: "item", id: item.id },
+        reconciliation: {
+          retry: "do_not_retry",
+          nextAction: "read_item",
+          itemId: item.id,
+        },
       });
 
-      const foreign = await mcpRequest(app, foreignReader.token, toolCall(3, {
+      const unknown = await callTool<any>(app, reader.token, 3, {
+        project: "alpha",
+        idempotencyKey: "remote-missing-key",
+      });
+      expect(unknown).toMatchObject({
+        status: "unknown",
+        project: "alpha",
+        idempotencyKey: "remote-missing-key",
+        reconciliation: {
+          retry: "hold",
+          nextAction: "verify_project_scope_before_retry",
+        },
+      });
+
+      const foreign = await mcpRequest(app, foreignReader.token, toolCall(4, {
         project: "alpha",
         idempotencyKey: "remote-receipt-create",
       }));
       expect(foreign.status).toBe(403);
       expect(await foreign.json()).toMatchObject({
         error: { message: "Token cannot access project alpha" },
-        id: 3,
+        id: 4,
       });
 
-      const missingReadScope = await mcpRequest(app, writer.token, toolCall(4, {
+      const missingReadScope = await mcpRequest(app, writer.token, toolCall(5, {
         project: "alpha",
         idempotencyKey: "remote-receipt-create",
       }));
       expect(missingReadScope.status).toBe(403);
       expect(await missingReadScope.json()).toMatchObject({
         error: { message: "Token requires read scope" },
-        id: 4,
+        id: 5,
       });
     } finally {
       store.close();
