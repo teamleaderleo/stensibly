@@ -1,7 +1,7 @@
 diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/overrides/index.ts
 --- a/types/src/transforms/overrides/index.ts
 +++ b/types/src/transforms/overrides/index.ts
-@@ -175,6 +175,64 @@ function cloneParameter(
+@@ -175,6 +175,70 @@ function cloneParameter(
    );
  }
  
@@ -18,8 +18,10 @@ diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/over
 +  ) {
 +    return receiver;
 +  }
-+  const typeArguments = typeParameters.map((parameter) =>
-+    ts.factory.createTypeReferenceNode(parameter.name)
++  const typeArguments = ts.factory.createNodeArray(
++    typeParameters.map((parameter) =>
++      ts.factory.createTypeReferenceNode(parameter.name)
++    )
 +  );
 +  const type = ts.factory.updateTypeReferenceNode(
 +    receiver.type,
@@ -43,6 +45,9 @@ diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/over
 +  member: Member,
 +  typeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined
 +): Member {
++  if (!ts.isMethodDeclaration(member) && !ts.isMethodSignature(member)) {
++    return member;
++  }
 +  const receiver = getThisParameter(member);
 +  if (receiver === undefined) return member;
 +  const parameters = ts.factory.createNodeArray([
@@ -62,24 +67,21 @@ diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/over
 +      member.body
 +    ) as unknown as Member;
 +  }
-+  if (ts.isMethodSignature(member)) {
-+    return ts.factory.updateMethodSignature(
-+      member,
-+      member.modifiers,
-+      member.name,
-+      member.questionToken,
-+      member.typeParameters,
-+      parameters,
-+      member.type
-+    ) as unknown as Member;
-+  }
-+  return member;
++  return ts.factory.updateMethodSignature(
++    member,
++    member.modifiers,
++    member.name,
++    member.questionToken,
++    member.typeParameters,
++    parameters,
++    member.type
++  ) as unknown as Member;
 +}
 +
  // Overrides predate generated receiver parameters, so an omitted `this` in a
  // legacy override should inherit the generated receiver. An explicit receiver
  // (including `this: void`) is treated as an intentional policy override.
-@@ -227,9 +285,12 @@ function mergeMembers<Member extends ts.ClassElement | ts.TypeElement>(
+@@ -227,9 +291,12 @@ function mergeMembers<Member extends ts.ClassElement | ts.TypeElement>(
    generated: ts.NodeArray<Member>,
    overrides: ts.NodeArray<ts.ClassElement>,
 -  transformer: (member: ts.ClassElement) => Member
@@ -92,7 +94,7 @@ diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/over
 +  );
    const grouped = groupMembersByKey(overrides);
    for (const [key, overrideMembers] of grouped) {
-@@ -402,15 +463,21 @@ function createOverrideDefineVisitor(
+@@ -402,15 +469,21 @@ function createOverrideDefineVisitor(
      if (ts.isClassDeclaration(node) && node.name !== undefined) {
        defines = maybeGetDefines(overrideCtx.program, node.name.text);
        node = applyOverride(ctx, overrideCtx, node, (node, override) => {
