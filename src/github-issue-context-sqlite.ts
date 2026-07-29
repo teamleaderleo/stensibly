@@ -21,7 +21,8 @@ export type GitHubIssueContextAcceptanceOutcome =
   | "initial"
   | "updated"
   | "stale"
-  | "instruction_rebound";
+  | "instruction_rebound"
+  | "synchronization_updated";
 
 export interface RepositoryInstructionSourceInput {
   path: string;
@@ -163,18 +164,18 @@ export function ensureGitHubIssueContextSchema(store: StensiblyStore): void {
       accepted_at TEXT NOT NULL,
       is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
       acceptance_outcome TEXT NOT NULL CHECK (
-        acceptance_outcome IN ('initial', 'updated', 'stale', 'instruction_rebound')
+        acceptance_outcome IN (
+          'initial',
+          'updated',
+          'stale',
+          'instruction_rebound',
+          'synchronization_updated'
+        )
       )
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issue_context_binding
-      ON github_issue_contexts(
-        workspace_id,
-        project_id,
-        external_id,
-        source_revision,
-        instruction_set_id
-      );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issue_context_observation
+      ON github_issue_contexts(workspace_id, project_id, observation_ref);
 
     CREATE INDEX IF NOT EXISTS idx_github_issue_context_current
       ON github_issue_contexts(workspace_id, project_id, external_id, is_current, sequence DESC);
@@ -219,6 +220,22 @@ export function acceptSqliteGitHubIssueContext(
   ensureGitHubIssueContextSchema(store);
   const prepared = prepareAcceptance(store, input);
   const transaction = store.db.transaction(() => {
+    const observedRow = getRowByObservationRef(
+      store,
+      prepared.workspace,
+      prepared.project,
+      prepared.observationRef,
+    );
+    if (observedRow) {
+      const observed = mapRecord(observedRow);
+      if (!isExactObservationReplay(observed, prepared)) {
+        throw new GitHubIssueContextConflictError(
+          `GitHub observation reference ${prepared.observationRef} was reused with altered content`,
+        );
+      }
+      return { record: observed, replayed: true };
+    }
+
     const sameRevision = listRowsForRevision(
       store,
       prepared.workspace,
@@ -232,9 +249,6 @@ export function acceptSqliteGitHubIssueContext(
         throw new GitHubIssueContextConflictError(
           `GitHub issue source revision ${prepared.snapshot.sourceRevision} was reused with altered content`,
         );
-      }
-      if (record.instructionSet.id === prepared.instructionSet.id) {
-        return { record, replayed: true };
       }
     }
 
@@ -440,6 +454,20 @@ function prepareAcceptance(
   };
 }
 
+function isExactObservationReplay(
+  current: GitHubIssueContextRecord,
+  candidate: ReturnType<typeof prepareAcceptance>,
+): boolean {
+  return current.externalId === candidate.snapshot.reference.externalId
+    && current.snapshot.snapshotSha256 === candidate.snapshot.snapshotSha256
+    && current.instructionSet.id === candidate.instructionSet.id
+    && current.syncStatus === candidate.syncStatus
+    && current.syncCursor === candidate.syncCursor
+    && current.degradedReasonCode === candidate.degradedReasonCode
+    && current.observedAt === candidate.observedAt
+    && current.acceptedBy === candidate.acceptedBy;
+}
+
 function classifyAcceptance(
   current: GitHubIssueContextRecord | null,
   snapshot: GitHubIssueContext,
@@ -461,13 +489,27 @@ function classifyAcceptance(
     case "updated":
       return { outcome: "updated", isCurrent: true };
     case "identical":
-      if (current.instructionSet.id === instructionSetId) {
-        throw new GitHubIssueContextConflictError(
-          "Identical GitHub issue context should have been handled as an idempotent replay",
-        );
-      }
-      return { outcome: "instruction_rebound", isCurrent: true };
+      return current.instructionSet.id === instructionSetId
+        ? { outcome: "synchronization_updated", isCurrent: true }
+        : { outcome: "instruction_rebound", isCurrent: true };
   }
+}
+
+function getRowByObservationRef(
+  store: StensiblyStore,
+  workspace: string,
+  project: string,
+  observationRef: string,
+): GitHubIssueContextRow | null {
+  return store.db.query<GitHubIssueContextRow, [string, string, string]>(`
+    SELECT *
+    FROM github_issue_contexts
+    WHERE workspace_id = ?1
+      AND project_id = ?2
+      AND observation_ref = ?3
+    ORDER BY sequence DESC
+    LIMIT 1
+  `).get(workspace, project, observationRef) ?? null;
 }
 
 function listRowsForRevision(
