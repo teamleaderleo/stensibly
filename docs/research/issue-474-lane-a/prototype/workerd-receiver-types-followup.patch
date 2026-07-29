@@ -1,0 +1,359 @@
+diff --git a/types/src/transforms/overrides/index.ts b/types/src/transforms/overrides/index.ts
+--- a/types/src/transforms/overrides/index.ts
++++ b/types/src/transforms/overrides/index.ts
+@@ -145,6 +145,70 @@ function findMemberIndex<Member extends ts.ClassElement | ts.TypeElement>(
+   );
+ }
+ 
++function getThisParameter(
++  member: ts.ClassElement | ts.TypeElement
++): ts.ParameterDeclaration | undefined {
++  if (!ts.isMethodDeclaration(member) && !ts.isMethodSignature(member)) {
++    return undefined;
++  }
++  const receiver = member.parameters[0];
++  if (
++    receiver !== undefined &&
++    ts.isIdentifier(receiver.name) &&
++    receiver.name.text === "this"
++  ) {
++    return receiver;
++  }
++  return undefined;
++}
++
++function cloneParameter(
++  parameter: ts.ParameterDeclaration
++): ts.ParameterDeclaration {
++  return ts.factory.createParameterDeclaration(
++    parameter.modifiers,
++    parameter.dotDotDotToken,
++    parameter.name,
++    parameter.questionToken,
++    parameter.type,
++    parameter.initializer
++  );
++}
++
++// Overrides predate generated receiver parameters, so an omitted `this` in a
++// legacy override should inherit the generated receiver. An explicit receiver
++// (including `this: void`) is treated as an intentional policy override.
++function inheritGeneratedReceiver<Member extends ts.ClassElement | ts.TypeElement>(
++  generated: Member,
++  override: Member
++): Member {
++  const receiver = getThisParameter(generated);
++  if (receiver === undefined || getThisParameter(override) !== undefined) {
++    return override;
++  }
++  const parameters = [cloneParameter(receiver), ...override.parameters];
++  if (ts.isMethodDeclaration(override)) {
++    return ts.factory.updateMethodDeclaration(
++      override,
++      override.modifiers,
++      override.asteriskToken,
++      override.name,
++      override.questionToken,
++      override.typeParameters,
++      parameters,
++      override.type,
++      override.body
++    ) as Member;
++  }
++  if (ts.isMethodSignature(override)) {
++    return ts.factory.updateMethodSignature(
++      override,
++      override.modifiers,
++      override.name,
++      override.questionToken,
++      override.typeParameters,
++      parameters,
++      override.type
++    ) as Member;
++  }
++  return override;
++}
++
+ // Merges generated members with overrides according to the following rules:
+ // 1. Members in the override but not in the generated type are inserted
+ // 2. If an override has the same key as a member in the generated type, the
+@@ -173,7 +237,7 @@ function mergeMembers<Member extends ts.ClassElement | ts.TypeElement>(
+     // Transform all class elements into the correct member type. If `Member` is
+     // `ts.ClassElement` already, `transformer` will be the identify function.
+-    const transformedOverrideMembers = filteredOverrideMembers.map(transformer);
++    let transformedOverrideMembers = filteredOverrideMembers.map(transformer);
+ 
+     // Try to find index of existing generated member with same key
+     const index = findMemberIndex(result, key);
+@@ -183,6 +247,9 @@ function mergeMembers<Member extends ts.ClassElement | ts.TypeElement>(
+       result.push(...transformedOverrideMembers);
+     } else {
+       const member = result[index];
++      transformedOverrideMembers = transformedOverrideMembers.map((override) =>
++        inheritGeneratedReceiver(member, override)
++      );
+       const nextIndex = findMemberIndex(result, key, index + 1);
+       if (
+         ts.isGetAccessorDeclaration(member) ||
+diff --git a/types/src/transforms/globals.ts b/types/src/transforms/globals.ts
+--- a/types/src/transforms/globals.ts
++++ b/types/src/transforms/globals.ts
+@@ -71,6 +71,41 @@ function createInlineVisitor(
+   return visitor;
+ }
+ 
++function isVoidReceiver(receiver: ts.ParameterDeclaration): boolean {
++  return receiver.type?.kind === ts.SyntaxKind.VoidKeyword;
++}
++
++function isGlobalThisType(type: ts.TypeNode): boolean {
++  return (
++    ts.isTypeQueryNode(type) &&
++    ts.isIdentifier(type.exprName) &&
++    type.exprName.text === "globalThis"
++  );
++}
++
++function isNullType(type: ts.TypeNode): boolean {
++  return ts.isLiteralTypeNode(type) && type.literal.kind === ts.SyntaxKind.NullKeyword;
++}
++
++function isContextGlobalReceiver(type: ts.TypeNode): boolean {
++  if (!ts.isUnionTypeNode(type)) return false;
++  let hasGlobalThis = false;
++  let hasNull = false;
++  let hasVoid = false;
++  for (const member of type.types) {
++    hasGlobalThis ||= isGlobalThisType(member);
++    hasNull ||= isNullType(member);
++    hasVoid ||= member.kind === ts.SyntaxKind.VoidKeyword;
++  }
++  return hasGlobalThis && hasNull && hasVoid;
++}
++
+ // JSG instance methods carry an explicit owning `this` parameter after type
+ // generation. When one of those methods is copied into the Worker global scope,
+ // preserve the Web IDL call forms for global operations:
+@@ -88,13 +123,18 @@ function createGlobalFunctionParameters(
+     receiver === undefined ||
+     !ts.isIdentifier(receiver.name) ||
+-    receiver.name.text !== "this"
++    receiver.name.text !== "this" ||
++    isVoidReceiver(receiver)
+   ) {
+     return parameters;
+   }
++  assert(receiver.type !== undefined);
++  if (isContextGlobalReceiver(receiver.type)) return parameters;
+ 
+   const receiverType = ctx.factory.createUnionTypeNode([
++    receiver.type,
+     ctx.factory.createTypeQueryNode(
+       ctx.factory.createIdentifier("globalThis")
+     ),
+@@ -116,6 +156,55 @@ function createGlobalFunctionParameters(
+   return [globalReceiver, ...parameters.slice(1)];
+ }
+ 
++function updateMethodParameters(
++  ctx: ts.TransformationContext,
++  node: ts.MethodSignature | ts.MethodDeclaration,
++  parameters: readonly ts.ParameterDeclaration[]
++): ts.MethodSignature | ts.MethodDeclaration {
++  if (parameters === node.parameters) return node;
++  if (ts.isMethodSignature(node)) {
++    return ctx.factory.updateMethodSignature(
++      node,
++      node.modifiers,
++      node.name,
++      node.questionToken,
++      node.typeParameters,
++      parameters,
++      node.type
++    );
++  }
++  return ctx.factory.updateMethodDeclaration(
++    node,
++    node.modifiers,
++    node.asteriskToken,
++    node.name,
++    node.questionToken,
++    node.typeParameters,
++    parameters,
++    node.type,
++    node.body
++  );
++}
++
++function widenContextGlobalScopeDeclaration(
++  ctx: ts.TransformationContext,
++  node: ts.InterfaceDeclaration | ts.ClassDeclaration
++): ts.InterfaceDeclaration | ts.ClassDeclaration {
++  const members = node.members.map((member) => {
++    if (ts.isMethodSignature(member) || ts.isMethodDeclaration(member)) {
++      const parameters = createGlobalFunctionParameters(ctx, member.parameters);
++      return updateMethodParameters(ctx, member, parameters);
++    }
++    return member;
++  });
++  if (ts.isInterfaceDeclaration(node)) {
++    return ctx.factory.updateInterfaceDeclaration(
++      node,
++      node.modifiers,
++      node.name,
++      node.typeParameters,
++      node.heritageClauses,
++      members
++    );
++  }
++  return ctx.factory.updateClassDeclaration(
++    node,
++    node.modifiers,
++    node.name,
++    node.typeParameters,
++    node.heritageClauses,
++    members
++  );
++}
++
+ // Call with each potential method/property that could be extracted into a
+ // global function/const.
+ export function maybeExtractGlobalNode(
+@@ -229,7 +318,10 @@ function createGlobalScopeVisitor(
+       node.name !== undefined &&
+       node.name.text === "ServiceWorkerGlobalScope"
+     ) {
+-      return [node, ...extractGlobalNodes(node)];
++      const globalScope = widenContextGlobalScopeDeclaration(ctx, node);
++      return [globalScope, ...extractGlobalNodes(globalScope)];
+     }
+     return node;
+   };
+diff --git a/types/test/transforms/globals.spec.ts b/types/test/transforms/globals.spec.ts
+--- a/types/test/transforms/globals.spec.ts
++++ b/types/test/transforms/globals.spec.ts
+@@ -39,7 +39,7 @@ interface ServiceWorkerGlobalScope extends WorkerGlobalScope {
+     DOMException: typeof DOMException; // PropertySignature
+     btoa(this: ServiceWorkerGlobalScope, value: string): string; // MethodSignature
+-    intentionallyReceiverFree(value: string): string; // MethodSignature
++    intentionallyReceiverFree(this: void, value: string): string; // MethodSignature
+     crypto: Crypto; // PropertySignature
+     get console(): Console; // GetAccessorDeclaration
+ }
+@@ -57,16 +57,21 @@ interface ServiceWorkerGlobalScope extends WorkerGlobalScope {
+ 
+   const output = printer.printFile(result.transformed[0]);
++  const widenedSource = source.replace(
++    "btoa(this: ServiceWorkerGlobalScope, value: string): string;",
++    "btoa(this: ServiceWorkerGlobalScope | typeof globalThis | null | void, value: string): string;"
++  );
+   assert.strictEqual(
+     output,
+     // Extracted global nodes inserted after ServiceWorkerGlobalScope
+-    source +
+-      `declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
+-declare function removeEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
+-declare function dispatchEvent(this: typeof globalThis | null | void, event: WorkerGlobalScopeEventMap[keyof WorkerGlobalScopeEventMap]): void;
++    widenedSource +
++      `declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: EventTarget<WorkerGlobalScopeEventMap> | typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
++declare function removeEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: EventTarget<WorkerGlobalScopeEventMap> | typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
++declare function dispatchEvent(this: EventTarget<WorkerGlobalScopeEventMap> | typeof globalThis | null | void, event: WorkerGlobalScopeEventMap[keyof WorkerGlobalScopeEventMap]): void;
+ declare function detachable(value: string): string;
+ declare const thing: string;
+ declare const CONSTANT: 42;
+ declare const property: number;
+-declare function btoa(this: typeof globalThis | null | void, value: string): string;
+-declare function intentionallyReceiverFree(value: string): string;
++declare function btoa(this: ServiceWorkerGlobalScope | typeof globalThis | null | void, value: string): string;
++declare function intentionallyReceiverFree(this: void, value: string): string;
+ declare const crypto: Crypto;
+ declare const console: Console;
+ `
+diff --git a/types/test/index.spec.ts b/types/test/index.spec.ts
+--- a/types/test/index.spec.ts
++++ b/types/test/index.spec.ts
+@@ -21,7 +21,7 @@ test('main: generates types', async () => {
+   eventTarget.name = 'EventTarget';
+   eventTarget.fullyQualifiedName = 'workerd::api::EventTarget';
+   {
+-    const members = eventTarget._initMembers(2);
++    const members = eventTarget._initMembers(4);
+     members.get(0)._initConstructor();
+     const method = members.get(1)._initMethod();
+     method.name = 'addEventListener';
+@@ -31,10 +31,26 @@ test('main: generates types', async () => {
+       args.get(1)._initBuiltin().type = BuiltinType_Type.V8FUNCTION;
+     }
+     method._initReturnType().voidt = true;
++
++    const receiverFree = members.get(2)._initMethod();
++    receiverFree.name = 'receiverFree';
++    receiverFree._initArgs(1).get(0)._initString().name = 'kj::String';
++    receiverFree._initReturnType()._initString().name = 'kj::String';
++
++    const detachable = members.get(3)._initMethod();
++    detachable.name = 'detachable';
++    detachable.static = true;
++    detachable._initArgs(1).get(0)._initString().name = 'kj::String';
++    detachable._initReturnType()._initString().name = 'kj::String';
+   }
+   eventTarget.tsDefine = 'interface Event {}';
+   eventTarget.tsOverride = `<EventMap extends Record<string, Event> = Record<string, Event>> {
+     addEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void;
++    receiverFree(this: void, value: string): string;
+   }`;
+@@ -158,7 +174,9 @@ test('main: generates types', async () => {
+ declare class EventTarget<EventMap extends Record<string, Event> = Record<string, Event>> {
+     constructor();
+-    addEventListener<Type extends keyof EventMap>(type: Type, handler: (event: EventMap[Type]) => void): void;
++    addEventListener<Type extends keyof EventMap>(this: EventTarget<EventMap>, type: Type, handler: (event: EventMap[Type]) => void): void;
++    receiverFree(this: void, value: string): string;
++    static detachable(param0: string): string;
+ }
+ type WorkerGlobalScopeEventMap = {
+@@ -171,10 +189,13 @@ declare abstract class WorkerGlobalScope extends EventTarget<WorkerGlobalScopeEve
+  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorkerGlobalScope)
+  */
+ interface ServiceWorkerGlobalScope extends WorkerGlobalScope {
+-    things(param0: boolean): IterableIterator<string>;
++    things(this: ServiceWorkerGlobalScope | typeof globalThis | null | void, param0: boolean): IterableIterator<string>;
+     get prop(): Promise<number>;
+ }
+-declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
+-declare function things(param0: boolean): IterableIterator<string>;
++declare function addEventListener<Type extends keyof WorkerGlobalScopeEventMap>(this: EventTarget<WorkerGlobalScopeEventMap> | typeof globalThis | null | void, type: Type, handler: (event: WorkerGlobalScopeEventMap[Type]) => void): void;
++declare function receiverFree(this: void, value: string): string;
++declare function detachable(param0: string): string;
++declare function things(this: ServiceWorkerGlobalScope | typeof globalThis | null | void, param0: boolean): IterableIterator<string>;
+ declare const prop: Promise<number>;
+ `
+diff --git a/types/test/types/fetch-receiver.ts b/types/test/types/fetch-receiver.ts
+--- a/types/test/types/fetch-receiver.ts
++++ b/types/test/types/fetch-receiver.ts
+@@ -3,6 +3,24 @@ const url = "data:text/plain,receiver-ok";
+ fetch(url);
+ globalThis.fetch(url);
+ self.fetch(url);
++
++const fromSelf = self.fetch;
++fromSelf(url);
++fromSelf.call(undefined, url);
++fromSelf.call(null, url);
++fromSelf.call(globalThis, url);
++
++// @ts-expect-error An unrelated object is not a legal Worker global receiver.
++fromSelf.call({}, url);
++
++fromSelf.apply(undefined, [url]);
++fromSelf.apply(null, [url]);
++fromSelf.apply(globalThis, [url]);
++
++// @ts-expect-error An unrelated object is not a legal Worker global receiver.
++fromSelf.apply({}, [url]);
++
++const selfHolder = { fetch: fromSelf };
++// @ts-expect-error Property-call syntax supplies selfHolder as the receiver.
++selfHolder.fetch(url);
+ 
+ const detached = fetch;
+ detached(url);
