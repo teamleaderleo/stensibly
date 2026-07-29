@@ -33,6 +33,10 @@ import type {
   UnblockWorkInput,
   WorkLedger,
 } from "./ledger.js";
+import type {
+  OperationReceiptInput,
+  OperationReceiptLedger,
+} from "./operation-receipt-contracts.js";
 
 const HISTORY_CONTRACT_VERSION = 1;
 const ITEM_DETAIL_EVENT_LIMIT = 100;
@@ -82,7 +86,8 @@ export class ConvexWorkLedger implements
   WorkLedger,
   ContinuationLedger,
   CompletionContinuationLedger,
-  ContinuationSupervisorLedger
+  ContinuationSupervisorLedger,
+  OperationReceiptLedger
 {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -100,6 +105,13 @@ export class ConvexWorkLedger implements
       convexApi.projects.brief,
       this.args({ project, limit, now: Date.now() }),
     );
+  }
+
+  async getOperationReceipt(input: OperationReceiptInput) {
+    return await this.client.query(
+      convexApi.operationReceipts.get,
+      this.args(input),
+    ) as Awaited<ReturnType<OperationReceiptLedger["getOperationReceipt"]>>;
   }
 
   async listWork(input: ListWorkInput = {}) {
