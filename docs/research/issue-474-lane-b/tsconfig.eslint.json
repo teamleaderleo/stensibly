@@ -3,9 +3,14 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
     "strict": true,
+    "strictBindCallApply": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["receiver-eslint-matrix.fixture.ts"]
+  "include": [
+    "receiver-eslint-matrix.fixture.ts",
+    "generated-receiver-eslint-matrix.fixture.ts"
+  ]
 }
