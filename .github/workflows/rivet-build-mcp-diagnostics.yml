@@ -1,0 +1,342 @@
+name: Build clean MCP diagnostics candidate
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/rivet-build-mcp-diagnostics.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rivet-build-mcp-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: rivet/490-mcp-manifest-builder
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build clean candidate from current main
+        run: |
+          set -euo pipefail
+          git reset --hard 5e77ae3dba7e6a701775ddc86ef222144f17c95a
+          git checkout 52ff31cdc9d642455073663302d73300b81b12c4 -- \
+            docs/mcp-connector-diagnostics.md \
+            src/mcp-diagnostics.ts \
+            src/verify-hosted.ts \
+            test/mcp-diagnostics.test.ts \
+            test/verify-hosted.test.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_one(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              target.write_text(text.replace(old, new))
+
+          # #503 added one public read tool after the first diagnostics candidate.
+          replace_one(
+              "src/mcp-diagnostics.ts",
+              '  "get_item",\n  "get_project_attachment",',
+              '  "get_item",\n  "get_operation_receipt",\n  "get_project_attachment",',
+          )
+          replace_one(
+              "src/mcp-diagnostics.ts",
+              '''  return new Response(JSON.stringify(payload), {
+    status: response.status,
+''',
+              '''  headers.delete("content-length");
+  return new Response(JSON.stringify(payload), {
+    status: response.status,
+''',
+          )
+
+          # Apply diagnostics around the current HTTP implementation without replacing
+          # the operation-receipt authorization work already on main.
+          replace_one(
+              "src/mcp-http.ts",
+              '''import type { ApiTokenAuthenticator } from "./token-provider.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+''',
+              '''import type { ApiTokenAuthenticator } from "./token-provider.js";
+import {
+  MCP_FAILURE_STAGE_HEADER,
+  type McpFailureStage,
+  withMcpDiagnostics,
+} from "./mcp-diagnostics.js";
+import {
+  FAILURE_CATEGORY_HEADER,
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''export async function handleMcpHttpRequest(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
+''',
+              '''export async function handleMcpHttpRequest(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
+  const diagnosticRequest = request.clone();
+  const response = await handleMcpHttpRequestCore(request, options);
+  return await withMcpDiagnostics(diagnosticRequest, response);
+}
+
+async function handleMcpHttpRequestCore(
+  request: Request,
+  options: McpHttpOptions,
+): Promise<Response> {
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''    return jsonRpcError(405, -32000, "Method not allowed.", null, {
+      Allow: "POST",
+    });
+''',
+              '''    return jsonRpcError(405, -32000, "Method not allowed.", null, {
+      Allow: "POST",
+      [MCP_FAILURE_STAGE_HEADER]: "method_validation",
+    });
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''      null,
+      {},
+      "convex_failure",
+''',
+              '''      null,
+      { [MCP_FAILURE_STAGE_HEADER]: "token_authority" },
+      "convex_failure",
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''    return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
+      "WWW-Authenticate": "Bearer",
+    }, "auth_failure");
+''',
+              '''    return jsonRpcError(401, -32001, "A valid Bearer token is required", null, {
+      "WWW-Authenticate": "Bearer",
+      [MCP_FAILURE_STAGE_HEADER]: "authentication",
+    }, "auth_failure");
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''    return jsonRpcError(400, -32700, "Parse error: Invalid JSON", null);
+''',
+              '''    return jsonRpcError(400, -32700, "Parse error: Invalid JSON", null, {
+      [MCP_FAILURE_STAGE_HEADER]: "payload_parse",
+    });
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''  let server: ReturnType<typeof createMcpServer> | undefined;
+  try {
+    server = (options.createServer ?? createMcpServer)(options.ledger);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    return await transport.handleRequest(request, { parsedBody: body });
+  } catch {
+    return jsonRpcError(
+      500,
+      -32603,
+      "Internal server error",
+      requestId(body),
+      {},
+      "mcp_failure",
+    );
+''',
+              '''  let server: ReturnType<typeof createMcpServer> | undefined;
+  let failureStage: McpFailureStage = "server_construction";
+  try {
+    server = (options.createServer ?? createMcpServer)(options.ledger);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    failureStage = "transport_connection";
+    await server.connect(transport);
+    failureStage = "request_execution";
+    return await transport.handleRequest(request, { parsedBody: body });
+  } catch {
+    return jsonRpcError(
+      500,
+      -32603,
+      "Internal server error",
+      requestId(body),
+      { [MCP_FAILURE_STAGE_HEADER]: failureStage },
+      "mcp_failure",
+    );
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''      {},
+      "authorization_failure",
+    );
+''',
+              '''      { [MCP_FAILURE_STAGE_HEADER]: "authorization" },
+      "authorization_failure",
+    );
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''      "A project is required when a token has a project allowlist",
+      requestId(payload),
+    );
+''',
+              '''      "A project is required when a token has a project allowlist",
+      requestId(payload),
+      { [MCP_FAILURE_STAGE_HEADER]: "authorization" },
+      "authorization_failure",
+    );
+''',
+          )
+          # Two authorization_failure blocks share the original snippet; the earlier
+          # replacement changed the first. Replace the remaining project denial.
+          replace_one(
+              "src/mcp-http.ts",
+              '''        {},
+        "authorization_failure",
+      );
+''',
+              '''        { [MCP_FAILURE_STAGE_HEADER]: "authorization" },
+        "authorization_failure",
+      );
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''    {},
+    "cors_rejection",
+  );
+''',
+              '''    { [MCP_FAILURE_STAGE_HEADER]: "origin_validation" },
+    "cors_rejection",
+  );
+''',
+          )
+          replace_one(
+              "src/mcp-http.ts",
+              '''  return jsonRpcError(403, -32001, `Host is not allowed: ${host ?? "missing"}`, null);
+''',
+              '''  return jsonRpcError(
+    403,
+    -32001,
+    `Host is not allowed: ${host ?? "missing"}`,
+    null,
+    { [MCP_FAILURE_STAGE_HEADER]: "host_validation" },
+    "authorization_failure",
+  );
+''',
+          )
+
+          # Add a direct regression for ambiguous write guidance.
+          replace_one(
+              "test/mcp-diagnostics.test.ts",
+              '''  MCP_TOOL_NAMES,
+} from "../src/mcp-diagnostics.ts";
+''',
+              '''  MCP_TOOL_NAMES,
+  withMcpDiagnostics,
+} from "../src/mcp-diagnostics.ts";
+''',
+          )
+          marker = '''  test("returns typed stage and reconciliation guidance for gateway MCP failures", async () => {'''
+          insertion = r'''  test("requires reconciliation before retrying an execution-stage write failure", async () => {
+    const request = new Request("https://api.stensibly.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": "diag-write-ambiguity-1",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "create_item",
+          arguments: { project: "oauth-dogfood" },
+        },
+      }),
+    });
+    const response = await withMcpDiagnostics(request, new Response(JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32603, message: "Internal server error" },
+      id: 7,
+    }), {
+      status: 500,
+      headers: {
+        "content-type": "application/json",
+        "x-stensibly-failure-category": "mcp_failure",
+        [MCP_FAILURE_STAGE_HEADER]: "request_execution",
+      },
+    }));
+
+    const payload = await response.json() as {
+      error?: { data?: Record<string, unknown> };
+    };
+    expect(payload.error?.data).toMatchObject({
+      layer: "mcp",
+      stage: "request_execution",
+      requestId: "diag-write-ambiguity-1",
+      retryable: false,
+      reconciliation: "read_after_write_before_retry",
+      recommendedAction: "reconcile_by_idempotency_key_before_retry",
+      method: "tools/call",
+      tool: "create_item",
+    });
+  });
+
+'''
+          target = Path("test/mcp-diagnostics.test.ts")
+          text = target.read_text()
+          if text.count(marker) != 1:
+              raise SystemExit("diagnostics test insertion marker mismatch")
+          target.write_text(text.replace(marker, insertion + marker))
+          PY
+
+      - name: Run exact repository checks
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Commit and publish clean final branch
+        run: |
+          set -euo pipefail
+          git config user.name "teamleaderleo"
+          git config user.email "13091533+teamleaderleo@users.noreply.github.com"
+          git add docs/mcp-connector-diagnostics.md \
+            src/mcp-diagnostics.ts src/mcp-http.ts src/verify-hosted.ts \
+            test/mcp-diagnostics.test.ts test/verify-hosted.test.ts
+          git commit -m "Expose MCP manifest and typed failure diagnostics"
+          git push --force origin HEAD:rivet/490-mcp-manifest-final
