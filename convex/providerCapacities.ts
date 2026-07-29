@@ -13,7 +13,7 @@ const MAX_REFILL_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const deliveryPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[bot\])?$/;
 const digestPattern = /^[0-9a-f]{64}$/;
 const commentIdPattern = /^\d{1,30}$/;
 
