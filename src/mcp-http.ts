@@ -378,13 +378,13 @@ function validateHost(request: Request, allowedHosts?: string[]): Response | nul
   const host = request.headers.get("host");
   if (host && allowedHosts.includes(host)) return null;
   return jsonRpcError(
-  403,
-  -32001,
-  `Host is not allowed: ${host ?? "missing"}`,
-  null,
-  { [MCP_FAILURE_STAGE_HEADER]: "host_validation" },
-  "request_failure",
-);
+    403,
+    -32001,
+    `Host is not allowed: ${host ?? "missing"}`,
+    null,
+    { [MCP_FAILURE_STAGE_HEADER]: "host_validation" },
+    "request_failure",
+  );
 }
 
 function parseBearerToken(authorization: string | null): string | null {
