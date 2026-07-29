@@ -2,7 +2,7 @@
 
 This runbook covers the #490 failure mode where ChatGPT discovers Stensibly actions, a later call fails before reaching the Worker, the Stensibly namespace disappears, or another app becomes forbidden inside the same conversation.
 
-## Current checkpoint
+## Current compatibility checkpoint
 
 Current `main` defines **26** public MCP tools with manifest fingerprint:
 
@@ -10,21 +10,41 @@ Current `main` defines **26** public MCP tools with manifest fingerprint:
 sha256:ecbae4d7efe2b6757b321a80d301fe06b81e70641717ddd682f9ceab0d4165bb
 ```
 
-The incident conversation exposed 25 Stensibly actions. The missing action is `get_operation_receipt`, added after the earlier ChatGPT app scan. Treat a 25-action scan as a stale ChatGPT app snapshot.
+The incident conversation exposed **25** Stensibly actions. The missing action is `get_operation_receipt`, added after the earlier ChatGPT app scan.
 
-OpenAI currently documents these product behaviours:
+OpenAI currently freezes the approved tools and inputs for a custom MCP app. Server changes are not applied automatically. OpenAI also states that backward-compatible changes may continue working, while incompatible input changes require an admin action refresh and Business published apps may require recreation.
 
-- ChatGPT keeps a frozen snapshot of an approved custom MCP app's tools and inputs.
-- Server-side action changes take effect after an admin refreshes and approves the updated actions.
-- Business workspaces may require recreating and republishing an app when its actions change.
-- Multiple first-party and third-party apps can run in one prompt.
-- Agent mode excludes custom apps, and company knowledge includes only eligible search/fetch actions.
+Stensibly therefore treats both snapshots as explicit compatibility targets during #490:
+
+- the approved 26-action epoch is frozen against additional public tool names;
+- the earlier 25-action snapshot remains supported for its existing reads and writes;
+- existing top-level input names remain accepted;
+- an existing optional input cannot become required;
+- new product data should be exposed through backward-compatible output additions to an existing read action while the incident remains open.
+
+The 25-action snapshot cannot call `get_operation_receipt`. Use a unique idempotency key and reconcile an ambiguous write through `get_item`, `list_work`, `get_brief`, or another bounded read already present in that snapshot.
 
 Stensibly's OAuth authorization metadata advertises `offline_access`, `authorization_code`, and `refresh_token`, with refresh tokens enabled by default. A clean failure before network dispatch points toward ChatGPT app or conversation-host state rather than token refresh.
 
-## Refresh or recreate the ChatGPT app
+## Normal operation without app recreation
 
-Perform this after any checked-in change to `docs/chatgpt-app-actions.json`.
+Do not recreate the ChatGPT app for a Stensibly release that preserves the compatibility epoch.
+
+A compatibility-preserving release must keep:
+
+1. all approved public tool names;
+2. every previously accepted top-level input name;
+3. the absence of any newly required input on an existing tool;
+4. old calls executable after a new MCP server instance is created;
+5. bounded read-after-write recovery for clients without `get_operation_receipt`.
+
+CI locks these conditions in `test/chatgpt-app-actions-snapshot.test.ts` and `test/mcp-frozen-chatgpt-snapshot.test.ts`.
+
+During #490, a proposed 27th public tool should be reworked into an existing read action's response or retained behind a non-public internal boundary. A deliberate breaking migration must change the compatibility checkpoint visibly and requires the corresponding ChatGPT admin refresh or recreation.
+
+## Optional refresh path
+
+Refreshing remains useful when an operator wants the 26th action or a later deliberately approved action migration. It is not the default recovery for compatibility-preserving server releases.
 
 ### Enterprise or Edu published app
 
@@ -36,17 +56,13 @@ Perform this after any checked-in change to `docs/chatgpt-app-actions.json`.
 
 ### Business published app
 
-Recreate and republish the app from the current endpoint when the published action set cannot be updated in place.
+Business published apps currently require recreation and republishing when their approved actions or metadata must change. Continue using the frozen compatible snapshot when no migration is required.
 
 ### Developer-mode draft
 
-1. Open **Settings → Apps → Create**.
-2. Enter the current Stensibly MCP endpoint and authentication choice.
-3. Select **Scan Tools** and complete OAuth.
-4. Confirm 26 actions and create a fresh draft.
-5. Disable or remove the stale draft after the replacement succeeds.
+Use **Scan Tools** only when deliberately updating the draft action set. Keep the existing draft for normal compatibility-preserving releases.
 
-Reconnect OAuth after the action refresh when ChatGPT still presents an authentication prompt or an expired connection.
+Reconnect OAuth when ChatGPT presents a Worker-visible authentication failure or an expired connection. OAuth changes do not repair a call that vanished before network dispatch.
 
 ## Mixed GitHub and Stensibly proof
 
@@ -60,6 +76,8 @@ GitHub read → Stensibly read → GitHub read → Stensibly read
 → Stensibly receipt/read-after-write → GitHub read
 ```
 
+For a 25-action client, replace the receipt call with `get_item`, `list_work`, or `get_brief` using the unique item identity.
+
 Recommended calls:
 
 1. GitHub: read #490 and current `main`.
@@ -68,22 +86,31 @@ Recommended calls:
 4. Stensibly: `get_continuation` or `get_item`.
 5. Stensibly: create one uniquely named item with an idempotency key.
 6. GitHub: add a post-write checkpoint comment.
-7. Stensibly: call `get_operation_receipt` with the exact project and idempotency key, then read the item.
+7. Stensibly: reconcile through `get_operation_receipt` when available, otherwise perform a bounded read-after-write.
 8. GitHub: read #490 again.
 
 Record the first transition where discovery, executable binding, network dispatch, server processing, result delivery, or another app changes.
 
 ## Layer diagnosis
 
-### Stale ChatGPT action snapshot
+### Frozen but compatible ChatGPT action snapshot
 
 Evidence:
 
-- ChatGPT exposes 25 actions while the checked-in snapshot expects 26;
+- ChatGPT exposes 25 actions while the checked-in current checkpoint has 26;
 - `get_operation_receipt` is absent;
-- refresh or recreation has yet to occur after the manifest changed.
+- existing 25-action reads and writes still execute.
 
-Action: refresh or recreate the app before continuing the coexistence proof.
+Action: continue using the supported legacy actions. Use read-after-write reconciliation for ambiguous mutations. Refresh only when the additional action is operationally valuable enough to justify the admin change.
+
+### Frozen snapshot incompatibility
+
+Evidence:
+
+- an existing tool call reaches `/mcp` but fails request validation because an approved input disappeared, changed incompatibly, or became newly required;
+- the server returns Worker receipts and typed request-validation evidence.
+
+Action: treat this as a Stensibly release regression. Restore backward compatibility or roll back before asking operators to refresh the app.
 
 ### ChatGPT host binding or conversation registry failure
 
@@ -94,7 +121,7 @@ Evidence:
 - Stensibly receives no request;
 - no Worker request ID, version receipt, response stage, manifest fingerprint, or tool-count header exists.
 
-This failure occurs before network dispatch. Server retries and OAuth changes cannot repair that specific call. Start a new conversation after refreshing the app, preserve the evidence, and escalate the host failure to OpenAI.
+This failure occurs before network dispatch. Server retries, schema compatibility changes, and OAuth changes cannot repair that specific call. Start a new conversation, preserve the evidence, and escalate the host failure to OpenAI. App recreation is not required to prove this layer when the cached action is covered by the compatibility epoch.
 
 ### OAuth or workspace access failure
 
@@ -128,6 +155,7 @@ Capture one packet for the first clean host-side reproduction:
 - the first `Resource not found` or `FORBIDDEN` text;
 - confirmation that the expected server manifest is 26 tools with fingerprint `sha256:ecbae4d7efe2b6757b321a80d301fe06b81e70641717ddd682f9ceab0d4165bb`;
 - confirmation that the failed call produced no Stensibly Worker receipt;
+- whether the selected tool belongs to the frozen 25-action compatibility set;
 - browser console export and HAR captured around the failure;
 - whether a new conversation, app refresh, app recreation, and OAuth reconnect changed the result.
 
@@ -135,6 +163,14 @@ OpenAI's general ChatGPT troubleshooting guidance asks for console logs and a HA
 
 ## Repository release rule
 
-`docs/chatgpt-app-actions.json` is the checked-in ChatGPT action checkpoint. The CI test compares its ordered tool names, count, manifest version, and fingerprint with `src/mcp-diagnostics.ts`.
+`docs/chatgpt-app-actions.json` is the checked-in ChatGPT action checkpoint.
 
-Any MCP tool-name change must update the checkpoint in the same pull request. That update means the deployed ChatGPT app requires an action refresh or recreation before the next production dogfood run.
+While #490 remains open:
+
+- the public action list stays at 26;
+- the pinned 25-action legacy subset remains executable;
+- previously accepted top-level inputs stay present;
+- no existing action gains a new required top-level input;
+- new capability should prefer an additive response field on an existing read action.
+
+Any deliberate exception is a visible compatibility-epoch migration and requires an explicit operator plan. Backward-compatible releases require no ChatGPT admin action.
