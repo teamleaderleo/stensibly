@@ -1,4 +1,7 @@
 import { v } from "convex/values";
+import {
+  createItemRequestFingerprint,
+} from "../src/idempotency-request-fingerprint";
 import { expireClaimIfNeeded, liveClaimHeldByOther } from "./lib/claimState";
 import {
   filterVisibleDependencyEvents,
@@ -53,6 +56,22 @@ export const create = mutation({
     if (!workspace) throw new Error("Failed to create workspace");
 
     const projectSlug = assertSlug(args.project, "Project");
+    const title = assertText(args.title, "Title", 240);
+    const summary = assertOptionalText(args.summary, "Summary", 10_000) ?? null;
+    const nextAction = assertOptionalText(args.nextAction, "Next action", 2_000) ?? null;
+    const priority = assertPriority(args.priority);
+    const actorExternalId = args.actor
+      ? assertText(args.actor.id, "Actor id", 120)
+      : null;
+    const requestFingerprint = createItemRequestFingerprint({
+      project: projectSlug,
+      kind: args.kind,
+      title,
+      summary,
+      nextAction,
+      priority,
+      actorId: actorExternalId,
+    });
     const existing = await requireMatchingIdempotency(
       ctx,
       workspace._id,
@@ -62,12 +81,8 @@ export const create = mutation({
     if (existing) {
       const item = await requireSameIdempotentItem(ctx, existing, {
         projectSlug,
-        actorExternalId: args.actor?.id ?? null,
-        payloadSubset: {
-          project: projectSlug,
-          kind: args.kind,
-          title: args.title.trim(),
-        },
+        actorExternalId,
+        payloadSubset: { requestFingerprint },
       });
       return await publicItem(ctx, item);
     }
@@ -81,11 +96,11 @@ export const create = mutation({
       projectId: project._id,
       externalId: "pending",
       kind: args.kind,
-      title: assertText(args.title, "Title", 240),
-      summary: assertOptionalText(args.summary, "Summary", 10_000),
+      title,
+      summary: summary ?? undefined,
       status: "ready",
-      priority: assertPriority(args.priority),
-      nextAction: assertOptionalText(args.nextAction, "Next action", 2_000),
+      priority,
+      nextAction: nextAction ?? undefined,
       claimGeneration: 0,
       version: 1,
       createdAt: now,
@@ -103,7 +118,8 @@ export const create = mutation({
       payload: {
         project: projectSlug,
         kind: args.kind,
-        title: args.title.trim(),
+        title,
+        requestFingerprint,
       },
       idempotencyKey: args.idempotencyKey,
       createdAt: now,

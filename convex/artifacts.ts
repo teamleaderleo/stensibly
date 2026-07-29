@@ -1,5 +1,8 @@
 import { v } from "convex/values";
 import {
+  attachArtifactRequestFingerprint,
+} from "../src/idempotency-request-fingerprint";
+import {
   appendEvent,
   assertOptionalText,
   assertText,
@@ -40,6 +43,19 @@ export const attach = mutation({
     requireServiceSecret(args.serviceSecret);
     const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
+    const actorExternalId = assertText(args.actor.id, "Actor id", 120);
+    const label = assertText(args.label, "Artifact label", 240);
+    const uri = assertText(args.uri, "Artifact URI", 4_096);
+    const mimeType = assertOptionalText(args.mimeType, "MIME type", 255) ?? null;
+    const requestFingerprint = attachArtifactRequestFingerprint({
+      itemId: args.id,
+      actorId: actorExternalId,
+      kind: args.kind,
+      label,
+      uri,
+      mimeType,
+      metadata: args.metadata,
+    });
     const existing = await requireMatchingIdempotency(
       ctx,
       workspace._id,
@@ -49,12 +65,8 @@ export const attach = mutation({
     if (existing) {
       const item = await requireSameIdempotentItem(ctx, existing, {
         itemExternalId: args.id,
-        actorExternalId: args.actor.id,
-        payloadSubset: {
-          kind: args.kind,
-          label: args.label.trim(),
-          uri: args.uri.trim(),
-        },
+        actorExternalId,
+        payloadSubset: { requestFingerprint },
       });
       const artifactExternalId = (existing.payload as { artifactId?: unknown }).artifactId;
       if (typeof artifactExternalId !== "string") {
@@ -82,9 +94,9 @@ export const attach = mutation({
       actorId: actor._id,
       actorExternalId: actor.externalId,
       kind: args.kind,
-      label: assertText(args.label, "Artifact label", 240),
-      uri: assertText(args.uri, "Artifact URI", 4_096),
-      mimeType: assertOptionalText(args.mimeType, "MIME type", 255),
+      label,
+      uri,
+      mimeType: mimeType ?? undefined,
       metadata: args.metadata,
       createdAt: now,
     });
@@ -100,8 +112,9 @@ export const attach = mutation({
       payload: {
         artifactId: externalId,
         kind: args.kind,
-        label: args.label.trim(),
-        uri: args.uri.trim(),
+        label,
+        uri,
+        requestFingerprint,
       },
       idempotencyKey: args.idempotencyKey,
       createdAt: now,
