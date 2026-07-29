@@ -70,12 +70,25 @@ detached(url);
 detached.call(undefined, url);
 detached.call(null, url);
 detached.call(globalThis, url);
+detached.apply(undefined, [url]);
+detached.apply(null, [url]);
+detached.apply(globalThis, [url]);
+
+const boundUndefined = detached.bind(undefined);
+const boundNull = detached.bind(null);
+const boundGlobal = detached.bind(globalThis);
+boundUndefined(url);
+boundNull(url);
+boundGlobal(url);
+({ fetch: boundGlobal }).fetch(url);
 ```
 
 It requires diagnostics for:
 
 ```ts
 detached.call({}, url);
+detached.apply({}, [url]);
+detached.bind({});
 ({ fetch: detached }).fetch(url);
 
 class Client {
@@ -102,6 +115,8 @@ bazelisk test \
   //types:test/types/fetch-receiver \
   --test_output=errors
 ```
+
+The workflow reproduces workerd's own Linux CI toolchain with LLVM 19 before running the focused targets.
 
 The transform test verifies three paths:
 
