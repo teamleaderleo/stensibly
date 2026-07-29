@@ -1,4 +1,5 @@
 import {
+  MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
   MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
@@ -217,8 +218,14 @@ export async function verifyHosted(
         `Expected MCP serverInfo.name=stensibly; received ${jsonPreview(body)}`,
       );
     }
+    if (serverInfo.version !== MCP_SERVER_VERSION) {
+      throw responseError(
+        response,
+        `Expected MCP serverInfo.version=${MCP_SERVER_VERSION}; received ${typeof serverInfo.version === "string" ? serverInfo.version : "missing"}`,
+      );
+    }
     const manifestFingerprint = requireMcpManifestReceipt(response);
-    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly manifest=${manifestFingerprint}`;
+    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly version=${MCP_SERVER_VERSION} manifest=${manifestFingerprint}`;
   }));
 
   return results;

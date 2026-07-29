@@ -8,6 +8,7 @@ import {
 import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
 import type { WorkLedger } from "./ledger.js";
+import { MCP_SERVER_VERSION } from "./mcp-diagnostics.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
 import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
@@ -20,7 +21,7 @@ import { buildWorkspaceSurvey } from "./survey.js";
 
 export function createMcpServer(ledger: WorkLedger): McpServer {
   const server = new McpServer(
-    { name: "stensibly", version: "0.0.1" },
+    { name: "stensibly", version: MCP_SERVER_VERSION },
     {
       instructions: [
         "Stensibly is a shared scrapbook for work in motion.",
