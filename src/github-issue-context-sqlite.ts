@@ -626,7 +626,11 @@ function boundedWorkspace(value: string, label: string): string {
   return boundedPattern(value, label, limits.workspace, workspacePattern).toLowerCase();
 }
 
-function boundedIdentifier(value: string, label: string, maximum = limits.identifier): string {
+function boundedIdentifier(
+  value: string,
+  label: string,
+  maximum: number = limits.identifier,
+): string {
   return boundedPattern(value, label, maximum, identifierPattern);
 }
 
