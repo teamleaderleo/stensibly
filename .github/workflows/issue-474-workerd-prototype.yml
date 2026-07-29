@@ -58,24 +58,31 @@ jobs:
           echo "build:linux --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld" >> .bazelrc
           echo "build:linux --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar" >> .bazelrc
 
-      - name: Apply prototype patch
+      - name: Apply prototype patches
         run: |
-          git -C workerd apply --check \
-            ../docs/research/issue-474-lane-a/prototype/workerd-receiver-types.patch
-          git -C workerd apply \
-            ../docs/research/issue-474-lane-a/prototype/workerd-receiver-types.patch
+          for patch in \
+            workerd-receiver-types.patch \
+            workerd-receiver-types-followup.patch \
+            workerd-receiver-types-review-fixes.patch
+          do
+            git -C workerd apply --check \
+              "../docs/research/issue-474-lane-a/prototype/$patch"
+            git -C workerd apply \
+              "../docs/research/issue-474-lane-a/prototype/$patch"
+          done
           git -C workerd diff --check
 
       - name: Confirm Bazelisk and focused targets
         working-directory: workerd
         run: |
           bazelisk version
-          bazelisk query '//types:*' | grep -E 'globals\.spec|fetch-receiver'
+          bazelisk query '//types:*' | grep -E 'index\.spec|globals\.spec|fetch-receiver'
 
-      - name: Run generator transform and type fixtures
+      - name: Run generator, override, global, and type fixtures
         working-directory: workerd
         run: |
           bazelisk test \
+            //types:test/index.spec \
             //types:test/transforms/globals.spec \
             //types:test/types/fetch-receiver \
             --test_output=errors
