@@ -132,19 +132,19 @@ describe("dashboard provider capacity reader", () => {
 });
 
 describe("dashboard provider capacity wiring", () => {
-  test("renders one scoped read-only card and refreshes it with the dashboard", async () => {
-    const [html, app, controller, css] = await Promise.all([
-      readFile("site/index.html", "utf8"),
-      readFile("site/app.js", "utf8"),
+  test("installs one scoped read-only card through the pre-app bridge", async () => {
+    const [bridge, entry, controller, css] = await Promise.all([
+      readFile("site/hosted-session-bridge.js", "utf8"),
+      readFile("site/provider-capacity-entry.js", "utf8"),
       readFile("site/provider-capacity-controller.js", "utf8"),
       readFile("site/provider-capacity.css", "utf8"),
     ]);
-    expect(html).toContain('id="provider-capacity-panel"');
-    expect(html).toContain('name="repository"');
-    expect(html).toContain('name="subject"');
-    expect(html).toContain('/provider-capacity.css');
-    expect(app).toContain("createProviderCapacityController");
-    expect(app).toContain("void providerCapacity.refresh()");
+    expect(bridge).toContain("installProviderCapacityCard()");
+    expect(entry).toContain('id=\"provider-capacity-panel\"');
+    expect(entry).toContain('name=\"repository\"');
+    expect(entry).toContain('name=\"subject\"');
+    expect(entry).toContain("MutationObserver");
+    expect(entry).toContain("/provider-capacity.css");
     expect(controller).toContain("/api/v1/provider-capacities/coderabbit?");
     expect(controller).toContain("localStorage.setItem(STORAGE_KEY");
     expect(controller).not.toContain("@coderabbitai");
