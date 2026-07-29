@@ -12,7 +12,8 @@ Every accepted row is scoped by all of:
 - project;
 - stable external issue identity, such as `github:teamleaderleo/stensibly#403`;
 - provider source revision;
-- accepted repository instruction-set identity.
+- accepted repository instruction-set identity;
+- one explicit observation reference.
 
 Reads require the workspace, project, and external identity. A matching issue number in another repository, project, or workspace is a different record.
 
@@ -70,19 +71,27 @@ The SQLite transaction classifies each write as one of:
 - `initial` — first current observation for the scoped issue;
 - `updated` — changed provider revision with a non-stale provider `updatedAt`;
 - `stale` — changed provider revision whose provider `updatedAt` predates the current view;
-- `instruction_rebound` — identical provider content accepted under a changed instruction set.
+- `instruction_rebound` — identical provider content accepted under a changed instruction set;
+- `synchronization_updated` — identical provider content and instructions accepted through a new observation, including a synchronized/degraded transition.
 
-Current replacement is transactional. `initial`, `updated`, and `instruction_rebound` rows become current and clear the prior current flag. A `stale` row remains durable evidence but never replaces the current accepted view.
+Current replacement is transactional. `initial`, `updated`, `instruction_rebound`, and `synchronization_updated` rows become current and clear the prior current flag. A `stale` row remains durable evidence but never replaces the current accepted view.
 
 Provider timestamps help classify freshness but do not grant authority. A later synchronization adapter must still use provider cursors, ETags, delivery identities, or exact fetched revisions where available.
 
-## Replay and conflict rules
+## Observation replay and conflict rules
 
-The same workspace, project, issue, source revision, snapshot content, and instruction set is an idempotent replay. The original row is returned and no second row is written.
+`observationRef` is the idempotency identity for one inbound observation. Repeating the same workspace, project, observation reference, issue snapshot, instruction set, synchronization state, cursor, observation time, and accepting actor returns the original row without writing a duplicate.
 
-The same issue and source revision with changed content fails closed with `GitHubIssueContextConflictError`. This is altered-revision reuse, not an update.
+Reusing one observation reference with altered issue identity, snapshot, instructions, synchronization state, cursor, observation time, or actor fails closed with `GitHubIssueContextConflictError`.
 
-The same snapshot and provider revision may be appended under a changed instruction set. That is an explicit `instruction_rebound` row so future run context can identify instruction drift without pretending GitHub changed.
+Provider revision and observation identity remain separate:
+
+- the same issue and source revision with changed content is altered-revision reuse and fails closed;
+- the same provider revision and content may be observed again under a new observation reference;
+- a new observation can change synchronized context to degraded, or degraded context back to synchronized, without inventing a GitHub source revision;
+- the same snapshot and provider revision may be accepted under a changed instruction set as `instruction_rebound`.
+
+This separation prevents an idempotent provider snapshot from hiding connector or synchronization failure.
 
 ## Synchronization state
 
@@ -93,7 +102,7 @@ Each acceptance records either:
 
 A synchronized row cannot carry a degraded reason. The optional cursor and observation reference are evidence only. This slice does not create polling, webhook intake, retries, or provider reachability checks.
 
-A connector outage may therefore leave a readable current row plus a later degraded observation. GitHub itself remains the recovery source and must not become hidden behind this projection.
+A connector outage may therefore append a new degraded observation while retaining the same last-known GitHub snapshot and source revision. That degraded row becomes the current Stensibly view, while the public GitHub issue remains the recovery source.
 
 ## Integrity checks
 
