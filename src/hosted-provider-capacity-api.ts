@@ -186,7 +186,7 @@ export function registerHostedProviderCapacityRoutes(
         && (repositoryResult?.duplicate ?? true);
       return context.json({
         accepted: true,
-        duplicate: result.duplicate,
+        duplicate: allDuplicate,
         ...(repositoryResult
           ? { repositoryObservation: repositoryAcceptedBody(repositoryResult) }
           : {}),
