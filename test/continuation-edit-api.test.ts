@@ -3,6 +3,7 @@ import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { bearerJsonHeaders } from "./support/http.ts";
 import { mcpRequest, readToolJson, toolCall } from "./support/mcp-http.ts";
 
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
@@ -161,11 +162,9 @@ async function restEdit(
 ) {
   const response = await app.request(`/api/v1/continuations/${id}/edit`, {
     method: "POST",
-    headers: {
-      ...bearer(alphaWriteToken),
-      "content-type": "application/json",
+    headers: bearerJsonHeaders(alphaWriteToken, {
       "idempotency-key": idempotencyKey,
-    },
+    }),
     body: JSON.stringify(body),
   });
   const raw = await response.json() as Record<string, unknown>;
@@ -174,8 +173,4 @@ async function restEdit(
     raw,
     continuation: raw.continuation as Record<string, unknown> | undefined,
   };
-}
-
-function bearer(value: string): Record<string, string> {
-  return { authorization: `Bearer ${value}` };
 }
