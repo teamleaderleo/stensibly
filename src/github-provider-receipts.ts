@@ -1,5 +1,7 @@
 import type {
   GitHubProviderReceipt,
+  GitHubRepositoryWriteLane,
+  GitHubRepositoryWriteLaneReservation,
   GitHubProviderReceiptReservation,
   GitHubProviderReceiptStore,
 } from "./github-provider-contracts.js";
@@ -7,6 +9,7 @@ import type {
 export class InMemoryGitHubProviderReceiptStore
   implements GitHubProviderReceiptStore {
   readonly #receipts = new Map<string, GitHubProviderReceipt>();
+  readonly #repositoryWriteLanes = new Map<string, GitHubRepositoryWriteLane>();
 
   async reserveGitHubProviderReceipt(
     receipt: GitHubProviderReceipt,
@@ -42,6 +45,41 @@ export class InMemoryGitHubProviderReceiptStore
     };
   }
 
+  async reserveGitHubRepositoryWriteLane(
+    lane: GitHubRepositoryWriteLane,
+  ): Promise<GitHubRepositoryWriteLaneReservation> {
+    const key = repositoryWriteLaneKey(
+      lane.project,
+      lane.repositoryFullName,
+      lane.targetRef,
+    );
+    const current = this.#repositoryWriteLanes.get(key);
+    if (current) {
+      return { outcome: "blocked", lane: clone(current) };
+    }
+    this.#repositoryWriteLanes.set(key, clone(lane));
+    return { outcome: "reserved", lane: clone(lane) };
+  }
+
+  async releaseGitHubRepositoryWriteLane(input: {
+    project: string;
+    repositoryFullName: string;
+    targetRef: string;
+    receiptId: string;
+  }): Promise<void> {
+    const key = repositoryWriteLaneKey(
+      input.project,
+      input.repositoryFullName,
+      input.targetRef,
+    );
+    const current = this.#repositoryWriteLanes.get(key);
+    if (!current) return;
+    if (current.receiptId !== input.receiptId) {
+      throw new Error("GitHub repository write lane release does not match its reservation");
+    }
+    this.#repositoryWriteLanes.delete(key);
+  }
+
   async updateGitHubProviderReceipt(
     receipt: GitHubProviderReceipt,
   ): Promise<GitHubProviderReceipt> {
@@ -67,6 +105,14 @@ export class InMemoryGitHubProviderReceiptStore
 
 function receiptKey(project: string, idempotencyKey: string): string {
   return `${project}\u0000${idempotencyKey}`;
+}
+
+function repositoryWriteLaneKey(
+  project: string,
+  repositoryFullName: string,
+  targetRef: string,
+): string {
+  return `${project}\u0000${repositoryFullName}\u0000${targetRef}`;
 }
 
 function clone<T>(value: T): T {

@@ -3,6 +3,11 @@ import type {
   GitHubIssueContextInput,
 } from "./github-issue-context.js";
 import type { ProjectAttachmentRecord } from "./project-attachment-ledger.js";
+import type {
+  RepositoryWriteProviderResult,
+  RepositoryWriteRefReader,
+  VerifiedRepositoryWrite,
+} from "./repository-write-fence.js";
 
 export const githubIssueProviderOperations = [
   "github_list_issues",
@@ -19,6 +24,19 @@ export const githubIssueProviderOperations = [
 
 export type GitHubIssueProviderOperation =
   typeof githubIssueProviderOperations[number];
+
+export const githubRepositoryWriteOperations = [
+  "github_create_repository_file",
+  "github_update_repository_file",
+  "github_delete_repository_file",
+] as const;
+
+export type GitHubRepositoryWriteOperation =
+  typeof githubRepositoryWriteOperations[number];
+
+export type GitHubProviderOperation =
+  | GitHubIssueProviderOperation
+  | GitHubRepositoryWriteOperation;
 
 export interface GitHubProviderRequestContext {
   project: string;
@@ -81,7 +99,7 @@ export interface GitHubProviderAuthority {
   authorizeGitHubOperation(input: {
     project: string;
     repositoryFullName: string;
-    operation: GitHubIssueProviderOperation;
+    operation: GitHubProviderOperation;
     actorId: string;
     clientId: string;
     capabilityGrantId?: string;
@@ -194,6 +212,35 @@ export interface GitHubIssueProviderAdapter {
   }): Promise<{ issue: GitHubIssueContextInput; providerRequestId?: string }>;
 }
 
+
+export interface GitHubRepositoryWriteAdapter extends RepositoryWriteRefReader {
+  createFile(input: {
+    repositoryFullName: string;
+    path: string;
+    content: string;
+    message: string;
+    targetRef: string;
+    idempotencyKey: string;
+  }): Promise<RepositoryWriteProviderResult>;
+  updateFile(input: {
+    repositoryFullName: string;
+    path: string;
+    content: string;
+    message: string;
+    contentSha: string;
+    targetRef: string;
+    idempotencyKey: string;
+  }): Promise<RepositoryWriteProviderResult>;
+  deleteFile(input: {
+    repositoryFullName: string;
+    path: string;
+    message: string;
+    contentSha: string;
+    targetRef: string;
+    idempotencyKey: string;
+  }): Promise<RepositoryWriteProviderResult>;
+}
+
 export type GitHubProviderReceiptState =
   | "reserved"
   | "succeeded"
@@ -208,7 +255,7 @@ export interface GitHubProviderReceipt {
   project: string;
   provider: "github";
   repositoryFullName: string;
-  operation: GitHubIssueProviderOperation;
+  operation: GitHubProviderOperation;
   target: string;
   actorId: string;
   clientId: string;
@@ -226,7 +273,7 @@ export interface GitHubProviderReceipt {
   createdAt: string;
   updatedAt: string;
   providerRequestId: string | null;
-  result: GitHubIssueContext | GitHubIssueComment | null;
+  result: GitHubIssueContext | GitHubIssueComment | VerifiedRepositoryWrite | null;
   verification: {
     state: "not_run" | "passed" | "failed";
     checkedAt: string | null;
@@ -251,10 +298,34 @@ export interface GitHubProviderReceiptReservation {
   outcome: "reserved" | "replay" | "conflict";
 }
 
+export interface GitHubRepositoryWriteLane {
+  project: string;
+  repositoryFullName: string;
+  targetRef: string;
+  receiptId: string;
+  idempotencyKey: string;
+  expectedParentSha: string;
+  reservedAt: string;
+}
+
+export interface GitHubRepositoryWriteLaneReservation {
+  outcome: "reserved" | "blocked";
+  lane: GitHubRepositoryWriteLane;
+}
+
 export interface GitHubProviderReceiptStore {
   reserveGitHubProviderReceipt(
     receipt: GitHubProviderReceipt,
   ): Promise<GitHubProviderReceiptReservation>;
+  reserveGitHubRepositoryWriteLane(
+    lane: GitHubRepositoryWriteLane,
+  ): Promise<GitHubRepositoryWriteLaneReservation>;
+  releaseGitHubRepositoryWriteLane(input: {
+    project: string;
+    repositoryFullName: string;
+    targetRef: string;
+    receiptId: string;
+  }): Promise<void>;
   updateGitHubProviderReceipt(
     receipt: GitHubProviderReceipt,
   ): Promise<GitHubProviderReceipt>;
@@ -262,6 +333,16 @@ export interface GitHubProviderReceiptStore {
     project: string,
     idempotencyKey: string,
   ): Promise<GitHubProviderReceipt | null>;
+}
+
+export interface GitHubRepositoryWriteProviderServiceDependencies {
+  projects: GitHubProviderProjectReader;
+  bindings: GitHubProviderBindingStore;
+  authority: GitHubProviderAuthority;
+  adapter: GitHubRepositoryWriteAdapter;
+  receipts: GitHubProviderReceiptStore;
+  now?: () => string;
+  idFactory?: () => string;
 }
 
 export interface GitHubIssueProviderServiceDependencies {
