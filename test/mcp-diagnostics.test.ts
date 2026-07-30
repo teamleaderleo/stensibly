@@ -13,8 +13,13 @@ import {
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
 import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
+import {
+  initializeMessage,
+  mcpRequest,
+  toolsListMessage,
+} from "./support/mcp-http.ts";
 
-const protocolVersion = "2025-06-18";
+const diagnosticsClient = { clientName: "mcp-diagnostics-test" };
 
 describe("MCP connector diagnostics", () => {
   test("publishes one stable manifest identity that matches initialize and tools/list", async () => {
@@ -29,7 +34,11 @@ describe("MCP connector diagnostics", () => {
         scopes: ["read"],
       });
       const app = createServerApp(store);
-      const initialized = await mcpRequest(app, token.token, initializeMessage(1));
+      const initialized = await mcpRequest(
+        app,
+        token.token,
+        initializeMessage(1, diagnosticsClient),
+      );
       expect(initialized.status).toBe(200);
       expect(initialized.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
         MCP_TOOL_MANIFEST_FINGERPRINT,
@@ -43,12 +52,7 @@ describe("MCP connector diagnostics", () => {
         version: MCP_SERVER_VERSION,
       });
 
-      const listed = await mcpRequest(app, token.token, {
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/list",
-        params: {},
-      });
+      const listed = await mcpRequest(app, token.token, toolsListMessage(2));
       const payload = await listed.json() as {
         result?: { tools?: Array<{ name?: unknown }> };
       };
@@ -79,17 +83,12 @@ describe("MCP connector diagnostics", () => {
           },
         },
       });
-      const response = await app.request("/mcp", {
-        method: "POST",
-        headers: {
-          accept: "application/json, text/event-stream",
-          authorization: `Bearer ${token.token}`,
-          "content-type": "application/json",
-          "mcp-protocol-version": protocolVersion,
-          "x-request-id": "diag-construction-1",
-        },
-        body: JSON.stringify(initializeMessage(9)),
-      });
+      const response = await mcpRequest(
+        app,
+        token.token,
+        initializeMessage(9, diagnosticsClient),
+        { "x-request-id": "diag-construction-1" },
+      );
       expect(response.status).toBe(500);
       expect(response.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("server_construction");
       expect(response.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
@@ -183,36 +182,6 @@ async function writeFailureDiagnostic(
   return payload.error.data;
 }
 
-async function mcpRequest(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  body: unknown,
-): Promise<Response> {
-  return await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-    },
-    body: JSON.stringify(body),
-  });
-}
-
-function initializeMessage(id: number) {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "initialize",
-    params: {
-      protocolVersion,
-      capabilities: {},
-      clientInfo: { name: "mcp-diagnostics-test", version: "0.0.1" },
-    },
-  };
-}
-
 describe("MCP gateway validation diagnostics", () => {
   test("classifies origin and Host denials as exact gateway validation failures", async () => {
     const store = new StensiblyStore(":memory:");
@@ -243,19 +212,16 @@ describe("MCP gateway validation diagnostics", () => {
       ] as const;
 
       for (const entry of cases) {
-        const response = await app.request("/mcp", {
-          method: "POST",
-          headers: {
-            accept: "application/json, text/event-stream",
-            authorization: `Bearer ${token.token}`,
-            "content-type": "application/json",
-            "mcp-protocol-version": protocolVersion,
+        const response = await mcpRequest(
+          app,
+          token.token,
+          initializeMessage(31, diagnosticsClient),
+          {
             "x-request-id": entry.requestId,
             origin: entry.origin,
             host: entry.host,
           },
-          body: JSON.stringify(initializeMessage(31)),
-        });
+        );
         expect(response.status).toBe(403);
         expect(response.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe(entry.stage);
         const payload = await response.json() as {
