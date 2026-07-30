@@ -3,6 +3,7 @@ import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { bearerJsonHeaders } from "./support/http.ts";
 import { mcpRequest, readToolJson, toolCall } from "./support/mcp-http.ts";
 
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
@@ -46,11 +47,9 @@ describe("continuation supervisor API", () => {
       `/api/v1/supervisor/continuations/${alphaProposal.id}/queue`,
       {
         method: "POST",
-        headers: {
-          ...bearer(writeToken),
-          "content-type": "application/json",
+        headers: bearerJsonHeaders(writeToken, {
           "idempotency-key": "rest-supervisor-queue",
-        },
+        }),
         body: JSON.stringify({
           actor: human,
           expectedGeneration: alphaProposal.generation,
@@ -88,11 +87,9 @@ describe("continuation supervisor API", () => {
       `/api/v1/supervisor/continuations/${alphaProposal.id}/queue`,
       {
         method: "POST",
-        headers: {
-          ...bearer(writeToken),
-          "content-type": "application/json",
+        headers: bearerJsonHeaders(writeToken, {
           "idempotency-key": "rest-supervisor-queue",
-        },
+        }),
         body: JSON.stringify({
           actor: human,
           expectedGeneration: alphaProposal.generation,
@@ -118,10 +115,7 @@ describe("continuation supervisor API", () => {
       `/api/v1/supervisor/continuations/${betaProposal.id}/queue`,
       {
         method: "POST",
-        headers: {
-          ...bearer(writeToken),
-          "content-type": "application/json",
-        },
+        headers: bearerJsonHeaders(writeToken),
         body: JSON.stringify({
           actor: human,
           expectedGeneration: betaProposal.generation,
@@ -156,10 +150,7 @@ describe("continuation supervisor API", () => {
       "/api/v1/supervisor/continuations/policy",
       {
         method: "POST",
-        headers: {
-          ...bearer(writeToken),
-          "content-type": "application/json",
-        },
+        headers: bearerJsonHeaders(writeToken),
         body: JSON.stringify({}),
       },
     );
@@ -196,8 +187,4 @@ async function propose(sourceItemId: string, targetItemId: string) {
     approvalMode: "human",
     deliveryMode: "supervisor",
   });
-}
-
-function bearer(value: string): Record<string, string> {
-  return { authorization: `Bearer ${value}` };
 }
