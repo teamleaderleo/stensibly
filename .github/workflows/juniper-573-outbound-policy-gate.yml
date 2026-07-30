@@ -1,0 +1,292 @@
+name: juniper-573-outbound-policy-gate
+
+on:
+  push:
+    branches:
+      - juniper/573-github-outbound-text-policy
+    paths:
+      - .github/workflows/juniper-573-outbound-policy-gate.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-573-outbound-policy-gate
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@v4
+        with:
+          ref: juniper/573-github-outbound-text-policy
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Tighten exact payload, authority, and receipt invariants
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/github-outbound-text-policy.ts')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  r'''const directItemUrl = /https?:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9_.-]{1,100})\/(issues|pull|discussions|commit)\/([A-Za-z0-9.-]+)/g;''',
+                  r'''const directItemUrl = /https?:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9_.-]{1,100})\/(issues|pull|discussions)\/([1-9][0-9]{0,9})\b/g;
+          const directCommitUrl = /https?:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9_.-]{1,100})\/commit\/([0-9a-fA-F]{7,40})\b/g;'''
+              ),
+              (
+                  '''  const destination = parseDestination(record.destination, "GitHub outbound receipt destination");
+            const fields = parseReceiptFields(record.fields);
+            const counts = parseReferenceCounts(record.referenceCounts);
+            const diagnostics = parseDiagnostics(record.diagnostics);
+            if (counts.rejected < diagnostics.length || counts.total < counts.controlled + counts.authorized + counts.rejected) {
+              throw new Error("GitHub outbound text reference counts are inconsistent");
+            }''',
+                  '''  const destination = parseDestination(record.destination, "GitHub outbound receipt destination");
+            const surface = closedValue(record.surface, GITHUB_OUTBOUND_SURFACES, "GitHub outbound surface");
+            const fields = parseReceiptFields(record.fields, surface);
+            const counts = parseReferenceCounts(record.referenceCounts);
+            const diagnostics = parseDiagnostics(record.diagnostics);
+            if (
+              counts.total !== counts.controlled + counts.authorized + counts.rejected
+              || counts.omittedDiagnostics !== counts.rejected - diagnostics.length
+              || diagnostics.length !== Math.min(counts.rejected, MAX_DIAGNOSTICS)
+            ) {
+              throw new Error("GitHub outbound text reference counts are inconsistent");
+            }
+            const fieldNames = new Set(fields.map((field) => field.name));
+            if (diagnostics.some((diagnostic) => !fieldNames.has(diagnostic.field))) {
+              throw new Error("GitHub outbound diagnostics reference an unknown field");
+            }'''
+              ),
+              (
+                  '    surface: closedValue(record.surface, GITHUB_OUTBOUND_SURFACES, "GitHub outbound surface"),',
+                  '    surface,'
+              ),
+              (
+                  '''  if (
+              (parsedWithoutFingerprint.externalContactAuthorityFingerprint === null)
+              !== (parsedWithoutFingerprint.externalContactAuthorityGeneration === null)
+            ) {
+              throw new Error("External contact authority identity is incomplete");
+            }''',
+                  '''  if (
+              (parsedWithoutFingerprint.externalContactAuthorityFingerprint === null)
+              !== (parsedWithoutFingerprint.externalContactAuthorityGeneration === null)
+            ) {
+              throw new Error("External contact authority identity is incomplete");
+            }
+            if (
+              parsedWithoutFingerprint.externalContactAuthorityGeneration !== null
+              && parsedWithoutFingerprint.externalContactAuthorityGeneration
+                !== parsedWithoutFingerprint.authorityGeneration
+            ) {
+              throw new Error("External contact authority generation does not match the provider operation");
+            }
+            if (
+              parsedWithoutFingerprint.externalContactAuthorityFingerprint === null
+              && counts.authorized !== 0
+            ) {
+              throw new Error("Authorized references require an external contact authority");
+            }'''
+              ),
+              (
+                  '''  const surface = closedValue(record.surface, GITHUB_OUTBOUND_SURFACES, "GitHub outbound surface");
+            const fields = parseFields(record.fields, surface);
+            const totalBytes = fields.reduce((sum, field) => sum + new TextEncoder().encode(field.text).byteLength, 0);
+            if (totalBytes > MAX_TOTAL_TEXT_BYTES) throw new Error("GitHub outbound text payload is too large");
+            return {
+              workspace: boundedSlug(record.workspace, "GitHub outbound workspace", 80),
+              project: boundedSlug(record.project, "GitHub outbound project", 80),
+              destination: parseDestination(record.destination, "GitHub outbound destination"),
+              surface,
+              operationRef: boundedIdentifier(record.operationRef, "GitHub outbound operation reference", 160),
+              authorityGeneration: positiveInteger(record.authorityGeneration, "GitHub outbound authority generation"),
+              fields,
+              policy: parsePolicy(record.policy),
+              externalContactAuthority: record.externalContactAuthority === null
+                ? null
+                : parseExternalAuthority(record.externalContactAuthority),
+            };''',
+                  '''  const surface = closedValue(record.surface, GITHUB_OUTBOUND_SURFACES, "GitHub outbound surface");
+            const fields = parseFields(record.fields, surface);
+            const totalBytes = fields.reduce((sum, field) => sum + new TextEncoder().encode(field.text).byteLength, 0);
+            if (totalBytes > MAX_TOTAL_TEXT_BYTES) throw new Error("GitHub outbound text payload is too large");
+            const authorityGeneration = positiveInteger(
+              record.authorityGeneration,
+              "GitHub outbound authority generation",
+            );
+            const externalContactAuthority = record.externalContactAuthority === null
+              ? null
+              : parseExternalAuthority(record.externalContactAuthority);
+            if (
+              externalContactAuthority
+              && externalContactAuthority.generation !== authorityGeneration
+            ) {
+              throw new Error("External contact authority generation does not match the provider operation");
+            }
+            return {
+              workspace: boundedSlug(record.workspace, "GitHub outbound workspace", 80),
+              project: boundedSlug(record.project, "GitHub outbound project", 80),
+              destination: parseDestination(record.destination, "GitHub outbound destination"),
+              surface,
+              operationRef: boundedIdentifier(record.operationRef, "GitHub outbound operation reference", 160),
+              authorityGeneration,
+              fields,
+              policy: parsePolicy(record.policy),
+              externalContactAuthority,
+            };'''
+              ),
+              (
+                  '    return { name: record.name, text: normalizeLineEndings(record.text) };',
+                  '    return { name: record.name, text: record.text };'
+              ),
+              (
+                  '''  const owner = parseOwner(record.owner);
+            const repository = parseRepository(record.repository);
+            const repositoryFullName = `${owner}/${repository}`;
+            if ("repositoryFullName" in record && record.repositoryFullName !== repositoryFullName) {
+              throw new Error(`${label} full name is not canonical`);
+            }''',
+                  '''  const owner = parseOwner(record.owner);
+            const repository = parseRepository(record.repository);
+            const repositoryFullName = `${owner}/${repository}`;
+            if (record.owner !== owner || record.repository !== repository) {
+              throw new Error(`${label} identity is not canonical`);
+            }
+            if ("repositoryFullName" in record && record.repositoryFullName !== repositoryFullName) {
+              throw new Error(`${label} full name is not canonical`);
+            }'''
+              ),
+              (
+                  '''function parseReceiptFields(input: unknown): GitHubOutboundTextReceipt["fields"] {
+            if (!Array.isArray(input) || input.length < 1 || input.length > 2) {
+              throw new Error("GitHub outbound receipt fields are invalid");
+            }
+            return input.map((entry) => {
+              const record = requireRecord(entry, "GitHub outbound receipt field");
+              rejectUnknownKeys(record, ["name", "textSha256", "byteLength", "lineCount"], "GitHub outbound receipt field");
+              return {
+                name: boundedIdentifier(record.name, "GitHub outbound receipt field name", 40),
+                textSha256: sha256(record.textSha256, "GitHub outbound text fingerprint"),
+                byteLength: boundedInteger(record.byteLength, "GitHub outbound field byte length", 0, MAX_FIELD_TEXT_BYTES),
+                lineCount: boundedInteger(record.lineCount, "GitHub outbound field line count", 1, 100_000),
+              };
+            });
+          }''',
+                  '''function parseReceiptFields(
+            input: unknown,
+            surface: GitHubOutboundSurface,
+          ): GitHubOutboundTextReceipt["fields"] {
+            const names = expectedFields[surface];
+            if (!Array.isArray(input) || input.length !== names.length) {
+              throw new Error("GitHub outbound receipt fields do not match the surface");
+            }
+            const fields = input.map((entry) => {
+              const record = requireRecord(entry, "GitHub outbound receipt field");
+              rejectUnknownKeys(record, ["name", "textSha256", "byteLength", "lineCount"], "GitHub outbound receipt field");
+              return {
+                name: boundedIdentifier(record.name, "GitHub outbound receipt field name", 40),
+                textSha256: sha256(record.textSha256, "GitHub outbound text fingerprint"),
+                byteLength: boundedInteger(record.byteLength, "GitHub outbound field byte length", 0, MAX_FIELD_TEXT_BYTES),
+                lineCount: boundedInteger(record.lineCount, "GitHub outbound field line count", 1, 100_000),
+              };
+            });
+            if (JSON.stringify(fields.map((field) => field.name)) !== JSON.stringify(names)) {
+              throw new Error("GitHub outbound receipt fields do not match the surface");
+            }
+            return fields;
+          }'''
+              ),
+              (
+                  '''function normalizeLineEndings(value: string): string {
+            return value.replace(/\r\n?/g, "\n");
+          }
+
+          ''',
+                  ''
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'outbound-policy anchor matched {count} times: {old[:120]!r}')
+              text = text.replace(old, new, 1)
+
+          direct_item_block = '''    for (const match of line.matchAll(directItemUrl)) {
+              const owner = parseOwner(match[1]);
+              const repository = parseRepository(match[2]);
+              const repositoryFullName = `${owner}/${repository}`;
+              const itemKind = providerPathKind(match[3]);
+              const itemIdentity = boundedItemIdentity(match[4], itemKind);
+              observations.push(observation({
+                field: field.name,
+                line: lineIndex + 1,
+                column: (match.index ?? 0) + 1,
+                kind: closingPrefix.test(line.slice(0, match.index ?? 0)) ? "closing_reference" : "direct_item_url",
+                owner,
+                repository,
+                itemKind,
+                itemIdentity,
+                repositoryFullName,
+                destinationRepository,
+                controlledOwners,
+                controlledRepositories,
+                authorizedRepositories,
+              }));
+            }
+          '''
+          direct_with_commit = direct_item_block + '''    for (const match of line.matchAll(directCommitUrl)) {
+              const owner = parseOwner(match[1]);
+              const repository = parseRepository(match[2]);
+              const repositoryFullName = `${owner}/${repository}`;
+              observations.push(observation({
+                field: field.name,
+                line: lineIndex + 1,
+                column: (match.index ?? 0) + 1,
+                kind: closingPrefix.test(line.slice(0, match.index ?? 0)) ? "closing_reference" : "direct_item_url",
+                owner,
+                repository,
+                itemKind: "commit",
+                itemIdentity: match[3]!.slice(0, 12).toLowerCase(),
+                repositoryFullName,
+                destinationRepository,
+                controlledOwners,
+                controlledRepositories,
+                authorizedRepositories,
+              }));
+            }
+          '''
+          if text.count(direct_item_block) != 1:
+              raise SystemExit('direct URL scan block anchor mismatch')
+          text = text.replace(direct_item_block, direct_with_commit, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-outbound-text-policy.test.ts
+          bun test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish source-only candidate
+        run: |
+          rm .github/workflows/juniper-573-outbound-policy-gate.yml
+          git diff --check
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git add src test docs .github
+          git commit -m 'feat: add outbound GitHub interaction preflight'
+          git push origin HEAD:juniper/573-github-outbound-text-policy
