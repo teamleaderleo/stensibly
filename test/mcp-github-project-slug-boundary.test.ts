@@ -18,7 +18,7 @@ interface ToolPayload {
 }
 
 describe("GitHub provider MCP project slug boundary", () => {
-  test("rejects the accidental ASCII range before provider dispatch", async () => {
+  test("rejects the complete accidental ASCII range before provider dispatch", async () => {
     const store = new StensiblyStore(":memory:");
     const dispatchedProjects: string[] = [];
     const service: GitHubIssueProviderReadService = {
@@ -47,7 +47,10 @@ describe("GitHub provider MCP project slug boundary", () => {
       const app = createServerApp(store, { ledger });
       await initialize(app, reader.token, 1);
 
-      const invalidProjects = ["a@", "a:", "a?", "a[", "a\\", "a^", "aA"];
+      const invalidProjects = Array.from(
+        { length: "^".charCodeAt(0) - ":".charCodeAt(0) + 1 },
+        (_, index) => `a${String.fromCharCode(":".charCodeAt(0) + index)}`,
+      );
       for (const [index, project] of invalidProjects.entries()) {
         const payload = await callTool(
           app,
