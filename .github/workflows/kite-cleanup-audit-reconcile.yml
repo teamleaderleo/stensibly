@@ -1,0 +1,79 @@
+name: kite-cleanup-audit-reconcile
+
+on:
+  push:
+    branches:
+      - kite/repository-cleanup-audit-20260731
+    paths:
+      - .github/workflows/kite-cleanup-audit-reconcile.yml
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: kite/repository-cleanup-audit-20260731
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply research corrections
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/repository-cleanup-audit-2026-07-31.md')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = {
+            '5. **Treat mirrored agent assets as generated artifacts.** The `.agents` and `.claude` trees contain overlapping files. Preserve tool-required locations, choose one source of truth, and enforce synchronization instead of hand-editing both copies.':
+            '5. **Keep mirrored Convex skills as managed agent-native installs.** Convex intentionally installs the canonical project-scoped skills under `.agents/skills/` and the Claude Code view under `.claude/skills/`. Preserve both required locations, avoid hand-deduplicating them, and use `npx convex ai-files status` / `update` to reconcile generated content.',
+            '3. Add one sync check for mirrored agent skill assets or document the generator that owns both trees.':
+            '3. Document Convex AI Files as the owner of `.agents/skills/` and `.claude/skills/`, exclude those managed mirrors from ordinary duplicate-code cleanup, and use `npx convex ai-files status` to detect drift.',
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f'expected one audit anchor, found {text.count(old)}: {old[:80]}')
+              text = text.replace(old, new, 1)
+
+          duplicate_anchor = '- Identical mirrored pairs: **30**\n'
+          duplicate_note = (
+              '- Identical mirrored pairs: **30**\n\n'
+              'These 30 pairs are expected managed output from Convex AI Files, which installs '
+              'project-scoped Codex skills in `.agents/skills/` and Claude Code views in '
+              '`.claude/skills/`. Their byte duplication is operational packaging, not a candidate '
+              'for manual deletion.\n'
+          )
+          if text.count(duplicate_anchor) != 1:
+              raise SystemExit('duplicate summary anchor moved')
+          text = text.replace(duplicate_anchor, duplicate_note, 1)
+
+          priority_anchor = '## Prioritized cleanup queue\n'
+          research = '''## GitHub-only research basis
+
+- **MCP TypeScript SDK:** `modelcontextprotocol/typescript-sdk/test/e2e/helpers/index.ts` centralizes in-process transport wiring, lifecycle cleanup, and raw HTTP capture for scenario tests. That supports a shared harness instead of per-suite protocol plumbing.
+- **Hono:** `honojs/hono/src/helper/testing/index.ts` wraps `app.request` behind one injected fetch seam for typed tests. The Stensibly harness follows the same in-process boundary while retaining raw JSON-RPC control.
+- **Convex AI Files:** `get-convex/convex-backend/npm-packages/convex/src/cli/lib/aiFiles/MANUAL_TESTING.md` defines `.agents/skills/` as the canonical project-scoped install and `.claude/skills/` as the Claude Code path. Cleanup should use the owning CLI rather than deleting one tree.
+
+'''
+          if text.count(priority_anchor) != 1:
+              raise SystemExit('priority section anchor moved')
+          text = text.replace(priority_anchor, research + priority_anchor, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Publish source-only correction
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/kite-cleanup-audit-reconcile.yml
+          git diff --check
+          git config user.name kite-stensibly
+          git config user.email kite-stensibly@users.noreply.github.com
+          git add docs/repository-cleanup-audit-2026-07-31.md .github/workflows
+          git commit -m 'docs: reconcile cleanup audit with upstream ownership'
+          git push origin HEAD:kite/repository-cleanup-audit-20260731
