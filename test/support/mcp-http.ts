@@ -1,4 +1,4 @@
-import type { JsonRpcMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -34,7 +34,7 @@ export function mcpHeaders(
 export function initializeMessage(
   id: number | string,
   options: McpInitializeOptions = {},
-): JsonRpcMessage {
+): JSONRPCMessage {
   return {
     jsonrpc: "2.0",
     id,
@@ -54,7 +54,7 @@ export function toolCall(
   id: number | string,
   name: string,
   args: Record<string, unknown>,
-): JsonRpcMessage {
+): JSONRPCMessage {
   return {
     jsonrpc: "2.0",
     id,
@@ -63,7 +63,7 @@ export function toolCall(
   };
 }
 
-export function toolsListMessage(id: number | string): JsonRpcMessage {
+export function toolsListMessage(id: number | string): JSONRPCMessage {
   return {
     jsonrpc: "2.0",
     id,
@@ -75,7 +75,7 @@ export function toolsListMessage(id: number | string): JsonRpcMessage {
 export async function mcpRequest(
   app: McpRequestTarget,
   token: string | null,
-  body: JsonRpcMessage | Record<string, unknown>,
+  body: JSONRPCMessage | Record<string, unknown>,
   extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
   return await app.request("/mcp", {
