@@ -67,7 +67,9 @@ describe("dashboard visual language", () => {
     ]) {
       expect(html).toContain(marker);
     }
-    expect(html).toContain("Tokens are not saved.");
+    expect(html).toContain(
+      "A bearer token stays in this browser session and is cleared when the session ends.",
+    );
   });
 
   test("keeps every primary action readable in light and dark schemes", async () => {
