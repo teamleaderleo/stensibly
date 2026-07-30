@@ -46,172 +46,164 @@ jobs:
           from pathlib import Path
           from textwrap import dedent
 
-          source = Path('src/delivery-desk.ts')
-          text = source.read_text(encoding='utf-8')
-
           def block(value: str) -> str:
               return dedent(value).strip('\n')
 
-          replacements = [
-              (
-                  block('''
-                  const suppliedEntries = record.entries as unknown[];
-                  if (JSON.stringify(projection.entries) !== JSON.stringify(suppliedEntries)) {
-                    throw new Error("Delivery Desk entries must be in canonical finish-line order");
-                  }
-                  '''),
-                  block('''
-                  const suppliedEntries = (record.entries as unknown[]).map(parseDeliveryDeskEntry);
-                  const suppliedOrder = suppliedEntries.map((entry) => deliveryDeskIssueKey(entry.issue));
-                  const canonicalOrder = projection.entries.map((entry) => deliveryDeskIssueKey(entry.issue));
-                  if (JSON.stringify(suppliedOrder) !== JSON.stringify(canonicalOrder)) {
-                    throw new Error("Delivery Desk entries must be in canonical finish-line order");
-                  }
-                  '''),
-              ),
-              (
-                  block('''
-                  const evidence = input.map((item) => {
-                    const record = requireRecord(item, "Delivery Desk evidence");
-                    rejectUnknownKeys(
-                      record,
-                      ["kind", "reference", "observedAt", "fingerprint"],
-                      "Delivery Desk evidence",
-                    );
-                    return {
-                      kind: closedValue(record.kind, DELIVERY_EVIDENCE_KINDS, "Delivery Desk evidence kind"),
-                      reference: boundedText(record.reference, "Delivery Desk evidence reference", 240),
-                      observedAt: canonicalTimestamp(record.observedAt, "Delivery Desk evidence time"),
-                      fingerprint: sha256(record.fingerprint, "Delivery Desk evidence fingerprint"),
-                    };
-                  }).sort(compareEvidence);
-                  const fingerprints = evidence.map((item) => item.fingerprint);
-                  if (new Set(fingerprints).size !== fingerprints.length) {
-                    throw new Error("Delivery Desk evidence fingerprints must be unique");
-                  }
-                  if (JSON.stringify(evidence) !== JSON.stringify(input)) {
-                    throw new Error("Delivery Desk evidence must be in canonical order");
-                  }
-                  return evidence;
-                  '''),
-                  block('''
-                  const suppliedEvidence = input.map((item) => {
-                    const record = requireRecord(item, "Delivery Desk evidence");
-                    rejectUnknownKeys(
-                      record,
-                      ["kind", "reference", "observedAt", "fingerprint"],
-                      "Delivery Desk evidence",
-                    );
-                    return {
-                      kind: closedValue(record.kind, DELIVERY_EVIDENCE_KINDS, "Delivery Desk evidence kind"),
-                      reference: boundedText(record.reference, "Delivery Desk evidence reference", 240),
-                      observedAt: canonicalTimestamp(record.observedAt, "Delivery Desk evidence time"),
-                      fingerprint: sha256(record.fingerprint, "Delivery Desk evidence fingerprint"),
-                    };
-                  });
-                  const fingerprints = suppliedEvidence.map((item) => item.fingerprint);
-                  if (new Set(fingerprints).size !== fingerprints.length) {
-                    throw new Error("Delivery Desk evidence fingerprints must be unique");
-                  }
-                  const evidence = [...suppliedEvidence].sort(compareEvidence);
-                  if (
-                    JSON.stringify(suppliedEvidence.map((item) => item.fingerprint))
-                    !== JSON.stringify(evidence.map((item) => item.fingerprint))
-                  ) {
-                    throw new Error("Delivery Desk evidence must be in canonical order");
-                  }
-                  return evidence;
-                  '''),
-              ),
-              (
-                  block('''
-                  function validateStateInvariants(entry: DeliveryDeskEntry): void {
-                    if (entry.selectedState === "land-now") {
-                  '''),
-                  block('''
-                  function validateStateInvariants(entry: DeliveryDeskEntry): void {
-                    if (
-                      entry.reviewFingerprint !== null
-                      && !entry.evidence.some((evidence) =>
-                        evidence.kind === "review"
-                        && evidence.fingerprint === entry.reviewFingerprint
-                      )
-                    ) {
-                      throw new Error("Delivery Desk review fingerprint must match retained review evidence");
-                    }
-                    if (entry.selectedState === "land-now") {
-                  '''),
-              ),
-          ]
+          def with_indent(value: str, width: int) -> str:
+              prefix = ' ' * width
+              return '\n'.join(prefix + line if line else line for line in value.splitlines())
 
-          for old, new in replacements:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'Delivery Desk source anchor matched {count} times: {old[:120]!r}')
-              text = text.replace(old, new, 1)
+          def replace_indented(document: str, old: str, new: str, label: str) -> str:
+              old = block(old)
+              new = block(new)
+              matches = []
+              for width in range(0, 25):
+                  candidate = with_indent(old, width)
+                  count = document.count(candidate)
+                  matches.extend([(candidate, width)] * count)
+              if len(matches) != 1:
+                  raise SystemExit(f'{label} matched {len(matches)} times')
+              candidate, width = matches[0]
+              return document.replace(candidate, with_indent(new, width), 1)
+
+          source = Path('src/delivery-desk.ts')
+          text = source.read_text(encoding='utf-8')
+          text = replace_indented(text, '''
+          const suppliedEntries = record.entries as unknown[];
+          if (JSON.stringify(projection.entries) !== JSON.stringify(suppliedEntries)) {
+            throw new Error("Delivery Desk entries must be in canonical finish-line order");
+          }
+          ''', '''
+          const suppliedEntries = (record.entries as unknown[]).map(parseDeliveryDeskEntry);
+          const suppliedOrder = suppliedEntries.map((entry) => deliveryDeskIssueKey(entry.issue));
+          const canonicalOrder = projection.entries.map((entry) => deliveryDeskIssueKey(entry.issue));
+          if (JSON.stringify(suppliedOrder) !== JSON.stringify(canonicalOrder)) {
+            throw new Error("Delivery Desk entries must be in canonical finish-line order");
+          }
+          ''', 'projection order boundary')
+
+          text = replace_indented(text, '''
+          const evidence = input.map((item) => {
+            const record = requireRecord(item, "Delivery Desk evidence");
+            rejectUnknownKeys(
+              record,
+              ["kind", "reference", "observedAt", "fingerprint"],
+              "Delivery Desk evidence",
+            );
+            return {
+              kind: closedValue(record.kind, DELIVERY_EVIDENCE_KINDS, "Delivery Desk evidence kind"),
+              reference: boundedText(record.reference, "Delivery Desk evidence reference", 240),
+              observedAt: canonicalTimestamp(record.observedAt, "Delivery Desk evidence time"),
+              fingerprint: sha256(record.fingerprint, "Delivery Desk evidence fingerprint"),
+            };
+          }).sort(compareEvidence);
+          const fingerprints = evidence.map((item) => item.fingerprint);
+          if (new Set(fingerprints).size !== fingerprints.length) {
+            throw new Error("Delivery Desk evidence fingerprints must be unique");
+          }
+          if (JSON.stringify(evidence) !== JSON.stringify(input)) {
+            throw new Error("Delivery Desk evidence must be in canonical order");
+          }
+          return evidence;
+          ''', '''
+          const suppliedEvidence = input.map((item) => {
+            const record = requireRecord(item, "Delivery Desk evidence");
+            rejectUnknownKeys(
+              record,
+              ["kind", "reference", "observedAt", "fingerprint"],
+              "Delivery Desk evidence",
+            );
+            return {
+              kind: closedValue(record.kind, DELIVERY_EVIDENCE_KINDS, "Delivery Desk evidence kind"),
+              reference: boundedText(record.reference, "Delivery Desk evidence reference", 240),
+              observedAt: canonicalTimestamp(record.observedAt, "Delivery Desk evidence time"),
+              fingerprint: sha256(record.fingerprint, "Delivery Desk evidence fingerprint"),
+            };
+          });
+          const fingerprints = suppliedEvidence.map((item) => item.fingerprint);
+          if (new Set(fingerprints).size !== fingerprints.length) {
+            throw new Error("Delivery Desk evidence fingerprints must be unique");
+          }
+          const evidence = [...suppliedEvidence].sort(compareEvidence);
+          if (
+            JSON.stringify(suppliedEvidence.map((item) => item.fingerprint))
+            !== JSON.stringify(evidence.map((item) => item.fingerprint))
+          ) {
+            throw new Error("Delivery Desk evidence must be in canonical order");
+          }
+          return evidence;
+          ''', 'evidence semantic order boundary')
+
+          text = replace_indented(text, '''
+          function validateStateInvariants(entry: DeliveryDeskEntry): void {
+            if (entry.selectedState === "land-now") {
+          ''', '''
+          function validateStateInvariants(entry: DeliveryDeskEntry): void {
+            if (
+              entry.reviewFingerprint !== null
+              && !entry.evidence.some((evidence) =>
+                evidence.kind === "review"
+                && evidence.fingerprint === entry.reviewFingerprint
+              )
+            ) {
+              throw new Error("Delivery Desk review fingerprint must match retained review evidence");
+            }
+            if (entry.selectedState === "land-now") {
+          ''', 'review evidence invariant')
           source.write_text(text, encoding='utf-8')
 
           tests = Path('test/delivery-desk.test.ts')
           test_text = tests.read_text(encoding='utf-8')
-          old = block('''
+          test_text = replace_indented(test_text, '''
               fingerprint: hash(issueNumber),
             }],
             disposition: "accept",
-          ''')
-          new = block('''
+          ''', '''
               fingerprint: hash(issueNumber + 2),
             }],
             disposition: "accept",
-          ''')
-          if test_text.count(old) != 1:
-              raise SystemExit('Delivery Desk helper evidence anchor mismatch')
-          test_text = test_text.replace(old, new, 1)
+          ''', 'test helper review evidence')
 
           old = '      evidenceFingerprints: [hash(13)],'
           new = '      evidenceFingerprints: [hash(1)],'
           if test_text.count(old) != 1:
-              raise SystemExit('Delivery Desk stale evidence anchor mismatch')
+              raise SystemExit('stale evidence anchor mismatch')
           test_text = test_text.replace(old, new, 1)
 
-          anchor = block('''
-            expect(() => parseDeliveryDeskEntry(entry(571, {
-              selectedState: "final-gate",
-          ''')
-          addition = block('''
-            expect(() => parseDeliveryDeskEntry(entry(571, {
-              reviewFingerprint: hash(15),
-            }))).toThrow("review fingerprint must match retained review evidence");
+          test_text = replace_indented(test_text, '''
+          expect(() => parseDeliveryDeskEntry(entry(571, {
+            selectedState: "final-gate",
+          ''', '''
+          expect(() => parseDeliveryDeskEntry(entry(571, {
+            reviewFingerprint: hash(15),
+          }))).toThrow("review fingerprint must match retained review evidence");
 
-          ''')
-          if test_text.count(anchor) != 1:
-              raise SystemExit('Delivery Desk review-evidence test anchor mismatch')
-          test_text = test_text.replace(anchor, addition + anchor, 1)
+          expect(() => parseDeliveryDeskEntry(entry(571, {
+            selectedState: "final-gate",
+          ''', 'review evidence test')
 
-          anchor = block('''
-            const projection = createDeliveryDeskProjection({
-              observedAt,
-              entries: [entry(571), entry(572)],
-            });
-            expect(() => parseDeliveryDeskProjection({
-          ''')
-          replacement = block('''
-            const projection = createDeliveryDeskProjection({
-              observedAt,
-              entries: [entry(571), entry(572)],
-            });
-            const reordered = JSON.parse(JSON.stringify(projection));
-            reordered.entries[0] = Object.fromEntries(
-              Object.entries(reordered.entries[0]).reverse(),
-            );
-            reordered.entries[0].evidence[0] = Object.fromEntries(
-              Object.entries(reordered.entries[0].evidence[0]).reverse(),
-            );
-            expect(parseDeliveryDeskProjection(reordered)).toEqual(projection);
-            expect(() => parseDeliveryDeskProjection({
-          ''')
-          if test_text.count(anchor) != 1:
-              raise SystemExit('Delivery Desk reordered-object test anchor mismatch')
-          tests.write_text(test_text.replace(anchor, replacement, 1), encoding='utf-8')
+          test_text = replace_indented(test_text, '''
+          const projection = createDeliveryDeskProjection({
+            observedAt,
+            entries: [entry(571), entry(572)],
+          });
+          expect(() => parseDeliveryDeskProjection({
+          ''', '''
+          const projection = createDeliveryDeskProjection({
+            observedAt,
+            entries: [entry(571), entry(572)],
+          });
+          const reordered = JSON.parse(JSON.stringify(projection));
+          reordered.entries[0] = Object.fromEntries(
+            Object.entries(reordered.entries[0]).reverse(),
+          );
+          reordered.entries[0].evidence[0] = Object.fromEntries(
+            Object.entries(reordered.entries[0].evidence[0]).reverse(),
+          );
+          expect(parseDeliveryDeskProjection(reordered)).toEqual(projection);
+          expect(() => parseDeliveryDeskProjection({
+          ''', 'reordered object-key control')
+          tests.write_text(test_text, encoding='utf-8')
           PY
 
       - name: Run focused and repository gates
