@@ -3,6 +3,12 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA that this run must validate
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,6 +18,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Verify manually dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
       - uses: oven-sh/setup-bun@v2
       - name: Prepare committed Bun lockfile candidate
         id: bun-lock
@@ -65,6 +81,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Verify manually dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v6
         with:

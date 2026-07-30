@@ -1,0 +1,186 @@
+name: Apply Bun lock candidate
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: >-
+    bun-lock-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_HEAD: ${{ github.event.workflow_run.head_sha }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      REPOSITORY_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Verify one current same-repository pull request
+        id: eligibility
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          pulls="$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f head="${REPOSITORY_OWNER}:${HEAD_BRANCH}"
+          )"
+
+          count="$(jq 'length' <<<"${pulls}")"
+          if [[ "${count}" != "1" ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Expected one open pull request for ${HEAD_BRANCH}; found ${count}." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          pull_head_repository="$(jq -r '.[0].head.repo.full_name' <<<"${pulls}")"
+          pull_head_sha="$(jq -r '.[0].head.sha' <<<"${pulls}")"
+          pull_number="$(jq -r '.[0].number' <<<"${pulls}")"
+
+          if [[ "${pull_head_repository}" != "${GITHUB_REPOSITORY}" ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Pull request #${pull_number} is not sourced from this repository." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          if [[ "${pull_head_sha}" != "${EXPECTED_HEAD}" ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Pull request #${pull_number} advanced beyond triggering head ${EXPECTED_HEAD}." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          echo "eligible=true" >>"${GITHUB_OUTPUT}"
+          echo "pull_number=${pull_number}" >>"${GITHUB_OUTPUT}"
+
+      - name: Check out the exact pull-request head
+        if: steps.eligibility.outputs.eligible == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.HEAD_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Bun
+        if: steps.eligibility.outputs.eligible == 'true'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Regenerate and fence the Bun lockfile
+        if: steps.eligibility.outputs.eligible == 'true'
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          checked_out_head="$(git rev-parse HEAD)"
+          if [[ "${checked_out_head}" != "${EXPECTED_HEAD}" ]]; then
+            echo "Checked-out head ${checked_out_head} does not match triggering head ${EXPECTED_HEAD}." >&2
+            exit 1
+          fi
+
+          if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "The exact pull-request head did not produce a clean worktree." >&2
+            exit 1
+          fi
+
+          committed_sha256="sha256:$(sha256sum bun.lock | awk '{print $1}')"
+          bun install --lockfile-only --ignore-scripts
+
+          mapfile -t changed_paths < <(
+            git status --porcelain=v1 --untracked-files=all \
+              | sed -E 's/^.. //'
+          )
+
+          if [[ "${#changed_paths[@]}" == "0" ]]; then
+            echo "changed=false" >>"${GITHUB_OUTPUT}"
+            echo "The committed Bun lockfile already matches package declarations." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          if [[ "${#changed_paths[@]}" != "1" || "${changed_paths[0]}" != "bun.lock" ]]; then
+            printf 'Lock generation changed an unsupported path: %s\n' "${changed_paths[@]}" >&2
+            exit 1
+          fi
+
+          candidate_sha256="sha256:$(sha256sum bun.lock | awk '{print $1}')"
+          if [[ "${candidate_sha256}" == "${committed_sha256}" ]]; then
+            echo "bun.lock has a worktree diff without a content digest change." >&2
+            exit 1
+          fi
+
+          echo "changed=true" >>"${GITHUB_OUTPUT}"
+          echo "committed_sha256=${committed_sha256}" >>"${GITHUB_OUTPUT}"
+          echo "candidate_sha256=${candidate_sha256}" >>"${GITHUB_OUTPUT}"
+
+      - name: Commit, publish, and validate only the generated lockfile
+        if: >-
+          steps.eligibility.outputs.eligible == 'true' &&
+          steps.generate.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$(git rev-parse HEAD)" != "${EXPECTED_HEAD}" ]]; then
+            echo "Branch head changed before lockfile publication." >&2
+            exit 1
+          fi
+
+          mapfile -t changed_paths < <(
+            git status --porcelain=v1 --untracked-files=all \
+              | sed -E 's/^.. //'
+          )
+          if [[ "${#changed_paths[@]}" != "1" || "${changed_paths[0]}" != "bun.lock" ]]; then
+            printf 'Publication fence rejected path: %s\n' "${changed_paths[@]}" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- bun.lock
+          git commit -m "Update Bun lockfile for ${EXPECTED_HEAD:0:12}"
+          generated_head="$(git rev-parse HEAD)"
+
+          gh auth setup-git
+          git push origin \
+            "HEAD:refs/heads/${HEAD_BRANCH}" \
+            --force-with-lease="refs/heads/${HEAD_BRANCH}:${EXPECTED_HEAD}"
+
+          remote_head="$(git ls-remote origin "refs/heads/${HEAD_BRANCH}" | awk '{print $1}')"
+          if [[ "${remote_head}" != "${generated_head}" ]]; then
+            echo "Published branch advanced to ${remote_head}; expected generated head ${generated_head}." >&2
+            exit 1
+          fi
+
+          gh workflow run ci.yml \
+            --ref "${HEAD_BRANCH}" \
+            -f expected_sha="${generated_head}"
+
+          {
+            echo "Updated Bun lockfile for pull request #${{ steps.eligibility.outputs.pull_number }}."
+            echo ""
+            echo "- triggering head: \`${EXPECTED_HEAD}\`"
+            echo "- generated commit: \`${generated_head}\`"
+            echo "- committed lock: \`${{ steps.generate.outputs.committed_sha256 }}\`"
+            echo "- generated lock: \`${{ steps.generate.outputs.candidate_sha256 }}\`"
+            echo "- changed path: \`bun.lock\`"
+            echo "- validation: explicit CI dispatch bound to the generated commit"
+          } >>"${GITHUB_STEP_SUMMARY}"
