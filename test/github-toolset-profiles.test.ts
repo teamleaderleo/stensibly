@@ -8,7 +8,6 @@ describe("GitHub toolset profiles", () => {
   test("tracks the official toolset inventory without a fixed count contract", () => {
     const names = githubUpstreamToolsets.map((toolset) => toolset.name);
 
-    expect(new Set(names).size).toBe(names.length);
     for (const requiredName of [
       "actions",
       "issues",
@@ -16,9 +15,10 @@ describe("GitHub toolset profiles", () => {
       "pull_requests",
       "repos",
       "users",
-    ]) {
+    ] as const) {
       expect(names).toContain(requiredName);
     }
+    expect(new Set(names).size).toBe(names.length);
     expect(names).not.toContain("default");
     expect(names).not.toContain("all");
   });
