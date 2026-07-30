@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { registerGitHubCapabilityTools } from "./github-capability-mcp.js";
 import type { GitHubIssueContext } from "./github-issue-context.js";
 import type { GitHubProviderRequestContext } from "./github-provider-contracts.js";
 import type { WorkLedger } from "./ledger.js";
@@ -41,6 +42,8 @@ export function registerGitHubIssueProviderTools(
   ledger: WorkLedger,
   context: McpRequestContext,
 ): void {
+  registerGitHubCapabilityTools(server);
+
   server.registerTool(
     "github_list_issues",
     {
