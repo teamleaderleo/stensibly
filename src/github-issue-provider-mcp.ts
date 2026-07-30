@@ -158,7 +158,7 @@ function projectSchema() {
     .trim()
     .min(1)
     .max(80)
-    .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug");
+    .regex(/^[a-z0-9][a-z0-9_-]*$/, "Use a lowercase project slug");
 }
 
 function repositorySchema() {
