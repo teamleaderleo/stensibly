@@ -4,12 +4,19 @@ import {
   normalizeEndpoint,
   readItems,
 } from './connection.js';
+import {
+  DASHBOARD_VISIBILITY_WAKE_MS,
+  acceptDashboardRefreshResult,
+  clearDashboardRefreshState,
+  dashboardRefreshDelay,
+  dashboardRefreshMode,
+  readDashboardRefreshState,
+} from './dashboard-refresh-policy.js';
 import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
-const REFRESH_INTERVAL_MS = 15000;
 
 const form = document.querySelector('#connect-form');
 const dashboard = document.querySelector('#dashboard');
@@ -32,12 +39,17 @@ const columns = [
   ['done', 'Done', 'completed work'],
 ];
 
+const browserSessionStorage = optionalSessionStorage();
+const storedRefreshState = readDashboardRefreshState(browserSessionStorage);
 let items = [];
 let refreshTimer;
+let refreshLevel = storedRefreshState.level;
+let refreshFingerprint = storedRefreshState.fingerprint;
+let lastSuccessfulUpdateLabel = '';
 let requestGeneration = 0;
 let connected = false;
 let endpoint = savedEndpoint();
-let token = sessionStorage.stensiblyToken || '';
+let token = readSessionValue('stensiblyToken');
 
 let itemDetail;
 let itemCreate;
@@ -59,7 +71,7 @@ itemDetail = createItemDetailController({
   }),
   reportConnectionIssue: (message) => showConnectedIssue(message),
   onChanged: async () => {
-    await refreshCurrent();
+    await refreshCurrent({ interactive: true });
   },
 });
 itemCreate = createItemCreateController({
@@ -91,6 +103,7 @@ document.querySelector('#change-connection').addEventListener('click', beginConn
 document.querySelector('#disconnect-connection').addEventListener('click', disconnect);
 cancelConnection.addEventListener('click', cancelConnectionChange);
 projectFilter.addEventListener('change', render);
+document.addEventListener('visibilitychange', handleVisibilityChange);
 
 if (token && isPlausibleToken(token)) {
   void refreshCurrent({ initial: true });
@@ -139,6 +152,7 @@ async function connect(event) {
   if (endpointChanged || tokenChanged) {
     itemDetail.reset();
     sessionContext.reset();
+    resetRefreshPolicy();
   }
   setConnectionStatus('connecting');
   try {
@@ -146,10 +160,10 @@ async function connect(event) {
     if (!isCurrentRequest(requestId)) return;
     endpoint = candidateEndpoint;
     token = candidateToken;
-    items = nextItems;
+    acceptRefreshResult(nextItems, { initial: true });
     connected = true;
     localStorage.stensiblyEndpoint = endpoint;
-    sessionStorage.stensiblyToken = token;
+    writeSessionValue('stensiblyToken', token);
     form.elements.endpoint.value = endpoint;
     form.elements.token.value = '';
     updateDashboard();
@@ -169,6 +183,7 @@ async function connect(event) {
       items = [];
       itemDetail.reset();
       sessionContext.reset();
+      resetRefreshPolicy();
     }
     showConnectionForm(message, {
       keepDashboard: connected,
@@ -182,6 +197,10 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     showConnectionForm();
     return;
   }
+  if (!interactive && !initial && document.hidden) {
+    scheduleRefresh();
+    return;
+  }
 
   clearRefreshTimer();
   const requestId = beginRequest();
@@ -190,7 +209,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
   try {
     const nextItems = await loadItems(endpoint, token);
     if (!isCurrentRequest(requestId)) return;
-    items = nextItems;
+    acceptRefreshResult(nextItems, { interactive, initial });
     connected = true;
     updateDashboard();
     showConnectedState();
@@ -206,6 +225,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
       items = [];
       itemDetail.reset();
       sessionContext.reset();
+      resetRefreshPolicy();
       showConnectionForm(message);
       return;
     }
@@ -306,6 +326,7 @@ function disconnect() {
   clearStoredToken();
   connected = false;
   items = [];
+  resetRefreshPolicy();
   form.elements.endpoint.value = endpoint;
   form.elements.token.value = '';
   showConnectionForm();
@@ -313,8 +334,40 @@ function disconnect() {
 
 function clearStoredToken() {
   token = '';
-  sessionStorage.removeItem('stensiblyToken');
+  removeSessionValue('stensiblyToken');
   form.elements.token.value = '';
+}
+
+function optionalSessionStorage() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readSessionValue(key) {
+  try {
+    return browserSessionStorage?.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeSessionValue(key, value) {
+  try {
+    browserSessionStorage?.setItem(key, value);
+  } catch {
+    // Session persistence is optional; the accepted in-memory result remains authoritative.
+  }
+}
+
+function removeSessionValue(key) {
+  try {
+    browserSessionStorage?.removeItem(key);
+  } catch {
+    // Disconnect and reset remain available when storage access is blocked.
+  }
 }
 
 function beginRequest() {
@@ -390,16 +443,68 @@ function setConnectionStatus(label, isError = false) {
   connectionState.classList.toggle('error', isError);
 }
 
+function acceptRefreshResult(nextItems, { interactive = false, initial = false } = {}) {
+  const nextState = acceptDashboardRefreshResult({
+    storage: browserSessionStorage,
+    previousFingerprint: refreshFingerprint,
+    currentLevel: refreshLevel,
+    nextItems,
+    interactive,
+    initial,
+  });
+  items = nextState.items;
+  refreshLevel = nextState.level;
+  refreshFingerprint = nextState.fingerprint;
+}
+
+function resetRefreshPolicy() {
+  refreshLevel = 0;
+  refreshFingerprint = '';
+  lastSuccessfulUpdateLabel = '';
+  clearDashboardRefreshState(browserSessionStorage);
+}
+
 function updateDashboard() {
   populateProjects();
   render();
-  lastUpdated.textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  lastSuccessfulUpdateLabel = new Date().toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
   itemDetail.reconcile();
 }
 
 function scheduleRefresh() {
   clearRefreshTimer();
-  refreshTimer = setTimeout(() => void refreshCurrent(), REFRESH_INTERVAL_MS);
+  if (!connected) return;
+  if (document.hidden) {
+    renderRefreshMode(dashboardRefreshMode({ hidden: true, level: refreshLevel }));
+    return;
+  }
+  const delay = dashboardRefreshDelay(refreshLevel);
+  renderRefreshMode(dashboardRefreshMode({ hidden: false, level: refreshLevel }));
+  refreshTimer = setTimeout(() => void refreshCurrent(), delay);
+}
+
+function handleVisibilityChange() {
+  clearRefreshTimer();
+  if (!connected) return;
+  if (document.hidden) {
+    renderRefreshMode(dashboardRefreshMode({ hidden: true, level: refreshLevel }));
+    return;
+  }
+  renderRefreshMode(dashboardRefreshMode({ hidden: false, level: refreshLevel, waking: true }));
+  refreshTimer = setTimeout(
+    () => void refreshCurrent(),
+    DASHBOARD_VISIBILITY_WAKE_MS,
+  );
+}
+
+function renderRefreshMode(mode) {
+  const updated = lastSuccessfulUpdateLabel
+    ? `updated ${lastSuccessfulUpdateLabel}`
+    : 'waiting for update';
+  lastUpdated.textContent = `${updated} · ${mode}`;
 }
 
 function clearRefreshTimer() {
