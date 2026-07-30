@@ -1,3 +1,4 @@
+/** Static, fixture-only frontend lab identities shared by the catalogue and source contracts. */
 export type FrontendLabStatus = "planned" | "prototype";
 
 export type FrontendLabSupport =
