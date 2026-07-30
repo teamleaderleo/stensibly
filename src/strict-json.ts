@@ -130,14 +130,12 @@ function parseNumber(
   }
 }
 
-function parseValue(
-  text: string,
-  cursor: Cursor,
+function enterContainer(
   depth: number,
   settings: StrictJsonSettings,
   path: string,
 ): void {
-  if (depth > settings.maxDepth) {
+  if (depth >= settings.maxDepth) {
     fail(
       settings,
       "TOO_DEEP",
@@ -145,13 +143,24 @@ function parseValue(
       path,
     );
   }
+}
+
+function parseValue(
+  text: string,
+  cursor: Cursor,
+  depth: number,
+  settings: StrictJsonSettings,
+  path: string,
+): void {
   skipWhitespace(text, cursor);
   const char = text[cursor.index];
   if (char === "{") {
+    enterContainer(depth, settings, path);
     parseObject(text, cursor, depth + 1, settings, path);
     return;
   }
   if (char === "[") {
+    enterContainer(depth, settings, path);
     parseArray(text, cursor, depth + 1, settings, path);
     return;
   }
@@ -186,18 +195,20 @@ function parseObject(
     return;
   }
   const keys = new Set<string>();
+  let entryIndex = 0;
   while (cursor.index < text.length) {
+    const entryPath = `${path}.object[${entryIndex}]`;
     skipWhitespace(text, cursor);
     if (text[cursor.index] !== '"') {
-      fail(settings, "INVALID_JSON", "Object keys must be strings.", path);
+      fail(settings, "INVALID_JSON", "Object keys must be strings.", entryPath);
     }
-    const key = parseString(text, cursor, settings, path);
+    const key = parseString(text, cursor, settings, `${entryPath}.key`);
     if (keys.has(key)) {
       fail(
         settings,
         "DUPLICATE_KEY",
-        `Duplicate JSON key: ${key}.`,
-        `${path}.${key}`,
+        "Duplicate JSON object key.",
+        entryPath,
       );
     }
     keys.add(key);
@@ -215,11 +226,11 @@ function parseObject(
         settings,
         "INVALID_JSON",
         "Expected colon after object key.",
-        `${path}.${key}`,
+        entryPath,
       );
     }
     cursor.index += 1;
-    parseValue(text, cursor, depth, settings, `${path}.${key}`);
+    parseValue(text, cursor, depth, settings, `${entryPath}.value`);
     skipWhitespace(text, cursor);
     if (text[cursor.index] === "}") {
       cursor.index += 1;
@@ -234,6 +245,7 @@ function parseObject(
       );
     }
     cursor.index += 1;
+    entryIndex += 1;
   }
   fail(settings, "INVALID_JSON", "Unterminated JSON object.", path);
 }
