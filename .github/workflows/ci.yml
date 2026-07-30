@@ -108,3 +108,544 @@ jobs:
           name: runtime-parity-diagnostics
           path: runtime-parity-output.txt
           if-no-files-found: ignore
+
+  publish-workflow-run-observations:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/aster/591-workflow-run-observations'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v6
+        with:
+          ref: aster/591-workflow-run-observations
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+      - name: Build and publish source-only workflow-run observations
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git config user.name aster-stensibly
+          git config user.email aster-stensibly@users.noreply.github.com
+          git fetch origin main
+          git rebase origin/main
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          path = Path("src/github-repository-observation.ts")
+          text = path.read_text(encoding="utf-8")
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              old = dedent(old).strip("\n")
+              new = dedent(new).strip("\n")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label} anchor matched {count} times")
+              text = text.replace(old, new, 1)
+
+          replace_once('''
+            "pull_request_review_comment",
+            "issues",
+          ''', '''
+            "pull_request_review_comment",
+            "workflow_run",
+            "issues",
+          ''', "event list")
+
+          replace_once('''
+            | "pull_request_review_comment"
+            | "issue"
+          ''', '''
+            | "pull_request_review_comment"
+            | "workflow_run"
+            | "issue"
+          ''', "subject kind")
+
+          replace_once('''
+          const actionPattern = /^[a-z][a-z0-9_]{0,63}$/u;
+          const actorPattern =
+          ''', '''
+          const actionPattern = /^[a-z][a-z0-9_]{0,63}$/u;
+          const workflowEventPattern = /^[a-z][a-z0-9_]{0,63}$/u;
+          const actorPattern =
+          ''', "workflow event pattern")
+
+          replace_once('''
+              : eventType === "pull_request_review_comment"
+              ? mapPullRequestReviewComment(payload, common)
+              : eventType === "issues"
+          ''', '''
+              : eventType === "pull_request_review_comment"
+              ? mapPullRequestReviewComment(payload, common)
+              : eventType === "workflow_run"
+              ? mapWorkflowRun(payload, common)
+              : eventType === "issues"
+          ''', "dispatch")
+
+          mapper = dedent('''
+          function mapWorkflowRun(
+            payload: Record<string, unknown>,
+            common: CommonMapping,
+          ): MappedSemantics {
+            const action = exactWorkflowRunAction(payload.action);
+            const run = requiredRecord(
+              payload.workflow_run,
+              "GitHub workflow run payload",
+            );
+            const runId = providerId(run.id, "GitHub workflow run ID");
+            const workflowId = providerId(
+              run.workflow_id,
+              "GitHub workflow ID",
+            );
+            const runNumber = positiveInteger(
+              run.run_number,
+              "GitHub workflow run number",
+            );
+            const runAttempt = positiveInteger(
+              run.run_attempt,
+              "GitHub workflow run attempt",
+            );
+            const checkSuiteId = optionalProviderId(
+              run.check_suite_id,
+              "GitHub workflow run check suite ID",
+            );
+            const revision = canonicalRevision(
+              requiredString(run.head_sha, "GitHub workflow run head revision"),
+              "GitHub workflow run head revision",
+            );
+            const triggerEvent = boundedPattern(
+              requiredString(run.event, "GitHub workflow run trigger event"),
+              "GitHub workflow run trigger event",
+              workflowEventPattern,
+            );
+            const status = exactWorkflowRunStatus(run.status);
+            const conclusion = exactWorkflowRunConclusion(run.conclusion);
+            const headRepositoryRecord = optionalRecord(run.head_repository);
+            const headRepository = headRepositoryRecord
+              ? normalizeGitHubRepository(requiredString(
+                headRepositoryRecord.full_name,
+                "GitHub workflow run head repository",
+              ))
+              : common.repository;
+            const time = sourceTime(
+              run.updated_at ?? run.run_started_at ?? run.created_at,
+              "GitHub workflow run updated time",
+              common.receivedAt,
+            );
+            return {
+              action,
+              subject: {
+                kind: "workflow_run",
+                externalId: `github:${common.repository}#workflow-run/${runId}`,
+              },
+              relationships: relationships(common.repository, { revision }),
+              facts: {
+                workflowId,
+                runNumber,
+                runAttempt,
+                checkSuiteId,
+                triggerEvent,
+                status,
+                conclusion,
+                headRepository: headRepository === common.repository
+                  ? null
+                  : headRepository,
+              },
+              contentRevisions: [],
+              ...time,
+            };
+          }
+
+          ''')
+          anchor = "function mapIssue(\n"
+          if text.count(anchor) != 1:
+              raise SystemExit(f"mapIssue anchor matched {text.count(anchor)} times")
+          text = text.replace(anchor, mapper + anchor, 1)
+
+          helpers = dedent('''
+          function exactWorkflowRunAction(
+            value: unknown,
+          ): "requested" | "in_progress" | "completed" {
+            if (value === "requested" || value === "in_progress" || value === "completed") {
+              return value;
+            }
+            throw new RangeError("GitHub workflow run action is invalid");
+          }
+
+          function exactWorkflowRunStatus(
+            value: unknown,
+          ): "queued" | "in_progress" | "completed" | "requested" | "waiting" | "pending" {
+            if (
+              value === "queued"
+              || value === "in_progress"
+              || value === "completed"
+              || value === "requested"
+              || value === "waiting"
+              || value === "pending"
+            ) {
+              return value;
+            }
+            throw new RangeError("GitHub workflow run status is invalid");
+          }
+
+          function exactWorkflowRunConclusion(
+            value: unknown,
+          ): "action_required" | "cancelled" | "failure" | "neutral" | "skipped" | "stale" | "startup_failure" | "success" | "timed_out" | null {
+            if (value === null || value === undefined) return null;
+            if (
+              value === "action_required"
+              || value === "cancelled"
+              || value === "failure"
+              || value === "neutral"
+              || value === "skipped"
+              || value === "stale"
+              || value === "startup_failure"
+              || value === "success"
+              || value === "timed_out"
+            ) {
+              return value;
+            }
+            throw new RangeError("GitHub workflow run conclusion is invalid");
+          }
+
+          ''')
+          anchor = 'function exactRefType(value: unknown): "branch" | "tag" {\n'
+          if text.count(anchor) != 1:
+              raise SystemExit(f"exactRefType anchor matched {text.count(anchor)} times")
+          text = text.replace(anchor, helpers + anchor, 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          cat > test/github-workflow-run-observation.test.ts <<'EOF'
+          import { describe, expect, test } from "bun:test";
+          import {
+            digestGitHubWebhookPayload,
+            mapGitHubRepositoryWebhook,
+          } from "../src/github-repository-observation.ts";
+
+          const repository = "teamleaderleo/stensibly";
+          const revision = "a".repeat(40);
+          const receivedAt = "2026-07-31T06:20:05.000Z";
+
+          function map(
+            payload: Record<string, unknown>,
+            deliveryId = "delivery-workflow-run",
+          ) {
+            const body = new TextEncoder().encode(JSON.stringify(payload));
+            return mapGitHubRepositoryWebhook({
+              eventType: "workflow_run",
+              deliveryId,
+              payloadDigest: digestGitHubWebhookPayload(body),
+              payload,
+              signatureVerified: true,
+              receivedAt,
+              expectedRepository: repository,
+            })!;
+          }
+
+          function payload(
+            overrides: Record<string, unknown> = {},
+          ): Record<string, unknown> {
+            return {
+              action: "completed",
+              repository: { full_name: repository },
+              sender: { login: "github-actions[bot]" },
+              workflow: {
+                id: 808,
+                name: "Private workflow presentation",
+                path: ".github/workflows/private-ci.yml",
+              },
+              workflow_run: {
+                id: "9007199254740995",
+                workflow_id: "9007199254740996",
+                run_number: 120,
+                run_attempt: 2,
+                check_suite_id: "9007199254740997",
+                head_sha: revision,
+                event: "pull_request",
+                status: "completed",
+                conclusion: "success",
+                name: "Private run name",
+                path: ".github/workflows/private-ci.yml@main",
+                display_title: "Private pull request title",
+                logs_url: "https://api.github.com/private/logs",
+                jobs_url: "https://api.github.com/private/jobs",
+                artifacts_url: "https://api.github.com/private/artifacts",
+                pull_requests: [{ number: 649, title: "Private PR title" }],
+                created_at: "2026-07-31T06:18:00.000Z",
+                run_started_at: "2026-07-31T06:18:10.000Z",
+                updated_at: "2026-07-31T06:20:00.000Z",
+                head_repository: { full_name: "fork-owner/stensibly" },
+              },
+              ...overrides,
+            };
+          }
+
+          describe("GitHub workflow run observations", () => {
+            test("maps run identity and outcome without retaining workflow presentation or execution payloads", () => {
+              const observation = map(payload());
+
+              expect(observation).toMatchObject({
+                eventType: "workflow_run",
+                action: "completed",
+                repository,
+                actor: "github-actions[bot]",
+                subject: {
+                  kind: "workflow_run",
+                  externalId:
+                    `github:${repository}#workflow-run/9007199254740995`,
+                },
+                relationships: { revision },
+                facts: {
+                  workflowId: "9007199254740996",
+                  runNumber: 120,
+                  runAttempt: 2,
+                  checkSuiteId: "9007199254740997",
+                  triggerEvent: "pull_request",
+                  status: "completed",
+                  conclusion: "success",
+                  headRepository: "fork-owner/stensibly",
+                },
+                contentRevisions: [],
+                sourceTime: "2026-07-31T06:20:00.000Z",
+                sourceTimeSource: "provider",
+                containsRawContent: false,
+              });
+              const serialized = JSON.stringify(observation);
+              for (const excluded of [
+                "Private workflow presentation",
+                ".github/workflows/private-ci.yml",
+                "Private run name",
+                "Private pull request title",
+                "Private PR title",
+                "api.github.com/private/logs",
+                "api.github.com/private/jobs",
+                "api.github.com/private/artifacts",
+              ]) {
+                expect(serialized).not.toContain(excluded);
+              }
+              expect(Object.isFrozen(observation)).toBe(true);
+              expect(Object.isFrozen(observation.relationships)).toBe(true);
+              expect(Object.isFrozen(observation.facts)).toBe(true);
+            });
+
+            test("maps requested and in-progress runs with nullable outcome and bounded time fallbacks", () => {
+              const requested = map(payload({
+                action: "requested",
+                workflow_run: {
+                  id: 41,
+                  workflow_id: 51,
+                  run_number: 7,
+                  run_attempt: 1,
+                  check_suite_id: null,
+                  head_sha: revision,
+                  event: "workflow_dispatch",
+                  status: "queued",
+                  conclusion: null,
+                  created_at: "2026-07-31T06:21:00.000Z",
+                  head_repository: { full_name: repository },
+                },
+              }), "delivery-requested-run");
+              expect(requested).toMatchObject({
+                action: "requested",
+                facts: {
+                  workflowId: "51",
+                  runNumber: 7,
+                  runAttempt: 1,
+                  checkSuiteId: null,
+                  triggerEvent: "workflow_dispatch",
+                  status: "queued",
+                  conclusion: null,
+                  headRepository: null,
+                },
+                sourceTime: "2026-07-31T06:21:00.000Z",
+                sourceTimeSource: "provider",
+              });
+
+              const inProgress = map(payload({
+                action: "in_progress",
+                workflow_run: {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 8,
+                  run_attempt: 3,
+                  head_sha: revision,
+                  event: "push",
+                  status: "in_progress",
+                  conclusion: null,
+                  run_started_at: "2026-07-31T06:22:00.000Z",
+                  head_repository: null,
+                },
+              }), "delivery-in-progress-run");
+              expect(inProgress).toMatchObject({
+                action: "in_progress",
+                facts: {
+                  checkSuiteId: null,
+                  status: "in_progress",
+                  conclusion: null,
+                  headRepository: null,
+                },
+                sourceTime: "2026-07-31T06:22:00.000Z",
+                sourceTimeSource: "provider",
+              });
+
+              const received = map(payload({
+                workflow_run: {
+                  id: 43,
+                  workflow_id: 53,
+                  run_number: 9,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "schedule",
+                  status: "completed",
+                  conclusion: "cancelled",
+                },
+              }), "delivery-received-time-run");
+              expect(received).toMatchObject({
+                sourceTime: receivedAt,
+                sourceTimeSource: "received",
+              });
+            });
+
+            test("keeps delivery identity separate from workflow-run semantics", () => {
+              const first = map(payload(), "delivery-one");
+              const second = map(payload(), "delivery-two");
+
+              expect(first.observationId).not.toBe(second.observationId);
+              expect(first.deliveryId).not.toBe(second.deliveryId);
+              expect(first.semanticFingerprint).toBe(second.semanticFingerprint);
+              expect(first.payloadDigest).toBe(second.payloadDigest);
+            });
+
+            test("rejects unknown actions, states, conclusions, identities, revisions, events, and repositories", () => {
+              expect(() => map(payload({ action: "queued" })))
+                .toThrow("workflow run action is invalid");
+              expect(() => map(payload({
+                workflow_run: {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "push",
+                  status: "unknown",
+                  conclusion: null,
+                },
+              }))).toThrow("workflow run status is invalid");
+              expect(() => map(payload({
+                workflow_run: {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "push",
+                  status: "completed",
+                  conclusion: "unknown",
+                },
+              }))).toThrow("workflow run conclusion is invalid");
+              for (const workflowRun of [
+                {
+                  id: 0,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "push",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  id: 42,
+                  workflow_id: 0,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "push",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 0,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "push",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 0,
+                  head_sha: revision,
+                  event: "push",
+                  status: "completed",
+                  conclusion: "success",
+                },
+              ]) {
+                expect(() => map(payload({ workflow_run: workflowRun }))).toThrow();
+              }
+              expect(() => map(payload({
+                workflow_run: {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: "abc",
+                  event: "push",
+                  status: "completed",
+                  conclusion: "success",
+                },
+              }))).toThrow("full Git revision");
+              expect(() => map(payload({
+                workflow_run: {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "Pull Request",
+                  status: "completed",
+                  conclusion: "success",
+                },
+              }))).toThrow("trigger event is invalid");
+              expect(() => map(payload({
+                workflow_run: {
+                  id: 42,
+                  workflow_id: 52,
+                  run_number: 1,
+                  run_attempt: 1,
+                  head_sha: revision,
+                  event: "push",
+                  status: "completed",
+                  conclusion: "success",
+                  head_repository: { full_name: "Invalid Repository" },
+                },
+              }))).toThrow();
+            });
+          });
+          EOF
+
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+          git checkout origin/main -- .github/workflows/ci.yml
+          git add src/github-repository-observation.ts test/github-workflow-run-observation.test.ts .github/workflows/ci.yml
+          git diff --cached --check
+          git commit -m "Map workflow runs into repository observations"
+          git push --force-with-lease origin HEAD:aster/591-workflow-run-observations
