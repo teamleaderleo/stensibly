@@ -53,9 +53,14 @@ export interface PreparedGitHubWebhookDelivery {
   readonly payloadDigest: string;
   readonly bodyByteLength: number;
   readonly receivedAt: string;
+  /**
+   * Verified provider JSON for immediate in-process consumers. This property is
+   * deliberately non-enumerable so receipts and ordinary JSON logging omit it.
+   */
   readonly payload: unknown;
   readonly observation: GitHubRepositoryObservation | null;
   readonly signatureAlgorithm: "hmac-sha256";
+  readonly payloadAvailability: "memory_only";
   readonly containsRawBody: false;
 }
 
@@ -183,17 +188,24 @@ async function prepareRequest(
     throw error;
   }
 
-  return deepFreeze({
+  const prepared = {
     deliveryId,
     eventType,
     payloadDigest,
     bodyByteLength: body.byteLength,
     receivedAt,
-    payload: frozenPayload,
     observation,
     signatureAlgorithm: "hmac-sha256" as const,
+    payloadAvailability: "memory_only" as const,
     containsRawBody: false as const,
+  } as PreparedGitHubWebhookDelivery;
+  Object.defineProperty(prepared, "payload", {
+    value: frozenPayload,
+    enumerable: false,
+    configurable: false,
+    writable: false,
   });
+  return deepFreeze(prepared);
 }
 
 function normalizeOptions(options: GitHubWebhookIngressOptions): NormalizedOptions {
@@ -280,10 +292,16 @@ async function readBoundedBody(
     }
     if (parsedLength > maxBodyBytes) throw payloadTooLarge();
   }
+  if (request.bodyUsed) throw bodyReadFailed();
 
   const stream = request.body;
   if (!stream) return new Uint8Array(0);
-  const reader = stream.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = stream.getReader();
+  } catch {
+    throw bodyReadFailed();
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -308,12 +326,7 @@ async function readBoundedBody(
     } catch {
       // The stream may already be closed or errored.
     }
-    throw new GitHubWebhookIngressError({
-      status: 400,
-      code: "invalid_request",
-      message: "GitHub webhook body could not be read",
-      detailCode: "GITHUB_WEBHOOK_BODY_READ_FAILED",
-    });
+    throw bodyReadFailed();
   } finally {
     reader.releaseLock();
   }
@@ -332,6 +345,15 @@ function payloadTooLarge(): GitHubWebhookIngressError {
     status: 413,
     code: "payload_too_large",
     message: "GitHub webhook body exceeds the configured bound",
+  });
+}
+
+function bodyReadFailed(): GitHubWebhookIngressError {
+  return new GitHubWebhookIngressError({
+    status: 400,
+    code: "invalid_request",
+    message: "GitHub webhook body could not be read",
+    detailCode: "GITHUB_WEBHOOK_BODY_READ_FAILED",
   });
 }
 
