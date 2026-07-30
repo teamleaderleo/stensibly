@@ -192,7 +192,7 @@ describe("GitHub webhook ingress", () => {
 
   test("rejects non-decimal Content-Length syntax", async () => {
     const ingress = createGitHubWebhookIngress({ secret });
-    for (const contentLength of ["1e3", "+2", " 2", "2 "]) {
+    for (const contentLength of ["1e3", "+2", "-1", "2.5"]) {
       const error = await ingressError(ingress(signedRequest("ping", "{}", {
         contentLength,
       })));
