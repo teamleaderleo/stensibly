@@ -26,13 +26,15 @@ describe("frontend labs static routes", () => {
     expect(productionApp).not.toContain("frontendLabManifest");
   });
 
-  test("publishes one stable HTML route for every manifest entry", () => {
+  test("publishes one stable sandbox-compatible HTML route for every manifest entry", () => {
     for (const variant of frontendLabManifest) {
       const html = source(join(variant.id, "index.html"));
       expect(html).toContain("data-stensibly-lab=");
       expect(html).toContain("../");
+      expect(html).not.toContain('type="module"');
       expect(html).not.toContain("stn.tok_");
     }
+    expect(source("planned.js")).not.toMatch(/^\s*import\s/m);
     expect(source("index.html")).toContain("data-stensibly-lab=\"catalogue\"");
   });
 
