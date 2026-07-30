@@ -1,4 +1,5 @@
 name: juniper-569-hosted-refresh-finalize
+# Retriggered after aligning the claim-refresh contract with interactive refresh.
 
 on:
   push:
