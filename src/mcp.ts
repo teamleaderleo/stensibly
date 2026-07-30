@@ -9,6 +9,9 @@ import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
 import { registerGitHubIssueProviderTools } from "./github-issue-provider-mcp.js";
 import type { WorkLedger } from "./ledger.js";
+import {
+  createMcpCapabilityRegistrationGuard,
+} from "./mcp-capability-policy.js";
 import type { McpRequestContext } from "./mcp-context.js";
 import { MCP_SERVER_VERSION } from "./mcp-diagnostics.js";
 import { asToolResult } from "./mcp-tool-result.js";
@@ -25,7 +28,7 @@ export function createMcpServer(
   ledger: WorkLedger,
   context: McpRequestContext = {},
 ): McpServer {
-  const server = new McpServer(
+  const rawServer = new McpServer(
     { name: "stensibly", version: MCP_SERVER_VERSION },
     {
       instructions: [
@@ -47,6 +50,8 @@ export function createMcpServer(
       ].join(" "),
     },
   );
+  const registration = createMcpCapabilityRegistrationGuard(rawServer);
+  const server = registration.server;
 
   server.registerTool(
     "get_brief",
@@ -282,7 +287,8 @@ export function createMcpServer(
   registerGitHubIssueProviderTools(server, ledger, context);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
-  return server;
+  registration.complete();
+  return rawServer;
 }
 
 function projectSchema() {
