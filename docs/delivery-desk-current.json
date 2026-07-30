@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-07-30T18:08:30.000Z",
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "issue": {
+        "repository": "teamleaderleo/stensibly",
+        "number": 564,
+        "url": "https://github.com/teamleaderleo/stensibly/issues/564"
+      },
+      "implementation": {
+        "repository": "teamleaderleo/stensibly",
+        "pullRequestNumber": 567,
+        "url": "https://github.com/teamleaderleo/stensibly/pull/567",
+        "branch": "juniper/564-convex-github-project-context",
+        "headSha": "ae42271bdff152792328d96e1ad4b22a5577545d"
+      },
+      "selectedState": "polish",
+      "riskTier": "tier_2",
+      "evidence": [],
+      "disposition": "repair",
+      "remainingGate": "run the current-main finalizer, transfer repaired source, and obtain exact-head CI plus review",
+      "owner": "actor:juniper",
+      "carrier": {
+        "kind": "workflow",
+        "reference": ".github/workflows/juniper-567-canonical-context-v2.yml",
+        "headSha": "ae42271bdff152792328d96e1ad4b22a5577545d",
+        "removable": true
+      },
+      "hostedState": "not_deployed",
+      "requiredInputFingerprint": "sha256:d8f891d3d02a97b3053f3d3a94496abacd1446e402729ca79d6ccbbf416ba122",
+      "reviewFingerprint": null
+    },
+    {
+      "schemaVersion": 1,
+      "issue": {
+        "repository": "teamleaderleo/stensibly",
+        "number": 566,
+        "url": "https://github.com/teamleaderleo/stensibly/issues/566"
+      },
+      "implementation": {
+        "repository": "teamleaderleo/stensibly",
+        "pullRequestNumber": 570,
+        "url": "https://github.com/teamleaderleo/stensibly/pull/570",
+        "branch": "juniper/566-coordination-graph-core",
+        "headSha": "dca37a9f11bdad99b4d987323ea93b76808e6826"
+      },
+      "selectedState": "polish",
+      "riskTier": "tier_1",
+      "evidence": [],
+      "disposition": "repair",
+      "remainingGate": "run the graph finalizer, remove validation machinery, and revalidate the exact source-only head",
+      "owner": "actor:juniper",
+      "carrier": {
+        "kind": "workflow",
+        "reference": ".github/workflows/juniper-570-finalize.yml",
+        "headSha": "dca37a9f11bdad99b4d987323ea93b76808e6826",
+        "removable": true
+      },
+      "hostedState": "not_applicable",
+      "requiredInputFingerprint": "sha256:8b818e338df48059593a9a331441c1161c784efd91e925cdce63a7e61e177671",
+      "reviewFingerprint": null
+    },
+    {
+      "schemaVersion": 1,
+      "issue": {
+        "repository": "teamleaderleo/stensibly",
+        "number": 572,
+        "url": "https://github.com/teamleaderleo/stensibly/issues/572"
+      },
+      "implementation": {
+        "repository": "teamleaderleo/stensibly",
+        "pullRequestNumber": 578,
+        "url": "https://github.com/teamleaderleo/stensibly/pull/578",
+        "branch": "juniper/572-execution-certainty-core",
+        "headSha": "f1ee46245819d48b4fe2b2b6196195657f4796bd"
+      },
+      "selectedState": "polish",
+      "riskTier": "tier_2",
+      "evidence": [],
+      "disposition": "repair",
+      "remainingGate": "run the execution-certainty finalizer and review the exact source-only recovery contract",
+      "owner": "actor:juniper",
+      "carrier": {
+        "kind": "workflow",
+        "reference": ".github/workflows/juniper-572-finalize.yml",
+        "headSha": "f1ee46245819d48b4fe2b2b6196195657f4796bd",
+        "removable": true
+      },
+      "hostedState": "not_applicable",
+      "requiredInputFingerprint": "sha256:11c7ccd323045520723cb3943ecfcb22e5aeac1cec0dacd3e8c2d7e126fa9520",
+      "reviewFingerprint": null
+    },
+    {
+      "schemaVersion": 1,
+      "issue": {
+        "repository": "teamleaderleo/stensibly",
+        "number": 573,
+        "url": "https://github.com/teamleaderleo/stensibly/issues/573"
+      },
+      "implementation": {
+        "repository": "teamleaderleo/stensibly",
+        "pullRequestNumber": 579,
+        "url": "https://github.com/teamleaderleo/stensibly/pull/579",
+        "branch": "juniper/573-github-outbound-text-policy",
+        "headSha": "dead7597db8f5ce5f180cfef4f824c8c2556b209"
+      },
+      "selectedState": "polish",
+      "riskTier": "tier_2",
+      "evidence": [],
+      "disposition": "repair",
+      "remainingGate": "run the outbound-policy finalizer and review the exact pre-dispatch privacy boundary",
+      "owner": "actor:juniper",
+      "carrier": {
+        "kind": "workflow",
+        "reference": ".github/workflows/juniper-573-finalize.yml",
+        "headSha": "dead7597db8f5ce5f180cfef4f824c8c2556b209",
+        "removable": true
+      },
+      "hostedState": "not_applicable",
+      "requiredInputFingerprint": "sha256:4c69d38030aaa82ec0157003b3790b4d6aeef08023b725271aed9cb17ee2e25d",
+      "reviewFingerprint": null
+    },
+    {
+      "schemaVersion": 1,
+      "issue": {
+        "repository": "teamleaderleo/stensibly",
+        "number": 574,
+        "url": "https://github.com/teamleaderleo/stensibly/issues/574"
+      },
+      "implementation": {
+        "repository": "teamleaderleo/stensibly",
+        "pullRequestNumber": 581,
+        "url": "https://github.com/teamleaderleo/stensibly/pull/581",
+        "branch": "juniper/574-resource-settlement-core",
+        "headSha": "1ec1c14ffa26737525735e774d5cf2473467782e"
+      },
+      "selectedState": "polish",
+      "riskTier": "tier_2",
+      "evidence": [],
+      "disposition": "repair",
+      "remainingGate": "run the settlement finalizer and review the exact late-publication and generation fence",
+      "owner": "actor:juniper",
+      "carrier": {
+        "kind": "workflow",
+        "reference": ".github/workflows/juniper-574-late-publication-repair.yml",
+        "headSha": "1ec1c14ffa26737525735e774d5cf2473467782e",
+        "removable": true
+      },
+      "hostedState": "not_applicable",
+      "requiredInputFingerprint": "sha256:b7e7ceff7e768b277f6186b740eb0421cfaee4d31624a08981a6ac5afd6606f5",
+      "reviewFingerprint": null
+    },
+    {
+      "schemaVersion": 1,
+      "issue": {
+        "repository": "teamleaderleo/stensibly",
+        "number": 510,
+        "url": "https://github.com/teamleaderleo/stensibly/issues/510"
+      },
+      "implementation": {
+        "repository": "teamleaderleo/stensibly",
+        "pullRequestNumber": 580,
+        "url": "https://github.com/teamleaderleo/stensibly/pull/580",
+        "branch": "zephyr/510-amend-gemini-assurance",
+        "headSha": "26209ed5ac4e85643eb74f2ef35c0fc5d47bef0c"
+      },
+      "selectedState": "decision",
+      "riskTier": "tier_1",
+      "evidence": [],
+      "disposition": "hold",
+      "remainingGate": "repair the rule so connector-only review and covered self-integration remain compatible with AGENTS.md",
+      "owner": "actor:zephyr",
+      "carrier": null,
+      "hostedState": "not_applicable",
+      "requiredInputFingerprint": "sha256:3a2a603bd5de8d67ad3b01ad7a215fdec35220d43ac0a2f99c8cfa0664903c39",
+      "reviewFingerprint": null
+    }
+  ],
+  "projectionFingerprint": "sha256:ee2f2bf773a42e73a3797bb62d05ccf4844524a96e7bbd469906ff88b550ff27"
+}
