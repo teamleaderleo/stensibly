@@ -22,6 +22,20 @@ export class InMemoryGitHubProviderReceiptStore
       && current.repositoryFullName === receipt.repositoryFullName
       && current.actorId === receipt.actorId
       && current.clientId === receipt.clientId;
+    if (sameRequest && current.state === "reserved") {
+      const pending: GitHubProviderReceipt = {
+        ...current,
+        state: "pending_reconciliation",
+        error: {
+          code: "provider_dispatch_in_progress_or_interrupted",
+          message: "GitHub provider dispatch may still be in progress or may have been interrupted",
+          retry: "reconcile_before_retry",
+        },
+        recovery: { nextAction: "reconcile_exact_operation" },
+      };
+      this.#receipts.set(key, clone(pending));
+      return { outcome: "replay", receipt: clone(pending) };
+    }
     return {
       outcome: sameRequest ? "replay" : "conflict",
       receipt: clone(current),
