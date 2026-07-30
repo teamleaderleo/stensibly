@@ -9,7 +9,7 @@ import {
 } from "../src/github-tool-catalogue.ts";
 
 describe("GitHub tool catalogue", () => {
-  test("canonicalizes ordering and produces a deterministic fingerprint", () => {
+  test("canonicalizes ordering and produces a deterministic immutable fingerprint", () => {
     const first = compileGitHubToolCatalogue(catalogueInput());
     const reorderedInput = catalogueInput();
     reorderedInput.toolsets.reverse();
@@ -25,6 +25,20 @@ describe("GitHub tool catalogue", () => {
       "actions_get",
       "actions_list",
     ]);
+
+    const fingerprint = first.fingerprint;
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.toolsets)).toBe(true);
+    expect(Object.isFrozen(first.toolsets[0])).toBe(true);
+    expect(Object.isFrozen(first.toolsets[0]?.tools)).toBe(true);
+    expect(Object.isFrozen(first.toolsets[0]?.tools[0]?.inputSchema)).toBe(true);
+    expect(() => {
+      first.toolsets[0]!.defaultEnabled = !first.toolsets[0]!.defaultEnabled;
+    }).toThrow(TypeError);
+    expect(() => {
+      first.toolsets[0]!.tools[0]!.inputSchema.type = "string";
+    }).toThrow(TypeError);
+    expect(first.fingerprint).toBe(fingerprint);
   });
 
   test("rejects duplicate names, malformed schemas, and inconsistent risk", () => {
@@ -116,6 +130,46 @@ describe("GitHub tool catalogue", () => {
     expect(change.changedTools).toEqual(["get_file_contents"]);
     expect(change.reasons.some((reason) => reason.includes("input schema"))).toBe(true);
     expect(change.reasons.some((reason) => reason.includes("repository scope"))).toBe(true);
+  });
+
+  test("classifies authority and default-exposure changes as breaking", () => {
+    const adminInput = catalogueInput();
+    const adminTool = adminInput.toolsets
+      .find((entry) => entry.name === "repos")!
+      .tools.find((entry) => entry.name === "get_file_contents")!;
+    adminTool.readOnly = false;
+    adminTool.riskClass = "admin";
+
+    const writeInput = catalogueInput();
+    const writeTool = writeInput.toolsets
+      .find((entry) => entry.name === "repos")!
+      .tools.find((entry) => entry.name === "get_file_contents")!;
+    writeTool.readOnly = false;
+    writeTool.riskClass = "write";
+
+    const riskDowngrade = classifyGitHubToolCatalogueChange(
+      compileGitHubToolCatalogue(adminInput),
+      compileGitHubToolCatalogue(writeInput),
+    );
+    expect(riskDowngrade.classification).toBe("breaking");
+    expect(riskDowngrade.reasons.some((reason) => reason.includes("risk class"))).toBe(true);
+
+    const readOnlyInput = catalogueInput();
+    const writeToRead = classifyGitHubToolCatalogueChange(
+      compileGitHubToolCatalogue(writeInput),
+      compileGitHubToolCatalogue(readOnlyInput),
+    );
+    expect(writeToRead.classification).toBe("breaking");
+    expect(writeToRead.reasons.some((reason) => reason.includes("read-only capability"))).toBe(true);
+
+    const enabledInput = catalogueInput();
+    enabledInput.toolsets.find((entry) => entry.name === "actions")!.defaultEnabled = true;
+    const defaultExposure = classifyGitHubToolCatalogueChange(
+      compileGitHubToolCatalogue(catalogueInput()),
+      compileGitHubToolCatalogue(enabledInput),
+    );
+    expect(defaultExposure.classification).toBe("breaking");
+    expect(defaultExposure.reasons).toContain("breaking toolset default changed: actions");
   });
 });
 
