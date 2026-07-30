@@ -14,6 +14,7 @@ export const githubRepositoryEventTypes = [
   "delete",
   "pull_request",
   "pull_request_review",
+  "pull_request_review_comment",
   "issues",
   "issue_comment",
 ] as const;
@@ -27,6 +28,7 @@ export type GitHubRepositorySubjectKind =
   | "ref"
   | "pull_request"
   | "pull_request_review"
+  | "pull_request_review_comment"
   | "issue"
   | "issue_comment";
 
@@ -183,6 +185,8 @@ export function mapGitHubRepositoryWebhook(
     ? mapPullRequest(payload, common)
     : eventType === "pull_request_review"
     ? mapPullRequestReview(payload, common)
+    : eventType === "pull_request_review_comment"
+    ? mapPullRequestReviewComment(payload, common)
     : eventType === "issues"
     ? mapIssue(payload, common)
     : mapIssueComment(payload, common);
@@ -393,6 +397,68 @@ function mapPullRequestReview(
   };
 }
 
+function mapPullRequestReviewComment(
+  payload: Record<string, unknown>,
+  common: CommonMapping,
+): MappedSemantics {
+  const action = exactPullRequestReviewCommentAction(payload.action);
+  const pullRequest = requiredRecord(
+    payload.pull_request,
+    "GitHub pull request review comment pull request",
+  );
+  const comment = requiredRecord(
+    payload.comment,
+    "GitHub pull request review comment payload",
+  );
+  const number = positiveInteger(
+    pullRequest.number,
+    "GitHub pull request review comment pull request number",
+  );
+  const commentId = providerId(
+    comment.id,
+    "GitHub pull request review comment ID",
+  );
+  const revision = canonicalRevision(
+    requiredString(
+      comment.commit_id ?? comment.original_commit_id,
+      "GitHub pull request review comment revision",
+    ),
+    "GitHub pull request review comment revision",
+  );
+  const reviewId = optionalProviderId(
+    comment.pull_request_review_id,
+    "GitHub pull request review comment review ID",
+  );
+  const inReplyToId = optionalProviderId(
+    comment.in_reply_to_id,
+    "GitHub pull request review comment parent ID",
+  );
+  const time = sourceTime(
+    comment.updated_at ?? comment.created_at,
+    "GitHub pull request review comment updated time",
+    common.receivedAt,
+  );
+  return {
+    action,
+    subject: {
+      kind: "pull_request_review_comment",
+      externalId:
+        `github:${common.repository}#pull/${number}/review-comment/${commentId}`,
+    },
+    relationships: relationships(common.repository, {
+      revision,
+      pullRequestNumber: number,
+      issueNumber: number,
+      commentId,
+    }),
+    facts: { reviewId, inReplyToId },
+    contentRevisions: canonicalContentRevisions([
+      contentRevision("comment_body", comment.body),
+    ]),
+    ...time,
+  };
+}
+
 function mapIssue(
   payload: Record<string, unknown>,
   common: CommonMapping,
@@ -561,6 +627,15 @@ function exactPullRequestReviewAction(
   throw new RangeError("GitHub pull request review action is invalid");
 }
 
+function exactPullRequestReviewCommentAction(
+  value: unknown,
+): "created" | "edited" | "deleted" {
+  if (value === "created" || value === "edited" || value === "deleted") {
+    return value;
+  }
+  throw new RangeError("GitHub pull request review comment action is invalid");
+}
+
 function exactReviewState(
   value: unknown,
 ): "approved" | "changes_requested" | "commented" | "dismissed" | "pending" {
@@ -681,6 +756,11 @@ function canonicalContentRevisions(
   values: GitHubRepositoryContentRevision[],
 ): GitHubRepositoryContentRevision[] {
   return values.sort((left, right) => codeUnitCompare(left.name, right.name));
+}
+
+function optionalProviderId(value: unknown, label: string): string | null {
+  if (value === null || value === undefined) return null;
+  return providerId(value, label);
 }
 
 function providerId(value: unknown, label: string): string {
