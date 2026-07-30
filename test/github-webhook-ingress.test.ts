@@ -18,6 +18,7 @@ function signedRequest(
     signature?: string;
     contentType?: string;
     deliveryId?: string;
+    contentLength?: string;
   } = {},
 ): Request {
   const signature = input.signature
@@ -29,6 +30,9 @@ function signedRequest(
       "X-GitHub-Delivery": input.deliveryId ?? "delivery-123",
       "X-GitHub-Event": eventType,
       "X-Hub-Signature-256": signature,
+      ...(input.contentLength === undefined
+        ? {}
+        : { "Content-Length": input.contentLength }),
     },
     body,
   });
@@ -77,6 +81,7 @@ describe("GitHub webhook ingress", () => {
       bodyByteLength: Buffer.byteLength(body, "utf8"),
       receivedAt,
       signatureAlgorithm: "hmac-sha256",
+      payloadAvailability: "memory_only",
       containsRawBody: false,
       observation: {
         eventType: "push",
@@ -93,19 +98,27 @@ describe("GitHub webhook ingress", () => {
     expect(Object.isFrozen(delivery)).toBe(true);
     expect(Object.isFrozen(delivery.payload as object)).toBe(true);
     expect(Object.isFrozen(delivery.observation!)).toBe(true);
+    expect(Object.keys(delivery)).not.toContain("payload");
     expect(JSON.stringify(delivery)).not.toContain("provider prose must stay memory-only");
   });
 
-  test("returns verified unsupported events for secondary consumers", async () => {
+  test("returns repository-bound unsupported events for secondary consumers", async () => {
     const ingress = createGitHubWebhookIngress({
       secret,
+      expectedRepository: repository,
       now: () => Date.parse(receivedAt),
     });
-    const delivery = await ingress(signedRequest("ping", JSON.stringify({ zen: "ok" })));
+    const delivery = await ingress(signedRequest("ping", JSON.stringify({
+      repository: { full_name: repository },
+      zen: "ok",
+    })));
 
     expect(delivery.eventType).toBe("ping");
     expect(delivery.observation).toBeNull();
-    expect(delivery.payload).toEqual({ zen: "ok" });
+    expect(delivery.payload).toEqual({
+      repository: { full_name: repository },
+      zen: "ok",
+    });
   });
 
   test("checks the signature before decoding or parsing provider content", async () => {
@@ -136,7 +149,7 @@ describe("GitHub webhook ingress", () => {
     expect(error.path).not.toContain(key);
   });
 
-  test("converts cross-repository mapper failures into fixed diagnostics", async () => {
+  test("binds unsupported event families before secondary dispatch", async () => {
     const ingress = createGitHubWebhookIngress({
       secret,
       expectedRepository: repository,
@@ -144,11 +157,13 @@ describe("GitHub webhook ingress", () => {
     const body = JSON.stringify({
       repository: { full_name: "external/private-repository" },
       sender: { login: "octocat" },
-      ref: "refs/heads/main",
-      before,
-      after,
+      pull_request: { number: 7 },
+      review: { id: 42 },
     });
-    const error = await ingressError(ingress(signedRequest("push", body)));
+    const error = await ingressError(ingress(signedRequest(
+      "pull_request_review",
+      body,
+    )));
 
     expect(error.status).toBe(400);
     expect(error.detailCode).toBe("GITHUB_WEBHOOK_INVALID_PAYLOAD");
@@ -173,6 +188,17 @@ describe("GitHub webhook ingress", () => {
     const sizeError = await ingressError(ingress(signedRequest("ping", oversizedBody)));
     expect(sizeError.status).toBe(413);
     expect(sizeError.code).toBe("payload_too_large");
+  });
+
+  test("rejects non-decimal Content-Length syntax", async () => {
+    const ingress = createGitHubWebhookIngress({ secret });
+    for (const contentLength of ["1e3", "+2", " 2", "2 "]) {
+      const error = await ingressError(ingress(signedRequest("ping", "{}", {
+        contentLength,
+      })));
+      expect(error.status).toBe(400);
+      expect(error.detailCode).toBe("GITHUB_WEBHOOK_INVALID_CONTENT_LENGTH");
+    }
   });
 
   test("reports a consumed request through the typed body-read failure", async () => {
