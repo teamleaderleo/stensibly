@@ -46,52 +46,64 @@ jobs:
           from pathlib import Path
           from textwrap import dedent
 
+          def block(value: str) -> str:
+              return dedent(value).strip('\n')
+
+          def with_indent(value: str, width: int) -> str:
+              prefix = ' ' * width
+              return '\n'.join(prefix + line if line else line for line in value.splitlines())
+
+          def replace_indented(document: str, old: str, new: str, label: str) -> str:
+              old = block(old)
+              new = block(new)
+              matches = []
+              for width in range(0, 25):
+                  candidate = with_indent(old, width)
+                  count = document.count(candidate)
+                  matches.extend([(candidate, width)] * count)
+              if len(matches) != 1:
+                  raise SystemExit(f'{label} matched {len(matches)} times')
+              candidate, width = matches[0]
+              return document.replace(candidate, with_indent(new, width), 1)
+
           source = Path('src/resource-settlement.ts')
           text = source.read_text(encoding='utf-8')
-          old = dedent('''
-            if (owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
-              throw new Error("Successful settlement owner contains failure or fence evidence");
-            }
-          ''').strip('\n')
-          new = dedent('''
-            if (
-              owner.failureClass
-              || owner.reconciliationRequired
-              || owner.canPublishLate
-              || owner.publicationFenceFingerprint
-            ) {
-              throw new Error("Successful settlement owner contains failure or late-publication evidence");
-            }
-          ''').strip('\n')
-          if text.count(old) != 1:
-              raise SystemExit(f'success late-publication anchor matched {text.count(old)} times')
-          text = text.replace(old, new, 1)
+          text = replace_indented(text, '''
+          if (owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
+            throw new Error("Successful settlement owner contains failure or fence evidence");
+          }
+          ''', '''
+          if (
+            owner.failureClass
+            || owner.reconciliationRequired
+            || owner.canPublishLate
+            || owner.publicationFenceFingerprint
+          ) {
+            throw new Error("Successful settlement owner contains failure or late-publication evidence");
+          }
+          ''', 'success late-publication invariant')
 
-          old = dedent('''
-            if (!owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
-              throw new Error("Failed settlement owner evidence is inconsistent");
-            }
-          ''').strip('\n')
-          new = dedent('''
-            if (
-              !owner.failureClass
-              || owner.reconciliationRequired
-              || owner.canPublishLate
-              || owner.publicationFenceFingerprint
-            ) {
-              throw new Error("Failed settlement owner evidence is inconsistent or permits unfenced late publication");
-            }
-          ''').strip('\n')
-          if text.count(old) != 1:
-              raise SystemExit(f'failure late-publication anchor matched {text.count(old)} times')
-          source.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = replace_indented(text, '''
+          if (!owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
+            throw new Error("Failed settlement owner evidence is inconsistent");
+          }
+          ''', '''
+          if (
+            !owner.failureClass
+            || owner.reconciliationRequired
+            || owner.canPublishLate
+            || owner.publicationFenceFingerprint
+          ) {
+            throw new Error("Failed settlement owner evidence is inconsistent or permits unfenced late publication");
+          }
+          ''', 'failure late-publication invariant')
+          source.write_text(text, encoding='utf-8')
 
           tests = Path('test/resource-settlement.test.ts')
           test_text = tests.read_text(encoding='utf-8')
-          anchor = dedent('''
+          test_text = replace_indented(test_text, '''
           test("requires exact publication-fence evidence", () => {
-          ''').strip('\n')
-          addition = dedent('''
+          ''', '''
           test("rejects terminal owners that can still publish without reconciliation or a fence", () => {
             expect(() => createResourceSettlementReceipt(input([
               owner("worker-a", "settled_failure", { canPublishLate: true }),
@@ -108,10 +120,9 @@ jobs:
             }))).toThrow("late-publication evidence");
           });
 
-          ''')
-          if test_text.count(anchor) != 1:
-              raise SystemExit('late-publication test insertion anchor mismatch')
-          tests.write_text(test_text.replace(anchor, addition + anchor, 1), encoding='utf-8')
+          test("requires exact publication-fence evidence", () => {
+          ''', 'late-publication controls')
+          tests.write_text(test_text, encoding='utf-8')
           PY
 
       - name: Run focused and repository gates
