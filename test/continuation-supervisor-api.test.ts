@@ -3,10 +3,10 @@ import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { mcpRequest, readToolJson, toolCall } from "./support/mcp-http.ts";
 
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
 const human = { id: "leo", name: "Leo", kind: "human" as const };
-const protocolVersion = "2025-06-18";
 
 let store: StensiblyStore;
 let ledger: SqliteWorkLedger;
@@ -104,6 +104,7 @@ describe("continuation supervisor API", () => {
 
   test("enforces write scope and source project through REST and remote MCP", async () => {
     const readOnly = await mcpRequest(
+      app,
       readToken,
       toolCall(1, "queue_continuation_for_supervisor", {
         id: alphaProposal.id,
@@ -130,6 +131,7 @@ describe("continuation supervisor API", () => {
     expect(wrongProject.status).toBe(403);
 
     const allowed = await mcpRequest(
+      app,
       writeToken,
       toolCall(2, "queue_continuation_for_supervisor", {
         id: alphaProposal.id,
@@ -142,7 +144,7 @@ describe("continuation supervisor API", () => {
     const result = await readToolJson<{
       continuation: { status: string };
       run: { continuationRef: string };
-    }>(allowed);
+    }>(allowed, 2);
     expect(result).toMatchObject({
       continuation: { status: "consumed" },
       run: { continuationRef: alphaProposal.id },
@@ -164,6 +166,7 @@ describe("continuation supervisor API", () => {
     expect(missingRestProject.status).toBe(400);
 
     const missingMcpProject = await mcpRequest(
+      app,
       writeToken,
       toolCall(3, "run_continuation_supervisor_policy", {}),
     );
@@ -197,37 +200,4 @@ async function propose(sourceItemId: string, targetItemId: string) {
 
 function bearer(value: string): Record<string, string> {
   return { authorization: `Bearer ${value}` };
-}
-
-async function mcpRequest(token: string, body: unknown): Promise<Response> {
-  return await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-}
-
-function toolCall(id: number, name: string, args: Record<string, unknown>) {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-}
-
-async function readToolJson<T>(response: Response): Promise<T> {
-  const body = await response.json() as {
-    result?: { content?: Array<{ type?: unknown; text?: unknown }> };
-  };
-  const first = body.result?.content?.[0];
-  if (first?.type !== "text" || typeof first.text !== "string") {
-    throw new Error("Remote MCP response did not contain JSON text");
-  }
-  return JSON.parse(first.text) as T;
 }

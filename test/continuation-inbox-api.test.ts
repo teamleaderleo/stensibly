@@ -3,9 +3,9 @@ import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { mcpRequest, readToolJson, toolCall } from "./support/mcp-http.ts";
 
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
-const protocolVersion = "2025-06-18";
 
 let store: StensiblyStore;
 let ledger: SqliteWorkLedger;
@@ -86,24 +86,36 @@ describe("continuation inbox API", () => {
   });
 
   test("applies the same project rule through remote MCP", async () => {
-    const missingProject = await mcpRequest(toolCall(1, "list_continuation_inbox", {}));
+    const missingProject = await mcpRequest(
+      app,
+      token,
+      toolCall(1, "list_continuation_inbox", {}),
+    );
     expect(missingProject.status).toBe(400);
 
-    const forbidden = await mcpRequest(toolCall(2, "list_continuation_inbox", {
-      project: "beta",
-    }));
+    const forbidden = await mcpRequest(
+      app,
+      token,
+      toolCall(2, "list_continuation_inbox", {
+        project: "beta",
+      }),
+    );
     expect(forbidden.status).toBe(403);
 
-    const allowed = await mcpRequest(toolCall(3, "list_continuation_inbox", {
-      project: "alpha",
-      limit: 5,
-    }));
+    const allowed = await mcpRequest(
+      app,
+      token,
+      toolCall(3, "list_continuation_inbox", {
+        project: "alpha",
+        limit: 5,
+      }),
+    );
     expect(allowed.status).toBe(200);
     const inbox = await readToolJson<{
       scope: { project: string | null };
       total: number;
       items: Array<{ id: string }>;
-    }>(allowed);
+    }>(allowed, 3);
     expect(inbox).toMatchObject({
       scope: { project: "alpha" },
       total: 1,
@@ -127,37 +139,4 @@ async function propose(sourceItemId: string) {
 
 function bearer(value: string): Record<string, string> {
   return { authorization: `Bearer ${value}` };
-}
-
-async function mcpRequest(body: unknown): Promise<Response> {
-  return await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-}
-
-function toolCall(id: number, name: string, args: Record<string, unknown>) {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-}
-
-async function readToolJson<T>(response: Response): Promise<T> {
-  const body = await response.json() as {
-    result?: { content?: Array<{ type?: unknown; text?: unknown }> };
-  };
-  const first = body.result?.content?.[0];
-  if (first?.type !== "text" || typeof first.text !== "string") {
-    throw new Error("Remote MCP response did not contain JSON text");
-  }
-  return JSON.parse(first.text) as T;
 }
