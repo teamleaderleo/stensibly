@@ -12,6 +12,12 @@ export const convexApi = {
     getCurrent: queryRef("projectAttachments:getCurrent"),
     accept: mutationRef("projectAttachments:accept"),
   },
+  githubProjectContexts: {
+    accept: mutationRef("githubProjectContexts:accept"),
+    getCurrent: queryRef("githubProjectContexts:getCurrent"),
+    listCurrent: queryRef("githubProjectContexts:listCurrent"),
+    listHistory: queryRef("githubProjectContexts:listHistory"),
+  },
   historyCapabilities: {
     get: queryRef("historyCapabilities:get"),
   },

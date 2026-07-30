@@ -5,7 +5,6 @@ import {
   withHostedAuthBootstrapProjects,
 } from "./hosted-account-bootstrap.js";
 import type { ConvexWorkLedger } from "./convex-ledger.js";
-import { createConvexProjectAttachmentLedgerFromEnv } from "./project-attachment-convex-ledger.js";
 import { createCorsMiddleware } from "./cors.js";
 import {
   ConvexHostedAccountService,
@@ -16,6 +15,7 @@ import {
   HttpGitHubOAuthClient,
   type HostedAuthOptions,
 } from "./hosted-auth.js";
+import { createHostedConvexLedgerFromEnv } from "./hosted-convex-ledger.js";
 import type { HostedSessionHttpAuthOptions, StensiblyEnv } from "./http-auth.js";
 import {
   registerHostedProviderCapacityRoutes,
@@ -135,7 +135,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
 export function createHostedAppFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): Hono<StensiblyEnv> {
-  const ledger = createConvexProjectAttachmentLedgerFromEnv(env);
+  const ledger = createHostedConvexLedgerFromEnv(env);
   const authenticator = new ConvexTokenProvider({
     client: ledger.client,
     serviceSecret: ledger.serviceSecret,
