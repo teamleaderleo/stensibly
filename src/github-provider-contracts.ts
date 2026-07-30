@@ -289,12 +289,9 @@ export class GitHubProviderAuthorityError extends Error {
 }
 
 export class GitHubProviderIdempotencyConflictError extends Error {
-  readonly receipt: GitHubProviderReceipt;
-
-  constructor(receipt: GitHubProviderReceipt) {
+  constructor(_receipt: GitHubProviderReceipt) {
     super("GitHub provider idempotency key was reused by another request");
     this.name = "GitHubProviderIdempotencyConflictError";
-    this.receipt = receipt;
   }
 }
 
