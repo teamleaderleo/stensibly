@@ -97,9 +97,9 @@ Promote a coordination convention into a product invariant only when it protects
 
 ## External GitHub backlinks
 
-Research and coordination should not create accidental backlinks or notifications in third-party official repositories.
+Research coordination should not create accidental backlinks or notifications in third-party official repositories.
 
-For third-party GitHub issues, pull requests, discussions, and commits cited without intentional interaction, use:
+Apply backlink suppression to GitHub interaction text: issue and pull-request titles and bodies, comments, reviews, discussions, and intentional issue references in commit messages. In those surfaces, use:
 
 ```text
 https://redirect.github.com/OWNER/REPOSITORY/issues/NUMBER
@@ -108,9 +108,13 @@ https://redirect.github.com/OWNER/REPOSITORY/discussions/NUMBER
 https://redirect.github.com/OWNER/REPOSITORY/commit/SHA
 ```
 
-Direct links among controlled `teamleaderleo/*` repositories are normal. Repository homepages, documentation sites, specifications, package registries, and release pages may be linked normally.
+Direct links among controlled `teamleaderleo/*` repositories are normal.
 
-Use direct third-party cross-references only when an explicitly authorized upstream interaction is being performed or accurately recorded.
+Repository documentation and other tracked files may link directly to third-party GitHub work because GitHub does not create autolinked issue or pull-request references in repository files. Those files do not need an automated reference check.
+
+Repository homepages, documentation sites, specifications, package registries, release pages, and ordinary web sources may be linked normally.
+
+Use direct third-party cross-references in interaction text only when an explicitly authorized upstream interaction is being performed or accurately recorded.
 
 ## Working rule
 
