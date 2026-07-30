@@ -1,8 +1,8 @@
 {
   "snapshotVersion": 3,
   "manifestVersion": 1,
-  "toolCount": 29,
-  "toolManifestFingerprint": "sha256:4462bf01f75c7d9365abe2a683cb157ad570c15682165a541bf7dd9b0cc78e3f",
+  "toolCount": 32,
+  "toolManifestFingerprint": "sha256:f651fa13f910529c5bd0a4eb9d05069f572277a6a633623864e936f4c7874c6b",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -17,8 +17,11 @@
     "get_project_attachment",
     "get_runner_context",
     "github_get_issue",
+    "github_get_tool",
     "github_list_issues",
+    "github_list_toolsets",
     "github_search_issues",
+    "github_search_tools",
     "handoff_work",
     "list_artifacts",
     "list_continuation_inbox",
