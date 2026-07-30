@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
+import { createMcpServer } from "../src/mcp.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
 import {
@@ -99,6 +100,35 @@ describe("remote MCP", () => {
     expect(write.status).toBe(403);
   });
 
+  test("rejects unclassified tools before constructing the MCP server", async () => {
+    const token = createApiToken(store, {
+      name: "Unknown tool probe",
+      scopes: ["read", "write"],
+      projects: ["scrapbook"],
+    });
+    let serverConstructions = 0;
+    const guardedApp = createServerApp(store, {
+      mcp: {
+        createServer(ledger, context) {
+          serverConstructions += 1;
+          return createMcpServer(ledger, context);
+        },
+      },
+    });
+
+    const response = await mcpRequest(
+      guardedApp,
+      token.token,
+      toolCall(6, "unclassified_tool", { project: "scrapbook" }),
+    );
+    expect(response.status).toBe(403);
+    expect(serverConstructions).toBe(0);
+    const body = await response.json() as { error?: { message?: string } };
+    expect(body.error?.message).toBe(
+      "Tool is not registered in the Stensibly capability policy",
+    );
+  });
+
   test("rejects browser origins unless explicitly allowed", async () => {
     const token = createApiToken(store, {
       name: "Browser client",
@@ -106,7 +136,7 @@ describe("remote MCP", () => {
       projects: ["scrapbook"],
     });
 
-    const denied = await mcpRequest(app, token.token, initializeMessage(6), {
+    const denied = await mcpRequest(app, token.token, initializeMessage(7), {
       origin: "https://untrusted.example",
     });
     expect(denied.status).toBe(403);
@@ -114,7 +144,7 @@ describe("remote MCP", () => {
     const originApp = createServerApp(store, {
       mcp: { allowedOrigins: ["https://trusted.example"] },
     });
-    const allowed = await mcpRequest(originApp, token.token, initializeMessage(7), {
+    const allowed = await mcpRequest(originApp, token.token, initializeMessage(8), {
       origin: "https://trusted.example",
     });
     expect(allowed.status).toBe(200);

@@ -4,14 +4,19 @@ import {
   supervisorPolicyAccessProjects,
 } from "./continuation-authorization.js";
 import { continuationLedger } from "./continuation-contracts.js";
+import type { WorkLedger } from "./ledger.js";
+import {
+  getMcpCapabilityPolicy,
+  type McpCapabilityPolicy,
+  type McpCapabilityScope,
+} from "./mcp-capability-policy.js";
+import { createMcpServer } from "./mcp.js";
+import type { ApiTokenAuthenticator } from "./token-provider.js";
 import {
   principalCanAccessProject,
   principalHasScope,
   type TokenPrincipal,
 } from "./token-contracts.js";
-import type { WorkLedger } from "./ledger.js";
-import { createMcpServer } from "./mcp.js";
-import type { ApiTokenAuthenticator } from "./token-provider.js";
 import {
   MCP_FAILURE_STAGE_HEADER,
   type McpFailureStage,
@@ -31,64 +36,11 @@ export interface McpHttpOptions {
 }
 
 interface AccessRule {
-  scope: "read" | "write";
+  scope: McpCapabilityScope;
   project?: string;
   projects?: string[];
   requireProject?: boolean;
 }
-
-const readTools = new Set([
-  "get_brief",
-  "get_project_attachment",
-  "get_operation_receipt",
-  "github_get_issue",
-  "github_get_tool",
-  "github_list_issues",
-  "github_list_toolsets",
-  "github_search_issues",
-  "github_search_tools",
-  "survey_workspace",
-  "list_work",
-  "get_item",
-  "get_runner_context",
-  "list_artifacts",
-  "get_continuation",
-  "list_continuations",
-  "list_continuation_inbox",
-]);
-
-const writeTools = new Set([
-  "attach_artifact",
-  "create_item",
-  "claim_work",
-  "renew_claim",
-  "handoff_work",
-  "block_work",
-  "unblock_work",
-  "release_work",
-  "record_event",
-  "complete_work",
-  "propose_continuation",
-  "edit_continuation",
-  "resolve_continuation",
-  "queue_continuation_for_supervisor",
-  "run_continuation_supervisor_policy",
-]);
-
-const itemTools = new Set([
-  "get_item",
-  "get_runner_context",
-  "list_artifacts",
-  "attach_artifact",
-  "claim_work",
-  "renew_claim",
-  "handoff_work",
-  "block_work",
-  "unblock_work",
-  "release_work",
-  "record_event",
-  "complete_work",
-]);
 
 export async function handleMcpHttpRequest(
   request: Request,
@@ -202,21 +154,30 @@ async function authorizeMessage(
   const params = isRecord(payload.params) ? payload.params : {};
   const toolName = typeof params.name === "string" ? params.name : "";
   const args = isRecord(params.arguments) ? params.arguments : {};
-  const scope = toolScope(toolName);
-  if (!scope) return null;
-
-  if (!principalHasScope(principal, scope)) {
+  const policy = getMcpCapabilityPolicy(toolName);
+  if (!policy) {
     return jsonRpcError(
       403,
       -32001,
-      `Token requires ${scope} scope`,
+      "Tool is not registered in the Stensibly capability policy",
       requestId(payload),
       {},
       "authorization_failure",
     );
   }
 
-  const rule = await resolveAccessRule(ledger, principal, toolName, args, scope);
+  if (!principalHasScope(principal, policy.scope)) {
+    return jsonRpcError(
+      403,
+      -32001,
+      `Token requires ${policy.scope} scope`,
+      requestId(payload),
+      {},
+      "authorization_failure",
+    );
+  }
+
+  const rule = await resolveAccessRule(ledger, principal, policy, args);
   if (rule.requireProject && !rule.project) {
     return jsonRpcError(
       400,
@@ -243,121 +204,97 @@ async function authorizeMessage(
   return null;
 }
 
-function toolScope(toolName: string): "read" | "write" | null {
-  if (readTools.has(toolName)) return "read";
-  if (writeTools.has(toolName)) return "write";
-  return null;
-}
-
 async function resolveAccessRule(
   ledger: WorkLedger,
   principal: TokenPrincipal,
-  toolName: string,
+  policy: McpCapabilityPolicy,
   args: Record<string, unknown>,
-  scope: "read" | "write",
 ): Promise<AccessRule> {
-  if (
-    toolName === "get_brief"
-    || toolName === "get_project_attachment"
-    || toolName === "get_operation_receipt"
-    || toolName === "github_get_issue"
-    || toolName === "github_list_issues"
-    || toolName === "github_search_issues"
-    || toolName === "create_item"
-  ) {
-    return {
-      scope,
-      project: stringArgument(args, "project"),
-    };
-  }
+  const scope = policy.scope;
+  const resolution = policy.projectResolution;
 
-  if (
-    toolName === "list_work"
-    || toolName === "survey_workspace"
-    || toolName === "list_continuation_inbox"
-  ) {
-    const project = stringArgument(args, "project");
-    return {
-      scope,
-      ...(project ? { project } : {}),
-      requireProject: principal.projects !== null,
-    };
-  }
-
-  if (toolName === "run_continuation_supervisor_policy") {
-    const project = stringArgument(args, "project");
-    const continuations = continuationLedger(ledger);
-    if (!continuations) {
-      return {
-        scope,
-        ...(project ? { project } : {}),
-        requireProject: principal.projects !== null,
-      };
-    }
-    try {
-      return {
-        scope,
-        ...(project ? { project } : {}),
-        projects: await supervisorPolicyAccessProjects(ledger, continuations, project),
-        requireProject: principal.projects !== null,
-      };
-    } catch {
-      return {
-        scope,
-        ...(project ? { project } : {}),
-        requireProject: principal.projects !== null,
-      };
-    }
-  }
-
-  if (toolName === "propose_continuation" || toolName === "list_continuations") {
-    return await itemAccessRule(ledger, scope, stringArgument(args, "sourceItemId"));
-  }
-
-  if (toolName === "queue_continuation_for_supervisor") {
-    const id = stringArgument(args, "id");
-    const continuations = continuationLedger(ledger);
-    if (!id || !continuations) return { scope };
-    try {
-      const continuation = await continuations.getContinuation(id);
-      return {
-        scope,
-        projects: await continuationAccessProjects(ledger, continuation),
-      };
-    } catch {
+  switch (resolution.kind) {
+    case "none":
       return { scope };
-    }
-  }
-
-  if (
-    toolName === "get_continuation"
-    || toolName === "edit_continuation"
-    || toolName === "resolve_continuation"
-  ) {
-    const id = stringArgument(args, "id");
-    const continuations = continuationLedger(ledger);
-    if (!id || !continuations) return { scope };
-    try {
-      const continuation = await continuations.getContinuation(id);
+    case "project_argument":
       return {
         scope,
-        project: (await ledger.getItem(continuation.sourceItemId)).item.project,
+        project: stringArgument(args, resolution.argument),
       };
-    } catch {
-      return { scope };
+    case "optional_project_argument": {
+      const project = stringArgument(args, resolution.argument);
+      return {
+        scope,
+        ...(project ? { project } : {}),
+        requireProject: principal.projects !== null,
+      };
+    }
+    case "item_argument":
+    case "continuation_source_item_argument":
+      return await itemAccessRule(
+        ledger,
+        scope,
+        stringArgument(args, resolution.argument),
+      );
+    case "continuation_argument": {
+      const id = stringArgument(args, resolution.argument);
+      const continuations = continuationLedger(ledger);
+      if (!id || !continuations) return { scope };
+      try {
+        const continuation = await continuations.getContinuation(id);
+        return {
+          scope,
+          project: (await ledger.getItem(continuation.sourceItemId)).item.project,
+        };
+      } catch {
+        return { scope };
+      }
+    }
+    case "continuation_touch_set": {
+      const id = stringArgument(args, resolution.argument);
+      const continuations = continuationLedger(ledger);
+      if (!id || !continuations) return { scope };
+      try {
+        const continuation = await continuations.getContinuation(id);
+        return {
+          scope,
+          projects: await continuationAccessProjects(ledger, continuation),
+        };
+      } catch {
+        return { scope };
+      }
+    }
+    case "continuation_supervisor_policy": {
+      const project = stringArgument(args, resolution.argument);
+      const continuations = continuationLedger(ledger);
+      if (!continuations) {
+        return {
+          scope,
+          ...(project ? { project } : {}),
+          requireProject: principal.projects !== null,
+        };
+      }
+      try {
+        return {
+          scope,
+          ...(project ? { project } : {}),
+          projects: await supervisorPolicyAccessProjects(ledger, continuations, project),
+          requireProject: principal.projects !== null,
+        };
+      } catch {
+        return {
+          scope,
+          ...(project ? { project } : {}),
+          requireProject: principal.projects !== null,
+        };
+      }
     }
   }
-
-  if (itemTools.has(toolName)) {
-    return await itemAccessRule(ledger, scope, stringArgument(args, "id"));
-  }
-
-  return { scope };
 }
 
 async function itemAccessRule(
   ledger: WorkLedger,
-  scope: "read" | "write",
+  scope: McpCapabilityScope,
   id: string | undefined,
 ): Promise<AccessRule> {
   if (!id) return { scope };
