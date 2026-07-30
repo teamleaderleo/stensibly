@@ -1,6 +1,5 @@
-name: juniper-567-canonical-context-v2
+name: juniper-567-canonical-context-finalize
 
-# Cedar retry after verifying the preserved repair is still absent from the exact PR head.
 on:
   push:
     branches:
@@ -12,22 +11,36 @@ permissions:
   contents: write
 
 concurrency:
-  group: juniper-567-canonical-context-repair
+  group: juniper-567-canonical-context-finalize
   cancel-in-progress: false
 
 jobs:
   repair-test-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Check out repair branch
-        uses: actions/checkout@v4
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: juniper/564-convex-github-project-context
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Execute preserved recipe with dedented anchors
+      - name: Rebase exact candidate onto current main
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch origin main
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git rebase origin/main
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "26"
+
+      - name: Execute preserved canonical-context repair
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -85,47 +98,41 @@ jobs:
           for block_index, script in enumerate(blocks, start=1):
               namespace = {'__name__': f'juniper_567_recipe_{block_index}'}
               executable = make_executable(script)
-              try:
-                  exec(compile(executable, f'{recipe}:block-{block_index}', 'exec'), namespace)
-              except Exception as error:
-                  Path(f'/tmp/juniper-567-block-{block_index}.py').write_text(executable, encoding='utf-8')
-                  raise RuntimeError(
-                      f'preserved repair block {block_index} failed; executable copy at '
-                      f'/tmp/juniper-567-block-{block_index}.py'
-                  ) from error
+              exec(compile(executable, f'{recipe}:block-{block_index}', 'exec'), namespace)
 
-          old = r'if (/[/\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
-          new = r'if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
+          unsafe = r'if (/[/\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
+          safe = r'if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
           for filename in (
               'convex/githubProjectContexts.ts',
               'src/github-project-context-convex-ledger.ts',
           ):
               path = Path(filename)
               text = path.read_text(encoding='utf-8')
-              if text.count(old) != 1:
-                  raise SystemExit(f'{filename}: unsafe-text validator anchor matched {text.count(old)} times')
-              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+              if text.count(unsafe) != 1:
+                  raise SystemExit(f'{filename}: unsafe-text validator anchor matched {text.count(unsafe)} times')
+              path.write_text(text.replace(unsafe, safe, 1), encoding='utf-8')
           PY
 
       - name: Run focused and repository gates
         run: |
+          set -euxo pipefail
           bun install --frozen-lockfile
           bun run typecheck
           bun test test/github-project-context-convex-ledger.test.ts
           bun run test:convex -- convex/githubProjectContexts.test.ts convex/githubProjectContextsValidation.test.ts
-          bun test
+          bun run test
           bun run test:convex
           bun run worker:check
           bun run test:runtime-parity
 
-      - name: Publish source-only repair
+      - name: Publish source-only current-main candidate
         run: |
+          set -euxo pipefail
           rm .github/workflows/juniper-567-canonical-context-v2.yml
           rm scripts/repair/juniper-567-canonical-context-repair-source.yml
           rmdir scripts/repair 2>/dev/null || true
           git diff --check
-          git config user.name cedar-stensibly
-          git config user.email cedar-stensibly@users.noreply.github.com
           git add convex src test scripts .github
           git commit -m 'fix: enforce canonical hosted GitHub context'
-          git push origin HEAD:juniper/564-convex-github-project-context
+          git push --force-with-lease=refs/heads/juniper/564-convex-github-project-context:$GITHUB_SHA \
+            origin HEAD:refs/heads/juniper/564-convex-github-project-context
