@@ -1,0 +1,246 @@
+name: mica-585-catalogue-snapshot-integrity
+
+on:
+  push:
+    branches:
+      - mica/585-catalogue-snapshot-integrity
+    paths:
+      - .github/workflows/mica-585-catalogue-snapshot-integrity.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mica-585-catalogue-snapshot-integrity
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: mica/585-catalogue-snapshot-integrity
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Repair catalogue immutability and drift classification
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def block(value: str) -> str:
+              return dedent(value).strip("\n")
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          source_path = Path("src/github-tool-catalogue.ts")
+          source = source_path.read_text(encoding="utf-8")
+
+          source = replace_once(
+              source,
+              block('''
+              export interface GitHubToolDefinition extends GitHubToolDefinitionInput {
+                toolset: string;
+              }
+
+              export interface GitHubToolset {
+                name: string;
+                description: string;
+                defaultEnabled: boolean;
+                tools: GitHubToolDefinition[];
+              }
+
+              export interface GitHubToolCatalogue {
+                version: 1;
+                source: "github-mcp";
+                sourceRevision: string;
+                toolsets: GitHubToolset[];
+                toolCount: number;
+                fingerprint: string;
+              }
+
+              export interface GitHubToolSearchResult extends GitHubToolDefinition {
+                score: number;
+              }
+              '''),
+              block('''
+              export interface GitHubToolDefinition {
+                readonly name: string;
+                readonly toolset: string;
+                readonly description: string;
+                readonly inputSchema: Readonly<Record<string, unknown>>;
+                readonly readOnly: boolean;
+                readonly riskClass: GitHubToolRiskClass;
+                readonly repositoryScoped: boolean;
+                readonly requiresApproval: boolean;
+              }
+
+              export interface GitHubToolset {
+                readonly name: string;
+                readonly description: string;
+                readonly defaultEnabled: boolean;
+                readonly tools: readonly GitHubToolDefinition[];
+              }
+
+              export interface GitHubToolCatalogue {
+                readonly version: 1;
+                readonly source: "github-mcp";
+                readonly sourceRevision: string;
+                readonly toolsets: readonly GitHubToolset[];
+                readonly toolCount: number;
+                readonly fingerprint: string;
+              }
+
+              export interface GitHubToolSearchResult extends GitHubToolDefinition {
+                readonly score: number;
+              }
+              '''),
+              "readonly catalogue output contracts",
+          )
+
+          source = replace_once(
+              source,
+              block('''
+                return Object.freeze({
+                  ...canonical,
+                  fingerprint: sha256(stableJson(canonical)),
+                });
+              '''),
+              block('''
+                return deepFreeze({
+                  ...canonical,
+                  fingerprint: sha256(stableJson(canonical)),
+                });
+              '''),
+              "deeply frozen compiled catalogue",
+          )
+
+          source = replace_once(
+              source,
+              block('''
+                  if (prior.defaultEnabled !== toolset.defaultEnabled) {
+                    compatible = true;
+                    reasons.push(`toolset default changed: ${name}`);
+                  }
+              '''),
+              block('''
+                  if (prior.defaultEnabled !== toolset.defaultEnabled) {
+                    breaking = true;
+                    reasons.push(`toolset default exposure changed: ${name}`);
+                  }
+              '''),
+              "default exposure drift classification",
+          )
+
+          source = replace_once(
+              source,
+              block('''
+              function codeUnitCompare(left: string, right: string): number {
+                return left < right ? -1 : left > right ? 1 : 0;
+              }
+              '''),
+              block('''
+              function deepFreeze<T>(value: T): T {
+                if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+                  for (const entry of Object.values(value)) deepFreeze(entry);
+                  Object.freeze(value);
+                }
+                return value;
+              }
+
+              function codeUnitCompare(left: string, right: string): number {
+                return left < right ? -1 : left > right ? 1 : 0;
+              }
+              '''),
+              "deep freeze helper",
+          )
+
+          source_path.write_text(source + ("" if source.endswith("\n") else "\n"), encoding="utf-8")
+
+          test_path = Path("test/github-tool-catalogue.test.ts")
+          tests = test_path.read_text(encoding="utf-8")
+
+          tests = replace_once(
+              tests,
+              '  test("rejects duplicate names, malformed schemas, and inconsistent risk", () => {',
+              block('''
+                test("deeply freezes compiled catalogue snapshots", () => {
+                  const catalogue = compileGitHubToolCatalogue(catalogueInput());
+                  const repositoryTool = catalogue.toolsets
+                    .find((entry) => entry.name === "repos")!
+                    .tools.find((entry) => entry.name === "get_file_contents")!;
+                  const properties = repositoryTool.inputSchema.properties;
+                  const fingerprint = catalogue.fingerprint;
+
+                  expect(Object.isFrozen(catalogue)).toBe(true);
+                  expect(Object.isFrozen(catalogue.toolsets)).toBe(true);
+                  expect(Object.isFrozen(catalogue.toolsets[0])).toBe(true);
+                  expect(Object.isFrozen(catalogue.toolsets[0]?.tools)).toBe(true);
+                  expect(Object.isFrozen(repositoryTool)).toBe(true);
+                  expect(Object.isFrozen(repositoryTool.inputSchema)).toBe(true);
+                  expect(Object.isFrozen(properties)).toBe(true);
+                  expect(() => {
+                    (properties as Record<string, unknown>).owner = { type: "number" };
+                  }).toThrow();
+                  expect(catalogue.fingerprint).toBe(fingerprint);
+                });
+
+                test("rejects duplicate names, malformed schemas, and inconsistent risk", () => {
+              '''),
+              "deep freeze regression test",
+          )
+
+          tests = replace_once(
+              tests,
+              '  test("classifies removals, schema changes, and authority changes as breaking", () => {',
+              block('''
+                test("classifies default toolset exposure changes as breaking", () => {
+                  const previous = compileGitHubToolCatalogue(catalogueInput());
+                  const nextInput = catalogueInput();
+                  nextInput.toolsets.find((entry) => entry.name === "actions")!.defaultEnabled = true;
+
+                  const change = classifyGitHubToolCatalogueChange(
+                    previous,
+                    compileGitHubToolCatalogue(nextInput),
+                  );
+                  expect(change.classification).toBe("breaking");
+                  expect(change.reasons).toContain("toolset default exposure changed: actions");
+                });
+
+                test("classifies removals, schema changes, and authority changes as breaking", () => {
+              '''),
+              "default exposure regression test",
+          )
+
+          test_path.write_text(tests + ("" if tests.endswith("\n") else "\n"), encoding="utf-8")
+          PY
+
+      - name: Run focused and repository checks
+        run: |
+          set -euxo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-tool-catalogue.test.ts
+          bun test
+          bun run worker:check
+
+      - name: Publish source-only repair
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/mica-585-catalogue-snapshot-integrity.yml
+          git diff --check
+          git config user.name mica-stensibly
+          git config user.email mica-stensibly@users.noreply.github.com
+          git add src/github-tool-catalogue.ts test/github-tool-catalogue.test.ts .github/workflows/mica-585-catalogue-snapshot-integrity.yml
+          git commit -m 'fix: preserve GitHub catalogue snapshot integrity'
+          git push origin HEAD:refs/heads/mica/585-catalogue-snapshot-integrity
