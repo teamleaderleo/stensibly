@@ -1,0 +1,115 @@
+name: juniper-569-hosted-refresh-finalize
+
+on:
+  push:
+    branches:
+      - juniper/541-hosted-dashboard-refresh
+    paths:
+      - .github/workflows/juniper-569-finalize.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-569-hosted-refresh-finalize
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: juniper/541-hosted-dashboard-refresh
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Rebase exact candidate onto current main
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch origin main
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git rebase origin/main
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "26"
+
+      - name: Execute retained bounded-refresh recipe
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/juniper-569-bounded-refresh-v2.yml')
+          lines = workflow.read_text(encoding='utf-8').splitlines()
+          marker = '      - name: Apply bounded refresh-state repair'
+          try:
+              start = lines.index(marker)
+          except ValueError as error:
+              raise SystemExit('bounded refresh repair marker is missing') from error
+
+          run_index = start + 1
+          while run_index < len(lines) and lines[run_index].strip() != 'run: |':
+              run_index += 1
+          if run_index >= len(lines):
+              raise SystemExit('bounded refresh repair run block is missing')
+
+          body = []
+          index = run_index + 1
+          while index < len(lines):
+              line = lines[index]
+              if line.startswith('      - name:'):
+                  break
+              if line.strip() and not line.startswith('          '):
+                  raise SystemExit(f'unexpected repair indentation at line {index + 1}')
+              body.append(line[10:] if len(line) >= 10 else '')
+              index += 1
+
+          if not body:
+              raise SystemExit('bounded refresh repair body is empty')
+          script = Path('/tmp/juniper-569-apply.sh')
+          script.write_text('\n'.join(body) + '\n', encoding='utf-8')
+          PY
+          bash -euxo pipefail /tmp/juniper-569-apply.sh
+
+      - name: Preserve rich item projection typing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('site/dashboard-refresh-policy.d.ts')
+          text = path.read_text(encoding='utf-8')
+          old = 'export function dashboardItemsFingerprint(items: DashboardRefreshItem[]): string;'
+          new = 'export function dashboardItemsFingerprint<T extends DashboardRefreshItem>(items: T[]): string;'
+          if text.count(old) != 1:
+              raise SystemExit(f'fingerprint declaration anchor matched {text.count(old)} times')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          set -euxo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/dashboard-refresh-policy.test.ts test/dashboard-hosted-refresh-contract.test.ts
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish source-only current-main candidate
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/juniper-569-bounded-refresh-v2.yml
+          rm .github/workflows/juniper-569-rich-item-followup.yml
+          rm .github/workflows/juniper-569-finalize.yml
+          git diff --check
+          git add site test .github
+          git commit -m 'fix: finalize bounded hosted refresh state'
+          git push --force-with-lease=refs/heads/juniper/541-hosted-dashboard-refresh:$GITHUB_SHA \
+            origin HEAD:refs/heads/juniper/541-hosted-dashboard-refresh
