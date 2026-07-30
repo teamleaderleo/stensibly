@@ -196,7 +196,7 @@ function capabilityScore(
     if (skill.includes(token)) score += 25;
     if (capability.tier === token) score += 20;
   }
-  score += Math.max(0, 30 - tierRank(capability.tier) * 10);
+  if (score > 0) score += Math.max(0, 30 - tierRank(capability.tier) * 10);
   return score;
 }
 
