@@ -53,6 +53,7 @@ describe("dashboard claim integration", () => {
   test("refreshes board and event history after success and reacts to actor changes", () => {
     expect(controller).toContain("await onChanged(claimed.id)");
     expect(app).toContain("onChanged: async () =>");
+    // Item mutations reset the idle backoff before the board is reread.
     expect(app).toContain("await refreshCurrent({ interactive: true })");
     expect(app).toContain("itemDetail?.syncContext()");
     expect(declaration).toContain("syncContext(): void");
