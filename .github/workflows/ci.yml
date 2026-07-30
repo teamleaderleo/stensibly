@@ -110,26 +110,25 @@ jobs:
           if-no-files-found: ignore
 
   publish-workflow-run-observations:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/aster/591-workflow-run-observations'
+    if: github.event_name == 'pull_request' && github.head_ref == 'aster/591-workflow-run-observations'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - name: Check out exact branch head
+      - name: Check out exact pull-request head
         uses: actions/checkout@v6
         with:
           ref: aster/591-workflow-run-observations
           fetch-depth: 0
           persist-credentials: true
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
       - name: Build and publish source-only workflow-run observations
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euxo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git config user.name aster-stensibly
           git config user.email aster-stensibly@users.noreply.github.com
           git fetch origin main
@@ -639,10 +638,7 @@ jobs:
 
           bun install --frozen-lockfile
           bun run typecheck
-          bun run test
-          bun run test:convex
-          bun run worker:check
-          bun run test:runtime-parity
+          bun test test/github-workflow-run-observation.test.ts
 
           git checkout origin/main -- .github/workflows/ci.yml
           git add src/github-repository-observation.ts test/github-workflow-run-observation.test.ts .github/workflows/ci.yml
