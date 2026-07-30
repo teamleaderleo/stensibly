@@ -7,6 +7,7 @@ const workflowDirectory = fileURLToPath(
 );
 
 const permanentWorkflows = [
+  "apply-bun-lock-candidate.yml",
   "auto-deploy-dashboard.yml",
   "callsign-registry.yml",
   "ci.yml",
