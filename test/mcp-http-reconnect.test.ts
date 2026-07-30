@@ -4,8 +4,15 @@ import { createHostedApp } from "../src/hosted-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import type { ApiTokenAuthenticator } from "../src/token-provider.ts";
+import {
+  MCP_PROTOCOL_VERSION,
+  callToolJson,
+  initializeMessage,
+  mcpRequest,
+  readJsonRpcResult,
+  toolsListMessage,
+} from "./support/mcp-http.ts";
 
-const protocolVersion = "2025-06-18";
 const token = "hosted-reconnect-token";
 const project = "oauth-dogfood";
 const actor = {
@@ -13,6 +20,7 @@ const actor = {
   name: "Reconnect Regression",
   kind: "agent" as const,
 };
+const reconnectClient = { clientName: "hosted-reconnect-test" };
 
 class FixedAuthenticator implements ApiTokenAuthenticator {
   async authenticate(rawToken: string): Promise<TokenPrincipal | null> {
@@ -177,16 +185,25 @@ function createApp(): HostedApp {
 }
 
 async function initialize(app: HostedApp): Promise<void> {
-  const result = await rpc<{ protocolVersion: string }>(app, "initialize", {
-    protocolVersion,
-    capabilities: {},
-    clientInfo: { name: "hosted-reconnect-test", version: "0.0.1" },
-  });
-  expect(result.protocolVersion).toBe(protocolVersion);
+  const id = ++requestId;
+  const response = await mcpRequest(
+    app,
+    token,
+    initializeMessage(id, reconnectClient),
+  );
+  expect(response.status).toBe(200);
+  const result = await readJsonRpcResult<{ protocolVersion: string }>(response, id);
+  expect(result.protocolVersion).toBe(MCP_PROTOCOL_VERSION);
 }
 
 async function listTools(app: HostedApp): Promise<string[]> {
-  const result = await rpc<{ tools: Array<{ name: string }> }>(app, "tools/list", {});
+  const id = ++requestId;
+  const response = await mcpRequest(app, token, toolsListMessage(id));
+  expect(response.status).toBe(200);
+  const result = await readJsonRpcResult<{ tools: Array<{ name: string }> }>(
+    response,
+    id,
+  );
   return result.tools.map((tool) => tool.name);
 }
 
@@ -195,52 +212,5 @@ async function callTool<T = unknown>(
   name: string,
   args: Record<string, unknown>,
 ): Promise<T> {
-  const result = await rpc<{
-    isError?: boolean;
-    content?: unknown;
-  }>(app, "tools/call", { name, arguments: args });
-  if (result.isError) throw new Error(textContent(result));
-  return JSON.parse(textContent(result)) as T;
-}
-
-async function rpc<T>(
-  app: HostedApp,
-  method: string,
-  params: Record<string, unknown>,
-): Promise<T> {
-  const id = ++requestId;
-  const response = await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-  });
-  expect(response.status).toBe(200);
-
-  const payload = await response.json() as {
-    id?: unknown;
-    result?: T;
-    error?: { code?: unknown; message?: unknown };
-  };
-  expect(payload.id).toBe(id);
-  if (payload.error) {
-    throw new Error(`MCP ${method} failed: ${JSON.stringify(payload.error)}`);
-  }
-  expect(payload.result).toBeDefined();
-  return payload.result as T;
-}
-
-function textContent(result: { content?: unknown }): string {
-  if (!Array.isArray(result.content) || result.content.length === 0) {
-    throw new Error("MCP result had no content");
-  }
-  const first = result.content[0] as { type?: unknown; text?: unknown };
-  if (first.type !== "text" || typeof first.text !== "string") {
-    throw new Error("MCP result did not contain text");
-  }
-  return first.text;
+  return await callToolJson<T>(app, token, ++requestId, name, args);
 }

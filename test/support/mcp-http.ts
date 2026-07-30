@@ -12,10 +12,20 @@ export interface McpInitializeOptions {
   capabilities?: Record<string, unknown>;
 }
 
-export interface McpToolResultPayload {
-  result?: {
-    content?: Array<{ type?: unknown; text?: unknown }>;
-  };
+export interface JsonRpcResponsePayload<T> {
+  id?: unknown;
+  result?: T;
+  error?: { code?: unknown; message?: unknown; data?: unknown };
+}
+
+export interface McpToolResult {
+  isError?: boolean;
+  content?: Array<{ type?: unknown; text?: unknown }>;
+}
+
+export interface McpToolEnvelope {
+  isError: boolean;
+  text: string;
 }
 
 export function mcpHeaders(
@@ -85,26 +95,82 @@ export async function mcpRequest(
   });
 }
 
-export async function readToolText(response: Response): Promise<string> {
-  const body = await response.json() as McpToolResultPayload;
-  const first = body.result?.content?.[0];
+export async function readJsonRpcResult<T>(
+  response: Response,
+  expectedId?: number | string,
+): Promise<T> {
+  const payload = await response.json() as JsonRpcResponsePayload<T>;
+  if (expectedId !== undefined && payload.id !== expectedId) {
+    throw new Error(
+      `Remote MCP response id ${String(payload.id)} did not match ${String(expectedId)}`,
+    );
+  }
+  if (payload.error) {
+    throw new Error(`Remote MCP request failed: ${JSON.stringify(payload.error)}`);
+  }
+  if (payload.result === undefined) {
+    throw new Error(`Remote MCP response ${response.status} did not contain a result`);
+  }
+  return payload.result;
+}
+
+export async function readToolEnvelope(
+  response: Response,
+  expectedId?: number | string,
+): Promise<McpToolEnvelope> {
+  const result = await readJsonRpcResult<McpToolResult>(response, expectedId);
+  const first = result.content?.[0];
   if (first?.type !== "text" || typeof first.text !== "string") {
     throw new Error(
       `Remote MCP response ${response.status} did not contain a text tool result`,
     );
   }
-  return first.text;
+  return { isError: result.isError === true, text: first.text };
 }
 
-export async function readToolJson<T>(response: Response): Promise<T> {
-  const text = await readToolText(response);
+export async function readToolText(
+  response: Response,
+  expectedId?: number | string,
+): Promise<string> {
+  return (await readToolEnvelope(response, expectedId)).text;
+}
+
+export async function readToolJson<T>(
+  response: Response,
+  expectedId?: number | string,
+): Promise<T> {
+  const envelope = await readToolEnvelope(response, expectedId);
+  if (envelope.isError) throw new Error(envelope.text);
   try {
-    return JSON.parse(text) as T;
+    return JSON.parse(envelope.text) as T;
   } catch (error) {
     throw new Error(
       `Remote MCP text result was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+export async function callToolEnvelope(
+  app: McpRequestTarget,
+  token: string,
+  id: number | string,
+  name: string,
+  args: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+): Promise<McpToolEnvelope> {
+  const response = await mcpRequest(
+    app,
+    token,
+    toolCall(id, name, args),
+    extraHeaders,
+  );
+  if (response.status !== 200) {
+    const body = await response.text().catch(() => "<unreadable response>");
+    throw new Error(
+      `Remote MCP tool ${name} returned ${response.status}: ${body.slice(0, 500)}`,
+    );
+  }
+  return await readToolEnvelope(response, id);
 }
 
 export async function callToolJson<T>(
@@ -113,13 +179,22 @@ export async function callToolJson<T>(
   id: number | string,
   name: string,
   args: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
 ): Promise<T> {
-  const response = await mcpRequest(app, token, toolCall(id, name, args));
-  if (response.status !== 200) {
-    const body = await response.text().catch(() => "<unreadable response>");
+  const envelope = await callToolEnvelope(
+    app,
+    token,
+    id,
+    name,
+    args,
+    extraHeaders,
+  );
+  if (envelope.isError) throw new Error(envelope.text);
+  try {
+    return JSON.parse(envelope.text) as T;
+  } catch (error) {
     throw new Error(
-      `Remote MCP tool ${name} returned ${response.status}: ${body.slice(0, 500)}`,
+      `Remote MCP text result was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  return await readToolJson<T>(response);
 }
