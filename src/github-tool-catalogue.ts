@@ -77,6 +77,11 @@ const toolsetNamePattern = /^[a-z][a-z0-9_]{0,63}$/;
 export function compileGitHubToolCatalogue(
   input: GitHubToolCatalogueInput,
 ): GitHubToolCatalogue {
+  rejectUnknownCatalogueFields(
+    input,
+    ["version", "source", "sourceRevision", "toolsets"],
+    "GitHub tool catalogue",
+  );
   if (input.version !== 1 || input.source !== "github-mcp") {
     throw new RangeError("GitHub tool catalogue version or source is unsupported");
   }
@@ -93,6 +98,11 @@ export function compileGitHubToolCatalogue(
   const toolNames = new Set<string>();
   let toolCount = 0;
   const toolsets = input.toolsets.map((toolset) => {
+    rejectUnknownCatalogueFields(
+      toolset,
+      ["name", "description", "defaultEnabled", "tools"],
+      "GitHub toolset",
+    );
     const name = catalogueName(
       toolset.name,
       "GitHub toolset name",
@@ -106,6 +116,19 @@ export function compileGitHubToolCatalogue(
       throw new RangeError(`GitHub toolset ${name} accepts at most 200 tools`);
     }
     const tools = toolset.tools.map((tool) => {
+      rejectUnknownCatalogueFields(
+        tool,
+        [
+          "name",
+          "description",
+          "inputSchema",
+          "readOnly",
+          "riskClass",
+          "repositoryScoped",
+          "requiresApproval",
+        ],
+        "GitHub tool",
+      );
       const toolName = catalogueName(
         tool.name,
         "GitHub tool name",
@@ -439,6 +462,35 @@ export const githubReadOnlySeedCatalogue = compileGitHubToolCatalogue({
   ],
 });
 
+function rejectUnknownCatalogueFields(
+  value: unknown,
+  allowed: readonly string[],
+  label: string,
+): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RangeError(`${label} must be a JSON object`);
+  }
+  const known = new Set(allowed);
+  const unknown = Object.keys(value as Record<string, unknown>)
+    .filter((key) => !known.has(key))
+    .sort(codeUnitCompare);
+  if (unknown.length === 0) return;
+  const field = boundedCatalogueFieldName(unknown[0]!);
+  throw new RangeError(`${label} has unknown field ${field}`);
+}
+
+function boundedCatalogueFieldName(value: string): string {
+  if (
+    value.length >= 1
+    && value.length <= 80
+    && value.normalize("NFKC") === value
+    && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(value)
+  ) {
+    return value;
+  }
+  const digest = sha256(value);
+  return `sha256:${digest.slice("sha256:".length, "sha256:".length + 16)}`;
+}
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (typeof value !== "object" || value === null || seen.has(value)) return value;
   seen.add(value);
