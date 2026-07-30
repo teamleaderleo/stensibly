@@ -46,107 +46,109 @@ jobs:
           from pathlib import Path
           from textwrap import dedent
 
-          source = Path('src/execution-certainty.ts')
-          text = source.read_text(encoding='utf-8')
-
           def block(value: str) -> str:
               return dedent(value).strip('\n')
 
-          replacements = [
-              (
-                  '  const expected = createExecutionCertaintyReceipt(record);',
-                  block('''
-                  const expected = createExecutionCertaintyReceipt({
-                    workspace: record.workspace,
-                    project: record.project,
-                    executionPath: record.executionPath,
-                    operation: record.operation,
-                    operationKind: record.operationKind,
-                    operationRef: record.operationRef,
-                    requestFingerprint: record.requestFingerprint,
-                    authorityFingerprint: record.authorityFingerprint,
-                    runGeneration: record.runGeneration,
-                    observedAt: record.observedAt,
-                    evidence: record.evidence,
-                  });
-                  '''),
-              ),
-              (
-                  block('''
-                  const allowed = [
-                    "schemaVersion",
-                    "workspace",
-                    "project",
-                    "executionPath",
-                    "operation",
-                    "operationKind",
-                    "operationRef",
-                    "requestFingerprint",
-                    "authorityFingerprint",
-                    "runGeneration",
-                    "observedAt",
-                    "evidence",
-                    "certainty",
-                    "receiptFingerprint",
-                  ];
-                  '''),
-                  block('''
-                  const allowed = [
-                    "workspace",
-                    "project",
-                    "executionPath",
-                    "operation",
-                    "operationKind",
-                    "operationRef",
-                    "requestFingerprint",
-                    "authorityFingerprint",
-                    "runGeneration",
-                    "observedAt",
-                    "evidence",
-                  ];
-                  '''),
-              ),
-              (
-                  '  const status = resolution.outcome === "still_unknown" ? "required" : "resolved";',
-                  block('''
-                  const status: "required" | "resolved" = resolution.outcome === "still_unknown"
-                    ? "required"
-                    : "resolved";
-                  '''),
-              ),
-          ]
+          def with_indent(value: str, width: int) -> str:
+              prefix = ' ' * width
+              return '\n'.join(prefix + line if line else line for line in value.splitlines())
 
-          for old, new in replacements:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'execution certainty source anchor matched {count} times: {old[:100]!r}')
-              text = text.replace(old, new, 1)
+          def replace_indented(document: str, old: str, new: str, label: str) -> str:
+              old = block(old)
+              new = block(new)
+              matches = []
+              for width in range(0, 25):
+                  candidate = with_indent(old, width)
+                  count = document.count(candidate)
+                  matches.extend([(candidate, width)] * count)
+              if len(matches) != 1:
+                  raise SystemExit(f'{label} matched {len(matches)} times')
+              candidate, width = matches[0]
+              return document.replace(candidate, with_indent(new, width), 1)
+
+          source = Path('src/execution-certainty.ts')
+          text = source.read_text(encoding='utf-8')
+          text = replace_indented(text, '''
+          const expected = createExecutionCertaintyReceipt(record);
+          ''', '''
+          const expected = createExecutionCertaintyReceipt({
+            workspace: record.workspace,
+            project: record.project,
+            executionPath: record.executionPath,
+            operation: record.operation,
+            operationKind: record.operationKind,
+            operationRef: record.operationRef,
+            requestFingerprint: record.requestFingerprint,
+            authorityFingerprint: record.authorityFingerprint,
+            runGeneration: record.runGeneration,
+            observedAt: record.observedAt,
+            evidence: record.evidence,
+          });
+          ''', 'receipt reconstruction')
+
+          text = replace_indented(text, '''
+          const allowed = [
+            "schemaVersion",
+            "workspace",
+            "project",
+            "executionPath",
+            "operation",
+            "operationKind",
+            "operationRef",
+            "requestFingerprint",
+            "authorityFingerprint",
+            "runGeneration",
+            "observedAt",
+            "evidence",
+            "certainty",
+            "receiptFingerprint",
+          ];
+          ''', '''
+          const allowed = [
+            "workspace",
+            "project",
+            "executionPath",
+            "operation",
+            "operationKind",
+            "operationRef",
+            "requestFingerprint",
+            "authorityFingerprint",
+            "runGeneration",
+            "observedAt",
+            "evidence",
+          ];
+          ''', 'creation allowed fields')
+
+          text = replace_indented(text, '''
+          const status = resolution.outcome === "still_unknown" ? "required" : "resolved";
+          ''', '''
+          const status: "required" | "resolved" = resolution.outcome === "still_unknown"
+            ? "required"
+            : "resolved";
+          ''', 'closed reconciliation status')
           source.write_text(text, encoding='utf-8')
 
           tests = Path('test/execution-certainty.test.ts')
           test_text = tests.read_text(encoding='utf-8')
-          unknown_anchor = block('''
-            expect(() => createExecutionCertaintyReceipt({ ...input(), arguments: { secret: true } }))
-              .toThrow("unknown field arguments");
-          ''')
-          unknown_replacement = unknown_anchor + '\n' + block('''
-            expect(() => createExecutionCertaintyReceipt({
-              ...input(),
-              certainty: { state: "not_dispatched" },
-            })).toThrow("unknown field certainty");
-          ''')
-          if test_text.count(unknown_anchor) != 1:
-              raise SystemExit('receipt-only field test anchor mismatch')
-          test_text = test_text.replace(unknown_anchor, unknown_replacement, 1)
+          test_text = replace_indented(test_text, '''
+          expect(() => createExecutionCertaintyReceipt({ ...input(), arguments: { secret: true } }))
+            .toThrow("unknown field arguments");
+          ''', '''
+          expect(() => createExecutionCertaintyReceipt({ ...input(), arguments: { secret: true } }))
+            .toThrow("unknown field arguments");
+          expect(() => createExecutionCertaintyReceipt({
+            ...input(),
+            certainty: { state: "not_dispatched" },
+          })).toThrow("unknown field certainty");
+          ''', 'receipt-only field control')
 
-          parity_old = '    expect(certainties).toEqual([certainties[0], certainties[0], certainties[0], certainties[0]]);'
-          parity_new = block('''
-            const expected = certainties[0]!;
-            expect(certainties).toEqual([expected, expected, expected, expected]);
-          ''')
-          if test_text.count(parity_old) != 1:
-              raise SystemExit('certainty parity assertion anchor mismatch')
-          tests.write_text(test_text.replace(parity_old, parity_new, 1), encoding='utf-8')
+          test_text = replace_indented(test_text, '''
+          expect(certainties).toEqual([certainties[0], certainties[0], certainties[0], certainties[0]]);
+          ''', '''
+          const expected = certainties[0]!;
+          expect(certainties).toEqual([expected, expected, expected, expected]);
+          ''', 'strict parity assertion')
+          tests.write_text(test_text, encoding='utf-8')
           PY
 
       - name: Run focused and repository gates
