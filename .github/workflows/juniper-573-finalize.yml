@@ -44,6 +44,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           workflow = Path('.github/workflows/juniper-573-outbound-policy-gate.yml')
           lines = workflow.read_text(encoding='utf-8').splitlines()
@@ -72,10 +73,39 @@ jobs:
 
           if not body:
               raise SystemExit('outbound policy repair body is empty')
-          Path('/tmp/juniper-573-apply.sh').write_text(
-              '\n'.join(body) + '\n',
-              encoding='utf-8',
-          )
+          script = '\n'.join(body) + '\n'
+          old_helper = dedent('''
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              old = block(old)
+              new = block(new)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label} anchor matched {count} times')
+              text = text.replace(old, new, 1)
+          ''').strip('\n')
+          new_helper = dedent('''
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              old = block(old)
+              new = block(new)
+              matches = []
+              for width in range(0, 25):
+                  prefix = ' ' * width
+                  candidate = '\\n'.join(prefix + line if line else line for line in old.splitlines())
+                  count = text.count(candidate)
+                  matches.extend([(candidate, width)] * count)
+              if len(matches) != 1:
+                  raise SystemExit(f'{label} anchor matched {len(matches)} times')
+              candidate, width = matches[0]
+              prefix = ' ' * width
+              replacement = '\\n'.join(prefix + line if line else line for line in new.splitlines())
+              text = text.replace(candidate, replacement, 1)
+          ''').strip('\n')
+          if script.count(old_helper) != 1:
+              raise SystemExit('outbound replace_once helper mismatch')
+          script = script.replace(old_helper, new_helper, 1)
+          Path('/tmp/juniper-573-apply.sh').write_text(script, encoding='utf-8')
           PY
           bash -euxo pipefail /tmp/juniper-573-apply.sh
 
