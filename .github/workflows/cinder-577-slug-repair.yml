@@ -1,0 +1,204 @@
+name: cinder-577-slug-repair
+
+on:
+  push:
+    branches:
+      - cinder/577-slug-validator-repair
+    paths:
+      - .github/workflows/cinder-577-slug-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-577-slug-repair
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: cinder/577-slug-validator-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Rebase onto current main
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch origin main
+          git config user.name cinder-stensibly
+          git config user.email cinder-stensibly@users.noreply.github.com
+          git rebase origin/main
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "26"
+
+      - name: Repair exact malformed classes and add regressions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          needle = "[a-z0-9-_]"
+          replacement = "[a-z0-9_-]"
+          changed = []
+          occurrences = 0
+          allowed_suffixes = {".ts", ".js", ".html"}
+
+          for root_name in ("src", "convex", "site"):
+              root = Path(root_name)
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.suffix not in allowed_suffixes:
+                      continue
+                  text = path.read_text(encoding="utf-8")
+                  count = text.count(needle)
+                  if count == 0:
+                      continue
+                  path.write_text(text.replace(needle, replacement), encoding="utf-8")
+                  changed.append((str(path), count))
+                  occurrences += count
+
+          if occurrences == 0:
+              raise SystemExit("no malformed lowercase slug classes found on current main")
+
+          remaining = []
+          for root_name in ("src", "convex", "site"):
+              root = Path(root_name)
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.suffix not in allowed_suffixes:
+                      continue
+                  if needle in path.read_text(encoding="utf-8"):
+                      remaining.append(str(path))
+          if remaining:
+              raise SystemExit(f"malformed class remains in: {remaining}")
+
+          print(f"repaired {occurrences} occurrence(s) across {len(changed)} file(s)")
+          for path, count in changed:
+              print(f"  {path}: {count}")
+
+          Path("test/lowercase-slug-boundary.test.ts").write_text(dedent(r'''
+          import { describe, expect, test } from "bun:test";
+          import { readdir, readFile } from "node:fs/promises";
+          import { extname, join } from "node:path";
+          import { assertSlug } from "../convex/lib/domain.ts";
+          import { continuationActionSchema } from "../src/continuation-contracts.ts";
+          import { normalizeOptions } from "../src/mcp-oauth-protocol.ts";
+          import { createItemSchema } from "../src/schemas.ts";
+          import { normalizeBoardProject } from "../site/board-filter.js";
+
+          const malformedClass = "[a-z0-9-_]";
+          const accidentalRangeCharacters = [
+            ":", ";", "<", "=", ">", "?", "@", "[", "\\", "]", "^",
+          ];
+          const validSlugs = ["a", "alpha-1", "alpha_1"];
+
+          describe("lowercase slug accidental ASCII range", () => {
+            test("keeps the malformed class out of production source", async () => {
+              const offenders: string[] = [];
+              for (const root of ["src", "convex", "site"]) {
+                for (const path of await sourceFiles(root)) {
+                  if ((await readFile(path, "utf8")).includes(malformedClass)) offenders.push(path);
+                }
+              }
+              expect(offenders).toEqual([]);
+            });
+
+            test("proves the old range admitted punctuation and the corrected range closes it", () => {
+              const malformed = /^[a-z0-9][a-z0-9-_]*$/;
+              const corrected = /^[a-z0-9][a-z0-9_-]*$/;
+              for (const character of accidentalRangeCharacters) {
+                expect(malformed.test(`a${character}`)).toBe(true);
+                expect(corrected.test(`a${character}`)).toBe(false);
+              }
+              for (const slug of validSlugs) expect(corrected.test(slug)).toBe(true);
+            });
+
+            test("rejects range-only punctuation through strict project and continuation schemas", () => {
+              for (const character of accidentalRangeCharacters) {
+                expect(createItemSchema.safeParse({ project: `a${character}`, title: "Boundary" }).success)
+                  .toBe(false);
+                expect(continuationActionSchema.safeParse({
+                  kind: "create_item",
+                  project: `a${character}`,
+                }).success).toBe(false);
+              }
+              for (const project of validSlugs) {
+                expect(createItemSchema.safeParse({ project, title: "Boundary" }).success).toBe(true);
+                expect(continuationActionSchema.safeParse({ kind: "create_item", project }).success)
+                  .toBe(true);
+              }
+            });
+
+            test("preserves OAuth and Convex case canonicalization while rejecting punctuation", () => {
+              const base = {
+                service: {} as Parameters<typeof normalizeOptions>[0]["service"],
+                accountService: {} as Parameters<typeof normalizeOptions>[0]["accountService"],
+                issuer: "https://api.stensibly.com",
+                resource: "https://api.stensibly.com/mcp",
+                signingSecret: "s".repeat(32),
+                workspace: "scrapbook",
+              };
+              for (const character of accidentalRangeCharacters) {
+                expect(() => normalizeOptions({ ...base, workspace: `a${character}` })).toThrow(
+                  "OAuth workspace must be a lowercase slug",
+                );
+                expect(() => assertSlug(`a${character}`, "Workspace")).toThrow(
+                  "Workspace must be a lowercase slug",
+                );
+              }
+              expect(normalizeOptions({ ...base, workspace: "Alpha_1" }).workspace).toBe("alpha_1");
+              expect(assertSlug("Alpha-1", "Workspace")).toBe("alpha-1");
+            });
+
+            test("rejects accidental punctuation through the browser project filter", () => {
+              for (const character of accidentalRangeCharacters) {
+                expect(normalizeBoardProject(`a${character}`)).toBe("");
+              }
+              for (const project of validSlugs) expect(normalizeBoardProject(project)).toBe(project);
+              expect(normalizeBoardProject("Alpha-1")).toBe("");
+            });
+          });
+
+          async function sourceFiles(root: string): Promise<string[]> {
+            const files: string[] = [];
+            for (const entry of await readdir(root, { withFileTypes: true })) {
+              const path = join(root, entry.name);
+              if (entry.isDirectory()) {
+                files.push(...await sourceFiles(path));
+              } else if ([".ts", ".js", ".html"].includes(extname(entry.name))) {
+                files.push(path);
+              }
+            }
+            return files.sort();
+          }
+          ''').lstrip(), encoding="utf-8")
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          set -euxo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/lowercase-slug-boundary.test.ts
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish source-only candidate
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/cinder-577-slug-repair.yml
+          git diff --check
+          git add src convex site test .github/workflows
+          git diff --cached --check
+          git commit -m "Fix malformed lowercase slug validators"
+          git push --force-with-lease=refs/heads/cinder/577-slug-validator-repair:$GITHUB_SHA \
+            origin HEAD:refs/heads/cinder/577-slug-validator-repair
