@@ -20,7 +20,7 @@ export function registerGitHubCapabilityTools(server: McpServer): void {
       },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asToolResult(() => catalogue.listToolsets(input)),
+    async (input) => asToolResult(async () => catalogue.listToolsets(input)),
   );
 
   server.registerTool(
@@ -37,7 +37,7 @@ export function registerGitHubCapabilityTools(server: McpServer): void {
       },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asToolResult(() => catalogue.searchTools(input)),
+    async (input) => asToolResult(async () => catalogue.searchTools(input)),
   );
 
   server.registerTool(
@@ -49,7 +49,7 @@ export function registerGitHubCapabilityTools(server: McpServer): void {
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ name }) => asToolResult(() => {
+    async ({ name }) => asToolResult(async () => {
       const capability = catalogue.getTool(name);
       return {
         ...capability,
