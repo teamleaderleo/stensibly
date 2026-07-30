@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { bearerJsonHeaders, jsonHeaders } from "./support/http.ts";
 
 const leo = { id: "leo", name: "Leo", kind: "human" as const };
 const agent = { id: "agent", name: "Agent", kind: "agent" as const };
@@ -41,10 +42,9 @@ describe("continuation REST API", () => {
     }>(
       app.request(`/api/v1/items/${item.id}/continuations`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
+        headers: jsonHeaders({
           "idempotency-key": "continuation-propose-1",
-        },
+        }),
         body: JSON.stringify(proposalInput),
       }),
       201,
@@ -57,10 +57,9 @@ describe("continuation REST API", () => {
     const replayed = await json<{ continuation: { id: string } }>(
       app.request(`/api/v1/items/${item.id}/continuations`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
+        headers: jsonHeaders({
           "idempotency-key": "continuation-propose-1",
-        },
+        }),
         body: JSON.stringify(proposalInput),
       }),
       201,
@@ -89,10 +88,9 @@ describe("continuation REST API", () => {
         `/api/v1/continuations/${proposed.continuation.id}/resolve`,
         {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
+          headers: jsonHeaders({
             "idempotency-key": "continuation-approve-1",
-          },
+          }),
           body: JSON.stringify({
             actor: leo,
             command: "approve",
@@ -114,10 +112,9 @@ describe("continuation REST API", () => {
         `/api/v1/continuations/${proposed.continuation.id}/resolve`,
         {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
+          headers: jsonHeaders({
             "idempotency-key": "continuation-approve-1",
-          },
+          }),
           body: JSON.stringify({
             actor: leo,
             command: "approve",
@@ -133,7 +130,7 @@ describe("continuation REST API", () => {
       `/api/v1/continuations/${proposed.continuation.id}/resolve`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           actor: leo,
           command: "reject",
@@ -156,10 +153,9 @@ describe("continuation REST API", () => {
         `/api/v1/continuations/${proposed.continuation.id}/resolve`,
         {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
+          headers: jsonHeaders({
             "idempotency-key": "continuation-consume-1",
-          },
+          }),
           body: JSON.stringify({
             actor: agent,
             command: "consume",
@@ -224,7 +220,7 @@ describe("continuation REST API", () => {
       `/api/v1/items/${visible.id}/continuations`,
       {
         method: "POST",
-        headers: { ...bearer(token.token), "content-type": "application/json" },
+        headers: bearerJsonHeaders(token.token),
         body,
       },
     );
@@ -234,17 +230,13 @@ describe("continuation REST API", () => {
       `/api/v1/items/${hidden.id}/continuations`,
       {
         method: "POST",
-        headers: { ...bearer(token.token), "content-type": "application/json" },
+        headers: bearerJsonHeaders(token.token),
         body,
       },
     );
     expect(denied.status).toBe(403);
   });
 });
-
-function bearer(token: string): Record<string, string> {
-  return { authorization: `Bearer ${token}` };
-}
 
 async function json<T>(
   responseValue: Response | Promise<Response>,
