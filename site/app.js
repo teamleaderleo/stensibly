@@ -6,11 +6,11 @@ import {
 } from './connection.js';
 import {
   DASHBOARD_VISIBILITY_WAKE_MS,
-  dashboardItemsFingerprint,
+  acceptDashboardRefreshResult,
+  clearDashboardRefreshState,
   dashboardRefreshDelay,
   dashboardRefreshMode,
-  nextDashboardRefreshLevel,
-  normalizeDashboardRefreshLevel,
+  readDashboardRefreshState,
 } from './dashboard-refresh-policy.js';
 import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
@@ -39,15 +39,17 @@ const columns = [
   ['done', 'Done', 'completed work'],
 ];
 
+const browserSessionStorage = optionalSessionStorage();
+const storedRefreshState = readDashboardRefreshState(browserSessionStorage);
 let items = [];
 let refreshTimer;
-let refreshLevel = normalizeDashboardRefreshLevel(sessionStorage.stensiblyRefreshLevel);
-let refreshFingerprint = sessionStorage.stensiblyItemsFingerprint || '';
+let refreshLevel = storedRefreshState.level;
+let refreshFingerprint = storedRefreshState.fingerprint;
 let lastSuccessfulUpdateLabel = '';
 let requestGeneration = 0;
 let connected = false;
 let endpoint = savedEndpoint();
-let token = sessionStorage.stensiblyToken || '';
+let token = readSessionValue('stensiblyToken');
 
 let itemDetail;
 let itemCreate;
@@ -161,7 +163,7 @@ async function connect(event) {
     acceptRefreshResult(nextItems, { initial: true });
     connected = true;
     localStorage.stensiblyEndpoint = endpoint;
-    sessionStorage.stensiblyToken = token;
+    writeSessionValue('stensiblyToken', token);
     form.elements.endpoint.value = endpoint;
     form.elements.token.value = '';
     updateDashboard();
@@ -332,8 +334,40 @@ function disconnect() {
 
 function clearStoredToken() {
   token = '';
-  sessionStorage.removeItem('stensiblyToken');
+  removeSessionValue('stensiblyToken');
   form.elements.token.value = '';
+}
+
+function optionalSessionStorage() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readSessionValue(key) {
+  try {
+    return browserSessionStorage?.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeSessionValue(key, value) {
+  try {
+    browserSessionStorage?.setItem(key, value);
+  } catch {
+    // Session persistence is optional; the accepted in-memory result remains authoritative.
+  }
+}
+
+function removeSessionValue(key) {
+  try {
+    browserSessionStorage?.removeItem(key);
+  } catch {
+    // Disconnect and reset remain available when storage access is blocked.
+  }
 }
 
 function beginRequest() {
@@ -410,26 +444,24 @@ function setConnectionStatus(label, isError = false) {
 }
 
 function acceptRefreshResult(nextItems, { interactive = false, initial = false } = {}) {
-  const nextFingerprint = dashboardItemsFingerprint(nextItems);
-  refreshLevel = nextDashboardRefreshLevel({
+  const nextState = acceptDashboardRefreshResult({
+    storage: browserSessionStorage,
     previousFingerprint: refreshFingerprint,
-    nextFingerprint,
     currentLevel: refreshLevel,
+    nextItems,
     interactive,
     initial,
   });
-  refreshFingerprint = nextFingerprint;
-  items = nextItems;
-  sessionStorage.stensiblyRefreshLevel = String(refreshLevel);
-  sessionStorage.stensiblyItemsFingerprint = refreshFingerprint;
+  items = nextState.items;
+  refreshLevel = nextState.level;
+  refreshFingerprint = nextState.fingerprint;
 }
 
 function resetRefreshPolicy() {
   refreshLevel = 0;
   refreshFingerprint = '';
   lastSuccessfulUpdateLabel = '';
-  sessionStorage.removeItem('stensiblyRefreshLevel');
-  sessionStorage.removeItem('stensiblyItemsFingerprint');
+  clearDashboardRefreshState(browserSessionStorage);
 }
 
 function updateDashboard() {
