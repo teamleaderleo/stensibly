@@ -11,6 +11,7 @@ const concurrency = workflow.match(
 describe("canonical CI concurrency", () => {
   test("cancels only superseded pull-request runs", () => {
     expect(concurrency).toBeDefined();
+    expect(concurrency).toContain("ci-${{ github.repository }}-");
     expect(concurrency).toContain("github.event_name == 'pull_request'");
     expect(concurrency).toContain(
       "format('pr-{0}', github.event.pull_request.number)",
