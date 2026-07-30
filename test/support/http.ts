@@ -1,33 +1,16 @@
-function withoutHeaders(
-  extra: Readonly<Record<string, string>>,
-  protectedNames: ReadonlySet<string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(extra).filter(
-      ([name]) => !protectedNames.has(name.toLowerCase()),
-    ),
-  );
-}
-
-const jsonHeaderNames = new Set(["content-type"]);
-const bearerJsonHeaderNames = new Set(["authorization", "content-type"]);
-
 export function jsonHeaders(
   extra: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
-  return {
-    ...withoutHeaders(extra, jsonHeaderNames),
-    "content-type": "application/json",
-  };
+  const headers = new Headers(extra);
+  headers.set("content-type", "application/json");
+  return Object.fromEntries(headers.entries());
 }
 
 export function bearerJsonHeaders(
   token: string,
   extra: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
-  return {
-    ...withoutHeaders(extra, bearerJsonHeaderNames),
-    authorization: `Bearer ${token}`,
-    "content-type": "application/json",
-  };
+  const headers = new Headers(jsonHeaders(extra));
+  headers.set("authorization", `Bearer ${token}`);
+  return Object.fromEntries(headers.entries());
 }
