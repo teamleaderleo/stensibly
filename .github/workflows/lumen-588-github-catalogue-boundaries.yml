@@ -1,0 +1,203 @@
+name: lumen-588-github-catalogue-boundaries
+
+on:
+  push:
+    branches:
+      - lumen/588-github-catalogue-boundaries
+    paths:
+      - .github/workflows/lumen-588-github-catalogue-boundaries.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-588-github-catalogue-boundaries
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: lumen/588-github-catalogue-boundaries
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply catalogue boundary repair
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git config user.name lumen-stensibly
+          git config user.email lumen-stensibly@users.noreply.github.com
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def block(value: str) -> str:
+              return dedent(value).strip("\n")
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              old = block(old)
+              new = block(new)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label} anchor matched {count} times")
+              return text.replace(old, new, 1)
+
+          source_path = Path("src/github-tool-catalogue.ts")
+          source = source_path.read_text(encoding="utf-8")
+          source = replace_once(source, '''
+          return Object.freeze({
+            ...canonical,
+            fingerprint: sha256(stableJson(canonical)),
+          });
+          ''', '''
+          return deepFreeze({
+            ...canonical,
+            fingerprint: sha256(stableJson(canonical)),
+          });
+          ''', "compiled catalogue freeze")
+          source = replace_once(source, '''
+              if (prior.defaultEnabled !== toolset.defaultEnabled) {
+                compatible = true;
+                reasons.push(`toolset default changed: ${name}`);
+              }
+          ''', '''
+              if (prior.defaultEnabled !== toolset.defaultEnabled) {
+                breaking = true;
+                reasons.push(`breaking toolset default changed: ${name}`);
+              }
+          ''', "toolset default drift")
+          source = replace_once(source, '''
+              if (riskRank[tool.riskClass] > riskRank[prior.riskClass]) {
+                changes.push("risk increase");
+              }
+              if (prior.readOnly && !tool.readOnly) changes.push("write capability");
+          ''', '''
+              if (prior.riskClass !== tool.riskClass) changes.push("risk class");
+              if (prior.readOnly !== tool.readOnly) changes.push("read-only capability");
+          ''', "authority drift")
+          source = replace_once(source, '''
+              if (
+                prior.description !== tool.description
+                || prior.readOnly !== tool.readOnly
+                || prior.riskClass !== tool.riskClass
+              ) {
+          ''', '''
+              if (prior.description !== tool.description) {
+          ''', "compatible metadata drift")
+          source = replace_once(source, '''
+          function toolMap(catalogue: GitHubToolCatalogue): Map<string, GitHubToolDefinition> {
+          ''', '''
+          function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+            if (typeof value !== "object" || value === null || seen.has(value)) return value;
+            seen.add(value);
+            for (const nested of Object.values(value as Record<string, unknown>)) {
+              deepFreeze(nested, seen);
+            }
+            return Object.freeze(value) as T;
+          }
+
+          function toolMap(catalogue: GitHubToolCatalogue): Map<string, GitHubToolDefinition> {
+          ''', "deep freeze helper")
+          source_path.write_text(source, encoding="utf-8")
+
+          test_path = Path("test/github-tool-catalogue.test.ts")
+          tests = test_path.read_text(encoding="utf-8")
+          tests = replace_once(tests, '''
+            expect(first.toolsets[0]?.tools.map((entry) => entry.name)).toEqual([
+              "actions_get",
+              "actions_list",
+            ]);
+          ''', '''
+            expect(first.toolsets[0]?.tools.map((entry) => entry.name)).toEqual([
+              "actions_get",
+              "actions_list",
+            ]);
+          
+            const fingerprint = first.fingerprint;
+            expect(Object.isFrozen(first)).toBe(true);
+            expect(Object.isFrozen(first.toolsets)).toBe(true);
+            expect(Object.isFrozen(first.toolsets[0])).toBe(true);
+            expect(Object.isFrozen(first.toolsets[0]?.tools)).toBe(true);
+            expect(Object.isFrozen(first.toolsets[0]?.tools[0]?.inputSchema)).toBe(true);
+            expect(() => {
+              first.toolsets[0]!.defaultEnabled = !first.toolsets[0]!.defaultEnabled;
+            }).toThrow(TypeError);
+            expect(() => {
+              first.toolsets[0]!.tools[0]!.inputSchema.type = "string";
+            }).toThrow(TypeError);
+            expect(first.fingerprint).toBe(fingerprint);
+          ''', "immutability regression")
+          tests = replace_once(tests, '''
+            expect(change.reasons.some((reason) => reason.includes("repository scope"))).toBe(true);
+          ''', '''
+            expect(change.reasons.some((reason) => reason.includes("repository scope"))).toBe(true);
+          });
+          
+          test("classifies authority and default-exposure reductions as breaking", () => {
+            const adminInput = catalogueInput();
+            const adminTool = adminInput.toolsets
+              .find((entry) => entry.name === "repos")!
+              .tools.find((entry) => entry.name === "get_file_contents")!;
+            adminTool.readOnly = false;
+            adminTool.riskClass = "admin";
+          
+            const writeInput = catalogueInput();
+            const writeTool = writeInput.toolsets
+              .find((entry) => entry.name === "repos")!
+              .tools.find((entry) => entry.name === "get_file_contents")!;
+            writeTool.readOnly = false;
+            writeTool.riskClass = "write";
+          
+            const riskDowngrade = classifyGitHubToolCatalogueChange(
+              compileGitHubToolCatalogue(adminInput),
+              compileGitHubToolCatalogue(writeInput),
+            );
+            expect(riskDowngrade.classification).toBe("breaking");
+            expect(riskDowngrade.reasons.some((reason) => reason.includes("risk class"))).toBe(true);
+          
+            const readOnlyInput = catalogueInput();
+            const writeToRead = classifyGitHubToolCatalogueChange(
+              compileGitHubToolCatalogue(writeInput),
+              compileGitHubToolCatalogue(readOnlyInput),
+            );
+            expect(writeToRead.classification).toBe("breaking");
+            expect(writeToRead.reasons.some((reason) => reason.includes("read-only capability"))).toBe(true);
+          
+            const enabledInput = catalogueInput();
+            enabledInput.toolsets.find((entry) => entry.name === "actions")!.defaultEnabled = true;
+            const defaultExposure = classifyGitHubToolCatalogueChange(
+              compileGitHubToolCatalogue(catalogueInput()),
+              compileGitHubToolCatalogue(enabledInput),
+            );
+            expect(defaultExposure.classification).toBe("breaking");
+            expect(defaultExposure.reasons).toContain("breaking toolset default changed: actions");
+          ''', "authority drift regressions")
+          test_path.write_text(tests, encoding="utf-8")
+          PY
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run repository gates
+        run: |
+          set -euxo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-tool-catalogue.test.ts
+          bun test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Publish source-only candidate
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/lumen-588-github-catalogue-boundaries.yml
+          git diff --check
+          git add src/github-tool-catalogue.ts test/github-tool-catalogue.test.ts .github/workflows
+          git commit -m 'fix: harden GitHub catalogue drift boundaries'
+          git push --force-with-lease=refs/heads/lumen/588-github-catalogue-boundaries:$GITHUB_SHA \
+            origin HEAD:refs/heads/lumen/588-github-catalogue-boundaries
