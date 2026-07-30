@@ -1,5 +1,6 @@
 name: juniper-567-canonical-context-finalize
 
+# Aster recovery retrigger after webhook ingress parity landed on current main.
 on:
   push:
     branches:
