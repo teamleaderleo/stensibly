@@ -1,0 +1,959 @@
+name: juniper-567-canonical-context-repair
+
+on:
+  push:
+    branches:
+      - juniper/564-convex-github-project-context
+    paths:
+      - .github/workflows/juniper-567-canonical-context-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-567-canonical-context-repair
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: juniper/564-convex-github-project-context
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Enforce canonical nested context on write and read
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          convex = Path('convex/githubProjectContexts.ts')
+          text = convex.read_text(encoding='utf-8')
+
+          old = 'const bodyRevisionKeys = ["byteLength", "present", "sha256"] as const;'
+          new = '''const bodyRevisionKeys = ["byteLength", "present", "sha256"] as const;
+          const milestoneKeys = ["number", "title"] as const;
+          const relationshipKeys = ["kind", "target"] as const;
+          const instructionSetKeys = [
+            "id",
+            "projectAttachmentId",
+            "projectAttachmentSnapshotSha256",
+            "sha256",
+            "sources",
+            "version",
+          ] as const;
+          const instructionSourceKeys = ["contentSha256", "path", "revision"] as const;
+          const relationshipKinds = ["parent", "sub_issue", "blocked_by", "blocks", "related"] as const;'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex key constant anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  if (current.sourceRevision === snapshot.sourceRevision) {
+              if (current.contentSha256 !== snapshot.contentSha256) {
+                throw new Error(
+                  `GitHub issue source revision ${snapshot.sourceRevision} was reused with altered content`,
+                );
+              }
+              if (current.instructionSetId !== instructionSetId) {
+                return { outcome: "instruction_rebound", isCurrent: true };
+              }
+              return observedAt < current.observedAt
+                ? { outcome: "stale", isCurrent: false }
+                : { outcome: "synchronization_updated", isCurrent: true };
+            }'''
+          new = '''  if (current.sourceRevision === snapshot.sourceRevision) {
+              if (current.contentSha256 !== snapshot.contentSha256) {
+                throw new Error(
+                  `GitHub issue source revision ${snapshot.sourceRevision} was reused with altered content`,
+                );
+              }
+              if (observedAt < current.observedAt) {
+                return { outcome: "stale", isCurrent: false };
+              }
+              if (current.instructionSetId !== instructionSetId) {
+                return { outcome: "instruction_rebound", isCurrent: true };
+              }
+              return { outcome: "synchronization_updated", isCurrent: true };
+            }'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex classification anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  assertBoundedText(decoded.title, "GitHub issue title", 256);
+            if (decoded.state !== "open" && decoded.state !== "closed") {
+              throw new Error("GitHub issue state is invalid");
+            }
+            if (
+              decoded.stateReason !== null
+              && decoded.stateReason !== "completed"
+              && decoded.stateReason !== "not_planned"
+              && decoded.stateReason !== "reopened"
+            ) {
+              throw new Error("GitHub issue state reason is invalid");
+            }
+            boundedStringArray(decoded.labels, "GitHub issue labels", 100, 100);
+            boundedStringArray(decoded.assignees, "GitHub issue assignees", 100, 39);
+            if (!Array.isArray(decoded.relationships) || decoded.relationships.length > 100) {
+              throw new Error("GitHub issue relationships are invalid");
+            }
+            if (
+              typeof decoded.bodyRevision.present !== "boolean"
+              || !Number.isSafeInteger(decoded.bodyRevision.byteLength)
+              || (decoded.bodyRevision.byteLength as number) < 0
+              || (decoded.bodyRevision.byteLength as number) > 128 * 1024
+            ) {
+              throw new Error("GitHub issue body revision metadata is invalid");
+            }
+            assertHash(decoded.bodyRevision.sha256, "GitHub issue body revision fingerprint");
+
+            const owner = assertGitHubOwner(decoded.reference.owner);
+            const repository = assertGitHubRepository(decoded.reference.repository);
+            const repositoryFullName = `${owner}/${repository}`;
+            const issueNumber = positiveInteger(decoded.reference.number, "GitHub issue number");
+            const externalId = `github:${repositoryFullName}#${issueNumber}`;
+            if (
+              decoded.reference.repositoryFullName !== repositoryFullName
+              || decoded.reference.externalId !== externalId
+              || decoded.reference.canonicalUrl !== `https://github.com/${repositoryFullName}/issues/${issueNumber}`
+            ) {
+              throw new Error("GitHub issue snapshot reference is not canonical");
+            }
+            const createdAt = timestamp(decoded.createdAt, "GitHub issue created time");
+            const providerUpdatedAt = timestamp(decoded.updatedAt, "GitHub issue updated time");'''
+          new = '''  assertCanonicalDisplayText(decoded.title, "GitHub issue title", 256);
+            if (decoded.state !== "open" && decoded.state !== "closed") {
+              throw new Error("GitHub issue state is invalid");
+            }
+            if (
+              decoded.stateReason !== null
+              && decoded.stateReason !== "completed"
+              && decoded.stateReason !== "not_planned"
+              && decoded.stateReason !== "reopened"
+            ) {
+              throw new Error("GitHub issue state reason is invalid");
+            }
+            assertCanonicalDisplayArray(decoded.labels, "GitHub issue labels", 100, 100);
+            assertCanonicalAssignees(decoded.assignees);
+            assertCanonicalMilestone(decoded.milestone);
+            if (
+              typeof decoded.bodyRevision.present !== "boolean"
+              || !Number.isSafeInteger(decoded.bodyRevision.byteLength)
+              || (decoded.bodyRevision.byteLength as number) < 0
+              || (decoded.bodyRevision.byteLength as number) > 128 * 1024
+            ) {
+              throw new Error("GitHub issue body revision metadata is invalid");
+            }
+            assertHash(decoded.bodyRevision.sha256, "GitHub issue body revision fingerprint");
+            if (decoded.bodyRevision.present === false && decoded.bodyRevision.byteLength !== 0) {
+              throw new Error("Absent GitHub issue body revision must have zero bytes");
+            }
+
+            const reference = assertCanonicalIssueReference(
+              decoded.reference,
+              "GitHub issue snapshot reference",
+            );
+            const externalId = reference.externalId;
+            const repositoryFullName = reference.repositoryFullName;
+            assertCanonicalRelationships(decoded.relationships, externalId);
+            if (decoded.providerNodeId !== null) {
+              assertProviderNodeId(decoded.providerNodeId);
+            }
+            const createdAt = timestamp(decoded.createdAt, "GitHub issue created time");
+            const providerUpdatedAt = timestamp(decoded.updatedAt, "GitHub issue updated time");'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex nested snapshot anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  if (!isRecord(decoded) || decoded.version !== 1 || !Array.isArray(decoded.sources)) {
+              throw new Error("Repository instruction set metadata is invalid");
+            }
+            const projectAttachmentId = assertIdentifier(decoded.projectAttachmentId, "Project attachment ID");'''
+          new = '''  if (
+              !isRecord(decoded)
+              || !hasExactKeys(decoded, instructionSetKeys)
+              || decoded.version !== 1
+              || !Array.isArray(decoded.sources)
+            ) {
+              throw new Error("Repository instruction set metadata is invalid");
+            }
+            const projectAttachmentId = assertIdentifier(decoded.projectAttachmentId, "Project attachment ID");'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex instruction top-level anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  const sources = decoded.sources.map((source) => {
+              if (!isRecord(source)) throw new Error("Repository instruction source must be an object");
+              const path = assertSourcePath(source.path);
+              if (paths.has(path)) throw new Error("Repository instruction source paths must be unique");
+              paths.add(path);
+              return {
+                path,
+                revision: assertIdentifier(source.revision, "Repository instruction source revision", 512),
+                contentSha256: assertHash(source.contentSha256, "Repository instruction source fingerprint"),
+              };
+            }).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);'''
+          new = '''  const sources = decoded.sources.map((source) => {
+              if (!isRecord(source) || !hasExactKeys(source, instructionSourceKeys)) {
+                throw new Error("Repository instruction source must contain only canonical fields");
+              }
+              const path = assertSourcePath(source.path);
+              if (source.path !== path) {
+                throw new Error("Repository instruction source path must be canonical");
+              }
+              if (paths.has(path)) throw new Error("Repository instruction source paths must be unique");
+              paths.add(path);
+              const revision = assertIdentifier(
+                source.revision,
+                "Repository instruction source revision",
+                512,
+              );
+              if (source.revision !== revision) {
+                throw new Error("Repository instruction source revision must be canonical");
+              }
+              return {
+                path,
+                revision,
+                contentSha256: assertHash(
+                  source.contentSha256,
+                  "Repository instruction source fingerprint",
+                ),
+              };
+            }).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+            if (JSON.stringify(decoded.sources) !== JSON.stringify(sources)) {
+              throw new Error("Repository instruction sources must be in canonical order");
+            }'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex instruction source anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''function assertGitHubOwner(value: unknown): string {
+            if (typeof value !== "string") throw new Error("GitHub owner identity is invalid");
+            const normalized = value.trim();
+            if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(normalized)) {
+              throw new Error("GitHub owner identity is invalid");
+            }
+            return normalized;
+          }
+
+          function assertGitHubRepository(value: unknown): string {
+            if (typeof value !== "string") throw new Error("GitHub repository identity is invalid");
+            const normalized = value.trim();
+            if (normalized.length < 1 || normalized.length > 100 || !/^[A-Za-z0-9_.-]+$/.test(normalized)) {
+              throw new Error("GitHub repository identity is invalid");
+            }
+            return normalized;
+          }'''
+          new = '''function assertGitHubOwner(value: unknown): string {
+            if (typeof value !== "string") throw new Error("GitHub owner identity is invalid");
+            const normalized = value.normalize("NFKC").trim();
+            const canonical = normalized.toLowerCase();
+            if (
+              normalized !== canonical
+              || normalized.includes("--")
+              || !/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/.test(normalized)
+            ) {
+              throw new Error("GitHub owner identity is invalid");
+            }
+            return canonical;
+          }
+
+          function assertGitHubRepository(value: unknown): string {
+            if (typeof value !== "string") throw new Error("GitHub repository identity is invalid");
+            const normalized = value.normalize("NFKC").trim();
+            const canonical = normalized.toLowerCase();
+            if (
+              normalized !== canonical
+              || normalized.length < 1
+              || normalized.length > 100
+              || normalized === "."
+              || normalized === ".."
+              || normalized.includes("..")
+              || !/^[a-z0-9_.-]+$/.test(normalized)
+            ) {
+              throw new Error("GitHub repository identity is invalid");
+            }
+            return canonical;
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex GitHub identity helper anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  const parsed = Date.parse(value);
+            if (!Number.isFinite(parsed)) throw new Error(`${label} must be an ISO timestamp`);
+            return parsed;
+          }'''
+          new = '''  const parsed = Date.parse(value);
+            if (!Number.isFinite(parsed)) throw new Error(`${label} must be an ISO timestamp`);
+            const canonical = new Date(parsed).toISOString();
+            const supplied = value.includes(".") ? value : value.replace(/Z$/, ".000Z");
+            if (canonical !== supplied) throw new Error(`${label} must be an ISO timestamp`);
+            return parsed;
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit('Convex timestamp helper anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          helper_anchor = '''function boundedStringArray(
+            value: unknown,
+            label: string,
+            maximumEntries: number,
+            maximumLength: number,
+          ): string[] {'''
+          helper_block = '''function assertCanonicalIssueReference(
+            value: unknown,
+            label: string,
+          ): { externalId: string; repositoryFullName: string } {
+            if (!isRecord(value) || !hasExactKeys(value, referenceKeys)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (value.provider !== "github" || value.host !== "github.com") {
+              throw new Error(`${label} is invalid`);
+            }
+            const owner = assertGitHubOwner(value.owner);
+            const repository = assertGitHubRepository(value.repository);
+            const number = positiveInteger(value.number, "GitHub issue number");
+            const repositoryFullName = `${owner}/${repository}`;
+            const externalId = `github:${repositoryFullName}#${number}`;
+            if (
+              value.owner !== owner
+              || value.repository !== repository
+              || value.repositoryFullName !== repositoryFullName
+              || value.externalId !== externalId
+              || value.canonicalUrl !== `https://github.com/${repositoryFullName}/issues/${number}`
+            ) {
+              throw new Error(`${label} is not canonical`);
+            }
+            return { externalId, repositoryFullName };
+          }
+
+          function assertCanonicalDisplayText(value: unknown, label: string, maximum: number): string {
+            if (typeof value !== "string") throw new Error(`${label} must be text`);
+            if (/[/\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]/u.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            const normalized = value.normalize("NFKC").trim();
+            if (!normalized || [...normalized].length > maximum || normalized !== value) {
+              throw new Error(`${label} is invalid`);
+            }
+            return normalized;
+          }
+
+          function assertCanonicalDisplayArray(
+            value: unknown,
+            label: string,
+            maximumEntries: number,
+            maximumLength: number,
+          ): void {
+            if (!Array.isArray(value) || value.length > maximumEntries) {
+              throw new Error(`${label} is invalid`);
+            }
+            const canonical = value.map((entry) =>
+              assertCanonicalDisplayText(entry, label, maximumLength)
+            ).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+            if (new Set(canonical).size !== canonical.length || JSON.stringify(value) !== JSON.stringify(canonical)) {
+              throw new Error(`${label} must be unique and in canonical order`);
+            }
+          }
+
+          function assertCanonicalAssignees(value: unknown): void {
+            if (!Array.isArray(value) || value.length > 100) {
+              throw new Error("GitHub issue assignees are invalid");
+            }
+            const canonical = value.map((entry) => assertGitHubOwner(entry))
+              .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+            if (new Set(canonical).size !== canonical.length || JSON.stringify(value) !== JSON.stringify(canonical)) {
+              throw new Error("GitHub issue assignees must be unique and in canonical order");
+            }
+          }
+
+          function assertCanonicalMilestone(value: unknown): void {
+            if (value === null) return;
+            if (!isRecord(value) || !hasExactKeys(value, milestoneKeys)) {
+              throw new Error("GitHub issue milestone is invalid");
+            }
+            positiveInteger(value.number, "GitHub milestone number");
+            assertCanonicalDisplayText(value.title, "GitHub milestone title", 256);
+          }
+
+          function assertCanonicalRelationships(value: unknown, sourceExternalId: string): void {
+            if (!Array.isArray(value) || value.length > 100) {
+              throw new Error("GitHub issue relationships are invalid");
+            }
+            const keys = value.map((entry) => {
+              if (!isRecord(entry) || !hasExactKeys(entry, relationshipKeys)) {
+                throw new Error("GitHub issue relationship is invalid");
+              }
+              if (
+                typeof entry.kind !== "string"
+                || !relationshipKinds.includes(entry.kind as typeof relationshipKinds[number])
+              ) {
+                throw new Error("GitHub issue relationship kind is invalid");
+              }
+              const target = assertCanonicalIssueReference(
+                entry.target,
+                "GitHub issue relationship target",
+              );
+              if (target.externalId === sourceExternalId) {
+                throw new Error("GitHub issue relationship must not target the source issue");
+              }
+              return `${entry.kind}:${target.externalId}`;
+            });
+            const sorted = [...keys].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+            if (new Set(keys).size !== keys.length || JSON.stringify(keys) !== JSON.stringify(sorted)) {
+              throw new Error("GitHub issue relationships must be unique and in canonical order");
+            }
+          }
+
+          function assertProviderNodeId(value: unknown): string {
+            if (typeof value !== "string" || value.length > 256 || !/^[A-Za-z0-9_:-]+$/.test(value)) {
+              throw new Error("GitHub provider node ID is invalid");
+            }
+            return value;
+          }
+
+          function boundedStringArray(
+            value: unknown,
+            label: string,
+            maximumEntries: number,
+            maximumLength: number,
+          ): string[] {'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit('Convex nested helper anchor mismatch')
+          text = text.replace(helper_anchor, helper_block, 1)
+          convex.write_text(text, encoding='utf-8')
+
+          adapter = Path('src/github-project-context-convex-ledger.ts')
+          text = adapter.read_text(encoding='utf-8')
+
+          old = '''const referenceKeys = [
+            "canonicalUrl",
+            "externalId",
+            "host",
+            "number",
+            "owner",
+            "provider",
+            "repository",
+            "repositoryFullName",
+          ] as const;'''
+          new = '''const referenceKeys = [
+            "canonicalUrl",
+            "externalId",
+            "host",
+            "number",
+            "owner",
+            "provider",
+            "repository",
+            "repositoryFullName",
+          ] as const;
+          const bodyRevisionKeys = ["byteLength", "present", "sha256"] as const;
+          const milestoneKeys = ["number", "title"] as const;
+          const relationshipKeys = ["kind", "target"] as const;
+          const instructionSetKeys = [
+            "id",
+            "projectAttachmentId",
+            "projectAttachmentSnapshotSha256",
+            "sha256",
+            "sources",
+            "version",
+          ] as const;
+          const instructionSourceKeys = ["contentSha256", "path", "revision"] as const;
+          const relationshipKinds = ["parent", "sub_issue", "blocked_by", "blocks", "related"] as const;'''
+          if text.count(old) != 1:
+              raise SystemExit('Adapter key constant anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  const createdAt = Date.parse(canonicalTimestamp(snapshot.createdAt, "GitHub issue created time"));
+            const updatedAt = Date.parse(canonicalTimestamp(snapshot.updatedAt, "GitHub issue updated time"));
+            if (updatedAt < createdAt) {
+              throw new Error("GitHub issue updated time must not precede creation time");
+            }
+          }'''
+          new = '''  assertCanonicalDisplayText(snapshot.title, "GitHub issue title", 256);
+            if (snapshot.state !== "open" && snapshot.state !== "closed") {
+              throw new Error("GitHub issue state is invalid");
+            }
+            if (
+              snapshot.stateReason !== null
+              && snapshot.stateReason !== "completed"
+              && snapshot.stateReason !== "not_planned"
+              && snapshot.stateReason !== "reopened"
+            ) {
+              throw new Error("GitHub issue state reason is invalid");
+            }
+            assertCanonicalDisplayArray(snapshot.labels, "GitHub issue labels", 100, 100);
+            assertCanonicalAssignees(snapshot.assignees);
+            assertCanonicalMilestone(snapshot.milestone);
+            if (!isRecord(snapshot.bodyRevision) || !hasExactKeys(snapshot.bodyRevision, bodyRevisionKeys)) {
+              throw new Error("GitHub issue body revision metadata is invalid");
+            }
+            if (
+              typeof snapshot.bodyRevision.present !== "boolean"
+              || !Number.isSafeInteger(snapshot.bodyRevision.byteLength)
+              || snapshot.bodyRevision.byteLength < 0
+              || snapshot.bodyRevision.byteLength > 128 * 1024
+            ) {
+              throw new Error("GitHub issue body revision metadata is invalid");
+            }
+            boundedHash(snapshot.bodyRevision.sha256, "GitHub issue body revision fingerprint");
+            if (snapshot.bodyRevision.present === false && snapshot.bodyRevision.byteLength !== 0) {
+              throw new Error("Absent GitHub issue body revision must have zero bytes");
+            }
+            assertCanonicalRelationships(snapshot.relationships, reference.externalId);
+            if (snapshot.milestone !== null) assertCanonicalMilestone(snapshot.milestone);
+            if (snapshot.providerNodeId !== null) assertProviderNodeId(snapshot.providerNodeId);
+            boundedIdentifier(snapshot.sourceRevision, "GitHub issue source revision", 512);
+            const createdAt = Date.parse(canonicalTimestamp(snapshot.createdAt, "GitHub issue created time"));
+            const updatedAt = Date.parse(canonicalTimestamp(snapshot.updatedAt, "GitHub issue updated time"));
+            if (updatedAt < createdAt) {
+              throw new Error("GitHub issue updated time must not precede creation time");
+            }
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit('Adapter nested snapshot anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+              throw new Error(`Hosted GitHub context ${recordId} instruction set is invalid`);
+            }
+            const raw = decoded as Record<string, unknown>;
+            const parsed = buildInstructionSet({'''
+          new = '''  if (!isRecord(decoded) || !hasExactKeys(decoded, instructionSetKeys)) {
+              throw new Error(`Hosted GitHub context ${recordId} instruction set is invalid`);
+            }
+            const raw = decoded;
+            if (!Array.isArray(raw.sources)) {
+              throw new Error(`Hosted GitHub context ${recordId} instruction sources are invalid`);
+            }
+            for (const source of raw.sources) {
+              if (!isRecord(source) || !hasExactKeys(source, instructionSourceKeys)) {
+                throw new Error(`Hosted GitHub context ${recordId} instruction source is invalid`);
+              }
+            }
+            const parsed = buildInstructionSet({'''
+          if text.count(old) != 1:
+              raise SystemExit('Adapter instruction parser anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''function boundedGitHubOwner(value: unknown): string {
+            if (typeof value !== "string") throw new RangeError("GitHub owner identity is invalid");
+            const normalized = value.trim();
+            if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(normalized)) {
+              throw new RangeError("GitHub owner identity is invalid");
+            }
+            return normalized;
+          }
+
+          function boundedGitHubRepository(value: unknown): string {
+            if (typeof value !== "string") throw new RangeError("GitHub repository identity is invalid");
+            const normalized = value.trim();
+            if (normalized.length < 1 || normalized.length > 100 || !/^[A-Za-z0-9_.-]+$/.test(normalized)) {
+              throw new RangeError("GitHub repository identity is invalid");
+            }
+            return normalized;
+          }'''
+          new = '''function boundedGitHubOwner(value: unknown): string {
+            if (typeof value !== "string") throw new RangeError("GitHub owner identity is invalid");
+            const normalized = value.normalize("NFKC").trim();
+            const canonical = normalized.toLowerCase();
+            if (
+              normalized !== canonical
+              || normalized.includes("--")
+              || !/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/.test(normalized)
+            ) {
+              throw new RangeError("GitHub owner identity is invalid");
+            }
+            return canonical;
+          }
+
+          function boundedGitHubRepository(value: unknown): string {
+            if (typeof value !== "string") throw new RangeError("GitHub repository identity is invalid");
+            const normalized = value.normalize("NFKC").trim();
+            const canonical = normalized.toLowerCase();
+            if (
+              normalized !== canonical
+              || normalized.length < 1
+              || normalized.length > 100
+              || normalized === "."
+              || normalized === ".."
+              || normalized.includes("..")
+              || !/^[a-z0-9_.-]+$/.test(normalized)
+            ) {
+              throw new RangeError("GitHub repository identity is invalid");
+            }
+            return canonical;
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit('Adapter identity helper anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''  const parsed = Date.parse(value);
+            if (!Number.isFinite(parsed)) throw new RangeError(`${label} must be an ISO timestamp`);
+            return new Date(parsed).toISOString();
+          }'''
+          new = '''  const parsed = Date.parse(value);
+            if (!Number.isFinite(parsed)) throw new RangeError(`${label} must be an ISO timestamp`);
+            const canonical = new Date(parsed).toISOString();
+            const supplied = value.includes(".") ? value : value.replace(/Z$/, ".000Z");
+            if (canonical !== supplied) throw new RangeError(`${label} must be an ISO timestamp`);
+            return canonical;
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit('Adapter timestamp helper anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          helper_anchor = '''function positiveInteger(value: unknown, label: string): number {'''
+          helper_block = '''function assertCanonicalDisplayText(value: unknown, label: string, maximum: number): string {
+            if (typeof value !== "string") throw new RangeError(`${label} must be text`);
+            if (/[/\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]/u.test(value)) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            const normalized = value.normalize("NFKC").trim();
+            if (!normalized || [...normalized].length > maximum || normalized !== value) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return normalized;
+          }
+
+          function assertCanonicalDisplayArray(
+            value: unknown,
+            label: string,
+            maximumEntries: number,
+            maximumLength: number,
+          ): void {
+            if (!Array.isArray(value) || value.length > maximumEntries) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            const canonical = value.map((entry) =>
+              assertCanonicalDisplayText(entry, label, maximumLength)
+            ).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+            if (new Set(canonical).size !== canonical.length || JSON.stringify(value) !== JSON.stringify(canonical)) {
+              throw new RangeError(`${label} must be unique and in canonical order`);
+            }
+          }
+
+          function assertCanonicalAssignees(value: unknown): void {
+            if (!Array.isArray(value) || value.length > 100) {
+              throw new RangeError("GitHub issue assignees are invalid");
+            }
+            const canonical = value.map((entry) => boundedGitHubOwner(entry))
+              .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+            if (new Set(canonical).size !== canonical.length || JSON.stringify(value) !== JSON.stringify(canonical)) {
+              throw new RangeError("GitHub issue assignees must be unique and in canonical order");
+            }
+          }
+
+          function assertCanonicalMilestone(value: unknown): void {
+            if (value === null) return;
+            if (!isRecord(value) || !hasExactKeys(value, milestoneKeys)) {
+              throw new RangeError("GitHub issue milestone is invalid");
+            }
+            positiveInteger(value.number, "GitHub milestone number");
+            assertCanonicalDisplayText(value.title, "GitHub milestone title", 256);
+          }
+
+          function assertCanonicalRelationships(value: unknown, sourceExternalId: string): void {
+            if (!Array.isArray(value) || value.length > 100) {
+              throw new RangeError("GitHub issue relationships are invalid");
+            }
+            const keys = value.map((entry) => {
+              if (!isRecord(entry) || !hasExactKeys(entry, relationshipKeys)) {
+                throw new RangeError("GitHub issue relationship is invalid");
+              }
+              if (
+                typeof entry.kind !== "string"
+                || !relationshipKinds.includes(entry.kind as typeof relationshipKinds[number])
+              ) {
+                throw new RangeError("GitHub issue relationship kind is invalid");
+              }
+              if (!isRecord(entry.target) || !hasExactKeys(entry.target, referenceKeys)) {
+                throw new RangeError("GitHub issue relationship target is invalid");
+              }
+              const targetExternalId = canonicalExternalId(entry.target.externalId);
+              const targetOwner = boundedGitHubOwner(entry.target.owner);
+              const targetRepository = boundedGitHubRepository(entry.target.repository);
+              const targetNumber = positiveInteger(entry.target.number, "GitHub issue number");
+              const repositoryFullName = `${targetOwner}/${targetRepository}`;
+              if (
+                entry.target.provider !== "github"
+                || entry.target.host !== "github.com"
+                || entry.target.owner !== targetOwner
+                || entry.target.repository !== targetRepository
+                || entry.target.repositoryFullName !== repositoryFullName
+                || targetExternalId !== `github:${repositoryFullName}#${targetNumber}`
+                || entry.target.canonicalUrl !== `https://github.com/${repositoryFullName}/issues/${targetNumber}`
+              ) {
+                throw new RangeError("GitHub issue relationship target is not canonical");
+              }
+              if (targetExternalId === sourceExternalId) {
+                throw new RangeError("GitHub issue relationship must not target the source issue");
+              }
+              return `${entry.kind}:${targetExternalId}`;
+            });
+            const sorted = [...keys].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+            if (new Set(keys).size !== keys.length || JSON.stringify(keys) !== JSON.stringify(sorted)) {
+              throw new RangeError("GitHub issue relationships must be unique and in canonical order");
+            }
+          }
+
+          function assertProviderNodeId(value: unknown): string {
+            if (typeof value !== "string" || value.length > 256 || !/^[A-Za-z0-9_:-]+$/.test(value)) {
+              throw new RangeError("GitHub provider node ID is invalid");
+            }
+            return value;
+          }
+
+          function positiveInteger(value: unknown, label: string): number {'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit('Adapter nested helper anchor mismatch')
+          text = text.replace(helper_anchor, helper_block, 1)
+          adapter.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Add stale-order and hostile nested regressions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('convex/githubProjectContexts.test.ts')
+          text = path.read_text(encoding='utf-8')
+          anchor = '''  test("isolates workspace and project reads and applies bounded history", async () => {'''
+          test_block = '''  test("keeps an older instruction rebound stale", async () => {
+            const t = convexTest(schema, modules);
+            const attachment = await acceptAttachment(t);
+            const snapshot = issueContext({
+              sourceRevision: "instruction-order-r1",
+              updatedAt: "2026-07-29T11:00:00.000Z",
+              title: "Instruction ordering",
+            });
+            const current = await accept(t, attachment, snapshot, {
+              observationRef: "github-observation-instruction-current",
+              observedAt: "2026-07-29T11:05:00.000Z",
+            });
+            const stale = await accept(t, attachment, snapshot, {
+              observationRef: "github-observation-instruction-stale",
+              observedAt: "2026-07-29T11:04:00.000Z",
+              instructionRevision: "instructions-r2",
+            });
+            expect(stale.record).toMatchObject({ outcome: "stale", isCurrent: false });
+            const selected = await t.query(convexApi.githubProjectContexts.getCurrent, {
+              serviceSecret,
+              workspace,
+              project,
+              externalId: snapshot.reference.externalId,
+            }) as any;
+            expect(selected.id).toBe(current.record.id);
+          });
+
+          test("isolates workspace and project reads and applies bounded history", async () => {'''
+          if text.count(anchor) != 1:
+              raise SystemExit('Main Convex test insertion anchor mismatch')
+          text = text.replace(anchor, test_block, 1)
+          text = text.replace(
+              '''    degradedReasonCode?: string | null;
+              },''',
+              '''    degradedReasonCode?: string | null;
+                instructionRevision?: string;
+              },''',
+              1,
+          )
+          text = text.replace(
+              'const instructionSet = instructionSetFor(attachment);',
+              'const instructionSet = instructionSetFor(attachment, options.instructionRevision);',
+              1,
+          )
+          text = text.replace(
+              'function instructionSetFor(attachment: any) {',
+              'function instructionSetFor(attachment: any, revision = "instructions-r1") {',
+              1,
+          )
+          text = text.replace(
+              'revision: "instructions-r1",',
+              'revision,',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('convex/githubProjectContextsValidation.test.ts')
+          text = path.read_text(encoding='utf-8')
+          anchor = '''  test("derives a stable bounded record ID from the scoped observation", async () => {'''
+          test_block = '''  test("rejects self-consistent hostile nested snapshot and instruction fields", async () => {
+            const t = convexTest(schema, modules);
+            const attachment = await acceptAttachment(t);
+
+            const milestone = rehash({
+              ...issueContext(),
+              milestone: { number: 1, title: "M1", extra: "raw" },
+            });
+            await expect(accept(t, attachment, milestone, "hostile-milestone"))
+              .rejects.toThrow("GitHub issue milestone is invalid");
+
+            const relationship = rehash({
+              ...issueContext(),
+              relationships: [{
+                kind: "related",
+                target: {
+                  provider: "github",
+                  host: "github.com",
+                  owner: "teamleaderleo",
+                  repository: "stensibly",
+                  repositoryFullName: "teamleaderleo/stensibly",
+                  number: 560,
+                  externalId: "github:teamleaderleo/stensibly#560",
+                  canonicalUrl: "https://github.com/teamleaderleo/stensibly/issues/560",
+                },
+                extra: "raw",
+              }],
+            });
+            await expect(accept(t, attachment, relationship, "hostile-relationship"))
+              .rejects.toThrow("GitHub issue relationship is invalid");
+
+            const hostileInstructions = instructionSetFor(attachment);
+            hostileInstructions.sources = [{
+              ...hostileInstructions.sources[0]!,
+              extra: "raw",
+            }] as any;
+            await expect(accept(
+              t,
+              attachment,
+              issueContext(),
+              "hostile-instructions",
+              hostileInstructions,
+            )).rejects.toThrow("only canonical fields");
+          });
+
+          test("derives a stable bounded record ID from the scoped observation", async () => {'''
+          if text.count(anchor) != 1:
+              raise SystemExit('Validation test insertion anchor mismatch')
+          text = text.replace(anchor, test_block, 1)
+          text = text.replace(
+              '''  observationRef: string,
+            ) {''',
+              '''  observationRef: string,
+              instructionSetOverride?: unknown,
+            ) {''',
+              1,
+          )
+          text = text.replace(
+              'const instructionSet = instructionSetFor(attachment);',
+              'const instructionSet = instructionSetOverride ?? instructionSetFor(attachment);',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('test/github-project-context-convex-ledger.test.ts')
+          text = path.read_text(encoding='utf-8')
+          anchor = '''  test("fails closed when hosted JSON metadata is altered", async () => {'''
+          test_block = '''  test("rejects self-consistent hostile nested hosted JSON", async () => {
+            const snapshot = issueContext();
+            const hostileMilestone = rehashSnapshot({
+              ...snapshot,
+              milestone: { number: 1, title: "M1", extra: "raw" },
+            });
+            const snapshotClient = new GitHubContextCaller();
+            snapshotClient.records.push(rawRecord(
+              hostileMilestone,
+              instructionSet(),
+              "github_context_hostile_snapshot",
+            ));
+            const snapshotLedger = new ConvexGitHubProjectContextLedger({
+              client: snapshotClient,
+              serviceSecret: "private-service-secret",
+              workspace: "default",
+            });
+            await expect(snapshotLedger.getGitHubProjectContext({ project: "scrapbook" }))
+              .rejects.toThrow("GitHub issue milestone is invalid");
+
+            const hostileInstructionSet = instructionSet() as any;
+            hostileInstructionSet.sources = [{
+              ...hostileInstructionSet.sources[0],
+              extra: "raw",
+            }];
+            const instructionClient = new GitHubContextCaller();
+            instructionClient.records.push(rawRecord(
+              snapshot,
+              hostileInstructionSet,
+              "github_context_hostile_instruction",
+            ));
+            const instructionLedger = new ConvexGitHubProjectContextLedger({
+              client: instructionClient,
+              serviceSecret: "private-service-secret",
+              workspace: "default",
+            });
+            await expect(instructionLedger.getGitHubProjectContext({ project: "scrapbook" }))
+              .rejects.toThrow("instruction source is invalid");
+          });
+
+          test("fails closed when hosted JSON metadata is altered", async () => {'''
+          if text.count(anchor) != 1:
+              raise SystemExit('Adapter test insertion anchor mismatch')
+          text = text.replace(anchor, test_block, 1)
+          helper_anchor = '''function instructionSet() {'''
+          helpers = '''function rehashSnapshot(value: object) {
+            const raw = value as Record<string, unknown>;
+            const {
+              snapshotSha256: _snapshotSha256,
+              contentSha256: _contentSha256,
+              sourceRevision,
+              ...content
+            } = raw;
+            const contentSha256 = fingerprintCanonicalRequest(content);
+            return {
+              ...content,
+              sourceRevision,
+              contentSha256,
+              snapshotSha256: fingerprintCanonicalRequest({ ...content, sourceRevision, contentSha256 }),
+            };
+          }
+
+          function rawRecord(snapshot: object, instructions: object, id: string) {
+            const externalId = (snapshot as any).reference.externalId;
+            return {
+              id,
+              project: "scrapbook",
+              externalId,
+              snapshotJson: JSON.stringify(snapshot),
+              instructionSetJson: JSON.stringify(instructions),
+              syncStatus: "synchronized",
+              syncCursor: null,
+              degradedReasonCode: null,
+              observationRef: `${id}-observation`,
+              observedAt: "2026-07-29T14:59:00.000Z",
+              acceptedBy: "actor:juniper",
+              acceptedAt: "2026-07-29T15:00:00.000Z",
+              isCurrent: true,
+              outcome: "initial",
+            };
+          }
+
+          function instructionSet() {'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit('Adapter test helper anchor mismatch')
+          text = text.replace(helper_anchor, helpers, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-project-context-convex-ledger.test.ts
+          bun run test:convex -- convex/githubProjectContexts.test.ts convex/githubProjectContextsValidation.test.ts
+          bun test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Publish source-only repair
+        run: |
+          rm .github/workflows/juniper-567-canonical-context-repair.yml
+          git diff --check
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git add convex src test .github
+          git commit -m 'fix: enforce canonical hosted GitHub context'
+          git push origin HEAD:juniper/564-convex-github-project-context
