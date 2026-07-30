@@ -13,7 +13,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
-      - run: bun install
+      - name: Prepare committed Bun lockfile candidate
+        id: bun-lock
+        run: bun run lockfile:check
+      - name: Upload refreshed Bun lockfile candidate
+        if: steps.bun-lock.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-lock-candidate-${{ github.sha }}
+          path: artifacts/bun-lock-candidate
+          if-no-files-found: error
+          retention-days: 7
+      - name: Reject stale committed Bun lockfile
+        if: steps.bun-lock.outputs.changed == 'true'
+        run: |
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
+          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
+          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
+          exit 1
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
       - name: Run typecheck
         run: |
           set -o pipefail
@@ -50,7 +69,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "26"
-      - run: bun install
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
       - name: Run Bun, Node, and native workerd receiver checks
         run: |
           set -o pipefail
