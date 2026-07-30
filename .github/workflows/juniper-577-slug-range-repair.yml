@@ -1,0 +1,88 @@
+name: juniper-577-slug-range-repair
+
+on:
+  push:
+    branches:
+      - juniper/577-fix-slug-character-ranges
+    paths:
+      - .github/workflows/juniper-577-slug-range-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-577-slug-range-repair
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: juniper/577-fix-slug-character-ranges
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Replace only the malformed character class
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          bad = '[a-z0-9-_]'
+          good = '[a-z0-9_-]'
+          roots = [Path('src'), Path('convex'), Path('site')]
+          changed = []
+          for root in roots:
+              for path in sorted(root.rglob('*')):
+                  if not path.is_file() or path.suffix not in {'.ts', '.js', '.html'}:
+                      continue
+                  if '_generated' in path.parts:
+                      continue
+                  text = path.read_text(encoding='utf-8')
+                  if bad not in text:
+                      continue
+                  path.write_text(text.replace(bad, good), encoding='utf-8')
+                  changed.append(path.as_posix())
+
+          expected = 28
+          if len(changed) != expected:
+              raise SystemExit(
+                  f'expected {expected} production files with malformed slug class, found '
+                  f'{len(changed)}: {changed}'
+              )
+          remaining = []
+          for root in roots:
+              for path in root.rglob('*'):
+                  if path.is_file() and path.suffix in {'.ts', '.js', '.html'}:
+                      if bad in path.read_text(encoding='utf-8'):
+                          remaining.append(path.as_posix())
+          if remaining:
+              raise SystemExit(f'malformed slug class remains in production source: {remaining}')
+
+          Path('/tmp/juniper-577-changed.txt').write_text('\n'.join(changed) + '\n', encoding='utf-8')
+          PY
+          cat /tmp/juniper-577-changed.txt
+          git diff --check
+
+      - name: Run focused and repository gates
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/lowercase-slug-character-class.test.ts
+          bun test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish source-only repair
+        run: |
+          rm .github/workflows/juniper-577-slug-range-repair.yml
+          git diff --check
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git add src convex site test .github
+          git commit -m 'fix: correct lowercase slug character ranges'
+          git push origin HEAD:juniper/577-fix-slug-character-ranges
