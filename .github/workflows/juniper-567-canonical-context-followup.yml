@@ -1,0 +1,67 @@
+name: juniper-567-canonical-context-followup
+
+on:
+  push:
+    branches:
+      - juniper/564-convex-github-project-context
+    paths:
+      - convex/githubProjectContexts.ts
+      - src/github-project-context-convex-ledger.ts
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-567-canonical-context-repair
+  cancel-in-progress: false
+
+jobs:
+  correct-test-publish:
+    if: github.actor == 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out published repair
+        uses: actions/checkout@v4
+        with:
+          ref: juniper/564-convex-github-project-context
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Correct unsafe-text validator character class
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = r'if (/[/\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
+          new = r'if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
+          for filename in (
+              'convex/githubProjectContexts.ts',
+              'src/github-project-context-convex-ledger.ts',
+          ):
+              path = Path(filename)
+              text = path.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{filename}: unsafe-text validator anchor mismatch')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-project-context-convex-ledger.test.ts
+          bun run test:convex -- convex/githubProjectContexts.test.ts convex/githubProjectContextsValidation.test.ts
+          bun test
+          bun run test:convex
+          bun run worker:check
+
+      - name: Publish final source-only repair
+        run: |
+          rm .github/workflows/juniper-567-canonical-context-followup.yml
+          git diff --check
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git add convex src test .github
+          git commit -m 'fix: align hosted GitHub text validation'
+          git push origin HEAD:juniper/564-convex-github-project-context
