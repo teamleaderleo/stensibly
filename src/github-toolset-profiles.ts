@@ -7,7 +7,7 @@ export interface GitHubUpstreamToolset {
   availability: GitHubToolsetAvailability;
 }
 
-export const githubUpstreamToolsets = [
+export const githubUpstreamToolsets = deepFreeze([
   {
     name: "actions",
     description: "GitHub Actions workflows and CI/CD operations.",
@@ -118,12 +118,12 @@ export const githubUpstreamToolsets = [
     description: "GitHub User related tools.",
     availability: "local_and_remote",
   },
-] as const satisfies readonly GitHubUpstreamToolset[];
+] as const satisfies readonly GitHubUpstreamToolset[]);
 
 export type GitHubUpstreamToolsetName =
   typeof githubUpstreamToolsets[number]["name"];
 
-export const githubToolsetProfileNames = [
+export const githubToolsetProfileNames = deepFreeze([
   "default",
   "read_only",
   "actions",
@@ -131,7 +131,7 @@ export const githubToolsetProfileNames = [
   "projects",
   "notifications",
   "all",
-] as const;
+] as const);
 export type GitHubToolsetProfileName = typeof githubToolsetProfileNames[number];
 
 interface GitHubToolsetProfileDefinition {
@@ -141,13 +141,11 @@ interface GitHubToolsetProfileDefinition {
   requiresOperatorApproval: boolean;
 }
 
-const allToolsetNames: readonly GitHubUpstreamToolsetName[] =
-  githubUpstreamToolsets.map((toolset) => toolset.name);
+const allToolsetNames: readonly GitHubUpstreamToolsetName[] = deepFreeze(
+  githubUpstreamToolsets.map((toolset) => toolset.name),
+);
 
-const githubToolsetProfileDefinitions: Record<
-  GitHubToolsetProfileName,
-  GitHubToolsetProfileDefinition
-> = {
+const githubToolsetProfileDefinitions = deepFreeze({
   default: {
     description: "High-value repository, issue, pull-request, and user operations.",
     toolsets: ["repos", "issues", "pull_requests", "users"],
@@ -196,7 +194,7 @@ const githubToolsetProfileDefinitions: Record<
     readOnly: false,
     requiresOperatorApproval: true,
   },
-};
+} satisfies Record<GitHubToolsetProfileName, GitHubToolsetProfileDefinition>);
 
 export interface ResolvedGitHubToolsetProfile {
   name: GitHubToolsetProfileName;
@@ -209,9 +207,11 @@ export interface ResolvedGitHubToolsetProfile {
 }
 
 export function resolveGitHubToolsetProfile(
-  name: GitHubToolsetProfileName,
-  providerMode: GitHubProviderMode,
+  nameInput: GitHubToolsetProfileName,
+  providerModeInput: GitHubProviderMode,
 ): ResolvedGitHubToolsetProfile {
+  const name = profileName(nameInput);
+  const providerMode = providerModeValue(providerModeInput);
   const profile = githubToolsetProfileDefinitions[name];
   const available = new Set<GitHubUpstreamToolsetName>(
     githubUpstreamToolsets
@@ -222,7 +222,7 @@ export function resolveGitHubToolsetProfile(
   const toolsets = profile.toolsets.filter((toolset) => available.has(toolset));
   const omittedToolsets = profile.toolsets.filter((toolset) => !available.has(toolset));
 
-  return {
+  return deepFreeze({
     name,
     description: profile.description,
     providerMode,
@@ -230,5 +230,31 @@ export function resolveGitHubToolsetProfile(
     omittedToolsets,
     readOnly: profile.readOnly,
     requiresOperatorApproval: profile.requiresOperatorApproval,
-  };
+  });
+}
+
+function profileName(value: unknown): GitHubToolsetProfileName {
+  if (
+    typeof value !== "string"
+    || !(githubToolsetProfileNames as readonly string[]).includes(value)
+  ) {
+    throw new RangeError("GitHub toolset profile name is invalid");
+  }
+  return value as GitHubToolsetProfileName;
+}
+
+function providerModeValue(value: unknown): GitHubProviderMode {
+  if (value !== "local" && value !== "remote") {
+    throw new RangeError("GitHub provider mode must be local or remote");
+  }
+  return value;
+}
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (typeof value !== "object" || value === null || seen.has(value)) return value;
+  seen.add(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(nested, seen);
+  }
+  return Object.freeze(value) as T;
 }
