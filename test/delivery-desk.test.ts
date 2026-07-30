@@ -44,7 +44,7 @@ function entry(
       kind: "review",
       reference: `review:${issueNumber}`,
       observedAt,
-      fingerprint: hash(issueNumber),
+      fingerprint: hash(issueNumber + 2),
     }],
     disposition: "accept",
     remainingGate: "revalidate exact head and merge the accepted candidate",
@@ -116,7 +116,7 @@ describe("Delivery Desk", () => {
       implementationHead: commit(14),
       requiredInputFingerprint: hash(14),
       reviewFingerprint: hash(15),
-      evidenceFingerprints: [hash(13)],
+      evidenceFingerprints: [hash(1)],
       carrierHeadSha: commit(12),
     });
     expect(stale).toMatchObject({
@@ -164,6 +164,10 @@ describe("Delivery Desk", () => {
     }))).toThrow("land-now requires accepted evidence and no execution carrier");
 
     expect(() => parseDeliveryDeskEntry(entry(571, {
+      reviewFingerprint: hash(15),
+    }))).toThrow("review fingerprint must match retained review evidence");
+
+    expect(() => parseDeliveryDeskEntry(entry(571, {
       selectedState: "final-gate",
       disposition: "pending",
       evidence: [],
@@ -206,6 +210,14 @@ describe("Delivery Desk", () => {
       observedAt,
       entries: [entry(571), entry(572)],
     });
+    const reordered = JSON.parse(JSON.stringify(projection));
+    reordered.entries[0] = Object.fromEntries(
+      Object.entries(reordered.entries[0]).reverse(),
+    );
+    reordered.entries[0].evidence[0] = Object.fromEntries(
+      Object.entries(reordered.entries[0].evidence[0]).reverse(),
+    );
+    expect(parseDeliveryDeskProjection(reordered)).toEqual(projection);
     expect(() => parseDeliveryDeskProjection({
       ...projection,
       entries: [...projection.entries].reverse(),

@@ -152,8 +152,10 @@ export function parseDeliveryDeskProjection(input: unknown): DeliveryDeskProject
     observedAt: record.observedAt,
     entries: record.entries,
   });
-  const suppliedEntries = record.entries as unknown[];
-  if (JSON.stringify(projection.entries) !== JSON.stringify(suppliedEntries)) {
+  const suppliedEntries = (record.entries as unknown[]).map(parseDeliveryDeskEntry);
+  const suppliedOrder = suppliedEntries.map((entry) => deliveryDeskIssueKey(entry.issue));
+  const canonicalOrder = projection.entries.map((entry) => deliveryDeskIssueKey(entry.issue));
+  if (JSON.stringify(suppliedOrder) !== JSON.stringify(canonicalOrder)) {
     throw new Error("Delivery Desk entries must be in canonical finish-line order");
   }
   const suppliedFingerprint = sha256(
@@ -426,7 +428,7 @@ function parseEvidence(input: unknown): DeliveryDeskEvidence[] {
   if (!Array.isArray(input) || input.length > 100) {
     throw new Error("Delivery Desk evidence must be a bounded array");
   }
-  const evidence = input.map((item) => {
+  const suppliedEvidence = input.map((item) => {
     const record = requireRecord(item, "Delivery Desk evidence");
     rejectUnknownKeys(
       record,
@@ -439,12 +441,16 @@ function parseEvidence(input: unknown): DeliveryDeskEvidence[] {
       observedAt: canonicalTimestamp(record.observedAt, "Delivery Desk evidence time"),
       fingerprint: sha256(record.fingerprint, "Delivery Desk evidence fingerprint"),
     };
-  }).sort(compareEvidence);
-  const fingerprints = evidence.map((item) => item.fingerprint);
+  });
+  const fingerprints = suppliedEvidence.map((item) => item.fingerprint);
   if (new Set(fingerprints).size !== fingerprints.length) {
     throw new Error("Delivery Desk evidence fingerprints must be unique");
   }
-  if (JSON.stringify(evidence) !== JSON.stringify(input)) {
+  const evidence = [...suppliedEvidence].sort(compareEvidence);
+  if (
+    JSON.stringify(suppliedEvidence.map((item) => item.fingerprint))
+    !== JSON.stringify(evidence.map((item) => item.fingerprint))
+  ) {
     throw new Error("Delivery Desk evidence must be in canonical order");
   }
   return evidence;
@@ -469,6 +475,15 @@ function parseCarrier(input: unknown): DeliveryDeskCarrier {
 }
 
 function validateStateInvariants(entry: DeliveryDeskEntry): void {
+  if (
+    entry.reviewFingerprint !== null
+    && !entry.evidence.some((evidence) =>
+      evidence.kind === "review"
+      && evidence.fingerprint === entry.reviewFingerprint
+    )
+  ) {
+    throw new Error("Delivery Desk review fingerprint must match retained review evidence");
+  }
   if (entry.selectedState === "land-now") {
     if (entry.disposition !== "accept" || entry.carrier !== null || entry.evidence.length === 0) {
       throw new Error("land-now requires accepted evidence and no execution carrier");
