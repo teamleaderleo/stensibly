@@ -3,14 +3,21 @@ import { createApiToken } from "../src/auth.ts";
 import { createMcpServer } from "../src/mcp.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
+import {
+  callToolEnvelope,
+  callToolJson,
+  initializeMessage,
+  mcpRequest,
+  toolCall,
+} from "./support/mcp-http.ts";
 
-const protocolVersion = "2025-06-18";
 const project = "oauth-dogfood";
 const actor = {
   id: "keel:ambiguous-retry",
   name: "Keel Ambiguous Retry",
   kind: "agent" as const,
 };
+const retryClient = { clientName: "ambiguous-retry-test" };
 
 describe("MCP ambiguous mutation retry", () => {
   test("re-executes the handler but persists one effect after result loss and exact retry", async () => {
@@ -61,6 +68,7 @@ describe("MCP ambiguous mutation retry", () => {
         firstApp,
         token.token,
         toolCall(2, "create_item", request),
+        requestHeaders(2),
       );
       expect(abandoned.status).toBe(200);
       await abandoned.body?.cancel("synthetic result-delivery loss");
@@ -68,7 +76,7 @@ describe("MCP ambiguous mutation retry", () => {
 
       const reconnectedApp = createApp();
       await initialize(reconnectedApp, token.token, 3);
-      const receipt = await callTool<{
+      const receipt = await callToolJson<{
         status: string;
         operation: string;
         eventId: string;
@@ -78,7 +86,7 @@ describe("MCP ambiguous mutation retry", () => {
       }>(reconnectedApp, token.token, 4, "get_operation_receipt", {
         project,
         idempotencyKey,
-      });
+      }, requestHeaders(4));
       expect(receipt).toMatchObject({
         status: "recorded",
         operation: "item.created",
@@ -86,11 +94,11 @@ describe("MCP ambiguous mutation retry", () => {
         reconciliation: { retry: "do_not_retry", nextAction: "read_item" },
       });
 
-      const replayed = await callTool<{
+      const replayed = await callToolJson<{
         id: string;
         title: string;
         status: string;
-      }>(reconnectedApp, token.token, 5, "create_item", request);
+      }>(reconnectedApp, token.token, 5, "create_item", request, requestHeaders(5));
       expect(replayed).toMatchObject({
         id: receipt.itemId,
         title: request.title,
@@ -98,21 +106,24 @@ describe("MCP ambiguous mutation retry", () => {
       });
       expect(createItemCalls).toBe(2);
 
-      const detail = await callTool<{
+      const detail = await callToolJson<{
         item: { id: string; title: string };
         events: Array<{ id: string; type: string }>;
-      }>(reconnectedApp, token.token, 6, "get_item", { id: receipt.itemId });
+      }>(reconnectedApp, token.token, 6, "get_item", {
+        id: receipt.itemId,
+      }, requestHeaders(6));
       expect(detail.item).toMatchObject({ id: receipt.itemId, title: request.title });
       const createdEvents = detail.events.filter((event) => event.type === "item.created");
       expect(createdEvents).toHaveLength(1);
       expect(createdEvents[0]?.id).toBe(receipt.eventId);
 
-      const work = await callTool<Array<{ id: string }>>(
+      const work = await callToolJson<Array<{ id: string }>>(
         reconnectedApp,
         token.token,
         7,
         "list_work",
         { project },
+        requestHeaders(7),
       );
       expect(work.map((item) => item.id)).toEqual([receipt.itemId]);
 
@@ -122,17 +133,19 @@ describe("MCP ambiguous mutation retry", () => {
         8,
         "create_item",
         { ...request, title: "Changed request under the same key" },
+        requestHeaders(8),
       );
       expect(changed.isError).toBe(true);
       expect(changed.text).toMatch(/different operation/i);
       expect(createItemCalls).toBe(3);
 
-      const afterConflict = await callTool<Array<{ id: string }>>(
+      const afterConflict = await callToolJson<Array<{ id: string }>>(
         reconnectedApp,
         token.token,
         9,
         "list_work",
         { project },
+        requestHeaders(9),
       );
       expect(afterConflict.map((item) => item.id)).toEqual([receipt.itemId]);
     } finally {
@@ -146,80 +159,15 @@ async function initialize(
   token: string,
   id: number,
 ): Promise<void> {
-  const response = await mcpRequest(app, token, {
-    jsonrpc: "2.0",
-    id,
-    method: "initialize",
-    params: {
-      protocolVersion,
-      capabilities: {},
-      clientInfo: { name: "ambiguous-retry-test", version: "0.0.1" },
-    },
-  });
+  const response = await mcpRequest(
+    app,
+    token,
+    initializeMessage(id, retryClient),
+    requestHeaders(id),
+  );
   expect(response.status).toBe(200);
 }
 
-async function callTool<T>(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  id: number,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<T> {
-  const envelope = await callToolEnvelope(app, token, id, name, args);
-  if (envelope.isError) throw new Error(envelope.text);
-  return JSON.parse(envelope.text) as T;
-}
-
-async function callToolEnvelope(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  id: number,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<{ isError: boolean; text: string }> {
-  const response = await mcpRequest(app, token, toolCall(id, name, args));
-  expect(response.status).toBe(200);
-  const payload = await response.json() as {
-    result?: {
-      isError?: boolean;
-      content?: Array<{ type?: unknown; text?: unknown }>;
-    };
-  };
-  const first = payload.result?.content?.[0];
-  if (first?.type !== "text" || typeof first.text !== "string") {
-    throw new Error("MCP result did not contain text");
-  }
-  return { isError: payload.result?.isError === true, text: first.text };
-}
-
-function toolCall(
-  id: number,
-  name: string,
-  args: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-}
-
-async function mcpRequest(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  body: unknown,
-): Promise<Response> {
-  return await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-      "x-request-id": `lane-68-${String((body as { id?: unknown }).id ?? "none")}`,
-    },
-    body: JSON.stringify(body),
-  });
+function requestHeaders(id: number): Record<string, string> {
+  return { "x-request-id": `lane-68-${id}` };
 }

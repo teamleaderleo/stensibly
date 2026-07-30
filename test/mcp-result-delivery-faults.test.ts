@@ -4,13 +4,20 @@ import { createMcpServer } from "../src/mcp.ts";
 import { asToolResult } from "../src/mcp-tool-result.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { StensiblyStore } from "../src/store.ts";
+import {
+  callToolJson,
+  initializeMessage,
+  mcpRequest,
+  readToolEnvelope,
+  toolCall,
+} from "./support/mcp-http.ts";
 
-const protocolVersion = "2025-06-18";
 const actor = {
   id: "delivery-fault-agent",
   name: "Delivery Fault Agent",
   kind: "agent" as const,
 };
+const deliveryClient = { clientName: "delivery-fault-test" };
 
 describe("MCP result delivery faults", () => {
   test("preserves a committed mutation when result serialization fails", async () => {
@@ -45,15 +52,20 @@ describe("MCP result delivery faults", () => {
       });
 
       await initialize(app, token.token, 1);
-      const response = await mcpRequest(app, token.token, toolCall(2, "create_item", {
-        project: "oauth-dogfood",
-        kind: "task",
-        title: "Committed before serialization failure",
-        actor,
-        idempotencyKey: "delivery-serialization-create",
-      }));
+      const response = await mcpRequest(
+        app,
+        token.token,
+        toolCall(2, "create_item", {
+          project: "oauth-dogfood",
+          kind: "task",
+          title: "Committed before serialization failure",
+          actor,
+          idempotencyKey: "delivery-serialization-create",
+        }),
+        requestHeaders(2),
+      );
       expect(response.status).toBe(200);
-      const failure = await readToolEnvelope(response);
+      const failure = await readToolEnvelope(response, 2);
       expect(failure.isError).toBe(true);
       expect(JSON.parse(failure.text)).toEqual({
         error: {
@@ -67,10 +79,15 @@ describe("MCP result delivery faults", () => {
         },
       });
 
-      const receipt = await callTool<any>(app, token.token, 3, "get_operation_receipt", {
+      const receipt = await callToolJson<{
+        status: string;
+        operation: string;
+        result: { kind: string };
+        reconciliation: { retry: string };
+      }>(app, token.token, 3, "get_operation_receipt", {
         project: "oauth-dogfood",
         idempotencyKey: "delivery-serialization-create",
-      });
+      }, requestHeaders(3));
       expect(receipt).toMatchObject({
         status: "recorded",
         operation: "item.created",
@@ -94,20 +111,30 @@ describe("MCP result delivery faults", () => {
       const app = createServerApp(store);
       await initialize(app, token.token, 1);
 
-      const response = await mcpRequest(app, token.token, toolCall(2, "create_item", {
-        project: "oauth-dogfood",
-        kind: "task",
-        title: "Client abandoned the response",
-        actor,
-        idempotencyKey: "delivery-abandoned-create",
-      }));
+      const response = await mcpRequest(
+        app,
+        token.token,
+        toolCall(2, "create_item", {
+          project: "oauth-dogfood",
+          kind: "task",
+          title: "Client abandoned the response",
+          actor,
+          idempotencyKey: "delivery-abandoned-create",
+        }),
+        requestHeaders(2),
+      );
       expect(response.status).toBe(200);
       await response.body?.cancel("synthetic client disconnect");
 
-      const receipt = await callTool<any>(app, token.token, 3, "get_operation_receipt", {
+      const receipt = await callToolJson<{
+        status: string;
+        operation: string;
+        result: { kind: string };
+        reconciliation: { retry: string };
+      }>(app, token.token, 3, "get_operation_receipt", {
         project: "oauth-dogfood",
         idempotencyKey: "delivery-abandoned-create",
-      });
+      }, requestHeaders(3));
       expect(receipt).toMatchObject({
         status: "recorded",
         operation: "item.created",
@@ -141,73 +168,15 @@ async function initialize(
   token: string,
   id: number,
 ): Promise<void> {
-  const response = await mcpRequest(app, token, {
-    jsonrpc: "2.0",
-    id,
-    method: "initialize",
-    params: {
-      protocolVersion,
-      capabilities: {},
-      clientInfo: { name: "delivery-fault-test", version: "0.0.1" },
-    },
-  });
+  const response = await mcpRequest(
+    app,
+    token,
+    initializeMessage(id, deliveryClient),
+    requestHeaders(id),
+  );
   expect(response.status).toBe(200);
 }
 
-async function callTool<T>(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  id: number,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<T> {
-  const response = await mcpRequest(app, token, toolCall(id, name, args));
-  expect(response.status).toBe(200);
-  const envelope = await readToolEnvelope(response);
-  if (envelope.isError) throw new Error(envelope.text);
-  return JSON.parse(envelope.text) as T;
-}
-
-async function readToolEnvelope(response: Response): Promise<{
-  isError: boolean;
-  text: string;
-}> {
-  const payload = await response.json() as {
-    result?: {
-      isError?: boolean;
-      content?: Array<{ type?: unknown; text?: unknown }>;
-    };
-  };
-  const first = payload.result?.content?.[0];
-  if (first?.type !== "text" || typeof first.text !== "string") {
-    throw new Error("MCP result did not contain text");
-  }
-  return { isError: payload.result?.isError === true, text: first.text };
-}
-
-function toolCall(id: number, name: string, args: Record<string, unknown>) {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-}
-
-async function mcpRequest(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  body: unknown,
-): Promise<Response> {
-  return await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-      "x-request-id": `delivery-${String((body as { id?: unknown }).id ?? "none")}`,
-    },
-    body: JSON.stringify(body),
-  });
+function requestHeaders(id: number): Record<string, string> {
+  return { "x-request-id": `delivery-${id}` };
 }
