@@ -25,6 +25,7 @@
     "worker:check": "wrangler deploy --dry-run --outdir .wrangler-dry-run",
     "worker:deploy": "wrangler deploy",
     "worker:tail": "wrangler tail",
+    "lockfile:check": "bun scripts/prepare-bun-lock-candidate.ts",
     "test": "bun test ./test/*.test.ts",
     "test:runtime-parity": "bun scripts/verify-runtime-parity.mjs",
     "test:convex": "vitest run",
