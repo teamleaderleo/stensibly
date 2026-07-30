@@ -9,18 +9,21 @@ import { createItemSchema } from "../src/schemas.ts";
 
 const malformedClass = "[a-z0-9" + "-_]";
 const valid = ["a", "alpha-1", "alpha_1", "a-b_c-9"];
-const invalid = ["a@", "a:", "a?", "aA", "a[", "a\\", "a^"];
+const accidentalRangeValues = ["a@", "a:", "a?", "a[", "a\\", "a^"];
 
 describe("lowercase slug character classes", () => {
   test("demonstrates the accidental ASCII range and the corrected boundary", () => {
     const malformed = new RegExp(`^[a-z0-9]${malformedClass}*$`);
     const corrected = /^[a-z0-9][a-z0-9_-]*$/;
-    expect(invalid.filter((value) => malformed.test(value))).toEqual(invalid);
-    expect(invalid.filter((value) => corrected.test(value))).toEqual([]);
+    expect(accidentalRangeValues.filter((value) => malformed.test(value)))
+      .toEqual(accidentalRangeValues);
+    expect(accidentalRangeValues.filter((value) => corrected.test(value))).toEqual([]);
+    expect(malformed.test("aA")).toBe(true);
+    expect(corrected.test("aA")).toBe(false);
     expect(valid.every((value) => corrected.test(value))).toBe(true);
   });
 
-  test("project, schema, OAuth, Convex, and browser validators agree", () => {
+  test("project, schema, OAuth, Convex, and browser validators reject accidental-range punctuation", () => {
     const client = {} as ConstructorParameters<typeof ConvexMcpOAuthService>[0]["client"];
     for (const value of valid) {
       expect(validateProjectScope(value)).toBe(value);
@@ -34,7 +37,7 @@ describe("lowercase slug character classes", () => {
       expect(normalizeBoardProject(value)).toBe(value);
     }
 
-    for (const value of invalid) {
+    for (const value of accidentalRangeValues) {
       expect(() => validateProjectScope(value)).toThrow("lowercase project slug");
       expect(() => createItemSchema.parse({ project: value, title: "Slug boundary" })).toThrow();
       expect(() => new ConvexMcpOAuthService({
@@ -45,6 +48,19 @@ describe("lowercase slug character classes", () => {
       expect(() => assertSlug(value, "Project")).toThrow("lowercase slug");
       expect(normalizeBoardProject(value)).toBe("");
     }
+  });
+
+  test("preserves each validator's existing uppercase normalization policy", () => {
+    const client = {} as ConstructorParameters<typeof ConvexMcpOAuthService>[0]["client"];
+    expect(() => validateProjectScope("Alpha")).toThrow("lowercase project slug");
+    expect(() => createItemSchema.parse({ project: "Alpha", title: "Slug boundary" })).toThrow();
+    expect(normalizeBoardProject("Alpha")).toBe("");
+    expect(new ConvexMcpOAuthService({
+      client,
+      serviceSecret: "test-service-secret",
+      workspace: "Alpha",
+    }).workspace).toBe("alpha");
+    expect(assertSlug("Alpha", "Project")).toBe("alpha");
   });
 
   test("production source cannot reintroduce the malformed class", () => {
