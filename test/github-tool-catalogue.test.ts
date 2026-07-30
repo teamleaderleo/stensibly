@@ -82,7 +82,7 @@ describe("GitHub tool catalogue", () => {
 
     const compatibleInput = catalogueInput();
     compatibleInput.sourceRevision = "github-mcp:test-2";
-    compatibleInput.toolsets[0]!.description = "Updated Actions description.";
+    compatibleInput.toolsets[0]!.description = "Updated repository description.";
     const compatible = classifyGitHubToolCatalogueChange(
       previous,
       compileGitHubToolCatalogue(compatibleInput),
@@ -94,14 +94,18 @@ describe("GitHub tool catalogue", () => {
   test("classifies removals, schema changes, and authority changes as breaking", () => {
     const previous = compileGitHubToolCatalogue(catalogueInput());
     const nextInput = catalogueInput();
-    nextInput.toolsets[0]!.tools.shift();
-    nextInput.toolsets[1]!.tools[0]!.inputSchema = {
+    const actions = nextInput.toolsets.find((entry) => entry.name === "actions")!;
+    actions.tools = actions.tools.filter((entry) => entry.name !== "actions_get");
+    const repositoryTool = nextInput.toolsets
+      .find((entry) => entry.name === "repos")!
+      .tools.find((entry) => entry.name === "get_file_contents")!;
+    repositoryTool.inputSchema = {
       type: "object",
       properties: { owner: { type: "string" } },
       required: ["owner"],
       additionalProperties: false,
     };
-    nextInput.toolsets[1]!.tools[0]!.repositoryScoped = false;
+    repositoryTool.repositoryScoped = false;
 
     const change = classifyGitHubToolCatalogueChange(
       previous,
