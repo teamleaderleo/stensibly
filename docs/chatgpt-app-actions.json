@@ -1,8 +1,8 @@
 {
   "snapshotVersion": 3,
   "manifestVersion": 1,
-  "toolCount": 26,
-  "toolManifestFingerprint": "sha256:ecbae4d7efe2b6757b321a80d301fe06b81e70641717ddd682f9ceab0d4165bb",
+  "toolCount": 29,
+  "toolManifestFingerprint": "sha256:4462bf01f75c7d9365abe2a683cb157ad570c15682165a541bf7dd9b0cc78e3f",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -16,6 +16,9 @@
     "get_operation_receipt",
     "get_project_attachment",
     "get_runner_context",
+    "github_get_issue",
+    "github_list_issues",
+    "github_search_issues",
     "handoff_work",
     "list_artifacts",
     "list_continuation_inbox",
@@ -93,5 +96,5 @@
   "requiredAdminActionAfterCompatibleExistingActionChange": "none",
   "requiredAdminActionToUseNewActions": "refresh_or_recreate_chatgpt_app",
   "requiredAdminActionAfterBreakingChange": "refresh_or_recreate_chatgpt_app",
-  "reviewedOn": "2026-07-29"
+  "reviewedOn": "2026-07-31"
 }
