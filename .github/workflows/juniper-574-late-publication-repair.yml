@@ -1,4 +1,4 @@
-name: juniper-574-late-publication-repair
+name: juniper-574-resource-settlement-finalize
 
 on:
   push:
@@ -11,20 +11,34 @@ permissions:
   contents: write
 
 concurrency:
-  group: juniper-574-resource-settlement-core
+  group: juniper-574-resource-settlement-finalize
   cancel-in-progress: false
 
 jobs:
   repair-test-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
-      - name: Check out candidate branch
-        uses: actions/checkout@v4
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: juniper/574-resource-settlement-core
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Rebase exact candidate onto current main
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch origin main
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git rebase origin/main
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "26"
 
       - name: Reject unfenced terminal late publication
         run: |
@@ -35,38 +49,38 @@ jobs:
           source = Path('src/resource-settlement.ts')
           text = source.read_text(encoding='utf-8')
           old = dedent('''
-              if (owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
-                throw new Error("Successful settlement owner contains failure or fence evidence");
-              }
+            if (owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
+              throw new Error("Successful settlement owner contains failure or fence evidence");
+            }
           ''').strip('\n')
           new = dedent('''
-              if (
-                owner.failureClass
-                || owner.reconciliationRequired
-                || owner.canPublishLate
-                || owner.publicationFenceFingerprint
-              ) {
-                throw new Error("Successful settlement owner contains failure or late-publication evidence");
-              }
+            if (
+              owner.failureClass
+              || owner.reconciliationRequired
+              || owner.canPublishLate
+              || owner.publicationFenceFingerprint
+            ) {
+              throw new Error("Successful settlement owner contains failure or late-publication evidence");
+            }
           ''').strip('\n')
           if text.count(old) != 1:
               raise SystemExit(f'success late-publication anchor matched {text.count(old)} times')
           text = text.replace(old, new, 1)
 
           old = dedent('''
-              if (!owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
-                throw new Error("Failed settlement owner evidence is inconsistent");
-              }
+            if (!owner.failureClass || owner.reconciliationRequired || owner.publicationFenceFingerprint) {
+              throw new Error("Failed settlement owner evidence is inconsistent");
+            }
           ''').strip('\n')
           new = dedent('''
-              if (
-                !owner.failureClass
-                || owner.reconciliationRequired
-                || owner.canPublishLate
-                || owner.publicationFenceFingerprint
-              ) {
-                throw new Error("Failed settlement owner evidence is inconsistent or permits unfenced late publication");
-              }
+            if (
+              !owner.failureClass
+              || owner.reconciliationRequired
+              || owner.canPublishLate
+              || owner.publicationFenceFingerprint
+            ) {
+              throw new Error("Failed settlement owner evidence is inconsistent or permits unfenced late publication");
+            }
           ''').strip('\n')
           if text.count(old) != 1:
               raise SystemExit(f'failure late-publication anchor matched {text.count(old)} times')
@@ -75,24 +89,24 @@ jobs:
           tests = Path('test/resource-settlement.test.ts')
           test_text = tests.read_text(encoding='utf-8')
           anchor = dedent('''
-            test("requires exact publication-fence evidence", () => {
+          test("requires exact publication-fence evidence", () => {
           ''').strip('\n')
           addition = dedent('''
-            test("rejects terminal owners that can still publish without reconciliation or a fence", () => {
-              expect(() => createResourceSettlementReceipt(input([
-                owner("worker-a", "settled_failure", { canPublishLate: true }),
-              ], {
-                terminalAt: at(5),
-                disposition: "retired",
-              }))).toThrow("unfenced late publication");
+          test("rejects terminal owners that can still publish without reconciliation or a fence", () => {
+            expect(() => createResourceSettlementReceipt(input([
+              owner("worker-a", "settled_failure", { canPublishLate: true }),
+            ], {
+              terminalAt: at(5),
+              disposition: "retired",
+            }))).toThrow("unfenced late publication");
 
-              expect(() => createResourceSettlementReceipt(input([
-                owner("worker-a", "settled_success", { canPublishLate: true }),
-              ], {
-                terminalAt: at(5),
-                disposition: "reusable",
-              }))).toThrow("late-publication evidence");
-            });
+            expect(() => createResourceSettlementReceipt(input([
+              owner("worker-a", "settled_success", { canPublishLate: true }),
+            ], {
+              terminalAt: at(5),
+              disposition: "reusable",
+            }))).toThrow("late-publication evidence");
+          });
 
           ''')
           if test_text.count(anchor) != 1:
@@ -102,6 +116,7 @@ jobs:
 
       - name: Run focused and repository gates
         run: |
+          set -euxo pipefail
           bun install --frozen-lockfile
           bun run typecheck
           bun test test/resource-settlement.test.ts
@@ -110,12 +125,12 @@ jobs:
           bun run worker:check
           bun run test:runtime-parity
 
-      - name: Publish source-only candidate
+      - name: Publish source-only current-main candidate
         run: |
+          set -euxo pipefail
           rm .github/workflows/juniper-574-late-publication-repair.yml
           git diff --check
-          git config user.name juniper-stensibly
-          git config user.email juniper-stensibly@users.noreply.github.com
           git add src test docs .github
           git commit -m 'fix: require a fence for late publication'
-          git push origin HEAD:juniper/574-resource-settlement-core
+          git push --force-with-lease=refs/heads/juniper/574-resource-settlement-core:$GITHUB_SHA \
+            origin HEAD:refs/heads/juniper/574-resource-settlement-core
