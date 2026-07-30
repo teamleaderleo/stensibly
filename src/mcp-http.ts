@@ -41,6 +41,9 @@ const readTools = new Set([
   "get_brief",
   "get_project_attachment",
   "get_operation_receipt",
+  "github_get_issue",
+  "github_list_issues",
+  "github_search_issues",
   "survey_workspace",
   "list_work",
   "get_item",
@@ -142,7 +145,7 @@ async function handleMcpHttpRequestCore(
   let server: ReturnType<typeof createMcpServer> | undefined;
   let failureStage: McpFailureStage = "server_construction";
   try {
-    server = (options.createServer ?? createMcpServer)(options.ledger);
+    server = (options.createServer ?? createMcpServer)(options.ledger, { principal });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
@@ -254,6 +257,9 @@ async function resolveAccessRule(
     toolName === "get_brief"
     || toolName === "get_project_attachment"
     || toolName === "get_operation_receipt"
+    || toolName === "github_get_issue"
+    || toolName === "github_list_issues"
+    || toolName === "github_search_issues"
     || toolName === "create_item"
   ) {
     return {

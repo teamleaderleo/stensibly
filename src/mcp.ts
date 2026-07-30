@@ -7,7 +7,9 @@ import {
 } from "./completion-continuation-contracts.js";
 import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
+import { registerGitHubIssueProviderTools } from "./github-issue-provider-mcp.js";
 import type { WorkLedger } from "./ledger.js";
+import type { McpRequestContext } from "./mcp-context.js";
 import { MCP_SERVER_VERSION } from "./mcp-diagnostics.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
@@ -19,7 +21,10 @@ import {
 } from "./schemas.js";
 import { buildWorkspaceSurvey } from "./survey.js";
 
-export function createMcpServer(ledger: WorkLedger): McpServer {
+export function createMcpServer(
+  ledger: WorkLedger,
+  context: McpRequestContext = {},
+): McpServer {
   const server = new McpServer(
     { name: "stensibly", version: MCP_SERVER_VERSION },
     {
@@ -29,6 +34,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
         "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
         "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
         "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
+        "Use github_list_issues, github_search_issues, and github_get_issue only for repositories explicitly bound to the project through a server-side GitHub provider connection.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
@@ -273,6 +279,7 @@ export function createMcpServer(ledger: WorkLedger): McpServer {
 
   registerOperationReceiptTools(server, ledger);
   registerProjectAttachmentTools(server, ledger);
+  registerGitHubIssueProviderTools(server, ledger, context);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
   return server;
