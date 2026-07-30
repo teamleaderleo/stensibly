@@ -13,6 +13,7 @@ export const githubRepositoryEventTypes = [
   "create",
   "delete",
   "pull_request",
+  "pull_request_review",
   "issues",
   "issue_comment",
 ] as const;
@@ -25,6 +26,7 @@ export type GitHubRepositorySubjectKind =
   | "revision"
   | "ref"
   | "pull_request"
+  | "pull_request_review"
   | "issue"
   | "issue_comment";
 
@@ -33,7 +35,7 @@ export type GitHubRepositoryRefType = "branch" | "tag" | "other";
 export type GitHubRepositoryFactValue = string | number | boolean | null;
 
 export interface GitHubRepositoryContentRevision {
-  readonly name: "title" | "body" | "comment_body";
+  readonly name: "title" | "body" | "comment_body" | "review_body";
   readonly present: boolean;
   readonly byteLength: number;
   readonly sha256: string;
@@ -179,6 +181,8 @@ export function mapGitHubRepositoryWebhook(
     ? mapRefLifecycle(payload, common, "deleted")
     : eventType === "pull_request"
     ? mapPullRequest(payload, common)
+    : eventType === "pull_request_review"
+    ? mapPullRequestReview(payload, common)
     : eventType === "issues"
     ? mapIssue(payload, common)
     : mapIssueComment(payload, common);
@@ -202,9 +206,8 @@ function mapPush(
     true,
   );
   const headCommit = optionalRecord(payload.head_commit);
-  const providerTime = headCommit?.timestamp;
   const time = sourceTime(
-    providerTime,
+    headCommit?.timestamp,
     "GitHub push head commit time",
     common.receivedAt,
   );
@@ -215,7 +218,7 @@ function mapPush(
     : nonNegativeInteger(payload.size, "GitHub push commit count");
   const subject = revision
     ? revisionSubject(common.repository, revision)
-    : refSubject(common.repository, ref.full, ref.type);
+    : refSubject(common.repository, ref.full);
   return {
     action: "pushed",
     subject,
@@ -250,7 +253,7 @@ function mapRefLifecycle(
   const full = type === "branch" ? `refs/heads/${name}` : `refs/tags/${name}`;
   return {
     action,
-    subject: refSubject(common.repository, full, type),
+    subject: refSubject(common.repository, full),
     relationships: relationships(common.repository, {
       ref: full,
       refType: type,
@@ -342,6 +345,54 @@ function mapPullRequest(
   };
 }
 
+function mapPullRequestReview(
+  payload: Record<string, unknown>,
+  common: CommonMapping,
+): MappedSemantics {
+  const action = exactPullRequestReviewAction(payload.action);
+  const pullRequest = requiredRecord(
+    payload.pull_request,
+    "GitHub pull request review pull request",
+  );
+  const review = requiredRecord(
+    payload.review,
+    "GitHub pull request review payload",
+  );
+  const number = positiveInteger(
+    pullRequest.number,
+    "GitHub pull request review pull request number",
+  );
+  const reviewId = providerId(review.id, "GitHub pull request review ID");
+  const revision = canonicalRevision(
+    requiredString(review.commit_id, "GitHub pull request review revision"),
+    "GitHub pull request review revision",
+  );
+  const state = exactReviewState(review.state);
+  const time = sourceTime(
+    review.submitted_at ?? pullRequest.updated_at,
+    "GitHub pull request review updated time",
+    common.receivedAt,
+  );
+  return {
+    action,
+    subject: {
+      kind: "pull_request_review",
+      externalId:
+        `github:${common.repository}#pull/${number}/review/${reviewId}`,
+    },
+    relationships: relationships(common.repository, {
+      revision,
+      pullRequestNumber: number,
+      issueNumber: number,
+    }),
+    facts: { state, reviewId },
+    contentRevisions: canonicalContentRevisions([
+      contentRevision("review_body", review.body),
+    ]),
+    ...time,
+  };
+}
+
 function mapIssue(
   payload: Record<string, unknown>,
   common: CommonMapping,
@@ -398,6 +449,7 @@ function mapIssueComment(
     common.receivedAt,
     true,
   );
+  const onPullRequest = optionalRecord(issue.pull_request) !== null;
   return {
     action,
     subject: {
@@ -407,12 +459,10 @@ function mapIssueComment(
     },
     relationships: relationships(common.repository, {
       issueNumber,
-      pullRequestNumber: optionalRecord(issue.pull_request) ? issueNumber : null,
+      pullRequestNumber: onPullRequest ? issueNumber : null,
       commentId,
     }),
-    facts: {
-      onPullRequest: optionalRecord(issue.pull_request) !== null,
-    },
+    facts: { onPullRequest },
     contentRevisions: canonicalContentRevisions([
       contentRevision("comment_body", comment.body),
     ]),
@@ -502,6 +552,30 @@ function exactState(value: unknown, label: string): "open" | "closed" {
   throw new RangeError(`${label} must be open or closed`);
 }
 
+function exactPullRequestReviewAction(
+  value: unknown,
+): "submitted" | "edited" | "dismissed" {
+  if (value === "submitted" || value === "edited" || value === "dismissed") {
+    return value;
+  }
+  throw new RangeError("GitHub pull request review action is invalid");
+}
+
+function exactReviewState(
+  value: unknown,
+): "approved" | "changes_requested" | "commented" | "dismissed" | "pending" {
+  if (
+    value === "approved"
+    || value === "changes_requested"
+    || value === "commented"
+    || value === "dismissed"
+    || value === "pending"
+  ) {
+    return value;
+  }
+  throw new RangeError("GitHub pull request review state is invalid");
+}
+
 function exactRefType(value: unknown): "branch" | "tag" {
   if (value === "branch" || value === "tag") return value;
   throw new RangeError("GitHub ref type must be branch or tag");
@@ -563,7 +637,6 @@ function revisionSubject(
 function refSubject(
   repository: string,
   ref: string,
-  _type: GitHubRepositoryRefType,
 ): GitHubRepositoryObservation["subject"] {
   return {
     kind: "ref",
