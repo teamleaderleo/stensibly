@@ -86,6 +86,33 @@ describe("GitHub provider boundaries", () => {
     })).outcome).toBe("conflict");
   });
 
+  test("turns an unresolved exact replay into a reconciliation fence", async () => {
+    const store = new InMemoryGitHubProviderReceiptStore();
+    const first = receipt();
+    expect((await store.reserveGitHubProviderReceipt(first)).outcome).toBe("reserved");
+
+    const replay = await store.reserveGitHubProviderReceipt({
+      ...first,
+      id: "ghop_boundary_replay",
+    });
+    expect(replay).toMatchObject({
+      outcome: "replay",
+      receipt: {
+        id: first.id,
+        state: "pending_reconciliation",
+        error: {
+          code: "provider_dispatch_in_progress_or_interrupted",
+          retry: "reconcile_before_retry",
+        },
+        recovery: { nextAction: "reconcile_exact_operation" },
+      },
+    });
+    expect(await store.getGitHubProviderReceipt(
+      first.project,
+      first.idempotencyKey,
+    )).toEqual(replay.receipt);
+  });
+
   test("keeps the original receipt out of idempotency conflict errors", () => {
     const error = new GitHubProviderIdempotencyConflictError(receipt());
     expect("receipt" in error).toBe(false);
