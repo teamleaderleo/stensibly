@@ -8,13 +8,13 @@ A delegated read proceeds only after all of these checks pass:
 
 1. the caller supplies the exact current curated catalogue fingerprint;
 2. the requested capability exists, is searchable, read-only, repository-scoped, and delegated;
-3. the project has an active binding for the canonical repository;
-4. the binding resolves to an active Stensibly-owned GitHub provider connection;
-5. the connection's repository snapshot includes the requested repository;
-6. delegated-read authority allows the exact project, repository, tool, actor, client, and catalogue identity;
-7. arguments fit bounded canonical JSON limits.
+3. arguments fit bounded canonical JSON limits;
+4. the project has an active binding for the canonical repository;
+5. the binding resolves to an active Stensibly-owned GitHub provider connection;
+6. the connection's repository snapshot includes the requested repository;
+7. delegated-read authority allows the exact project, repository, tool, actor, client, and catalogue identity.
 
-Every failure before step 7 keeps adapter dispatch at zero.
+Every admission failure keeps adapter dispatch at zero.
 
 ## Adapter boundary
 
