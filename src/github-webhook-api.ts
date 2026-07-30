@@ -1,6 +1,11 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import {
+  createGitHubWebhookIngress,
+  DEFAULT_GITHUB_INGRESS_MAX_BODY_BYTES,
+  GitHubWebhookIngressError,
+  type GitHubWebhookIngress,
+} from "./github-webhook-ingress.js";
 import {
   createHttpAuthMiddleware,
   currentPrincipal,
@@ -27,7 +32,8 @@ import {
 import type { StensiblyStore } from "./store.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 
-export const DEFAULT_GITHUB_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
+export const DEFAULT_GITHUB_WEBHOOK_MAX_BODY_BYTES =
+  DEFAULT_GITHUB_INGRESS_MAX_BODY_BYTES;
 
 export interface GitHubWebhookOptions {
   secret: string;
@@ -37,7 +43,13 @@ export interface GitHubWebhookOptions {
   now?: () => number;
 }
 
-const githubDeliveryPattern = /^[A-Za-z0-9._:-]{1,128}$/;
+interface NormalizedGitHubWebhookOptions {
+  ingress: GitHubWebhookIngress;
+  maxStoredEvents: number;
+  acknowledgedRetentionMs: number;
+  now: () => number;
+}
+
 const githubRepositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const githubActorLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[bot\])?$/;
 const gitRevisionPattern = /^[0-9a-f]{40}$/i;
@@ -128,45 +140,14 @@ export function registerGitHubProviderEventRoutes(
   const capacities = new SqliteProviderCapacityStore(store);
 
   app.post("/webhooks/github", async (context) => {
-    const deliveryId = context.req.header("X-GitHub-Delivery");
-    if (!deliveryId || !githubDeliveryPattern.test(deliveryId)) {
-      return context.json({
-        error: "X-GitHub-Delivery must be a bounded delivery identity",
-        code: "invalid_request",
-      }, 400);
+    let delivery;
+    try {
+      delivery = await normalized.ingress(context.req.raw);
+    } catch (error) {
+      return ingressError(context, error);
     }
 
-    const eventType = context.req.header("X-GitHub-Event");
-    if (!eventType || eventType.length > 64 || controlPattern.test(eventType)) {
-      return context.json({
-        error: "X-GitHub-Event must be a bounded event type",
-        code: "invalid_request",
-      }, 400);
-    }
-
-    const contentType = context.req.header("Content-Type")
-      ?.split(";", 1)[0]
-      ?.trim()
-      .toLowerCase();
-    if (contentType !== "application/json") {
-      return context.json({
-        error: "GitHub webhook content type must be application/json",
-        code: "unsupported_media_type",
-      }, 415);
-    }
-
-    const bodyResult = await readBoundedBody(context.req.raw, normalized.maxBodyBytes);
-    if (bodyResult instanceof Response) return bodyResult;
-
-    const signature = context.req.header("X-Hub-Signature-256");
-    if (!verifySignature(normalized.secret, bodyResult, signature)) {
-      context.header("WWW-Authenticate", "GitHub-HMAC-SHA256");
-      return context.json({
-        error: "GitHub webhook signature is invalid",
-        code: "unauthorized",
-      }, 401);
-    }
-
+    const eventType = delivery.eventType;
     if (eventType !== "pull_request_review" && eventType !== "issue_comment") {
       return context.json({
         accepted: false,
@@ -175,18 +156,8 @@ export function registerGitHubProviderEventRoutes(
       }, 202);
     }
 
-    let rawPayload: unknown;
-    try {
-      rawPayload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyResult));
-    } catch {
-      return context.json({
-        error: "GitHub webhook body must be valid UTF-8 JSON",
-        code: "invalid_request",
-      }, 400);
-    }
-
     if (eventType === "pull_request_review") {
-      const parsed = pullRequestReviewSchema.safeParse(rawPayload);
+      const parsed = pullRequestReviewSchema.safeParse(delivery.payload);
       if (!parsed.success) {
         return context.json({
           error: "GitHub pull_request_review payload is malformed",
@@ -210,8 +181,8 @@ export function registerGitHubProviderEventRoutes(
 
       try {
         const result = events.ingestGitHubPullRequestReview({
-          deliveryId,
-          payloadDigest: createHash("sha256").update(bodyResult).digest("hex"),
+          deliveryId: delivery.deliveryId,
+          payloadDigest: legacyPayloadDigest(delivery.payloadDigest),
           externalObjectId,
           repository,
           subjectNumber,
@@ -219,7 +190,7 @@ export function registerGitHubProviderEventRoutes(
           revision,
           actor,
           summary,
-          receivedAt: new Date(normalized.now()).toISOString(),
+          receivedAt: delivery.receivedAt,
         });
         return context.json({
           accepted: true,
@@ -231,7 +202,7 @@ export function registerGitHubProviderEventRoutes(
       }
     }
 
-    const parsed = issueCommentSchema.safeParse(rawPayload);
+    const parsed = issueCommentSchema.safeParse(delivery.payload);
     if (!parsed.success) {
       return context.json({
         error: "GitHub issue_comment payload is malformed",
@@ -267,8 +238,8 @@ export function registerGitHubProviderEventRoutes(
 
     try {
       const result = capacities.ingestCodeRabbit({
-        deliveryId,
-        payloadDigest: createHash("sha256").update(bodyResult).digest("hex"),
+        deliveryId: delivery.deliveryId,
+        payloadDigest: legacyPayloadDigest(delivery.payloadDigest),
         sourceCommentId: String(payload.comment.id),
         repository: payload.repository.full_name,
         pullRequestNumber: payload.issue.number,
@@ -278,7 +249,7 @@ export function registerGitHubProviderEventRoutes(
         limit: capacity.limit,
         refillAt: capacity.refillAt,
         observedAt: payload.comment.updated_at,
-        receivedAt: new Date(normalized.now()).toISOString(),
+        receivedAt: delivery.receivedAt,
       });
       return context.json({
         accepted: true,
@@ -419,23 +390,15 @@ export function registerGitHubProviderEventRoutes(
   app.route("/api/v1", api);
 }
 
-function normalizeOptions(options: GitHubWebhookOptions): {
-  secret: string;
-  maxBodyBytes: number;
-  maxStoredEvents: number;
-  acknowledgedRetentionMs: number;
-  now: () => number;
-} {
-  const secretBytes = Buffer.byteLength(options.secret, "utf8");
-  if (secretBytes < 16 || secretBytes > 1024) {
-    throw new Error("GitHub webhook secret must contain between 16 and 1024 UTF-8 bytes");
-  }
-  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_GITHUB_WEBHOOK_MAX_BODY_BYTES;
-  if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024 || maxBodyBytes > 1024 * 1024) {
-    throw new Error("GitHub webhook body bound must be between 1024 and 1048576 bytes");
-  }
+function normalizeOptions(
+  options: GitHubWebhookOptions,
+): NormalizedGitHubWebhookOptions {
   const maxStoredEvents = options.maxStoredEvents ?? DEFAULT_MAX_PROVIDER_EVENTS;
-  if (!Number.isInteger(maxStoredEvents) || maxStoredEvents < 1 || maxStoredEvents > 100_000) {
+  if (
+    !Number.isInteger(maxStoredEvents)
+    || maxStoredEvents < 1
+    || maxStoredEvents > 100_000
+  ) {
     throw new Error("GitHub provider event capacity must be between 1 and 100000 rows");
   }
   const acknowledgedRetentionMs = options.acknowledgedRetentionMs
@@ -445,92 +408,46 @@ function normalizeOptions(options: GitHubWebhookOptions): {
     || acknowledgedRetentionMs < 0
     || acknowledgedRetentionMs > 365 * 24 * 60 * 60 * 1_000
   ) {
-    throw new Error("Acknowledged provider event retention must be between 0 and 31536000000 milliseconds");
+    throw new Error(
+      "Acknowledged provider event retention must be between 0 and 31536000000 milliseconds",
+    );
   }
+  const now = options.now ?? Date.now;
   return {
-    secret: options.secret,
-    maxBodyBytes,
+    ingress: createGitHubWebhookIngress({
+      secret: options.secret,
+      ...(options.maxBodyBytes === undefined
+        ? {}
+        : { maxBodyBytes: options.maxBodyBytes }),
+      now,
+    }),
     maxStoredEvents,
     acknowledgedRetentionMs,
-    now: options.now ?? Date.now,
+    now,
   };
 }
 
-async function readBoundedBody(
-  request: Request,
-  maxBodyBytes: number,
-): Promise<Uint8Array | Response> {
-  const declaredLength = request.headers.get("content-length");
-  if (declaredLength !== null) {
-    const parsedLength = Number(declaredLength);
-    if (!Number.isInteger(parsedLength) || parsedLength < 0) {
-      return Response.json({
-        error: "Content-Length must be a non-negative integer",
-        code: "invalid_request",
-      }, { status: 400 });
-    }
-    if (parsedLength > maxBodyBytes) {
-      return payloadTooLarge();
-    }
+function legacyPayloadDigest(value: string): string {
+  if (!/^sha256:[a-f0-9]{64}$/u.test(value)) {
+    throw new Error("Prepared GitHub webhook digest is invalid");
   }
-
-  const stream = request.body;
-  if (!stream) return new Uint8Array(0);
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      const chunk = result.value;
-      total += chunk.byteLength;
-      if (total > maxBodyBytes) {
-        await reader.cancel("GitHub webhook body exceeds the configured bound");
-        return payloadTooLarge();
-      }
-      chunks.push(chunk.slice());
-    }
-  } catch {
-    try {
-      await reader.cancel("GitHub webhook body could not be read");
-    } catch {
-      // The source may already be errored or closed.
-    }
-    return Response.json({
-      error: "GitHub webhook body could not be read",
-      code: "invalid_request",
-    }, { status: 400 });
-  } finally {
-    reader.releaseLock();
-  }
-
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
+  return value.slice("sha256:".length);
 }
 
-function payloadTooLarge(): Response {
-  return Response.json({
-    error: "GitHub webhook body exceeds the configured bound",
-    code: "payload_too_large",
-  }, { status: 413 });
-}
-
-function verifySignature(
-  secret: string,
-  body: Uint8Array,
-  signature: string | undefined,
-): boolean {
-  const match = /^sha256=([0-9a-f]{64})$/i.exec(signature ?? "");
-  if (!match?.[1]) return false;
-  const supplied = Buffer.from(match[1], "hex");
-  const expected = createHmac("sha256", secret).update(body).digest();
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+function ingressError(
+  context: Context<StensiblyEnv>,
+  error: unknown,
+): Response {
+  if (!(error instanceof GitHubWebhookIngressError)) throw error;
+  if (error.authenticate) {
+    context.header("WWW-Authenticate", "GitHub-HMAC-SHA256");
+  }
+  return context.json({
+    error: error.message,
+    code: error.code,
+    ...(error.detailCode ? { detailCode: error.detailCode } : {}),
+    ...(error.path ? { path: error.path } : {}),
+  }, error.status);
 }
 
 function parseProviderEventStatus(value: string): ProviderEventStatus | null {
