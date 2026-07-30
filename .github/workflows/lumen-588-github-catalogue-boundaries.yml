@@ -50,6 +50,14 @@ jobs:
           source_path = Path("src/github-tool-catalogue.ts")
           source = source_path.read_text(encoding="utf-8")
           source = replace_once(source, '''
+          const riskRank: Record<GitHubToolRiskClass, number> = {
+            read: 0,
+            write: 1,
+            admin: 2,
+          };
+          ''', '''
+          ''', "unused risk rank")
+          source = replace_once(source, '''
           return Object.freeze({
             ...canonical,
             fingerprint: sha256(stableJson(canonical)),
@@ -117,7 +125,7 @@ jobs:
               "actions_get",
               "actions_list",
             ]);
-          
+
             const fingerprint = first.fingerprint;
             expect(Object.isFrozen(first)).toBe(true);
             expect(Object.isFrozen(first.toolsets)).toBe(true);
@@ -134,32 +142,33 @@ jobs:
           ''', "immutability regression")
           tests = replace_once(tests, '''
             expect(change.reasons.some((reason) => reason.includes("repository scope"))).toBe(true);
+          });
           ''', '''
             expect(change.reasons.some((reason) => reason.includes("repository scope"))).toBe(true);
           });
-          
-          test("classifies authority and default-exposure reductions as breaking", () => {
+
+          test("classifies authority and default-exposure changes as breaking", () => {
             const adminInput = catalogueInput();
             const adminTool = adminInput.toolsets
               .find((entry) => entry.name === "repos")!
               .tools.find((entry) => entry.name === "get_file_contents")!;
             adminTool.readOnly = false;
             adminTool.riskClass = "admin";
-          
+
             const writeInput = catalogueInput();
             const writeTool = writeInput.toolsets
               .find((entry) => entry.name === "repos")!
               .tools.find((entry) => entry.name === "get_file_contents")!;
             writeTool.readOnly = false;
             writeTool.riskClass = "write";
-          
+
             const riskDowngrade = classifyGitHubToolCatalogueChange(
               compileGitHubToolCatalogue(adminInput),
               compileGitHubToolCatalogue(writeInput),
             );
             expect(riskDowngrade.classification).toBe("breaking");
             expect(riskDowngrade.reasons.some((reason) => reason.includes("risk class"))).toBe(true);
-          
+
             const readOnlyInput = catalogueInput();
             const writeToRead = classifyGitHubToolCatalogueChange(
               compileGitHubToolCatalogue(writeInput),
@@ -167,7 +176,7 @@ jobs:
             );
             expect(writeToRead.classification).toBe("breaking");
             expect(writeToRead.reasons.some((reason) => reason.includes("read-only capability"))).toBe(true);
-          
+
             const enabledInput = catalogueInput();
             enabledInput.toolsets.find((entry) => entry.name === "actions")!.defaultEnabled = true;
             const defaultExposure = classifyGitHubToolCatalogueChange(
@@ -176,6 +185,7 @@ jobs:
             );
             expect(defaultExposure.classification).toBe("breaking");
             expect(defaultExposure.reasons).toContain("breaking toolset default changed: actions");
+          });
           ''', "authority drift regressions")
           test_path.write_text(tests, encoding="utf-8")
           PY
