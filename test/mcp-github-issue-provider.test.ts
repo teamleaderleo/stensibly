@@ -8,8 +8,15 @@ import {
 import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
+import {
+  callToolEnvelope,
+  callToolJson,
+  initializeMessage,
+  mcpRequest,
+  toolCall,
+} from "./support/mcp-http.ts";
 
-const protocolVersion = "2025-06-18";
+const githubProviderClient = { clientName: "github-provider-test" };
 
 function issue() {
   return buildGitHubIssueContext({
@@ -70,7 +77,10 @@ describe("remote GitHub issue provider MCP reads", () => {
       const app = createServerApp(store, { ledger });
 
       await initialize(app, reader.token, 1);
-      const result = await callTool<any>(app, reader.token, 2, "github_get_issue", {
+      const result = await callToolJson<{
+        reference: { externalId: string };
+        containsIssueBody: boolean;
+      }>(app, reader.token, 2, "github_get_issue", {
         project: "stensibly",
         repository: "teamleaderleo/stensibly",
         issueNumber: 525,
@@ -147,7 +157,9 @@ describe("remote GitHub issue provider MCP reads", () => {
       });
       const app = createServerApp(store, { ledger });
       await initialize(app, reader.token, 10);
-      const response = await mcpRequest(app, reader.token, toolCall(
+      const result = await callToolEnvelope(
+        app,
+        reader.token,
         11,
         "github_search_issues",
         {
@@ -155,15 +167,9 @@ describe("remote GitHub issue provider MCP reads", () => {
           repository: "teamleaderleo/stensibly",
           query: "repo:teamleaderleo/fieldwork provider",
         },
-      ));
-      expect(response.status).toBe(200);
-      const payload = await response.json() as {
-        result?: { isError?: boolean; content?: Array<{ text?: unknown }> };
-      };
-      expect(payload.result?.isError).toBe(true);
-      expect(payload.result?.content?.[0]?.text).toContain(
-        "cannot contain provider qualifiers",
       );
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("cannot contain provider qualifiers");
       expect(searchCalls).toBe(0);
     } finally {
       store.close();
@@ -180,7 +186,9 @@ describe("remote GitHub issue provider MCP reads", () => {
       });
       const app = createServerApp(store);
       await initialize(app, reader.token, 20);
-      const response = await mcpRequest(app, reader.token, toolCall(
+      const result = await callToolEnvelope(
+        app,
+        reader.token,
         21,
         "github_get_issue",
         {
@@ -188,15 +196,9 @@ describe("remote GitHub issue provider MCP reads", () => {
           repository: "teamleaderleo/stensibly",
           issueNumber: 525,
         },
-      ));
-      expect(response.status).toBe(200);
-      const payload = await response.json() as {
-        result?: { isError?: boolean; content?: Array<{ text?: unknown }> };
-      };
-      expect(payload.result?.isError).toBe(true);
-      expect(payload.result?.content?.[0]?.text).toContain(
-        "no mounted provider service",
       );
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("no mounted provider service");
     } finally {
       store.close();
     }
@@ -208,60 +210,10 @@ async function initialize(
   token: string,
   id: number,
 ): Promise<void> {
-  const response = await mcpRequest(app, token, {
-    jsonrpc: "2.0",
-    id,
-    method: "initialize",
-    params: {
-      protocolVersion,
-      capabilities: {},
-      clientInfo: { name: "github-provider-test", version: "0.0.1" },
-    },
-  });
+  const response = await mcpRequest(
+    app,
+    token,
+    initializeMessage(id, githubProviderClient),
+  );
   expect(response.status).toBe(200);
-}
-
-async function callTool<T>(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  id: number,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<T> {
-  const response = await mcpRequest(app, token, toolCall(id, name, args));
-  expect(response.status).toBe(200);
-  const payload = await response.json() as {
-    result?: { content?: Array<{ type?: unknown; text?: unknown }> };
-  };
-  const first = payload.result?.content?.[0];
-  if (first?.type !== "text" || typeof first.text !== "string") {
-    throw new Error("GitHub provider response did not contain JSON text");
-  }
-  return JSON.parse(first.text) as T;
-}
-
-function toolCall(id: number, name: string, args: Record<string, unknown>) {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-}
-
-async function mcpRequest(
-  app: ReturnType<typeof createServerApp>,
-  token: string,
-  body: unknown,
-): Promise<Response> {
-  return await app.request("/mcp", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "mcp-protocol-version": protocolVersion,
-    },
-    body: JSON.stringify(body),
-  });
 }
