@@ -59,6 +59,43 @@ describe("GitHub tool catalogue", () => {
     expect(() => compileGitHubToolCatalogue(inconsistent)).toThrow(
       "must use read risk exactly when read-only",
     );
+
+    const unknownCatalogue = {
+      ...catalogueInput(),
+      destructiveMode: true,
+    } as GitHubToolCatalogueInput;
+    expect(() => compileGitHubToolCatalogue(unknownCatalogue)).toThrow(
+      "GitHub tool catalogue has unknown field destructiveMode",
+    );
+
+    const unknownToolset = catalogueInput();
+    Object.assign(unknownToolset.toolsets[0]!, { exposureMode: "write" });
+    expect(() => compileGitHubToolCatalogue(unknownToolset)).toThrow(
+      "GitHub toolset has unknown field exposureMode",
+    );
+
+    const unknownTool = catalogueInput();
+    Object.assign(unknownTool.toolsets[0]!.tools[0]!, { destructive: true });
+    expect(() => compileGitHubToolCatalogue(unknownTool)).toThrow(
+      "GitHub tool has unknown field destructive",
+    );
+
+    const unsafeField = `authorization\n${"secret".repeat(30)}`;
+    const unsafeCatalogue = catalogueInput() as GitHubToolCatalogueInput & Record<string, unknown>;
+    unsafeCatalogue[unsafeField] = true;
+    expect(() => compileGitHubToolCatalogue(unsafeCatalogue)).toThrow(
+      /^GitHub tool catalogue has unknown field sha256:[a-f0-9]{16}$/,
+    );
+    try {
+      compileGitHubToolCatalogue(unsafeCatalogue);
+    } catch (error) {
+      expect(String(error)).not.toContain(unsafeField);
+    }
+
+    const extendedSchema = catalogueInput();
+    extendedSchema.toolsets[0]!.tools[0]!.inputSchema["x-provider-capability"] = "bounded";
+    expect(compileGitHubToolCatalogue(extendedSchema).fingerprint)
+      .not.toBe(compileGitHubToolCatalogue(catalogueInput()).fingerprint);
   });
 
   test("searches the bounded catalogue with deterministic filters", () => {
