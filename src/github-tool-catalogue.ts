@@ -73,11 +73,6 @@ export interface GitHubToolCatalogueChange {
 
 const toolNamePattern = /^[a-z][a-z0-9_]{0,127}$/;
 const toolsetNamePattern = /^[a-z][a-z0-9_]{0,63}$/;
-const riskRank: Record<GitHubToolRiskClass, number> = {
-  read: 0,
-  write: 1,
-  admin: 2,
-};
 
 export function compileGitHubToolCatalogue(
   input: GitHubToolCatalogueInput,
@@ -177,7 +172,7 @@ export function compileGitHubToolCatalogue(
     toolsets,
     toolCount,
   };
-  return Object.freeze({
+  return deepFreeze({
     ...canonical,
     fingerprint: sha256(stableJson(canonical)),
   });
@@ -266,8 +261,8 @@ export function classifyGitHubToolCatalogueChange(
       reasons.push(`toolset description changed: ${name}`);
     }
     if (prior.defaultEnabled !== toolset.defaultEnabled) {
-      compatible = true;
-      reasons.push(`toolset default changed: ${name}`);
+      breaking = true;
+      reasons.push(`breaking toolset default changed: ${name}`);
     }
   }
 
@@ -296,21 +291,15 @@ export function classifyGitHubToolCatalogueChange(
     if (prior.requiresApproval !== tool.requiresApproval) {
       changes.push("approval requirement");
     }
-    if (riskRank[tool.riskClass] > riskRank[prior.riskClass]) {
-      changes.push("risk increase");
-    }
-    if (prior.readOnly && !tool.readOnly) changes.push("write capability");
+    if (prior.riskClass !== tool.riskClass) changes.push("risk class");
+    if (prior.readOnly !== tool.readOnly) changes.push("read-only capability");
     if (changes.length > 0) {
       breaking = true;
       changedTools.push(name);
       reasons.push(`breaking tool change ${name}: ${changes.join(", ")}`);
       continue;
     }
-    if (
-      prior.description !== tool.description
-      || prior.readOnly !== tool.readOnly
-      || prior.riskClass !== tool.riskClass
-    ) {
+    if (prior.description !== tool.description) {
       compatible = true;
       changedTools.push(name);
       reasons.push(`compatible tool metadata changed: ${name}`);
@@ -449,6 +438,15 @@ export const githubReadOnlySeedCatalogue = compileGitHubToolCatalogue({
     },
   ],
 });
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (typeof value !== "object" || value === null || seen.has(value)) return value;
+  seen.add(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(nested, seen);
+  }
+  return Object.freeze(value) as T;
+}
 
 function toolMap(catalogue: GitHubToolCatalogue): Map<string, GitHubToolDefinition> {
   return new Map(
