@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { GitHubIssueContextInput } from "../src/github-issue-context.ts";
 import {
   GitHubProviderBindingError,
+  GitHubProviderIdempotencyConflictError,
   InMemoryGitHubProviderReceiptStore,
   buildScopedGitHubIssueContext,
   type GitHubProviderReceipt,
@@ -83,6 +84,11 @@ describe("GitHub provider boundaries", () => {
       id: "ghop_boundary_3",
       clientId: "client-b",
     })).outcome).toBe("conflict");
+  });
+
+  test("keeps the original receipt out of idempotency conflict errors", () => {
+    const error = new GitHubProviderIdempotencyConflictError(receipt());
+    expect("receipt" in error).toBe(false);
   });
 
   test("rejects provider issue results from a repository outside the binding", () => {
