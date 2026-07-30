@@ -69,7 +69,7 @@ describe("frontend labs static routes", () => {
     expect(quietHtml).toContain("fictional fixtures");
     expect(quietApp).toContain('currentView = "attention"');
     expect(quietApp).toContain('event.key === "/"');
-    expect(quietApp).toContain("prefers-reduced-motion").toBe(false);
+    expect(quietApp).not.toContain("prefers-reduced-motion");
     expect(source(join("quiet-control", "styles.css"))).toContain("prefers-reduced-motion");
   });
 
