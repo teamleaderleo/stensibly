@@ -1,0 +1,234 @@
+name: juniper-598-catalogue-strict
+
+on:
+  push:
+    branches:
+      - juniper/598-catalogue-unknown-fields
+    paths:
+      - .github/workflows/juniper-598-catalogue-strict.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-598-catalogue-strict
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: juniper/598-catalogue-unknown-fields
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Rebase exact candidate onto current main
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch origin main
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git rebase origin/main
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "26"
+
+      - name: Reject unknown catalogue envelope fields
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def block(value: str) -> str:
+              return dedent(value).strip('\n')
+
+          def with_indent(value: str, width: int) -> str:
+              prefix = ' ' * width
+              return '\n'.join(prefix + line if line else line for line in value.splitlines())
+
+          def replace_indented(document: str, old: str, new: str, label: str) -> str:
+              old = block(old)
+              new = block(new)
+              matches = []
+              for width in range(0, 25):
+                  candidate = with_indent(old, width)
+                  count = document.count(candidate)
+                  matches.extend([(candidate, width)] * count)
+              if len(matches) != 1:
+                  raise SystemExit(f'{label} matched {len(matches)} times')
+              candidate, width = matches[0]
+              return document.replace(candidate, with_indent(new, width), 1)
+
+          source = Path('src/github-tool-catalogue.ts')
+          text = source.read_text(encoding='utf-8')
+          text = replace_indented(text, '''
+          export function compileGitHubToolCatalogue(
+            input: GitHubToolCatalogueInput,
+          ): GitHubToolCatalogue {
+            if (input.version !== 1 || input.source !== "github-mcp") {
+          ''', '''
+          export function compileGitHubToolCatalogue(
+            input: GitHubToolCatalogueInput,
+          ): GitHubToolCatalogue {
+            rejectUnknownCatalogueFields(
+              input,
+              ["version", "source", "sourceRevision", "toolsets"],
+              "GitHub tool catalogue",
+            );
+            if (input.version !== 1 || input.source !== "github-mcp") {
+          ''', 'catalogue envelope')
+
+          text = replace_indented(text, '''
+          const toolsets = input.toolsets.map((toolset) => {
+            const name = catalogueName(
+          ''', '''
+          const toolsets = input.toolsets.map((toolset) => {
+            rejectUnknownCatalogueFields(
+              toolset,
+              ["name", "description", "defaultEnabled", "tools"],
+              "GitHub toolset",
+            );
+            const name = catalogueName(
+          ''', 'toolset envelope')
+
+          text = replace_indented(text, '''
+          const tools = toolset.tools.map((tool) => {
+            const toolName = catalogueName(
+          ''', '''
+          const tools = toolset.tools.map((tool) => {
+            rejectUnknownCatalogueFields(
+              tool,
+              [
+                "name",
+                "description",
+                "inputSchema",
+                "readOnly",
+                "riskClass",
+                "repositoryScoped",
+                "requiresApproval",
+              ],
+              "GitHub tool",
+            );
+            const toolName = catalogueName(
+          ''', 'tool envelope')
+
+          helper_anchor = 'function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {'
+          helpers = block('''
+          function rejectUnknownCatalogueFields(
+            value: unknown,
+            allowed: readonly string[],
+            label: string,
+          ): void {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw new RangeError(`${label} must be a JSON object`);
+            }
+            const known = new Set(allowed);
+            const unknown = Object.keys(value as Record<string, unknown>)
+              .filter((key) => !known.has(key))
+              .sort(codeUnitCompare);
+            if (unknown.length === 0) return;
+            const field = boundedCatalogueFieldName(unknown[0]!);
+            throw new RangeError(`${label} has unknown field ${field}`);
+          }
+
+          function boundedCatalogueFieldName(value: string): string {
+            if (
+              value.length >= 1
+              && value.length <= 80
+              && value.normalize("NFKC") === value
+              && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(value)
+            ) {
+              return value;
+            }
+            const digest = sha256(value);
+            return `sha256:${digest.slice("sha256:".length, "sha256:".length + 16)}`;
+          }
+
+          ''')
+          if text.count(helper_anchor) != 1:
+              raise SystemExit('catalogue helper insertion anchor mismatch')
+          text = text.replace(helper_anchor, helpers + '\n' + helper_anchor, 1)
+          source.write_text(text, encoding='utf-8')
+
+          tests = Path('test/github-tool-catalogue.test.ts')
+          test_text = tests.read_text(encoding='utf-8')
+          test_text = replace_indented(test_text, '''
+          const inconsistent = catalogueInput();
+          inconsistent.toolsets[0]!.tools[0]!.riskClass = "write";
+          expect(() => compileGitHubToolCatalogue(inconsistent)).toThrow(
+            "must use read risk exactly when read-only",
+          );
+          ''', '''
+          const inconsistent = catalogueInput();
+          inconsistent.toolsets[0]!.tools[0]!.riskClass = "write";
+          expect(() => compileGitHubToolCatalogue(inconsistent)).toThrow(
+            "must use read risk exactly when read-only",
+          );
+
+          const unknownCatalogue = {
+            ...catalogueInput(),
+            destructiveMode: true,
+          } as GitHubToolCatalogueInput;
+          expect(() => compileGitHubToolCatalogue(unknownCatalogue)).toThrow(
+            "GitHub tool catalogue has unknown field destructiveMode",
+          );
+
+          const unknownToolset = catalogueInput();
+          Object.assign(unknownToolset.toolsets[0]!, { exposureMode: "write" });
+          expect(() => compileGitHubToolCatalogue(unknownToolset)).toThrow(
+            "GitHub toolset has unknown field exposureMode",
+          );
+
+          const unknownTool = catalogueInput();
+          Object.assign(unknownTool.toolsets[0]!.tools[0]!, { destructive: true });
+          expect(() => compileGitHubToolCatalogue(unknownTool)).toThrow(
+            "GitHub tool has unknown field destructive",
+          );
+
+          const unsafeField = `authorization\\n${"secret".repeat(30)}`;
+          const unsafeCatalogue = catalogueInput() as GitHubToolCatalogueInput & Record<string, unknown>;
+          unsafeCatalogue[unsafeField] = true;
+          expect(() => compileGitHubToolCatalogue(unsafeCatalogue)).toThrow(
+            /^GitHub tool catalogue has unknown field sha256:[a-f0-9]{16}$/,
+          );
+          try {
+            compileGitHubToolCatalogue(unsafeCatalogue);
+          } catch (error) {
+            expect(String(error)).not.toContain(unsafeField);
+          }
+
+          const extendedSchema = catalogueInput();
+          extendedSchema.toolsets[0]!.tools[0]!.inputSchema["x-provider-capability"] = "bounded";
+          expect(compileGitHubToolCatalogue(extendedSchema).fingerprint)
+            .not.toBe(compileGitHubToolCatalogue(catalogueInput()).fingerprint);
+          ''', 'unknown-field controls')
+          tests.write_text(test_text, encoding='utf-8')
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          set -euxo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-tool-catalogue.test.ts
+          bun run test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish source-only current-main candidate
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/juniper-598-catalogue-strict.yml
+          git diff --check
+          git add src test .github
+          git commit -m 'fix: reject unknown GitHub catalogue fields'
+          git push --force-with-lease=refs/heads/juniper/598-catalogue-unknown-fields:$GITHUB_SHA \
+            origin HEAD:refs/heads/juniper/598-catalogue-unknown-fields
