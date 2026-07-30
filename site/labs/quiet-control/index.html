@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiet Control · Stensibly Labs</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body data-stensibly-lab="prototype">
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="../">
+        <span class="mark" aria-hidden="true">S</span>
+        <span class="brand-copy"><strong>Quiet Control</strong><small>Stensibly Labs · fictional fixtures</small></span>
+      </a>
+      <button class="command-button" id="command-button" type="button"><span>Search work or run a command</span><kbd>⌘ K</kbd></button>
+      <div class="top-actions"><span class="fixture">experiment</span><span class="health">GitHub and API healthy</span><a href="../">All variants</a></div>
+    </header>
+
+    <div class="workspace" id="workspace" data-mobile-detail="false">
+      <nav aria-label="Primary views">
+        <p class="nav-label">Work</p>
+        <ul class="nav-list" id="nav-list"></ul>
+        <p class="nav-note">Keys 1–4 switch views. J/K or arrows move the selected row.</p>
+      </nav>
+
+      <section class="list-pane" aria-labelledby="view-title">
+        <header class="pane-head"><h1 id="view-title"></h1><p id="view-description"></p></header>
+        <div class="filters"><button type="button" aria-pressed="true">All projects</button><button type="button" aria-pressed="false">Assigned</button><button type="button" aria-pressed="false">Unhealthy</button></div>
+        <ul class="work-list" id="work-list" aria-label="Work in selected view"></ul>
+      </section>
+
+      <main class="detail-pane" id="detail-pane" tabindex="-1">
+        <header class="detail-head">
+          <div class="detail-title"><button class="mobile-back" id="mobile-back" type="button">← List</button><div id="detail-title"></div></div>
+          <div class="detail-actions"><button type="button" data-action="source">Open source</button><button type="button" data-action="evidence">Evidence</button><button class="primary" id="primary-action" type="button">Review decision</button></div>
+        </header>
+        <div class="detail-content" id="detail-content"></div>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="command-dialog" aria-labelledby="command-title">
+    <h2 class="sr-only" id="command-title">Search and commands</h2>
+    <input id="command-input" type="search" placeholder="Type a command…" autocomplete="off" />
+    <ul class="commands" id="commands"></ul>
+  </dialog>
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Compare experimental Stensibly frontend directions without changing the production dashboard." />
+  <title>Stensibly Labs · Frontend variants</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body data-stensibly-lab="catalogue">
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Return to the production Stensibly dashboard">
+      <span class="brand-mark" aria-hidden="true">S</span>
+      <span><strong>Stensibly Labs</strong><small>experimental frontend studio</small></span>
+    </a>
+    <a class="production-link" href="/">Production dashboard</a>
+  </header>
+
+  <main>
+    <section class="intro" aria-labelledby="labs-title">
+      <p class="eyebrow">Fixture-backed experiments</p>
+      <h1 id="labs-title">Compare several ways Stensibly could feel.</h1>
+      <p>Each route has a distinct interaction thesis. The live root stays separate while these variants compete on the same operator tasks, states, accessibility requirements, and evidence.</p>
+      <div class="boundary" role="note">
+        <strong>Experiment boundary</strong>
+        <span>These pages use invented local fixtures. They perform no API calls, hold no credentials, and make no product decisions.</span>
+      </div>
+    </section>
+
+    <section class="catalogue-section" aria-labelledby="catalogue-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Available routes</p>
+          <h2 id="catalogue-title">Frontend variants</h2>
+        </div>
+        <div class="compare-controls">
+          <span id="selection-summary" role="status">Select two variants to compare.</span>
+          <button id="compare-button" type="button" disabled>Compare selected</button>
+        </div>
+      </div>
+      <div class="variant-grid" id="variant-grid"></div>
+    </section>
+
+    <section class="compare-section" id="compare-section" aria-labelledby="compare-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Isolated preview</p>
+          <h2 id="compare-title">Side-by-side comparison</h2>
+        </div>
+        <button class="secondary" id="close-compare" type="button">Close comparison</button>
+      </div>
+      <p class="compare-note">Preview frames receive script permission for their local interactions and stay in isolated origins. Open either route directly for full keyboard and narrow-screen evaluation.</p>
+      <div class="compare-grid" id="compare-grid"></div>
+    </section>
+
+    <section class="task-section" aria-labelledby="task-title">
+      <p class="eyebrow">Shared evaluation</p>
+      <h2 id="task-title">Judge the work, then judge the look.</h2>
+      <ol>
+        <li>Find the one item that needs a human decision.</li>
+        <li>Identify active workers and the unhealthy lease.</li>
+        <li>Explain why the top ready item is recommended.</li>
+        <li>Locate an ambiguous operation and its safe reconciliation action.</li>
+        <li>Check connection health, source evidence, and the exact next action.</li>
+        <li>Repeat by keyboard, at narrow width, and with reduced motion.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    <span>Programme <a href="https://github.com/teamleaderleo/stensibly/issues/605">#605</a></span>
+    <span>Catalogue lane <a href="https://github.com/teamleaderleo/stensibly/issues/606">#606</a></span>
+  </footer>
+
+  <script type="module" src="./catalogue.js"></script>
+</body>
+</html>
