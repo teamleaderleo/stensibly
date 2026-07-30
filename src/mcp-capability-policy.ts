@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { sha256, stableJson } from "./github-provider-validation.js";
+import { sha256, stableJson } from "./canonical-json.js";
 
 export const mcpCapabilityScopes = ["read", "write"] as const;
 export type McpCapabilityScope = typeof mcpCapabilityScopes[number];
