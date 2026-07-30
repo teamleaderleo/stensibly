@@ -8,7 +8,7 @@ export interface DashboardRefreshItem {
   updatedAt: string;
 }
 
-export function dashboardItemsFingerprint(items: DashboardRefreshItem[]): string;
+export function dashboardItemsFingerprint<T extends DashboardRefreshItem>(items: T[]): string;
 export function normalizeDashboardRefreshLevel(value: unknown): number;
 export function nextDashboardRefreshLevel(input: {
   previousFingerprint: string;
