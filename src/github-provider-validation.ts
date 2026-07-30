@@ -140,8 +140,8 @@ export function boundedLimit(value: number): number {
   return value;
 }
 
-export function positiveInteger(value: number, label: string): number {
-  if (!Number.isSafeInteger(value) || value < 1) {
+export function positiveInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new RangeError(`${label} must be a positive integer`);
   }
   return value;
