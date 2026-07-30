@@ -1,0 +1,130 @@
+name: juniper-567-canonical-context-v2
+
+on:
+  push:
+    branches:
+      - juniper/564-convex-github-project-context
+    paths:
+      - .github/workflows/juniper-567-canonical-context-v2.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-567-canonical-context-repair
+  cancel-in-progress: false
+
+jobs:
+  repair-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: juniper/564-convex-github-project-context
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Execute preserved recipe with dedented anchors
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          from textwrap import dedent
+
+          recipe = Path('scripts/repair/juniper-567-canonical-context-repair-source.yml')
+          lines = recipe.read_text(encoding='utf-8').splitlines()
+          blocks = []
+          index = 0
+          while index < len(lines):
+              if lines[index].strip() != "python3 - <<'PY'":
+                  index += 1
+                  continue
+              end = index + 1
+              while end < len(lines) and lines[end].strip() != 'PY':
+                  end += 1
+              if end >= len(lines):
+                  raise SystemExit('unterminated Python block in preserved repair recipe')
+              raw = lines[index + 1:end]
+              indents = [len(line) - len(line.lstrip()) for line in raw if line.strip()]
+              margin = min(indents) if indents else 0
+              blocks.append('\n'.join(line[margin:] if len(line) >= margin else '' for line in raw))
+              index = end + 1
+
+          if len(blocks) != 2:
+              raise SystemExit(f'expected two Python blocks in preserved recipe, found {len(blocks)}')
+
+          def make_executable(script: str) -> str:
+              script = script.replace(
+                  'from pathlib import Path\n',
+                  'from pathlib import Path\nfrom textwrap import dedent\n\ndef _block(value):\n    return dedent(value).strip("\\n")\n',
+                  1,
+              )
+              script = re.sub(
+                  r'(?m)^(\s*)if text\.count\(old\) != 1:',
+                  r'\1old = _block(old)\n\1new = _block(new)\n\1if text.count(old) != 1:',
+                  script,
+              )
+              script = re.sub(
+                  r'(?m)^(\s*)if text\.count\(helper_anchor\) != 1:',
+                  r'''\1helper_anchor = _block(helper_anchor)
+\1if "helper_block" in globals(): helper_block = _block(helper_block)
+\1if "helpers" in globals(): helpers = _block(helpers)
+\1if text.count(helper_anchor) != 1:''',
+                  script,
+              )
+              script = re.sub(
+                  r'(?m)^(\s*)if text\.count\(anchor\) != 1:',
+                  r'\1anchor = _block(anchor)\n\1test_block = _block(test_block)\n\1if text.count(anchor) != 1:',
+                  script,
+              )
+              return script
+
+          for block_index, script in enumerate(blocks, start=1):
+              namespace = {'__name__': f'juniper_567_recipe_{block_index}'}
+              executable = make_executable(script)
+              try:
+                  exec(compile(executable, f'{recipe}:block-{block_index}', 'exec'), namespace)
+              except Exception as error:
+                  Path(f'/tmp/juniper-567-block-{block_index}.py').write_text(executable, encoding='utf-8')
+                  raise RuntimeError(
+                      f'preserved repair block {block_index} failed; executable copy at '
+                      f'/tmp/juniper-567-block-{block_index}.py'
+                  ) from error
+
+          old = r'if (/[/\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
+          new = r'if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)) {'
+          for filename in (
+              'convex/githubProjectContexts.ts',
+              'src/github-project-context-convex-ledger.ts',
+          ):
+              path = Path(filename)
+              text = path.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{filename}: unsafe-text validator anchor matched {text.count(old)} times')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Run focused and repository gates
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-project-context-convex-ledger.test.ts
+          bun run test:convex -- convex/githubProjectContexts.test.ts convex/githubProjectContextsValidation.test.ts
+          bun test
+          bun run test:convex
+          bun run worker:check
+          bun run test:runtime-parity
+
+      - name: Publish source-only repair
+        run: |
+          rm .github/workflows/juniper-567-canonical-context-v2.yml
+          rm scripts/repair/juniper-567-canonical-context-repair-source.yml
+          rmdir scripts/repair 2>/dev/null || true
+          git diff --check
+          git config user.name juniper-stensibly
+          git config user.email juniper-stensibly@users.noreply.github.com
+          git add convex src test scripts .github
+          git commit -m 'fix: enforce canonical hosted GitHub context'
+          git push origin HEAD:juniper/564-convex-github-project-context
