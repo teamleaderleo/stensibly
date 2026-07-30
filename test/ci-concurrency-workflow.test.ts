@@ -4,11 +4,20 @@ const workflow = await Bun.file(
   new URL("../.github/workflows/ci.yml", import.meta.url),
 ).text();
 
+const triggers = workflow.match(
+  /\non:\n([\s\S]*?)\nconcurrency:\n/u,
+)?.[1];
 const concurrency = workflow.match(
   /\nconcurrency:\n([\s\S]*?)\npermissions:\n/u,
 )?.[1];
 
-describe("canonical CI concurrency", () => {
+describe("canonical CI scheduling", () => {
+  test("runs feature revisions once through pull requests", () => {
+    expect(triggers).toContain("push:\n    branches:\n      - main");
+    expect(triggers).toContain("pull_request:");
+    expect(triggers).toContain("workflow_dispatch:");
+  });
+
   test("cancels only superseded pull-request runs", () => {
     expect(concurrency).toBeDefined();
     expect(concurrency).toContain("ci-${{ github.repository }}-");
