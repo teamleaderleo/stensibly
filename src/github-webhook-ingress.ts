@@ -77,6 +77,7 @@ interface NormalizedOptions {
 
 const deliveryPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const eventTypePattern = /^[a-z][a-z0-9_]{0,63}$/u;
+const contentLengthPattern = /^\d+$/u;
 
 /**
  * Creates one reusable request compiler for GitHub webhook routes.
@@ -161,6 +162,9 @@ async function prepareRequest(
     throw error;
   }
 
+  if (options.expectedRepository) {
+    assertExpectedRepository(payload, options.expectedRepository);
+  }
   const frozenPayload = deepFreeze(payload);
   const payloadDigest = digestGitHubWebhookPayload(body);
   let observation: GitHubRepositoryObservation | null;
@@ -177,14 +181,7 @@ async function prepareRequest(
         : {}),
     });
   } catch (error) {
-    if (error instanceof RangeError) {
-      throw new GitHubWebhookIngressError({
-        status: 400,
-        code: "invalid_request",
-        message: "GitHub webhook payload is invalid",
-        detailCode: "GITHUB_WEBHOOK_INVALID_PAYLOAD",
-      });
-    }
+    if (error instanceof RangeError) throw invalidPayload();
     throw error;
   }
 
@@ -276,20 +273,36 @@ function canonicalReceiptTime(value: number): string {
   }
 }
 
+function assertExpectedRepository(
+  payload: unknown,
+  expectedRepository: string,
+): void {
+  try {
+    if (!isRecord(payload)) throw invalidPayload();
+    const repository = payload.repository;
+    if (!isRecord(repository) || typeof repository.full_name !== "string") {
+      throw invalidPayload();
+    }
+    if (normalizeGitHubRepository(repository.full_name) !== expectedRepository) {
+      throw invalidPayload();
+    }
+  } catch (error) {
+    if (error instanceof GitHubWebhookIngressError) throw error;
+    throw invalidPayload();
+  }
+}
+
 async function readBoundedBody(
   request: Request,
   maxBodyBytes: number,
 ): Promise<Uint8Array> {
   const declaredLength = request.headers.get("Content-Length");
   if (declaredLength !== null) {
-    const parsedLength = Number(declaredLength);
-    if (!Number.isInteger(parsedLength) || parsedLength < 0) {
-      throw new GitHubWebhookIngressError({
-        status: 400,
-        code: "invalid_request",
-        message: "Content-Length must be a non-negative integer",
-      });
+    if (!contentLengthPattern.test(declaredLength)) {
+      throw invalidContentLength();
     }
+    const parsedLength = Number(declaredLength);
+    if (!Number.isSafeInteger(parsedLength)) throw invalidContentLength();
     if (parsedLength > maxBodyBytes) throw payloadTooLarge();
   }
   if (request.bodyUsed) throw bodyReadFailed();
@@ -340,6 +353,15 @@ async function readBoundedBody(
   return body;
 }
 
+function invalidContentLength(): GitHubWebhookIngressError {
+  return new GitHubWebhookIngressError({
+    status: 400,
+    code: "invalid_request",
+    message: "Content-Length must contain decimal digits",
+    detailCode: "GITHUB_WEBHOOK_INVALID_CONTENT_LENGTH",
+  });
+}
+
 function payloadTooLarge(): GitHubWebhookIngressError {
   return new GitHubWebhookIngressError({
     status: 413,
@@ -354,6 +376,15 @@ function bodyReadFailed(): GitHubWebhookIngressError {
     code: "invalid_request",
     message: "GitHub webhook body could not be read",
     detailCode: "GITHUB_WEBHOOK_BODY_READ_FAILED",
+  });
+}
+
+function invalidPayload(): GitHubWebhookIngressError {
+  return new GitHubWebhookIngressError({
+    status: 400,
+    code: "invalid_request",
+    message: "GitHub webhook payload is invalid",
+    detailCode: "GITHUB_WEBHOOK_INVALID_PAYLOAD",
   });
 }
 
@@ -379,6 +410,10 @@ function invalidSignature(): GitHubWebhookIngressError {
     detailCode: "GITHUB_WEBHOOK_INVALID_SIGNATURE",
     authenticate: true,
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function deepFreeze<T>(value: T): T {
