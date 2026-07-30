@@ -10,6 +10,15 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: >-
+    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
+    format('pr-{0}', github.event.pull_request.number) ||
+    github.event_name == 'workflow_dispatch' &&
+    format('dispatch-{0}', inputs.expected_sha) ||
+    format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
