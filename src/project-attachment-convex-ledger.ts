@@ -7,6 +7,10 @@ import {
   type ConvexWorkLedgerOptions,
 } from "./convex-ledger.js";
 import type { GitHubIssueProviderReadService } from "./github-issue-provider-mcp.js";
+import {
+  mountHostedGitHubDelegatedReadProviderFromEnv,
+  type HostedGitHubDelegatedReadProvider,
+} from "./hosted-github-delegated-read-provider.js";
 import { mountHostedGitHubIssueProviderFromEnv } from "./hosted-github-issue-provider.js";
 import {
   prepareProjectAttachmentAcceptance,
@@ -91,7 +95,9 @@ export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements P
 
 export function createConvexProjectAttachmentLedgerFromEnv(
   env: Record<string, string | undefined> = Bun.env,
-): ConvexProjectAttachmentLedger & Partial<GitHubIssueProviderReadService> {
+): ConvexProjectAttachmentLedger
+  & Partial<GitHubIssueProviderReadService>
+  & Partial<HostedGitHubDelegatedReadProvider> {
   const url = required(env.CONVEX_URL, "CONVEX_URL");
   const serviceSecret = required(
     env.STENSIBLY_SERVICE_SECRET,
@@ -102,7 +108,8 @@ export function createConvexProjectAttachmentLedgerFromEnv(
     serviceSecret,
     workspace: env.STENSIBLY_WORKSPACE ?? "default",
   });
-  return mountHostedGitHubIssueProviderFromEnv(ledger, env);
+  const issueProvider = mountHostedGitHubIssueProviderFromEnv(ledger, env);
+  return mountHostedGitHubDelegatedReadProviderFromEnv(issueProvider, env);
 }
 
 function mapRecord(value: unknown): ProjectAttachmentRecord {
