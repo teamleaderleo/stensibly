@@ -1,6 +1,6 @@
 import { sha256, stableJson } from "./canonical-json.js";
 
-export const synchronizationCompilerRevision = "synchronization-state/1" as const;
+export const synchronizationCompilerRevision = "synchronization-state/2" as const;
 
 export type SynchronizationState =
   | "synchronized"
@@ -221,6 +221,10 @@ export function compileSynchronizationState(
     ...projectionBody,
     projectionFingerprint: sha256(stableJson(projectionBody)),
   });
+}
+
+export function fingerprintSynchronizationCoordinationInput(input: unknown): string {
+  return coordinationInputFingerprint(admitInput(input));
 }
 
 function admitInput(value: unknown): AdmittedInput {
@@ -540,6 +544,12 @@ function collectConflicts(admitted: AdmittedInput): SynchronizationConflictV1[] 
   if (hasAnyFact && coordination === null) {
     push("missing_source_coverage", [subject.id], ["stensibly"]);
   }
+  if (
+    coordination !== null
+    && coordination.inputFingerprint !== coordinationInputFingerprint(admitted)
+  ) {
+    push("projection_input_changed", [coordination.id], ["stensibly"]);
+  }
   if (coordination?.status === "competing") {
     push("competing_producer", [coordination.id], ["stensibly"]);
   }
@@ -634,6 +644,24 @@ function normalizedInputValue(admitted: AdmittedInput): unknown {
     coordination: admitted.coordination,
     declaredConflicts: admitted.declaredConflicts,
   };
+}
+
+function coordinationInputValue(admitted: AdmittedInput): unknown {
+  return {
+    schemaVersion: admitted.schemaVersion,
+    policyVersion: admitted.policyVersion,
+    evaluatedAt: admitted.evaluatedAt,
+    subject: admitted.subject,
+    source: admitted.source,
+    evidence: admitted.evidence,
+    operation: admitted.operation,
+    authority: admitted.authority,
+    declaredConflicts: admitted.declaredConflicts,
+  };
+}
+
+function coordinationInputFingerprint(admitted: AdmittedInput): string {
+  return sha256(stableJson(coordinationInputValue(admitted)));
 }
 
 function canonicalConflict(
@@ -758,6 +786,9 @@ function exactRecord(
 function denseArray(value: unknown, maximum: number, label: string): unknown[] {
   if (!Array.isArray(value) || value.length > maximum) {
     throw new TypeError(`${label} must be a bounded array`);
+  }
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new TypeError(`${label} must use the ordinary array prototype`);
   }
   if (Object.getOwnPropertySymbols(value).length !== 0) {
     throw new TypeError(`${label} must not contain symbol keys`);
