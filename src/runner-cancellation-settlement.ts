@@ -34,6 +34,7 @@ export interface RunnerCancellationSettlementResultV1 {
   workspace: string;
   project: string;
   commandId: string;
+  commandFingerprint: string;
   adapterId: string;
   adapterVersion: string;
   profileId: string;
@@ -53,7 +54,7 @@ export interface RunnerCancellationSettlementResultV1 {
 
 export type RunnerCancellationSettlementClock = () => string;
 
-const resultPolicyVersion = "runner-cancellation-settlement-v1";
+const resultPolicyVersion = "runner-cancellation-settlement-v2";
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/u;
 const slugPattern = /^[a-z0-9][a-z0-9_-]*$/u;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
@@ -77,6 +78,7 @@ export class RunnerCancellationSettlementCoordinatorV1 {
   readonly #descriptor: RunnerAdapterDescriptorV1;
   readonly #scope: RunnerCancellationSettlementScopeV1;
   readonly #command: RunnerCancellationCommandV1;
+  readonly #commandFingerprint: string;
   readonly #clock: RunnerCancellationSettlementClock;
   readonly #controller =
     new AuthoritativeSettlementController<RunnerCancellationSettlementResultV1>();
@@ -94,6 +96,7 @@ export class RunnerCancellationSettlementCoordinatorV1 {
     }
     this.#scope = parseScope(scopeValue);
     this.#command = parseCancellationCommand(commandValue, this.#descriptor);
+    this.#commandFingerprint = fingerprintCancellationCommand(this.#command);
     if (typeof clock !== "function") {
       throw new RangeError("Runner cancellation settlement clock must be a function");
     }
@@ -116,6 +119,15 @@ export class RunnerCancellationSettlementCoordinatorV1 {
   }
 
   async #execute(): Promise<RunnerCancellationSettlementResultV1> {
+    const execution = resolveExecutionAuthority(
+      this.#clock,
+      this.#command.requestedAt,
+      this.#command.authority.expiresAt,
+    );
+    if (!execution.allowed) {
+      return this.#buildResult("adapter_failure", null, execution.observedAt);
+    }
+
     let outcome: RunnerCancellationSettlementOutcomeV1 = "adapter_failure";
     let cancellation: RunnerCancellationObservationV1 | null = null;
     try {
@@ -125,6 +137,11 @@ export class RunnerCancellationSettlementCoordinatorV1 {
         this.#command,
         this.#descriptor,
       );
+      if (cancellation.observedAt < execution.observedAt) {
+        throw new RangeError(
+          "Runner cancellation observation predates adapter execution",
+        );
+      }
       outcome = "cancellation_observed";
     } catch {
       cancellation = null;
@@ -134,21 +151,28 @@ export class RunnerCancellationSettlementCoordinatorV1 {
     const timing = resolveSettlementTime(
       this.#clock,
       this.#command.requestedAt,
+      execution.observedAt,
       cancellation?.observedAt ?? null,
     );
     if (timing.failed) {
       cancellation = null;
       outcome = "adapter_failure";
     }
-    const observedAt = timing.observedAt;
+    return this.#buildResult(outcome, cancellation, timing.observedAt);
+  }
 
+  #buildResult(
+    outcome: RunnerCancellationSettlementOutcomeV1,
+    cancellation: RunnerCancellationObservationV1 | null,
+    observedAt: string,
+  ): RunnerCancellationSettlementResultV1 {
     const settlement = createResourceSettlementReceipt({
       workspace: this.#scope.workspace,
       project: this.#scope.project,
       resourceId: `run:${this.#command.runId}`,
       resourceKind: "runner_adapter",
       generation: this.#command.runGeneration,
-      operationRef: this.#command.commandId,
+      operationRef: this.#commandFingerprint,
       policyVersion: resultPolicyVersion,
       failureMode: "continue_through_error",
       admissionState: "closed",
@@ -187,6 +211,7 @@ export class RunnerCancellationSettlementCoordinatorV1 {
       workspace: this.#scope.workspace,
       project: this.#scope.project,
       commandId: this.#command.commandId,
+      commandFingerprint: this.#commandFingerprint,
       adapterId: this.#command.adapterId,
       adapterVersion: this.#command.adapterVersion,
       profileId: this.#command.profileId,
@@ -460,13 +485,45 @@ function parseCancellationObservation(
     ) {
       throw new RangeError("Runner cancellation reference generation does not match run");
     }
+    if (reference.createdAt > observation.observedAt) {
+      throw new RangeError(
+        "Runner cancellation reference was created after its observation",
+      );
+    }
   }
   return observation;
+}
+
+function resolveExecutionAuthority(
+  clock: RunnerCancellationSettlementClock,
+  requestedAt: string,
+  expiresAt: string,
+): { observedAt: string; allowed: boolean } {
+  let value: unknown;
+  try {
+    value = clock();
+  } catch {
+    return { observedAt: requestedAt, allowed: false };
+  }
+  let observedAt: string;
+  try {
+    observedAt = canonicalTimestamp(
+      value,
+      "Runner cancellation execution time",
+    );
+  } catch {
+    return { observedAt: requestedAt, allowed: false };
+  }
+  if (observedAt < requestedAt || observedAt >= expiresAt) {
+    return { observedAt: requestedAt, allowed: false };
+  }
+  return { observedAt, allowed: true };
 }
 
 function resolveSettlementTime(
   clock: RunnerCancellationSettlementClock,
   requestedAt: string,
+  executionObservedAt: string,
   cancellationObservedAt: string | null,
 ): { observedAt: string; failed: boolean } {
   let value: unknown;
@@ -484,11 +541,38 @@ function resolveSettlementTime(
   } catch {
     return { observedAt: requestedAt, failed: true };
   }
-  const minimum = cancellationObservedAt ?? requestedAt;
+  const minimum = [
+    requestedAt,
+    executionObservedAt,
+    cancellationObservedAt,
+  ].filter((entry): entry is string => entry !== null).sort().at(-1)!;
   if (observedAt < minimum) {
     return { observedAt: requestedAt, failed: true };
   }
   return { observedAt, failed: false };
+}
+
+function fingerprintCancellationCommand(
+  command: RunnerCancellationCommandV1,
+): string {
+  return fingerprintCanonicalRequest({
+    version: command.version,
+    commandId: command.commandId,
+    adapterId: command.adapterId,
+    adapterVersion: command.adapterVersion,
+    profileId: command.profileId,
+    runId: command.runId,
+    runGeneration: command.runGeneration,
+    leaseGeneration: command.leaseGeneration,
+    authority: {
+      resource: command.authority.resource,
+      holderId: command.authority.holderId,
+      generation: command.authority.generation,
+      expiresAt: command.authority.expiresAt,
+    },
+    requestedAt: command.requestedAt,
+    reason: command.reason,
+  });
 }
 
 function exactRecord(
