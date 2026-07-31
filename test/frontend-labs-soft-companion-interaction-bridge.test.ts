@@ -143,9 +143,7 @@ function executeBridge(tone: "serious" | "healthy") {
   }
 
   runInNewContext(bridge, {
-    globalThis: {
-      StensiblyFrontendLabFixtures: { frontendLabFixture },
-    },
+    StensiblyFrontendLabFixtures: { frontendLabFixture },
     document: {
       body,
       querySelector(selector: string) {
