@@ -16,6 +16,7 @@ describe("automatic dashboard publication workflow", () => {
     expect(workflow).toContain("branches:");
     expect(workflow).toContain("- main");
     expect(workflow).toContain('"site/**"');
+    expect(workflow).toContain('"scripts/link-vercel-project-domain.sh"');
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("group: stensibly-dashboard-production");
     expect(workflow).toContain("cancel-in-progress: false");
@@ -53,20 +54,9 @@ describe("automatic dashboard publication workflow", () => {
     expect(workflow).not.toContain('"deploymentType":"all"');
   });
 
-  test("adds or moves the exact canonical project domain through Vercel APIs", () => {
-    expect(workflow).not.toContain("domains add");
-    expect(workflow).toContain("/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&limit=100");
-    expect(workflow).toContain("/v1/domains/${DASHBOARD_APEX}/project-domains?teamId=${VERCEL_ORG_ID}&limit=100");
-    expect(workflow).toContain("/v1/projects/${source_project}/domains/${DASHBOARD_HOST}/move?teamId=${VERCEL_ORG_ID}");
-    expect(workflow).toContain("/v10/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}");
-    expect(workflow).toContain("{projectId: $projectId, gitBranch: null}");
-    expect(workflow).toContain("{name: $name, gitBranch: null}");
-    expect(workflow).toContain("Canonical domain ${operation} failed");
-  });
-
-  test("requires the provider to confirm target project ownership", () => {
-    expect(workflow).toContain("/v9/projects/${VERCEL_PROJECT_ID}/domains/${DASHBOARD_HOST}?teamId=${VERCEL_ORG_ID}");
-    expect(workflow).toContain(".name == $domain and .projectId == $project");
+  test("runs the separately tested fail-closed domain linker before build", () => {
+    expect(workflow).not.toContain("vercel@${VERCEL_CLI_VERSION} domains add");
+    expect(workflow).toContain("run: bash scripts/link-vercel-project-domain.sh");
     expect(position("Link the canonical domain to this project"))
       .toBeLessThan(position("Pull and build the complete dashboard project"));
   });
