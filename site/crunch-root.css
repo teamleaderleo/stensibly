@@ -257,11 +257,11 @@ html[data-app-mode="degraded"] .login-card {
 }
 
 html[data-app-mode="editing"] .login-card {
-  padding: .5rem .88rem;
+  padding: .25rem .88rem;
 }
 
 html[data-app-mode="editing"] .login-card .connection-head {
-  padding-bottom: .65rem;
+  padding-bottom: .55rem;
 }
 
 html[data-app-mode="editing"] .login-card form {
@@ -339,7 +339,7 @@ html[data-app-mode="editing"] .login-card form {
   }
 
   html[data-app-mode="editing"] .login-card {
-    padding: .5rem .88rem;
+    padding: .25rem .88rem;
   }
 }
 
