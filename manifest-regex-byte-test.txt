@@ -1,0 +1,1 @@
+const unsafeTextPattern = /[\u005cu0000-\u005cu001f\u005cu007f-\u005cu009f\u005cu2028\u005cu2029\u005cu202a-\u005cu202e\u005cu2066-\u005cu2069]/u;
