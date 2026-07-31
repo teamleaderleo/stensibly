@@ -227,7 +227,7 @@ describe("private hosted GitHub delegated reads", () => {
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
       tool: "get_pr_info",
-      arguments: { pullNumber: 1 },
+      arguments: { pr_number: 1 },
     })).rejects.toThrow("authority denied");
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
