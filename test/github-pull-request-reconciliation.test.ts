@@ -141,24 +141,15 @@ describe("GitHub pull request reconciliation", () => {
     });
   });
 
-  test("accepts canonical dot-prefixed repository names through the shared normalizer", () => {
-    const dotRepository = "teamleaderleo/.github";
-    const result = compileGitHubPullRequestReconciliationV1({
+  test("requires exact normalized repository identity", () => {
+    expect(() => compileGitHubPullRequestReconciliationV1({
       version: GITHUB_PULL_REQUEST_RECONCILIATION_V1,
-      repository: dotRepository,
+      repository: "TeamLeaderLeo/Stensibly",
       pullRequestNumber,
-      observation: observation({ repository: dotRepository }),
-      providerRead: providerRead({
-        receiptRepository: dotRepository,
-        resultRepository: dotRepository,
-      }),
+      observation: observation(),
+      providerRead: providerRead(),
       reconciledAt,
-    }, clock);
-
-    expect(result).toMatchObject({
-      repository: dotRepository,
-      state: "matched",
-    });
+    }, clock)).toThrow("repository is invalid");
   });
 
   test("produces a deterministic fingerprint from admitted evidence", () => {
