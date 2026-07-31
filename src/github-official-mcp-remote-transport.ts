@@ -8,6 +8,7 @@ import {
 export const githubOfficialMcpRemoteEndpoint =
   "https://api.githubcopilot.com/mcp/" as const;
 export const githubOfficialMcpRemoteMaximumTextBytes = 256 * 1024;
+export const githubOfficialMcpRemoteMaximumResponseBytes = 2 * 1024 * 1024;
 
 export type GitHubOfficialMcpRemoteErrorCode =
   | "github_official_mcp_mapping_rejected"
@@ -184,7 +185,7 @@ const sdkSessionFactory: GitHubOfficialMcpRemoteSessionFactory = Object.freeze({
   create(input) {
     const transport = new StreamableHTTPClientTransport(input.endpoint, {
       fetch: input.fetch,
-      requestInit: { headers: input.headers },
+      requestInit: { headers: new Headers(input.headers) },
       reconnectionOptions: {
         initialReconnectionDelay: 100,
         maxReconnectionDelay: 1_000,
@@ -295,18 +296,117 @@ function confinedFetch(endpoint: URL, delegate: typeof fetch): typeof fetch {
       || (response.status >= 300 && response.status < 400)
       || (response.url !== "" && response.url !== endpoint.href)
     ) {
-      try {
-        await response.body?.cancel();
-      } catch {
-        // Redirect confinement remains authoritative if disposal fails.
-      }
+      await disposeResponse(response);
       throw new Error("Official GitHub MCP redirect was rejected");
     }
-    return response;
+    return boundedResponse(response);
   }) as typeof fetch;
 }
 
+async function boundedResponse(response: Response): Promise<Response> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    if (!/^(?:0|[1-9][0-9]*)$/.test(declaredLength)) {
+      await disposeResponse(response);
+      throw new Error("Official GitHub MCP response length is invalid");
+    }
+    const declaredBytes = Number(declaredLength);
+    if (
+      !Number.isSafeInteger(declaredBytes)
+      || declaredBytes > githubOfficialMcpRemoteMaximumResponseBytes
+    ) {
+      await disposeResponse(response);
+      throw new Error("Official GitHub MCP response is oversized");
+    }
+  }
+  if (response.body === null) return response;
+
+  const reader = response.body.getReader();
+  let responseBytes = 0;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    try {
+      reader.releaseLock();
+    } catch {
+      // Reader release is best effort after the bounded result is settled.
+    }
+  };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          release();
+          controller.close();
+          return;
+        }
+        if (!(next.value instanceof Uint8Array)) {
+          await cancelReader(reader);
+          release();
+          controller.error(new Error("Official GitHub MCP response body is invalid"));
+          return;
+        }
+        responseBytes += next.value.byteLength;
+        if (responseBytes > githubOfficialMcpRemoteMaximumResponseBytes) {
+          await cancelReader(reader);
+          release();
+          controller.error(new Error("Official GitHub MCP response is oversized"));
+          return;
+        }
+        controller.enqueue(next.value);
+      } catch {
+        await cancelReader(reader);
+        release();
+        controller.error(new Error("Official GitHub MCP response could not be read"));
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } catch {
+        // Caller cancellation remains authoritative if the provider rejects it.
+      } finally {
+        release();
+      }
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+async function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // The bounded rejection remains authoritative if cancellation fails.
+  }
+}
+
+async function disposeResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Status and identity confinement remain authoritative if disposal fails.
+  }
+}
+
 function admittedToolResult(value: unknown): unknown {
+  try {
+    return admittedToolResultInner(value);
+  } catch (error) {
+    if (error instanceof GitHubOfficialMcpRemoteError) throw error;
+    throw invalidResult();
+  }
+}
+
+function admittedToolResultInner(value: unknown): unknown {
   const record = exactDataRecord(
     value,
     ["_meta", "content", "isError", "structuredContent"],
