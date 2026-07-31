@@ -135,23 +135,28 @@ export class GitHubAppInstallationTokenMinter
 
     const [, repository] = repositoryFullName.split("/");
     const appJwt = this.#createAppJwt(now);
-    const response = await this.#fetch(
-      `${this.#apiBaseUrl}/app/installations/${this.#installationId}/access_tokens`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${appJwt}`,
-          "Content-Type": "application/json",
-          "User-Agent": "stensibly",
-          "X-GitHub-Api-Version": githubApiVersion,
+    let response: Response;
+    try {
+      response = await this.#fetch(
+        `${this.#apiBaseUrl}/app/installations/${this.#installationId}/access_tokens`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${appJwt}`,
+            "Content-Type": "application/json",
+            "User-Agent": "stensibly",
+            "X-GitHub-Api-Version": githubApiVersion,
+          },
+          body: JSON.stringify({
+            repositories: [repository],
+            permissions: { issues },
+          }),
         },
-        body: JSON.stringify({
-          repositories: [repository],
-          permissions: { issues },
-        }),
-      },
-    );
+      );
+    } catch {
+      throw credentialTransportError("request");
+    }
     const payload = await readJson(response);
     if (!response.ok) {
       throw githubHttpError(response.status, "mint installation token");
@@ -245,7 +250,12 @@ function base64Url(value: string | Uint8Array): string {
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw credentialTransportError("response");
+  }
   if (!text) return {};
   try {
     return JSON.parse(text) as unknown;
@@ -255,6 +265,17 @@ async function readJson(response: Response): Promise<unknown> {
       "GitHub returned a non-JSON response",
     );
   }
+}
+
+function credentialTransportError(
+  stage: "request" | "response",
+): GitHubProviderRejectedError {
+  return new GitHubProviderRejectedError(
+    "github_credential_mint_failed",
+    stage === "request"
+      ? "GitHub installation token request failed before a response was available"
+      : "GitHub installation token response could not be read",
+  );
 }
 
 function secretString(value: unknown, label: string): string {
