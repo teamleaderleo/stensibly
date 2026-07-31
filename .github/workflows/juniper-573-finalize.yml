@@ -130,3 +130,5 @@ jobs:
           git commit -m 'feat: add outbound GitHub interaction preflight'
           git push --force-with-lease=refs/heads/juniper/573-github-outbound-text-policy:$GITHUB_SHA \
             origin HEAD:refs/heads/juniper/573-github-outbound-text-policy
+
+# retriggered by Sable after exact five-test failure classification
