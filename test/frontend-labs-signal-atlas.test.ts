@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
+import { frontendLabFixture } from "../site/labs/fixtures.js";
 import { frontendLabManifest } from "../site/labs/manifest.js";
 
 const repositoryRoot = join(import.meta.dir, "..");
@@ -9,9 +10,10 @@ const routeRoot = join(repositoryRoot, "site", "labs", "signal-atlas");
 const html = readFileSync(join(routeRoot, "index.html"), "utf8");
 const css = readFileSync(join(routeRoot, "styles.css"), "utf8");
 const app = readFileSync(join(routeRoot, "app.js"), "utf8");
+const ledgerModal = readFileSync(join(routeRoot, "ledger-modal.js"), "utf8");
 const mapFocus = readFileSync(join(routeRoot, "map-focus.js"), "utf8");
 const guide = readFileSync(join(repositoryRoot, "docs", "frontend-signal-atlas.md"), "utf8");
-const routeSource = `${html}\n${css}\n${app}\n${mapFocus}`;
+const routeSource = `${html}\n${css}\n${app}\n${ledgerModal}\n${mapFocus}`;
 const sourceWithoutSvgNamespace = routeSource.replaceAll("http://www.w3.org/2000/svg", "");
 
 const sharedTargets = [
@@ -24,42 +26,34 @@ const sharedTargets = [
   "api",
   "mcp",
 ];
-
 const chapterIds = ["decision", "workers", "recommendation", "ambiguity", "connections"];
 
 describe("Signal Atlas frontend lab", () => {
   test("publishes one independent narrative prototype route", () => {
     const manifestEntry = frontendLabManifest.find((entry) => entry.id === "signal-atlas");
-    expect(manifestEntry).toMatchObject({
-      owner: "Cinder",
-      status: "prototype",
-      issue: 611,
-      path: "./signal-atlas/",
-    });
+    expect(manifestEntry).toMatchObject({ owner: "Cinder", status: "prototype", issue: 611, path: "./signal-atlas/" });
     expect(manifestEntry?.revision).toMatch(/^[0-9a-f]{40}$/);
-    expect(manifestEntry?.support).toEqual([
-      "wide",
-      "medium",
-      "narrow",
-      "light",
-      "dark",
-      "keyboard",
-      "reduced-motion",
-    ]);
+    expect(manifestEntry?.support).toEqual(["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion"]);
     expect(html).toContain('data-stensibly-lab="prototype"');
+    expect(html).toContain('<script src="../fixtures.classic.js"></script>');
     expect(html).toContain('<script src="./app.js"></script>');
     expect(html).toContain('<script src="./map-focus.js"></script>');
     expect(html).not.toContain("../planned.js");
     expect(html).not.toContain("../planned.css");
   });
 
-  test("keeps every shared target available through five direct chapters", () => {
+  test("projects the shared fictional fixture through five direct chapters", () => {
     for (const target of sharedTargets) expect(app).toContain(`"${target}"`);
     for (const chapterId of chapterIds) expect(app).toContain(`id: "${chapterId}"`);
-    expect(app).toContain("The concise wording is the only human decision");
-    expect(app).toContain("Lease expired 12 minutes ago");
-    expect(app).toContain("Top recommendation because it unlocks keyboard evidence");
-    expect(app).toContain("settlement is unknown");
+    expect(app).toContain("routePolicy.projectRecords(fixtureApi.frontendLabFixture, localRecordMetadata)");
+    expect(ledgerModal).toContain("must match a shared fixture identity and kind");
+    expect(frontendLabFixture.decision.title).toBe("Approve the release note");
+    expect(frontendLabFixture.workers.find((entry) => entry.id === "ember")?.detail).toContain("Lease expired 12 minutes ago");
+    expect(frontendLabFixture.readyWork.find((entry) => entry.id === "repair-focus-order")?.reason).toContain("keyboard evidence across every variant");
+    expect(frontendLabFixture.operations.find((entry) => entry.id === "deploy-amber")).toMatchObject({
+      state: "ambiguous",
+      action: "Reconcile publication",
+    });
     expect(app).toContain("GitHub is healthy, the API is reconnecting, and MCP is offline");
   });
 
@@ -76,22 +70,24 @@ describe("Signal Atlas frontend lab", () => {
     expect(guide).toContain("chapter order is explanatory, not authoritative");
   });
 
-  test("keeps evidence, time, source, provider health, and safe action persistent", () => {
+  test("keeps evidence, time, shared source, provider health, and safe action persistent", () => {
     expect(html).toContain('id="evidence-body" tabindex="-1"');
     for (const label of ["Identity", "Kind", "Owner", "Observed", "Evidence head", "Source"]) expect(app).toContain(`["${label}"`);
-    expect(app).toContain("Paper Lantern fictional fixture");
+    expect(app).toContain("Paper Lantern shared fictional fixture");
     expect(app).toContain("Safe next action");
-    expect(app).toContain("Read the remote receipt and target state before accepting or retrying");
-    expect(app).toContain('["GitHub", "healthy"]');
-    expect(app).toContain('["API", "reconnecting"]');
-    expect(app).toContain('["MCP", "offline"]');
+    expect(app).toContain('records.filter((entry) => entry.kind === "connection")');
+    expect(ledgerModal).toContain('metadata.kind === "operation" ? source.action : metadata.nextAction');
     expect(guide).toContain("The ambiguous operation never exposes a retry action");
   });
 
-  test("uses native navigation, direct keyboard chapters, and reduced-motion parity", () => {
+  test("uses explicit ledger destinations, bounded return focus, direct keyboard chapters, and reduced-motion parity", () => {
     for (const key of ["ArrowRight", "ArrowLeft", "Escape"]) expect(app).toContain(`"${key}"`);
     expect(app).toContain('/^[1-5]$/.test(keyboardEvent.key)');
     expect(app).toContain('keyboardEvent.key.toLowerCase() === "l"');
+    expect(app).toContain('event("09:36 UTC", "ambiguity", "deploy-amber"');
+    expect(app).toContain('event("09:41 UTC", "connections", "api"');
+    expect(app).toContain("routePolicy.chapterIndex(chapters, entry.chapterId, entry.recordId)");
+    expect(app).toContain("routePolicy.returnFocusTarget(document.activeElement, showLedgerButton, ledger, document.body)");
     expect(app).toContain('behavior: reducedMotion ? "auto" : "smooth"');
     expect(css).toContain('@media (prefers-reduced-motion: reduce)');
     expect(css).toContain("scroll-behavior: auto");
@@ -106,20 +102,13 @@ describe("Signal Atlas frontend lab", () => {
       hidden: boolean;
       focused = false;
       closestResult: FakeElement | null;
-
       constructor(recordId?: string, hidden = false, closestResult?: FakeElement | null) {
         this.dataset = { recordId };
         this.hidden = hidden;
         this.closestResult = closestResult === undefined ? this : closestResult;
       }
-
-      closest(selector: string) {
-        return selector === "button[data-record-id]" ? this.closestResult : null;
-      }
-
-      focus() {
-        this.focused = true;
-      }
+      closest(selector: string) { return selector === "button[data-record-id]" ? this.closestResult : null; }
+      focus() { this.focused = true; }
     }
 
     let nodes: FakeElement[] = [];
@@ -128,17 +117,10 @@ describe("Signal Atlas frontend lab", () => {
     const animationFrames: Array<() => void> = [];
     const mapNodes = {
       addEventListener(type: string, listener: typeof clickListener, options: { capture?: boolean }) {
-        if (type === "click") {
-          clickListener = listener;
-          listenerOptions = options;
-        }
+        if (type === "click") { clickListener = listener; listenerOptions = options; }
       },
-      contains(node: FakeElement) {
-        return nodes.includes(node);
-      },
-      querySelectorAll(selector: string) {
-        return selector === "button[data-record-id]" ? nodes : [];
-      },
+      contains(node: FakeElement) { return nodes.includes(node); },
+      querySelectorAll(selector: string) { return selector === "button[data-record-id]" ? nodes : []; },
     };
 
     runInNewContext(mapFocus, {
@@ -166,6 +148,7 @@ describe("Signal Atlas frontend lab", () => {
 
   test("uses abstract fiction and stays flat, local, and authority-free", () => {
     expect(() => new Function(app)).not.toThrow();
+    expect(() => new Function(ledgerModal)).not.toThrow();
     expect(() => new Function(mapFocus)).not.toThrow();
     expect(html).toContain("abstract fictional work landscape");
     expect(guide).toContain("has no relevant real-world coordinates");
