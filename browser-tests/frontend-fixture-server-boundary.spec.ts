@@ -14,7 +14,7 @@ test("serves the production root and Labs directory indexes", async ({ request }
   const labs = await request.get("/labs/");
   expect(labs.status()).toBe(200);
   expect(labs.headers()["content-type"]).toContain("text/html");
-  expect(await labs.text()).toContain("Frontend Labs");
+  expect(await labs.text()).toContain("Stensibly Labs");
 });
 
 test("rejects an in-root symlink whose target escapes site", async ({ request }) => {
