@@ -1,3 +1,19 @@
+<!--
+When progress requires a human-only action, move the block below out of this comment
+and keep it above every other section. Delete it when no operator action is required.
+
+> [!IMPORTANT]
+> ## Operator action required
+> **Action:** <one concrete action>
+> **Where:** <provider, repository setting, dashboard, environment, or account>
+> **Minimum scope:** <smallest required permission, target, duration, or spend>
+> **Why now:** <what is blocked and why agents cannot complete it>
+> **Clears when:** <observable evidence that allows work to resume>
+> **Secret handling:** Do not paste token, key, secret, recovery-code, or private values into GitHub, chat, logs, screenshots, or artifacts.
+
+See docs/operator-action-required.md.
+-->
+
 ## In simple words / purpose
 
 <!-- One to three sentences: what this means without recent context, which larger outcome it advances, and why now. -->

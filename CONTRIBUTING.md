@@ -4,6 +4,8 @@ Start every repository change by reading [`AGENTS.md`](AGENTS.md), [`STENSIBLY.m
 
 Read [`docs/documentation-system.md`](docs/documentation-system.md) before creating or materially revising a campaign record, durable decision, operating instruction, or shared documentation convention.
 
+When progress requires a human-only action such as authentication, token creation, protected secret configuration, provider access, DNS, or approval, follow [`docs/operator-action-required.md`](docs/operator-action-required.md). Put the action block before every other section in the owning record, request the minimum safe scope, and never ask anyone to paste a secret value into GitHub, chat, logs, screenshots, or artifacts.
+
 ## Local setup
 
 Install Bun and repository dependencies:
