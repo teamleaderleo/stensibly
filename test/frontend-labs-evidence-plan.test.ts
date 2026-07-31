@@ -115,17 +115,13 @@ describe("frontend labs deterministic evidence plan", () => {
   });
 
   test("fails closed when a selected variant cannot emit complete route or task evidence", () => {
-    const unsupportedSelection = frontendLabManifest.flatMap((variant) =>
-      frontendLabEvidenceProfiles.map((profile) => ({ variant, profile }))
-    ).find(({ variant, profile }) => !variant.support.includes(profile.requiredSupport));
-    expect(unsupportedSelection).toBeDefined();
-    if (!unsupportedSelection) throw new Error("Expected an unsupported evidence selection");
-    expect(() => createFrontendLabEvidencePlan({
-      variantIds: [unsupportedSelection.variant.id],
-      profileIds: [unsupportedSelection.profile.id],
-    })).toThrow("at least one selected supported evidence profile");
-
     const prototype = frontendLabManifest.find((variant) => variant.id === "quiet-control")!;
+    const medium = frontendLabEvidenceProfiles.find((profile) => profile.id === "medium")!;
+    expect(() => validateFrontendLabEvidenceVariant({
+      ...prototype,
+      support: ["wide", "light", "keyboard"],
+    }, [medium])).toThrow("at least one selected supported evidence profile");
+
     expect(() => validateFrontendLabEvidenceVariant({
       ...prototype,
       support: ["wide", "keyboard"],
@@ -135,11 +131,11 @@ describe("frontend labs deterministic evidence plan", () => {
       support: ["wide", "light"],
     })).toThrow("requires keyboard support");
 
-    const medium = frontendLabEvidenceProfiles.find((profile) => profile.id === "medium")!;
+    const wide = frontendLabEvidenceProfiles.find((profile) => profile.id === "wide")!;
     expect(() => validateFrontendLabEvidenceVariant({
       ...prototype,
-      support: ["medium", "light", "keyboard"],
-    }, [medium])).toThrow("task-eligible evidence profile");
+      support: ["wide", "light", "keyboard"],
+    }, [{ ...wide, taskEligible: false }])).toThrow("task-eligible evidence profile");
   });
 
   test("emits only manifest-supported profiles, presentation axes, and state scenarios", () => {
