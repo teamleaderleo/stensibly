@@ -3,28 +3,66 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A fixture-only editorial work-lineage prototype for Stensibly Labs." />
   <title>Signal Atlas · Stensibly Labs</title>
-  <link rel="stylesheet" href="../planned.css" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
-<body data-stensibly-lab="planned" data-variant="signal-atlas">
-  <header><strong>Stensibly Labs · planned variant</strong><a href="../">All variants</a></header>
-  <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Editorial data-story avenue</p>
-        <h1 id="variant-title">Signal Atlas</h1>
-        <p class="lede" id="variant-thesis"></p>
-      </div>
-      <div class="seed" id="seed" aria-label="Signal Atlas direction seed"></div>
-    </section>
-    <section class="meta" aria-label="Variant identity">
-      <div><span>Status</span><strong id="variant-status"></strong></div>
-      <div><span>Owner</span><strong id="variant-owner"></strong></div>
-      <div><span>Route</span><strong id="variant-route"></strong></div>
-    </section>
-    <div class="actions"><a id="variant-issue" href="#">Open issue</a><a href="../">Compare variants</a></div>
-    <p class="note">This route reserves a map, topology, timeline, and causal-storytelling lane. The full prototype will keep source, time, freshness, and a complete static or reduced-motion explanation visible through every guided transition.</p>
+<body data-stensibly-lab="prototype">
+  <header class="masthead">
+    <a class="brand" href="../"><strong>Signal Atlas</strong><small>Paper Lantern · fictional work landscape</small></a>
+    <p class="masthead-summary">Five direct chapters explain authority, worker health, recommendation, ambiguity, and provider capability.</p>
+    <div class="masthead-actions"><button id="show-ledger" type="button">Show all evidence</button><a href="../">All variants</a></div>
+  </header>
+
+  <main class="atlas">
+    <nav class="chapter-rail" aria-labelledby="chapters-title">
+      <header class="rail-head"><h1 id="chapters-title">Story chapters</h1><p>Choose any chapter. Native scrolling and the full ledger remain available.</p></header>
+      <div class="boundary" role="note"><strong>Experiment boundary:</strong> abstract fictional work data only. No geographic claim, network request, credential, or product action.</div>
+      <ol class="chapter-list" id="chapter-list"></ol>
+      <p class="keyboard-note">Arrow Left/Right or J/K changes chapter. Keys 1–5 jump directly. L opens the complete ledger.</p>
+    </nav>
+
+    <article class="story" id="scene" aria-labelledby="scene-title">
+      <header class="scene-head">
+        <p class="eyebrow" id="scene-kicker"></p>
+        <h2 id="scene-title" tabindex="-1"></h2>
+        <p id="scene-narrative"></p>
+        <div class="scene-controls"><button id="previous-chapter" type="button">Previous chapter</button><button id="next-chapter" type="button">Next chapter</button></div>
+      </header>
+
+      <section class="landscape-shell" aria-label="abstract fictional work landscape">
+        <div class="landscape" aria-hidden="true">
+          <div class="landmass landmass-one"></div>
+          <div class="landmass landmass-two"></div>
+          <div class="landmass landmass-three"></div>
+        </div>
+        <svg class="route-lines" id="route-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div id="map-nodes"></div>
+        <aside class="annotation"><strong id="annotation-title"></strong><span id="annotation-copy"></span></aside>
+      </section>
+
+      <section class="static-story" aria-labelledby="static-story-title">
+        <h3 id="static-story-title">Complete static explanation</h3>
+        <div class="static-grid" id="static-grid"></div>
+      </section>
+    </article>
+
+    <aside class="evidence-rail" aria-labelledby="evidence-title">
+      <header class="rail-head"><h2 id="evidence-title">Selected evidence</h2><p>Identity, time, source, capability, and safe next action stay visible through every chapter.</p></header>
+      <div class="evidence-body" id="evidence-body" tabindex="-1"></div>
+    </aside>
   </main>
-  <script src="../planned.js"></script>
+
+  <section class="ledger" id="ledger" aria-labelledby="ledger-title" hidden>
+    <header class="ledger-head"><div><h2 id="ledger-title">Complete static timeline and evidence path</h2><p>No chapter order or animated travel is required to understand the incident.</p></div><button id="close-ledger" type="button">Close ledger</button></header>
+    <ol class="timeline-ledger" id="ledger-list"></ol>
+  </section>
+
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+  <script src="../fixtures.classic.js"></script>
+  <script src="./ledger-modal.js"></script>
+  <script src="./app.js"></script>
+  <script src="./fixture-bridge.js"></script>
+  <script src="./map-focus.js"></script>
 </body>
 </html>
