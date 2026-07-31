@@ -12,7 +12,7 @@ describe("production root tactile presentation", () => {
     expect(calmIndex).toBeGreaterThan(0);
     expect(statusIndex).toBeGreaterThan(calmIndex);
     expect(crunchIndex).toBeGreaterThan(statusIndex);
-    expect(html).toContain("<h1>Shared work, made legible.</h1>");
+    expect(html).toContain("<h1>Shared work. Made legible.</h1>");
     expect(html).toContain('class="brand-copy"');
     expect(html).toContain('class="hero-lede"');
     expect(html).toContain('class="hero-principles"');
@@ -43,7 +43,7 @@ describe("production root tactile presentation", () => {
       expect(css).toContain(`html[data-app-mode="${mode}"] .hero-login`);
       expect(css).toContain(`html[data-app-mode="${mode}"] .login-card`);
     }
-    expect(css).toContain('html[data-app-mode="editing"] .login-card {\n  padding: .5rem .88rem;');
+    expect(css).toContain('html[data-app-mode="editing"] .login-card {\n  padding: .25rem .88rem;');
   });
 
   test("preserves the accepted root status and live control identities", async () => {
