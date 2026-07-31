@@ -1,0 +1,352 @@
+body {
+  border-top: .3rem solid var(--accent-strong);
+}
+
+.topbar {
+  margin-bottom: 0;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--line-strong);
+}
+
+.brand {
+  gap: .72rem;
+}
+
+.mark {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 2px solid var(--line-strong);
+  border-radius: .3rem;
+  background: var(--panel);
+  box-shadow: .24rem .24rem 0 var(--line-strong);
+}
+
+.brand-copy {
+  display: grid;
+  gap: .08rem;
+}
+
+.brand-copy strong {
+  font-size: .92rem;
+  line-height: 1.05;
+}
+
+.brand-copy small {
+  color: var(--muted);
+  font: .6rem var(--font-code);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.topbar > .github,
+.frontend-labs-link {
+  padding: .5rem .62rem;
+  border: 1px solid var(--line-strong);
+  border-radius: .3rem;
+  color: var(--muted);
+  background: var(--panel);
+  font: .64rem var(--font-code);
+  letter-spacing: .02em;
+}
+
+.topbar > .github:hover,
+.frontend-labs-link:hover {
+  color: var(--text);
+  border-color: var(--text);
+  background: var(--panel-2);
+}
+
+.frontend-labs-link::before {
+  content: "preview · ";
+  color: var(--accent-strong);
+}
+
+.hero-login {
+  grid-template-columns: minmax(0, 1.15fr) minmax(20rem, 25rem);
+  gap: clamp(2.5rem, 7vw, 7rem);
+  align-items: center;
+  min-height: calc(100vh - 8.8rem);
+  margin: 0;
+  padding: clamp(3rem, 7vw, 6rem) 0;
+}
+
+.hero-copy {
+  min-width: 0;
+  max-width: 50rem;
+}
+
+.hero-copy::before {
+  content: "";
+  display: block;
+  width: 4.5rem;
+  height: .35rem;
+  margin-bottom: 1.25rem;
+  background: var(--accent-strong);
+}
+
+.hero-login .eyebrow {
+  margin: 0 0 .82rem;
+  font: 700 .68rem var(--font-code);
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.hero-login h1 {
+  max-width: 10ch;
+  margin: 0;
+  font-size: clamp(3.6rem, 7.4vw, 7rem);
+  font-weight: 650;
+  line-height: .91;
+  letter-spacing: -.065em;
+}
+
+.hero-lede {
+  max-width: 39rem;
+  margin: 1.35rem 0 0;
+  color: var(--muted);
+  font-size: clamp(.98rem, 1.25vw, 1.12rem);
+  line-height: 1.62;
+}
+
+.hero-principles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 42rem;
+  margin: 2rem 0 0;
+  padding: 0;
+  border-block: 1px solid var(--line-strong);
+  list-style: none;
+}
+
+.hero-principles li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: .2rem .65rem;
+  min-width: 0;
+  padding: .9rem .9rem .95rem 0;
+}
+
+.hero-principles li + li {
+  padding-left: .9rem;
+  border-left: 1px solid var(--line);
+}
+
+.hero-principles span {
+  grid-row: 1 / span 2;
+  color: var(--accent-strong);
+  font: 700 .62rem var(--font-code);
+  letter-spacing: .06em;
+}
+
+.hero-principles strong {
+  min-width: 0;
+  font-size: .76rem;
+  line-height: 1.15;
+}
+
+.hero-principles small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: .67rem;
+  line-height: 1.35;
+}
+
+.login-card {
+  width: 100%;
+  padding: 1rem;
+  border: 2px solid var(--line-strong);
+  border-radius: .45rem;
+  background: var(--panel);
+  box-shadow: .65rem .65rem 0 var(--accent-soft);
+}
+
+.login-card .connection-head {
+  position: relative;
+  align-items: center;
+  padding: 0 0 .82rem 1rem;
+  border-bottom: 2px solid var(--line-strong);
+}
+
+.login-card .connection-head::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: .48rem;
+  height: .48rem;
+  border: 1px solid var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.login-card .connection-head strong {
+  font-size: .96rem;
+}
+
+.login-card #connection-state {
+  color: var(--muted);
+  font: .63rem var(--font-code);
+}
+
+.login-card .hosted-sign-in button {
+  min-height: 3.2rem;
+  border-width: 2px;
+  border-radius: .3rem;
+  box-shadow: .22rem .22rem 0 var(--line-strong);
+  transition: none;
+}
+
+.login-card .hosted-sign-in button:active:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.login-card input,
+.login-card select,
+.login-card textarea,
+.login-card .connection-form-actions button,
+.login-card .connected-actions button {
+  border-radius: .3rem;
+}
+
+.advanced-connection summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.advanced-connection summary::after {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  font: 700 .72rem var(--font-code);
+}
+
+.advanced-connection[open] summary::after {
+  content: "−";
+}
+
+html[data-app-mode="connected"] .hero-copy,
+html[data-app-mode="degraded"] .hero-copy,
+html[data-app-mode="editing"] .hero-copy {
+  display: none;
+}
+
+html[data-app-mode="connected"] .hero-login,
+html[data-app-mode="degraded"] .hero-login,
+html[data-app-mode="editing"] .hero-login {
+  display: block;
+  min-height: 0;
+  margin: 0 0 .9rem;
+  padding: 0;
+}
+
+html[data-app-mode="connected"] .login-card,
+html[data-app-mode="degraded"] .login-card,
+html[data-app-mode="editing"] .login-card {
+  max-width: none;
+  border-radius: .4rem;
+  box-shadow: .3rem .3rem 0 var(--accent-soft);
+}
+
+html[data-app-mode="connected"] .login-card,
+html[data-app-mode="degraded"] .login-card {
+  padding: .78rem .88rem;
+}
+
+html[data-app-mode="editing"] .login-card {
+  padding: .5rem .88rem;
+}
+
+html[data-app-mode="editing"] .login-card .connection-head {
+  padding-bottom: .65rem;
+}
+
+html[data-app-mode="editing"] .login-card form {
+  margin-top: .7rem;
+}
+
+@media (max-width: 900px) {
+  .hero-login {
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+    min-height: auto;
+    padding: 3.5rem 0 4.5rem;
+  }
+
+  .hero-login h1 {
+    max-width: 11ch;
+    font-size: clamp(3.4rem, 12vw, 6rem);
+  }
+
+  .login-card {
+    max-width: 34rem;
+  }
+}
+
+@media (max-width: 620px) {
+  body {
+    border-top-width: .22rem;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    gap: .55rem;
+  }
+
+  .topbar > .github,
+  .frontend-labs-link {
+    padding: .42rem .48rem;
+    font-size: .58rem;
+  }
+
+  .frontend-labs-link {
+    margin-left: auto;
+  }
+
+  .frontend-labs-link::before {
+    content: "";
+  }
+
+  .hero-login {
+    gap: 2rem;
+    padding: 2.5rem 0 3.5rem;
+  }
+
+  .hero-login h1 {
+    font-size: clamp(3rem, 17vw, 4.8rem);
+  }
+
+  .hero-principles {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-principles li {
+    padding: .8rem 0;
+  }
+
+  .hero-principles li + li {
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .login-card {
+    padding: .88rem;
+    box-shadow: .4rem .4rem 0 var(--accent-soft);
+  }
+
+  html[data-app-mode="editing"] .login-card {
+    padding: .5rem .88rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card *,
+  .login-card *::before,
+  .login-card *::after {
+    transition: none !important;
+  }
+}
