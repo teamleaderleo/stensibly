@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -192,6 +193,7 @@ describe("browser evidence policy", () => {
     expect(packageJson.scripts["browser:mcp"]).toBeUndefined();
     expect(packageJson.scripts["browser:cli"]).toBe("playwright cli");
     expect(Object.values(packageJson.scripts)).not.toContain("bun scripts/run-playwright-mcp.ts");
+    expect(existsSync(join(repositoryRoot, "scripts", "run-playwright-mcp.ts"))).toBe(false);
     expect(packageJson.scripts["test:browser"]).toBe("playwright test");
     expect(verifier).not.toContain("testDurations");
     expect(verifier).toContain('keys.join(",") !== "failedTests,status"');
