@@ -109,6 +109,7 @@ function responseHeaders(type: string): Headers {
       "object-src 'none'",
       "script-src 'self'",
       "style-src 'self'",
+      "worker-src 'none'",
     ].join("; "),
     "Content-Type": type,
     "Referrer-Policy": "no-referrer",
