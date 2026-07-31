@@ -41,6 +41,8 @@ The generated runtime uses a fresh external directory for `HOME`, XDG state, Ope
 
 OpenCode reports token and cost usage, while its ordinary CLI lacks a pre-turn dollar breaker. Live launch consequently requires a separate acknowledgement of this budget gap. A later supervisor must ingest JSON usage events and cancel before the daily or episode reservation is exhausted.
 
+The first executable wrapper permits **observe only**. Candidate execution is blocked because a worker that can edit and run tests can create code that reads inherited environment variables or opens network connections. Candidate mode requires an external process/container sandbox that removes the provider key from tool subprocesses, denies egress, and mounts only the disposable worktree.
+
 ### 2. Claude Code over the Anthropic-compatible endpoint
 
 DeepSeek also documents Claude Code against `https://api.deepseek.com/anthropic`. This is the second harness candidate because it exercises a separately maintained agent loop and DeepSeek-supported compatibility path. It receives its own recorded fixture and permission review before live use.
@@ -87,11 +89,11 @@ Recorded and fake-provider traffic only. Validate event mapping, model identity,
 
 ### Observe
 
-A real provider may inspect one public or fictional worktree. OpenCode receives read, glob, grep, list, LSP, and skill access. Shell, edits, web access, task delegation, external directories, GitHub, and external actions remain denied.
+A real provider may inspect one public or fictional worktree. OpenCode receives read, glob, grep, and list access. Shell, edits, web access, task delegation, external directories, GitHub, and external actions remain denied.
 
 ### Candidate
 
-One disposable worktree may receive edits and a narrow local shell allowlist for Git inspection and repository tests. Commit, push, `gh`, network utilities, external directories, package installation, merge, deployment, credentials, and canonical issue state remain denied. A separate trusted publisher can later turn an accepted diff into a branch or draft PR under its own authority.
+One disposable worktree may receive edits and a narrow local shell allowlist for Git inspection and repository tests after the external sandbox exists. Commit, push, `gh`, network utilities, external directories, package installation, merge, deployment, credentials, and canonical issue state remain denied. A separate trusted publisher can later turn an accepted diff into a branch or draft PR under its own authority.
 
 ## Eval catalogue
 
@@ -152,7 +154,7 @@ STENSIBLY_DEEPSEEK_ACCEPT_OPENCODE_BUDGET_GAP=1
 DEEPSEEK_API_KEY=<operator secret>
 ```
 
-The first accepted paid run should remain an observe episode against public or fictional data. Keep concurrency at one until at least twenty episodes establish median cost, cache-hit rate, useful checkpoint rate, repair burden, and reviewer demand.
+This wrapper accepts paid observe episodes only. The first accepted paid run should remain an observe episode against public or fictional data. Keep concurrency at one until at least twenty episodes establish median cost, cache-hit rate, useful checkpoint rate, repair burden, and reviewer demand.
 
 ## Integration with existing runner work
 
