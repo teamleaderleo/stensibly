@@ -48,8 +48,8 @@ describe("automatic dashboard publication workflow", () => {
   test("keeps production public while retaining preview SSO", () => {
     expect(workflow).toContain("--request PATCH");
     expect(workflow).toContain("ssoProtection");
-    expect(workflow).toContain('deploymentType\\":\\"preview');
-    expect(workflow).not.toContain('deploymentType\\":\\"all');
+    expect(workflow).toContain('"deploymentType":"preview"');
+    expect(workflow).not.toContain('"deploymentType":"all"');
   });
 
   test("reassigns the canonical domain only when absent", () => {
