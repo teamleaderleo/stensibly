@@ -81,7 +81,8 @@ export function buildOpenAIAgentsRuntimeManifestV1(
   const queue: Agent<any, any>[] = [rootAgent];
   const seenObjects = new WeakSet<object>();
   const seenNames = new Set<string>();
-  const qualifiedToolNames = new Set<string>();
+  const qualifiedToolKeys = new Set<string>();
+  const seenExecutableIds = new Set<string>();
   const agents: OpenAIAgentsRuntimeAgentManifestV1[] = [];
 
   while (queue.length > 0) {
@@ -119,12 +120,13 @@ export function buildOpenAIAgentsRuntimeManifestV1(
         `OpenAI Agents runtime agent ${name} tool name`,
       );
       const qualifiedName = `${name}::${toolName}`;
-      if (qualifiedToolNames.has(qualifiedName)) {
+      const qualifiedKey = stableJson([name, toolName]);
+      if (qualifiedToolKeys.has(qualifiedKey)) {
         throw new RangeError(
           `OpenAI Agents runtime graph duplicates qualified tool identity ${qualifiedName}`,
         );
       }
-      qualifiedToolNames.add(qualifiedName);
+      qualifiedToolKeys.add(qualifiedKey);
 
       const executableId = executableToolIds.get(functionTool);
       if (executableId === undefined) {
@@ -132,6 +134,12 @@ export function buildOpenAIAgentsRuntimeManifestV1(
           `OpenAI Agents runtime tool ${qualifiedName} lacks an executable identity`,
         );
       }
+      if (seenExecutableIds.has(executableId)) {
+        throw new RangeError(
+          `OpenAI Agents runtime graph duplicates executable tool identity ${executableId}`,
+        );
+      }
+      seenExecutableIds.add(executableId);
 
       return {
         qualifiedName,
@@ -169,6 +177,7 @@ export function buildOpenAIAgentsRuntimeManifestV1(
         `OpenAI Agents runtime agent ${name} has an invalid handoff inventory`,
       );
     }
+    const handoffNames = new Set<string>();
     const handoffAgentNames = agent.handoffs.map((handoff, index) => {
       if (!(handoff instanceof Agent)) {
         throw new RangeError(
@@ -179,6 +188,12 @@ export function buildOpenAIAgentsRuntimeManifestV1(
         handoff.name,
         `OpenAI Agents runtime agent ${name} handoff name`,
       );
+      if (handoffNames.has(handoffName)) {
+        throw new RangeError(
+          `OpenAI Agents runtime agent ${name} duplicates handoff identity ${handoffName}`,
+        );
+      }
+      handoffNames.add(handoffName);
       queue.push(handoff);
       return handoffName;
     }).sort(compareText);
