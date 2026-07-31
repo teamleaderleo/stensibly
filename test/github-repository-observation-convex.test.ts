@@ -4,15 +4,16 @@ import {
   GitHubRepositoryObservationConflictError,
 } from "../src/github-repository-observation-convex.ts";
 import { mapGitHubRepositoryWebhook } from "../src/github-repository-observation.ts";
+import type { HostedGitHubRepositoryObservationInput } from "../src/hosted-provider-capacity-api.ts";
 
 describe("Convex GitHub repository observation service", () => {
   test("stores only the canonical content-minimised observation", async () => {
     const observation = issueObservation();
-    let captured: Record<string, unknown> | null = null;
+    const calls: Record<string, unknown>[] = [];
     const service = new ConvexGitHubRepositoryObservationService({
       client: {
         async mutation(_reference, args) {
-          captured = args;
+          calls.push(args);
           return {
             duplicate: false,
             record: storedRecord(String(args.observationJson)),
@@ -33,6 +34,7 @@ describe("Convex GitHub repository observation service", () => {
       receivedAt: observation.receivedAt,
       observation,
     })).toEqual({ duplicate: false });
+    const captured = calls[0];
     expect(captured).toMatchObject({
       serviceSecret: "service-secret",
       workspace: "default",
@@ -41,10 +43,50 @@ describe("Convex GitHub repository observation service", () => {
       payloadDigest: `sha256:${"a".repeat(64)}`,
       receivedAt: Date.parse("2026-07-31T15:00:01.000Z"),
     });
-    const observationJson = String(captured?.observationJson);
+    const observationJson = String(captured?.observationJson ?? "");
     expect(observationJson).not.toContain("private issue body");
     expect(observationJson).not.toContain("rawPayload");
     expect(observationJson).toContain(observation.semanticFingerprint);
+  });
+
+  test("rejects accessors without invoking them or calling Convex", async () => {
+    const observation = issueObservation();
+    let getterCalls = 0;
+    let mutationCalls = 0;
+    const hostile = Object.create(null) as Record<string, unknown>;
+    Object.defineProperties(hostile, {
+      deliveryId: { enumerable: true, value: observation.deliveryId },
+      eventType: { enumerable: true, value: observation.eventType },
+      payloadDigest: { enumerable: true, value: observation.payloadDigest },
+      receivedAt: { enumerable: true, value: observation.receivedAt },
+      observation: {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          throw new Error("credential-shaped getter text");
+        },
+      },
+    });
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          mutationCalls += 1;
+          throw new Error("must not run");
+        },
+        async query() {
+          throw new Error("not used");
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await expect(service.ingestRepositoryObservation(
+      hostile as unknown as HostedGitHubRepositoryObservationInput,
+    )).rejects.toThrow(
+      "GitHub repository observation input.observation must be an enumerable data property",
+    );
+    expect(getterCalls).toBe(0);
+    expect(mutationCalls).toBe(0);
   });
 
   test("maps changed delivery reuse to one typed conflict", async () => {
@@ -71,10 +113,6 @@ describe("Convex GitHub repository observation service", () => {
 
   test("reads bounded canonical observations and rejects stored divergence", async () => {
     const observation = issueObservation();
-    const canonical = JSON.stringify(
-      JSON.parse(JSON.stringify(observation)),
-      Object.keys(observation).sort(),
-    );
     const service = new ConvexGitHubRepositoryObservationService({
       client: {
         async mutation() {
@@ -105,7 +143,6 @@ describe("Convex GitHub repository observation service", () => {
         repository: "teamleaderleo/stensibly",
       },
     });
-    expect(canonical.length).toBeGreaterThan(0);
   });
 });
 
