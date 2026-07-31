@@ -115,19 +115,13 @@ describe("Signal Atlas shared fixture policy", () => {
     delete sparse[0];
     expect(() => policy.projectRecords(sparse)).toThrow("must be a dense data array");
 
-    const outOfRange = [...complete] as MetadataRecord[] & Record<string, unknown>;
-    Object.defineProperty(outOfRange, String(outOfRange.length), {
+    const nonCanonicalIndex = [...complete] as MetadataRecord[] & Record<string, unknown>;
+    Object.defineProperty(nonCanonicalIndex, "01", {
       enumerable: true,
       configurable: true,
       value: complete[0],
     });
-    Object.defineProperty(outOfRange, "length", {
-      writable: true,
-      enumerable: false,
-      configurable: false,
-      value: complete.length,
-    });
-    expect(() => policy.projectRecords(outOfRange)).toThrow("contains an unsupported field");
+    expect(() => policy.projectRecords(nonCanonicalIndex)).toThrow("contains an unsupported field");
 
     const hostilePosition = complete.map((entry) => ({ ...entry, position: [...entry.position] }));
     Object.defineProperty(hostilePosition[0]!.position, "every", {
