@@ -352,7 +352,7 @@ async function readJson(response: Response): Promise<unknown> {
         try { await reader.cancel(); } catch {}
         throw tooLarge(`GitHub delegated provider response exceeds ${maxResponseBytes} bytes`);
       }
-      chunks.push(item.value);
+      chunks.push(item.value.slice());
     }
   } catch (error) {
     prior = true;
