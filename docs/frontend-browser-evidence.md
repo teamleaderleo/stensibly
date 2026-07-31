@@ -1,4 +1,4 @@
-# Frontend browser evidence and research adapters
+# Frontend browser evidence and research boundary
 
 **Owner issue:** #667  
 **Related:** #605, #615, #618, #620
@@ -17,7 +17,7 @@ bun run test:browser
 bun run verify:browser-artifacts
 ```
 
-The suite starts `scripts/serve-frontend-fixtures.ts` on loopback, serves only files under the real `site/` tree, and applies a restrictive local content-security policy. Browser tests fail on any HTTP or WebSocket request whose origin differs from the loopback fixture server. Dialogs, downloads, console errors, uncaught browser errors, and page crashes also fail the applicable evidence flow.
+The suite starts `scripts/serve-frontend-fixtures.ts` on loopback, serves only files under the real `site/` tree, and applies a restrictive local content-security policy. Browser tests fail on any HTTP or WebSocket request whose origin differs from the loopback fixture server. Dialogs, downloads, console errors, uncaught browser errors, page crashes, and service-worker creation also fail the applicable evidence flow.
 
 `tsconfig.browser.json` keeps the Playwright configuration, browser tasks, fixture server, artifact verifier, and narrow browser-global declaration under strict TypeScript checking without widening the main application compiler inputs.
 
@@ -60,11 +60,11 @@ Playwright 1.62 writes one runner-owned `artifacts/playwright-results/.last-run.
 
 The dedicated upload runs only after both the Chromium suite and artifact fence succeed. Browser output stays outside the generic diagnostics artifact.
 
-Playwright can create compressed traces after a failure. The privacy fence rejects those opaque archives, and CI never uploads browser evidence from a failed Chromium run. Canonical CI retains only green, verified fixture-only artifacts for seven days.
+Playwright can create compressed traces after a failure. The privacy fence rejects those opaque archives, and CI uploads browser evidence only from green Chromium runs. Canonical CI retains verified fixture-only artifacts for seven days.
 
 ## Determinism boundary
 
-The first slice does not commit pixel baselines. It proves behavior and produces reviewable render evidence from one exact browser environment.
+The first slice omits pixel baselines. It proves behavior and produces reviewable render evidence from one exact browser environment.
 
 Before adopting `toHaveScreenshot()` baselines:
 
@@ -78,71 +78,24 @@ Before adopting `toHaveScreenshot()` baselines:
 
 Playwright documents that screenshots can vary across operating systems, browser versions, hardware, power state, and headless settings. Baselines must be generated in the same controlled environment used for comparison.
 
-## Local exploratory browser work
+## Interactive browser research boundary
 
-Playwright CLI and Playwright MCP are optional research and QA interfaces. They do not replace repository tests.
+The repository exposes Playwright Test only. It carries no package script or source launcher for Playwright CLI or Playwright MCP.
 
-Playwright 1.62 bundles both interfaces in the exact pinned repository toolchain:
+Playwright CLI can save and load browser storage state, inspect and mutate cookies and web storage, attach to existing browsers, execute browser-control code, record screenshots, PDFs, video, and traces, and write automatic page snapshots under `.playwright-cli/`. Playwright MCP runs a local server process, exposes broad browser-control tools, and states that its origin controls do not form a security boundary. Those capabilities can reach private records, authenticated sessions, host files, and ambient credentials when launched inside an ordinary repository session.
 
-```bash
-bun run browser:cli -- --help
-bun run browser:mcp -- --help
-```
+Any future interactive browser experiment requires a separate reviewed lane with:
 
-Use an isolated profile by default. Restrict allowed origins, avoid unrestricted file access, and store no credentials in repository artifacts. Connecting to an existing operator browser is reserved for an exact logged-in task where the existing state is genuinely required.
+- an operating-system or container boundary;
+- an empty credential environment;
+- a minimal read-only filesystem view that excludes the repository and user profile;
+- fresh browser state with no private account session;
+- exact public or loopback origins for one bounded question;
+- bounded ephemeral output outside the repository;
+- explicit operator approval;
+- source URLs, inspection date, access limitations, and a clear adopt, adapt, test, or reject disposition.
 
-A bounded MCP client entry can invoke the repository-pinned server from the repository root:
-
-```json
-{
-  "mcpServers": {
-    "playwright-research": {
-      "command": "bun",
-      "args": [
-        "run",
-        "browser:mcp",
-        "--",
-        "--isolated",
-        "--headless",
-        "--sandbox",
-        "--block-service-workers",
-        "--allowed-origins",
-        "https://example.com;https://www.example.com",
-        "--image-responses",
-        "omit",
-        "--output-mode",
-        "file",
-        "--output-dir",
-        "/temporary/path/stensibly-browser-research/run-id",
-        "--output-max-size",
-        "25000000",
-        "--viewport-size",
-        "1440x900"
-      ]
-    }
-  }
-}
-```
-
-Set the MCP client's working directory to the Stensibly repository. Replace the example origins with the exact sites required for one research question and put the output directory outside the repository. Do not add `--allow-unrestricted-file-access`, `--secrets`, `--storage-state`, or `--save-session` for ordinary public research.
-
-The wrapper creates a fresh child environment from an explicit execution-path and locale allowlist. Parent tokens, proxy credentials, provider variables, and unrelated environment values are omitted. Credential-shaped or control-bearing values in an admitted variable fail with fixed content-minimised diagnostics before the MCP child starts.
-
-Playwright MCP states that origin filters are not a complete security boundary and do not constrain redirects. Keep research profiles isolated and free of sensitive logins even when an allowlist is configured. The browser extension can attach to an existing Chrome or Edge tab, but that exposes the selected tab's logged-in state and requires an explicit connection approval by default; reserve it for a narrowly reviewed authenticated task.
-
-A browser research result should record:
-
-- the research question;
-- source URLs and inspection date;
-- wide and narrow navigation paths;
-- semantic or accessibility observations;
-- concrete praise and friction;
-- screenshots only when they clarify a finding;
-- the applicable Stensibly task or prototype lane;
-- an adopt, adapt, test, or reject disposition;
-- access, terms, robots, login, and evidence limitations.
-
-Do not bypass access controls, CAPTCHAs, paywalls, robots restrictions, or site terms.
+A research session carries no authority to contact, purchase, submit, publish, deploy, mutate a provider, bypass access controls, solve CAPTCHAs, cross paywalls, ignore robots restrictions, or act as the operator.
 
 ## Optional Browserbase use
 
@@ -150,11 +103,11 @@ Browserbase is an occasional hosted adapter for remote execution, session replay
 
 The free plan inspected on 2026-07-31 included one browser hour per month and 15-minute maximum sessions. Stay within the free plan unless the operator separately approves paid capacity.
 
-Use one bounded question per hosted session. Prefer fresh isolated contexts. Do not use retained hosted sessions for private accounts or secret-bearing pages without a reviewed need. Do not contact, purchase, submit, publish, or act as the operator during market research.
+Use one bounded question per hosted session. Prefer fresh isolated contexts. Keep private accounts, credentials, retained hosted sessions, and secret-bearing pages outside ordinary research. Preserve the same no-action and content-minimisation boundary used by local evidence.
 
 ## Dependency and browser updates
 
-`@playwright/test` is an exact-pinned development dependency governed by `docs/dependency-lockfile-workflow.md`. Playwright 1.62 includes the matching test runner, browser library, MCP server, and CLI. A package declaration change intentionally causes canonical CI to publish an exact `bun.lock` candidate before frozen validation resumes.
+`@playwright/test` is an exact-pinned development dependency governed by `docs/dependency-lockfile-workflow.md`. The repository uses the matching test runner and browser library while leaving interactive package binaries unexposed. A package declaration change intentionally causes canonical CI to publish an exact `bun.lock` candidate before frozen validation resumes.
 
 For a Playwright update:
 
@@ -170,7 +123,6 @@ For a Playwright update:
 Remove:
 
 - `@playwright/test` from `package.json` and regenerate `bun.lock`;
-- the `browser:cli` and `browser:mcp` scripts;
 - `playwright.config.ts` and `tsconfig.browser.json`;
 - `browser-tests/`;
 - `scripts/serve-frontend-fixtures.ts` and `scripts/verify-browser-evidence-artifacts.ts`;
