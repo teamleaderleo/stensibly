@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 const hostedSentinel = `stn.tok_${"0".repeat(32)}.${"s".repeat(40)}`;
@@ -120,8 +121,13 @@ async function waitForRootMode(page: Page, errors: string[], expected: string): 
 }
 
 async function attachScreenshot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-  const body = await page.screenshot({ fullPage: true });
-  await testInfo.attach(name, { body, contentType: "image/png" });
+  const sourcePath = testInfo.outputPath("attachment-source.png");
+  try {
+    await page.screenshot({ path: sourcePath, fullPage: true });
+    await testInfo.attach(name, { path: sourcePath, contentType: "image/png" });
+  } finally {
+    await rm(sourcePath, { force: true });
+  }
 }
 
 test("signed-out root stays recoverable at narrow dark reduced-motion settings", async ({ page }, testInfo) => {
@@ -199,7 +205,7 @@ test("returning session exposes a real connecting status before the compact desk
   const editingHeight = await page.locator(".hero-login").evaluate((element) =>
     element.getBoundingClientRect().height,
   );
-  expect(editingHeight).toBeLessThan(430);
+  expect(editingHeight).toBeLessThan(420);
 
   await page.getByRole("button", { name: "cancel" }).click();
   await expect(root).toHaveAttribute("data-app-mode", "connected");
