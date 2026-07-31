@@ -1,0 +1,675 @@
+name: Plover 783 browser receipt repair
+
+on:
+  push:
+    branches:
+      - tern/700-signed-actions-ci-receipts
+    paths:
+      - .github/workflows/plover-783-browser-receipt-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plover-783-browser-receipt-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: tern/700-signed-actions-ci-receipts
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply browser topology and privacy repair
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          normalized_path = Path("src/github-actions-ci-receipt-normalized.ts")
+          normalized = normalized_path.read_text()
+          import_anchor = 'import {\n  CI_CANONICAL_COMMAND_IDS_V1,'
+          if normalized.count(import_anchor) != 1:
+              raise SystemExit("normalized import anchor drifted")
+          normalized = normalized.replace(
+              import_anchor,
+              'import { CI_BROWSER_EVIDENCE_TOPOLOGIES_V1 } from "./ci-browser-evidence-profile.js";\n' + import_anchor,
+              1,
+          )
+          old_jobs = '''export const GITHUB_ACTIONS_CI_JOB_NAMES = [
+            "test",
+            "runtime-parity",
+            "serial-full",
+          ] as const;'''
+          new_jobs = '''export const GITHUB_ACTIONS_CI_JOB_NAMES = [
+            CI_BROWSER_EVIDENCE_TOPOLOGIES_V1.full_parallel.jobName,
+            "test",
+            "runtime-parity",
+            "serial-full",
+          ] as const;'''
+          if normalized.count(old_jobs) != 1:
+              raise SystemExit("normalized job list drifted")
+          normalized = normalized.replace(old_jobs, new_jobs, 1)
+          normalized = normalized.replace(
+              'const credentialPattern =\n  /(?:^|[._:/-])(?:(?:env|secret):\\/\\/|github_pat_|gh[pousr]_|stn\\.tok_|sk-|xox[baprs]-)/iu;',
+              '''const credentialPattern = new RegExp(
+            [
+              "(?:^|[._:/\\\\s-])(?:env|secret):\\\\/\\\\/",
+              "(?:^|[._:/\\\\s-])github_pat_[A-Za-z0-9_]{20,}",
+              "(?:^|[._:/\\\\s-])gh[pousr]_[A-Za-z0-9]{20,}",
+              "(?:^|[._:/\\\\s-])stn\\\\.tok_[A-Za-z0-9._-]{20,}",
+              "(?:^|[._:/\\\\s-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}",
+              "(?:^|[._:/\\\\s-])xox[baprs]-[A-Za-z0-9-]{20,}",
+              "(?:^|[._:/\\\\s-])bearer[\\\\t ]+[A-Za-z0-9._~+/-]{20,}={0,2}",
+              "(?:^|[._:/\\\\s-])eyJ[A-Za-z0-9_-]{10,}\\\\.[A-Za-z0-9_-]{10,}\\\\.[A-Za-z0-9_-]{10,}",
+            ].join("|"),
+            "iu",
+          );''',
+              1,
+          )
+          old_exact_jobs = 'const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 3, 3)'
+          if normalized.count(old_exact_jobs) != 1:
+              raise SystemExit("normalized job bounds drifted")
+          normalized = normalized.replace(
+              old_exact_jobs,
+              'const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 4, 4)',
+              1,
+          )
+          steps_anchor = '''  requireUnique(
+            steps.map((step) => String(step.number)),
+            "GitHub Actions job steps must have unique numbers",
+          );
+          if (
+            conclusion !== "failure"'''
+          steps_replacement = '''  requireUnique(
+            steps.map((step) => String(step.number)),
+            "GitHub Actions job steps must have unique numbers",
+          );
+          if (startedAt === null && steps.length !== 0) {
+            throw new RangeError("GitHub Actions unstarted job cannot contain completed steps");
+          }
+          if (
+            conclusion !== "failure"'''
+          if normalized.count(steps_anchor) != 1:
+              raise SystemExit("normalized step admission anchor drifted")
+          normalized = normalized.replace(steps_anchor, steps_replacement, 1)
+          start = normalized.index('function validateProfileTopology(')
+          end = normalized.index('\nfunction failedStep(', start)
+          topology = r'''function validateProfileTopology(
+            event: ParsedRun["event"],
+            runConclusion: CiRunConclusion,
+            profile: GitHubActionsCiValidationProfile,
+            jobs: readonly ParsedJob[],
+          ): void {
+            if (event !== "workflow_dispatch" && profile !== "full_parallel") {
+              throw new RangeError(
+                "Only manually dispatched CI may use the serial validation profile",
+              );
+            }
+            const byName = new Map(jobs.map((job) => [job.name, job]));
+            const browser = byName.get(
+              CI_BROWSER_EVIDENCE_TOPOLOGIES_V1.full_parallel.jobName,
+            )!;
+            const test = byName.get("test")!;
+            const parity = byName.get("runtime-parity")!;
+            const serial = byName.get("serial-full")!;
+            const evidenceConclusions = new Set<CiRunConclusion>([
+              "failure", "timed_out", "neutral",
+            ]);
+
+            if (profile === "full_parallel") {
+              if (event !== "pull_request" && serial.conclusion !== "skipped") {
+                throw new RangeError(
+                  "Non-pull-request full-parallel CI requires the serial job to be skipped",
+                );
+              }
+              if (runConclusion === "success") {
+                if ([browser, test, parity].some((job) => job.conclusion === "skipped")) {
+                  throw new RangeError(
+                    "Successful full-parallel CI requires every parallel job",
+                  );
+                }
+                if (event === "pull_request" && serial.conclusion === "skipped") {
+                  throw new RangeError(
+                    "Successful pull-request CI requires exact-head serial validation",
+                  );
+                }
+              }
+              if (evidenceConclusions.has(runConclusion)) {
+                const accountable = event === "pull_request"
+                  ? [browser, test, parity, serial]
+                  : [browser, test, parity];
+                if (!accountable.some((job) => job.conclusion === runConclusion)) {
+                  throw new RangeError(
+                    "Terminal full-parallel CI requires positive active-profile failure evidence",
+                  );
+                }
+              }
+              return;
+            }
+
+            if (
+              browser.conclusion !== "skipped"
+              || test.conclusion !== "skipped"
+              || parity.conclusion !== "skipped"
+            ) {
+              throw new RangeError(
+                "Serial-full CI requires every parallel job to be skipped",
+              );
+            }
+            if (runConclusion === "success" && serial.conclusion === "skipped") {
+              throw new RangeError("Successful serial-full CI requires the serial job");
+            }
+            if (
+              evidenceConclusions.has(runConclusion)
+              && serial.conclusion !== runConclusion
+            ) {
+              throw new RangeError(
+                "Terminal serial-full CI requires positive serial failure evidence",
+              );
+            }
+          }
+          '''
+          normalized = normalized[:start] + topology + normalized[end:]
+          diagnostics_anchor = '''function diagnosticsFingerprint(
+            jobName: ParsedJob["name"],
+            artifacts: readonly ParsedArtifact[],
+          ): string | null {
+            const artifactName = jobName === "test"'''
+          diagnostics_replacement = '''function diagnosticsFingerprint(
+            jobName: ParsedJob["name"],
+            artifacts: readonly ParsedArtifact[],
+          ): string | null {
+            if (jobName === CI_BROWSER_EVIDENCE_TOPOLOGIES_V1.full_parallel.jobName) {
+              return null;
+            }
+            const artifactName = jobName === "test"'''
+          if normalized.count(diagnostics_anchor) != 1:
+              raise SystemExit("normalized diagnostics anchor drifted")
+          normalized = normalized.replace(diagnostics_anchor, diagnostics_replacement, 1)
+          normalized_path.write_text(normalized)
+
+          public_path = Path("src/github-actions-ci-receipt.ts")
+          public = public_path.read_text()
+          public = public.replace(
+              '    "(?:^|[._:/\\\\s-])sk-proj-[A-Za-z0-9_-]+",\n    "(?:^|[._:/\\\\s-])sk-[A-Za-z0-9_-]{20,}",',
+              '    "(?:^|[._:/\\\\s-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}",',
+              1,
+          )
+          old_public_jobs = 'const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 3, 3)'
+          if public.count(old_public_jobs) != 1:
+              raise SystemExit("public job bounds drifted")
+          public = public.replace(
+              old_public_jobs,
+              'const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 4, 4)',
+              1,
+          )
+          public_path.write_text(public)
+
+          test_path = Path("test/github-actions-ci-receipt.test.ts")
+          test_path.write_text(r'''import { describe, expect, test } from "bun:test";
+          import {
+            GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
+            compileGitHubActionsCiReceiptV1,
+            type GitHubActionsCiReceiptBundleV1,
+            type GitHubActionsCompletedJobV1,
+            type GitHubActionsCompletedStepV1,
+          } from "../src/github-actions-ci-receipt.ts";
+
+          const candidate = "a".repeat(40);
+          const base = "b".repeat(40);
+          const workflow = "c".repeat(40);
+          const newer = "d".repeat(40);
+          const diagnostics = `sha256:${"e".repeat(64)}`;
+
+          function step(
+            number: number,
+            name: string,
+            conclusion: GitHubActionsCompletedStepV1["conclusion"] = "success",
+          ): GitHubActionsCompletedStepV1 {
+            return { number, name, status: "completed", conclusion };
+          }
+
+          function job(
+            name: GitHubActionsCompletedJobV1["name"],
+            conclusion: GitHubActionsCompletedJobV1["conclusion"],
+            overrides: Partial<GitHubActionsCompletedJobV1> = {},
+          ): GitHubActionsCompletedJobV1 {
+            const ids = {
+              "browser-evidence": 10,
+              test: 20,
+              "runtime-parity": 30,
+              "serial-full": 40,
+            } as const;
+            const noStart = [
+              "skipped", "action_required", "stale", "startup_failure",
+            ].includes(conclusion);
+            return {
+              id: ids[name],
+              runId: 30638086970,
+              runAttempt: 1,
+              headSha: candidate,
+              workflowName: "CI",
+              name,
+              status: "completed",
+              conclusion,
+              createdAt: "2026-07-31T10:00:01Z",
+              startedAt: noStart ? null : "2026-07-31T10:02:00Z",
+              completedAt: noStart
+                ? "2026-07-31T10:00:03Z"
+                : "2026-07-31T10:20:00Z",
+              labels: ["ubuntu-latest"],
+              steps: noStart ? [] : [step(1, "Set up job"), step(2, "Run gate")],
+              ...overrides,
+            };
+          }
+
+          function pullRequestSuccessJobs(): GitHubActionsCompletedJobV1[] {
+            return [
+              job("browser-evidence", "success", {
+                startedAt: "2026-07-31T10:00:30Z",
+                completedAt: "2026-07-31T10:10:00Z",
+              }),
+              job("test", "success"),
+              job("runtime-parity", "success", {
+                startedAt: "2026-07-31T10:01:00Z",
+                completedAt: "2026-07-31T10:05:00Z",
+              }),
+              job("serial-full", "success", {
+                startedAt: "2026-07-31T10:21:00Z",
+                completedAt: "2026-07-31T10:29:00Z",
+              }),
+            ];
+          }
+
+          function bundle(
+            overrides: Partial<GitHubActionsCiReceiptBundleV1> = {},
+          ): GitHubActionsCiReceiptBundleV1 {
+            return {
+              version: GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
+              repository: "teamleaderleo/stensibly",
+              receivedAt: "2026-07-31T10:31:00Z",
+              workflowRevision: workflow,
+              validationProfile: "full_parallel",
+              run: {
+                id: 30638086970,
+                attempt: 1,
+                name: "CI",
+                path: ".github/workflows/ci.yml",
+                event: "pull_request",
+                status: "completed",
+                conclusion: "success",
+                headSha: candidate,
+                createdAt: "2026-07-31T10:00:00Z",
+                completedAt: "2026-07-31T10:30:00Z",
+                pullRequests: [{ number: 704, headSha: candidate, baseSha: base }],
+              },
+              jobs: pullRequestSuccessJobs(),
+              diagnosticsArtifacts: [],
+              ...overrides,
+            };
+          }
+
+          function compile(input: GitHubActionsCiReceiptBundleV1 = bundle()) {
+            return compileGitHubActionsCiReceiptV1(
+              input,
+              () => new Date(input.receivedAt),
+            );
+          }
+
+          function failedBundle(
+            artifacts: GitHubActionsCiReceiptBundleV1["diagnosticsArtifacts"] = [],
+          ): GitHubActionsCiReceiptBundleV1 {
+            return bundle({
+              run: { ...bundle().run, conclusion: "failure" },
+              jobs: [
+                job("browser-evidence", "success"),
+                job("test", "failure", {
+                  steps: [step(1, "Set up job"), step(2, "Run Bun tests", "failure")],
+                }),
+                job("runtime-parity", "success"),
+                job("serial-full", "skipped"),
+              ],
+              diagnosticsArtifacts: artifacts,
+            });
+          }
+
+          describe("signed GitHub Actions CI receipt compiler", () => {
+            test("binds independent workflow bytes and the current pull-request topology", () => {
+              const receipt = compile();
+              expect(receipt).toMatchObject({
+                workflowRunId: 30638086970,
+                workflowAttempt: 1,
+                event: "pull_request",
+                pullRequestNumber: 704,
+                candidateRevision: candidate,
+                baseRevision: base,
+                workflowRevision: workflow,
+                validationProfile: "full_parallel",
+                validationProfileState: "reviewed",
+                concurrencyGroup: "ci-teamleaderleo/stensibly-pr-704",
+                firstJobStartedAt: "2026-07-31T10:00:30.000Z",
+                queueWaitMs: 30_000,
+                durationMs: 1_800_000,
+                supersededByRevision: null,
+                queuePosition: "unknown",
+                authorizesMerge: false,
+                authorizesMutation: false,
+              });
+              expect(receipt.jobs.map(({ name }) => name).sort()).toEqual([
+                "browser-evidence", "runtime-parity", "serial-full", "test",
+              ]);
+              expect(receipt.jobs.find((entry) => entry.name === "runtime-parity"))
+                .toMatchObject({ queuedAt: "2026-07-31T10:00:01.000Z", queueWaitMs: 59_000 });
+              expect(compile(bundle({ workflowRevision: newer })).receiptFingerprint)
+                .not.toBe(receipt.receiptFingerprint);
+            });
+
+            test("binds diagnostics to the exact run attempt and failed job", () => {
+              const artifact = {
+                workflowRunId: 30638086970,
+                workflowRunAttempt: 1,
+                workflowJobId: 20,
+                name: "diagnostics" as const,
+                digest: diagnostics,
+              };
+              const receipt = compile(failedBundle([artifact]));
+              expect(receipt.jobs.find((entry) => entry.name === "test"))
+                .toMatchObject({ failedStep: "Run Bun tests", diagnosticsFingerprint: diagnostics });
+              expect(() => compile(failedBundle([{ ...artifact, workflowRunAttempt: 2 }])))
+                .toThrow("another run attempt");
+              expect(() => compile(failedBundle([{ ...artifact, workflowJobId: 30 }])))
+                .toThrow("another workflow job");
+              expect(() => compile(bundle({ diagnosticsArtifacts: [artifact] })))
+                .toThrow("requires its failed canonical job");
+            });
+
+            test("rejects failed steps hidden under a non-failed job", () => {
+              expect(() => compile(bundle({
+                jobs: [
+                  job("browser-evidence", "success"),
+                  job("test", "success", { steps: [step(1, "continued failure", "failure")] }),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "success"),
+                ],
+              }))).toThrow("non-failed job cannot contain a failed step");
+            });
+
+            test("records cancellation without inventing supersession causality", () => {
+              const input = bundle({
+                run: { ...bundle().run, conclusion: "cancelled" },
+                jobs: [
+                  job("browser-evidence", "cancelled", { startedAt: null, completedAt: "2026-07-31T10:04:00Z", steps: [] }),
+                  job("test", "cancelled", { startedAt: null, completedAt: "2026-07-31T10:04:00Z", steps: [] }),
+                  job("runtime-parity", "cancelled", { startedAt: null, completedAt: "2026-07-31T10:04:00Z", steps: [] }),
+                  job("serial-full", "skipped"),
+                ],
+              });
+              expect(compile(input)).toMatchObject({
+                conclusion: "cancelled",
+                supersededByRevision: null,
+                firstJobStartedAt: null,
+                queueWaitMs: null,
+              });
+              const arbitrary = { ...input, supersededByRevision: newer };
+              expect(() => compileGitHubActionsCiReceiptV1(
+                arbitrary,
+                () => new Date(input.receivedAt),
+              )).toThrow("contains unknown fields");
+            });
+
+            test("requires zero steps for every job that never started", () => {
+              expect(() => compile(bundle({
+                jobs: [
+                  job("browser-evidence", "success"),
+                  job("test", "success"),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "skipped", { steps: [step(1, "Skipped setup", "skipped")] }),
+                ],
+              }))).toThrow("unstarted job cannot contain completed steps");
+              expect(() => compile(bundle({
+                run: { ...bundle().run, conclusion: "cancelled" },
+                jobs: [
+                  job("browser-evidence", "cancelled", { startedAt: null, completedAt: "2026-07-31T10:04:00Z", steps: [step(1, "Cancelled setup", "cancelled")] }),
+                  job("test", "cancelled", { startedAt: null, completedAt: "2026-07-31T10:04:00Z", steps: [] }),
+                  job("runtime-parity", "cancelled", { startedAt: null, completedAt: "2026-07-31T10:04:00Z", steps: [] }),
+                  job("serial-full", "skipped"),
+                ],
+              }))).toThrow("unstarted job cannot contain completed steps");
+            });
+
+            test("compiles full-parallel push and dispatch topologies", () => {
+              for (const event of ["push", "workflow_dispatch"] as const) {
+                const input = bundle({
+                  workflowRevision: candidate,
+                  run: {
+                    ...bundle().run,
+                    event,
+                    headSha: candidate,
+                    pullRequests: [],
+                  },
+                  jobs: [
+                    job("browser-evidence", "success"),
+                    job("test", "success"),
+                    job("runtime-parity", "success"),
+                    job("serial-full", "skipped"),
+                  ],
+                });
+                expect(compile(input)).toMatchObject({ event, validationProfile: "full_parallel" });
+              }
+            });
+
+            test("compiles the opt-in serial exact-ref topology", () => {
+              const input = bundle({
+                workflowRevision: candidate,
+                validationProfile: "serial_full",
+                run: {
+                  ...bundle().run,
+                  event: "workflow_dispatch",
+                  headSha: candidate,
+                  pullRequests: [],
+                },
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "success", {
+                    startedAt: "2026-07-31T10:01:30Z",
+                    completedAt: "2026-07-31T10:28:00Z",
+                  }),
+                ],
+              });
+              expect(compile(input)).toMatchObject({
+                event: "workflow_dispatch",
+                baseRevision: null,
+                workflowRevision: candidate,
+                validationProfile: "serial_full",
+                concurrencyGroup: `ci-teamleaderleo/stensibly-dispatch-${candidate}-serial_full`,
+              });
+              expect(() => compile({ ...input, workflowRevision: newer }))
+                .toThrow("non-pull-request workflow revision must equal the run head");
+            });
+
+            test("requires positive failure evidence from the active profile", () => {
+              expect(() => compile(bundle({
+                run: { ...bundle().run, conclusion: "failure" },
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "skipped"),
+                ],
+              }))).toThrow("positive active-profile failure evidence");
+
+              expect(compile(bundle({
+                run: { ...bundle().run, conclusion: "failure" },
+                jobs: [
+                  job("browser-evidence", "failure", { steps: [step(1, "Run browser evidence", "failure")] }),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "skipped"),
+                ],
+              })).toMatchObject({ conclusion: "failure" });
+
+              const serialBase = bundle({
+                workflowRevision: candidate,
+                validationProfile: "serial_full",
+                run: {
+                  ...bundle().run,
+                  event: "workflow_dispatch",
+                  conclusion: "failure",
+                  headSha: candidate,
+                  pullRequests: [],
+                },
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "failure", { steps: [step(1, "Run serial gate", "failure")] }),
+                ],
+              });
+              expect(compile(serialBase)).toMatchObject({ conclusion: "failure" });
+              expect(() => compile({
+                ...serialBase,
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "skipped"),
+                ],
+              })).toThrow("positive serial failure evidence");
+            });
+
+            test("rejects cross-run, cross-attempt, and browser topology drift", () => {
+              expect(() => compile(bundle({
+                jobs: [
+                  job("browser-evidence", "success"),
+                  job("test", "success", { runId: 99 }),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "success"),
+                ],
+              }))).toThrow("another workflow run");
+              expect(() => compile(bundle({
+                jobs: [
+                  job("browser-evidence", "success", { runAttempt: 2 }),
+                  job("test", "success"),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "success"),
+                ],
+              }))).toThrow("another workflow attempt");
+              expect(() => compile(bundle({
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "success"),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "success"),
+                ],
+              }))).toThrow("every parallel job");
+              expect(() => compile(bundle({
+                jobs: [
+                  job("browser-evidence", "success"),
+                  job("test", "success"),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "skipped"),
+                ],
+              }))).toThrow("exact-head serial validation");
+            });
+
+            test("admits benign sk and sk-proj prose while rejecting realistic credentials", () => {
+              const benign = failedBundle();
+              benign.repository = "teamleaderleo/task-sk-proj-research";
+              benign.jobs = [
+                job("browser-evidence", "success"),
+                job("test", "failure", {
+                  labels: ["runner-sk-proj-review"],
+                  steps: [step(1, "Run sk-proj-review checks", "failure")],
+                }),
+                job("runtime-parity", "success"),
+                job("serial-full", "skipped"),
+              ];
+              const receipt = compile(benign);
+              expect(receipt.repository).toBe("teamleaderleo/task-sk-proj-research");
+              expect(receipt.jobs.find((entry) => entry.name === "test"))
+                .toMatchObject({
+                  requestedLabels: ["runner-sk-proj-review"],
+                  failedStep: "Run sk-proj-review checks",
+                });
+
+              const secret = `context.sk-proj-${"A".repeat(24)}`;
+              let error: unknown;
+              try {
+                compile(failedBundle().jobs.length && bundle({
+                  run: { ...bundle().run, conclusion: "failure" },
+                  jobs: [
+                    job("browser-evidence", "success"),
+                    job("test", "failure", { steps: [step(1, secret, "failure")] }),
+                    job("runtime-parity", "success"),
+                    job("serial-full", "skipped"),
+                  ],
+                }));
+              } catch (caught) { error = caught; }
+              expect((error as Error).message).toBe("GitHub Actions step name is invalid");
+              expect((error as Error).message).not.toContain(secret);
+            });
+
+            test("keeps descriptor diagnostics fixed and invokes zero getters", () => {
+              let reads = 0;
+              const hostile = bundle() as unknown as Record<PropertyKey, unknown>;
+              const hostileKey = `credential:github_pat_${"A".repeat(30)}`;
+              Object.defineProperty(hostile, hostileKey, {
+                enumerable: true,
+                get() { reads += 1; return "secret"; },
+              });
+              let error: unknown;
+              try {
+                compileGitHubActionsCiReceiptV1(
+                  hostile,
+                  () => new Date("2026-07-31T10:31:00Z"),
+                );
+              } catch (caught) { error = caught; }
+              expect((error as Error).message)
+                .toBe("GitHub Actions CI receipt bundle contains unknown fields");
+              expect((error as Error).message).not.toContain(hostileKey);
+              expect(reads).toBe(0);
+            });
+
+            test("collapses invalid timestamps to fixed receipt prose", () => {
+              expect(() => compile(bundle({ receivedAt: "2026-13-31T10:31:00Z" })))
+                .toThrow("GitHub Actions receipt time must be a canonical timestamp");
+            });
+          });
+          ''')
+
+          docs_path = Path("docs/github-actions-ci-receipt-emitter.md")
+          docs = docs_path.read_text()
+          docs = docs.replace(
+              "- exactly one record for each canonical `test`, `runtime-parity`, and `serial-full` job;",
+              "- exactly one record for each canonical `browser-evidence`, `test`, `runtime-parity`, and `serial-full` job;",
+          )
+          old_topology = "`full_parallel` requires `test` and `runtime-parity`; `serial-full` remains skipped. `serial_full` is admitted only for `workflow_dispatch`, requires `serial-full`, and keeps both parallel jobs skipped. All profiles carry the same ordered six-command contract."
+          new_topology = "`full_parallel` requires the landed browser-evidence adjunct beside `test` and `runtime-parity`. Pull-request runs additionally require the automatic exact-head `serial-full` job; push and full-parallel manual runs retain it as skipped. `serial_full` is admitted only for `workflow_dispatch`, requires `serial-full`, and keeps all three parallel jobs skipped. All profiles retain the same ordered six-command core contract. Browser acceptance remains a separate `ci-browser-evidence-profile/v1` receipt, so this queue receipt records browser job timing and outcome without claiming the retained browser artifact proves acceptance."
+          if old_topology not in docs:
+              raise SystemExit("documentation topology anchor drifted")
+          docs = docs.replace(old_topology, new_topology)
+          docs_path.write_text(docs)
+          PY
+          git diff --check
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Run focused validation
+        run: |
+          bun run typecheck
+          bun test test/ci-queue-receipt-cancelled-before-start.test.ts test/github-actions-ci-receipt.test.ts test/ci-browser-evidence-workflow.test.ts
+      - name: Publish clean repaired head
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/plover-783-browser-receipt-repair.yml
+          git add docs/github-actions-ci-receipt-emitter.md src/github-actions-ci-receipt-normalized.ts src/github-actions-ci-receipt.ts test/github-actions-ci-receipt.test.ts
+          git diff --cached --check
+          git commit -m "Consume browser evidence in signed CI receipts"
+          git push origin HEAD:tern/700-signed-actions-ci-receipts
