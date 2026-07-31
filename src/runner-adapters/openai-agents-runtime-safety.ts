@@ -14,6 +14,10 @@ const limits = {
   functionSource: 100_000,
 } as const;
 
+const digestPattern = /^sha256:[0-9a-f]{64}$/;
+const exactTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
+
 export interface OpenAIAgentsRuntimeToolManifestV1 {
   readonly qualifiedName: string;
   readonly executableId: string;
@@ -29,7 +33,10 @@ export interface OpenAIAgentsRuntimeToolManifestV1 {
 export interface OpenAIAgentsRuntimeAgentManifestV1 {
   readonly name: string;
   readonly instructionsDigest: string;
+  readonly handoffDescriptionDigest: string;
+  readonly modelSettingsDigest: string;
   readonly toolUseBehaviorDigest: string;
+  readonly resetToolChoice: boolean;
   readonly tools: readonly OpenAIAgentsRuntimeToolManifestV1[];
   readonly handoffAgentNames: readonly string[];
 }
@@ -69,7 +76,7 @@ export function bindOpenAIAgentsExecutableToolV1<
 
 /**
  * Build a bounded content-minimised identity from the actual SDK Agent graph.
- * Only the first-slice direct Agent handoff form and function tools are accepted.
+ * Only the model-free first-slice Agent, handoff, and function-tool surface is admitted.
  */
 export function buildOpenAIAgentsRuntimeManifestV1(
   rootAgent: Agent<any, any>,
@@ -102,12 +109,8 @@ export function buildOpenAIAgentsRuntimeManifestV1(
       );
     }
     seenNames.add(name);
+    assertFirstSliceAgentPolicy(agent, name);
 
-    if (!Array.isArray(agent.tools) || agent.tools.length > limits.toolsPerAgent) {
-      throw new RangeError(
-        `OpenAI Agents runtime agent ${name} has an invalid tool inventory`,
-      );
-    }
     const tools = agent.tools.map((tool, index) => {
       if (!isRecord(tool) || tool.type !== "function") {
         throw new RangeError(
@@ -115,6 +118,7 @@ export function buildOpenAIAgentsRuntimeManifestV1(
         );
       }
       const functionTool = tool as FunctionTool<any, any, any>;
+      assertFirstSliceFunctionToolPolicy(functionTool, name, index);
       const toolName = boundedIdentifier(
         functionTool.name,
         `OpenAI Agents runtime agent ${name} tool name`,
@@ -152,7 +156,7 @@ export function buildOpenAIAgentsRuntimeManifestV1(
           functionTool.parameters,
           `OpenAI Agents runtime tool ${qualifiedName} parameters`,
         ),
-        strict: functionTool.strict === true,
+        strict: functionTool.strict,
         deferLoading: functionTool.deferLoading === true,
         invokeDigest: digestFunction(
           functionTool.invoke,
@@ -169,14 +173,6 @@ export function buildOpenAIAgentsRuntimeManifestV1(
       } satisfies OpenAIAgentsRuntimeToolManifestV1;
     }).sort((left, right) => compareText(left.qualifiedName, right.qualifiedName));
 
-    if (
-      !Array.isArray(agent.handoffs)
-      || agent.handoffs.length > limits.handoffsPerAgent
-    ) {
-      throw new RangeError(
-        `OpenAI Agents runtime agent ${name} has an invalid handoff inventory`,
-      );
-    }
     const handoffNames = new Set<string>();
     const handoffAgentNames = agent.handoffs.map((handoff, index) => {
       if (!(handoff instanceof Agent)) {
@@ -201,46 +197,47 @@ export function buildOpenAIAgentsRuntimeManifestV1(
     agents.push({
       name,
       instructionsDigest: digestInstruction(agent.instructions, name),
+      handoffDescriptionDigest: digestText(
+        agent.handoffDescription,
+        `OpenAI Agents runtime agent ${name} handoff description`,
+      ),
+      modelSettingsDigest: digestCanonical(
+        agent.modelSettings,
+        `OpenAI Agents runtime agent ${name} model settings`,
+      ),
       toolUseBehaviorDigest: digestToolUseBehavior(agent.toolUseBehavior, name),
+      resetToolChoice: agent.resetToolChoice,
       tools,
       handoffAgentNames,
     });
   }
 
   agents.sort((left, right) => compareText(left.name, right.name));
-  const body = {
-    version: 1 as const,
+  return admitRuntimeManifest({
+    version: 1,
     rootAgentName: boundedIdentifier(
       rootAgent.name,
       "OpenAI Agents runtime root agent name",
     ),
     agents,
-  };
-  return deepFreeze({
-    ...body,
-    fingerprint: sha256(stableJson(body)),
+    fingerprint: sha256(stableJson({
+      version: 1,
+      rootAgentName: rootAgent.name,
+      agents,
+    })),
   });
 }
 
+/**
+ * Re-admit checkpoint-loaded evidence through an exact inert schema before comparison.
+ */
 export function requireOpenAIAgentsRuntimeManifestV1(
-  expected: OpenAIAgentsRuntimeManifestV1,
-  current: OpenAIAgentsRuntimeManifestV1,
+  expectedValue: unknown,
+  currentValue: unknown,
 ): OpenAIAgentsRuntimeManifestV1 {
-  if (
-    expected.version !== 1
-    || current.version !== 1
-    || expected.fingerprint !== sha256(stableJson({
-      version: expected.version,
-      rootAgentName: expected.rootAgentName,
-      agents: expected.agents,
-    }))
-    || current.fingerprint !== sha256(stableJson({
-      version: current.version,
-      rootAgentName: current.rootAgentName,
-      agents: current.agents,
-    }))
-    || expected.fingerprint !== current.fingerprint
-  ) {
+  const expected = admitRuntimeManifest(expectedValue);
+  const current = admitRuntimeManifest(currentValue);
+  if (expected.fingerprint !== current.fingerprint) {
     throw new RangeError("OpenAI Agents runtime graph identity is stale");
   }
   return current;
@@ -251,34 +248,333 @@ export function requireOpenAIAgentsRuntimeManifestV1(
  */
 export function openAIAgentsObservationTimeV1(
   now: () => Date,
-  issuedAt: string,
+  issuedAtValue: string,
   ordinal: number,
 ): string {
-  let current: Date;
+  let currentTime: number;
   try {
-    current = now();
+    const current = now();
+    currentTime = Date.prototype.getTime.call(current);
   } catch {
-    throw new RangeError("OpenAI Agents adapter clock is invalid");
+    throw invalidClock();
   }
-  const currentTime = current instanceof Date ? current.getTime() : Number.NaN;
-  const issuedTime = Date.parse(issuedAt);
+  const issuedTime = canonicalTimestampMilliseconds(issuedAtValue);
   if (
     !Number.isFinite(currentTime)
-    || !Number.isFinite(issuedTime)
     || !Number.isSafeInteger(ordinal)
     || ordinal < 0
   ) {
-    throw new RangeError("OpenAI Agents adapter clock is invalid");
+    throw invalidClock();
   }
   const observedTime = Math.max(currentTime, issuedTime) + ordinal;
-  if (!Number.isFinite(observedTime)) {
-    throw new RangeError("OpenAI Agents adapter clock is invalid");
-  }
   try {
-    return new Date(observedTime).toISOString();
+    const observedAt = new Date(observedTime).toISOString();
+    if (!exactTimestampPattern.test(observedAt)) throw invalidClock();
+    return observedAt;
   } catch {
-    throw new RangeError("OpenAI Agents adapter clock is invalid");
+    throw invalidClock();
   }
+}
+
+function assertFirstSliceAgentPolicy(agent: Agent<any, any>, name: string): void {
+  if (!Array.isArray(agent.tools) || agent.tools.length > limits.toolsPerAgent) {
+    throw new RangeError(
+      `OpenAI Agents runtime agent ${name} has an invalid tool inventory`,
+    );
+  }
+  if (!Array.isArray(agent.handoffs) || agent.handoffs.length > limits.handoffsPerAgent) {
+    throw new RangeError(
+      `OpenAI Agents runtime agent ${name} has an invalid handoff inventory`,
+    );
+  }
+  if (
+    agent.prompt !== undefined
+    || agent.mcpServers.length !== 0
+    || Object.keys(agent.mcpConfig).length !== 0
+    || agent.inputGuardrails.length !== 0
+    || agent.outputGuardrails.length !== 0
+    || agent.outputType !== "text"
+    || typeof agent.resetToolChoice !== "boolean"
+  ) {
+    throw new RangeError(
+      `OpenAI Agents runtime agent ${name} uses unsupported first-slice policy`,
+    );
+  }
+}
+
+function assertFirstSliceFunctionToolPolicy(
+  tool: FunctionTool<any, any, any>,
+  agentName: string,
+  index: number,
+): void {
+  const label = `OpenAI Agents runtime agent ${agentName} tool ${index + 1}`;
+  const allowedKeys = new Set([
+    "type",
+    "name",
+    "description",
+    "parameters",
+    "strict",
+    "deferLoading",
+    "providerData",
+    "invoke",
+    "needsApproval",
+    "timeoutMs",
+    "timeoutBehavior",
+    "timeoutErrorFunction",
+    "isEnabled",
+    "inputGuardrails",
+    "outputGuardrails",
+    "customDataExtractor",
+  ]);
+  if (
+    Object.getOwnPropertySymbols(tool).length !== 0
+    || Object.keys(tool).some((key) => !allowedKeys.has(key))
+    || tool.providerData !== undefined
+    || "allowedCallers" in tool
+    || "outputSchema" in tool
+    || "errorFunction" in tool
+    || tool.timeoutMs !== undefined
+    || tool.timeoutBehavior !== "error_as_result"
+    || tool.timeoutErrorFunction !== undefined
+    || tool.customDataExtractor !== undefined
+    || !Array.isArray(tool.inputGuardrails)
+    || tool.inputGuardrails.length !== 0
+    || !Array.isArray(tool.outputGuardrails)
+    || tool.outputGuardrails.length !== 0
+    || typeof tool.strict !== "boolean"
+    || typeof tool.deferLoading !== "boolean"
+  ) {
+    throw new RangeError(`${label} uses unsupported first-slice policy`);
+  }
+}
+
+function admitRuntimeManifest(value: unknown): OpenAIAgentsRuntimeManifestV1 {
+  const input = strictRecord(
+    value,
+    "OpenAI Agents runtime manifest",
+    ["version", "rootAgentName", "agents", "fingerprint"],
+  );
+  if (input.version !== 1) {
+    throw new RangeError("OpenAI Agents runtime manifest version is invalid");
+  }
+  const rootAgentName = boundedIdentifier(
+    input.rootAgentName,
+    "OpenAI Agents runtime root agent name",
+  );
+  const agentValues = strictArray(
+    input.agents,
+    "OpenAI Agents runtime agents",
+    limits.agents,
+  );
+  const seenNames = new Set<string>();
+  const seenExecutableIds = new Set<string>();
+  const agents = agentValues.map((entry, index) => {
+    const agent = strictRecord(
+      entry,
+      `OpenAI Agents runtime agent ${index + 1}`,
+      [
+        "name",
+        "instructionsDigest",
+        "handoffDescriptionDigest",
+        "modelSettingsDigest",
+        "toolUseBehaviorDigest",
+        "resetToolChoice",
+        "tools",
+        "handoffAgentNames",
+      ],
+    );
+    const name = boundedIdentifier(
+      agent.name,
+      `OpenAI Agents runtime agent ${index + 1} name`,
+    );
+    if (seenNames.has(name)) {
+      throw new RangeError(
+        `OpenAI Agents runtime graph duplicates agent identity ${name}`,
+      );
+    }
+    seenNames.add(name);
+    const toolValues = strictArray(
+      agent.tools,
+      `OpenAI Agents runtime agent ${name} tools`,
+      limits.toolsPerAgent,
+    );
+    const seenQualifiedNames = new Set<string>();
+    const tools = toolValues.map((toolValue, toolIndex) => {
+      const tool = strictRecord(
+        toolValue,
+        `OpenAI Agents runtime agent ${name} tool ${toolIndex + 1}`,
+        [
+          "qualifiedName",
+          "executableId",
+          "descriptionDigest",
+          "parametersDigest",
+          "strict",
+          "deferLoading",
+          "invokeDigest",
+          "approvalDigest",
+          "enabledDigest",
+        ],
+      );
+      const qualifiedName = boundedIdentifier(
+        tool.qualifiedName,
+        `OpenAI Agents runtime agent ${name} qualified tool name`,
+      );
+      const executableId = boundedIdentifier(
+        tool.executableId,
+        `OpenAI Agents runtime agent ${name} executable tool ID`,
+      );
+      if (seenQualifiedNames.has(qualifiedName)) {
+        throw new RangeError(
+          `OpenAI Agents runtime graph duplicates qualified tool identity ${qualifiedName}`,
+        );
+      }
+      if (seenExecutableIds.has(executableId)) {
+        throw new RangeError(
+          `OpenAI Agents runtime graph duplicates executable tool identity ${executableId}`,
+        );
+      }
+      seenQualifiedNames.add(qualifiedName);
+      seenExecutableIds.add(executableId);
+      return {
+        qualifiedName,
+        executableId,
+        descriptionDigest: exactDigest(tool.descriptionDigest, "Description digest"),
+        parametersDigest: exactDigest(tool.parametersDigest, "Parameters digest"),
+        strict: exactBoolean(tool.strict, "Tool strictness"),
+        deferLoading: exactBoolean(tool.deferLoading, "Tool deferred-loading flag"),
+        invokeDigest: exactDigest(tool.invokeDigest, "Invocation digest"),
+        approvalDigest: exactDigest(tool.approvalDigest, "Approval digest"),
+        enabledDigest: exactDigest(tool.enabledDigest, "Enablement digest"),
+      };
+    });
+    const handoffValues = strictArray(
+      agent.handoffAgentNames,
+      `OpenAI Agents runtime agent ${name} handoffs`,
+      limits.handoffsPerAgent,
+    );
+    const handoffNames = new Set<string>();
+    const handoffAgentNames = handoffValues.map((handoff, handoffIndex) => {
+      const handoffName = boundedIdentifier(
+        handoff,
+        `OpenAI Agents runtime agent ${name} handoff ${handoffIndex + 1}`,
+      );
+      if (handoffNames.has(handoffName)) {
+        throw new RangeError(
+          `OpenAI Agents runtime agent ${name} duplicates handoff identity ${handoffName}`,
+        );
+      }
+      handoffNames.add(handoffName);
+      return handoffName;
+    });
+    return {
+      name,
+      instructionsDigest: exactDigest(agent.instructionsDigest, "Instructions digest"),
+      handoffDescriptionDigest: exactDigest(
+        agent.handoffDescriptionDigest,
+        "Handoff-description digest",
+      ),
+      modelSettingsDigest: exactDigest(agent.modelSettingsDigest, "Model-settings digest"),
+      toolUseBehaviorDigest: exactDigest(
+        agent.toolUseBehaviorDigest,
+        "Tool-use-behavior digest",
+      ),
+      resetToolChoice: exactBoolean(agent.resetToolChoice, "Reset-tool-choice flag"),
+      tools,
+      handoffAgentNames,
+    };
+  });
+  const fingerprint = exactDigest(input.fingerprint, "Manifest fingerprint");
+  const body = { version: 1 as const, rootAgentName, agents };
+  if (fingerprint !== sha256(stableJson(body))) {
+    throw new RangeError("OpenAI Agents runtime manifest fingerprint is invalid");
+  }
+  return deepFreeze({ ...body, fingerprint });
+}
+
+function strictRecord(
+  value: unknown,
+  label: string,
+  expectedKeys: readonly string[],
+): Record<string, unknown> {
+  if (!isRecord(value)) throw new RangeError(`${label} must be a plain object`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new RangeError(`${label} must be a plain object`);
+  }
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw new RangeError(`${label} contains a symbol field`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const actualKeys = Object.keys(descriptors).sort(compareText);
+  const canonicalExpected = [...expectedKeys].sort(compareText);
+  if (stableJson(actualKeys) !== stableJson(canonicalExpected)) {
+    throw new RangeError(`${label} fields are invalid`);
+  }
+  const output: Record<string, unknown> = {};
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (
+      descriptor === undefined
+      || descriptor.enumerable !== true
+      || !("value" in descriptor)
+    ) {
+      throw new RangeError(`${label} field ${key} must be an enumerable data property`);
+    }
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
+function strictArray(
+  value: unknown,
+  label: string,
+  maximum: number,
+): readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new RangeError(`${label} must be a bounded array`);
+  }
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new RangeError(`${label} must use the default array prototype`);
+  }
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw new RangeError(`${label} contains a symbol field`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const allowed = new Set(["length", ...value.map((_, index) => String(index))]);
+  if (Object.keys(descriptors).some((key) => !allowed.has(key))) {
+    throw new RangeError(`${label} contains an unknown field`);
+  }
+  const output: unknown[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (
+      descriptor === undefined
+      || descriptor.enumerable !== true
+      || !("value" in descriptor)
+    ) {
+      throw new RangeError(`${label} must contain dense enumerable data entries`);
+    }
+    output.push(descriptor.value);
+  }
+  return output;
+}
+
+function canonicalTimestampMilliseconds(value: unknown): number {
+  if (typeof value !== "string" || !exactTimestampPattern.test(value)) {
+    throw invalidClock();
+  }
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) throw invalidClock();
+  try {
+    if (new Date(milliseconds).toISOString() !== value) throw invalidClock();
+  } catch {
+    throw invalidClock();
+  }
+  return milliseconds;
+}
+
+function invalidClock(): RangeError {
+  return new RangeError("OpenAI Agents adapter clock is invalid");
 }
 
 function digestInstruction(
@@ -339,13 +635,25 @@ function digestCanonical(value: unknown, label: string): string {
   }
 }
 
+function exactDigest(value: unknown, label: string): string {
+  if (typeof value !== "string" || !digestPattern.test(value)) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return value;
+}
+
+function exactBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new RangeError(`${label} is invalid`);
+  return value;
+}
+
 function boundedIdentifier(value: unknown, label: string): string {
   if (
     typeof value !== "string"
     || value.length === 0
     || value.length > limits.identifier
     || value.trim() !== value
-    || /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u.test(value)
+    || unsafeTextPattern.test(value)
   ) {
     throw new RangeError(`${label} is invalid`);
   }
