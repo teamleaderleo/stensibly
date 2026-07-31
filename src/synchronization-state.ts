@@ -742,8 +742,8 @@ function exactRecord(
   if (Object.getOwnPropertySymbols(value).length !== 0) {
     throw new TypeError(`${label} must not contain symbol keys`);
   }
-  const keys = Object.keys(value);
-  if (keys.length !== fields.length || fields.some((field) => !keys.includes(field))) {
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== fields.length || fields.some((field) => !names.includes(field))) {
     throw new TypeError(`${label} fields were invalid`);
   }
   for (const field of fields) {
@@ -762,18 +762,23 @@ function denseArray(value: unknown, maximum: number, label: string): unknown[] {
   if (Object.getOwnPropertySymbols(value).length !== 0) {
     throw new TypeError(`${label} must not contain symbol keys`);
   }
-  const keys = Object.keys(value);
-  if (keys.length !== value.length) {
+  const names = Object.getOwnPropertyNames(value);
+  if (
+    names.length !== value.length + 1
+    || names[names.length - 1] !== "length"
+    || names.slice(0, -1).some((name, index) => name !== String(index))
+  ) {
     throw new TypeError(`${label} must be dense and undecorated`);
   }
   for (let index = 0; index < value.length; index += 1) {
-    if (keys[index] !== String(index)) {
-      throw new TypeError(`${label} must be dense and undecorated`);
-    }
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       throw new TypeError(`${label} entries must be enumerable data properties`);
     }
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (!lengthDescriptor || !("value" in lengthDescriptor) || lengthDescriptor.enumerable) {
+    throw new TypeError(`${label} length must be a non-enumerable data property`);
   }
   return value;
 }
