@@ -5,6 +5,7 @@ import {
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 import {
+  normalizeGitHubRepository,
   sha256,
   stableJson,
 } from "./github-provider-validation.js";
@@ -155,8 +156,6 @@ const providerResultKeys = [
   "comments",
 ] as const;
 
-const repositoryPattern =
-  /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?\/[a-z0-9](?:[a-z0-9_.-]{0,99})$/u;
 const fullRevisionPattern = /^[a-f0-9]{40}$/u;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/u;
 const providerRequestPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/u;
@@ -601,13 +600,23 @@ function repositoryName(value: unknown): string {
   if (
     typeof value !== "string"
     || value !== value.toLowerCase()
-    || value.length > 139
-    || !repositoryPattern.test(value)
+    || value.trim() !== value
     || unsafeTextPattern.test(value)
   ) {
     throw new RangeError("GitHub reconciliation repository is invalid");
   }
-  return value;
+  let normalized: string;
+  try {
+    normalized = normalizeGitHubRepository(value);
+  } catch {
+    throw new RangeError("GitHub reconciliation repository is invalid");
+  }
+  if (normalized !== value) {
+    throw new RangeError(
+      "GitHub reconciliation repository must use exact normalized identity",
+    );
+  }
+  return normalized;
 }
 
 function nullableRepository(value: unknown, label: string): string | null {
