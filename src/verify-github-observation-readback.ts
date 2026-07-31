@@ -362,7 +362,7 @@ async function readWithDeadline(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<ReadableStreamReadResult<Uint8Array>> {
+) {
   if (signal.aborted) {
     await cancelReader(reader);
     throw timeoutError(timeoutMs);
