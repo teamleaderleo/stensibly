@@ -2,7 +2,7 @@
 
 **Status:** living gallery of current-main examples  
 **Owner:** #693  
-**Source pin for this edition:** `e6a586a0d5d8f0693b295680e89bca699ce41417`
+**Source pin for this edition:** `3cb781b530550ae0274b5c1f166ec289918eabce`
 
 ## In simple words / purpose
 
@@ -71,18 +71,10 @@ the meaning of the record.
 
 ### Tests worth reading
 
-The focused test covers:
-
-- null-prototype acceptance and inherited-record rejection;
-- accessor counters proving zero getter execution;
-- hidden, symbol, unknown, sparse, decorated, and custom-prototype inputs;
-- padded and full-width aliases for projects, IDs, installation IDs, account logins,
-  repository inputs, fingerprints, and timestamps;
-- mixed-case canonical aliases and duplicate aliases;
-- empty repository inventory as zero authority;
-- cross-owner repositories;
-- revoked binding preservation and authority denial;
-- frozen output.
+The focused test covers null-prototype records, accessor counters, hidden and symbol
+fields, sparse and decorated arrays, padded and full-width aliases, duplicate canonical
+repositories, empty inventories, cross-owner repositories, revoked bindings, exact
+timestamps, and frozen output.
 
 ### Limits
 
@@ -125,14 +117,9 @@ command shape cannot prove the command may execute now.
 
 ### Tests worth reading
 
-The focused test proves:
-
-- start and resume behavior through one guard;
-- identity preservation and frozen input;
-- exact issue-time acceptance;
-- one millisecond before issue rejection;
-- exact expiry and later rejection;
-- invalid trusted clock rejection without mutating the command.
+The focused test proves start and resume behavior, identity preservation, frozen input,
+exact issue-time acceptance, pre-issue rejection, exact-expiry rejection, later-expiry
+rejection, and invalid trusted-clock handling.
 
 ### Limits
 
@@ -180,17 +167,9 @@ or revocation that closes the wrong authority record.
 
 ### Tests worth reading
 
-The store tests cover:
-
-- exact observation replay;
-- conflicting identity/timestamp reuse;
-- installation ownership;
-- chronological rejection;
-- active, suspended, and revoked connection projections;
-- binding creation, exact revocation, duplicate active binding rejection, and reopen;
-- empty repository inventory removing usable binding authority;
-- persistence across store instances;
-- admitted frozen reads.
+The store tests cover exact replay, identity conflict, installation ownership,
+chronological rejection, current status projection, exact revocation, reopen, empty
+repository inventory, persistence across store instances, and frozen admitted reads.
 
 ### Limits
 
@@ -232,15 +211,13 @@ executes getters and changes after validation.
   project attachment, binding, connection, actor, client, grant, and approval identities
   before dispatch.
 - Persisted connection and binding values are re-admitted before use.
-- Authority output is admitted by descriptors, rejects unknown/decorated fields, and
-  denies grant or approval identities on a denied decision.
-- Provider results pass a bounded descriptor walk: plain objects, dense default arrays,
+- Authority output is admitted by descriptors and denies grant or approval identities on
+  a denied decision.
+- Provider results pass a bounded descriptor walk with plain objects, dense arrays,
   finite values, node/depth/byte limits, canonical keys, zero getter execution, deep
-  freezing, deterministic hashing.
+  freezing, and deterministic hashing.
 - The receipt omits the credential reference while retaining bounded provider request,
   parameter, result, attachment, binding, and catalogue identities.
-- Public dispatch remained disabled until the surrounding provider path could satisfy
-  the same contracts.
 
 ### Invariant demonstrated
 
@@ -249,18 +226,10 @@ executes getters and changes after validation.
 
 ### Tests worth reading
 
-The tests prove:
-
-- unsupported tool denial and repository-argument override denial;
-- immutable commit refs and exact tool/SHA bytes;
-- zero adapter dispatch for stale catalogue, attachment, binding, connection, and
-  authority failures;
-- re-admission of structurally typed records;
-- secret-shaped authority identity rejection;
-- accessor counters and hidden/symbol/decorated provider results;
-- sparse arrays, custom prototypes, depth/node/byte bounds, non-finite numbers, and
-  frozen nested results;
-- deterministic receipt fingerprints and credential omission.
+The tests prove unsupported-tool and repository-override denial, immutable commit refs,
+exact tool/SHA bytes, zero dispatch for stale authority, runtime re-admission,
+secret-shaped identity rejection, accessor counters, decorated result rejection,
+JSON bounds, frozen nested results, deterministic fingerprints, and credential omission.
 
 ### Limits
 
@@ -270,6 +239,129 @@ The tests prove:
   grant execution.
 - Deep descriptor walking has a cost; the node, depth, and byte bounds keep it suitable
   for bounded read results.
+
+## 5. Exact GitHub App installation permission profiles
+
+**Study:**
+
+- [`src/github-app-installation-token.ts`](../src/github-app-installation-token.ts)
+- [`test/github-app-installation-permission-admission.test.ts`](../test/github-app-installation-permission-admission.test.ts)
+- [`test/github-app-installation-permission-profile.test.ts`](../test/github-app-installation-permission-profile.test.ts)
+- [`test/github-app-installation-response-bound.test.ts`](../test/github-app-installation-response-bound.test.ts)
+- merged through #738, squash commit `e6a586a0d5d8f0693b295680e89bca699ce41417`
+
+### Problem
+
+A repository-selected installation token can look usable while carrying broader
+permissions, a different repository, a malformed response, an expired lifetime, or a
+cache identity that conflates distinct authority profiles. Provider error bodies and
+successful credential responses also require strict confidentiality and size bounds.
+
+### Why this implementation is strong
+
+- The public permission set is closed: issues, metadata, contents, pull requests,
+  statuses, and actions.
+- Only issues may request write access; every other profile is read-only.
+- The legacy `issues` request remains compatible by compiling to the same exact profile
+  and cache identity.
+- Request and nested permission records use descriptor-safe exact-field admission and
+  return frozen values.
+- Repository source bytes are checked for exact printable ASCII and surrounding
+  whitespace before GitHub canonicalization.
+- Cache identity includes canonical repository, permission name, and access.
+- The trusted clock is validated before cache reuse or provider dispatch.
+- Failed HTTP responses are handled by status after response-body cancellation, keeping
+  provider prose out of public diagnostics.
+- Successful response bodies are streamed through a 64 KiB bound, strict UTF-8 decode,
+  and JSON parse before credential fields are trusted.
+- Cache admission requires a usable expiry, the complete exact permission map, selected
+  repository mode, and one matching canonical repository.
+- Widened, hidden, malformed, or different provider scope is rejected on every attempt
+  and never enters cache.
+
+### Invariant demonstrated
+
+> A provider credential enters cache only after its complete returned authority matches
+> the exact repository and permission profile requested by Stensibly.
+
+### Tests worth reading
+
+The permission tests cover legacy compatibility, independent profile caches, exact
+issue-write behavior, unsupported and write-capable profiles, decorated and accessor
+input, zero provider calls on admission failure, repeated widened-scope rejection, and
+repeated malformed-response rejection. The response-bound tests cover declared and
+streamed size limits, invalid UTF-8, malformed JSON, cancellation, transport failures,
+and fixed secret-confidential errors.
+
+### Limits
+
+- This component mints credentials; it does not decide whether a principal may perform
+  an operation.
+- Constructor options are trusted deployment configuration and use their own admission
+  rules. Do not copy those rules into persisted authority records.
+- Tool-specific adapters still need to map each operation to the correct profile and
+  verify returned resource identity.
+
+## 6. Literal CI queue receipts with zero mutation authority
+
+**Study:**
+
+- [`src/ci-queue-receipt.ts`](../src/ci-queue-receipt.ts)
+- [`test/ci-queue-receipt.test.ts`](../test/ci-queue-receipt.test.ts)
+- [`test/ci-concurrency-workflow.test.ts`](../test/ci-concurrency-workflow.test.ts)
+- [`docs/ci-queue-receipt.md`](ci-queue-receipt.md)
+- merged through #704, squash commit `1a121d1e20f926ac15ccfedc7b88bd128b4a5018`
+
+### Problem
+
+GitHub exposes several literal run and job states. Collapsing requested, waiting,
+pending, queued, in-progress, completed, skipped, stale, startup failure, and other
+conclusions into a generic green/red/pending label loses evidence and can tempt a
+coordination layer to infer queue position or merge authority it never observed.
+
+### Why this implementation is strong
+
+- The contract preserves every supported literal run and job status and conclusion.
+- Run, job, array, revision, timestamp, profile, and identifier input passes exact
+  runtime admission before derivation.
+- Untrusted accessors, symbols, hidden fields, sparse arrays, decoration, custom
+  prototypes, and credential-shaped identifiers fail without executing caller code or
+  echoing hostile field names.
+- One trusted clock must attest the exact observation timestamp.
+- Lifecycle tuples, queue/start/completion intervals, runner identity, failed-step
+  diagnostics, supersession, and run/job conclusion compatibility are checked together.
+- Reviewed validation profiles bind to one canonical ordered command set; other profiles
+  remain explicitly unreviewed.
+- Jobs and labels are deterministically ordered before fingerprinting.
+- Queue wait, duration, observed queue age, and first-start evidence are derived from
+  admitted timestamps.
+- Unknown facts remain unknown: queue position is literally `unknown`, and queue reason
+  stays bounded.
+- Every receipt is deeply frozen, deterministically fingerprinted, and carries
+  `authorizesMerge: false` plus `authorizesMutation: false`.
+
+### Invariant demonstrated
+
+> CI observation can guide coordination while remaining literal, privacy-safe,
+> deterministic, and incapable of granting merge or mutation authority.
+
+### Tests worth reading
+
+The test suite admits every run status and conclusion, proves compatible no-start and
+skipped jobs, derives waits and durations, requires unique stable job IDs, binds reviewed
+profiles, attests the trusted clock once, rejects credential-shaped identifiers, proves
+zero getter execution, rejects decorated and sparse arrays, verifies fingerprint
+sensitivity, preserves supersession semantics, and rejects contradictory timing,
+runner, diagnostics, and conclusion evidence.
+
+### Limits
+
+- The compiler consumes observations; it does not poll GitHub or prove the connector
+  returned a complete snapshot.
+- Queue reasons are bounded interpretations and queue position remains unknown.
+- A successful receipt never replaces exact-head review, required checks, current base,
+  mergeability, or review-thread revalidation.
+- The receipt records no deployment authority or runtime effect.
 
 ## Review exercise
 
@@ -291,11 +383,9 @@ A useful atlas entry helps this review without turning into a cargo-cult templat
 
 Re-read on current `main` before adding:
 
-- exact GitHub App installation permission profiles from #738;
 - deterministic GitHub tool catalogue and profile resolution from #661;
 - canonical REST test-header helpers from #654;
 - generation-guarded claim, run, reservation, and timer transitions;
-- CI queue receipts from #704;
 - frontend fixture admission and no-gradient Labs exemplars;
 - hosted provider token/error boundaries after their complete path is integrated and
   verified.
