@@ -137,7 +137,9 @@ describe("hosted GitHub repository observations", () => {
     await expect(t.mutation(ingestRef, {
       ...input(),
       observationJson: oversizedMultibyteJson,
-    })).rejects.toThrow("GitHub repository observation JSON is invalid");
+    })).rejects.toThrow(
+      "GitHub repository observation envelope.observationJson contains oversized text",
+    );
   });
 
   test("requires the service boundary", async () => {
