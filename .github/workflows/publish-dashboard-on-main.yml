@@ -23,6 +23,7 @@ concurrency:
 env:
   VERCEL_CLI_VERSION: 56.5.0
   EXPECTED_VERCEL_PROJECT: stensibly
+  DASHBOARD_APEX: stensibly.com
   DASHBOARD_HOST: www.stensibly.com
 
 jobs:
@@ -94,18 +95,78 @@ jobs:
       - name: Link the canonical domain to this project
         run: |
           set -euo pipefail
+
+          project_domains_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&limit=100"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "${project_domains_url}" > /tmp/vercel-project-domains.json
+
           if jq --exit-status --arg domain "${DASHBOARD_HOST}" '
-            ((.alias // []) + ((.domains // []) | map(if type == "object" then .name else . end)))
-            | index($domain) != null
-          ' /tmp/vercel-project.json > /dev/null; then
+            [.domains[]? | .name] | index($domain) != null
+          ' /tmp/vercel-project-domains.json > /dev/null; then
             echo "${DASHBOARD_HOST} is already attached to ${EXPECTED_VERCEL_PROJECT}."
           else
-            npx --yes vercel@${VERCEL_CLI_VERSION} domains add \
-              "${DASHBOARD_HOST}" \
-              "${EXPECTED_VERCEL_PROJECT}" \
-              --force \
-              --token="${VERCEL_TOKEN}"
+            apex_domains_url="https://api.vercel.com/v1/domains/${DASHBOARD_APEX}/project-domains?teamId=${VERCEL_ORG_ID}&limit=100"
+            apex_status="$(curl --silent --show-error \
+              --output /tmp/vercel-apex-domains.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+              "${apex_domains_url}" || true)"
+
+            source_project=""
+            if [ "${apex_status}" = "200" ]; then
+              source_project="$(jq --raw-output \
+                --arg domain "${DASHBOARD_HOST}" \
+                --arg target "${VERCEL_PROJECT_ID}" '
+                  [.projectDomains[]? | select(.name == $domain and .projectId != $target)]
+                  | first
+                  | .projectId // empty
+                ' /tmp/vercel-apex-domains.json)"
+            fi
+
+            if [ -n "${source_project}" ]; then
+              jq --null-input --arg projectId "${VERCEL_PROJECT_ID}" \
+                '{projectId: $projectId, gitBranch: null}' \
+                > /tmp/vercel-domain-request.json
+              domain_url="https://api.vercel.com/v1/projects/${source_project}/domains/${DASHBOARD_HOST}/move?teamId=${VERCEL_ORG_ID}"
+              operation="move"
+            else
+              jq --null-input --arg name "${DASHBOARD_HOST}" \
+                '{name: $name, gitBranch: null}' \
+                > /tmp/vercel-domain-request.json
+              domain_url="https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}"
+              operation="add"
+            fi
+
+            domain_status="$(curl --silent --show-error \
+              --request POST \
+              --output /tmp/vercel-domain-response.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data-binary @/tmp/vercel-domain-request.json \
+              "${domain_url}" || true)"
+
+            case "${domain_status}" in
+              200|201) ;;
+              *)
+                provider_code="$(jq --raw-output '.error.code // .code // "unknown"' /tmp/vercel-domain-response.json 2>/dev/null || printf unknown)"
+                provider_message="$(jq --raw-output '.error.message // .message // "Vercel project-domain request failed"' /tmp/vercel-domain-response.json 2>/dev/null || printf 'Vercel project-domain request failed')"
+                echo "::error title=Canonical domain ${operation} failed::Vercel returned HTTP ${domain_status} (${provider_code}): ${provider_message}"
+                exit 1
+                ;;
+            esac
           fi
+
+          project_domain_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/domains/${DASHBOARD_HOST}?teamId=${VERCEL_ORG_ID}"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "${project_domain_url}" > /tmp/vercel-project-domain.json
+          jq --exit-status \
+            --arg domain "${DASHBOARD_HOST}" \
+            --arg project "${VERCEL_PROJECT_ID}" '
+              .name == $domain and .projectId == $project
+            ' /tmp/vercel-project-domain.json > /dev/null
 
       - name: Pull and build the complete dashboard project
         run: |
