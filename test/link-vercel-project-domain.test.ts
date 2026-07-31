@@ -39,7 +39,7 @@ function runScenario(scenario: string): ScenarioResult {
   const bin = join(root, "bin");
   const state = join(root, "state.json");
   const fakeCurl = join(bin, "curl");
-  Bun.write(fakeCurl, `#!/usr/bin/env node
+  writeFileSync(fakeCurl, `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 
