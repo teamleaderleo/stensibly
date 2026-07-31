@@ -616,4 +616,5 @@ async function capturedError(
 function deepValue(depth: number): unknown {
   let value: unknown = "leaf";
   for (let index = 0; index < depth; index += 1) value = { value };
+  return value;
 }
