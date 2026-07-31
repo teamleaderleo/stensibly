@@ -1,90 +1,59 @@
 # Field Console frontend prototype
 
-**Owner issue:** #610  
-**Parent programme:** #605  
-**Route:** `/labs/field-console/`
+Owner: #610  
+Programme: #605  
+Route: `/labs/field-console/`
 
-## Thesis
+Field Console is the dense operational lane in the frontend design studio. It presents the shared fictional Paper Lantern fixture as an object list, an abstract dependency topology, a selected-object detail, explicit connection health, text relationships, and a timestamped event timeline.
 
-Field Console tests whether Stensibly benefits from a denser operational view when every visual object still carries exact identity, literal state, owner, evidence, time, and one safe next action.
+## Shared fixture boundary
 
-The central surface is a **dependency topology**, not a geographic map. Paper Lantern has no meaningful fictional coordinates, and inventing a world map would add drama without improving a decision. Nodes show work, workers, operations, and connections. SVG lines show modeled dependencies. Every line is repeated as ordinary text below the topology.
+The route loads `../fixtures.classic.js` before its compatibility, projection-policy, and application scripts. `fixture-policy.js` consumes the immutable `StensiblyFrontendLabFixtures` contract, validates the route metadata against every shared identity and task, and derives decision, worker, ranked-work, operation, and connection presentation from that one source. `app.js` renders only the policy output.
 
-## Shared task translation
+Field Console keeps only route-specific presentation metadata locally: topology positions, fictional observation times, evidence labels, priority, read-only guidance labels, and task routing. It does not duplicate the shared record titles, state, summaries, or provider health.
 
-The route uses the same fictional identities as the shared frontend-lab fixture:
+## One projected truth
 
-- human decision: `approve-release-note`;
-- workers and unhealthy lease: `moss`, `ember`;
-- top recommendation: `repair-focus-order`;
-- ambiguous operation: `deploy-amber`;
-- connection health: `github`, `api`, `mcp`.
+Every readable surface receives the same projected record set:
 
-Each target is available through the object list and the topology. Connection health is also written in the top bar and selected-object detail. Timeline entries supplement those paths but never replace them.
+- object list;
+- connection shelf and accessible connection summary;
+- dependency topology;
+- selected relationships in text;
+- event timeline titles;
+- selected detail and connection evidence.
 
-## Interaction model
+The deterministic degraded scenario changes the `sync-violet` summary once in the projection policy. List, search, topology, relationship text, timeline, detail, and announcements then read that same projection. Empty and error scenarios retain project identity and recovery controls.
+
+## Topology, not geography
+
+The central visualization is a dependency topology, not a geographic map. It claims no latitude, infrastructure location, region, or real-world spatial precision. Every modeled relation is repeated as ordinary text, so the spatial layout is never the only source of meaning.
+
+## Action truth
+
+Primary controls expose read-only guidance:
+
+- `Read next action`;
+- `Read safe next action` for ambiguous settlement;
+- `Read evidence summary`.
+
+Activation announces the safe next action and explicitly says that no product action was performed. Ambiguous publication guidance says `No retry performed` and never exposes a retry control. The prototype never retries, approves, recovers, publishes, or mutates.
+
+## Interaction and recovery
 
 - `/` focuses object search.
-- `J`, `K`, Arrow Down, and Arrow Up move through the visible text list.
-- `1` focuses the object list, `2` the topology, `3` selected detail, and `4` the timeline.
-- `D` switches between comfortable and compact density.
-- Filters isolate needs-action, workers, ready work, operations, and connections.
-- Selecting an object synchronizes list, topology, text relationships, detail, and timeline.
-- At narrow width, opening an object moves to detail; the explicit return control restores list focus.
-- Reduced-motion preferences remove nonessential timing.
+- J/K and Arrow Up/Down move through the visible list.
+- D toggles comfortable and compact density.
+- Keys 1–4 focus objects, topology, detail, and timeline.
+- Escape returns from narrow-screen detail.
+- Timeline keyboard activation restores focus to the exact replacement event after rerender.
+- Scenario URLs use the local history adapter, which absorbs only opaque-origin `SecurityError` and rethrows every other failure.
+- Reduced motion removes decorative transitions without removing records or controls.
 
-## State and action boundary
+State is never color-only. Text labels and symbols accompany attention, healthy, unhealthy, ready, ambiguous, degraded, recovered, reconnecting, and offline states.
 
-State is never color-only. Every chip combines a symbol and literal text:
+## Safety and recovery
 
-- `◆` human decision or ambiguity;
-- `×` unhealthy or failed;
-- `●` healthy or ready;
-- `▲` degraded, reconnecting, or offline;
-- `✓` recovered.
+No production dashboard, authentication, API, deployment, or durable state is changed. The route has no network client, browser storage, credential, private record, external asset, tracker, map tile, copied imagery, remote font, or gradient.
 
-Every primary control is labelled **Read next action** or **Read safe next action**. Activating it announces fixture guidance only. The ambiguous publication detail retains **Reconcile before retry** guidance and performs no retry, write, network request, or simulated settlement.
-
-## Local scenarios
-
-`?scenario=default|empty|degraded|error` selects deterministic, reversible fixture presentation.
-
-- **empty:** no projected objects; project identity and reset control remain.
-- **degraded:** delayed review evidence is explicit while healthy reads remain usable.
-- **error:** object and topology projections are unavailable; no automatic retry occurs.
-
-The selector updates the URL without navigation. Every non-default scenario includes a local recovery control.
-
-## Adopted patterns
-
-- coordinated object selection from operational and geospatial tools;
-- observability-style literal health and event chronology;
-- compact, precise metadata from issue trackers and incident consoles;
-- topology only where relationship changes the decision;
-- synchronized visual and text representations;
-- density as a user choice rather than permanently tiny text.
-
-## Deliberately rejected patterns
-
-- invented geography when no location exists;
-- faux classified labels, weapon imagery, military language, or command theater;
-- neon alarm styling and constant visual urgency;
-- map-only navigation;
-- tiny status text;
-- cinematic movement for routine actions;
-- color-only priority;
-- automatic retry after ambiguous settlement;
-- gradients, remote fonts, copied product imagery, analytics, or trackers.
-
-## Fixture and asset boundary
-
-The route is a classic-script, zero-build prototype using locally authored HTML, CSS, JavaScript, and inline SVG relationship lines. It contains no external image, map tile, font, library, iframe, API call, credential, private record, storage state, or live product authority.
-
-The shared classic fixture bridge loads before the route. `fixture-bridge.js` combines exact shared identities, titles, state, detail, and operation actions with local topology positions, timestamps, and evidence labels. One cached scenario projection feeds list, topology, connection health, text relationships, selected detail, and action copy synchronously.
-
-## Recovery
-
-Revert the eventual Field Console squash commit to restore the planned route placeholder. No production dashboard, authentication, API, deployment, or durable state is involved.
-
-— Cinder  
-Intention: gain operational precision and relationship awareness without fake geography or manufactured urgency.
+Recovery is source-only: revert the eventual Field Console squash commit or restore the planned manifest row and placeholder route. No data migration or operational rollback is required.
