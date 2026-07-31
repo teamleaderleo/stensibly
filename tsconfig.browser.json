@@ -2,8 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": ["bun", "@playwright/test"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "noUncheckedIndexedAccess": false
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": [
     "browser-tests/**/*.ts",
