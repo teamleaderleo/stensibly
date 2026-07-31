@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   compileSynchronizationState,
+  fingerprintSynchronizationCoordinationInput,
   synchronizationCompilerRevision,
   type SynchronizationCompilerInputV1,
   type SynchronizationConflictInputV1,
@@ -15,8 +16,10 @@ function hash(seed: string): string {
 
 function fixture(
   overrides: Partial<SynchronizationCompilerInputV1> = {},
+  options: Readonly<{ coordinationInputFingerprint?: string }> = {},
 ): SynchronizationCompilerInputV1 {
-  return {
+  const { coordination: coordinationOverride, ...rest } = overrides;
+  const withoutCoordination: SynchronizationCompilerInputV1 = {
     schemaVersion: 1,
     policyVersion: "github-proofwake-stensibly/v1",
     evaluatedAt,
@@ -51,14 +54,24 @@ function fixture(
       status: "active",
       observedAt: "2026-07-31T23:50:00.000Z",
     },
-    coordination: {
-      id: "coordination-receipt-1",
-      inputFingerprint: hash("coordination-input-1"),
-      status: "accepted",
-      observedAt: "2026-07-31T23:57:00.000Z",
-    },
+    coordination: null,
     declaredConflicts: [],
-    ...overrides,
+    ...rest,
+  };
+  if (coordinationOverride === null) return withoutCoordination;
+  const coordination = coordinationOverride ?? {
+    id: "coordination-receipt-1",
+    inputFingerprint: hash("placeholder"),
+    status: "accepted" as const,
+    observedAt: "2026-07-31T23:57:00.000Z",
+  };
+  return {
+    ...withoutCoordination,
+    coordination: {
+      ...coordination,
+      inputFingerprint: options.coordinationInputFingerprint
+        ?? fingerprintSynchronizationCoordinationInput(withoutCoordination),
+    },
   };
 }
 
@@ -281,6 +294,21 @@ describe("compileSynchronizationState", () => {
     });
   });
 
+  test("classifies changed coordination inputs", () => {
+    const projection = compileSynchronizationState(fixture(
+      {},
+      { coordinationInputFingerprint: hash("unrelated-coordination-input") },
+    ));
+
+    expect(projection.state).toBe("conflicted");
+    expect(projection.nextAction).toBe("refresh_evidence_projection");
+    expect(projection.conflicts).toContainEqual({
+      type: "projection_input_changed",
+      factIds: ["coordination-receipt-1"],
+      sourceOwners: ["stensibly"],
+    });
+  });
+
   test("classifies competing coordination producers", () => {
     const projection = compileSynchronizationState(fixture({
       coordination: {
@@ -369,6 +397,12 @@ describe("compileSynchronizationState", () => {
     expect(() => compileSynchronizationState(fixture({
       declaredConflicts: decorated,
     }))).toThrow("dense and undecorated");
+
+    const customPrototype: SynchronizationConflictInputV1[] = [];
+    Object.setPrototypeOf(customPrototype, Object.create(Array.prototype));
+    expect(() => compileSynchronizationState(fixture({
+      declaredConflicts: customPrototype,
+    }))).toThrow("ordinary array prototype");
   });
 
   test("rejects duplicate declared conflicts after canonical ordering", () => {
