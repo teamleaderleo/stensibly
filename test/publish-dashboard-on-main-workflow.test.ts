@@ -36,6 +36,7 @@ describe("automatic dashboard publication workflow", () => {
   test("pins and validates the exact dashboard project before domain work", () => {
     expect(workflow).toContain("VERCEL_CLI_VERSION: 56.5.0");
     expect(workflow).toContain("EXPECTED_VERCEL_PROJECT: stensibly");
+    expect(workflow).toContain("DASHBOARD_APEX: stensibly.com");
     expect(workflow).toContain("DASHBOARD_HOST: www.stensibly.com");
     expect(workflow).toContain("api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}");
     expect(workflow).toContain('.name == $name and .rootDirectory == "site"');
@@ -52,12 +53,22 @@ describe("automatic dashboard publication workflow", () => {
     expect(workflow).not.toContain('"deploymentType":"all"');
   });
 
-  test("reassigns the canonical domain only when absent", () => {
-    expect(workflow).toContain("domains add");
-    expect(workflow).toContain('"${DASHBOARD_HOST}"');
-    expect(workflow).toContain('"${EXPECTED_VERCEL_PROJECT}"');
-    expect(workflow).toContain("--force");
-    expect(workflow).toContain("index($domain) != null");
+  test("adds or moves the exact canonical project domain through Vercel APIs", () => {
+    expect(workflow).not.toContain("domains add");
+    expect(workflow).toContain("/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&limit=100");
+    expect(workflow).toContain("/v1/domains/${DASHBOARD_APEX}/project-domains?teamId=${VERCEL_ORG_ID}&limit=100");
+    expect(workflow).toContain("/v1/projects/${source_project}/domains/${DASHBOARD_HOST}/move?teamId=${VERCEL_ORG_ID}");
+    expect(workflow).toContain("/v10/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}");
+    expect(workflow).toContain("{projectId: $projectId, gitBranch: null}");
+    expect(workflow).toContain("{name: $name, gitBranch: null}");
+    expect(workflow).toContain("Canonical domain ${operation} failed");
+  });
+
+  test("requires the provider to confirm target project ownership", () => {
+    expect(workflow).toContain("/v9/projects/${VERCEL_PROJECT_ID}/domains/${DASHBOARD_HOST}?teamId=${VERCEL_ORG_ID}");
+    expect(workflow).toContain(".name == $domain and .projectId == $project");
+    expect(position("Link the canonical domain to this project"))
+      .toBeLessThan(position("Pull and build the complete dashboard project"));
   });
 
   test("deploys the complete linked project, verifies immutable routes, then aliases", () => {
