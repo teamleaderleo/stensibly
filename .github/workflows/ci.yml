@@ -79,16 +79,6 @@ jobs:
             browser-artifact-output.txt
           if-no-files-found: error
           retention-days: 7
-      - name: Upload browser failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-evidence-diagnostics
-          path: |
-            browser-typecheck-output.txt
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: ignore
 
   test:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
