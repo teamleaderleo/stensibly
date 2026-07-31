@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { GitHubAppInstallationTokenMinter } from "../src/github-app-installation-token.ts";
+import { GitHubProviderRejectedError } from "../src/github-provider-contracts.ts";
 import { GitHubRestIssueProviderAdapter } from "../src/github-rest-issue-adapter.ts";
 
 const privateKeyPem = generateKeyPairSync("rsa", {
@@ -37,14 +38,27 @@ function constructors(apiBaseUrl: string): Array<() => unknown> {
   ];
 }
 
-async function capturedError(run: () => Promise<unknown>): Promise<Error> {
+async function capturedError(
+  run: () => Promise<unknown>,
+): Promise<GitHubProviderRejectedError> {
   try {
     await run();
   } catch (error) {
-    expect(error).toBeInstanceOf(Error);
-    return error as Error;
+    expect(error).toBeInstanceOf(GitHubProviderRejectedError);
+    return error as GitHubProviderRejectedError;
   }
   throw new Error("Expected operation to reject");
+}
+
+function unreadableResponse(secret: string, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers(),
+    async text() {
+      throw new Error(`provider body stream echoed ${secret}`);
+    },
+  } as unknown as Response;
 }
 
 describe("GitHub provider API base", () => {
@@ -290,5 +304,125 @@ describe("GitHub provider credential redaction", () => {
     expect(error.message).toContain("HTTP 403");
     expect(error.message).not.toContain(authorization);
     expect(error.message).not.toContain(installationToken);
+  });
+
+  test("redacts the App JWT when token-mint fetch rejects", async () => {
+    let authorization = "";
+    const apiBaseUrl = "https://api.github.test";
+    const minter = new GitHubAppInstallationTokenMinter({
+      ...minterOptions(apiBaseUrl),
+      now: () => Date.parse("2026-07-31T00:00:00.000Z"),
+      fetch: (async (_input: FetchInput, init: FetchInit) => {
+        authorization = new Headers(init?.headers).get("authorization") ?? "";
+        throw new Error(`transport echoed ${authorization}`);
+      }) as unknown as typeof fetch,
+    });
+
+    const error = await capturedError(() => minter.getInstallationToken({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issues: "read",
+    }));
+
+    expect(authorization).toStartWith("Bearer ");
+    expect(error.code).toBe("github_credential_mint_failed");
+    expect(error.message).toBe(
+      "GitHub installation token request failed before a response was available",
+    );
+    expect(error.message).not.toContain(authorization);
+    expect(error.message).not.toContain(authorization.slice("Bearer ".length));
+    expect(error.message).not.toContain(apiBaseUrl);
+  });
+
+  test("redacts credential-shaped token response body-read failures", async () => {
+    let authorization = "";
+    const apiBaseUrl = "https://api.github.test";
+    const minter = new GitHubAppInstallationTokenMinter({
+      ...minterOptions(apiBaseUrl),
+      now: () => Date.parse("2026-07-31T00:00:00.000Z"),
+      fetch: (async (_input: FetchInput, init: FetchInit) => {
+        authorization = new Headers(init?.headers).get("authorization") ?? "";
+        return unreadableResponse(authorization, 201);
+      }) as unknown as typeof fetch,
+    });
+
+    const error = await capturedError(() => minter.getInstallationToken({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issues: "read",
+    }));
+
+    expect(authorization).toStartWith("Bearer ");
+    expect(error.code).toBe("github_credential_mint_failed");
+    expect(error.message).toBe("GitHub installation token response could not be read");
+    expect(error.message).not.toContain(authorization);
+    expect(error.message).not.toContain(authorization.slice("Bearer ".length));
+    expect(error.message).not.toContain(apiBaseUrl);
+  });
+
+  test("redacts the installation token when REST fetch rejects", async () => {
+    const installationToken = "installation-token-transport-secret";
+    let authorization = "";
+    const apiBaseUrl = "https://api.github.test";
+    const adapter = new GitHubRestIssueProviderAdapter({
+      tokenProvider: {
+        async getInstallationToken() {
+          return {
+            token: installationToken,
+            expiresAt: "2026-07-31T01:00:00.000Z",
+          };
+        },
+      },
+      apiBaseUrl,
+      fetch: (async (_input: FetchInput, init: FetchInit) => {
+        authorization = new Headers(init?.headers).get("authorization") ?? "";
+        throw new Error(`transport echoed ${authorization}`);
+      }) as unknown as typeof fetch,
+    });
+
+    const error = await capturedError(() => adapter.getIssue({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issueNumber: 1,
+    }));
+
+    expect(authorization).toBe(`Bearer ${installationToken}`);
+    expect(error.code).toBe("github_provider_temporarily_unavailable");
+    expect(error.message).toBe(
+      "GitHub provider request failed before a response was available",
+    );
+    expect(error.message).not.toContain(authorization);
+    expect(error.message).not.toContain(installationToken);
+    expect(error.message).not.toContain(apiBaseUrl);
+  });
+
+  test("redacts credential-shaped REST response body-read failures", async () => {
+    const installationToken = "installation-token-body-secret";
+    let authorization = "";
+    const apiBaseUrl = "https://api.github.test";
+    const adapter = new GitHubRestIssueProviderAdapter({
+      tokenProvider: {
+        async getInstallationToken() {
+          return {
+            token: installationToken,
+            expiresAt: "2026-07-31T01:00:00.000Z",
+          };
+        },
+      },
+      apiBaseUrl,
+      fetch: (async (_input: FetchInput, init: FetchInit) => {
+        authorization = new Headers(init?.headers).get("authorization") ?? "";
+        return unreadableResponse(authorization);
+      }) as unknown as typeof fetch,
+    });
+
+    const error = await capturedError(() => adapter.getIssue({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issueNumber: 1,
+    }));
+
+    expect(authorization).toBe(`Bearer ${installationToken}`);
+    expect(error.code).toBe("github_provider_temporarily_unavailable");
+    expect(error.message).toBe("GitHub provider response could not be read");
+    expect(error.message).not.toContain(authorization);
+    expect(error.message).not.toContain(installationToken);
+    expect(error.message).not.toContain(apiBaseUrl);
   });
 });
