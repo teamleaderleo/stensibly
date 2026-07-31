@@ -268,8 +268,6 @@ jobs:
             typecheck-output.txt
             browser-typecheck-output.txt
             test-output.txt
-            browser-test-output.txt
-            browser-artifact-output.txt
             convex-test-output.txt
             worker-check-output.txt
             runtime-parity-output.txt
