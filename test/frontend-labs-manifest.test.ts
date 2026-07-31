@@ -71,7 +71,8 @@ describe("frontend labs manifest", () => {
     expect(() => parseFrontendLabManifest(missingPrototypeRevision)).toThrow("requires an exact hexadecimal revision");
 
     const claimedPlannedRevision = cloneManifest();
-    claimedPlannedRevision[1].revision = "abcdef0";
+    claimedPlannedRevision[0].status = "planned";
+    claimedPlannedRevision[0].revision = "abcdef0";
     expect(() => parseFrontendLabManifest(claimedPlannedRevision)).toThrow("must not claim a revision");
   });
 
