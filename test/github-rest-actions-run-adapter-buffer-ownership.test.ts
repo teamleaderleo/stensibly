@@ -57,7 +57,7 @@ test("copies admitted Actions response chunks before producer mutation", async (
         streamController!.close();
       }, 0);
       return response;
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   });
 
   const called = await adapter.callReadTool({
