@@ -85,15 +85,17 @@ describe("fenced Bun lock writer workflow", () => {
     expect(workflow).not.toContain("--force\n");
   });
 
-  test("dispatches each canonical CI topology for the exact generated commit", () => {
+  test("dispatches exact generated commits into the canonical CI topology", () => {
     expect(ciWorkflow).toContain("workflow_dispatch:");
     expect(ciWorkflow).toContain("expected_sha:");
     expect(ciWorkflow).toContain("required: true");
     expect(ciTestJob?.match(/Verify manually dispatched revision/g)).toHaveLength(1);
     expect(ciRuntimeParityJob?.match(/Verify manually dispatched revision/g))
       .toHaveLength(1);
-    expect(ciSerialFullJob?.match(/Verify manually dispatched revision/g))
+    expect(ciSerialFullJob?.match(/Verify exact serial revision/g))
       .toHaveLength(1);
+    expect(ciSerialFullJob).toContain("inputs.expected_sha");
+    expect(ciSerialFullJob).toContain("SERIAL_VALIDATION_SHA");
     expect(ciWorkflow).toContain(
       '"${GITHUB_SHA}" != "${EXPECTED_SHA}"',
     );
