@@ -13,7 +13,7 @@ import {
 const currentSha = "a".repeat(40);
 const baselineSha = "b".repeat(40);
 const olderSha = "c".repeat(40);
-
+const publisherPath = "/actions/workflows/publish-dashboard-on-main.yml";
 const baseEnvironment = Object.freeze({
   FORCE_DASHBOARD_RELEASE: "false",
   GITHUB_API_URL: "https://api.github.test",
@@ -37,9 +37,7 @@ describe("dashboard release-window policy", () => {
       ".github/workflows/auto-deploy-dashboard.yml",
       ".github/workflows/deploy-dashboard.yml",
       ".github/workflows/publish-dashboard-on-main.yml",
-    ]) {
-      expect(isDashboardReleasePath(path), path).toBe(true);
-    }
+    ]) expect(isDashboardReleasePath(path)).toBe(true);
 
     for (const path of [
       "test/dashboard.test.ts",
@@ -50,14 +48,12 @@ describe("dashboard release-window policy", () => {
       "site\\index.html",
       "site//index.html",
       "site/index.html\nother",
-    ]) {
-      expect(isDashboardReleasePath(path), path).toBe(false);
-    }
+    ]) expect(isDashboardReleasePath(path)).toBe(false);
   });
 
   test("coalesces every active GitHub Actions state", () => {
     for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
-      expect(hasActiveDashboardRun([workflowRun({ status })]), status).toBe(true);
+      expect(hasActiveDashboardRun([workflowRun({ status })])).toBe(true);
     }
     expect(hasActiveDashboardRun([
       workflowRun({ status: "completed", conclusion: "success" }),
@@ -65,7 +61,7 @@ describe("dashboard release-window policy", () => {
     ])).toBe(false);
   });
 
-  test("selects the newest successful release and newest guarded attempt independently", () => {
+  test("selects the newest successful publication and newest attempt independently", () => {
     const runs = [
       workflowRun({ headSha: olderSha, createdAt: "2026-07-31T10:00:00Z", conclusion: "success" }),
       workflowRun({ headSha: currentSha, createdAt: "2026-07-31T12:00:00Z", conclusion: "failure" }),
@@ -73,14 +69,13 @@ describe("dashboard release-window policy", () => {
       workflowRun({ headSha: "invalid", createdAt: "2026-07-31T14:00:00Z", conclusion: "success" }),
       workflowRun({ headSha: baselineSha, createdAt: "invalid", conclusion: "success" }),
     ];
-
     expect(latestSuccessfulDashboardSha(runs)).toBe(baselineSha);
     expect(latestAttemptedDashboardSha(runs)).toBe(currentSha);
     expect(latestSuccessfulDashboardSha([])).toBeNull();
     expect(latestAttemptedDashboardSha([])).toBeNull();
   });
 
-  test("dispatches manual force, a first baseline, and relevant accumulated changes", () => {
+  test("dispatches force, a first baseline, and relevant accumulated changes", () => {
     expect(decideDashboardRelease({
       force: true,
       activeRun: true,
@@ -88,7 +83,6 @@ describe("dashboard release-window policy", () => {
       baselineSha: currentSha,
       attemptedSha: currentSha,
     })).toEqual({ action: "dispatch", reason: "manual_force" });
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -98,7 +92,6 @@ describe("dashboard release-window policy", () => {
       compareStatus: "ahead",
       changedFiles: ["docs/readme.md", "site/app.js"],
     })).toEqual({ action: "dispatch", reason: "relevant_changes" });
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -108,7 +101,7 @@ describe("dashboard release-window policy", () => {
     })).toEqual({ action: "dispatch", reason: "missing_baseline" });
   });
 
-  test("skips occupied, current, previously attempted, empty, uncertain, and non-linear windows", () => {
+  test("skips occupied, current, attempted, empty, uncertain, and non-linear windows", () => {
     expect(decideDashboardRelease({
       force: false,
       activeRun: true,
@@ -118,7 +111,6 @@ describe("dashboard release-window policy", () => {
       compareStatus: "ahead",
       changedFiles: ["site/app.js"],
     })).toEqual({ action: "skip", reason: "active_run" });
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -126,7 +118,6 @@ describe("dashboard release-window policy", () => {
       baselineSha: currentSha,
       attemptedSha: currentSha,
     })).toEqual({ action: "skip", reason: "already_current" });
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -134,7 +125,6 @@ describe("dashboard release-window policy", () => {
       baselineSha,
       attemptedSha: currentSha,
     })).toEqual({ action: "skip", reason: "already_attempted" });
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -144,7 +134,6 @@ describe("dashboard release-window policy", () => {
       compareStatus: "ahead",
       changedFiles: ["test/dashboard.test.ts"],
     })).toEqual({ action: "skip", reason: "no_relevant_changes" });
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -153,7 +142,6 @@ describe("dashboard release-window policy", () => {
       attemptedSha: baselineSha,
       compareStatus: "unavailable",
     })).toEqual({ action: "skip", reason: "comparison_unavailable" });
-
     for (const compareStatus of ["diverged", "behind"] as const) {
       expect(decideDashboardRelease({
         force: false,
@@ -164,7 +152,6 @@ describe("dashboard release-window policy", () => {
         compareStatus,
       })).toEqual({ action: "skip", reason: "history_not_linear" });
     }
-
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
@@ -179,65 +166,45 @@ describe("dashboard release-window policy", () => {
 });
 
 describe("dashboard release-window GitHub coordinator", () => {
-  test("queues the latest main revision once when a relevant diff accumulated", async () => {
+  test("queues the repaired publisher once for relevant accumulated changes", async () => {
     const calls: ApiCall[] = [];
     const request = createGithubStub(calls, {
       currentSha,
       runs: [workflowRun({ headSha: baselineSha, conclusion: "success" })],
       comparison: { status: "ahead", files: ["docs/readme.md", "site/app.js"] },
     });
-
     await expect(runDashboardReleaseWindow(baseEnvironment, request)).resolves.toEqual({
       action: "dispatch",
       reason: "relevant_changes",
     });
     expect(calls.map((call) => call.method)).toEqual(["GET", "GET", "GET", "POST"]);
-    expect(calls.at(-1)?.url.endsWith("/actions/workflows/deploy-dashboard.yml/dispatches")).toBe(true);
+    expect(calls.at(-1)?.url.endsWith(`${publisherPath}/dispatches`)).toBe(true);
     expect(calls.at(-1)?.body).toBe('{"ref":"main"}');
   });
 
-  test("exits an empty window without comparison or dispatch when production is current", async () => {
+  test("exits when the successful publication already covers main", async () => {
     const calls: ApiCall[] = [];
-    const request = createGithubStub(calls, {
+    await expect(runDashboardReleaseWindow(baseEnvironment, createGithubStub(calls, {
       currentSha,
       runs: [workflowRun({ headSha: currentSha, conclusion: "success" })],
-    });
-
-    await expect(runDashboardReleaseWindow(baseEnvironment, request)).resolves.toEqual({
-      action: "skip",
-      reason: "already_current",
-    });
+    }))).resolves.toEqual({ action: "skip", reason: "already_current" });
     expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
   });
 
-  test("does not retry a failed unchanged revision automatically", async () => {
+  test("does not retry an unchanged failed publication automatically", async () => {
     const calls: ApiCall[] = [];
-    const request = createGithubStub(calls, {
+    await expect(runDashboardReleaseWindow(baseEnvironment, createGithubStub(calls, {
       currentSha,
       runs: [
-        workflowRun({
-          headSha: baselineSha,
-          conclusion: "success",
-          createdAt: "2026-07-31T10:00:00Z",
-        }),
-        workflowRun({
-          headSha: currentSha,
-          conclusion: "failure",
-          createdAt: "2026-07-31T12:00:00Z",
-        }),
+        workflowRun({ headSha: baselineSha, conclusion: "success", createdAt: "2026-07-31T10:00:00Z" }),
+        workflowRun({ headSha: currentSha, conclusion: "failure", createdAt: "2026-07-31T12:00:00Z" }),
       ],
-    });
-
-    await expect(runDashboardReleaseWindow(baseEnvironment, request)).resolves.toEqual({
-      action: "skip",
-      reason: "already_attempted",
-    });
+    }))).resolves.toEqual({ action: "skip", reason: "already_attempted" });
     expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
   });
 
-  test("coalesces scheduled work while manual force queues the guarded workflow", async () => {
+  test("coalesces scheduled work while force queues the publisher", async () => {
     const active = workflowRun({ status: "in_progress", conclusion: null, headSha: baselineSha });
-
     const scheduledCalls: ApiCall[] = [];
     await expect(runDashboardReleaseWindow(
       baseEnvironment,
@@ -253,13 +220,12 @@ describe("dashboard release-window GitHub coordinator", () => {
     expect(forcedCalls.map((call) => call.method)).toEqual(["GET", "GET", "POST"]);
   });
 
-  test("fails closed before API use for an invalid ref or environment", async () => {
+  test("fails closed before API use for an invalid ref or force value", async () => {
     let calls = 0;
     const request = (async () => {
       calls += 1;
       return new Response(null, { status: 500 });
     }) as typeof fetch;
-
     await expect(runDashboardReleaseWindow(
       { ...baseEnvironment, GITHUB_REF: "refs/heads/feature" },
       request,
@@ -278,9 +244,7 @@ interface ApiCall {
   readonly body: string | null;
 }
 
-function workflowRun(
-  override: Partial<DashboardWorkflowRun> = {},
-): DashboardWorkflowRun {
+function workflowRun(override: Partial<DashboardWorkflowRun> = {}): DashboardWorkflowRun {
   return {
     status: "completed",
     conclusion: "success",
@@ -310,15 +274,13 @@ function createGithubStub(
     if (method === "GET" && url.endsWith("/git/ref/heads/main")) {
       return jsonResponse({ object: { sha: fixture.currentSha } });
     }
-    if (method === "GET" && url.includes("/actions/workflows/deploy-dashboard.yml/runs?")) {
-      return jsonResponse({
-        workflow_runs: fixture.runs.map((run) => ({
-          status: run.status,
-          conclusion: run.conclusion,
-          head_sha: run.headSha,
-          created_at: run.createdAt,
-        })),
-      });
+    if (method === "GET" && url.includes(`${publisherPath}/runs?`)) {
+      return jsonResponse({ workflow_runs: fixture.runs.map((run) => ({
+        status: run.status,
+        conclusion: run.conclusion,
+        head_sha: run.headSha,
+        created_at: run.createdAt,
+      })) });
     }
     if (method === "GET" && url.includes("/compare/")) {
       if (!fixture.comparison) return jsonResponse({ message: "missing comparison" }, 404);
@@ -327,7 +289,7 @@ function createGithubStub(
         files: fixture.comparison.files.map((filename) => ({ filename })),
       });
     }
-    if (method === "POST" && url.endsWith("/actions/workflows/deploy-dashboard.yml/dispatches")) {
+    if (method === "POST" && url.endsWith(`${publisherPath}/dispatches`)) {
       return new Response(null, { status: 204 });
     }
     return jsonResponse({ message: "unexpected request" }, 404);
@@ -335,8 +297,5 @@ function createGithubStub(
 }
 
 function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 }
