@@ -7,7 +7,10 @@ import type {
   HostedGitHubRepositoryObservationResult,
   HostedGitHubRepositoryObservationSink,
 } from "./hosted-provider-capacity-api.js";
-import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
+import {
+  canonicalJsonString,
+  fingerprintCanonicalRequest,
+} from "./idempotency-request-fingerprint.js";
 
 const ingestRef = makeFunctionReference<"mutation">(
   "githubRepositoryObservations:ingest",
@@ -22,6 +25,47 @@ const inputKeys = [
   "observation",
   "payloadDigest",
   "receivedAt",
+] as const;
+const mutationResultKeys = ["duplicate", "record"] as const;
+const storedRecordKeys = [
+  "action",
+  "actor",
+  "createdAt",
+  "deliveryId",
+  "eventType",
+  "id",
+  "observationId",
+  "observationJson",
+  "payloadDigest",
+  "receivedAt",
+  "repository",
+  "semanticFingerprint",
+  "sourceTime",
+  "sourceTimeSource",
+  "subjectExternalId",
+  "subjectKind",
+] as const;
+const observationKeys = [
+  "action",
+  "actor",
+  "containsRawContent",
+  "contentRevisions",
+  "deliveryId",
+  "eventType",
+  "facts",
+  "observationId",
+  "payloadDigest",
+  "provider",
+  "receivedAt",
+  "relationships",
+  "repository",
+  "semanticFingerprint",
+  "sourceSchema",
+  "sourceSchemaVersion",
+  "sourceTime",
+  "sourceTimeSource",
+  "subject",
+  "version",
 ] as const;
 const maximumAdmissionDepth = 24;
 const maximumAdmissionValues = 1_024;
@@ -121,17 +165,15 @@ export class ConvexGitHubRepositoryObservationService
   ): Promise<HostedGitHubRepositoryObservationResult> {
     const admitted = canonicalInput(input);
     try {
-      const result = await this.client.mutation(ingestRef, this.args({
+      const rawResult = await this.client.mutation(ingestRef, this.args({
         deliveryId: admitted.deliveryId,
         eventType: admitted.eventType,
         payloadDigest: admitted.payloadDigest,
         receivedAt: admitted.receivedAt,
         observationJson: admitted.observationJson,
-      })) as { duplicate: boolean; record: ConvexObservationRecord };
+      }));
+      const result = admitMutationResult(rawResult);
       validateStoredRecord(result.record);
-      if (typeof result.duplicate !== "boolean") {
-        throw new GitHubRepositoryObservationStorageError();
-      }
       return Object.freeze({ duplicate: result.duplicate });
     } catch (error) {
       throw mapStorageError(error);
@@ -148,15 +190,13 @@ export class ConvexGitHubRepositoryObservationService
     }
     let rows: ConvexObservationRecord[];
     try {
-      rows = await this.client.query(listRecentRef, this.args({
+      const rawRows = await this.client.query(listRecentRef, this.args({
         repository: canonicalRepository,
         limit,
-      })) as ConvexObservationRecord[];
+      }));
+      rows = admitStoredRows(rawRows, limit);
     } catch (error) {
       throw mapStorageError(error);
-    }
-    if (!Array.isArray(rows) || rows.length > limit) {
-      throw new GitHubRepositoryObservationStorageError();
     }
     return Object.freeze(rows.map((row) => {
       const observation = validateStoredRecord(row);
@@ -166,7 +206,7 @@ export class ConvexGitHubRepositoryObservationService
       return Object.freeze({
         id: row.id,
         observation,
-        createdAt: new Date(exactTimestamp(row.createdAt)).toISOString(),
+        createdAt: new Date(row.createdAt).toISOString(),
       });
     }));
   }
@@ -181,15 +221,9 @@ export class ConvexGitHubRepositoryObservationService
 }
 
 function canonicalInput(inputValue: unknown): CanonicalObservationInput {
-  const snapshot = snapshotJsonValue(
+  const snapshot = snapshotBoundedJson(
     inputValue,
     "GitHub repository observation input",
-    {
-      active: new WeakSet<object>(),
-      visited: 0,
-      stringBytes: 0,
-    },
-    0,
   );
   if (!isRecord(snapshot) || !hasExactKeys(snapshot, inputKeys)) {
     throw new RangeError("GitHub repository observation input has noncanonical fields");
@@ -234,6 +268,81 @@ function canonicalInput(inputValue: unknown): CanonicalObservationInput {
     ),
     observationJson: canonicalJsonString(observation),
   };
+}
+
+function admitMutationResult(value: unknown): {
+  duplicate: boolean;
+  record: ConvexObservationRecord;
+} {
+  const snapshot = snapshotBoundedJson(
+    value,
+    "GitHub repository observation mutation result",
+  );
+  if (!isRecord(snapshot) || !hasExactKeys(snapshot, mutationResultKeys)) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  if (typeof snapshot.duplicate !== "boolean") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return {
+    duplicate: snapshot.duplicate,
+    record: admitStoredRecord(snapshot.record),
+  };
+}
+
+function admitStoredRows(value: unknown, limit: number): ConvexObservationRecord[] {
+  const snapshot = snapshotBoundedJson(
+    value,
+    "GitHub repository observation query result",
+  );
+  if (!Array.isArray(snapshot) || snapshot.length > limit) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return snapshot.map(admitStoredRecord);
+}
+
+function admitStoredRecord(value: unknown): ConvexObservationRecord {
+  if (!isRecord(value) || !hasExactKeys(value, storedRecordKeys)) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  const actor = value.actor === null
+    ? null
+    : storageString(value.actor);
+  const sourceTimeSource = value.sourceTimeSource;
+  if (sourceTimeSource !== "provider" && sourceTimeSource !== "received") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return {
+    id: storageString(value.id),
+    observationId: storageString(value.observationId),
+    deliveryId: storageString(value.deliveryId),
+    payloadDigest: storageString(value.payloadDigest),
+    semanticFingerprint: storageString(value.semanticFingerprint),
+    eventType: storageString(value.eventType),
+    action: storageString(value.action),
+    repository: storageString(value.repository),
+    actor,
+    subjectKind: storageString(value.subjectKind),
+    subjectExternalId: storageString(value.subjectExternalId),
+    sourceTime: storageTimestamp(value.sourceTime),
+    sourceTimeSource,
+    receivedAt: storageTimestamp(value.receivedAt),
+    observationJson: storageString(value.observationJson),
+    createdAt: storageTimestamp(value.createdAt),
+  };
+}
+
+function snapshotBoundedJson(value: unknown, label: string): JsonValue {
+  return snapshotJsonValue(
+    value,
+    label,
+    {
+      active: new WeakSet<object>(),
+      visited: 0,
+      stringBytes: 0,
+    },
+    0,
+  );
 }
 
 function snapshotJsonValue(
@@ -367,19 +476,29 @@ function snapshotRecord(
 }
 
 function validateStoredRecord(row: ConvexObservationRecord): GitHubRepositoryObservation {
-  if (!row || typeof row !== "object") {
-    throw new GitHubRepositoryObservationStorageError();
-  }
   let decoded: unknown;
   try {
     decoded = JSON.parse(row.observationJson);
   } catch {
     throw new GitHubRepositoryObservationStorageError();
   }
-  if (!isRecord(decoded)) throw new GitHubRepositoryObservationStorageError();
   if (
-    canonicalJsonString(decoded) !== row.observationJson
-    || decoded.version !== 1
+    !isRecord(decoded)
+    || !hasExactKeys(decoded, observationKeys)
+    || canonicalJsonString(decoded) !== row.observationJson
+  ) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  const {
+    observationId: _observationId,
+    deliveryId: _deliveryId,
+    payloadDigest: _payloadDigest,
+    semanticFingerprint: _semanticFingerprint,
+    receivedAt: _receivedAt,
+    ...canonicalSemantics
+  } = decoded;
+  if (
+    decoded.version !== 1
     || decoded.provider !== "github"
     || decoded.sourceSchema !== "github-webhook"
     || decoded.sourceSchemaVersion !== "2022-11-28"
@@ -388,6 +507,7 @@ function validateStoredRecord(row: ConvexObservationRecord): GitHubRepositoryObs
     || decoded.deliveryId !== row.deliveryId
     || decoded.payloadDigest !== row.payloadDigest
     || decoded.semanticFingerprint !== row.semanticFingerprint
+    || fingerprintCanonicalRequest(canonicalSemantics) !== row.semanticFingerprint
     || decoded.eventType !== row.eventType
     || decoded.action !== row.action
     || decoded.repository !== row.repository
@@ -401,7 +521,6 @@ function validateStoredRecord(row: ConvexObservationRecord): GitHubRepositoryObs
   ) {
     throw new GitHubRepositoryObservationStorageError();
   }
-  exactTimestamp(row.createdAt);
   return decoded as unknown as GitHubRepositoryObservation;
 }
 
@@ -427,8 +546,15 @@ function canonicalTimestamp(value: unknown, label: string): number {
   return milliseconds;
 }
 
-function exactTimestamp(value: unknown): number {
+function storageTimestamp(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return value;
+}
+
+function storageString(value: unknown): string {
+  if (typeof value !== "string" || value.length < 1) {
     throw new GitHubRepositoryObservationStorageError();
   }
   return value;
