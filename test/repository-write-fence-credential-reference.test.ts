@@ -82,7 +82,7 @@ describe("repository write credential-reference identity", () => {
         authority({ authorityId: credentialIdentity }),
       ));
       expect(error).toMatchObject({
-        code: "invalid_repository_write_identifier",
+        code: "invalid_repository_write_text",
         disposition: "rejected",
         retry: "do_not_retry",
       });
