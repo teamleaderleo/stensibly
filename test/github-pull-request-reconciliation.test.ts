@@ -141,6 +141,26 @@ describe("GitHub pull request reconciliation", () => {
     });
   });
 
+  test("accepts canonical dot-prefixed repository names through the shared normalizer", () => {
+    const dotRepository = "teamleaderleo/.github";
+    const result = compileGitHubPullRequestReconciliationV1({
+      version: GITHUB_PULL_REQUEST_RECONCILIATION_V1,
+      repository: dotRepository,
+      pullRequestNumber,
+      observation: observation({ repository: dotRepository }),
+      providerRead: providerRead({
+        receiptRepository: dotRepository,
+        resultRepository: dotRepository,
+      }),
+      reconciledAt,
+    }, clock);
+
+    expect(result).toMatchObject({
+      repository: dotRepository,
+      state: "matched",
+    });
+  });
+
   test("produces a deterministic fingerprint from admitted evidence", () => {
     const input = {
       observation: observation(),
