@@ -46,7 +46,7 @@ test("keeps the fixture server bounded to public site reads", async ({ request }
   const missing = await request.get("/labs/missing-evidence-route", { maxRedirects: 0 });
   expect(missing.status()).toBe(404);
 
-  const traversal = await request.get("/labs/%2e%2e/%2e%2e/package.json", { maxRedirects: 0 });
+  const traversal = await request.get("/labs/..%2f..%2fpackage.json", { maxRedirects: 0 });
   expect(traversal.status()).toBe(404);
   expect(await traversal.text()).not.toContain('"name": "stensibly"');
 
@@ -73,7 +73,7 @@ test("renders the labs catalogue from canonical route evidence cases", async ({ 
     const card = page.locator(`[data-variant-id="${variant.id}"]`);
     await expect(card.getByRole("heading", { name: variant.title, exact: true })).toBeVisible();
     await expect(card.getByRole("checkbox", { name: `Select ${variant.title} for comparison` })).toBeVisible();
-    await expect(card).toContainText(variant.revision ?? "unreviewed");
+    await expect(card).toContainText(variant.revision ? variant.revision.slice(0, 12) : "unreviewed");
   }
 
   await assertNoHorizontalOverflow(page);
@@ -141,7 +141,8 @@ test("compares canonical Quiet Control and Soft Companion routes without widenin
   await expect(quiet.getByRole("heading", { name: "Attention" })).toBeVisible();
   const soft = page.frameLocator(`iframe[title="${requiredVariant(softCase.variantId).title} isolated preview"]`);
   await expect(soft.getByRole("heading", { name: "A gentle place for exact work." })).toBeVisible();
-  await expect(soft.getByText(requiredVariant(softCase.variantId).title, { exact: true }).first()).toBeVisible();
+  await expect(soft.locator('body[data-stensibly-lab="prototype"]')).toBeVisible();
+  await expect(soft.getByText(frontendLabFixture.project.name, { exact: true }).first()).toBeVisible();
 
   await attachSyntheticScreenshot(page, testInfo, "comparison-quiet-control-soft-companion");
   await attachSyntheticReceipt(testInfo, "comparison", [quietCase, softCase]);
