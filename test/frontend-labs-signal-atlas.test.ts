@@ -152,7 +152,7 @@ describe("Signal Atlas frontend lab", () => {
     expect(() => new Function(mapFocus)).not.toThrow();
     expect(html).toContain("abstract fictional work landscape");
     expect(guide).toContain("has no relevant real-world coordinates");
-    expect(guide).toContain("No real data layer is used");
+    expect(guide).toContain("The shared source is fictional and contains no coordinate layer");
     expect(routeSource).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/);
     expect(sourceWithoutSvgNamespace).not.toMatch(/https?:\/\//);
     expect(routeSource).not.toMatch(/stn\.tok_/);
