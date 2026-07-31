@@ -18,7 +18,7 @@ describe("Soft Companion frontend lab", () => {
     expect(variant).toMatchObject({
       owner: "Cinder",
       status: "prototype",
-      revision: "b29bc7f1655e8b30d3dc7d4041108e4b1aa7f0cd",
+      revision: "b656c3181abb8275c4e00ddebeef2498f6f7f95e",
       issue: 608,
       path: "./soft-companion/",
     });
@@ -58,6 +58,8 @@ describe("Soft Companion frontend lab", () => {
     expect(compat).toContain("No product action was performed");
     expect(compat).toContain("event.stopImmediatePropagation()");
     expect(compat).toContain('primaryAction.addEventListener("click"');
+    expect(compat).toContain('detailContent.querySelector(".next-note")');
+    expect(compat).not.toContain('querySelectorAll(".detail-block")');
   });
 
   test("provides deterministic local empty, loading, degraded, and error states", () => {
@@ -70,6 +72,10 @@ describe("Soft Companion frontend lab", () => {
     expect(app).toContain("This deterministic preview performs no network request.");
     expect(app).toContain("Retry local preview");
     expect(css).toContain('body[data-scenario="degraded"]');
+    expect(compat).toContain("repairConnectionShelf(projections)");
+    expect(compat).toContain("repairConnectionDetail(projections)");
+    expect(compat).toContain('querySelectorAll(".detail-section")');
+    expect(compat).toContain('candidate.querySelector("h3")?.textContent === "Connection health"');
   });
 
   test("keeps URL updates, drawer focus, connection truth, and action previews recoverable", () => {
