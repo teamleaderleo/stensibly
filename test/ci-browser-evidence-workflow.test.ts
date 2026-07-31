@@ -15,6 +15,9 @@ const browserJob = workflow.match(
 const serialJob = workflow.match(
   /\n  serial-full:\n([\s\S]*)$/u,
 )?.[1];
+const serialDiagnostics = serialJob?.match(
+  /\n      - name: Upload serial full diagnostics\n([\s\S]*)$/u,
+)?.[1];
 
 const commandMarkers = {
   "browser-typecheck": "bun run typecheck:browser",
@@ -83,5 +86,13 @@ describe("CI browser evidence profile", () => {
     expect(serialJob).toContain("browser-typecheck-output.txt");
     expect(serialJob).toContain("browser-test-output.txt");
     expect(serialJob).toContain("browser-artifact-output.txt");
+  });
+
+  test("retains browser outputs only after the serial privacy fence succeeds", () => {
+    expect(serialDiagnostics).toBeDefined();
+    expect(serialDiagnostics).toContain("browser-typecheck-output.txt");
+    expect(serialDiagnostics).not.toContain("browser-test-output.txt");
+    expect(serialDiagnostics).not.toContain("browser-artifact-output.txt");
+    expect(serialJob).toContain("if: steps.serial-validation.outcome == 'success'");
   });
 });
