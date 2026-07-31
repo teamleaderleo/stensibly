@@ -37,7 +37,8 @@ describe("hosted GitHub repository observations", () => {
     const recent = await t.query(listRecentRef, queryArgs()) as any[];
     expect(recent).toHaveLength(1);
     expect(recent[0].observationJson).not.toContain("secret issue body");
-    expect(recent[0].observationJson).not.toContain("payload");
+    expect(recent[0].observationJson).not.toContain('"payload":');
+    expect(recent[0].observationJson).toContain('"payloadDigest":');
   });
 
   test("rejects changed content under one delivery identity", async () => {
