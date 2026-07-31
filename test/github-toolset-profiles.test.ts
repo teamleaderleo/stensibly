@@ -13,6 +13,7 @@ describe("GitHub toolset profiles", () => {
 
     for (const requiredName of [
       "actions",
+      "context",
       "issues",
       "projects",
       "pull_requests",
@@ -29,6 +30,23 @@ describe("GitHub toolset profiles", () => {
     expect(Object.isFrozen(githubToolsetProfileNames)).toBe(true);
   });
 
+  test("keeps authenticated context in the default provider profile", () => {
+    const expected = [
+      "context",
+      "repos",
+      "issues",
+      "pull_requests",
+      "users",
+    ];
+
+    expect(
+      resolveGitHubToolsetProfile("default", "remote").toolsets.join(","),
+    ).toBe(expected.join(","));
+    expect(
+      resolveGitHubToolsetProfile("default", "local").toolsets.join(","),
+    ).toBe(expected.join(","));
+  });
+
   test("resolves the remote all profile from the inventory", () => {
     const profile = resolveGitHubToolsetProfile("all", "remote");
 
@@ -40,9 +58,10 @@ describe("GitHub toolset profiles", () => {
     expect(profile.requiresOperatorApproval).toBe(true);
   });
 
-  test("removes remote-only toolsets from local sidecar profiles", () => {
+  test("removes only remote-only toolsets from local sidecar profiles", () => {
     const profile = resolveGitHubToolsetProfile("read_only", "local");
 
+    expect(profile.toolsets).toContain("context");
     expect(profile.toolsets).not.toContain("copilot_spaces");
     expect(profile.toolsets).not.toContain("github_support_docs_search");
     expect(profile.omittedToolsets).toEqual([

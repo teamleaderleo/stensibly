@@ -24,6 +24,11 @@ export const githubUpstreamToolsets = deepFreeze([
     availability: "local_and_remote",
   },
   {
+    name: "context",
+    description: "Authenticated GitHub identity and operating context.",
+    availability: "local_and_remote",
+  },
+  {
     name: "copilot",
     description: "GitHub Copilot related tools.",
     availability: "local_and_remote",
@@ -147,8 +152,8 @@ const allToolsetNames: readonly GitHubUpstreamToolsetName[] = deepFreeze(
 
 const githubToolsetProfileDefinitions = deepFreeze({
   default: {
-    description: "High-value repository, issue, pull-request, and user operations.",
-    toolsets: ["repos", "issues", "pull_requests", "users"],
+    description: "Authenticated context plus high-value repository, issue, pull-request, and user operations.",
+    toolsets: ["context", "repos", "issues", "pull_requests", "users"],
     readOnly: false,
     requiresOperatorApproval: false,
   },

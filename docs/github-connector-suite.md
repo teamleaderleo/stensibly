@@ -14,11 +14,12 @@ Stensibly should avoid copying every host-specific GitHub connector action into 
 
 ## Upstream capability groups
 
-The current official remote documentation publishes these standard toolsets:
+The current reviewed official inventory contains these standard toolsets:
 
 - `actions`;
 - `code_quality`;
 - `code_security`;
+- `context`;
 - `copilot`;
 - `copilot_issue_intents`;
 - `dependabot`;
@@ -44,7 +45,12 @@ The remote service also publishes remote-only toolsets:
 
 GitHub supports toolset selection through URL paths or `X-MCP-Toolsets`, exact tool selection through `X-MCP-Tools`, read-only filtering through `X-MCP-Readonly`, lockdown mode, and insiders mode. The local server exposes equivalent environment variables or flags for the shared capabilities.
 
-Source revision reviewed: `github/github-mcp-server` main file `docs/remote-server.md`, blob `04d3ceefae5fe851c104ea9b2c53393a8f03944e`.
+Source revisions reviewed:
+
+- remote catalogue: `github/github-mcp-server` main file `docs/remote-server.md`, blob `04d3ceefae5fe851c104ea9b2c53393a8f03944e`;
+- shared source inventory: commit `ca8ab52dcc45b86fae190398178fd22edb7b1362`, file `pkg/github/tools.go`, blob `7bae64d2e85c60fcb2ea00933c3a853c4ca4e10a`.
+
+The shared source inventory declares `context` as a default toolset and does not classify it as remote-only.
 
 ## Stensibly product surface
 
@@ -70,12 +76,12 @@ The delegated path should:
 
 The first profile registry lives in `src/github-toolset-profiles.ts`:
 
-- `default`: repositories, issues, pull requests, and users;
-- `read_only`: every provider-available toolset with writes removed;
+- `default`: authenticated context, repositories, issues, pull requests, and users;
+- `read_only`: every reviewed provider-available toolset with writes removed;
 - focused `actions`, `security`, `projects`, and `notifications` profiles;
-- `all`: every provider-available toolset, with explicit operator approval required.
+- `all`: every reviewed provider-available toolset, with explicit operator approval required.
 
-Provider resolution removes remote-only toolsets from local-sidecar profiles and reports the omitted names instead of silently presenting unavailable capabilities.
+Provider resolution removes reviewed remote-only toolsets from local-sidecar profiles and reports the omitted names instead of silently presenting unavailable capabilities. The default and broad profiles include the shared `context` group so authenticated identity and operating context remain available in both provider modes.
 
 ## Compatibility tests
 
@@ -86,7 +92,8 @@ Use these rules:
 - required stable public tools remain asserted by name;
 - duplicate names fail;
 - observed snapshots may record a count and fingerprint for audit history;
-- additive tools pass compatibility checks;
+- additive tools inside an already reviewed toolset pass compatibility checks, subject to read-only and policy metadata;
+- a newly observed toolset remains quarantined until its provider availability, authority implications, and profile membership receive an explicit inventory revision;
 - removals, schema narrowing, authority widening, or read-to-write changes require explicit drift handling.
 
 ## Implementation sequence
