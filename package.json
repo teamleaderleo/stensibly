@@ -20,7 +20,7 @@
     "verify:dashboard": "bun src/verify-dashboard.ts",
     "verify:browser-artifacts": "bun scripts/verify-browser-evidence-artifacts.ts",
     "audit:membership": "bun src/provider-membership-audit-cli.ts",
-    "convex:dev": "convex dev --dev-deployment cloud",
+    "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
     "convex:deploy": "convex deploy",
     "worker:dev": "wrangler dev",
