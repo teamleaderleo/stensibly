@@ -94,20 +94,50 @@ describe("hosted GitHub repository observations", () => {
     const forged = input();
     const decoded = JSON.parse(forged.observationJson);
     decoded.facts.rawBody = "secret issue body";
-    const {
-      observationId: _observationId,
-      deliveryId: _deliveryId,
-      payloadDigest: _payloadDigest,
-      semanticFingerprint: _semanticFingerprint,
-      receivedAt: _receivedAt,
-      ...canonicalSemantics
-    } = decoded;
-    decoded.semanticFingerprint = fingerprintCanonicalRequest(canonicalSemantics);
+    refingerprint(decoded);
 
     await expect(t.mutation(ingestRef, {
       ...forged,
       observationJson: canonicalJsonString(decoded),
     })).rejects.toThrow("GitHub issue facts has noncanonical fields");
+  });
+
+  test("rejects direct and namespaced credential-shaped retained text", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+
+    const direct = input({ deliveryId: "delivery-direct-secret" });
+    const directDecoded = JSON.parse(direct.observationJson);
+    directDecoded.actor = "ghp_not-a-real-token";
+    refingerprint(directDecoded);
+    await expect(t.mutation(ingestRef, {
+      ...direct,
+      observationJson: canonicalJsonString(directDecoded),
+    })).rejects.toThrow("GitHub actor cannot be credential-shaped");
+
+    const namespaced = input({ deliveryId: "delivery-namespaced-secret" });
+    const namespacedDecoded = JSON.parse(namespaced.observationJson);
+    namespacedDecoded.facts.stateReason = "context.github_pat_not-a-real-token";
+    refingerprint(namespacedDecoded);
+    await expect(t.mutation(ingestRef, {
+      ...namespaced,
+      observationJson: canonicalJsonString(namespacedDecoded),
+    })).rejects.toThrow(
+      "GitHub issue state reason cannot be credential-shaped",
+    );
+  });
+
+  test("enforces the observation bound in UTF-8 bytes", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    const oversizedMultibyteJson = `"${"é".repeat(32_768)}"`;
+    expect(oversizedMultibyteJson.length).toBeLessThan(64 * 1_024);
+    expect(new TextEncoder().encode(oversizedMultibyteJson).byteLength)
+      .toBeGreaterThan(64 * 1_024);
+    await expect(t.mutation(ingestRef, {
+      ...input(),
+      observationJson: oversizedMultibyteJson,
+    })).rejects.toThrow("GitHub repository observation JSON is invalid");
   });
 
   test("requires the service boundary", async () => {
@@ -194,6 +224,18 @@ function input(overrides: {
     receivedAt: Date.parse(receivedAt),
     observationJson: canonicalJsonString(observation),
   };
+}
+
+function refingerprint(observation: Record<string, any>): void {
+  const {
+    observationId: _observationId,
+    deliveryId: _deliveryId,
+    payloadDigest: _payloadDigest,
+    semanticFingerprint: _semanticFingerprint,
+    receivedAt: _receivedAt,
+    ...canonicalSemantics
+  } = observation;
+  observation.semanticFingerprint = fingerprintCanonicalRequest(canonicalSemantics);
 }
 
 function queryArgs(overrides: Record<string, unknown> = {}) {
