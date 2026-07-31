@@ -1,170 +1,123 @@
-const records = Object.freeze([
-  record({
-    id: "approve-release-note",
+const fixtureApi = globalThis.StensiblyFrontendLabFixtures;
+if (!fixtureApi) throw new Error("Field Console requires the shared frontend labs fixture contract");
+const policy = globalThis.StensiblyFieldConsolePolicy;
+if (!policy) throw new Error("Field Console requires its shared-fixture projection policy");
+const fixture = fixtureApi.frontendLabFixture;
+
+const metadata = Object.freeze({
+  "approve-release-note": meta({
     kind: "decision",
-    state: "attention",
-    title: "Approve the release note",
-    summary: "Choose the concise wording before the fictional publication can settle.",
     owner: "operator",
     timestamp: "09:42 UTC",
     evidence: "7ac91de",
     priority: 1,
     nextAction: "Review the concise wording, then approve it or return it for revision.",
-    actionLabel: "Review decision",
     position: [50, 11],
     task: "human-decision",
   }),
-  record({
-    id: "moss",
+  moss: meta({
     kind: "worker",
-    state: "healthy",
-    title: "Moss",
-    summary: "Reviewing accessibility evidence with a healthy fictional lease.",
     owner: "Moss",
     timestamp: "09:40 UTC",
     evidence: "lease-moss-14",
     priority: 5,
     nextAction: "Open the current evidence and allow the bounded review to continue.",
-    actionLabel: "Open activity",
     position: [20, 31],
     task: "worker-health",
   }),
-  record({
-    id: "ember",
+  ember: meta({
     kind: "worker",
-    state: "unhealthy",
-    title: "Ember",
-    summary: "Lease expired 12 minutes ago; safe reassignment is available.",
     owner: "Ember",
     timestamp: "09:28 UTC",
     evidence: "lease-ember-09",
     priority: 2,
     nextAction: "Confirm the lease is expired, then recover or reassign the work.",
-    actionLabel: "Start recovery",
     position: [80, 31],
     task: "worker-health",
   }),
-  record({
-    id: "repair-focus-order",
+  "repair-focus-order": meta({
     kind: "ready work",
-    state: "ready",
-    title: "Repair focus order",
-    summary: "Top recommendation because it unblocks keyboard evidence across every variant.",
     owner: "unclaimed",
     timestamp: "rank 1",
     evidence: "task-focus-01",
     priority: 3,
     nextAction: "Repair the shared focus order, then repeat keyboard evidence across every variant.",
-    actionLabel: "Open recommendation",
     position: [20, 58],
     task: "recommended-work",
   }),
-  record({
-    id: "polish-empty-state",
+  "polish-empty-state": meta({
     kind: "ready work",
-    state: "ready",
-    title: "Polish empty state",
-    summary: "Second-ranked work after the common focus path is reliable.",
     owner: "unclaimed",
     timestamp: "rank 2",
     evidence: "task-empty-02",
     priority: 8,
     nextAction: "Take this after the shared focus repair has landed.",
-    actionLabel: "Open next action",
     position: [18, 79],
     task: null,
   }),
-  record({
-    id: "deploy-amber",
+  "deploy-amber": meta({
     kind: "operation",
-    state: "ambiguous",
-    title: "Dashboard publication",
-    summary: "Provider receipt is missing; remote settlement is unknown.",
     owner: "operator",
     timestamp: "09:36 UTC",
     evidence: "preview-amber-17",
     priority: 1,
     nextAction: "Read the remote receipt and target state before accepting or retrying.",
-    actionLabel: "Reconcile before retry",
     position: [53, 54],
     task: "safe-reconciliation",
   }),
-  record({
-    id: "sync-violet",
+  "sync-violet": meta({
     kind: "operation",
-    state: "degraded",
-    title: "GitHub context sync",
-    summary: "Issue reads are current; review-thread evidence is delayed.",
     owner: "Moss",
     timestamp: "09:38 UTC",
     evidence: "sync-violet-22",
     priority: 4,
     nextAction: "Inspect delayed evidence without blocking healthy issue reads.",
-    actionLabel: "View evidence",
     position: [81, 58],
     task: null,
   }),
-  record({
-    id: "archive-coral",
+  "archive-coral": meta({
     kind: "operation",
-    state: "recovered",
-    title: "Artifact archive",
-    summary: "Recovered from a stale lease without duplicate writes.",
     owner: "Moss",
     timestamp: "09:31 UTC",
     evidence: "archive-coral-04",
     priority: 7,
     nextAction: "Review the recovery receipt; no further action is required.",
-    actionLabel: "Open activity",
     position: [51, 79],
     task: null,
   }),
-  record({
-    id: "github",
+  github: meta({
     kind: "connection",
-    state: "healthy",
-    title: "GitHub",
-    summary: "Read and bounded write capabilities are available.",
     owner: "provider",
     timestamp: "09:41 UTC",
     evidence: "connection-github",
     priority: 6,
     nextAction: "No recovery action is required.",
-    actionLabel: "Open connection",
     position: [35, 94],
     task: "connection-health",
   }),
-  record({
-    id: "api",
+  api: meta({
     kind: "connection",
-    state: "reconnecting",
-    title: "API",
-    summary: "Refreshing a fictional short-lived session.",
     owner: "provider",
     timestamp: "09:41 UTC",
     evidence: "connection-api",
     priority: 5,
     nextAction: "Allow the bounded reconnect to finish, then recheck health.",
-    actionLabel: "Inspect reconnect",
     position: [58, 94],
     task: "connection-health",
   }),
-  record({
-    id: "mcp",
+  mcp: meta({
     kind: "connection",
-    state: "offline",
-    title: "MCP",
-    summary: "Unavailable in this preview scenario; other paths remain explicit.",
     owner: "provider",
     timestamp: "09:39 UTC",
     evidence: "connection-mcp",
     priority: 4,
     nextAction: "Use the available GitHub or API path and preserve the offline explanation.",
-    actionLabel: "Open recovery note",
     position: [80, 94],
     task: "connection-health",
   }),
-]);
+});
+
+const baseRecords = Object.freeze(Object.entries(metadata).map(([id, details]) => Object.freeze({ id, ...details })));
 
 const relations = Object.freeze([
   relation("approve-release-note", "deploy-amber", "Decision gates publication", true),
@@ -224,11 +177,12 @@ const densityValue = required("#density-value");
 const announcer = required("#announcer");
 const mobileBack = required("#mobile-back");
 
-let selectedId = "approve-release-note";
+let selectedId = fixture.decision.id;
 let currentFilter = "all";
 let query = "";
 let density = "comfortable";
 let scenario = readScenario();
+let projection = projectedRecords();
 
 renderFilters();
 renderAll();
@@ -239,10 +193,7 @@ searchInput.addEventListener("input", () => {
 });
 
 scenarioSelect.value = scenario;
-scenarioSelect.addEventListener("change", () => {
-  setScenario(scenarioSelect.value);
-});
-
+scenarioSelect.addEventListener("change", () => setScenario(scenarioSelect.value));
 densityToggle.addEventListener("click", toggleDensity);
 mobileBack.addEventListener("click", closeMobileDetail);
 
@@ -277,16 +228,17 @@ document.addEventListener("keydown", (event) => {
 });
 
 function renderAll() {
+  projection = projectedRecords();
   renderScenario();
-  const visible = visibleRecords();
+  const visible = visibleRecords(projection);
   if (!visible.some((entry) => entry.id === selectedId)) selectedId = visible[0]?.id ?? null;
-  renderHealth();
+  renderHealth(projection);
   renderList(visible);
-  renderTopology(visible);
-  renderRelationships();
-  renderTimeline();
-  renderDetail();
-  resultSummary.textContent = `${visible.length} of ${scenarioRecords().length} fictional objects visible`;
+  renderTopology(visible, projection);
+  renderRelationships(projection);
+  renderTimeline(projection);
+  renderDetail(projection);
+  resultSummary.textContent = `${visible.length} of ${projection.length} fictional objects visible`;
 }
 
 function renderFilters() {
@@ -306,10 +258,11 @@ function renderFilters() {
   }));
 }
 
-function renderHealth() {
+function renderHealth(source) {
   const container = required("#connection-health");
-  const connections = records.filter((entry) => entry.kind === "connection");
+  const connections = source.filter((entry) => entry.kind === "connection");
   container.replaceChildren(...connections.map((entry) => stateChip(entry.state, `${entry.title} ${stateLabels[entry.state]}`)));
+  container.setAttribute("aria-label", `Connection health: ${connections.map((entry) => `${entry.title} ${stateLabels[entry.state]}`).join(", ")}`);
 }
 
 function renderList(visible) {
@@ -331,27 +284,23 @@ function renderList(visible) {
     button.setAttribute("aria-label", `${entry.title}. ${stateLabels[entry.state]}. ${entry.summary}`);
     const top = element("span", "row-top");
     top.append(stateChip(entry.state, stateLabels[entry.state]), text("span", entry.timestamp));
-    button.append(
-      top,
-      text("strong", entry.title, "row-title"),
-      text("span", entry.summary, "row-summary"),
-      metadataRow(entry),
-    );
+    button.append(top, text("strong", entry.title, "row-title"), text("span", entry.summary, "row-summary"), metadataRow(entry));
     button.addEventListener("click", () => activateRecord(entry.id, "list"));
     item.append(button);
     return item;
   }));
 }
 
-function renderTopology(visible) {
+function renderTopology(visible, source) {
   const visibleIds = new Set(visible.map((entry) => entry.id));
   topology.replaceChildren();
   topologyLinks.replaceChildren();
 
   for (const link of relations) {
     if (!visibleIds.has(link.from) || !visibleIds.has(link.to)) continue;
-    const from = byId(link.from);
-    const to = byId(link.to);
+    const from = byId(link.from, source);
+    const to = byId(link.to, source);
+    if (!from || !to) continue;
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
     line.setAttribute("x1", String(from.position[0]));
     line.setAttribute("y1", String(from.position[1]));
@@ -380,17 +329,13 @@ function renderTopology(visible) {
     button.style.top = `${entry.position[1]}%`;
     button.setAttribute("aria-current", String(entry.id === selectedId));
     button.setAttribute("aria-label", `${entry.kind}: ${entry.title}. ${stateLabels[entry.state]}.`);
-    button.append(
-      text("span", entry.kind, "node-kind"),
-      text("strong", entry.title),
-      text("small", stateLabels[entry.state]),
-    );
+    button.append(text("span", entry.kind, "node-kind"), text("strong", entry.title), text("small", stateLabels[entry.state]));
     button.addEventListener("click", () => activateRecord(entry.id, "topology"));
     topology.append(button);
   }
 }
 
-function renderRelationships() {
+function renderRelationships(source) {
   if (!selectedId) {
     relationshipSummary.replaceChildren(emptyItem("Select an object to read its topology relationships in text."));
     return;
@@ -402,10 +347,10 @@ function renderRelationships() {
   }
   relationshipSummary.replaceChildren(...related.map((link) => {
     const item = document.createElement("li");
-    const from = byId(link.from);
-    const to = byId(link.to);
+    const from = byId(link.from, source);
+    const to = byId(link.to, source);
     item.append(
-      text("strong", `${from.title} → ${to.title}`),
+      text("strong", `${from?.title ?? link.from} → ${to?.title ?? link.to}`),
       text("span", link.label, "relation-copy"),
       stateChip(link.critical ? "ambiguous" : "healthy", link.critical ? "decision-relevant relation" : "context relation"),
     );
@@ -413,7 +358,7 @@ function renderRelationships() {
   }));
 }
 
-function renderTimeline() {
+function renderTimeline(source) {
   timelineList.replaceChildren(...timeline.map((event) => {
     const item = document.createElement("li");
     item.dataset.recordId = event.recordId;
@@ -423,7 +368,7 @@ function renderTimeline() {
     button.className = "timeline-button";
     button.append(
       elementWithChildren("span", "timeline-meta", stateChip(event.state, stateLabels[event.state]), text("time", `${event.time} UTC`)),
-      text("strong", byId(event.recordId).title),
+      text("strong", byId(event.recordId, source)?.title ?? event.recordId),
       text("span", event.text, "row-summary"),
     );
     button.addEventListener("click", () => activateRecord(event.recordId, "timeline"));
@@ -432,12 +377,12 @@ function renderTimeline() {
   }));
 }
 
-function renderDetail() {
-  const entry = selectedId ? byId(selectedId) : null;
+function renderDetail(source) {
+  const entry = selectedId ? byId(selectedId, source) : null;
   if (!entry || scenario === "error") {
     detailBody.replaceChildren(
       text("h2", scenario === "error" ? "Projection unavailable" : "No object selected", "detail-title"),
-      text("p", "Project Paper Lantern remains selected. Use the local scenario control or choose another object.", "detail-copy"),
+      text("p", `Project ${fixture.project.name} remains selected. Use the local scenario control or choose another object.`, "detail-copy"),
       resetScenarioButton(),
     );
     return;
@@ -450,14 +395,14 @@ function renderDetail() {
   primary.className = "primary";
   primary.textContent = entry.actionLabel;
   primary.addEventListener("click", () => {
-    const prefix = entry.state === "ambiguous" ? "No retry performed. Safe next action" : "Fixture action only. Next action";
-    announce(`${prefix}: ${entry.nextAction}`);
+    const prefix = entry.state === "ambiguous" ? "No retry performed. Safe next action" : "Preview only. Next action";
+    announce(`${prefix}: ${entry.nextAction}. No product action was performed.`);
   });
 
-  const source = document.createElement("button");
-  source.type = "button";
-  source.textContent = "Open evidence summary";
-  source.addEventListener("click", () => announce(`Evidence ${entry.evidence}. Fictional local fixture only.`));
+  const evidence = document.createElement("button");
+  evidence.type = "button";
+  evidence.textContent = "Read evidence summary";
+  evidence.addEventListener("click", () => announce(`Evidence ${entry.evidence}. Fictional local fixture only.`));
 
   const sections = [
     elementWithChildren(
@@ -484,7 +429,7 @@ function renderDetail() {
       "section",
       "detail-section",
       text("h3", "Connection health"),
-      detailList(records.filter((candidate) => candidate.kind === "connection").map((candidate) => `${candidate.title}: ${stateLabels[candidate.state]} — ${candidate.summary}`)),
+      detailList(source.filter((candidate) => candidate.kind === "connection").map((candidate) => `${candidate.title}: ${stateLabels[candidate.state]} — ${candidate.summary}`)),
     ),
   ];
 
@@ -494,7 +439,7 @@ function renderDetail() {
     stateChip(entry.state, stateLabels[entry.state]),
     text("h2", entry.title, "detail-title"),
     text("p", entry.summary, "detail-copy"),
-    elementWithChildren("div", "detail-actions", source, primary),
+    elementWithChildren("div", "detail-actions", evidence, primary),
     ...sections,
   );
 }
@@ -512,9 +457,9 @@ function renderScenario() {
   scenarioPanel.replaceChildren(text("strong", copy[0]), document.createTextNode(` — ${copy[1]} `), resetScenarioButton());
 }
 
-function visibleRecords() {
+function visibleRecords(source) {
   if (scenario === "empty" || scenario === "error") return [];
-  return scenarioRecords().filter((entry) => {
+  return source.filter((entry) => {
     const filterMatch = currentFilter === "all"
       || entry.kind === currentFilter
       || (currentFilter === "attention" && ["attention", "unhealthy", "ambiguous", "degraded", "reconnecting", "offline"].includes(entry.state));
@@ -523,11 +468,8 @@ function visibleRecords() {
   });
 }
 
-function scenarioRecords() {
-  if (scenario !== "degraded") return records;
-  return records.map((entry) => entry.id === "sync-violet"
-    ? Object.freeze({ ...entry, summary: "Review-thread evidence is delayed by 18 minutes; issue reads remain current." })
-    : entry);
+function projectedRecords() {
+  return policy.projectRecords(baseRecords, scenario);
 }
 
 function activateRecord(id, source) {
@@ -537,13 +479,14 @@ function activateRecord(id, source) {
   document.querySelector(selector)?.focus();
   if (window.matchMedia("(max-width: 48rem)").matches) {
     document.body.dataset.mobileDetail = "true";
-    required("#detail-body").focus({ preventScroll: true });
+    detailBody.focus({ preventScroll: true });
   }
-  announce(`${byId(id).title} selected. ${stateLabels[byId(id).state]}.`);
+  const entry = byId(id, projection);
+  if (entry) announce(`${entry.title} selected. ${stateLabels[entry.state]}.`);
 }
 
 function moveSelection(delta) {
-  const visible = visibleRecords();
+  const visible = visibleRecords(projection);
   if (!visible.length) return;
   const index = Math.max(0, visible.findIndex((entry) => entry.id === selectedId));
   const next = visible[(index + delta + visible.length) % visible.length];
@@ -554,14 +497,8 @@ function moveSelection(delta) {
 }
 
 function focusRegion(number) {
-  const targets = [
-    objectList.querySelector("button"),
-    topology.querySelector("button"),
-    detailBody,
-    timelineList.querySelector("button"),
-  ];
-  const target = targets[number - 1];
-  target?.focus();
+  const targets = [objectList.querySelector("button"), topology.querySelector("button"), detailBody, timelineList.querySelector("button")];
+  targets[number - 1]?.focus();
   announce(`Region ${number} focused`);
 }
 
@@ -576,7 +513,7 @@ function toggleDensity() {
 function setScenario(value) {
   if (!["default", "empty", "degraded", "error"].includes(value)) return;
   scenario = value;
-  selectedId = value === "degraded" ? "sync-violet" : "approve-release-note";
+  selectedId = value === "degraded" ? "sync-violet" : fixture.decision.id;
   const url = new URL(window.location.href);
   if (value === "default") url.searchParams.delete("scenario");
   else url.searchParams.set("scenario", value);
@@ -606,6 +543,18 @@ function resetScenarioButton() {
   return button;
 }
 
+function meta(value) {
+  return Object.freeze({ ...value, position: Object.freeze([...value.position]) });
+}
+
+function relation(from, to, label, critical) {
+  return Object.freeze({ from, to, label, critical });
+}
+
+function byId(id, source = projection) {
+  return source.find((entry) => entry.id === id) ?? null;
+}
+
 function metadataRow(entry) {
   const wrapper = element("span", "row-meta");
   wrapper.append(text("span", entry.kind), text("span", entry.owner), text("code", entry.evidence));
@@ -619,67 +568,55 @@ function stateChip(state, label) {
   return chip;
 }
 
-function detailGrid(entries) {
-  const wrapper = element("div", "detail-grid");
-  for (const [label, value] of entries) {
-    wrapper.append(elementWithChildren("div", "", text("span", label, "meta-label"), text("strong", value)));
-  }
-  return wrapper;
+function detailGrid(rows) {
+  const grid = element("dl", "detail-grid");
+  for (const [label, value] of rows) grid.append(text("dt", label), text("dd", value));
+  return grid;
 }
 
-function detailList(entries) {
+function detailList(rows) {
   const list = element("ul", "detail-list");
-  for (const entry of entries) list.append(elementWithChildren("li", "", text("span", entry)));
+  for (const row of rows) list.append(text("li", row));
   return list;
 }
 
-function emptyItem(copy) {
-  return elementWithChildren("li", "empty-panel", text("span", copy));
+function emptyItem(message) {
+  const item = text("li", message);
+  item.className = "empty-state";
+  return item;
 }
 
-function emptyPanel(copy) {
-  return elementWithChildren("div", "empty-panel", text("span", copy));
+function emptyPanel(message) {
+  return text("p", message, "empty-state");
 }
 
-function byId(id) {
-  const entry = records.find((candidate) => candidate.id === id);
-  if (!entry) throw new Error(`Unknown Field Console record: ${id}`);
-  return entry;
-}
-
-function record(value) {
-  return Object.freeze(value);
-}
-
-function relation(from, to, label, critical) {
-  return Object.freeze({ from, to, label, critical });
-}
-
-function element(tagName, className = "") {
-  const node = document.createElement(tagName);
+function element(tag, className) {
+  const node = document.createElement(tag);
   if (className) node.className = className;
   return node;
 }
 
-function text(tagName, value, className = "") {
-  const node = element(tagName, className);
+function text(tag, value, className) {
+  const node = element(tag, className);
   node.textContent = value;
   return node;
 }
 
-function elementWithChildren(tagName, className, ...children) {
-  const node = element(tagName, className);
+function elementWithChildren(tag, className, ...children) {
+  const node = element(tag, className);
   node.append(...children);
   return node;
 }
 
 function required(selector) {
   const node = document.querySelector(selector);
-  if (!node) throw new Error(`Field Console is missing ${selector}`);
+  if (!node) throw new Error(`Missing required Field Console element: ${selector}`);
   return node;
 }
 
 function announce(message) {
   announcer.textContent = "";
-  requestAnimationFrame(() => { announcer.textContent = message; });
+  requestAnimationFrame(() => {
+    announcer.textContent = message;
+  });
 }
