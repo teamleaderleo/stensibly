@@ -80,4 +80,38 @@ describe("documentation brief experiment", () => {
     expect(decisions).toContain("Do not create “the next ADR number.”");
     expect(decisionTemplate).toContain("- **Owning issue:** #NNNN");
   });
+
+  test("publishes one handbook and current-main code atlas under issue 693", async () => {
+    const readme = await read("README.md");
+    const contributing = await read("CONTRIBUTING.md");
+    const handbook = await read("docs/engineering-handbook.md");
+    const atlas = await read("docs/code-atlas.md");
+    const decision = await read("docs/decisions/693-engineering-handbook.md");
+
+    expect(readme).toContain("docs/engineering-handbook.md");
+    expect(readme).toContain("docs/code-atlas.md");
+    expect(contributing).toContain("docs/engineering-handbook.md");
+    expect(contributing).toContain("docs/code-atlas.md");
+
+    expect(handbook).toContain("- **Required invariant**");
+    expect(handbook).toContain("- **Repository convention**");
+    expect(handbook).toContain("- **Active experiment**");
+    expect(handbook).toContain("## Ten recurring pitfalls");
+    expect((handbook.match(/^\| [^\n]+ \| [^\n]+ \| [^\n]+ \|$/gm) ?? []).length)
+      .toBeGreaterThanOrEqual(11);
+
+    for (const heading of [
+      "## 1. Strict GitHub provider binding admission",
+      "## 2. Invocation-time runner authority",
+      "## 3. Append-only SQLite provider binding history",
+      "## 4. Guarded delegated GitHub read boundary",
+    ]) {
+      expect(atlas).toContain(heading);
+    }
+    expect(atlas).toContain(
+      "**Source pin for this edition:** `e6a586a0d5d8f0693b295680e89bca699ce41417`",
+    );
+    expect(decision).toContain("- **Status:** experimenting");
+    expect(decision).toContain("- **Owning issue:** #693");
+  });
 });

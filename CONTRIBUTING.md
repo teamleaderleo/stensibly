@@ -2,6 +2,8 @@
 
 Start every repository change by reading [`AGENTS.md`](AGENTS.md), [`STENSIBLY.md`](STENSIBLY.md), and [`docs/current-wave.md`](docs/current-wave.md). Inspect current issues, pull requests, and exact-head handoffs before selecting a file fence.
 
+Read [`docs/engineering-handbook.md`](docs/engineering-handbook.md) before implementing or reviewing source changes. Use [`docs/code-atlas.md`](docs/code-atlas.md) to find current-main examples of authority guards, runtime admission, persistence, provider composition, and focused tests.
+
 Read [`docs/documentation-system.md`](docs/documentation-system.md) before creating or materially revising a campaign record, durable decision, operating instruction, or shared documentation convention.
 
 When progress requires a human-only action such as authentication, token creation, protected secret configuration, provider access, DNS, or approval, follow [`docs/operator-action-required.md`](docs/operator-action-required.md). Put the action block before every other section in the owning record, request the minimum safe scope, and never ask anyone to paste a secret value into GitHub, chat, logs, screenshots, or artifacts.
