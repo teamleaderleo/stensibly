@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 const hostedSentinel = `stn.tok_${"0".repeat(32)}.${"s".repeat(40)}`;
@@ -94,7 +95,7 @@ function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`page:${error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console:${message.text()}`));
+    if (message.type() === "error") errors.push(`console:${message.text()}`);
   });
   return errors;
 }
@@ -120,8 +121,13 @@ async function waitForRootMode(page: Page, errors: string[], expected: string): 
 }
 
 async function attachScreenshot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-  const body = await page.screenshot({ fullPage: true });
-  await testInfo.attach(name, { body, contentType: "image/png" });
+  const sourcePath = testInfo.outputPath("attachment-source.png");
+  try {
+    await page.screenshot({ path: sourcePath, fullPage: true });
+    await testInfo.attach(name, { path: sourcePath, contentType: "image/png" });
+  } finally {
+    await rm(sourcePath, { force: true });
+  }
 }
 
 test("signed-out root stays recoverable at narrow dark reduced-motion settings", async ({ page }, testInfo) => {
