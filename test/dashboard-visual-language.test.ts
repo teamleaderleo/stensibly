@@ -3,16 +3,23 @@ import { describe, expect, test } from "bun:test";
 const siteFile = (name: string) => Bun.file(new URL(`../site/${name}`, import.meta.url)).text();
 
 describe("dashboard visual language", () => {
-  test("uses a warm light foundation with an intentional dark scheme", async () => {
-    const styles = await siteFile("styles.css");
+  test("overrides the legacy warm base with a neutral light and dark root", async () => {
+    const [styles, calm] = await Promise.all([
+      siteFile("styles.css"),
+      siteFile("calm-root.css"),
+    ]);
 
     expect(styles).toContain("color-scheme: light dark");
-    expect(styles).toContain("--bg: #e9e5dd");
-    expect(styles).toContain("--accent: #70668b");
-    expect(styles).toContain("@media (prefers-color-scheme: dark)");
-    expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(styles).not.toContain("#0b0b0d");
-    expect(styles).not.toContain("#d8ff5f");
+    expect(calm).toContain("--bg: #f5f5f4");
+    expect(calm).toContain("--paper: #ffffff");
+    expect(calm).toContain("--text: #181817");
+    expect(calm).toContain("--accent: #8f8998");
+    expect(calm).toContain("@media (prefers-color-scheme: dark)");
+    expect(calm).toContain("--bg: #0f0f10");
+    expect(calm).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(calm).not.toContain("#e9e5dd");
+    expect(calm).not.toContain("#70668b");
+    expect(calm).not.toContain("#d8ff5f");
   });
 
   test("keeps hosted sign-in simple, flat, and primary", async () => {
@@ -24,7 +31,7 @@ describe("dashboard visual language", () => {
     ]);
     const loginSurface = `${html}\n${loginStyles}\n${bridge}`;
 
-    expect(html).toContain("<h1>Shared work.</h1>");
+    expect(html).toContain("<h1>Shared work, made legible.</h1>");
     expect(html).toContain('class="connection login-card"');
     expect(html).toContain('href="/login-scrapbook.css"');
     expect(html).toContain('id="github-sign-in"');
@@ -78,19 +85,20 @@ describe("dashboard visual language", () => {
       siteFile("item-claim.css"),
     ]);
 
-    expect(hostedStyles).toContain("--accent-solid: #5d5478");
-    expect(hostedStyles).toContain("--accent-solid: #70668b");
-    expect(hostedStyles).toContain("--on-accent: #fff");
+    expect(hostedStyles).toContain("--accent-solid: #181817");
+    expect(hostedStyles).toContain("--on-accent: #ffffff");
+    expect(hostedStyles).toContain("--accent-solid: #f2f2ef");
+    expect(hostedStyles).toContain("--on-accent: #0f0f10");
 
     expect(cssRule(hostedStyles, ".hosted-sign-in button")).toContain(
-      "color: var(--on-accent);\n  border-color: transparent;\n  background: var(--accent-solid);",
+      "color: var(--on-accent);\n  border-color: var(--accent-solid);\n  background: var(--accent-solid);",
     );
     expect(cssRule(hostedStyles, [
       ".connection-form-actions button:first-child",
       ".actor-form-actions button:first-child",
       ".create-item-actions button:first-child",
     ].join(",\n"))).toContain(
-      "color: var(--on-accent);\n  background: var(--accent-solid);",
+      "color: var(--on-accent);\n  border-color: var(--accent-solid);\n  background: var(--accent-solid);",
     );
     expect(cssRule(claimStyles, [
       ".detail-claim-actions button",
@@ -99,8 +107,8 @@ describe("dashboard visual language", () => {
       "color: var(--on-accent);\n  border-color: transparent;\n  background: var(--accent-solid);",
     );
 
-    expect(contrastRatio("#5d5478", "#ffffff")).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio("#70668b", "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio("#181817", "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio("#f2f2ef", "#0f0f10")).toBeGreaterThanOrEqual(4.5);
   });
 
   test("keeps dynamically loaded item actions inside the same palette", async () => {

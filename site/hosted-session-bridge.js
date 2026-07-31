@@ -17,6 +17,9 @@ const sentinel = hostedSessionSentinel();
 const originalFetch = window.fetch.bind(window);
 const savedEndpoint = readSavedEndpoint();
 
+const root = document.documentElement;
+const connectForm = document.querySelector('#connect-form');
+const dashboard = document.querySelector('#dashboard');
 const signInButton = document.querySelector('#github-sign-in');
 const hostedSignOutButton = document.querySelector('#hosted-sign-out');
 const signInState = document.querySelector('#hosted-sign-in-state');
@@ -29,6 +32,7 @@ let hostedSessionRejectedStatus = 0;
 installFrontendLabsEntry();
 persistEndpoint(savedEndpoint);
 installSessionMarker(savedEndpoint);
+installRootModeObserver();
 window.fetch = installHostedSessionFetchBridge({
   fetchImpl: originalFetch,
   sessionOrigin: DEFAULT_ENDPOINT,
@@ -40,6 +44,49 @@ installProviderCapacityCard();
 signInButton?.addEventListener('click', beginGithubSignIn);
 hostedSignOutButton?.addEventListener('click', signOutHostedSession, { capture: true });
 disconnectButton?.addEventListener('click', signOutHostedSession, { capture: true });
+
+function installRootModeObserver() {
+  const savedMarker = readSessionMarker();
+  root.dataset.appMode = isPlausibleToken(savedMarker) ? 'connecting' : 'signed-out';
+  root.dataset.rootReady = 'true';
+
+  const sync = () => {
+    const formVisible = Boolean(connectForm && !connectForm.hidden);
+    const dashboardVisible = Boolean(dashboard && !dashboard.hidden);
+    const errorVisible = Boolean(connectionError && !connectionError.hidden);
+
+    if (dashboardVisible && formVisible) {
+      root.dataset.appMode = 'editing';
+      return;
+    }
+    if (dashboardVisible) {
+      root.dataset.appMode = errorVisible ? 'degraded' : 'connected';
+      return;
+    }
+    root.dataset.appMode = formVisible ? 'signed-out' : 'connecting';
+  };
+
+  try {
+    if (typeof globalThis.MutationObserver !== 'function') {
+      root.dataset.appMode = 'signed-out';
+      return;
+    }
+    const observer = new globalThis.MutationObserver(sync);
+    for (const element of [connectForm, dashboard, connectionError]) {
+      if (element) observer.observe(element, { attributes: true, attributeFilter: ['hidden'] });
+    }
+  } catch {
+    root.dataset.appMode = 'signed-out';
+  }
+}
+
+function readSessionMarker() {
+  try {
+    return sessionStorage.getItem(STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
 
 function installSessionMarker(endpoint) {
   try {

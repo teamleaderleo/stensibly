@@ -6,7 +6,7 @@ The coordination graph core is a bounded, deterministic readiness evaluator. It 
 
 A graph has one workspace, project, graph-policy version, schema version, and repository-owned compiler revision. Nodes use a stable ID plus an explicit positive generation. The generation is part of node identity; replacing `review@1` with `review@2` creates a new fact.
 
-Every graph, node, receipt, edge, reference, dependency record, and array crosses an exact own-property admission boundary. Unknown or symbol fields, accessors, hidden fields, custom prototypes, sparse arrays, and decorated arrays fail before caller-controlled getters execute.
+Every graph, node, receipt, edge, reference, dependency record, evaluation option, and array crosses an exact own-property admission boundary. Unknown or symbol fields, accessors, hidden fields, custom prototypes, sparse arrays, and decorated arrays fail before caller-controlled getters execute.
 
 Each node binds:
 
@@ -17,6 +17,7 @@ Each node binds:
 - node policy version;
 - authority generation when relevant;
 - owner when declared;
+- exact selected producer identity when resolving a competition;
 - declared state;
 - optional bounded receipt.
 
@@ -33,11 +34,12 @@ A receipt proves one complete node input fingerprint. The subject includes:
 - node policy version;
 - authority generation;
 - owner identity;
+- exact selected producer identity when declared;
 - every accepted readiness predecessor's key, edge type, output fingerprint, and optional competition identity.
 
-Changing owner, graph policy, compiler policy, node policy, authority generation, environment, definition, or accepted predecessor output rotates the expected fingerprint. A provider result alone advances nothing: the exact receipt disposition and declared state must agree.
+Changing owner, graph policy, compiler policy, node policy, authority generation, environment, definition, selection, or accepted predecessor output rotates the expected fingerprint. A provider result alone advances nothing: the exact receipt disposition and declared state must agree.
 
-Receipt observation time and optional expiry use canonical UTC. A receipt observed after the immutable evaluation time is stale. An expiry at or before evaluation is stale.
+Receipt observation time and optional expiry use canonical UTC. Every evaluation requires an explicit canonical `evaluatedAt` input; the evaluator reads no ambient process clock. A receipt observed after that immutable evaluation time is stale. An expiry at or before evaluation is stale.
 
 ## Edge layers
 
@@ -65,13 +67,15 @@ Causal cycles are valid and do not affect readiness or invalidation.
 
 ## Competing producers
 
-An output may have one ordinary producer. Multiple producers require the same explicit `competitionId`; otherwise graph validation fails. A competition group satisfies readiness when at least one candidate has an accepted output. Every accepted candidate in the group contributes to the target input fingerprint.
+An output may have one ordinary producer. Multiple producers require the same explicit `competitionId`; otherwise graph validation fails. The target remains blocked until it declares one exact `selectedProducer` reference from that competition. Only the selected accepted output contributes to the target input fingerprint.
+
+Losing alternatives remain visible graph facts and may mark descendants affected. Their movement leaves an exact selected downstream receipt reusable. Movement of the selected producer output or selected producer identity rotates the target fingerprint and requires fresh proof.
 
 ## Evaluation order
 
 For each node the evaluator:
 
-1. resolves hard prerequisite states and accepted predecessor outputs;
+1. resolves hard prerequisite states and the exact selected competition output;
 2. computes the complete candidate input fingerprint;
 3. validates exact receipt identity, observation time, expiry, and disposition;
 4. emits the current state;
@@ -85,14 +89,23 @@ The evaluator emits:
 
 - `accepted` — matching fresh accepted receipt for the complete inputs;
 - `eligible` — prerequisites are accepted and the current inputs lack reusable proof;
-- `blocked` — a hard prerequisite is not accepted;
+- `blocked` — a hard prerequisite or explicit competition selection is unresolved;
 - `failed` — matching fresh failure receipt for the exact inputs;
 - `ambiguous` — matching fresh ambiguous receipt requiring reconciliation;
 - `stale` — fingerprint mismatch, future observation, expiry, missing fresh proof for a declared accepted affected node, or state/receipt disagreement;
 - `revoked` — authority or accepted state was explicitly revoked;
 - `unknown` — source state is explicitly unknown.
 
-Unrelated accepted branches remain reusable.
+Unrelated accepted branches and accepted losing alternatives remain reusable.
+
+## Projection integrity
+
+Evaluation results are deeply frozen, including node rows and reason arrays. The queue renderer accepts either:
+
+- the exact in-process evaluation object issued by this evaluator; or
+- exact evaluation inputs containing `evaluatedAt` and optional changed-node identities, from which it recomputes the evaluation.
+
+A cloned, reconstructed, reordered, or caller-authored evaluation object is treated as an invalid options object and fails before any supplied state, reason, timestamp, ordering, or fingerprint can be rendered. Serialized callers should retain graph inputs plus explicit evaluation inputs and recompute the disposable view.
 
 ## Bounds and deterministic identity
 
@@ -120,7 +133,7 @@ This core does not:
 - schedule workflows;
 - implement the periodic compiler from issue #566.
 
-Later slices may add accepted-input adapters, durable snapshots, reverse-reachability persistence, CI publication, and product projections. Those layers must preserve this evaluator's exact receipt subject and authority boundary.
+Later slices may add accepted-input adapters, durable snapshots, reverse-reachability persistence, CI publication, and product projections. Those layers must preserve this evaluator's exact receipt subject, explicit time input, selected-producer identity, and authority boundary.
 
-— Kestrel · coordination graph repair
-  Intention: preserve reusable proof across change while every accepted state remains attributable to one exact generation and policy subject.
+— Nacre · coordination graph post-merge repair
+  Intention: keep selected work and published readiness attributable to exact inputs.

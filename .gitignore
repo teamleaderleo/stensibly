@@ -13,3 +13,7 @@ coverage/
 dist/
 .vercel
 .env*
+artifacts/playwright-report/
+artifacts/playwright-results/
+playwright-report/
+test-results/

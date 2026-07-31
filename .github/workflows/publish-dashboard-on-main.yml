@@ -1,18 +1,12 @@
-name: Publish Dashboard On Main
+name: Publish Dashboard Production
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "site/**"
-      - ".github/workflows/publish-dashboard-on-main.yml"
-      - "scripts/link-vercel-project-domain.sh"
-      - "src/dashboard-assets.ts"
-      - "src/verify-dashboard.ts"
-      - "package.json"
-      - "bun.lock"
   workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Exact lowercase full main revision admitted by the release coordinator
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -32,6 +26,19 @@ jobs:
     name: Validate dashboard candidate
     runs-on: ubuntu-latest
     steps:
+      - name: Require the exact admitted revision
+        env:
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${EXPECTED_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Invalid dashboard revision::expected_revision must be a lowercase full commit SHA."
+            exit 1
+          fi
+          if [ "${GITHUB_SHA}" != "${EXPECTED_REVISION}" ]; then
+            echo "::error title=Dashboard revision moved::Expected ${EXPECTED_REVISION}, received ${GITHUB_SHA}."
+            exit 1
+          fi
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
       - name: Install locked dependencies
@@ -174,11 +181,13 @@ jobs:
       - name: Record publication receipt
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment_url }}
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
         run: |
           {
             echo "## Dashboard publication receipt"
             echo
             echo "- source: \`${GITHUB_SHA}\`"
+            echo "- expected revision: \`${EXPECTED_REVISION}\`"
             echo "- project: \`${EXPECTED_VERCEL_PROJECT}\` (\`${VERCEL_PROJECT_ID}\`)"
             echo "- immutable deployment: ${DEPLOYMENT_URL}"
             echo "- canonical domain: https://${DASHBOARD_HOST}"

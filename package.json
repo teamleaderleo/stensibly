@@ -17,6 +17,7 @@
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
     "verify:dashboard": "bun src/verify-dashboard.ts",
+    "verify:browser-artifacts": "bun scripts/verify-browser-evidence-artifacts.ts",
     "audit:membership": "bun src/provider-membership-audit-cli.ts",
     "convex:dev": "convex dev",
     "convex:local": "convex dev --dev-deployment local",
@@ -27,9 +28,12 @@
     "worker:tail": "wrangler tail",
     "lockfile:check": "bun scripts/prepare-bun-lock-candidate.ts",
     "test": "bun test ./test/*.test.ts",
+    "test:browser": "playwright test",
+    "test:browser:report": "playwright show-report artifacts/playwright-report",
     "test:runtime-parity": "bun scripts/verify-runtime-parity.mjs",
     "test:convex": "vitest run",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "typecheck:browser": "bunx tsc --noEmit -p tsconfig.browser.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -40,6 +44,7 @@
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
+    "@playwright/test": "1.62.0",
     "@types/bun": "latest",
     "convex-test": "^0.0.54",
     "typescript": "^5.0.0",

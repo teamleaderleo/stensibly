@@ -9,10 +9,10 @@ body {
 }
 
 .hero-login {
-  grid-template-columns: minmax(0, 1fr) minmax(20rem, 25rem);
-  gap: clamp(2rem, 7vw, 7rem);
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 24rem);
+  gap: clamp(2rem, 7vw, 6rem);
   align-items: center;
-  min-height: calc(100vh - 10rem);
+  min-height: calc(100vh - 9rem);
   margin: 0;
 }
 
@@ -22,24 +22,24 @@ body {
 
 .hero-login .eyebrow {
   margin: 0 0 .75rem;
-  font: 700 .68rem ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .12em;
+  font: 600 .68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .1em;
   text-transform: uppercase;
 }
 
 .hero-login h1 {
   max-width: none;
   margin: 0;
-  font-size: clamp(3.2rem, 8vw, 7rem);
-  line-height: .94;
-  letter-spacing: -.065em;
+  font-size: clamp(3rem, 7vw, 6rem);
+  line-height: .96;
+  letter-spacing: -.06em;
 }
 
 .login-card {
   width: 100%;
   padding: 1rem;
   border: 1px solid var(--line);
-  border-radius: 1rem;
+  border-radius: .8rem;
   background: var(--panel);
   box-shadow: none;
 }
@@ -55,7 +55,7 @@ body {
 }
 
 .login-card .connection-head strong {
-  font-size: 1rem;
+  font-size: .94rem;
 }
 
 .login-card #connection-state {
@@ -64,7 +64,7 @@ body {
 }
 
 .login-card form {
-  gap: .75rem;
+  gap: .7rem;
   margin-top: .85rem;
 }
 
@@ -80,7 +80,7 @@ body {
 .login-card .hosted-sign-in p {
   margin: 0;
   color: var(--muted);
-  font-size: .78rem;
+  font-size: .76rem;
   line-height: 1.4;
 }
 
@@ -91,18 +91,18 @@ body {
   gap: .65rem;
   min-height: 3rem;
   padding: .72rem .85rem;
-  border-radius: .7rem;
+  border-radius: .6rem;
   box-shadow: none;
   text-align: center;
 }
 
 .login-card .hosted-sign-in button svg {
-  width: 1.1rem;
-  height: 1.1rem;
+  width: 1.05rem;
+  height: 1.05rem;
 }
 
 .login-card .hosted-sign-in .secondary {
-  min-height: 2.6rem;
+  min-height: 2.55rem;
 }
 
 .advanced-connection {
@@ -110,10 +110,10 @@ body {
 }
 
 .advanced-connection summary {
-  padding: .75rem 0 0;
+  padding: .72rem 0 0;
   color: var(--muted);
   cursor: pointer;
-  font-size: .72rem;
+  font-size: .68rem;
   list-style: none;
 }
 
@@ -136,8 +136,12 @@ body {
 
 .advanced-connection-body {
   display: grid;
-  gap: .7rem;
-  padding-top: .8rem;
+  gap: .65rem;
+  padding-top: .75rem;
+}
+
+.login-card .advanced-connection-body label {
+  font-size: .7rem;
 }
 
 .login-card .connection-form-actions {
@@ -146,11 +150,15 @@ body {
 }
 
 .login-card .connection-note {
-  margin: .75rem 0 0;
-  padding-top: .7rem;
+  margin: .72rem 0 0;
+  padding-top: .68rem;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: .65rem;
+  font-size: .64rem;
+}
+
+.login-card:not(:has(.advanced-connection[open])) .connection-note {
+  display: none;
 }
 
 .hero-login ~ .disconnected {
@@ -166,7 +174,7 @@ body {
   }
 
   .hero-login h1 {
-    font-size: clamp(3rem, 18vw, 5rem);
+    font-size: clamp(2.8rem, 16vw, 4.75rem);
   }
 
   .login-card {
@@ -180,7 +188,7 @@ body {
   }
 
   .hero-login {
-    gap: 1.5rem;
+    gap: 1.4rem;
     padding-top: 1rem;
   }
 
