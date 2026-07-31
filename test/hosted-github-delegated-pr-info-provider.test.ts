@@ -182,8 +182,8 @@ describe("private hosted GitHub delegated pull request reads", () => {
 
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      tool: "get_pr_diff",
-      arguments: { pr_number: pullRequestNumber, format: "diff" },
+      tool: "list_pull_request_review_threads",
+      arguments: { pr_number: pullRequestNumber },
     })).rejects.toThrow("authority denied");
     expect(externalCalls).toBe(0);
   });
