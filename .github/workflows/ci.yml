@@ -73,39 +73,10 @@ jobs:
         run: |
           set -o pipefail
           bun run typecheck 2>&1 | tee typecheck-output.txt
-      - name: Typecheck frontend browser evidence
-        run: |
-          set -o pipefail
-          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
       - name: Run Bun tests
         run: |
           set -o pipefail
           bun run test 2>&1 | tee test-output.txt
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run frontend browser evidence
-        id: browser-test
-        run: |
-          set -o pipefail
-          bun run test:browser 2>&1 | tee browser-test-output.txt
-      - name: Verify frontend browser evidence artifacts
-        id: browser-artifacts
-        if: always() && steps.browser-test.outcome != 'skipped'
-        run: |
-          set -o pipefail
-          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
-      - name: Upload verified frontend browser evidence
-        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-browser-evidence-${{ github.sha }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: error
-          retention-days: 7
       - name: Run Convex tests
         run: |
           set -o pipefail
@@ -121,7 +92,6 @@ jobs:
           name: diagnostics
           path: |
             typecheck-output.txt
-            browser-typecheck-output.txt
             test-output.txt
             convex-test-output.txt
             worker-check-output.txt
@@ -158,6 +128,63 @@ jobs:
         with:
           name: runtime-parity-diagnostics
           path: runtime-parity-output.txt
+          if-no-files-found: ignore
+
+  browser-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify manually dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Dispatched browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck frontend browser evidence
+        run: |
+          set -o pipefail
+          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+      - name: Run frontend browser evidence
+        id: browser-test
+        run: |
+          set -o pipefail
+          bun run test:browser 2>&1 | tee browser-test-output.txt
+      - name: Verify frontend browser evidence artifacts
+        id: browser-artifacts
+        if: always() && steps.browser-test.outcome != 'skipped'
+        run: |
+          set -o pipefail
+          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
+      - name: Upload verified frontend browser evidence
+        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence-${{ github.sha }}
+          path: |
+            artifacts/playwright-report
+            artifacts/playwright-results
+            browser-test-output.txt
+            browser-artifact-output.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-evidence-diagnostics
+          path: |
+            browser-typecheck-output.txt
+            browser-test-output.txt
+            browser-artifact-output.txt
           if-no-files-found: ignore
 
   serial-full:
@@ -198,8 +225,6 @@ jobs:
           exit 1
       - name: Install committed dependencies once
         run: bun install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
       - name: Run serial full validation
         run: |
           set +e
@@ -220,10 +245,7 @@ jobs:
             fi
           }
           run_gate typecheck typecheck-output.txt bun run typecheck
-          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
           run_gate bun-tests test-output.txt bun run test
-          run_gate browser-tests browser-test-output.txt bun run test:browser
-          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
           run_gate convex-tests convex-test-output.txt bun run test:convex
           run_gate worker-check worker-check-output.txt bun run worker:check
           run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
@@ -235,7 +257,6 @@ jobs:
           name: serial-full-diagnostics
           path: |
             typecheck-output.txt
-            browser-typecheck-output.txt
             test-output.txt
             convex-test-output.txt
             worker-check-output.txt
