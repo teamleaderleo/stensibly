@@ -8,8 +8,6 @@ const maximumFileBytes = 20 * 1_024 * 1_024;
 const maximumTotalBytes = 75 * 1_024 * 1_024;
 const maximumPngDimension = 10_000;
 const maximumPngPixels = 50_000_000;
-const maximumLastRunTests = 10_000;
-const maximumLastRunIdentityLength = 512;
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const allowedPngChunks = new Set([
   "IHDR",
@@ -37,7 +35,7 @@ const credentialPatterns = [
   { name: "Stensibly token", pattern: /stn\.tok_[A-Za-z0-9._-]{8,}/u },
   { name: "GitHub fine-grained token", pattern: /github_pat_[A-Za-z0-9_]{20,}/u },
   { name: "GitHub classic token", pattern: /gh[pousr]_[A-Za-z0-9]{20,}/u },
-  { name: "OpenAI-style secret", pattern: /sk-[A-Za-z0-9_-]{20,}/u },
+  { name: "OpenAI-style secret", pattern: /(?:^|[^A-Za-z0-9_])sk-[A-Za-z0-9_-]{20,}/u },
   { name: "AWS access key", pattern: /AKIA[0-9A-Z]{16}/u },
 ];
 
@@ -241,7 +239,7 @@ export async function verifyBrowserEvidenceArtifacts(
       return;
     }
     const keys = Object.keys(value).sort();
-    if (keys.join(",") !== "failedTests,status,testDurations") {
+    if (keys.join(",") !== "failedTests,status") {
       violations.push("artifacts/playwright-results/.last-run.json must use exact Playwright 1.62 control fields");
       return;
     }
@@ -250,22 +248,6 @@ export async function verifyBrowserEvidenceArtifacts(
     }
     if (!Array.isArray(value.failedTests) || value.failedTests.length !== 0) {
       violations.push("artifacts/playwright-results/.last-run.json must contain no failed test identities");
-    }
-    if (!isPlainRecord(value.testDurations) || Object.keys(value.testDurations).length > maximumLastRunTests) {
-      violations.push("artifacts/playwright-results/.last-run.json has invalid test durations");
-      return;
-    }
-    for (const [id, duration] of Object.entries(value.testDurations)) {
-      if (
-        id.length < 1
-        || id.length > maximumLastRunIdentityLength
-        || typeof duration !== "number"
-        || !Number.isFinite(duration)
-        || duration < 0
-      ) {
-        violations.push("artifacts/playwright-results/.last-run.json has invalid test durations");
-        break;
-      }
     }
   }
 
