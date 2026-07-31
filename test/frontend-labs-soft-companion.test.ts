@@ -35,10 +35,10 @@ describe("Soft Companion frontend lab", () => {
 
   test("maps every shared task to exact fixture identities and visible destinations", () => {
     const expectedTargets = new Map<string, string>([
-      ["human-decision", frontendLabFixture.decision.id],
+      ["human-decision", String(frontendLabFixture.decision.id)],
       ["worker-health", "ember"],
-      ["recommended-work", frontendLabFixture.readyWork[0]!.id],
-      ["safe-reconciliation", frontendLabFixture.operations[0]!.id],
+      ["recommended-work", String(frontendLabFixture.readyWork[0]!.id)],
+      ["safe-reconciliation", String(frontendLabFixture.operations[0]!.id)],
     ]);
     expect(frontendLabTasks).toHaveLength(5);
     expect(app).toContain("...tasks.map");
@@ -140,11 +140,12 @@ describe("Soft Companion frontend lab", () => {
     expect(() => history.replaceState("security")).not.toThrow();
     expect(() => history.replaceState("unexpected")).toThrow("unexpected history failure");
     expect(listenerOptions).toEqual({ capture: true });
-    expect(clickListener).not.toBeNull();
+    const registeredClickListener = clickListener as ((event: { detail: number; target: FakeElement }) => void) | null;
+    if (!registeredClickListener) throw new Error("Soft Companion compatibility listener was not registered");
 
     const oldButton = new FakeElement("workers");
     buttons = [oldButton];
-    clickListener?.({ detail: 0, target: oldButton });
+    registeredClickListener({ detail: 0, target: oldButton });
     expect(animationFrames).toHaveLength(1);
 
     const replacementButton = new FakeElement("workers");
@@ -153,7 +154,7 @@ describe("Soft Companion frontend lab", () => {
     expect(replacementButton.focused).toBe(true);
 
     replacementButton.focused = false;
-    clickListener?.({ detail: 1, target: replacementButton });
+    registeredClickListener({ detail: 1, target: replacementButton });
     expect(animationFrames).toHaveLength(0);
     expect(replacementButton.focused).toBe(false);
   });
