@@ -26,7 +26,7 @@ const supportValues = new Set([
 ]);
 const idPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const revisionPattern = /^[0-9a-f]{7,40}$/;
-const unsafeTextPattern = /[\x00-\x1f\x7f-\x9f\u{2028}\u{2029}\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
+const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
 const sourceManifest = [
   {
