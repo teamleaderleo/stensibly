@@ -131,7 +131,8 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await installDeterministicApi(page, { returningSession: false, itemsMode: "unauthorized" });
 
-  await page.goto("/");
+  const response = await page.goto("/");
+  expect(response?.status()).toBe(200);
 
   await waitForRootMode(page, errors, "signed-out");
   await expect(page.getByRole("heading", { name: "Shared work." })).toBeVisible();
@@ -163,7 +164,8 @@ test("returning session exposes a real connecting status before the compact desk
   const errors = collectBrowserErrors(page);
   await installDeterministicApi(page, { returningSession: true, itemsMode: "pending" });
 
-  await page.goto("/");
+  const response = await page.goto("/");
+  expect(response?.status()).toBe(200);
 
   const root = page.locator("html");
   const status = page.locator("#root-connecting-status");
