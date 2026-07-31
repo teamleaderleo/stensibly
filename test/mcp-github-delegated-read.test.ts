@@ -17,6 +17,8 @@ const catalogueFingerprint =
   new GitHubCapabilityCatalogueService().registry.fingerprint;
 const commitSha = "a".repeat(40);
 const pullRequestNumber = 42;
+const diffContent = "diff --git a/README.md b/README.md\n+bounded public diff\n";
+const patchContent = "Subject: [PATCH] Bounded public patch\n\n+bounded public patch\n";
 
 describe("guarded GitHub delegated-read MCP dispatch", () => {
   test("omits public dispatch when the backend has no mounted delegated provider", async () => {
@@ -47,7 +49,7 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
     }
   });
 
-  test("registers only the three enabled reads and derives principal identity", async () => {
+  test("registers only the four enabled reads and derives principal identity", async () => {
     const calls: HostedGitHubDelegatedReadInput[] = [];
     const mounted = mountedLedger(calls);
     const server = createMcpServer(mounted.ledger, {
@@ -70,7 +72,12 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
       expect(toolsets).toMatchObject({
         dispatchSurface: "typed_first_party_and_guarded_delegated",
         delegatedDispatchEnabled: true,
-        delegatedTools: ["get_repo", "fetch_file", "get_pr_info"],
+        delegatedTools: [
+          "get_repo",
+          "fetch_file",
+          "get_pr_info",
+          "get_pr_diff",
+        ],
       });
 
       const searched = await call<Array<{
@@ -98,9 +105,17 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
       }>(client, "github_get_tool", { name: "get_pr_info" });
       expect(pullRequestCapability.delegatedDispatchEnabled).toBe(true);
       expect(pullRequestCapability.recommendedAction).toContain("github_call_tool");
+      const diffCapability = await call<{
+        delegatedDispatchEnabled: boolean;
+        recommendedAction: string;
+      }>(client, "github_get_tool", { name: "get_pr_diff" });
+      expect(diffCapability.delegatedDispatchEnabled).toBe(true);
+      expect(diffCapability.recommendedAction).toContain("github_call_tool");
       const disabledCapability = await call<{
         delegatedDispatchEnabled: boolean;
-      }>(client, "github_get_tool", { name: "get_pr_diff" });
+      }>(client, "github_get_tool", {
+        name: "list_pull_request_review_threads",
+      });
       expect(disabledCapability.delegatedDispatchEnabled).toBe(false);
 
       const fileReceipt = await call<Record<string, unknown>>(
@@ -143,6 +158,57 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
         catalogueFingerprint,
         result: { number: pullRequestNumber },
       });
+
+      const diffReceipt = await call<Record<string, unknown>>(
+        client,
+        "github_call_tool",
+        {
+          project,
+          repository,
+          tool: "get_pr_diff",
+          arguments: { pr_number: pullRequestNumber },
+          catalogueFingerprint,
+        },
+      );
+      expect(diffReceipt).toMatchObject({
+        project,
+        repositoryFullName: repository,
+        tool: "get_pr_diff",
+        actorId: "api-token:delegated-read-token",
+        clientId: "mcp:api-token:delegated-read-token",
+        catalogueFingerprint,
+        result: {
+          number: pullRequestNumber,
+          format: "diff",
+          content: diffContent,
+        },
+      });
+
+      const patchReceipt = await call<Record<string, unknown>>(
+        client,
+        "github_call_tool",
+        {
+          project,
+          repository,
+          tool: "get_pr_diff",
+          arguments: { pr_number: pullRequestNumber, format: "patch" },
+          catalogueFingerprint,
+        },
+      );
+      expect(patchReceipt).toMatchObject({
+        project,
+        repositoryFullName: repository,
+        tool: "get_pr_diff",
+        actorId: "api-token:delegated-read-token",
+        clientId: "mcp:api-token:delegated-read-token",
+        catalogueFingerprint,
+        result: {
+          number: pullRequestNumber,
+          format: "patch",
+          content: patchContent,
+        },
+      });
+
       expect(calls).toEqual([
         {
           project,
@@ -158,6 +224,24 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
           repository,
           tool: "get_pr_info",
           arguments: { pr_number: pullRequestNumber },
+          actorId: "api-token:delegated-read-token",
+          clientId: "mcp:api-token:delegated-read-token",
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "get_pr_diff",
+          arguments: { pr_number: pullRequestNumber },
+          actorId: "api-token:delegated-read-token",
+          clientId: "mcp:api-token:delegated-read-token",
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "get_pr_diff",
+          arguments: { pr_number: pullRequestNumber, format: "patch" },
           actorId: "api-token:delegated-read-token",
           clientId: "mcp:api-token:delegated-read-token",
           catalogueFingerprint,
@@ -197,7 +281,21 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
           project,
           repository,
           tool: "get_pr_diff",
-          arguments: { pr_number: pullRequestNumber, format: "diff" },
+          arguments: { pr_number: 0 },
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "get_pr_diff",
+          arguments: { pr_number: pullRequestNumber, format: "raw" },
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "list_pull_request_review_threads",
+          arguments: { pr_number: pullRequestNumber },
           catalogueFingerprint,
         },
       ]) {
@@ -206,7 +304,7 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
           arguments: argumentsValue,
         });
         expect(denied.isError).toBe(true);
-        expect(calls).toHaveLength(2);
+        expect(calls).toHaveLength(4);
       }
     } finally {
       await client.close();
@@ -262,9 +360,21 @@ function mountedLedger(calls: HostedGitHubDelegatedReadInput[]) {
   const provider: HostedGitHubDelegatedReadProvider = {
     async callGitHubDelegatedRead(input) {
       calls.push(input);
-      const result = input.tool === "get_pr_info"
-        ? Object.freeze({ number: input.arguments.pr_number })
-        : Object.freeze({ path: "README.md", ref: commitSha });
+      let result: Readonly<Record<string, unknown>>;
+      if (input.tool === "get_pr_info") {
+        result = Object.freeze({ number: input.arguments.pr_number });
+      } else if (input.tool === "get_pr_diff") {
+        const format = input.arguments.format === "patch" ? "patch" : "diff";
+        const content = format === "patch" ? patchContent : diffContent;
+        result = Object.freeze({
+          number: input.arguments.pr_number,
+          format,
+          byteLength: Buffer.byteLength(content, "utf8"),
+          content,
+        });
+      } else {
+        result = Object.freeze({ path: "README.md", ref: commitSha });
+      }
       return Object.freeze({
         version: 1,
         project: input.project,
