@@ -1,7 +1,7 @@
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
 export const COORDINATION_GRAPH_SCHEMA_VERSION = 1 as const;
-export const COORDINATION_GRAPH_COMPILER_REVISION = "coordination-graph-core/2" as const;
+export const COORDINATION_GRAPH_COMPILER_REVISION = "coordination-graph-core/3" as const;
 export const COORDINATION_GRAPH_MAX_NODES = 500;
 export const COORDINATION_GRAPH_MAX_EDGES = 2_000;
 
@@ -80,6 +80,7 @@ export interface CoordinationGraphNode extends CoordinationNodeReference {
   policyVersion: string;
   authorityGeneration: number | null;
   owner: string | null;
+  selectedProducer?: CoordinationNodeReference | null;
   declaredState: CoordinationDeclaredState;
   receipt: CoordinationReceipt | null;
 }
@@ -142,8 +143,28 @@ export interface CoordinationFingerprintDependency {
   competitionId?: string;
 }
 
+export interface CoordinationEvaluationOptions {
+  evaluatedAt: string;
+  changedNodeKeys?: readonly string[];
+}
+
 const graphKeys = ["schemaVersion", "workspace", "project", "policyVersion", "nodes", "edges"] as const;
 const nodeKeys = [
+  "id",
+  "generation",
+  "kind",
+  "workspace",
+  "project",
+  "definitionFingerprint",
+  "environmentFingerprint",
+  "policyVersion",
+  "authorityGeneration",
+  "owner",
+  "selectedProducer",
+  "declaredState",
+  "receipt",
+] as const;
+const nodeRequiredKeys = [
   "id",
   "generation",
   "kind",
@@ -164,6 +185,8 @@ const readinessEdgeKeys = ["layer", "type", "from", "to", "competitionId"] as co
 const readinessEdgeRequiredKeys = ["layer", "type", "from", "to"] as const;
 const dependencyKeys = ["key", "type", "outputFingerprint", "competitionId"] as const;
 const dependencyRequiredKeys = ["key", "type", "outputFingerprint"] as const;
+const evaluationOptionKeys = ["evaluatedAt", "changedNodeKeys"] as const;
+const issuedEvaluations = new WeakSet<object>();
 
 export function coordinationNodeKey(reference: CoordinationNodeReference): string {
   return `${reference.id}@${reference.generation}`;
@@ -176,21 +199,9 @@ export function canonicalizeCoordinationGraph(input: unknown): CoordinationGraph
   }
   const workspace = boundedSlug(record.workspace, "Coordination workspace", 80);
   const project = boundedSlug(record.project, "Coordination project", 80);
-  const policyVersion = boundedIdentifier(
-    record.policyVersion,
-    "Coordination policy version",
-    120,
-  );
-  const rawNodes = exactArray(
-    record.nodes,
-    "Coordination graph nodes",
-    COORDINATION_GRAPH_MAX_NODES,
-  );
-  const rawEdges = exactArray(
-    record.edges,
-    "Coordination graph edges",
-    COORDINATION_GRAPH_MAX_EDGES,
-  );
+  const policyVersion = boundedIdentifier(record.policyVersion, "Coordination policy version", 120);
+  const rawNodes = exactArray(record.nodes, "Coordination graph nodes", COORDINATION_GRAPH_MAX_NODES);
+  const rawEdges = exactArray(record.edges, "Coordination graph edges", COORDINATION_GRAPH_MAX_EDGES);
 
   const nodes = rawNodes.map((node) => parseNode(node, workspace, project));
   const nodeIdentity = new Set<string>();
@@ -228,6 +239,7 @@ export function canonicalizeCoordinationGraph(input: unknown): CoordinationGraph
     ),
   };
   validateExclusiveProducers(graph);
+  validateCompetitionSelections(graph);
   topologicalReadinessOrder(graph);
   return graph;
 }
@@ -270,6 +282,7 @@ export function coordinationNodeInputFingerprint(
       policyVersion: node.policyVersion,
       authorityGeneration: node.authorityGeneration,
       owner: node.owner,
+      selectedProducer: node.selectedProducer ?? null,
     },
     dependencies,
   });
@@ -325,28 +338,15 @@ export function compareCoordinationGraphs(
 
 export function evaluateCoordinationGraph(
   input: CoordinationGraph,
-  options: {
-    changedNodeKeys?: readonly string[];
-    evaluatedAt?: string;
-  } = {},
+  options: CoordinationEvaluationOptions,
 ): CoordinationGraphEvaluation {
   const graph = canonicalizeCoordinationGraph(input);
-  const evaluatedAt = canonicalTimestamp(
-    options.evaluatedAt ?? new Date().toISOString(),
-    "Coordination evaluation time",
-  );
+  const admittedOptions = parseCoordinationEvaluationOptions(options);
+  const evaluatedAt = admittedOptions.evaluatedAt;
   const nodeMap = new Map(graph.nodes.map((node) => [coordinationNodeKey(node), node]));
-  const changedValues = options.changedNodeKeys === undefined
-    ? []
-    : exactArray(
-      options.changedNodeKeys,
-      "Changed coordination nodes",
-      COORDINATION_GRAPH_MAX_NODES,
-    );
-  const changed = new Set(changedValues.map((key) => {
-    const normalized = boundedNodeKey(key);
-    if (!nodeMap.has(normalized)) throw new Error(`Changed coordination node ${normalized} is missing`);
-    return normalized;
+  const changed = new Set(admittedOptions.changedNodeKeys.map((key) => {
+    if (!nodeMap.has(key)) throw new Error(`Changed coordination node ${key} is missing`);
+    return key;
   }));
   const affected = affectedReadinessNodes(graph, changed);
   const order = topologicalReadinessOrder(graph);
@@ -356,7 +356,7 @@ export function evaluateCoordinationGraph(
   for (const key of order) {
     const node = nodeMap.get(key)!;
     const dependencyEdges = incoming.get(key) ?? [];
-    const dependencyResult = evaluateDependencies(dependencyEdges, evaluations);
+    const dependencyResult = evaluateDependencies(node, dependencyEdges, evaluations);
     const isAffected = affected.has(key);
 
     if (node.declaredState === "revoked") {
@@ -454,40 +454,56 @@ export function evaluateCoordinationGraph(
     ]));
   }
 
-  return {
-    schemaVersion: 1,
+  const result = deepFreeze({
+    schemaVersion: 1 as const,
     graphFingerprint: fingerprintCanonicalRequest(graph),
     evaluatedAt,
     changedNodeKeys: [...changed].sort(),
     affectedNodeKeys: [...affected].sort(),
     topologicalOrder: order,
     nodes: order.map((key) => evaluations.get(key)!),
-  };
+  });
+  issuedEvaluations.add(result);
+  return result;
 }
 
 export function evaluateCoordinationGraphChange(
   previous: CoordinationGraph,
   candidate: CoordinationGraph,
-  evaluatedAt?: string,
+  evaluatedAt: string,
 ): CoordinationGraphEvaluation {
   const comparison = compareCoordinationGraphs(previous, candidate);
   const candidateKeys = new Set(
     canonicalizeCoordinationGraph(candidate).nodes.map(coordinationNodeKey),
   );
   return evaluateCoordinationGraph(candidate, {
+    evaluatedAt,
     changedNodeKeys: comparison.changedNodeKeys.filter((key) => candidateKeys.has(key)),
-    ...(evaluatedAt ? { evaluatedAt } : {}),
   });
 }
 
 export function renderCoordinationQueueMarkdown(
   graph: CoordinationGraph,
-  evaluationResult: CoordinationGraphEvaluation,
+  evaluationOrOptions: CoordinationGraphEvaluation | CoordinationEvaluationOptions,
 ): string {
   const canonical = canonicalizeCoordinationGraph(graph);
-  if (coordinationGraphFingerprint(canonical) !== evaluationResult.graphFingerprint) {
-    throw new Error("Coordination queue graph does not match its evaluation receipt");
+  let evaluationResult: CoordinationGraphEvaluation;
+  if (
+    evaluationOrOptions
+    && typeof evaluationOrOptions === "object"
+    && issuedEvaluations.has(evaluationOrOptions)
+  ) {
+    evaluationResult = evaluationOrOptions as CoordinationGraphEvaluation;
+    if (coordinationGraphFingerprint(canonical) !== evaluationResult.graphFingerprint) {
+      throw new Error("Coordination queue graph does not match its evaluation receipt");
+    }
+  } else {
+    evaluationResult = evaluateCoordinationGraph(
+      canonical,
+      evaluationOrOptions as CoordinationEvaluationOptions,
+    );
   }
+
   const nodeMap = new Map(canonical.nodes.map((node) => [coordinationNodeKey(node), node]));
   const priority: Record<CoordinationEvaluationState, number> = {
     ambiguous: 0,
@@ -520,6 +536,7 @@ export function renderCoordinationQueueMarkdown(
 }
 
 function evaluateDependencies(
+  target: CoordinationGraphNode,
   edges: readonly CoordinationReadinessEdge[],
   evaluations: ReadonlyMap<string, CoordinationNodeEvaluation>,
 ): {
@@ -553,25 +570,27 @@ function evaluateDependencies(
   for (const [competitionId, group] of [...competitionGroups.entries()].sort(([left], [right]) =>
     codeUnitCompare(left, right)
   )) {
-    const accepted = group.map((edge) => ({
-      edge,
-      key: coordinationNodeKey(edge.from),
-      evaluation: evaluations.get(coordinationNodeKey(edge.from))!,
-    })).filter(({ evaluation }) =>
-      evaluation.state === "accepted" && Boolean(evaluation.outputFingerprint)
-    );
-    if (!accepted.length) {
-      blockers.push(`competition ${competitionId} has no accepted candidate`);
+    if (!target.selectedProducer) {
+      blockers.push(`competition ${competitionId} requires an explicit selected producer`);
       continue;
     }
-    for (const candidate of accepted.sort((left, right) => codeUnitCompare(left.key, right.key))) {
-      dependencies.push({
-        key: candidate.key,
-        type: candidate.edge.type,
-        outputFingerprint: candidate.evaluation.outputFingerprint!,
-        competitionId,
-      });
+    const selectedKey = coordinationNodeKey(target.selectedProducer);
+    const selected = group.find((edge) => coordinationNodeKey(edge.from) === selectedKey);
+    if (!selected) {
+      blockers.push(`competition ${competitionId} does not contain selected producer ${selectedKey}`);
+      continue;
     }
+    const evaluation = evaluations.get(selectedKey)!;
+    if (evaluation.state !== "accepted" || !evaluation.outputFingerprint) {
+      blockers.push(`${selectedKey} is ${evaluation.state}`);
+      continue;
+    }
+    dependencies.push({
+      key: selectedKey,
+      type: selected.type,
+      outputFingerprint: evaluation.outputFingerprint,
+      competitionId,
+    });
   }
 
   return {
@@ -580,12 +599,37 @@ function evaluateDependencies(
   };
 }
 
+function parseCoordinationEvaluationOptions(input: unknown): {
+  evaluatedAt: string;
+  changedNodeKeys: string[];
+} {
+  if (input === undefined) {
+    throw new Error("Coordination evaluation time must be a canonical UTC timestamp");
+  }
+  const record = exactRecord(
+    input,
+    evaluationOptionKeys,
+    [] as const,
+    "Coordination evaluation options",
+  );
+  return {
+    evaluatedAt: canonicalTimestamp(record.evaluatedAt, "Coordination evaluation time"),
+    changedNodeKeys: record.changedNodeKeys === undefined
+      ? []
+      : exactArray(
+        record.changedNodeKeys,
+        "Changed coordination nodes",
+        COORDINATION_GRAPH_MAX_NODES,
+      ).map(exactNodeKey),
+  };
+}
+
 function parseNode(
   input: unknown,
   graphWorkspace: string,
   graphProject: string,
 ): CoordinationGraphNode {
-  const record = exactRecord(input, nodeKeys, nodeKeys, "Coordination node");
+  const record = exactRecord(input, nodeKeys, nodeRequiredKeys, "Coordination node");
   const workspace = boundedSlug(record.workspace, "Coordination node workspace", 80);
   const project = boundedSlug(record.project, "Coordination node project", 80);
   if (workspace !== graphWorkspace || project !== graphProject) {
@@ -597,25 +641,21 @@ function parseNode(
     kind: closedValue(record.kind, COORDINATION_NODE_KINDS, "Coordination node kind"),
     workspace,
     project,
-    definitionFingerprint: sha256(
-      record.definitionFingerprint,
-      "Coordination definition fingerprint",
-    ),
+    definitionFingerprint: sha256(record.definitionFingerprint, "Coordination definition fingerprint"),
     environmentFingerprint: nullableSha256(
       record.environmentFingerprint,
       "Coordination environment fingerprint",
     ),
-    policyVersion: boundedIdentifier(
-      record.policyVersion,
-      "Coordination node policy version",
-      120,
-    ),
+    policyVersion: boundedIdentifier(record.policyVersion, "Coordination node policy version", 120),
     authorityGeneration: record.authorityGeneration === null
       ? null
       : positiveInteger(record.authorityGeneration, "Coordination authority generation"),
     owner: record.owner === null
       ? null
       : boundedIdentifier(record.owner, "Coordination node owner", 160),
+    selectedProducer: record.selectedProducer === undefined || record.selectedProducer === null
+      ? null
+      : parseExactReference(record.selectedProducer, "Coordination selected producer"),
     declaredState: closedValue(
       record.declaredState,
       COORDINATION_DECLARED_STATES,
@@ -627,10 +667,7 @@ function parseNode(
 
 function parseReceipt(input: unknown): CoordinationReceipt {
   const record = exactRecord(input, receiptKeys, receiptKeys, "Coordination receipt");
-  const observedAt = canonicalTimestamp(
-    record.observedAt,
-    "Coordination receipt observation time",
-  );
+  const observedAt = canonicalTimestamp(record.observedAt, "Coordination receipt observation time");
   const expiresAt = record.expiresAt === null
     ? null
     : canonicalTimestamp(record.expiresAt, "Coordination receipt expiry time");
@@ -638,19 +675,9 @@ function parseReceipt(input: unknown): CoordinationReceipt {
     throw new Error("Coordination receipt expiry must follow its observation time");
   }
   return {
-    inputFingerprint: sha256(
-      record.inputFingerprint,
-      "Coordination receipt input fingerprint",
-    ),
-    outputFingerprint: sha256(
-      record.outputFingerprint,
-      "Coordination receipt output fingerprint",
-    ),
-    status: closedValue(
-      record.status,
-      COORDINATION_RECEIPT_STATUSES,
-      "Coordination receipt status",
-    ),
+    inputFingerprint: sha256(record.inputFingerprint, "Coordination receipt input fingerprint"),
+    outputFingerprint: sha256(record.outputFingerprint, "Coordination receipt output fingerprint"),
+    status: closedValue(record.status, COORDINATION_RECEIPT_STATUSES, "Coordination receipt status"),
     observedAt,
     expiresAt,
   };
@@ -672,11 +699,7 @@ function parseEdge(input: unknown): CoordinationGraphEdge {
     const record = exactRecord(input, causalEdgeKeys, causalEdgeKeys, "Coordination causal edge");
     return {
       layer,
-      type: closedValue(
-        record.type,
-        COORDINATION_CAUSAL_EDGE_TYPES,
-        "Coordination causal edge type",
-      ),
+      type: closedValue(record.type, COORDINATION_CAUSAL_EDGE_TYPES, "Coordination causal edge type"),
       from: parseReference(record.from, "Coordination edge source"),
       to: parseReference(record.to, "Coordination edge target"),
     };
@@ -689,11 +712,7 @@ function parseEdge(input: unknown): CoordinationGraphEdge {
   );
   const competitionId = discriminator.competitionId === undefined
     ? undefined
-    : boundedIdentifier(
-      discriminator.competitionId,
-      "Coordination competition ID",
-      160,
-    );
+    : boundedIdentifier(discriminator.competitionId, "Coordination competition ID", 160);
   if (type !== "produces" && competitionId !== undefined) {
     throw new Error("Only produces edges may declare a competition ID");
   }
@@ -710,6 +729,14 @@ function parseReference(input: unknown, label: string): CoordinationNodeReferenc
   const record = exactRecord(input, referenceKeys, referenceKeys, label);
   return {
     id: boundedIdentifier(record.id, `${label} ID`, 160),
+    generation: positiveInteger(record.generation, `${label} generation`),
+  };
+}
+
+function parseExactReference(input: unknown, label: string): CoordinationNodeReference {
+  const record = exactRecord(input, referenceKeys, referenceKeys, label);
+  return {
+    id: exactBoundedIdentifier(record.id, `${label} ID`, 160),
     generation: positiveInteger(record.generation, `${label} generation`),
   };
 }
@@ -758,6 +785,33 @@ function validateExclusiveProducers(graph: CoordinationGraph): void {
     const competitionIds = new Set(edges.map((edge) => edge.competitionId ?? ""));
     if (competitionIds.size !== 1 || competitionIds.has("")) {
       throw new Error(`Exclusive coordination output ${target} has competing producers`);
+    }
+  }
+}
+
+function validateCompetitionSelections(graph: CoordinationGraph): void {
+  const nodeMap = new Map(graph.nodes.map((node) => [coordinationNodeKey(node), node]));
+  const competitionProducers = new Map<string, CoordinationReadinessEdge[]>();
+  for (const edge of graph.edges) {
+    if (edge.layer !== "readiness" || edge.type !== "produces" || !edge.competitionId) continue;
+    const target = coordinationNodeKey(edge.to);
+    const current = competitionProducers.get(target) ?? [];
+    current.push(edge);
+    competitionProducers.set(target, current);
+  }
+  for (const node of graph.nodes) {
+    if (!node.selectedProducer) continue;
+    const target = coordinationNodeKey(node);
+    const group = competitionProducers.get(target);
+    if (!group) {
+      throw new Error(`Coordination node ${target} selects a producer without a competition`);
+    }
+    const selectedKey = coordinationNodeKey(node.selectedProducer);
+    if (!nodeMap.has(selectedKey)) {
+      throw new Error(`Coordination selected producer ${selectedKey} is missing`);
+    }
+    if (!group.some((edge) => coordinationNodeKey(edge.from) === selectedKey)) {
+      throw new Error(`Coordination selected producer ${selectedKey} is outside competition for ${target}`);
     }
   }
 }
@@ -883,6 +937,20 @@ function boundedNodeKey(value: unknown): string {
   });
 }
 
+function exactNodeKey(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("Coordination evaluation node key must be a string");
+  }
+  const match = /^(.+)@([1-9][0-9]*)$/.exec(value);
+  if (!match) throw new Error("Coordination evaluation node key is invalid");
+  const canonical = coordinationNodeKey({
+    id: exactBoundedIdentifier(match[1], "Coordination evaluation node key ID", 160),
+    generation: positiveInteger(Number(match[2]), "Coordination evaluation node key generation"),
+  });
+  if (canonical !== value) throw new Error("Coordination evaluation node key is invalid");
+  return canonical;
+}
+
 function boundedSlug(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
   const normalized = value.trim();
@@ -906,6 +974,12 @@ function boundedIdentifier(value: unknown, label: string, maximum: number): stri
   ) {
     throw new Error(`${label} is invalid`);
   }
+  return normalized;
+}
+
+function exactBoundedIdentifier(value: unknown, label: string, maximum: number): string {
+  const normalized = boundedIdentifier(value, label, maximum);
+  if (value !== normalized) throw new Error(`${label} is invalid`);
   return normalized;
 }
 
@@ -1012,6 +1086,14 @@ function exactArray(value: unknown, label: string, maximum: number): unknown[] {
     result.push(descriptor.value);
   }
   return result;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function insertSorted(values: string[], value: string): void {
