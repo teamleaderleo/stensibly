@@ -6,9 +6,9 @@ Dashboard production changes are published through a two-hour release window. Th
 
 Dashboard-relevant changes are the complete `site/` tree plus the exact package, lock, dashboard verifier, deployment diagnostics, domain linker, coordinator, publisher, and manual recovery workflow files.
 
-Several relevant commits inside one window become one publication of the latest `main` revision. An active publication coalesces the window. A window exits successfully when production already covers current `main`, the latest guarded attempt already used the exact current revision, or the comparison contains no dashboard path.
+Several relevant commits inside one window become one publication of the latest `main` revision. An active publication coalesces the window. A window exits successfully when production already covers current `main` or the comparison contains no dashboard path.
 
-The attempted-revision fence prevents an unchanged failed candidate from retrying every two hours. A new `main` revision makes a later window eligible. A manual run with `force: true` is the explicit retry path for the same revision.
+A failed publication remains eligible at the next two-hour window because the comparison baseline is the newest successful publication. Manual `force: true` remains the immediate retry path between scheduled windows.
 
 Automatic publication fails closed when the successful baseline is unavailable, behind, or diverged; the comparison reaches its bounded file ceiling; or GitHub returns malformed repository, revision, run, path, or text data. Those exits use no Vercel credential and leave the public dashboard unchanged.
 
@@ -18,7 +18,7 @@ The coordinator admits one lowercase full `main` SHA, evaluates the comparison a
 
 The publisher checks the input format and requires `github.sha` to equal the admitted revision as its first validation step. A branch movement between evaluation and workflow dispatch therefore fails before checkout. The protected publication job depends on validation, so a mismatch reaches no production environment, Vercel credential, project API, build, deployment, or alias step.
 
-The final publication receipt records both `github.sha` and `expected_revision`.
+A branch-move rejection remains eligible for the next scheduled window against the newly resolved `main` revision. The final publication receipt records both `github.sha` and `expected_revision`.
 
 ## Guarded publisher
 
