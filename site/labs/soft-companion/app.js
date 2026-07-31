@@ -13,7 +13,7 @@ const taskTargets = Object.freeze({
   "safe-reconciliation": { mode: "recover", identity: "deploy-amber" },
 });
 const supportedScenarios = new Set(["default", "empty", "loading", "degraded", "error"]);
-const filterLabels = Object.freeze({ all: "All", action: "Needs action", unhealthy: "Unhealthy" });
+const filterLabels = { all: "All", action: "Needs action", unhealthy: "Unhealthy" };
 
 let currentMode = "today";
 let currentFilter = "all";
