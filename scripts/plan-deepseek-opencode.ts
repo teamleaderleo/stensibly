@@ -51,6 +51,9 @@ async function execute(
   plan: ReturnType<typeof planDeepSeekOpenCodeEpisode>,
   prompt: string,
 ): Promise<void> {
+  if (!plan.liveExecutionEligible || plan.phase !== "observe") {
+    throw new Error("This first campaign executor permits observe episodes only; candidate execution requires an external secret-stripping and egress sandbox");
+  }
   if (process.env.STENSIBLY_DEEPSEEK_LIVE !== "1") {
     throw new Error("Live DeepSeek execution requires STENSIBLY_DEEPSEEK_LIVE=1");
   }
