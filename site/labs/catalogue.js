@@ -49,7 +49,7 @@ function renderVariantCard(variant) {
   const meta = element("div", "variant-meta");
   meta.append(
     metadata("Owner", variant.owner),
-    metadata("Revision", variant.revision ? variant.revision.slice(0, 12) : "unpublished"),
+    metadata("Revision", variant.revision ?? "unpublished"),
     metadata("Source", `#${variant.issue}`),
   );
 
