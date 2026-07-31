@@ -19,8 +19,8 @@ describe("canonical CI dependency lock", () => {
     );
   });
 
-  test("uses the committed lock for both validation jobs", () => {
-    expect(workflow.match(/bun install --frozen-lockfile/g)).toHaveLength(2);
+  test("uses the committed lock for every validation topology", () => {
+    expect(workflow.match(/bun install --frozen-lockfile/g)).toHaveLength(3);
     expect(workflow).not.toContain("contents: write");
     expect(workflow).not.toContain("pull-requests: write");
     expect(workflow).not.toContain("git commit");
