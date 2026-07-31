@@ -49,12 +49,32 @@ describe("browser evidence policy", () => {
     expect(validatePlaywrightMcpArgs(["--help"], repositoryRoot)).toEqual(["--help"]);
     expect(() => validatePlaywrightMcpArgs([], repositoryRoot)).toThrow("reviewed isolated research arguments");
     expect(() => validatePlaywrightMcpArgs(acceptedArgs.filter((arg) => arg !== "--isolated"), repositoryRoot)).toThrow("requires --isolated");
-    expect(() => validatePlaywrightMcpArgs([...acceptedArgs, "--storage-state", "/tmp/state.json"], repositoryRoot)).toThrow("does not allow argument");
+    expect(() => validatePlaywrightMcpArgs([...acceptedArgs, "--storage-state", "/tmp/state.json"], repositoryRoot)).toThrow("reviewed switch set");
     expect(() => validatePlaywrightMcpArgs([...acceptedArgs, "--allowed-origins", "https://other.example"], repositoryRoot)).toThrow("appears more than once");
     expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--allowed-origins", "http://example.com"), repositoryRoot)).toThrow("HTTPS or loopback HTTP");
     expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--allowed-origins", "https://example.com/path"), repositoryRoot)).toThrow("exact credential-free origin");
     expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--output-dir", join(repositoryRoot, "artifacts", "research")), repositoryRoot)).toThrow("outside the repository after symlink resolution");
     expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--output-max-size", "25000001"), repositoryRoot)).toThrow("1-25000000 bytes");
+  });
+
+  test("keeps hostile MCP values out of validation diagnostics", () => {
+    const secret = "github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const cases: readonly (readonly string[])[] = [
+      [secret],
+      replaceValue(acceptedArgs, "--allowed-origins", `https://${secret}@example.com`),
+      replaceValue(acceptedArgs, "--allowed-origins", `${secret}://example.com`),
+    ];
+
+    for (const args of cases) {
+      let message = "";
+      try {
+        validatePlaywrightMcpArgs(args, repositoryRoot);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message.length).toBeGreaterThan(0);
+      expect(message).not.toContain(secret);
+    }
   });
 
   test("rejects an outside-looking MCP output path that resolves into the repository", () => {
