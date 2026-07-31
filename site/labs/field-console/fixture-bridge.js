@@ -11,6 +11,11 @@
     ...fixture.connections.map((entry) => [entry.id, { kind: "connection", source: entry }]),
   ]);
 
+  const detailFacts = Object.freeze([
+    Object.freeze(["Authority", "Fixture guidance only"]),
+    Object.freeze(["Persistence", "Page instance only; nothing saved"]),
+  ]);
+
   const policy = Object.freeze({
     projectRecords(baseRecords, scenarioValue) {
       if (!Array.isArray(baseRecords)) throw new TypeError("Field Console base records must be an array");
@@ -51,6 +56,24 @@
         });
       }));
     },
+    detailPresentation(projectedRecords) {
+      if (!Array.isArray(projectedRecords)) throw new TypeError("Field Console projected records must be an array");
+      const connections = projectedRecords.filter((entry) => entry?.kind === "connection");
+      if (connections.length !== fixture.connections.length) {
+        throw new TypeError("Field Console detail requires every shared connection");
+      }
+      return Object.freeze({
+        facts: detailFacts,
+        connections: Object.freeze(connections.map((entry) => {
+          if (typeof entry.title !== "string" || typeof entry.state !== "string" || typeof entry.summary !== "string") {
+            throw new TypeError("Field Console projected connection must contain title, state, and summary");
+          }
+          const stateLabel = stateLabels[entry.state];
+          if (typeof stateLabel !== "string") throw new TypeError(`Field Console connection state is unsupported: ${entry.state}`);
+          return `${entry.title}: ${stateLabel} — ${entry.summary}`;
+        })),
+      });
+    },
   });
 
   Object.defineProperty(globalThis, "StensiblyFieldConsolePolicy", {
@@ -83,6 +106,37 @@
     const connections = scenarioRecords().filter((entry) => entry.kind === "connection");
     container.replaceChildren(...connections.map((entry) => stateChip(entry.state, `${entry.title} ${stateLabels[entry.state]}`)));
   };
+
+  const baseRenderDetail = renderDetail;
+  renderDetail = function renderProjectedDetail() {
+    baseRenderDetail();
+    if (!selectedId || scenario === "error") return;
+    const presentation = policy.detailPresentation(scenarioRecords());
+    const grid = detailBody.querySelector(".detail-grid");
+    const connectionList = detailBody.querySelector(".detail-list");
+    if (!grid || !connectionList) throw new Error("Field Console detail projection targets are missing");
+    grid.append(...presentation.facts.map(([label, value]) => detailFact(label, value)));
+    connectionList.replaceChildren(...presentation.connections.map((copy) => detailConnection(copy)));
+  };
+
+  function detailFact(label, value) {
+    const wrapper = document.createElement("div");
+    const labelNode = document.createElement("span");
+    labelNode.className = "meta-label";
+    labelNode.textContent = label;
+    const valueNode = document.createElement("strong");
+    valueNode.textContent = value;
+    wrapper.append(labelNode, valueNode);
+    return wrapper;
+  }
+
+  function detailConnection(copy) {
+    const item = document.createElement("li");
+    const value = document.createElement("span");
+    value.textContent = copy;
+    item.append(value);
+    return item;
+  }
 
   renderAll();
 })();
