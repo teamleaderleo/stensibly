@@ -116,8 +116,19 @@ export class RunnerCancellationSettlementCoordinatorV1 {
   }
 
   async #execute(): Promise<RunnerCancellationSettlementResultV1> {
-    let outcome: RunnerCancellationSettlementOutcomeV1 = "adapter_failure";
-    let cancellation: RunnerCancellationObservationV1 | null = null;
+  const commandFingerprint = fingerprintCanonicalRequest(this.#command);
+  const timing = resolveExecutionTime(
+    this.#clock,
+    this.#command.requestedAt,
+  );
+  let observedAt = timing.observedAt;
+  let outcome: RunnerCancellationSettlementOutcomeV1 = "adapter_failure";
+  let cancellation: RunnerCancellationObservationV1 | null = null;
+
+  if (
+    !timing.failed
+    && observedAt < this.#command.authority.expiresAt
+  ) {
     try {
       const returned = await this.#adapter.requestCancellation(this.#command);
       cancellation = parseCancellationObservation(
@@ -130,83 +141,82 @@ export class RunnerCancellationSettlementCoordinatorV1 {
       cancellation = null;
       outcome = "adapter_failure";
     }
-
-    const timing = resolveSettlementTime(
-      this.#clock,
-      this.#command.requestedAt,
-      cancellation?.observedAt ?? null,
-    );
-    if (timing.failed) {
-      cancellation = null;
-      outcome = "adapter_failure";
-    }
-    const observedAt = timing.observedAt;
-
-    const settlement = createResourceSettlementReceipt({
-      workspace: this.#scope.workspace,
-      project: this.#scope.project,
-      resourceId: `run:${this.#command.runId}`,
-      resourceKind: "runner_adapter",
-      generation: this.#command.runGeneration,
-      operationRef: this.#command.commandId,
-      policyVersion: resultPolicyVersion,
-      failureMode: "continue_through_error",
-      admissionState: "closed",
-      disposition: "reconciliation_hold",
-      openedAt: this.#command.requestedAt,
-      closingStartedAt: this.#command.requestedAt,
-      terminalAt: observedAt,
-      observedAt,
-      owners: [{
-        id: `${this.#command.adapterId}:${this.#command.profileId}`,
-        kind: "worker",
-        generation: this.#command.runGeneration,
-        attempted: true,
-        state: "reconciliation_required",
-        attemptedAt: this.#command.requestedAt,
-        settledAt: observedAt,
-        failureClass: "unknown_outcome",
-        reconciliationRequired: true,
-        canPublishLate: true,
-        outputFingerprint: cancellation?.reference?.digest ?? null,
-        publicationFenceFingerprint: null,
-      }],
-    });
-    const generationAdvance = evaluateResourceGenerationAdvance(
-      settlement,
-      this.#command.runGeneration + 1,
-    );
-    if (generationAdvance.allowed) {
-      throw new Error(
-        "Runner cancellation settlement unexpectedly allowed generation advance",
-      );
-    }
-
-    const withoutFingerprint = {
-      version: RUNNER_CANCELLATION_SETTLEMENT_V1,
-      workspace: this.#scope.workspace,
-      project: this.#scope.project,
-      commandId: this.#command.commandId,
-      adapterId: this.#command.adapterId,
-      adapterVersion: this.#command.adapterVersion,
-      profileId: this.#command.profileId,
-      runId: this.#command.runId,
-      runGeneration: this.#command.runGeneration,
-      leaseGeneration: this.#command.leaseGeneration,
-      requestedAt: this.#command.requestedAt,
-      observedAt,
-      outcome,
-      cancellation,
-      settlement,
-      generationAdvance,
-      containsPrivateContent: false as const,
-      containsCredentials: false as const,
-    };
-    return deepFreeze({
-      ...withoutFingerprint,
-      resultFingerprint: fingerprintCanonicalRequest(withoutFingerprint),
-    });
   }
+
+  if (
+    cancellation !== null
+    && cancellation.observedAt > observedAt
+  ) {
+    cancellation = null;
+    outcome = "adapter_failure";
+    observedAt = this.#command.requestedAt;
+  }
+
+  const settlement = createResourceSettlementReceipt({
+    workspace: this.#scope.workspace,
+    project: this.#scope.project,
+    resourceId: `run:${this.#command.runId}`,
+    resourceKind: "runner_adapter",
+    generation: this.#command.runGeneration,
+    operationRef: commandFingerprint,
+    policyVersion: resultPolicyVersion,
+    failureMode: "continue_through_error",
+    admissionState: "closed",
+    disposition: "reconciliation_hold",
+    openedAt: this.#command.requestedAt,
+    closingStartedAt: this.#command.requestedAt,
+    terminalAt: observedAt,
+    observedAt,
+    owners: [{
+      id: `${this.#command.adapterId}:${this.#command.profileId}`,
+      kind: "worker",
+      generation: this.#command.runGeneration,
+      attempted: true,
+      state: "reconciliation_required",
+      attemptedAt: this.#command.requestedAt,
+      settledAt: observedAt,
+      failureClass: "unknown_outcome",
+      reconciliationRequired: true,
+      canPublishLate: true,
+      outputFingerprint: cancellation?.reference?.digest ?? null,
+      publicationFenceFingerprint: null,
+    }],
+  });
+  const generationAdvance = evaluateResourceGenerationAdvance(
+    settlement,
+    this.#command.runGeneration + 1,
+  );
+  if (generationAdvance.allowed) {
+    throw new Error(
+      "Runner cancellation settlement unexpectedly allowed generation advance",
+    );
+  }
+
+  const withoutFingerprint = {
+    version: RUNNER_CANCELLATION_SETTLEMENT_V1,
+    workspace: this.#scope.workspace,
+    project: this.#scope.project,
+    commandId: this.#command.commandId,
+    adapterId: this.#command.adapterId,
+    adapterVersion: this.#command.adapterVersion,
+    profileId: this.#command.profileId,
+    runId: this.#command.runId,
+    runGeneration: this.#command.runGeneration,
+    leaseGeneration: this.#command.leaseGeneration,
+    requestedAt: this.#command.requestedAt,
+    observedAt,
+    outcome,
+    cancellation,
+    settlement,
+    generationAdvance,
+    containsPrivateContent: false as const,
+    containsCredentials: false as const,
+  };
+  return deepFreeze({
+    ...withoutFingerprint,
+    resultFingerprint: fingerprintCanonicalRequest(withoutFingerprint),
+  });
+}
 }
 
 function adapterPort(value: RunnerAdapterV1): RunnerAdapterV1 {
@@ -451,7 +461,13 @@ function parseCancellationObservation(
     throw new RangeError("Runner cancellation observation predates its request");
   }
   if (reference !== null) {
-    if (reference.adapterId !== descriptor.adapterId) {
+  if (reference.createdAt > observation.observedAt) {
+    throw new RangeError(
+      "Runner cancellation reference cannot follow its observation",
+    );
+  }
+  if (reference.adapterId !== descriptor.adapterId) {
+
       throw new RangeError("Runner cancellation reference adapter does not match descriptor");
     }
     if (
@@ -464,10 +480,9 @@ function parseCancellationObservation(
   return observation;
 }
 
-function resolveSettlementTime(
+function resolveExecutionTime(
   clock: RunnerCancellationSettlementClock,
   requestedAt: string,
-  cancellationObservedAt: string | null,
 ): { observedAt: string; failed: boolean } {
   let value: unknown;
   try {
@@ -484,8 +499,7 @@ function resolveSettlementTime(
   } catch {
     return { observedAt: requestedAt, failed: true };
   }
-  const minimum = cancellationObservedAt ?? requestedAt;
-  if (observedAt < minimum) {
+  if (observedAt < requestedAt) {
     return { observedAt: requestedAt, failed: true };
   }
   return { observedAt, failed: false };
