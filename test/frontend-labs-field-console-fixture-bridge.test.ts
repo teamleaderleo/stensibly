@@ -110,11 +110,12 @@ describe("Field Console shared fixture bridge", () => {
     ]);
 
     const presentation = runtime.StensiblyFieldConsolePolicy?.detailPresentation(first ?? []);
-    expect(presentation?.facts).toEqual([
+    if (!presentation) throw new Error("Field Console detail presentation was not published");
+    expect(presentation.facts).toEqual([
       ["Authority", "Fixture guidance only"],
       ["Persistence", "Page instance only; nothing saved"],
     ]);
-    expect(presentation?.connections).toEqual([
+    expect(presentation.connections).toEqual([
       `GitHub: healthy — ${frontendLabFixture.connections[0]?.detail}`,
       `API: reconnecting — ${frontendLabFixture.connections[1]?.detail}`,
       `MCP: offline — ${frontendLabFixture.connections[2]?.detail}`,
@@ -126,7 +127,7 @@ describe("Field Console shared fixture bridge", () => {
       "AuthorityFixture guidance only",
       "PersistencePage instance only; nothing saved",
     ]);
-    expect(connectionList.children.map(nodeText)).toEqual(presentation?.connections);
+    expect(connectionList.children.map(nodeText)).toEqual([...presentation.connections]);
   });
 
   test("rejects incomplete or duplicate local identity metadata", () => {
