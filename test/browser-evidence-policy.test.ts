@@ -1,18 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  isForbiddenBrowserEvidenceName,
-  validatePlaywrightMcpArgs,
-} from "../scripts/browser-evidence-policy.ts";
+import { isForbiddenBrowserEvidenceName } from "../scripts/browser-evidence-policy.ts";
 import { verifyBrowserEvidenceArtifacts } from "../scripts/verify-browser-evidence-artifacts.ts";
 
 const repositoryRoot = join(import.meta.dir, "..");
@@ -21,74 +18,9 @@ const playwrightConfig = readFileSync(join(repositoryRoot, "playwright.config.ts
 const browserSuite = readFileSync(join(repositoryRoot, "browser-tests", "frontend-labs.spec.ts"), "utf8");
 const serviceWorkerSuite = readFileSync(join(repositoryRoot, "browser-tests", "frontend-service-worker-boundary.spec.ts"), "utf8");
 const fixtureServer = readFileSync(join(repositoryRoot, "scripts", "serve-frontend-fixtures.ts"), "utf8");
-const launcher = readFileSync(join(repositoryRoot, "scripts", "run-playwright-mcp.ts"), "utf8");
 const verifier = readFileSync(join(repositoryRoot, "scripts", "verify-browser-evidence-artifacts.ts"), "utf8");
 
-const acceptedArgs = [
-  "--isolated",
-  "--headless",
-  "--sandbox",
-  "--block-service-workers",
-  "--allowed-origins",
-  "https://example.com;http://127.0.0.1:4173",
-  "--image-responses",
-  "omit",
-  "--output-mode",
-  "file",
-  "--output-dir",
-  "/tmp/stensibly-browser-research/run-17",
-  "--output-max-size",
-  "25000000",
-  "--viewport-size",
-  "1440x900",
-] as const;
-
 describe("browser evidence policy", () => {
-  test("admits only the reviewed isolated MCP profile", () => {
-    expect(validatePlaywrightMcpArgs(acceptedArgs, repositoryRoot)).toEqual([...acceptedArgs]);
-    expect(validatePlaywrightMcpArgs(["--help"], repositoryRoot)).toEqual(["--help"]);
-    expect(() => validatePlaywrightMcpArgs([], repositoryRoot)).toThrow("reviewed isolated research arguments");
-    expect(() => validatePlaywrightMcpArgs(acceptedArgs.filter((arg) => arg !== "--isolated"), repositoryRoot)).toThrow("requires --isolated");
-    expect(() => validatePlaywrightMcpArgs([...acceptedArgs, "--storage-state", "/tmp/state.json"], repositoryRoot)).toThrow("reviewed switch set");
-    expect(() => validatePlaywrightMcpArgs([...acceptedArgs, "--allowed-origins", "https://other.example"], repositoryRoot)).toThrow("appears more than once");
-    expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--allowed-origins", "http://example.com"), repositoryRoot)).toThrow("HTTPS or loopback HTTP");
-    expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--allowed-origins", "https://example.com/path"), repositoryRoot)).toThrow("exact credential-free origin");
-    expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--output-dir", join(repositoryRoot, "artifacts", "research")), repositoryRoot)).toThrow("outside the repository after symlink resolution");
-    expect(() => validatePlaywrightMcpArgs(replaceValue(acceptedArgs, "--output-max-size", "25000001"), repositoryRoot)).toThrow("1-25000000 bytes");
-  });
-
-  test("keeps hostile MCP values out of validation diagnostics", () => {
-    const secret = "github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    const cases: readonly (readonly string[])[] = [
-      [secret],
-      replaceValue(acceptedArgs, "--allowed-origins", `https://${secret}@example.com`),
-      replaceValue(acceptedArgs, "--allowed-origins", `${secret}://example.com`),
-    ];
-
-    for (const args of cases) {
-      let message = "";
-      try {
-        validatePlaywrightMcpArgs(args, repositoryRoot);
-      } catch (error) {
-        message = error instanceof Error ? error.message : String(error);
-      }
-      expect(message.length).toBeGreaterThan(0);
-      expect(message).not.toContain(secret);
-    }
-  });
-
-  test("rejects an outside-looking MCP output path that resolves into the repository", () => {
-    const temporaryRoot = mkdtempSync(join(tmpdir(), "stensibly-browser-policy-"));
-    const linkedRepository = join(temporaryRoot, "linked-repository");
-    try {
-      symlinkSync(repositoryRoot, linkedRepository, "dir");
-      const args = replaceValue(acceptedArgs, "--output-dir", join(linkedRepository, "artifacts", "research"));
-      expect(() => validatePlaywrightMcpArgs(args, repositoryRoot)).toThrow("outside the repository after symlink resolution");
-    } finally {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    }
-  });
-
   test("rejects private browser-profile filename families case-insensitively", () => {
     for (const name of [
       ".env",
@@ -210,10 +142,13 @@ describe("browser evidence policy", () => {
   });
 
   test("routes repository scripts through deterministic path-backed evidence", () => {
-    expect(packageJson.scripts["browser:mcp"]).toBe("bun scripts/run-playwright-mcp.ts");
+    expect(packageJson.scripts["browser:mcp"]).toBeUndefined();
+    expect(packageJson.scripts["browser:cli"]).toBeUndefined();
+    expect(Object.values(packageJson.scripts)).not.toContain("bun scripts/run-playwright-mcp.ts");
+    expect(Object.values(packageJson.scripts)).not.toContain("playwright cli");
+    expect(existsSync(join(repositoryRoot, "scripts", "run-playwright-mcp.ts"))).toBe(false);
+    expect(existsSync(join(repositoryRoot, "test", "browser-mcp-environment.test.ts"))).toBe(false);
     expect(packageJson.scripts["test:browser"]).toBe("playwright test");
-    expect(launcher).toContain("validatePlaywrightMcpArgs");
-    expect(launcher).toContain('["bunx", "playwright", "mcp", ...args]');
     expect(verifier).not.toContain("testDurations");
     expect(verifier).toContain('keys.join(",") !== "failedTests,status"');
     expect(verifier).toContain("uninspectable compressed archive");
@@ -231,14 +166,6 @@ describe("browser evidence policy", () => {
     expect(playwrightConfig).not.toContain('["html"');
   });
 });
-
-function replaceValue(args: readonly string[], flag: string, value: string): string[] {
-  const copy = [...args];
-  const index = copy.indexOf(flag);
-  if (index < 0) throw new Error(`Missing test flag ${flag}`);
-  copy[index + 1] = value;
-  return copy;
-}
 
 function createEvidenceRoot(lastRun: unknown = {
   status: "passed",
