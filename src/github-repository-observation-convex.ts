@@ -1,16 +1,17 @@
 import { makeFunctionReference } from "convex/server";
 import type { ConvexCaller } from "./convex-ledger.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
+import {
+  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+  snapshotBoundedJson,
+} from "./github-repository-observation-admission.js";
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
 import type {
   HostedGitHubRepositoryObservationInput,
   HostedGitHubRepositoryObservationResult,
   HostedGitHubRepositoryObservationSink,
 } from "./hosted-provider-capacity-api.js";
-import {
-  canonicalJsonString,
-  fingerprintCanonicalRequest,
-} from "./idempotency-request-fingerprint.js";
 
 const ingestRef = makeFunctionReference<"mutation">(
   "githubRepositoryObservations:ingest",
@@ -19,13 +20,6 @@ const listRecentRef = makeFunctionReference<"query">(
   "githubRepositoryObservations:listRecent",
 );
 
-const inputKeys = [
-  "deliveryId",
-  "eventType",
-  "observation",
-  "payloadDigest",
-  "receivedAt",
-] as const;
 const mutationResultKeys = ["duplicate", "record"] as const;
 const storedRecordKeys = [
   "action",
@@ -45,34 +39,6 @@ const storedRecordKeys = [
   "subjectExternalId",
   "subjectKind",
 ] as const;
-const observationKeys = [
-  "action",
-  "actor",
-  "containsRawContent",
-  "contentRevisions",
-  "deliveryId",
-  "eventType",
-  "facts",
-  "observationId",
-  "payloadDigest",
-  "provider",
-  "receivedAt",
-  "relationships",
-  "repository",
-  "semanticFingerprint",
-  "sourceSchema",
-  "sourceSchemaVersion",
-  "sourceTime",
-  "sourceTimeSource",
-  "subject",
-  "version",
-] as const;
-const maximumAdmissionDepth = 24;
-const maximumAdmissionValues = 1_024;
-const maximumArrayLength = 256;
-const maximumObjectKeys = 128;
-const maximumStringBytes = 64 * 1_024;
-const maximumTotalStringBytes = 128 * 1_024;
 
 export class GitHubRepositoryObservationConflictError extends Error {
   readonly code = "github_repository_observation_conflict";
@@ -117,23 +83,6 @@ interface ConvexObservationRecord {
   createdAt: number;
 }
 
-interface CanonicalObservationInput {
-  deliveryId: string;
-  eventType: string;
-  payloadDigest: string;
-  receivedAt: number;
-  observationJson: string;
-}
-
-type JsonPrimitive = string | number | boolean | null;
-type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
-
-interface SnapshotState {
-  readonly active: WeakSet<object>;
-  visited: number;
-  stringBytes: number;
-}
-
 export interface HostedGitHubRepositoryObservationRecord {
   readonly id: string;
   readonly observation: GitHubRepositoryObservation;
@@ -163,7 +112,7 @@ export class ConvexGitHubRepositoryObservationService
   async ingestRepositoryObservation(
     input: HostedGitHubRepositoryObservationInput,
   ): Promise<HostedGitHubRepositoryObservationResult> {
-    const admitted = canonicalInput(input);
+    const admitted = admitHostedGitHubRepositoryObservationInput(input);
     try {
       const rawResult = await this.client.mutation(ingestRef, this.args({
         deliveryId: admitted.deliveryId,
@@ -188,27 +137,26 @@ export class ConvexGitHubRepositoryObservationService
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new RangeError("GitHub repository observation limit must be 1-100");
     }
-    let rows: ConvexObservationRecord[];
     try {
       const rawRows = await this.client.query(listRecentRef, this.args({
         repository: canonicalRepository,
         limit,
       }));
-      rows = admitStoredRows(rawRows, limit);
+      const rows = admitStoredRows(rawRows, limit);
+      return Object.freeze(rows.map((row) => {
+        const observation = validateStoredRecord(row);
+        if (observation.repository !== canonicalRepository) {
+          throw new GitHubRepositoryObservationStorageError();
+        }
+        return Object.freeze({
+          id: row.id,
+          observation,
+          createdAt: new Date(row.createdAt).toISOString(),
+        });
+      }));
     } catch (error) {
       throw mapStorageError(error);
     }
-    return Object.freeze(rows.map((row) => {
-      const observation = validateStoredRecord(row);
-      if (observation.repository !== canonicalRepository) {
-        throw new GitHubRepositoryObservationStorageError();
-      }
-      return Object.freeze({
-        id: row.id,
-        observation,
-        createdAt: new Date(row.createdAt).toISOString(),
-      });
-    }));
   }
 
   private args(input: Record<string, unknown>): Record<string, unknown> {
@@ -218,56 +166,6 @@ export class ConvexGitHubRepositoryObservationService
       workspace: this.workspace,
     };
   }
-}
-
-function canonicalInput(inputValue: unknown): CanonicalObservationInput {
-  const snapshot = snapshotBoundedJson(
-    inputValue,
-    "GitHub repository observation input",
-  );
-  if (!isRecord(snapshot) || !hasExactKeys(snapshot, inputKeys)) {
-    throw new RangeError("GitHub repository observation input has noncanonical fields");
-  }
-
-  const deliveryId = exactString(
-    snapshot.deliveryId,
-    "GitHub repository observation delivery ID",
-  );
-  const eventType = exactString(
-    snapshot.eventType,
-    "GitHub repository observation event type",
-  );
-  const payloadDigest = exactString(
-    snapshot.payloadDigest,
-    "GitHub repository observation payload digest",
-  );
-  const receivedAtText = exactString(
-    snapshot.receivedAt,
-    "GitHub repository observation receipt time",
-  );
-  const observation = snapshot.observation;
-  if (!isRecord(observation)) {
-    throw new RangeError("GitHub repository observation must be a plain data record");
-  }
-  if (
-    observation.deliveryId !== deliveryId
-    || observation.eventType !== eventType
-    || observation.payloadDigest !== payloadDigest
-    || observation.receivedAt !== receivedAtText
-    || observation.containsRawContent !== false
-  ) {
-    throw new RangeError("GitHub repository observation input is inconsistent");
-  }
-  return {
-    deliveryId,
-    eventType,
-    payloadDigest,
-    receivedAt: canonicalTimestamp(
-      receivedAtText,
-      "GitHub webhook received time",
-    ),
-    observationJson: canonicalJsonString(observation),
-  };
 }
 
 function admitMutationResult(value: unknown): {
@@ -332,202 +230,36 @@ function admitStoredRecord(value: unknown): ConvexObservationRecord {
   };
 }
 
-function snapshotBoundedJson(value: unknown, label: string): JsonValue {
-  return snapshotJsonValue(
-    value,
-    label,
-    {
-      active: new WeakSet<object>(),
-      visited: 0,
-      stringBytes: 0,
-    },
-    0,
-  );
-}
-
-function snapshotJsonValue(
-  value: unknown,
-  label: string,
-  state: SnapshotState,
-  depth: number,
-): JsonValue {
-  state.visited += 1;
-  if (state.visited > maximumAdmissionValues || depth > maximumAdmissionDepth) {
-    throw new RangeError(`${label} exceeds the bounded data envelope`);
-  }
-  if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const bytes = new TextEncoder().encode(value).byteLength;
-    state.stringBytes += bytes;
-    if (
-      bytes > maximumStringBytes
-      || state.stringBytes > maximumTotalStringBytes
-    ) {
-      throw new RangeError(`${label} contains oversized text`);
-    }
-    return value;
-  }
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || Object.is(value, -0)) {
-      throw new RangeError(`${label} contains an invalid number`);
-    }
-    return value;
-  }
-  if (!value || typeof value !== "object") {
-    throw new RangeError(`${label} contains a non-JSON value`);
-  }
-  if (state.active.has(value)) {
-    throw new RangeError(`${label} contains a cycle`);
-  }
-  state.active.add(value);
-  try {
-    return Array.isArray(value)
-      ? snapshotArray(value, label, state, depth)
-      : snapshotRecord(value, label, state, depth);
-  } finally {
-    state.active.delete(value);
-  }
-}
-
-function snapshotArray(
-  value: unknown[],
-  label: string,
-  state: SnapshotState,
-  depth: number,
-): JsonValue[] {
-  if (Object.getPrototypeOf(value) !== Array.prototype) {
-    throw new RangeError(`${label} arrays must use the default prototype`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value as object);
-  const lengthDescriptor = descriptors["length"];
-  const rawLength = lengthDescriptor && "value" in lengthDescriptor
-    ? lengthDescriptor.value
-    : null;
+function validateStoredRecord(
+  row: ConvexObservationRecord,
+): GitHubRepositoryObservation {
+  const admitted = admitGitHubRepositoryObservationEnvelope({
+    deliveryId: row.deliveryId,
+    eventType: row.eventType,
+    payloadDigest: row.payloadDigest,
+    receivedAt: row.receivedAt,
+    observationJson: row.observationJson,
+  });
   if (
-    typeof rawLength !== "number"
-    || !Number.isSafeInteger(rawLength)
-    || rawLength < 0
-    || rawLength > maximumArrayLength
-  ) {
-    throw new RangeError(`${label} has an invalid array length`);
-  }
-  const length = rawLength;
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string") {
-      throw new RangeError(`${label} arrays cannot contain symbol fields`);
-    }
-    if (key === "length") continue;
-    if (!/^(0|[1-9][0-9]*)$/u.test(key) || Number(key) >= length) {
-      throw new RangeError(`${label} arrays cannot contain decorated fields`);
-    }
-  }
-  const output: JsonValue[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = descriptors[String(index)];
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
-      throw new RangeError(`${label} arrays must contain dense enumerable data slots`);
-    }
-    output.push(snapshotJsonValue(
-      descriptor.value,
-      `${label}[${index}]`,
-      state,
-      depth + 1,
-    ));
-  }
-  return output;
-}
-
-function snapshotRecord(
-  value: object,
-  label: string,
-  state: SnapshotState,
-  depth: number,
-): { [key: string]: JsonValue } {
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new RangeError(`${label} records must use a plain prototype`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys: string[] = [];
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string") {
-      throw new RangeError(`${label} records cannot contain symbol fields`);
-    }
-    keys.push(key);
-  }
-  if (keys.length > maximumObjectKeys) {
-    throw new RangeError(`${label} contains too many fields`);
-  }
-  keys.sort(codeUnitCompare);
-  const output: { [key: string]: JsonValue } = {};
-  for (const key of keys) {
-    const descriptor = descriptors[key];
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
-      throw new RangeError(`${label}.${key} must be an enumerable data property`);
-    }
-    output[key] = snapshotJsonValue(
-      descriptor.value,
-      `${label}.${key}`,
-      state,
-      depth + 1,
-    );
-  }
-  return output;
-}
-
-function validateStoredRecord(row: ConvexObservationRecord): GitHubRepositoryObservation {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(row.observationJson);
-  } catch {
-    throw new GitHubRepositoryObservationStorageError();
-  }
-  if (
-    !isRecord(decoded)
-    || !hasExactKeys(decoded, observationKeys)
-    || canonicalJsonString(decoded) !== row.observationJson
+    admitted.observationId !== row.observationId
+    || admitted.semanticFingerprint !== row.semanticFingerprint
+    || admitted.action !== row.action
+    || admitted.repository !== row.repository
+    || admitted.actor !== row.actor
+    || admitted.subjectKind !== row.subjectKind
+    || admitted.subjectExternalId !== row.subjectExternalId
+    || admitted.sourceTime !== row.sourceTime
+    || admitted.sourceTimeSource !== row.sourceTimeSource
   ) {
     throw new GitHubRepositoryObservationStorageError();
   }
-  const {
-    observationId: _observationId,
-    deliveryId: _deliveryId,
-    payloadDigest: _payloadDigest,
-    semanticFingerprint: _semanticFingerprint,
-    receivedAt: _receivedAt,
-    ...canonicalSemantics
-  } = decoded;
-  if (
-    decoded.version !== 1
-    || decoded.provider !== "github"
-    || decoded.sourceSchema !== "github-webhook"
-    || decoded.sourceSchemaVersion !== "2022-11-28"
-    || decoded.containsRawContent !== false
-    || decoded.observationId !== row.observationId
-    || decoded.deliveryId !== row.deliveryId
-    || decoded.payloadDigest !== row.payloadDigest
-    || decoded.semanticFingerprint !== row.semanticFingerprint
-    || fingerprintCanonicalRequest(canonicalSemantics) !== row.semanticFingerprint
-    || decoded.eventType !== row.eventType
-    || decoded.action !== row.action
-    || decoded.repository !== row.repository
-    || decoded.actor !== row.actor
-    || decoded.sourceTimeSource !== row.sourceTimeSource
-    || canonicalTimestamp(decoded.sourceTime, "Stored GitHub source time") !== row.sourceTime
-    || canonicalTimestamp(decoded.receivedAt, "Stored GitHub receipt time") !== row.receivedAt
-    || !isRecord(decoded.subject)
-    || decoded.subject.kind !== row.subjectKind
-    || decoded.subject.externalId !== row.subjectExternalId
-  ) {
-    throw new GitHubRepositoryObservationStorageError();
-  }
-  return decoded as unknown as GitHubRepositoryObservation;
+  return admitted.observation;
 }
 
 function mapStorageError(error: unknown): Error {
   if (error instanceof GitHubRepositoryObservationConflictError) return error;
   if (error instanceof GitHubRepositoryObservationStorageError) return error;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = ownDataErrorMessage(error);
   if (
     message.includes("GITHUB_REPOSITORY_DELIVERY_CONFLICT")
     || message.includes("GITHUB_REPOSITORY_OBSERVATION_CONFLICT")
@@ -537,13 +269,12 @@ function mapStorageError(error: unknown): Error {
   return new GitHubRepositoryObservationStorageError();
 }
 
-function canonicalTimestamp(value: unknown, label: string): number {
-  if (typeof value !== "string") throw new RangeError(`${label} is invalid`);
-  const milliseconds = Date.parse(value);
-  if (!Number.isSafeInteger(milliseconds) || new Date(milliseconds).toISOString() !== value) {
-    throw new RangeError(`${label} must be an exact UTC timestamp`);
-  }
-  return milliseconds;
+function ownDataErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : "";
 }
 
 function storageTimestamp(value: unknown): number {
@@ -560,21 +291,18 @@ function storageString(value: unknown): string {
   return value;
 }
 
-function exactString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length < 1) {
-    throw new RangeError(`${label} is invalid`);
-  }
-  return value;
-}
-
 function required(value: string, label: string): string {
-  if (value.length < 1 || value !== value.trim()) throw new Error(`${label} is required`);
+  if (value.length < 1 || value !== value.trim()) {
+    throw new Error(`${label} is required`);
+  }
   return value;
 }
 
 function normalizeWorkspace(value: string): string {
   if (value !== value.trim() || !/^[a-z0-9][a-z0-9-_]{0,79}$/u.test(value)) {
-    throw new Error("Workspace must be an exact lowercase slug up to 80 characters");
+    throw new Error(
+      "Workspace must be an exact lowercase slug up to 80 characters",
+    );
   }
   return value;
 }
