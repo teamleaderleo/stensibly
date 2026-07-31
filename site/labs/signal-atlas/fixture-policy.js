@@ -19,8 +19,11 @@
   const metadataKeys = ["evidence", "id", "kind", "nextAction", "owner", "position", "task", "time"];
   const policy = Object.freeze({
     projectRecords(value) {
-      if (!Array.isArray(value)) throw new TypeError("Signal Atlas base records must be an array");
-      const baseRecords = value.map((entry, index) => admitMetadata(entry, index));
+      const entries = admitDenseDataArray(value, "Signal Atlas base records");
+      const baseRecords = [];
+      for (let index = 0; index < entries.length; index += 1) {
+        baseRecords.push(admitMetadata(entries[index], index));
+      }
       const ids = baseRecords.map((entry) => entry.id);
       if (new Set(ids).size !== ids.length) throw new TypeError("Signal Atlas base record identities must be unique");
       if (ids.length !== sharedRecords.size || ids.some((id) => !sharedRecords.has(id))) {
@@ -71,10 +74,51 @@
     if (record.task !== null && (typeof record.task !== "string" || !taskIds.has(record.task))) {
       throw new TypeError(`Unknown Signal Atlas task identity: ${record.task}`);
     }
-    if (!Array.isArray(record.position) || record.position.length !== 2 || !record.position.every(Number.isFinite)) {
+    const position = admitDenseDataArray(
+      record.position,
+      `Signal Atlas record ${record.id} landscape position`,
+      2,
+    );
+    if (!position.every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) {
       throw new TypeError(`Signal Atlas record ${record.id} requires one finite landscape position`);
     }
-    return Object.freeze({ ...record, position: Object.freeze([...record.position]) });
+    return Object.freeze({ ...record, position: Object.freeze(position) });
+  }
+
+  function admitDenseDataArray(value, label, exactLength = null) {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new TypeError(`${label} must be a plain array`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const lengthDescriptor = descriptors.length;
+    if (!lengthDescriptor || !("value" in lengthDescriptor)) {
+      throw new TypeError(`${label} has an invalid length descriptor`);
+    }
+    const length = lengthDescriptor.value;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new TypeError(`${label} has an invalid length`);
+    }
+    if (exactLength !== null && length !== exactLength) {
+      throw new TypeError(`${label} must contain exactly ${exactLength} entries`);
+    }
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key !== "string") {
+        throw new TypeError(`${label} cannot contain symbol fields`);
+      }
+      if (key === "length") continue;
+      if (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length) {
+        throw new TypeError(`${label} contains an unsupported field`);
+      }
+    }
+    const result = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+        throw new TypeError(`${label} must be a dense data array`);
+      }
+      result.push(descriptor.value);
+    }
+    return result;
   }
 
   Object.defineProperty(globalThis, "StensiblySignalAtlasPolicy", {
