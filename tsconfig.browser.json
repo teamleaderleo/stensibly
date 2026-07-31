@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun", "@playwright/test"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "browser-tests/**/*.ts",
+    "playwright.config.ts",
+    "scripts/browser-evidence-policy.ts",
+    "scripts/run-playwright-mcp.ts",
+    "scripts/serve-frontend-fixtures.ts",
+    "scripts/verify-browser-evidence-artifacts.ts"
+  ]
+}
