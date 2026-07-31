@@ -1,4 +1,5 @@
 import { isPlausibleToken, normalizeEndpoint } from './connection.js';
+import { installFrontendLabsEntry } from './frontend-labs-entry.js';
 import {
   classifyHostedSessionDisconnect,
   createGithubSignInUrl,
@@ -25,6 +26,7 @@ const disconnectButton = document.querySelector('#disconnect-connection');
 let hostedAuthorizationDenied = false;
 let hostedSessionRejectedStatus = 0;
 
+installFrontendLabsEntry();
 persistEndpoint(savedEndpoint);
 installSessionMarker(savedEndpoint);
 window.fetch = installHostedSessionFetchBridge({
