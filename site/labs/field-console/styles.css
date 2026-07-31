@@ -260,6 +260,9 @@ body[data-density="compact"] .row-summary, body[data-density="compact"] .topolog
 
 @media (max-width: 48rem) {
   .topbar { align-items: flex-start; flex-wrap: wrap; }
+  .brand { min-width: 0; }
+  .brand-copy { min-width: 0; }
+  .brand-copy small { overflow-wrap: anywhere; }
   .top-health { order: 3; width: 100%; }
   .console { display: block; }
   .region { border-right: 0; border-bottom: 1px solid var(--border); }
