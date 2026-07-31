@@ -8,7 +8,7 @@
 
 Studio Canvas tests whether Stensibly works better when the selected deliverable becomes the visual center of gravity.
 
-The common shell keeps work navigation on the left, the artifact in the center, and evidence/comments/versions/activity in a contextual inspector. Ordinary inspection does not open a modal. The command dialog is reserved for switching work, inspector tabs, comparison, and recoverable desktop layout.
+The common shell keeps work navigation on the left, the artifact in the center, and evidence/comments/versions/activity in a contextual inspector. Ordinary inspection does not open a modal. The command dialog is reserved for switching work, inspector tabs, available comparison, and recoverable desktop layout.
 
 ## Shared task translation
 
@@ -22,7 +22,7 @@ Five fictional artifacts preserve the shared evaluation tasks:
 
 Each artifact writes source, revision, freshness, authority, persistence, owner, evidence, and one safe next action.
 
-`../fixtures.classic.js` loads before the route. `workspace-bridge.js` admits the exact five-artifact task order and projects shared decision, worker, ready-work, operation, and provider truth into the final work list, artifact sheet, inspector, command search, and visible local-action result. Local revision labels, comments, comparison examples, evidence filenames, activity times, authority copy, persistence copy, and artifact presentation states remain route-specific metadata.
+`../fixtures.classic.js` and `fixture-policy.js` load before `app.js`. The policy admits the exact five-artifact order and projects shared decision, worker, ready-work, operation, and provider truth before the first render. The app uses that one frozen artifact set for work navigation, the artifact sheet, inspector, commands, local explanations, and announcements. `workspace-bridge.js` is limited to dynamic heading identity, roving-tab semantics, and replacement focus. Local revision labels, comments, comparison examples, evidence filenames, activity times, authority copy, persistence copy, and artifact presentation states remain route-specific metadata.
 
 ## Artifact state honesty
 
@@ -34,13 +34,15 @@ The shell distinguishes states with a symbol and literal text:
 - `✓ accepted` — the fictional revision is the accepted comparison reference;
 - `! stale` — freshness or settlement is insufficient for action.
 
-"Accepted" describes fixture history. It does not grant live product authority. The masthead always says `review mode`, `fixture only`, and `nothing saved`.
+“Accepted” describes fixture history. It does not grant live product authority. The masthead always says `review mode`, `fixture only`, and `nothing saved`.
 
 ## Version and comparison boundary
 
-The Versions inspector exposes current, earlier accepted, and stale fictional revisions. Comparison renders earlier and current text together.
+The Versions inspector exposes current, earlier accepted, and stale fictional revisions when they exist. Comparison renders earlier and current text together.
 
 - comparison does not restore, branch, approve, save, publish, or mutate anything;
+- comparison is omitted from command search when the selected artifact has no earlier revision;
+- the toggle also fails closed with `No earlier revision is available for comparison` if invoked after availability changes;
 - the recovery control only explains that a real restore or branch needs explicit reviewed action;
 - the ambiguous publication receipt exposes no retry control;
 - the release-note proposal exposes no approval control in the prototype.
@@ -55,18 +57,18 @@ Changing artifacts clears the prior result so one artifact never inherits anothe
 
 Command/Ctrl-K or `/` opens command search. The return target is admitted only when connected, visible, focusable, and outside the dialog; keyboard opening from `body` falls back to the command trigger.
 
-Every command has an explicit destination:
+Every available command has an explicit destination:
 
 - artifact commands focus the replacement selected work row;
 - inspector commands focus the replacement selected tab;
-- comparison focuses the artifact sheet;
+- available comparison focuses the artifact sheet;
 - desktop collapse commands focus their visible recovery controls.
 
 Destination commands suppress ordinary dialog-return focus before closing, so an inspector control that is removed by the command never becomes the terminal focus target. Escape and ordinary dismissal retain validated return focus.
 
 ## Responsive collapse contract
 
-Desktop work and inspector regions can collapse and have fixed recovery controls. At widths up to 48rem, all regions stack in document order, collapse controls disappear, stale collapsed datasets are cleared, and collapse commands are omitted from search. Crossing into the narrow contract therefore restores both regions before the responsive CSS forces stacked visibility.
+Desktop work and inspector regions can collapse and have fixed recovery controls. At widths up to 48rem, all regions stack in document order, collapse controls disappear, stale collapsed datasets are cleared, and collapse commands are omitted from search. The collapse function also rejects a narrow-layout collapse request, so a stale command cannot focus a hidden recovery control. Crossing into the narrow contract restores both regions before the responsive CSS forces stacked visibility.
 
 ## Common workspace primitives
 
@@ -76,7 +78,7 @@ Reusable across artifact types:
 - artifact identity, revision, mode, authority, freshness, and persistence;
 - central readable sheet;
 - evidence, comments, versions, and activity tabs;
-- local revision comparison;
+- local revision comparison when an earlier revision exists;
 - explicit next action;
 - command/search surface;
 - recoverable work and inspector collapse;
@@ -91,7 +93,7 @@ Reusable across artifact types:
 - **operation receipt:** observed, unknown, and safe reconciliation sections;
 - **capability note:** provider-by-provider availability.
 
-The prototype does not pretend that every artifact supports selected-text actions, code execution, image editing, diagram editing, or direct persistence. Those require artifact-specific models and reviewed authority.
+The prototype does not pretend that every artifact supports selected-text actions, code execution, image editing, diagram editing, direct persistence, or revision comparison. Those require artifact-specific models and reviewed authority.
 
 ## Keyboard and layout
 
@@ -113,10 +115,11 @@ The center artifact is inspectable, not directly editable. A future editor would
 ## Deliberately rejected patterns
 
 - implying autosave, approval, or persistence without a receipt;
+- offering comparison without an earlier revision;
 - modal hopping for evidence, versions, and activity;
 - permanent icon-only toolbars;
 - hiding source, authority, freshness, or state;
-- unrecoverable collapsed panels;
+- unrecoverable collapsed panels or hidden recovery focus;
 - one generic editor pretending all artifact types have identical actions;
 - framework migration solely for the prototype;
 - gradients, remote fonts, copied product imagery, analytics, trackers, or network data.
