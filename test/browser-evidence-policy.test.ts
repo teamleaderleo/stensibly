@@ -116,12 +116,11 @@ describe("browser evidence policy", () => {
     }
   });
 
-  test("rejects stale, failed, and invalid Playwright control envelopes", async () => {
+  test("rejects failed and noncanonical Playwright control envelopes", async () => {
     for (const lastRun of [
-      { status: "passed", failedTests: [] },
-      { status: "failed", failedTests: ["browser-case"], testDurations: {} },
-      { status: "passed", failedTests: [], testDurations: { fixture: -1 } },
-      { status: "passed", failedTests: [], testDurations: { fixture: Number.NaN } },
+      { status: "passed", failedTests: [], testDurations: {} },
+      { status: "failed", failedTests: ["browser-case"] },
+      { status: "passed", failedTests: ["browser-case"] },
     ]) {
       const evidence = createEvidenceRoot(lastRun);
       try {
@@ -129,6 +128,27 @@ describe("browser evidence policy", () => {
       } finally {
         evidence.remove();
       }
+    }
+  });
+
+  test("distinguishes canonical task identities from OpenAI-style secrets", async () => {
+    const evidence = createEvidenceRoot();
+    try {
+      writeFileSync(evidence.receiptPath, JSON.stringify({
+        taskId: "task-human-decision-soft-companion-wide-default",
+      }));
+      await expect(verifyBrowserEvidenceArtifacts(evidence.root)).resolves.toMatchObject({
+        containsCredentials: false,
+      });
+
+      writeFileSync(evidence.receiptPath, JSON.stringify({
+        value: `sk-${"A".repeat(24)}`,
+      }));
+      await expect(verifyBrowserEvidenceArtifacts(evidence.root)).rejects.toThrow(
+        "OpenAI-style secret",
+      );
+    } finally {
+      evidence.remove();
     }
   });
 
@@ -172,7 +192,8 @@ describe("browser evidence policy", () => {
     expect(packageJson.scripts["test:browser"]).toBe("playwright test");
     expect(launcher).toContain("validatePlaywrightMcpArgs");
     expect(launcher).toContain('["bunx", "playwright", "mcp", ...args]');
-    expect(verifier).toContain("testDurations");
+    expect(verifier).toContain('keys.join(",") !== "failedTests,status"');
+    expect(verifier).not.toContain("testDurations");
     expect(verifier).toContain("uninspectable compressed archive");
     expect(verifier).toContain("opaque in-memory payload");
     expect(verifier).toContain("disallowed PNG metadata chunk");
@@ -196,7 +217,6 @@ function replaceValue(args: readonly string[], flag: string, value: string): str
 function createEvidenceRoot(lastRun: unknown = {
   status: "passed",
   failedTests: [],
-  testDurations: { "chromium::catalogue": 147 },
 }) {
   const root = mkdtempSync(join(tmpdir(), "stensibly-browser-artifacts-"));
   const reportRoot = join(root, "artifacts", "playwright-report");
@@ -224,6 +244,7 @@ function createEvidenceRoot(lastRun: unknown = {
     reportRoot,
     reportPath,
     resultsRoot,
+    receiptPath,
     outputPath,
     totalBytes: Buffer.byteLength(report) + Buffer.byteLength(receipt) + image.length + Buffer.byteLength(lastRunJson) + Buffer.byteLength(output),
     remove() {
