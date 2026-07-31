@@ -140,7 +140,7 @@ export async function runDashboardReleaseWindow(
     changedFiles,
     compareTruncated,
   });
-  if (decision.action === "dispatch") await client.dispatchPublisher();
+  if (decision.action === "dispatch") await client.dispatchPublisher(currentSha);
   emitDecision(decision, currentSha, baselineSha, attemptedSha);
   await appendSummary(env.GITHUB_STEP_SUMMARY, decision, currentSha, baselineSha, attemptedSha);
   return decision;
@@ -221,11 +221,15 @@ function githubClient(input: {
         ))),
       });
     },
-    async dispatchPublisher(): Promise<void> {
+    async dispatchPublisher(expectedRevision: string): Promise<void> {
+      requireSha(expectedRevision, "Dashboard publisher expected revision");
       const response = await input.request(
         `${input.apiBase}/repos/${input.repository}/actions/workflows/${publisherWorkflow}/dispatches`,
         {
-          body: JSON.stringify({ ref: "main" }),
+          body: JSON.stringify({
+            ref: "main",
+            inputs: { expected_revision: expectedRevision },
+          }),
           headers: { ...headers, "Content-Type": "application/json" },
           method: "POST",
         },
