@@ -10,8 +10,9 @@ const html = readFileSync(join(routeRoot, "index.html"), "utf8");
 const css = readFileSync(join(routeRoot, "styles.css"), "utf8");
 const compat = readFileSync(join(routeRoot, "compat.js"), "utf8");
 const app = readFileSync(join(routeRoot, "app.js"), "utf8");
+const bridge = readFileSync(join(routeRoot, "fixture-bridge.js"), "utf8");
 const guide = readFileSync(join(repositoryRoot, "docs", "frontend-field-console.md"), "utf8");
-const routeSource = `${html}\n${css}\n${compat}\n${app}`;
+const routeSource = `${html}\n${css}\n${compat}\n${app}\n${bridge}`;
 const sourceWithoutSvgNamespace = routeSource.replaceAll("http://www.w3.org/2000/svg", "");
 
 const sharedTargets = [
@@ -39,7 +40,7 @@ describe("Field Console frontend lab", () => {
     expect(manifestEntry).toMatchObject({
       owner: "Cinder",
       status: "prototype",
-      revision: "8f9e13f7da46f3951284f2d920fdc99855259661",
+      revision: "43a888457299c9ec4528dc6bc7ab697faf0c5b41",
       issue: 610,
       path: "./field-console/",
     });
@@ -55,7 +56,9 @@ describe("Field Console frontend lab", () => {
       "error",
     ]);
     expect(html).toContain('data-stensibly-lab="prototype"');
+    expect(html.indexOf('<script src="../fixtures.classic.js"></script>')).toBeLessThan(html.indexOf('<script src="./compat.js"></script>'));
     expect(html.indexOf('<script src="./compat.js"></script>')).toBeLessThan(html.indexOf('<script src="./app.js"></script>'));
+    expect(html.indexOf('<script src="./app.js"></script>')).toBeLessThan(html.indexOf('<script src="./fixture-bridge.js"></script>'));
     expect(html).not.toContain('type="module"');
     expect(html).not.toContain("../planned.js");
     expect(html).not.toContain("../planned.css");
@@ -68,6 +71,7 @@ describe("Field Console frontend lab", () => {
     expect(app).toContain("No retry performed. Safe next action");
     expect(app).toContain("remote settlement is unknown");
     expect(app).toContain("Top recommendation because it unblocks keyboard evidence across every variant");
+    expect(bridge).toContain('actionLabel: state === "ambiguous" ? "Read safe next action" : "Read next action"');
   });
 
   test("synchronizes topology, text relationships, list, detail, connections, and timeline", () => {
@@ -84,6 +88,11 @@ describe("Field Console frontend lab", () => {
     expect(app).toContain("renderRelationships()");
     expect(app).toContain("renderTimeline()");
     expect(app).toContain("renderDetail()");
+    expect(bridge).toContain("scenarioRecords = function scenarioProjectedRecords");
+    expect(bridge).toContain("renderHealth = function renderProjectedHealth");
+    expect(bridge).toContain("renderDetail = function renderProjectedDetail");
+    expect(bridge).toContain("policy.detailPresentation(scenarioRecords())");
+    expect(bridge).toContain('detailBody.querySelector(".detail-list")');
     expect(guide).toContain("dependency topology");
     expect(guide).toContain("not a geographic map");
   });
@@ -224,6 +233,10 @@ describe("Field Console frontend lab", () => {
   test("stays fixture-only, flat, and free of external authority", () => {
     expect(() => new Function(app)).not.toThrow();
     expect(() => new Function(compat)).not.toThrow();
+    expect(() => new Function(bridge)).not.toThrow();
+    expect(bridge).toContain('["Authority", "Fixture guidance only"]');
+    expect(bridge).toContain('["Persistence", "Page instance only; nothing saved"]');
+    expect(bridge).toContain("Field Console detail requires every shared connection");
     expect(routeSource).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/);
     expect(sourceWithoutSvgNamespace).not.toMatch(/https?:\/\//);
     expect(routeSource).not.toMatch(/stn\.tok_/);
