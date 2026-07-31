@@ -1,0 +1,24 @@
+@media (max-width: 48rem) {
+  #collapse-work,
+  #collapse-inspector,
+  #reopen-work,
+  #reopen-inspector,
+  .mobile-pane-switcher {
+    display: none !important;
+  }
+
+  body[data-work-collapsed="true"] .work-region,
+  body[data-inspector-collapsed="true"] .inspector-region {
+    display: block;
+  }
+
+  .work-region,
+  .canvas-region,
+  .inspector-region {
+    min-height: auto;
+  }
+
+  .work-list button {
+    min-height: 4.75rem;
+  }
+}
