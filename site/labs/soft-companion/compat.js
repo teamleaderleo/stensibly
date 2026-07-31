@@ -79,11 +79,16 @@
         const suffix = connection.previewState ? ` · ${connection.previewState} preview` : "";
         const label = `${connection.label} · ${connection.state}${suffix}`;
         if (chip.textContent !== label) chip.textContent = label;
-        chip.dataset.state = connection.state;
-        if (connection.previewState) chip.dataset.previewState = connection.previewState;
-        else delete chip.dataset.previewState;
-        chip.dataset.symbol = connection.state === "healthy" ? "✓" : connection.state === "offline" ? "×" : "△";
-        chip.title = connection.previewDetail ?? connection.detail;
+        if (chip.dataset.state !== connection.state) chip.dataset.state = connection.state;
+        if (connection.previewState) {
+          if (chip.dataset.previewState !== connection.previewState) chip.dataset.previewState = connection.previewState;
+        } else if (chip.dataset.previewState !== undefined) {
+          delete chip.dataset.previewState;
+        }
+        const symbol = connection.state === "healthy" ? "✓" : connection.state === "offline" ? "×" : "△";
+        if (chip.dataset.symbol !== symbol) chip.dataset.symbol = symbol;
+        const title = connection.previewDetail ?? connection.detail;
+        if (chip.title !== title) chip.title = title;
       });
       const ariaLabel = `Connection health: ${projections.map((connection) => {
         const suffix = connection.previewState ? `, ${connection.previewState} preview` : "";
