@@ -15,7 +15,7 @@ import {
 } from "./token-contracts.js";
 
 const catalogue = new GitHubCapabilityCatalogueService();
-const delegatedToolNames = ["get_repo", "fetch_file"] as const;
+const delegatedToolNames = ["get_repo", "fetch_file", "get_pr_info"] as const;
 const delegatedToolSet = new Set<string>(delegatedToolNames);
 
 export function registerGitHubCapabilityTools(
@@ -107,7 +107,7 @@ export function registerGitHubCapabilityTools(
   server.registerTool(
     "github_call_tool",
     {
-      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The initial public subset is repository metadata and one file at an immutable commit.",
+      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset is repository metadata, one file at an immutable commit, and exact pull-request metadata.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
@@ -117,6 +117,9 @@ export function registerGitHubCapabilityTools(
           z.object({
             path: z.string().min(1).max(4_096),
             ref: z.string().regex(/^[a-f0-9]{40}$/),
+          }).strict(),
+          z.object({
+            pr_number: z.number().int().min(1),
           }).strict(),
         ]),
         catalogueFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
