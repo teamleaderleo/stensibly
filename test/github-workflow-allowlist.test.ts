@@ -14,6 +14,7 @@ const permanentWorkflows = [
   "deploy-dashboard.yml",
   "deploy-worker.yml",
   "mcp-stateful-replay-v130-probe.yml",
+  "publish-dashboard-on-main.yml",
   "sync-issue-labels.yml",
   "verify-oauth-hosted.yml",
 ] as const;
