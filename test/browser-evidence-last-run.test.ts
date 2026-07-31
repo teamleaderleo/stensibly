@@ -5,13 +5,10 @@ import { tmpdir } from "node:os";
 import { verifyBrowserEvidenceArtifacts } from "../scripts/verify-browser-evidence-artifacts.ts";
 
 describe("Playwright last-run browser evidence control", () => {
-  test("accepts the exact passed Playwright 1.62 control envelope", async () => {
+  test("accepts the exact passed Playwright 1.62 two-field envelope", async () => {
     const fixture = createEvidenceFixture({
       status: "passed",
       failedTests: [],
-      testDurations: {
-        "chromium::frontend-labs::catalogue": 147,
-      },
     });
     try {
       const summary = await verifyBrowserEvidenceArtifacts(fixture.root);
@@ -23,22 +20,27 @@ describe("Playwright last-run browser evidence control", () => {
     }
   });
 
-  test("rejects the stale two-field Playwright control envelope", async () => {
-    const fixture = createEvidenceFixture({ status: "passed", failedTests: [] });
-    try {
-      await expect(verifyBrowserEvidenceArtifacts(fixture.root)).rejects.toThrow(
-        "must use exact Playwright 1.62 control fields",
-      );
-    } finally {
-      rmSync(fixture.root, { recursive: true, force: true });
+  test("rejects extra Playwright control fields", async () => {
+    for (const lastRun of [
+      { status: "passed", failedTests: [], testDurations: {} },
+      { status: "passed", failedTests: [], extra: true },
+    ]) {
+      const fixture = createEvidenceFixture(lastRun);
+      try {
+        await expect(verifyBrowserEvidenceArtifacts(fixture.root)).rejects.toThrow(
+          "must use exact Playwright 1.62 control fields",
+        );
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
     }
   });
 
-  test("rejects failed identities and invalid duration values", async () => {
+  test("rejects failed status and failed test identities", async () => {
     for (const lastRun of [
-      { status: "failed", failedTests: ["fixture failure"], testDurations: {} },
-      { status: "passed", failedTests: [], testDurations: { fixture: -1 } },
-      { status: "passed", failedTests: [], testDurations: { fixture: Number.NaN } },
+      { status: "failed", failedTests: [] },
+      { status: "passed", failedTests: ["fixture failure"] },
+      { status: "failed", failedTests: ["fixture failure"] },
     ]) {
       const fixture = createEvidenceFixture(lastRun);
       try {
