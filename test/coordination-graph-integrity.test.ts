@@ -274,4 +274,33 @@ describe("coordination graph integrity repair", () => {
     })).toThrow("must contain enumerable data entries");
     expect(getterCalls).toBe(0);
   });
+
+  test("rejects padded aliases for new exact identity inputs", () => {
+    const input = fixture();
+    const paddedSelection: CoordinationGraph = {
+      ...input,
+      nodes: input.nodes.map((node) => node.id === "decision"
+        ? {
+          ...node,
+          selectedProducer: { id: " candidate-a ", generation: 1 },
+        }
+        : node),
+    };
+
+    expect(() => canonicalizeCoordinationGraph(paddedSelection))
+      .toThrow("Coordination selected producer ID is invalid");
+    expect(canonicalizeCoordinationGraph(input).nodes.find(
+      ({ id }) => id === "decision",
+    )?.selectedProducer).toEqual({ id: "candidate-a", generation: 1 });
+
+    expect(() => evaluateCoordinationGraph(input, {
+      evaluatedAt,
+      changedNodeKeys: [" decision@1 "],
+    })).toThrow("Coordination evaluation node key is invalid");
+    expect(evaluateCoordinationGraph(input, {
+      evaluatedAt,
+      changedNodeKeys: ["decision@1"],
+    }).changedNodeKeys).toEqual(["decision@1"]);
+  });
+
 });

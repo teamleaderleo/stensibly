@@ -620,7 +620,7 @@ function parseCoordinationEvaluationOptions(input: unknown): {
         record.changedNodeKeys,
         "Changed coordination nodes",
         COORDINATION_GRAPH_MAX_NODES,
-      ).map(boundedNodeKey),
+      ).map(exactNodeKey),
   };
 }
 
@@ -655,7 +655,7 @@ function parseNode(
       : boundedIdentifier(record.owner, "Coordination node owner", 160),
     selectedProducer: record.selectedProducer === undefined || record.selectedProducer === null
       ? null
-      : parseReference(record.selectedProducer, "Coordination selected producer"),
+      : parseExactReference(record.selectedProducer, "Coordination selected producer"),
     declaredState: closedValue(
       record.declaredState,
       COORDINATION_DECLARED_STATES,
@@ -729,6 +729,14 @@ function parseReference(input: unknown, label: string): CoordinationNodeReferenc
   const record = exactRecord(input, referenceKeys, referenceKeys, label);
   return {
     id: boundedIdentifier(record.id, `${label} ID`, 160),
+    generation: positiveInteger(record.generation, `${label} generation`),
+  };
+}
+
+function parseExactReference(input: unknown, label: string): CoordinationNodeReference {
+  const record = exactRecord(input, referenceKeys, referenceKeys, label);
+  return {
+    id: exactBoundedIdentifier(record.id, `${label} ID`, 160),
     generation: positiveInteger(record.generation, `${label} generation`),
   };
 }
@@ -929,6 +937,20 @@ function boundedNodeKey(value: unknown): string {
   });
 }
 
+function exactNodeKey(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("Coordination evaluation node key must be a string");
+  }
+  const match = /^(.+)@([1-9][0-9]*)$/.exec(value);
+  if (!match) throw new Error("Coordination evaluation node key is invalid");
+  const canonical = coordinationNodeKey({
+    id: exactBoundedIdentifier(match[1], "Coordination evaluation node key ID", 160),
+    generation: positiveInteger(Number(match[2]), "Coordination evaluation node key generation"),
+  });
+  if (canonical !== value) throw new Error("Coordination evaluation node key is invalid");
+  return canonical;
+}
+
 function boundedSlug(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
   const normalized = value.trim();
@@ -952,6 +974,12 @@ function boundedIdentifier(value: unknown, label: string, maximum: number): stri
   ) {
     throw new Error(`${label} is invalid`);
   }
+  return normalized;
+}
+
+function exactBoundedIdentifier(value: unknown, label: string, maximum: number): string {
+  const normalized = boundedIdentifier(value, label, maximum);
+  if (value !== normalized) throw new Error(`${label} is invalid`);
   return normalized;
 }
 
