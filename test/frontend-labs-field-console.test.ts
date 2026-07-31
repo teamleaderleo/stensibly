@@ -55,6 +55,11 @@ describe("Field Console frontend lab", () => {
       "degraded",
       "error",
     ]);
+    expect(frontendLabManifest.slice(0, 3).map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: "quiet-control", status: "prototype" },
+      { id: "soft-companion", status: "prototype" },
+      { id: "field-console", status: "prototype" },
+    ]);
     expect(html).toContain('data-stensibly-lab="prototype"');
     expect(html.indexOf('<script src="../fixtures.classic.js"></script>')).toBeLessThan(html.indexOf('<script src="./compat.js"></script>'));
     expect(html.indexOf('<script src="./compat.js"></script>')).toBeLessThan(html.indexOf('<script src="./app.js"></script>'));
