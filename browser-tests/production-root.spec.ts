@@ -94,7 +94,7 @@ function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`page:${error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console:${message.text()}`));
+    if (message.type() === "error") errors.push(`console:${message.text()}`);
   });
   return errors;
 }
