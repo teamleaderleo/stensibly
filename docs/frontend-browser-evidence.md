@@ -80,53 +80,19 @@ Playwright documents that screenshots can vary across operating systems, browser
 
 ## Local exploratory browser work
 
-Playwright CLI and Playwright MCP are optional research and QA interfaces. They do not replace repository tests.
+Playwright CLI is an optional local research and QA interface. It does not replace repository tests.
 
-Playwright 1.62 bundles both interfaces in the exact pinned repository toolchain:
+Playwright 1.62 provides the repository-pinned CLI:
 
 ```bash
 bun run browser:cli -- --help
-bun run browser:mcp -- --help
 ```
 
-Use an isolated profile by default. Restrict allowed origins, avoid unrestricted file access, and store no credentials in repository artifacts. Connecting to an existing operator browser is reserved for an exact logged-in task where the existing state is genuinely required.
+Use a fresh browser context for one bounded public research question. Keep credentials, private accounts, storage state, retained profiles, downloads, and repository evidence outside the session. Record source URLs and inspection dates, and retain screenshots only when they clarify a privacy-safe finding.
 
-A bounded MCP client entry can invoke the repository-pinned server from the repository root:
+The repository intentionally exposes no Playwright MCP launcher. Official Playwright MCP documentation states that MCP is not a security boundary and classifies its code-execution tool as RCE-equivalent because it executes arbitrary JavaScript in the server process. Origin filters, browser isolation, and output bounds cannot protect ambient environment credentials or host files from that process.
 
-```json
-{
-  "mcpServers": {
-    "playwright-research": {
-      "command": "bun",
-      "args": [
-        "run",
-        "browser:mcp",
-        "--",
-        "--isolated",
-        "--headless",
-        "--sandbox",
-        "--block-service-workers",
-        "--allowed-origins",
-        "https://example.com;https://www.example.com",
-        "--image-responses",
-        "omit",
-        "--output-mode",
-        "file",
-        "--output-dir",
-        "/temporary/path/stensibly-browser-research/run-id",
-        "--output-max-size",
-        "25000000",
-        "--viewport-size",
-        "1440x900"
-      ]
-    }
-  }
-}
-```
-
-Set the MCP client's working directory to the Stensibly repository. Replace the example origins with the exact sites required for one research question and put the output directory outside the repository. Do not add `--allow-unrestricted-file-access`, `--secrets`, `--storage-state`, or `--save-session` for ordinary public research.
-
-Playwright MCP states that origin filters are not a complete security boundary and do not constrain redirects. Keep research profiles isolated and free of sensitive logins even when an allowlist is configured. The browser extension can attach to an existing Chrome or Edge tab, but that exposes the selected tab's logged-in state and requires an explicit connection approval by default; reserve it for a narrowly reviewed authenticated task.
+Any future MCP experiment requires a separate reviewed lane with an operating-system or container boundary, an empty credential environment, a minimal read-only filesystem view, exact local origins, bounded ephemeral output, and explicit operator approval. The canonical browser lane carries no MCP execution requirement.
 
 A browser research result should record:
 
@@ -152,7 +118,7 @@ Use one bounded question per hosted session. Prefer fresh isolated contexts. Do 
 
 ## Dependency and browser updates
 
-`@playwright/test` is an exact-pinned development dependency governed by `docs/dependency-lockfile-workflow.md`. Playwright 1.62 includes the matching test runner, browser library, MCP server, and CLI. A package declaration change intentionally causes canonical CI to publish an exact `bun.lock` candidate before frozen validation resumes.
+`@playwright/test` is an exact-pinned development dependency governed by `docs/dependency-lockfile-workflow.md`. Playwright 1.62 includes the matching test runner, browser library, and CLI. A package declaration change intentionally causes canonical CI to publish an exact `bun.lock` candidate before frozen validation resumes.
 
 For a Playwright update:
 
@@ -168,7 +134,7 @@ For a Playwright update:
 Remove:
 
 - `@playwright/test` from `package.json` and regenerate `bun.lock`;
-- the `browser:cli` and `browser:mcp` scripts;
+- the `browser:cli` script;
 - `playwright.config.ts` and `tsconfig.browser.json`;
 - `browser-tests/`;
 - `scripts/serve-frontend-fixtures.ts` and `scripts/verify-browser-evidence-artifacts.ts`;
