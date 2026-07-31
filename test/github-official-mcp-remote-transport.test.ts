@@ -7,6 +7,7 @@ import {
   GitHubOfficialMcpRemoteError,
   GitHubOfficialMcpRemoteTransport,
   githubOfficialMcpRemoteEndpoint,
+  githubOfficialMcpRemoteMaximumResponseBytes,
   githubOfficialMcpRemoteMaximumTextBytes,
   type GitHubOfficialMcpRemoteSession,
   type GitHubOfficialMcpRemoteSessionFactory,
@@ -130,9 +131,11 @@ describe("official GitHub MCP remote transport", () => {
       callError: new Error(`upstream leaked ${transportSecret}`),
       closeError: new Error(`close leaked ${transportSecret}`),
     });
-    const callTransport = transportWith(callHarness.factory);
     const callError = await capturedError(() =>
-      callTransport.callMappedRead({ mapping, credentialRef })
+      transportWith(callHarness.factory).callMappedRead({
+        mapping,
+        credentialRef,
+      })
     );
     expect(callError.code).toBe("github_official_mcp_transport_failed");
     expect(callError.message).toBe(
@@ -146,8 +149,10 @@ describe("official GitHub MCP remote transport", () => {
     let cancellations = 0;
     const redirectResponse = {
       status: 302,
+      statusText: "Found",
       redirected: false,
       url: githubOfficialMcpRemoteEndpoint,
+      headers: new Headers(),
       body: {
         async cancel() {
           cancellations += 1;
@@ -212,6 +217,90 @@ describe("official GitHub MCP remote transport", () => {
       })
     );
     expect(escapeError.code).toBe("github_official_mcp_transport_failed");
+  });
+
+  test("bounds declared and streamed response bytes before SDK parsing", async () => {
+    let declaredReaderCalls = 0;
+    let declaredCancellations = 0;
+    const declaredResponse = {
+      status: 200,
+      statusText: "OK",
+      redirected: false,
+      url: githubOfficialMcpRemoteEndpoint,
+      headers: new Headers({
+        "content-length": String(
+          githubOfficialMcpRemoteMaximumResponseBytes + 1,
+        ),
+      }),
+      body: {
+        async cancel() {
+          declaredCancellations += 1;
+        },
+        getReader() {
+          declaredReaderCalls += 1;
+          throw new Error("declared overflow body was read");
+        },
+      },
+    } as unknown as Response;
+    const declared = fetchHarness(
+      (async () => declaredResponse) as typeof fetch,
+    );
+    const declaredError = await capturedError(() =>
+      transportWith(declared.factory, declared.fetch).callMappedRead({
+        mapping: pullRequestMapping(),
+        credentialRef,
+      })
+    );
+    expect(declaredError.code).toBe("github_official_mcp_transport_failed");
+    expect(declaredReaderCalls).toBe(0);
+    expect(declaredCancellations).toBe(1);
+    expect(declared.closed).toBe(1);
+
+    let streamedPulls = 0;
+    let streamedCancellations = 0;
+    const streamedSource = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        streamedPulls += 1;
+        controller.enqueue(
+          streamedPulls === 1
+            ? new Uint8Array(githubOfficialMcpRemoteMaximumResponseBytes)
+            : new Uint8Array([1]),
+        );
+      },
+      cancel() {
+        streamedCancellations += 1;
+      },
+    });
+    const streamed = fetchHarness(
+      (async () => new Response(streamedSource, { status: 200 })) as typeof fetch,
+    );
+    const streamedError = await capturedError(() =>
+      transportWith(streamed.factory, streamed.fetch).callMappedRead({
+        mapping: pullRequestMapping(),
+        credentialRef,
+      })
+    );
+    expect(streamedError.code).toBe("github_official_mcp_transport_failed");
+    expect(streamedPulls).toBe(2);
+    expect(streamedCancellations).toBe(1);
+    expect(streamed.closed).toBe(1);
+
+    const secret = "github_pat_unreadable_response_echo_1234567890";
+    const unreadable = fetchHarness((async () =>
+      new Response(new ReadableStream<Uint8Array>({
+        pull() {
+          throw new Error(`provider leaked ${secret}`);
+        },
+      }), { status: 200 })) as typeof fetch);
+    const unreadableError = await capturedError(() =>
+      transportWith(unreadable.factory, unreadable.fetch).callMappedRead({
+        mapping: pullRequestMapping(),
+        credentialRef,
+      })
+    );
+    expect(unreadableError.code).toBe("github_official_mcp_transport_failed");
+    expect(unreadableError.message).not.toContain(secret);
+    expect(unreadable.closed).toBe(1);
   });
 
   test("admits only one bounded JSON text result", async () => {
@@ -362,10 +451,14 @@ function resolver() {
   };
 }
 
-function transportWith(factory: GitHubOfficialMcpRemoteSessionFactory) {
+function transportWith(
+  factory: GitHubOfficialMcpRemoteSessionFactory,
+  injectedFetch?: typeof fetch,
+) {
   return new GitHubOfficialMcpRemoteTransport({
     credentials: resolver(),
     sessionFactory: factory,
+    ...(injectedFetch ? { fetch: injectedFetch } : {}),
   });
 }
 
@@ -412,6 +505,27 @@ function createHarness(
         },
       };
       return session;
+    },
+  };
+  return Object.assign(state, { factory });
+}
+
+function fetchHarness(injectedFetch: typeof fetch) {
+  const state = { closed: 0, fetch: injectedFetch };
+  const factory: GitHubOfficialMcpRemoteSessionFactory = {
+    create(input) {
+      return {
+        async connect() {
+          const response = await input.fetch(input.endpoint);
+          await response.arrayBuffer();
+        },
+        async callTool() {
+          throw new Error("unreachable");
+        },
+        async close() {
+          state.closed += 1;
+        },
+      };
     },
   };
   return Object.assign(state, { factory });
