@@ -6,6 +6,7 @@ import {
 } from "../src/github-repository-observation-convex.ts";
 import { mapGitHubRepositoryWebhook } from "../src/github-repository-observation.ts";
 import type { HostedGitHubRepositoryObservationInput } from "../src/hosted-provider-capacity-api.ts";
+import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint.ts";
 
 describe("Convex GitHub repository observation service", () => {
   test("stores only the canonical content-minimised observation", async () => {
@@ -107,10 +108,47 @@ describe("Convex GitHub repository observation service", () => {
         value: storedRecord(canonicalJson(observation)),
       },
     });
+    const service = serviceWithMutationResult(hostileResult);
+
+    await expect(service.ingestRepositoryObservation(observationInput(observation)))
+      .rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
+    expect(getterCalls).toBe(0);
+  });
+
+  test("does not invoke a backend proxy get trap", async () => {
+    const observation = issueObservation();
+    let getCalls = 0;
+    const result = new Proxy({
+      duplicate: false,
+      record: storedRecord(canonicalJson(observation)),
+    }, {
+      get() {
+        getCalls += 1;
+        throw new Error("proxy get trap must not run");
+      },
+    });
+    const service = serviceWithMutationResult(result);
+
+    expect(await service.ingestRepositoryObservation(observationInput(observation)))
+      .toEqual({ duplicate: false });
+    expect(getCalls).toBe(0);
+  });
+
+  test("does not invoke a thrown message accessor", async () => {
+    const observation = issueObservation();
+    let getterCalls = 0;
+    const hostileError = Object.create(Error.prototype);
+    Object.defineProperty(hostileError, "message", {
+      enumerable: false,
+      get() {
+        getterCalls += 1;
+        throw new Error("thrown message getter must not run");
+      },
+    });
     const service = new ConvexGitHubRepositoryObservationService({
       client: {
         async mutation() {
-          return hostileResult;
+          throw hostileError;
         },
         async query() {
           throw new Error("not used");
@@ -119,13 +157,8 @@ describe("Convex GitHub repository observation service", () => {
       serviceSecret: "service-secret",
     });
 
-    await expect(service.ingestRepositoryObservation({
-      deliveryId: observation.deliveryId,
-      eventType: observation.eventType,
-      payloadDigest: observation.payloadDigest,
-      receivedAt: observation.receivedAt,
-      observation,
-    })).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
+    await expect(service.ingestRepositoryObservation(observationInput(observation)))
+      .rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
     expect(getterCalls).toBe(0);
   });
 
@@ -142,16 +175,11 @@ describe("Convex GitHub repository observation service", () => {
       },
       serviceSecret: "service-secret",
     });
-    await expect(service.ingestRepositoryObservation({
-      deliveryId: observation.deliveryId,
-      eventType: observation.eventType,
-      payloadDigest: observation.payloadDigest,
-      receivedAt: observation.receivedAt,
-      observation,
-    })).rejects.toBeInstanceOf(GitHubRepositoryObservationConflictError);
+    await expect(service.ingestRepositoryObservation(observationInput(observation)))
+      .rejects.toBeInstanceOf(GitHubRepositoryObservationConflictError);
   });
 
-  test("reads bounded canonical observations and rejects stored divergence", async () => {
+  test("reads bounded canonical observations", async () => {
     const observation = issueObservation();
     const service = new ConvexGitHubRepositoryObservationService({
       client: {
@@ -183,6 +211,61 @@ describe("Convex GitHub repository observation service", () => {
         repository: "teamleaderleo/stensibly",
       },
     });
+  });
+
+  test("rejects query accessors without invoking them", async () => {
+    let getterCalls = 0;
+    const hostileRows: unknown[] = [];
+    Object.defineProperty(hostileRows, "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("query getter must not run");
+      },
+    });
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          throw new Error("not used");
+        },
+        async query() {
+          return hostileRows;
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await expect(service.listRecentRepositoryObservations(
+      "teamleaderleo/stensibly",
+      10,
+    )).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
+    expect(getterCalls).toBe(0);
+  });
+
+  test("rejects coherently fingerprinted stored semantic forgery", async () => {
+    const decoded = JSON.parse(canonicalJson(issueObservation()));
+    decoded.subject = {
+      kind: "pull_request",
+      externalId: "github:teamleaderleo/stensibly#pull/591",
+    };
+    decoded.relationships.pullRequestNumber = 591;
+    refingerprint(decoded);
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          throw new Error("not used");
+        },
+        async query() {
+          return [storedRecord(canonicalJson(decoded))];
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await expect(service.listRecentRepositoryObservations(
+      "teamleaderleo/stensibly",
+      10,
+    )).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
   });
 });
 
@@ -217,6 +300,30 @@ function issueObservation() {
   return observation;
 }
 
+function observationInput(observation: ReturnType<typeof issueObservation>) {
+  return {
+    deliveryId: observation.deliveryId,
+    eventType: observation.eventType,
+    payloadDigest: observation.payloadDigest,
+    receivedAt: observation.receivedAt,
+    observation,
+  };
+}
+
+function serviceWithMutationResult(result: unknown) {
+  return new ConvexGitHubRepositoryObservationService({
+    client: {
+      async mutation() {
+        return result;
+      },
+      async query() {
+        throw new Error("not used");
+      },
+    },
+    serviceSecret: "service-secret",
+  });
+}
+
 function storedRecord(observationJson: string) {
   const observation = JSON.parse(observationJson);
   return {
@@ -237,6 +344,18 @@ function storedRecord(observationJson: string) {
     observationJson,
     createdAt: Date.parse("2026-07-31T15:00:02.000Z"),
   };
+}
+
+function refingerprint(observation: Record<string, any>): void {
+  const {
+    observationId: _observationId,
+    deliveryId: _deliveryId,
+    payloadDigest: _payloadDigest,
+    semanticFingerprint: _semanticFingerprint,
+    receivedAt: _receivedAt,
+    ...canonicalSemantics
+  } = observation;
+  observation.semanticFingerprint = fingerprintCanonicalRequest(canonicalSemantics);
 }
 
 function canonicalJson(value: unknown): string {
