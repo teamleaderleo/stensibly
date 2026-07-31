@@ -64,13 +64,12 @@ Raw exception text is not retained.
 
 ## Trusted clock failure
 
-A started cancellation operation must still publish bounded recovery evidence when the trusted observation clock throws, returns a malformed timestamp, predates the accepted request, or predates retained adapter evidence.
+Before dispatch, the coordinator reads the trusted execution clock once. A thrown, malformed, or pre-request value prevents adapter activity and still publishes bounded recovery evidence. If valid execution time predates returned adapter evidence, that evidence is discarded.
 
 In those cases the coordinator:
 
-- discards the adapter observation;
 - reports `adapter_failure`;
-- uses the accepted request time as the deterministic settlement observation time;
+- uses the accepted request time as the deterministic settlement observation time when clock or evidence chronology fails;
 - publishes the same reconciliation hold;
 - retains no raw clock error text or contradictory external-reference digest.
 
