@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import type { ConvexCaller } from "../src/convex-ledger.ts";
-import { ConvexProjectAttachmentLedger } from "../src/project-attachment-convex-ledger.ts";
+import {
+  ConvexProjectAttachmentLedger,
+  createConvexProjectAttachmentLedgerFromEnv,
+} from "../src/project-attachment-convex-ledger.ts";
 import { compileProjectContract, renderProjectContract } from "../src/project-contract.ts";
 
 class AttachmentCaller implements ConvexCaller {
@@ -138,7 +142,59 @@ describe("Convex project attachment ledger adapter", () => {
     await expect(ledger.getProjectAttachment("scrapbook"))
       .rejects.toThrow("metadata does not match");
   });
+
+  test("composes private delegated reads after the hosted issue provider only under the exact flag", () => {
+    const issueOnly = createConvexProjectAttachmentLedgerFromEnv(
+      hostedFactoryEnv(false),
+    );
+    expect(typeof issueOnly.listIssues).toBe("function");
+    expect(typeof issueOnly.searchIssues).toBe("function");
+    expect(typeof issueOnly.getIssue).toBe("function");
+    expect(issueOnly.callGitHubDelegatedRead).toBeUndefined();
+
+    const delegated = createConvexProjectAttachmentLedgerFromEnv(
+      hostedFactoryEnv(true),
+    );
+    expect(typeof delegated.listIssues).toBe("function");
+    expect(typeof delegated.searchIssues).toBe("function");
+    expect(typeof delegated.getIssue).toBe("function");
+    expect(typeof delegated.callGitHubDelegatedRead).toBe("function");
+  });
+
+  test("fails factory creation on partial delegated-read enablement before network activity", () => {
+    expect(() => createConvexProjectAttachmentLedgerFromEnv({
+      CONVEX_URL: "https://fixture.convex.cloud",
+      STENSIBLY_SERVICE_SECRET: "private-service-secret",
+      STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",
+    })).toThrow("STENSIBLY_GITHUB_APP_ID");
+  });
 });
+
+const factoryPrivateKey = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: "spki", format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+}).privateKey;
+
+function hostedFactoryEnv(
+  delegatedReads: boolean,
+): Record<string, string> {
+  return {
+    CONVEX_URL: "https://fixture.convex.cloud",
+    STENSIBLY_SERVICE_SECRET: "private-service-secret",
+    STENSIBLY_WORKSPACE: "shared-work",
+    STENSIBLY_GITHUB_APP_ID: "12345",
+    STENSIBLY_GITHUB_APP_PRIVATE_KEY: factoryPrivateKey,
+    STENSIBLY_GITHUB_INSTALLATION_ID: "98765",
+    STENSIBLY_GITHUB_PROVIDER_PROJECT: "scrapbook",
+    STENSIBLY_GITHUB_PROVIDER_REPOSITORY: "teamleaderleo/stensibly",
+    STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN: "teamleaderleo",
+    STENSIBLY_GITHUB_API_BASE_URL: "https://api.github.test",
+    STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: delegatedReads
+      ? "true"
+      : "false",
+  };
+}
 
 function attachmentSnapshot() {
   return compileProjectContract(renderProjectContract({
