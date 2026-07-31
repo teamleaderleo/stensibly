@@ -47,6 +47,7 @@ const maximumComments = 400;
 const providerResponseMaximumBytes = 256 * 1024;
 const delegatedResultMaximumBytes = 256 * 1024;
 const maximumReviewBodyCharacters = 16 * 1024;
+const providerRequestTimeoutMilliseconds = 15_000;
 const unsafeTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const credentialShapedPublicIdentityPattern = /(?:^|[\s:./=,;'"()\[\]{}@#_-])(?:Bearer\s+|gh[pousr]_|github_pat_|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
 const credentialShapedRetainedContentPattern = /(?:^|[\s:./=,;'"()\[\]{}@#_-])(?:Bearer\s+[A-Za-z0-9._~+\/-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})(?=$|[\s:./=,;'"()\[\]{}@#_-])/imu;
@@ -366,6 +367,7 @@ export class GitHubRestPullRequestReviewThreadAdapter
           "X-GitHub-Api-Version": githubApiVersion,
         },
         body,
+        signal: AbortSignal.timeout(providerRequestTimeoutMilliseconds),
         redirect: "error",
       });
     } catch {
@@ -428,7 +430,7 @@ function parseReviewThreadPage(
   const root = providerRecord(
     value,
     ["data", "errors", "extensions"],
-    ["data"],
+    [],
     "GitHub GraphQL response",
   );
   if (root.errors !== undefined) {
@@ -789,7 +791,7 @@ function minimizedReviewBody(value: unknown): Readonly<{
   characterCount: number;
   minimized: boolean;
 }> {
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string") {
     throw rejected(
       "github_delegated_provider_invalid_response",
       "GitHub review comment body was invalid",
@@ -1294,8 +1296,17 @@ function exactTimestamp(value: unknown, label: string): string {
       `${label} was absent`,
     );
   }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
+    throw rejected(
+      "github_delegated_provider_invalid_response",
+      `${label} was invalid`,
+    );
+  }
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const expected = value.includes(".")
+    ? value
+    : `${value.slice(0, -1)}.000Z`;
+  if (Number.isNaN(date.getTime()) || date.toISOString() !== expected) {
     throw rejected(
       "github_delegated_provider_invalid_response",
       `${label} was invalid`,
