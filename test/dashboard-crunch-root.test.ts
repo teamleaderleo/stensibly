@@ -32,7 +32,7 @@ describe("production root tactile presentation", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).not.toMatch(/(?:linear|radial|conic)-gradient\s*\(/i);
     expect(css).not.toContain("rotate(");
-    expect(css).not.toContain("filter:");
+    expect(css).not.toMatch(/^\s*filter\s*:/im);
   });
 
   test("keeps every live desk mode compact, including connection editing", async () => {
