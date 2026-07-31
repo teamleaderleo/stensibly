@@ -1,5 +1,7 @@
 const fixtureApi = globalThis.StensiblyFrontendLabFixtures;
 if (!fixtureApi) throw new Error("Soft Companion requires the shared frontend labs fixture contract");
+const policy = globalThis.StensiblySoftCompanionPolicy;
+if (!policy) throw new Error("Soft Companion requires the synchronous route policy contract");
 
 const { frontendLabFixture: fixture, frontendLabTasks: tasks } = fixtureApi;
 const references = Object.fromEntries(fixture.references.map((reference) => [reference.kind, reference]));
@@ -219,18 +221,21 @@ function renderModes() {
   }));
 }
 
+function projectedConnections() {
+  return policy.projectConnections(fixture.connections, body.dataset.scenario ?? "default");
+}
+
 function renderConnections() {
-  const degraded = body.dataset.scenario === "degraded";
-  connectionShelf.replaceChildren(...fixture.connections.map((connection) => {
-    const state = degraded && connection.id === "github" ? "degraded" : connection.state;
-    const chip = text("span", `${connection.label} · ${state}`);
+  const connections = projectedConnections();
+  connectionShelf.replaceChildren(...connections.map((connection) => {
+    const chip = text("span", `${connection.label} · ${connection.state}`);
     chip.className = "connection-chip";
-    chip.dataset.state = state;
-    chip.dataset.symbol = state === "healthy" ? "✓" : state === "offline" ? "×" : "△";
-    chip.title = degraded && connection.id === "github" ? "Fictional degraded preview: issue reads current, review threads delayed." : connection.detail;
+    chip.dataset.state = connection.state;
+    chip.dataset.symbol = connection.state === "healthy" ? "✓" : connection.state === "offline" ? "×" : "△";
+    chip.title = connection.detail;
     return chip;
   }));
-  connectionShelf.setAttribute("aria-label", `Connection health: ${[...connectionShelf.children].map((chip) => chip.textContent).join(", ")}`);
+  connectionShelf.setAttribute("aria-label", `Connection health: ${connections.map((connection) => `${connection.label} · ${connection.state}`).join(", ")}`);
 }
 
 function selectMode(key, focusList = false) {
@@ -404,7 +409,10 @@ function renderDetail() {
   state.dataset.tone = row.tone;
   state.dataset.symbol = row.symbol;
   detailHeading.replaceChildren(state, text("h2", row.title), text("p", `${row.context} · owner ${row.owner}`));
-  primaryAction.textContent = acknowledgedId === row.id ? "Undo preview acknowledgement" : row.action;
+  const operational = row.tone === "serious" || row.tone === "warning";
+  primaryAction.textContent = operational
+    ? row.action
+    : acknowledgedId === row.id ? "Undo preview acknowledgement" : "Acknowledge in preview";
 
   const facts = element("section", "detail-grid");
   facts.setAttribute("aria-label", "Selected work summary");
@@ -425,7 +433,7 @@ function renderDetail() {
   const connections = element("section", "detail-section");
   connections.append(text("h3", "Connection health"));
   const connectionList = element("ul", "evidence-list");
-  for (const connection of fixture.connections) connectionList.append(evidenceItem(connection.label, connection.state, connection.detail));
+  for (const connection of projectedConnections()) connectionList.append(evidenceItem(connection.label, connection.state, connection.detail));
   connections.append(connectionList);
 
   detailContent.replaceChildren(facts, why, evidence, connections);
@@ -462,6 +470,10 @@ function runPrimaryAction() {
   if (!row) return;
   if (row.semanticState === "ambiguous") {
     announce(`Safe recovery remains required: ${row.next}. No retry was performed.`);
+    return;
+  }
+  if (row.tone === "serious" || row.tone === "warning") {
+    announce(policy.operationalAnnouncement(row.action, row.next));
     return;
   }
   acknowledgedId = acknowledgedId === row.id ? null : row.id;
