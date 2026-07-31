@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/item-claim.css" />
     <link rel="stylesheet" href="/hosted-session.css" />
     <link rel="stylesheet" href="/login-scrapbook.css" />
+    <link rel="stylesheet" href="/calm-root.css" />
   </head>
   <body>
     <main class="shell">
@@ -90,14 +91,14 @@
           </div>
         </div>
 
-        <section class="session-context" id="session-context-panel" data-mode="unavailable" aria-labelledby="session-context-title">
-          <div class="session-context-head">
-            <div>
-              <p class="eyebrow">Current session</p>
-              <h3 id="session-context-title">Account and write identity</h3>
-            </div>
+        <details class="session-context" id="session-context-panel" data-mode="unavailable">
+          <summary class="session-context-head">
+            <span class="session-context-summary-copy">
+              <span class="eyebrow">Connection</span>
+              <strong id="session-context-title">Connection &amp; write identity</strong>
+            </span>
             <span id="capability-state">unavailable</span>
-          </div>
+          </summary>
 
           <div class="principal-summary" id="principal-summary" hidden>
             <div>
@@ -146,7 +147,7 @@
           <p class="actor-unavailable" id="actor-unavailable">Connect a ledger to inspect account or token capability.</p>
           <p class="session-context-error" id="session-context-error" role="alert" hidden></p>
           <p class="session-context-note">The hosted account or bearer token grants authority. The actor identifies who or what will be recorded in ledger events. Actor context stays in this browser session.</p>
-        </section>
+        </details>
 
         <section class="metrics" aria-label="Status totals">
           <article><span>ready</span><strong id="metric-ready">0</strong></article>
