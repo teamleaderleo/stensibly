@@ -129,9 +129,16 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(plan.budget.liveExecutionDefault).toBe("disabled");
     expect(plan.liveExecutionEligible).toBe(false);
     expect(plan.externalSandboxRequired).toBe(false);
-    expect(plan.requiredBeforeLive).toContain("exact-model-and-system-fingerprint-admission");
-    expect(plan.requiredBeforeLive).toContain("deepseek-reasoning-tool-turn-replay");
-    expect(plan.requiredBeforeLive).toContain("supervisor-owned-budget-breaker");
+    for (const requirement of [
+      "recorded-opencode-json-event-fixture",
+      "effective-opencode-config-and-provider-allowlist-receipt",
+      "minimal-child-environment-without-ambient-secrets",
+      "symlink-safe-runtime-directory-and-exclusive-files",
+      "exact-model-and-system-fingerprint-admission",
+      "deepseek-reasoning-tool-turn-replay",
+      "usage-and-cost-receipt-parser",
+      "supervisor-owned-budget-breaker",
+    ]) expect(plan.requiredBeforeLive).toContain(requirement);
     expect(Object.values(plan.authority)).toEqual([false, false, false, false, false, false]);
     expect(Object.isFrozen(plan)).toBe(true);
   });
