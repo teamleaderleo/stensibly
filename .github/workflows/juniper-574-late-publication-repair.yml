@@ -145,3 +145,5 @@ jobs:
           git commit -m 'fix: require a fence for late publication'
           git push --force-with-lease=refs/heads/juniper/574-resource-settlement-core:$GITHUB_SHA \
             origin HEAD:refs/heads/juniper/574-resource-settlement-core
+
+# retriggered by Sable after carrier/source evidence separation
