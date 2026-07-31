@@ -35,6 +35,7 @@ import {
   type ApiTokenAuthenticator,
 } from "./token-provider.js";
 import { ConvexProviderCapacityService } from "./provider-capacity-convex.js";
+import { ConvexGitHubRepositoryObservationService } from "./github-repository-observation-convex.js";
 import {
   FAILURE_CATEGORY_HEADER,
   type FailureCategory,
@@ -150,11 +151,11 @@ export function createHostedAppFromEnv(
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
     hostedAuth,
     mcpOAuth: mcpOAuthFromEnv(ledger, hostedAuth, env),
-    providerCapacity: providerCapacityFromEnv(ledger, env),
+    providerCapacity: hostedProviderCapacityFromEnv(ledger, env),
   });
 }
 
-function providerCapacityFromEnv(
+export function hostedProviderCapacityFromEnv(
   ledger: ConvexWorkLedger,
   env: Record<string, string | undefined>,
 ): HostedProviderCapacityOptions | undefined {
@@ -162,6 +163,11 @@ function providerCapacityFromEnv(
   if (!githubWebhookSecret) return undefined;
   return {
     service: new ConvexProviderCapacityService({
+      client: ledger.client,
+      serviceSecret: ledger.serviceSecret,
+      workspace: ledger.workspace,
+    }),
+    repositoryObservationSink: new ConvexGitHubRepositoryObservationService({
       client: ledger.client,
       serviceSecret: ledger.serviceSecret,
       workspace: ledger.workspace,
