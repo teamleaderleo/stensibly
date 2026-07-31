@@ -50,13 +50,14 @@ describe("Soft Companion frontend lab", () => {
     expect(html).toContain('id="connection-shelf" tabindex="-1"');
   });
 
-  test("keeps serious ambiguity literal and fail-closed", () => {
+  test("keeps serious ambiguity literal while primary controls remain preview-only", () => {
     expect(app).toContain('disposition: operation.state === "ambiguous" ? "Reconcile before retry"');
-    expect(app).toContain('row.semanticState === "ambiguous"');
-    expect(app).toContain("No retry was performed");
     expect(app).toContain('text("strong", row.semanticState === "ambiguous" ? "Safe next action"');
-    expect(app).toContain("Undo preview acknowledgement");
-    expect(app).toContain("acknowledgedId = acknowledgedId === row.id ? null : row.id");
+    expect(compat).toContain("primaryActionLabel");
+    expect(compat).toContain("primaryActionAnnouncement");
+    expect(compat).toContain("No product action was performed");
+    expect(compat).toContain("event.stopImmediatePropagation()");
+    expect(compat).toContain('primaryAction.addEventListener("click"');
   });
 
   test("provides deterministic local empty, loading, degraded, and error states", () => {
@@ -71,7 +72,7 @@ describe("Soft Companion frontend lab", () => {
     expect(css).toContain('body[data-scenario="degraded"]');
   });
 
-  test("keeps URL updates and drawer focus recoverable inside opaque sandbox frames", () => {
+  test("keeps URL updates, drawer focus, connection truth, and action previews recoverable", () => {
     class FakeDomException extends Error {
       name: string;
       constructor(message: string, name: string) {
@@ -124,8 +125,12 @@ describe("Soft Companion frontend lab", () => {
         return selector === "button[data-mode]" ? buttons : [];
       },
     };
-
-    runInNewContext(compat, {
+    type Policy = {
+      projectConnections: (connections: readonly Record<string, unknown>[], scenario: string) => readonly Record<string, unknown>[];
+      primaryActionLabel: (action: string) => string;
+      primaryActionAnnouncement: (nextAction: string, safeRecovery?: boolean) => string;
+    };
+    const context: Record<string, unknown> & { StensiblySoftCompanionPolicy?: Policy } = {
       History: FakeHistory,
       DOMException: FakeDomException,
       Element: FakeElement,
@@ -134,7 +139,8 @@ describe("Soft Companion frontend lab", () => {
       requestAnimationFrame: (callback: () => void) => animationFrames.push(callback),
       Error,
       TypeError,
-    });
+    };
+    runInNewContext(compat, context);
 
     const history = new FakeHistory() as { replaceState: (kind: string) => unknown };
     expect(() => history.replaceState("security")).not.toThrow();
@@ -157,6 +163,19 @@ describe("Soft Companion frontend lab", () => {
     registeredClickListener({ detail: 1, target: replacementButton });
     expect(animationFrames).toHaveLength(0);
     expect(replacementButton.focused).toBe(false);
+
+    const policy = context.StensiblySoftCompanionPolicy;
+    if (!policy) throw new Error("Soft Companion preview policy was not published");
+    expect(Object.isFrozen(policy)).toBe(true);
+    const projected = policy.projectConnections(frontendLabFixture.connections, "degraded");
+    const github = projected.find((connection) => connection.id === "github");
+    expect(github).toMatchObject({ state: "healthy", previewState: "degraded" });
+    expect(projected.find((connection) => connection.id === "api")).toBe(frontendLabFixture.connections[1]);
+    expect(policy.primaryActionLabel("Reconcile before retry")).toBe("Preview: Reconcile before retry");
+    expect(policy.primaryActionLabel("Preview: Reconcile before retry")).toBe("Preview: Reconcile before retry");
+    expect(policy.primaryActionAnnouncement("Reconcile with remote state before any retry", true)).toBe(
+      "Safe recovery preview: Reconcile with remote state before any retry. No product action was performed.",
+    );
   });
 
   test("preserves keyboard, focus, narrow-screen, evening, and reduced-motion behavior", () => {
