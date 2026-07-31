@@ -33,7 +33,6 @@ export interface DashboardReleaseDecisionInput {
   readonly activeRun: boolean;
   readonly currentSha: string;
   readonly baselineSha: string | null;
-  readonly attemptedSha: string | null;
   readonly compareStatus?: "ahead" | "identical" | "behind" | "diverged" | "unavailable";
   readonly changedFiles?: readonly string[];
   readonly compareTruncated?: boolean;
@@ -46,7 +45,6 @@ export type DashboardReleaseDecision = Readonly<{
     | "active_run"
     | "missing_baseline"
     | "already_current"
-    | "already_attempted"
     | "relevant_changes"
     | "no_relevant_changes"
     | "comparison_unavailable"
@@ -73,12 +71,10 @@ export function latestAttemptedDashboardSha(runs: readonly DashboardWorkflowRun[
 export function decideDashboardRelease(input: DashboardReleaseDecisionInput): DashboardReleaseDecision {
   requireSha(input.currentSha, "Current main revision");
   if (input.baselineSha !== null) requireSha(input.baselineSha, "Dashboard baseline revision");
-  if (input.attemptedSha !== null) requireSha(input.attemptedSha, "Dashboard attempted revision");
 
   if (input.force) return Object.freeze({ action: "dispatch", reason: "manual_force" });
   if (input.activeRun) return Object.freeze({ action: "skip", reason: "active_run" });
   if (input.baselineSha === input.currentSha) return Object.freeze({ action: "skip", reason: "already_current" });
-  if (input.attemptedSha === input.currentSha) return Object.freeze({ action: "skip", reason: "already_attempted" });
   if (input.baselineSha === null) return Object.freeze({ action: "dispatch", reason: "missing_baseline" });
   if (input.compareStatus === undefined || input.compareStatus === "unavailable") {
     return Object.freeze({ action: "skip", reason: "comparison_unavailable" });
@@ -119,7 +115,7 @@ export async function runDashboardReleaseWindow(
   let compareStatus: DashboardReleaseDecisionInput["compareStatus"];
   let changedFiles: readonly string[] | undefined;
   let compareTruncated = false;
-  if (!force && !activeRun && baselineSha !== null && baselineSha !== currentSha && attemptedSha !== currentSha) {
+  if (!force && !activeRun && baselineSha !== null && baselineSha !== currentSha) {
     try {
       const comparison = await client.compare(baselineSha, currentSha);
       compareStatus = comparison.status;
@@ -135,13 +131,12 @@ export async function runDashboardReleaseWindow(
     activeRun,
     currentSha,
     baselineSha,
-    attemptedSha,
     compareStatus,
     changedFiles,
     compareTruncated,
   });
   if (decision.action === "dispatch") await client.dispatchPublisher(currentSha);
-  emitDecision(decision, currentSha, baselineSha, attemptedSha);
+  emitDecision(decision, currentSha, baselineSha);
   await appendSummary(env.GITHUB_STEP_SUMMARY, decision, currentSha, baselineSha, attemptedSha);
   return decision;
 }
@@ -243,14 +238,12 @@ function emitDecision(
   decision: DashboardReleaseDecision,
   currentSha: string,
   baselineSha: string | null,
-  attemptedSha: string | null,
 ): void {
   const messages: Record<DashboardReleaseDecision["reason"], readonly [string, string]> = {
     manual_force: ["Dashboard release queued", `Manual force queued current main ${currentSha}.`],
     active_run: ["Dashboard release coalesced", "A guarded dashboard publication is already active."],
     missing_baseline: ["Dashboard release queued", `No successful publication baseline exists; queued current main ${currentSha}.`],
     already_current: ["Dashboard already current", `Production already covers current main ${currentSha}.`],
-    already_attempted: ["Dashboard revision already attempted", `Guarded publication already attempted current main ${attemptedSha ?? currentSha}; use manual force for an intentional retry.`],
     relevant_changes: ["Dashboard release queued", `Dashboard changes accumulated after ${baselineSha ?? "missing baseline"}; queued ${currentSha}.`],
     no_relevant_changes: ["Dashboard release window empty", "No dashboard-relevant files changed since the latest successful publication."],
     comparison_unavailable: ["Dashboard comparison unavailable", "Automatic publication was skipped; the manual queue remains available."],
@@ -259,7 +252,7 @@ function emitDecision(
   };
   const [title, message] = messages[decision.reason];
   const noticeReasons: readonly DashboardReleaseDecision["reason"][] = [
-    "active_run", "already_current", "already_attempted", "no_relevant_changes",
+    "active_run", "already_current", "no_relevant_changes",
   ];
   const level = decision.action === "dispatch" || noticeReasons.includes(decision.reason) ? "notice" : "warning";
   console.log(`::${level} title=${title}::${message}`);
