@@ -46,6 +46,7 @@ describe("production root tactile presentation", () => {
       expect(css).toContain(`html[data-app-mode="${mode}"] .login-card`);
     }
     expect(css).toContain('html[data-app-mode="editing"] .login-card {\n  padding: .5rem .85rem;');
+    expect(css).toContain('html[data-app-mode="editing"] .login-card form {\n  margin-top: .2rem;');
   });
 
   test("preserves the existing connection and dashboard control identities", async () => {
