@@ -80,7 +80,7 @@ Playwright documents that screenshots can vary across operating systems, browser
 
 ## Interactive browser research boundary
 
-The repository exposes Playwright Test only. It carries no package script or source launcher for Playwright CLI or Playwright MCP.
+The repository exposes canonical Playwright Test and the bounded local report viewer. It carries no package script or source launcher for interactive browser control through Playwright CLI or Playwright MCP.
 
 Playwright CLI can save and load browser storage state, inspect and mutate cookies and web storage, attach to existing browsers, execute browser-control code, record screenshots, PDFs, video, and traces, and write automatic page snapshots under `.playwright-cli/`. Playwright MCP runs a local server process, exposes broad browser-control tools, and states that its origin controls do not form a security boundary. Those capabilities can reach private records, authenticated sessions, host files, and ambient credentials when launched inside an ordinary repository session.
 
