@@ -149,6 +149,26 @@ describe("OpenAI Agents runtime safety", () => {
     )).toThrow("already bound to a different executable ID");
   });
 
+  test("rejects dynamic instruction and tool-use closures in the first slice", () => {
+    const dynamicInstructions = new Agent({
+      name: "Dynamic Instructions Agent",
+      instructions: () => "dynamic",
+      tools: [],
+    });
+    expect(() => buildOpenAIAgentsRuntimeManifestV1(
+      dynamicInstructions,
+    )).toThrow("uses unsupported dynamic instructions");
+
+    const dynamicToolUse = agent("Dynamic Tool Use Agent", "Stable", []);
+    dynamicToolUse.toolUseBehavior = () => ({
+      isFinalOutput: false,
+      isInterrupted: undefined,
+    });
+    expect(() => buildOpenAIAgentsRuntimeManifestV1(
+      dynamicToolUse,
+    )).toThrow("uses unsupported dynamic tool-use behavior");
+  });
+
   test("rejects forged manifest fingerprints", () => {
     const accepted = buildOpenAIAgentsRuntimeManifestV1(runtimeGraph());
     const forged = structuredClone(accepted) as OpenAIAgentsRuntimeManifestV1;
