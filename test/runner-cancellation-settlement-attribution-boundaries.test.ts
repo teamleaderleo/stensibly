@@ -206,11 +206,12 @@ describe("runner cancellation attribution boundaries", () => {
       adapter.asAdapter(),
       scope,
       command(),
-      () => "2026-08-01T01:00:01.000Z",
+      () => "2026-08-01T00:00:10.000Z",
     );
 
     const result = await coordinator.request();
 
+    expect(adapter.calls).toBe(1);
     expect(result.outcome).toBe("adapter_failure");
     expect(result.cancellation).toBeNull();
     expect(result.settlement.successfulOutputs).toEqual([]);
