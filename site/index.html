@@ -12,15 +12,19 @@
     <link rel="stylesheet" href="/login-scrapbook.css" />
     <link rel="stylesheet" href="/calm-root.css" />
     <link rel="stylesheet" href="/root-mode-status.css" />
+    <link rel="stylesheet" href="/crunch-root.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Stensibly home">
           <span class="mark">S</span>
-          <strong>Stensibly</strong>
+          <span class="brand-copy">
+            <strong>Stensibly</strong>
+            <small>coordination ledger</small>
+          </span>
         </a>
-        <a class="github" href="https://github.com/teamleaderleo/stensibly">source ↗</a>
+        <a class="github" href="https://github.com/teamleaderleo/stensibly">GitHub source ↗</a>
       </header>
 
       <section class="root-connecting-status" id="root-connecting-status" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
@@ -29,8 +33,26 @@
 
       <section class="hero hero-login">
         <div class="hero-copy">
-          <p class="eyebrow">Stensibly</p>
-          <h1>Shared work.</h1>
+          <p class="eyebrow">Coordination ledger</p>
+          <h1>Shared work, made legible.</h1>
+          <p class="hero-lede">Stensibly keeps ownership, next actions, and handoffs visible so people and agents can pick work up without guessing.</p>
+          <ul class="hero-principles" aria-label="What Stensibly keeps visible">
+            <li>
+              <span aria-hidden="true">01</span>
+              <strong>Ownership</strong>
+              <small>Who holds the next move.</small>
+            </li>
+            <li>
+              <span aria-hidden="true">02</span>
+              <strong>Context</strong>
+              <small>Why the work is here.</small>
+            </li>
+            <li>
+              <span aria-hidden="true">03</span>
+              <strong>Continuity</strong>
+              <small>Where to resume.</small>
+            </li>
+          </ul>
         </div>
 
         <aside class="connection login-card" id="connection-panel" aria-labelledby="connection-title">
