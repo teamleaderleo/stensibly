@@ -507,7 +507,7 @@ function repository(value: unknown): string {
     || !/^[\x20-\x7e]+$/.test(value)
     || credentialPattern.test(value)
   ) throw adapterInvalid("GitHub delegated repository identity is invalid");
-  try { return normalizeGitHubRepository(value, "GitHub delegated repository"); }
+  try { return normalizeGitHubRepository(value); }
   catch { throw adapterInvalid("GitHub delegated repository identity is invalid"); }
 }
 
