@@ -10,14 +10,12 @@ function position(value: string): number {
   return index;
 }
 
-describe("automatic dashboard publication workflow", () => {
-  test("runs for merged dashboard changes and remains manually recoverable", () => {
-    expect(workflow).toContain("push:");
-    expect(workflow).toContain("branches:");
-    expect(workflow).toContain("- main");
-    expect(workflow).toContain('"site/**"');
-    expect(workflow).toContain('"scripts/link-vercel-project-domain.sh"');
+describe("guarded dashboard publication workflow", () => {
+  test("runs only through an explicit dispatch and stays serialized", () => {
+    expect(workflow).toContain("name: Publish Dashboard Production");
     expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("push:");
+    expect(workflow).not.toContain("schedule:");
     expect(workflow).toContain("group: stensibly-dashboard-production");
     expect(workflow).toContain("cancel-in-progress: false");
   });
