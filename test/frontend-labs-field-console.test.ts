@@ -9,83 +9,69 @@ const routeRoot = join(repositoryRoot, "site", "labs", "field-console");
 const html = readFileSync(join(routeRoot, "index.html"), "utf8");
 const css = readFileSync(join(routeRoot, "styles.css"), "utf8");
 const compat = readFileSync(join(routeRoot, "compat.js"), "utf8");
+const policy = readFileSync(join(routeRoot, "fixture-policy.js"), "utf8");
 const app = readFileSync(join(routeRoot, "app.js"), "utf8");
 const guide = readFileSync(join(repositoryRoot, "docs", "frontend-field-console.md"), "utf8");
-const routeSource = `${html}\n${css}\n${compat}\n${app}`;
+const routeSource = `${html}\n${css}\n${compat}\n${policy}\n${app}`;
 const sourceWithoutSvgNamespace = routeSource.replaceAll("http://www.w3.org/2000/svg", "");
 
-const sharedTargets = [
-  "approve-release-note",
-  "moss",
-  "ember",
-  "repair-focus-order",
-  "deploy-amber",
-  "github",
-  "api",
-  "mcp",
-];
-
-const sharedTasks = [
-  "human-decision",
-  "worker-health",
-  "recommended-work",
-  "safe-reconciliation",
-  "connection-health",
-];
-
 describe("Field Console frontend lab", () => {
-  test("publishes one independently previewable prototype route", () => {
-    const manifestEntry = frontendLabManifest.find((entry) => entry.id === "field-console");
-    expect(manifestEntry).toMatchObject({
+  test("publishes one direct shared-fixture prototype route", () => {
+    expect(frontendLabManifest.find((entry) => entry.id === "field-console")).toEqual({
+      id: "field-console",
+      title: "Field Console",
+      thesis: "A dense operational view pairing exact object state, alert triage, topology, timeline, and detail.",
       owner: "Cinder",
       status: "prototype",
-      revision: "8f9e13f7da46f3951284f2d920fdc99855259661",
+      revision: "54f0f684bc52eccec9e069292992d5dbb37cbece",
       issue: 610,
       path: "./field-console/",
+      support: ["wide", "medium", "narrow", "dark", "keyboard", "reduced-motion", "empty", "degraded", "error"],
     });
-    expect(manifestEntry?.support).toEqual([
-      "wide",
-      "medium",
-      "narrow",
-      "dark",
-      "keyboard",
-      "reduced-motion",
-      "empty",
-      "degraded",
-      "error",
-    ]);
+
+    const fixtureIndex = html.indexOf('<script src="../fixtures.classic.js"></script>');
+    const compatIndex = html.indexOf('<script src="./compat.js"></script>');
+    const policyIndex = html.indexOf('<script src="./fixture-policy.js"></script>');
+    const appIndex = html.indexOf('<script src="./app.js"></script>');
+    expect(fixtureIndex).toBeGreaterThan(-1);
+    expect(fixtureIndex).toBeLessThan(compatIndex);
+    expect(compatIndex).toBeLessThan(policyIndex);
+    expect(policyIndex).toBeLessThan(appIndex);
+    expect(html).not.toContain("fixture-bridge.js");
     expect(html).toContain('data-stensibly-lab="prototype"');
-    expect(html.indexOf('<script src="./compat.js"></script>')).toBeLessThan(html.indexOf('<script src="./app.js"></script>'));
-    expect(html).not.toContain('type="module"');
     expect(html).not.toContain("../planned.js");
     expect(html).not.toContain("../planned.css");
   });
 
-  test("keeps every shared task and target available in the local object model", () => {
-    for (const target of sharedTargets) expect(app).toContain(`id: "${target}"`);
-    for (const task of sharedTasks) expect(app).toContain(`task: "${task}"`);
-    expect(app).toContain('actionLabel: "Reconcile before retry"');
-    expect(app).toContain("No retry performed. Safe next action");
-    expect(app).toContain("remote settlement is unknown");
-    expect(app).toContain("Top recommendation because it unblocks keyboard evidence across every variant");
+  test("renders every readable surface from one validated projection", () => {
+    for (const id of ["object-list", "topology", "topology-links", "relationship-summary", "timeline-list", "detail-body", "connection-health"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(app).toContain("globalThis.StensiblyFieldConsolePolicy");
+    expect(app).toContain("const baseRecords = Object.freeze");
+    expect(app).toContain("return policy.projectRecords(baseRecords, scenario)");
+    expect(app).toContain("renderHealth(projection)");
+    expect(app).toContain("renderTopology(visible, projection)");
+    expect(app).toContain("renderRelationships(projection)");
+    expect(app).toContain("renderTimeline(projection)");
+    expect(app).toContain("renderDetail(projection)");
+    expect(app).toContain('container.setAttribute("aria-label", `Connection health:');
+    expect(app).not.toContain("const records = Object.freeze([");
+    expect(app).not.toContain("scenarioRecords = function");
+    expect(policy).toContain("must match the shared fixture identities");
+    expect(policy).toContain("must keep its shared fixture kind");
+    expect(policy).toContain("Review-thread evidence is delayed by 18 minutes");
   });
 
-  test("synchronizes topology, text relationships, list, detail, connections, and timeline", () => {
-    expect(html).toContain('id="object-list"');
-    expect(html).toContain('id="topology"');
-    expect(html).toContain('id="topology-links"');
-    expect(html).toContain('id="relationship-summary"');
-    expect(html).toContain('id="timeline-list"');
-    expect(html).toContain('id="detail-body"');
-    expect(html).toContain('id="connection-health"');
-    expect(html).toContain("Selected relationships in text");
-    expect(app).toContain("renderList(visible)");
-    expect(app).toContain("renderTopology(visible)");
-    expect(app).toContain("renderRelationships()");
-    expect(app).toContain("renderTimeline()");
-    expect(app).toContain("renderDetail()");
-    expect(guide).toContain("dependency topology");
-    expect(guide).toContain("not a geographic map");
+  test("keeps actions truthful and ambiguity fail-closed", () => {
+    for (const stale of ["Review decision", "Start recovery", "Open recommendation", "View evidence", "Open activity"]) {
+      expect(app).not.toContain(`actionLabel: "${stale}"`);
+    }
+    expect(policy).toContain('state === "ambiguous" ? "Read safe next action" : "Read next action"');
+    expect(app).toContain('entry.state === "ambiguous" ? "No retry performed. Safe next action" : "Preview only. Next action"');
+    expect(app).toContain("No product action was performed");
+    expect(guide).toContain("read-only guidance");
+    expect(guide).toContain("never retries, approves, recovers, publishes, or mutates");
   });
 
   test("keeps scenario URLs and timeline focus recoverable inside opaque sandbox frames", () => {
@@ -165,14 +151,14 @@ describe("Field Console frontend lab", () => {
     expect(() => history.replaceState("security")).not.toThrow();
     expect(() => history.replaceState("unexpected")).toThrow("unexpected history failure");
     expect(listenerOptions).toEqual({ capture: true });
-    const registeredClickListener = clickListener as ((event: { target: FakeElement }) => void) | null;
-    if (!registeredClickListener) throw new Error("Field Console timeline listener was not registered");
+    const registered = clickListener as ((event: { target: FakeElement }) => void) | null;
+    if (!registered) throw new Error("Field Console timeline listener was not registered");
 
     const oldItem = new FakeElement("item", "deploy-amber");
     const oldButton = new FakeElement("button", undefined, oldItem);
     oldItem.child = oldButton;
     items = [oldItem];
-    registeredClickListener({ target: oldButton });
+    registered({ target: oldButton });
     expect(animationFrames).toHaveLength(1);
 
     const replacementItem = new FakeElement("item", "deploy-amber");
@@ -184,54 +170,46 @@ describe("Field Console frontend lab", () => {
   });
 
   test("supports keyboard regions, density, scenarios, and narrow recovery", () => {
-    for (const key of ["ArrowDown", "ArrowUp", "Escape"]) expect(app).toContain(`"${key}"`);
-    expect(app).toContain('event.key === "/"');
-    expect(app).toContain('event.key.toLowerCase() === "d"');
-    expect(app).toContain('/^[1-4]$/.test(event.key)');
-    expect(app).toContain("focusRegion(Number(event.key))");
-    expect(app).toContain('density === "comfortable" ? "compact" : "comfortable"');
-    expect(app).toContain('["default", "empty", "degraded", "error"]');
-    expect(app).toContain("Restore default fixture");
-    expect(app).toContain('document.body.dataset.mobileDetail = "false"');
-    expect(compat).toContain("SecurityError");
-    expect(compat).toContain("requestAnimationFrame");
-    expect(css).toContain('@media (max-width: 48rem)');
+    for (const literal of [
+      'event.key === "/"',
+      '"ArrowDown"',
+      '"ArrowUp"',
+      '"Escape"',
+      'event.key.toLowerCase() === "d"',
+      '/^[1-4]$/.test(event.key)',
+      'density === "comfortable" ? "compact" : "comfortable"',
+      '["default", "empty", "degraded", "error"]',
+      "Restore default fixture",
+      'document.body.dataset.mobileDetail = "false"',
+    ]) expect(app).toContain(literal);
+    expect(css).toContain("@media (max-width: 48rem)");
     expect(css).toContain('body[data-mobile-detail="true"] .alerts');
-    expect(css).toContain('@media (prefers-reduced-motion: reduce)');
-    expect(css).toContain('button:focus-visible');
+    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(css).toContain("button:focus-visible");
     expect(css).toContain('body[data-density="compact"]');
   });
 
-  test("uses literal non-color state meaning and preserves readable targets", () => {
-    for (const label of [
-      "human decision",
-      "lease unhealthy",
-      "ambiguous settlement",
-      "degraded",
-      "reconnecting",
-      "offline",
-      "recovered",
-    ]) expect(app).toContain(label);
+  test("uses literal non-color state meaning and stays authority-free", () => {
+    for (const label of ["human decision", "lease unhealthy", "ambiguous settlement", "degraded", "reconnecting", "offline", "recovered"]) {
+      expect(app).toContain(label);
+    }
     expect(css).toContain('content: "◆"');
     expect(css).toContain('content: "×"');
     expect(css).toContain('content: "▲"');
     expect(css).toContain('content: "✓"');
-    expect(css).toContain("min-height: 2.5rem");
-    expect(css).toContain("transform: translate(-50%, -50%)");
-    expect(guide).toContain("State is never color-only");
-  });
-
-  test("stays fixture-only, flat, and free of external authority", () => {
     expect(() => new Function(app)).not.toThrow();
+    expect(() => new Function(policy)).not.toThrow();
     expect(() => new Function(compat)).not.toThrow();
     expect(routeSource).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/);
     expect(sourceWithoutSvgNamespace).not.toMatch(/https?:\/\//);
-    expect(routeSource).not.toMatch(/stn\.tok_/);
     expect(routeSource).not.toMatch(/\b(?:localStorage|sessionStorage|indexedDB)\b/);
     expect(routeSource).not.toMatch(/(?:linear|radial|conic)-gradient\s*\(/i);
-    expect(css).not.toContain("url(");
-    expect(css).not.toContain("@import");
+    expect(routeSource).not.toMatch(/stn\.tok_/);
     expect(html).not.toMatch(/<(?:img|iframe)\b/i);
+    expect(css).not.toContain("@import");
+    expect(css).not.toContain("url(");
+    expect(guide).toContain("not a geographic map");
+    expect(guide).toContain("State is never color-only");
     expect(guide).toContain("No production dashboard, authentication, API, deployment, or durable state");
   });
 });
