@@ -34,6 +34,8 @@ The versioned input contains:
 
 All retained identifiers use exact control-free bytes. Repository names use exact lowercase `owner/name`. Timestamps use canonical ISO bytes. Fingerprints use lowercase SHA-256 identities. Accessors, symbols, decorated or sparse arrays, unknown fields, future-dated facts, impossible operation settlement claims, and realistic credential values fail admission.
 
+Exact objects compare every own property name, including non-enumerable properties, with the declared field set. Exact arrays admit only dense index properties plus the intrinsic non-enumerable `length` property. Hidden caller decorations therefore cannot influence execution while escaping the declared input envelope.
+
 ## Ordering and inference
 
 The compiler does not infer chronology from ingestion time, array order, display order, prose, labels, or timestamps alone.
