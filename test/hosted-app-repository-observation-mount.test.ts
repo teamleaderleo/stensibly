@@ -96,7 +96,10 @@ function fakeConvexLedger(
 ): ConvexWorkLedger {
   return {
     client: {
-      async mutation(_reference, args) {
+      async mutation(
+        _reference: unknown,
+        args: Record<string, unknown>,
+      ) {
         mutationArgs.push(args);
         return {
           duplicate: false,
