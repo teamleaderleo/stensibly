@@ -29,6 +29,16 @@ const privateKey = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
 }).privateKey;
+const diffText = [
+  "diff --git a/src/config.ts b/src/config.ts",
+  "index 1111111..2222222 100644",
+  "--- a/src/config.ts",
+  "+++ b/src/config.ts",
+  "@@ -1 +1,2 @@",
+  "+const appKey = 'env://STENSIBLY_GITHUB_APP_PRIVATE_KEY';",
+  "+const fallback = 'secret://github/app-private-key';",
+  "",
+].join("\n");
 
 const snapshot = compileProjectContract(renderProjectContract({
   version: 1,
@@ -59,11 +69,12 @@ const attachment: ProjectAttachmentRecord = {
 };
 
 describe("private hosted GitHub delegated pull request reads", () => {
-  test("mints pull-request-only authority and publishes an attributable receipt", async () => {
+  test("mints pull-request-only authority and publishes an attributable metadata receipt", async () => {
     const calls: Array<{
       url: string;
       method: string;
       authorization: string | null;
+      accept: string | null;
       body: unknown;
     }> = [];
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
@@ -82,6 +93,7 @@ describe("private hosted GitHub delegated pull request reads", () => {
             url,
             method,
             authorization: headers.get("authorization"),
+            accept: headers.get("accept"),
             body,
           });
           if (url.endsWith("/app/installations/98765/access_tokens")) {
@@ -166,6 +178,113 @@ describe("private hosted GitHub delegated pull request reads", () => {
     expect(serialized).not.toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
   });
 
+  test("mounts bounded raw diff reads with the same repository-narrow authority", async () => {
+    const calls: Array<{
+      url: string;
+      method: string;
+      authorization: string | null;
+      accept: string | null;
+      body: unknown;
+    }> = [];
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(),
+      providerEnv(),
+      {
+        now: () => fixedNow,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          const method = init?.method ?? "GET";
+          const headers = new Headers(init?.headers);
+          const body = init?.body
+            ? JSON.parse(String(init.body)) as Record<string, unknown>
+            : null;
+          calls.push({
+            url,
+            method,
+            authorization: headers.get("authorization"),
+            accept: headers.get("accept"),
+            body,
+          });
+          if (url.endsWith("/app/installations/98765/access_tokens")) {
+            return Response.json({
+              token: "pull-request-installation-token-secret",
+              expires_at: "2026-07-31T01:00:00Z",
+              permissions: {
+                pull_requests: "read",
+                metadata: "read",
+              },
+              repository_selection: "selected",
+              repositories: [{ full_name: "TeamLeaderLeo/Stensibly" }],
+            }, { status: 201 });
+          }
+          if (
+            url
+              === "https://api.github.test/repos/teamleaderleo/stensibly/pulls/42"
+          ) {
+            return rawDiffResponse(diffText, {
+              "x-github-request-id": "PRDIFF:1234",
+            });
+          }
+          return Response.json({ message: "unexpected request" }, { status: 500 });
+        }) as unknown as typeof fetch,
+      },
+    );
+
+    const receipt = await mounted.callGitHubDelegatedRead!({
+      ...callBase(),
+      tool: "get_pr_diff",
+      arguments: { pr_number: pullRequestNumber, format: "diff" },
+    });
+
+    expect(receipt).toMatchObject({
+      version: 1,
+      project,
+      repositoryFullName,
+      tool: "get_pr_diff",
+      connectionId: "ghconn_installation_98765",
+      installationId: "98765",
+      attachmentId: attachment.id,
+      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
+      capabilityGrantId: null,
+      approvalId: null,
+      catalogueFingerprint,
+      providerRequestId: "PRDIFF:1234",
+      result: {
+        repositoryFullName,
+        number: pullRequestNumber,
+        format: "diff",
+        byteLength: Buffer.byteLength(diffText, "utf8"),
+        content: diffText,
+      },
+    });
+    expect(receipt.bindingId).toMatch(/^ghbind_[a-f0-9]{24}$/);
+    expect(receipt.parametersSha256).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(receipt.resultSha256).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(Object.isFrozen(receipt.result)).toBe(true);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.test/app/installations/98765/access_tokens",
+      method: "POST",
+      body: {
+        repositories: ["stensibly"],
+        permissions: { pull_requests: "read" },
+      },
+    });
+    expect(calls[1]).toMatchObject({
+      url: "https://api.github.test/repos/teamleaderleo/stensibly/pulls/42",
+      method: "GET",
+      authorization: "Bearer pull-request-installation-token-secret",
+      accept: "application/vnd.github.v3.diff",
+    });
+    const serialized = JSON.stringify(receipt);
+    expect(serialized).toContain("env://STENSIBLY_GITHUB_APP_PRIVATE_KEY");
+    expect(serialized).toContain("secret://github/app-private-key");
+    expect(serialized).not.toContain(privateKey);
+    expect(serialized).not.toContain("installation-token-secret");
+  });
+
   test("keeps every remaining delegated contract outside private authority", async () => {
     let externalCalls = 0;
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
@@ -182,8 +301,8 @@ describe("private hosted GitHub delegated pull request reads", () => {
 
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      tool: "get_pr_diff",
-      arguments: { pr_number: pullRequestNumber, format: "diff" },
+      tool: "list_pull_request_review_threads",
+      arguments: { pr_number: pullRequestNumber },
     })).rejects.toThrow("authority denied");
     expect(externalCalls).toBe(0);
   });
@@ -221,6 +340,30 @@ function providerEnv(): Record<string, string> {
     STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN: "teamleaderleo",
     STENSIBLY_GITHUB_API_BASE_URL: "https://api.github.test",
   };
+}
+
+function rawDiffResponse(
+  content: string,
+  headers: HeadersInit = {},
+): Response {
+  const response = new Response(content, {
+    status: 200,
+    headers: {
+      "content-type": "application/vnd.github.v3.diff; charset=utf-8",
+      ...headers,
+    },
+  });
+  Object.defineProperties(response, {
+    url: {
+      configurable: true,
+      value: "https://api.github.test/repos/teamleaderleo/stensibly/pulls/42",
+    },
+    redirected: {
+      configurable: true,
+      value: false,
+    },
+  });
+  return response;
 }
 
 function pullRequestPayload(): Record<string, unknown> {
