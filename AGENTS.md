@@ -14,6 +14,7 @@ Convex agent skills for common tasks can be installed with
 # Agent entry point
 
 **Operating protocol:** `stensibly-agent-ops/0.4.0`  
+**Active instruction experiment:** `documentation-brief/1` — #666  
 **Status:** internal dogfood  
 **Standing project policy:** `STENSIBLY.md`  
 **Change lifecycle:** `docs/operating-instruction-lifecycle.md`
@@ -33,7 +34,10 @@ Before substantive repository work:
    authority for internal dogfood effects.
 4. Read `docs/current-wave.md`.
 5. Read `README.md`, `docs/product-model.md`, and relevant generated guidelines.
-6. Inspect the relevant issues, pull requests, reviews, current deployments, and
+6. Read `docs/documentation-system.md` before creating or materially revising a
+   campaign record, durable decision, operating instruction, or shared documentation
+   convention.
+7. Inspect the relevant issues, pull requests, reviews, current deployments, and
    exact-head handoffs.
 
 When older prompts or documents conflict, use the newest repository protocol and
@@ -279,17 +283,37 @@ Write updates like a teammate:
 - distinguish a concrete blocker from an imperfection that can safely ship and be
   repaired.
 
+Meaningful issue or pull-request descriptions, claims, handoffs, campaign updates,
+and durable decisions should preserve five concepts near the top:
+
+```text
+In simple words / purpose: <what this means without recent context, the larger outcome, and why now>
+Change: <behavior, contract, result, or decision>
+Proof: <evidence available or required>
+Next: <next action, integration state, or clearing condition>
+```
+
+Use separate `In simple words` and `Purpose` headings only when each adds distinct
+information. Literal headings may be combined or omitted; the concepts must remain
+legible. Add `Decision`, `Fence`, `Risk`, or `Recovery` only when they materially
+improve review or continuation. Routine progress updates remain one or two sentences.
+Keep the first screen current and link to exact evidence below. Use
+`docs/documentation-system.md` for audiences, zoom levels, campaign records, and
+durable decision guidance.
+
 ## Completion and handoff
 
 A run is incomplete until another worker can continue without the transcript.
 Record the subset that materially helps:
 
+- plain-language result, purpose, and relationship to the larger outcome;
 - completed outcome and changed files;
 - exact issue, PR, branch, revision, deployment, and artifacts;
 - tests, checks, dogfood results, and failures;
 - review and integration state;
 - live configuration or effect state when relevant;
 - residual risks and accepted imperfections;
+- non-obvious decision rationale or a link to its durable record;
 - exact next action and recovery condition.
 
 Do not pad handoffs with unrelated non-actions. Merge, deploy, complete, release,
@@ -301,7 +325,8 @@ After meaningful work, record reusable findings and improve the protocol when it
 causes stalls, repeated operator correction, duplicate work, unnecessary approval,
 or missed ambition.
 
-Use `docs/operating-instruction-lifecycle.md` for durable protocol changes, but do
-not let process prevent an operator-directed correction from becoming effective.
-Preserve superseded wording in Git history rather than keeping it active in the
-current instructions.
+Use `docs/operating-instruction-lifecycle.md` for durable protocol changes and
+`docs/documentation-system.md` for documentation goals, record types, and decision
+history, but do not let process prevent an operator-directed correction from becoming
+effective. Preserve superseded wording in Git history rather than keeping it active
+in the current instructions.
