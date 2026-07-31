@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const maximumMcpOutputBytes = 25_000_000;
+const maximumMcpEnvironmentValueBytes = 8_192;
 const booleanMcpSwitches = new Set([
   "--isolated",
   "--headless",
@@ -17,6 +18,20 @@ const valuedMcpSwitches = new Set([
   "--viewport-size",
 ]);
 const requiredMcpSwitches = new Set([...booleanMcpSwitches, ...valuedMcpSwitches]);
+const mcpEnvironmentKeys = [
+  "BUN_INSTALL",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "PATH",
+  "PLAYWRIGHT_BROWSERS_PATH",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "XDG_CACHE_HOME",
+] as const;
+const unsafeEnvironmentText = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const credentialEnvironmentText = /(?:^|[._:/=@-])(?:(?:env|secret):\/\/|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-|AKIA[0-9A-Z]{16})/iu;
 
 const exactPrivateNames = new Set([
   ".dev.vars",
@@ -138,6 +153,25 @@ export function validatePlaywrightMcpArgs(
   }
 
   return Object.freeze([...args]);
+}
+
+export function createPlaywrightMcpEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> {
+  const admitted: Record<string, string> = {};
+  for (const key of mcpEnvironmentKeys) {
+    const value = environment[key];
+    if (value === undefined || value === "") continue;
+    if (
+      Buffer.byteLength(value, "utf8") > maximumMcpEnvironmentValueBytes
+      || unsafeEnvironmentText.test(value)
+      || credentialEnvironmentText.test(value)
+    ) {
+      throw new TypeError("Playwright MCP execution environment contains an unsafe admitted value");
+    }
+    admitted[key] = value;
+  }
+  return Object.freeze(admitted);
 }
 
 function resolveThroughExistingAncestor(path: string): string {
