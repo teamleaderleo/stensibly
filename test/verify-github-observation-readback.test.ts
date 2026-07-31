@@ -276,6 +276,24 @@ describe("hosted GitHub observation readback verifier", () => {
     expect(receipt.revision).toBe(revision);
   });
 
+  test("times out and cancels a stalled response body", async () => {
+    let cancelled = false;
+    const stalled = responseAt(requestUrl, new ReadableStream<Uint8Array>({
+      pull() {
+        // Leave the first read pending until the verifier deadline cancels it.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }));
+
+    await expect(verifyGitHubObservationReadback(
+      verifierOptions({ timeoutMs: 100 }),
+      async () => stalled,
+    )).rejects.toThrow("Request timed out after 100ms");
+    expect(cancelled).toBe(true);
+  });
+
   test("rejects invalid or conflicting response lengths", async () => {
     for (const contentLength of ["01", "1, 2", "-1", "9007199254740992"]) {
       await expect(verifyGitHubObservationReadback(verifierOptions(), async () => responseAt(
