@@ -80,7 +80,9 @@ describe("canonical CI scheduling", () => {
     expect(serialFullJob).toContain("bun run test:convex");
     expect(serialFullJob).toContain("bun run worker:check");
     expect(serialFullJob).toContain("bun run test:runtime-parity");
-    expect(serialFullJob).toContain("code=${PIPESTATUS[0]}");
+    expect(serialFullJob).toContain('pipeline_status=("${PIPESTATUS[@]}")');
+    expect(serialFullJob).toContain('"${pipeline_status[0]}" -ne 0');
+    expect(serialFullJob).toContain('"${pipeline_status[1]}" -ne 0');
     expect(serialFullJob).toContain("exit \"${status}\"");
   });
 
