@@ -92,11 +92,18 @@ describe("canonical CI scheduling", () => {
     }
   });
 
-  test("runs the opt-in serial full profile on one hosted runner", () => {
+  test("runs exact-head serial validation automatically after green pull-request jobs", () => {
     expect(serialFullJob).toBeDefined();
+    expect(serialFullJob).toContain("needs: [browser-evidence, test, runtime-parity]");
+    expect(serialFullJob).toContain("always()");
+    expect(serialFullJob).toContain("github.event_name == 'pull_request'");
+    expect(serialFullJob).toContain("needs.browser-evidence.result == 'success'");
+    expect(serialFullJob).toContain("needs.test.result == 'success'");
+    expect(serialFullJob).toContain("needs.runtime-parity.result == 'success'");
     expect(serialFullJob).toContain(
-      "github.event_name == 'workflow_dispatch' && inputs.validation_profile == 'serial_full'",
+      "github.event_name == 'workflow_dispatch' &&",
     );
+    expect(serialFullJob).toContain("inputs.validation_profile == 'serial_full'");
     expect(serialFullJob?.match(/actions\/checkout@v6/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/oven-sh\/setup-bun@v2/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/actions\/setup-node@v6/gu)).toHaveLength(1);
@@ -108,8 +115,14 @@ describe("canonical CI scheduling", () => {
   });
 
   test("preserves exact-SHA admission and bounded failure artifacts", () => {
-    expect(serialFullJob).toContain('"${GITHUB_SHA}" != "${EXPECTED_SHA}"');
-    expect(serialFullJob).toContain("serial-full-diagnostics");
+    expect(serialFullJob).toContain("SERIAL_VALIDATION_SHA:");
+    expect(serialFullJob).toContain("github.event.pull_request.head.sha");
+    expect(serialFullJob).toContain("ref: ${{ env.SERIAL_VALIDATION_SHA }}");
+    expect(serialFullJob).toContain("persist-credentials: false");
+    expect(serialFullJob).toContain('actual_sha="$(git rev-parse HEAD)"');
+    expect(serialFullJob).toContain('! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$');
+    expect(serialFullJob).toContain('"${actual_sha}" != "${SERIAL_VALIDATION_SHA}"');
+    expect(serialFullJob).toContain("serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}");
     expect(serialFullJob).toContain("typecheck-output.txt");
     expect(serialFullJob).toContain("test-output.txt");
     expect(serialFullJob).toContain("convex-test-output.txt");
