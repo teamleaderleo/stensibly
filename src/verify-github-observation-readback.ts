@@ -240,6 +240,9 @@ function matchingReceipt(
   if (!DELIVERY_PATTERN.test(deliveryId)) {
     throw new Error("Hosted push observation has an invalid delivery identity");
   }
+  if (observationId !== `github:push:${deliveryId}`) {
+    throw new Error("Hosted push observation has an inconsistent observation identity");
+  }
   const semanticFingerprint = observation.semanticFingerprint;
   if (typeof semanticFingerprint !== "string" || !HASH_PATTERN.test(semanticFingerprint)) {
     throw new Error("Hosted push observation has an invalid semantic fingerprint");
@@ -318,7 +321,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
         await cancelReader(reader);
         throw new Error("Hosted observation readback response exceeded 1 MiB");
       }
-      chunks.push(result.value);
+      chunks.push(result.value.slice());
     }
   } finally {
     reader.releaseLock();
