@@ -19,7 +19,7 @@ import {
   sha256,
   stableJson,
 } from "./github-provider-validation.js";
-import { GitHubRestPullRequestReadAdapter } from "./github-rest-pull-request-read-adapter.js";
+import { GitHubRestPullRequestDiffAdapter } from "./github-rest-pull-request-diff-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   projectAttachmentLedger,
@@ -52,10 +52,15 @@ interface HostedGitHubDelegatedReadConfig {
   credentialRef: string;
 }
 
-const enabledTools = new Set(["get_repo", "fetch_file", "get_pr_info"]);
+const enabledTools = new Set([
+  "get_repo",
+  "fetch_file",
+  "get_pr_info",
+  "get_pr_diff",
+]);
 
 /**
- * Mounts a private three-tool delegated-read service when the explicit hosted
+ * Mounts a private four-tool delegated-read service when the explicit hosted
  * flag and the complete GitHub App configuration are present. Public MCP
  * dispatch and discovery remain separately controlled.
  */
@@ -93,7 +98,7 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
     now,
   });
-  const adapter = new GitHubRestPullRequestReadAdapter({
+  const adapter = new GitHubRestPullRequestDiffAdapter({
     connectionId: bindings.connection.id,
     installationId: config.installationId,
     credentialRef: config.credentialRef,
@@ -105,7 +110,7 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
   const service = new GitHubDelegatedReadService({
     projects,
     bindings,
-    authority: new HostedThreeToolDelegatedReadAuthority(config),
+    authority: new HostedFourToolDelegatedReadAuthority(config),
     adapter,
     catalogue,
   });
@@ -234,7 +239,7 @@ class AcceptedAttachmentDelegatedBindingStore
   }
 }
 
-class HostedThreeToolDelegatedReadAuthority
+class HostedFourToolDelegatedReadAuthority
   implements GitHubDelegatedReadAuthority
 {
   readonly #config: HostedGitHubDelegatedReadConfig;
