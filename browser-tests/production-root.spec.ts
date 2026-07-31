@@ -51,32 +51,36 @@ async function installDeterministicApi(
         writable: false,
       });
 
-      window.fetch = async (input: RequestInfo | URL) => {
-        const url = new URL(
-          typeof input === "string" || input instanceof URL ? String(input) : input.url,
-          window.location.href,
-        );
+      Object.defineProperty(window, "fetch", {
+        configurable: true,
+        writable: true,
+        value: async (input: RequestInfo | URL) => {
+          const url = new URL(
+            typeof input === "string" || input instanceof URL ? String(input) : input.url,
+            window.location.href,
+          );
 
-        if (url.pathname === "/api/v1/items") {
-          if (itemsMode === "pending") return pendingItems;
-          if (itemsMode === "success") return json({ items: [] }, 200);
-          if (itemsMode === "unauthorized") {
-            return json({ error: { code: "invalid_token", message: "Sign in required." } }, 401);
+          if (url.pathname === "/api/v1/items") {
+            if (itemsMode === "pending") return pendingItems;
+            if (itemsMode === "success") return json({ items: [] }, 200);
+            if (itemsMode === "unauthorized") {
+              return json({ error: { code: "invalid_token", message: "Sign in required." } }, 401);
+            }
+            throw new TypeError("fixture API unavailable");
           }
-          throw new TypeError("fixture API unavailable");
-        }
 
-        if (url.pathname === "/api/v1/principal") {
-          return json({ error: { code: "not_found", message: "Capability unavailable." } }, 404);
-        }
+          if (url.pathname === "/api/v1/principal") {
+            return json({ error: { code: "not_found", message: "Capability unavailable." } }, 404);
+          }
 
-        if (url.pathname === "/health") {
-          if (itemsMode === "network-error") throw new TypeError("fixture health unavailable");
-          return new Response(null, { status: 204 });
-        }
+          if (url.pathname === "/health") {
+            if (itemsMode === "network-error") throw new TypeError("fixture health unavailable");
+            return new Response(null, { status: 204 });
+          }
 
-        return json({ error: { code: "not_found", message: "Fixture route unavailable." } }, 404);
-      };
+          return json({ error: { code: "not_found", message: "Fixture route unavailable." } }, 404);
+        },
+      });
     },
     {
       returningSession: options.returningSession,
