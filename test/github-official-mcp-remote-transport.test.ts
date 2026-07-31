@@ -482,8 +482,9 @@ describe("official GitHub MCP remote transport", () => {
     expect(harness.closed).toBe(1);
   });
 
-  test("requires one canonical HTTPS MCP endpoint", () => {
+  test("requires the one canonical official HTTPS MCP endpoint", () => {
     for (const endpoint of [
+      "https://attacker.example/mcp/",
       "http://api.githubcopilot.com/mcp/",
       "https://user@api.githubcopilot.com/mcp/",
       "https://api.githubcopilot.com/mcp/?tool=repos",
