@@ -101,6 +101,8 @@ interface ResolvedDelegatedReadScope {
   approvalId: string | null;
 }
 
+const secretShapedAuthorityIdentityPattern = /(?:^|[._:/-])(?:(?:env|secret):\/\/|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-)/i;
+
 export class GitHubDelegatedReadService {
   readonly #projects: GitHubProviderProjectReader;
   readonly #bindings: GitHubProviderBindingStore;
@@ -180,21 +182,19 @@ export class GitHubDelegatedReadService {
       actorId,
       clientId,
       catalogueFingerprint,
-      ...(input.capabilityGrantId
+      ...(input.capabilityGrantId !== undefined
         ? {
-          capabilityGrantId: boundedText(
+          capabilityGrantId: exactAuthorityIdentity(
             input.capabilityGrantId,
             "GitHub delegated capability grant ID",
-            240,
           ),
         }
         : {}),
-      ...(input.approvalId
+      ...(input.approvalId !== undefined
         ? {
-          approvalId: boundedText(
+          approvalId: exactAuthorityIdentity(
             input.approvalId,
             "GitHub delegated approval ID",
-            240,
           ),
         }
         : {}),
@@ -290,11 +290,19 @@ export class GitHubDelegatedReadService {
       );
     const connection = validatedConnection(rawConnection, binding);
 
-    const authority =
-      await this.#authority.authorizeGitHubDelegatedRead(input);
+    let authority: GitHubDelegatedReadAuthorityDecision;
+    try {
+      authority = admitDelegatedReadAuthorityDecision(
+        await this.#authority.authorizeGitHubDelegatedRead(input),
+      );
+    } catch {
+      throw new GitHubDelegatedAuthorityError(
+        "GitHub delegated read authority response is invalid",
+      );
+    }
     if (!authority.allowed) {
       throw new GitHubDelegatedAuthorityError(
-        authority.reason ?? "GitHub delegated read authority denied",
+        "GitHub delegated read authority denied",
       );
     }
     return {
@@ -303,9 +311,8 @@ export class GitHubDelegatedReadService {
       attachment,
       binding,
       connection,
-      capabilityGrantId:
-        authority.capabilityGrantId ?? input.capabilityGrantId ?? null,
-      approvalId: authority.approvalId ?? input.approvalId ?? null,
+      capabilityGrantId: authority.capabilityGrantId ?? null,
+      approvalId: authority.approvalId ?? null,
     };
   }
 }
@@ -414,6 +421,113 @@ function validatedConnection(
     );
   }
   return connection;
+}
+
+function admitDelegatedReadAuthorityDecision(
+  value: unknown,
+): GitHubDelegatedReadAuthorityDecision {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RangeError("GitHub delegated authority decision must be an object");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new RangeError("GitHub delegated authority decision must be a plain object");
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new RangeError("GitHub delegated authority decision contains a symbol field");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const allowedKeys = new Set([
+    "allowed",
+    "reason",
+    "capabilityGrantId",
+    "approvalId",
+  ]);
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!allowedKeys.has(key)) {
+      throw new RangeError(
+        `GitHub delegated authority decision contains unknown field ${key}`,
+      );
+    }
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new RangeError(
+        `GitHub delegated authority decision field ${key} must be an enumerable data property`,
+      );
+    }
+  }
+  const allowedDescriptor = descriptors.allowed;
+  if (!allowedDescriptor || !("value" in allowedDescriptor)) {
+    throw new RangeError("GitHub delegated authority decision is missing allowed");
+  }
+  if (typeof allowedDescriptor.value !== "boolean") {
+    throw new RangeError("GitHub delegated authority decision allowed must be a boolean");
+  }
+  const reason = optionalAuthorityText(
+    descriptors.reason,
+    "GitHub delegated authority reason",
+    1_000,
+  );
+  const capabilityGrantId = optionalAuthorityIdentity(
+    descriptors.capabilityGrantId,
+    "GitHub delegated capability grant ID",
+  );
+  const approvalId = optionalAuthorityIdentity(
+    descriptors.approvalId,
+    "GitHub delegated approval ID",
+  );
+  if (!allowedDescriptor.value && (capabilityGrantId || approvalId)) {
+    throw new RangeError(
+      "Denied GitHub delegated authority cannot return grant or approval identities",
+    );
+  }
+  return Object.freeze({
+    allowed: allowedDescriptor.value,
+    ...(reason === undefined ? {} : { reason }),
+    ...(capabilityGrantId === undefined ? {} : { capabilityGrantId }),
+    ...(approvalId === undefined ? {} : { approvalId }),
+  });
+}
+
+function optionalAuthorityText(
+  descriptor: PropertyDescriptor | undefined,
+  label: string,
+  maximumLength: number,
+): string | undefined {
+  if (!descriptor) return undefined;
+  if (!("value" in descriptor) || typeof descriptor.value !== "string") {
+    throw new RangeError(`${label} must be a string`);
+  }
+  return boundedText(descriptor.value, label, maximumLength);
+}
+
+function optionalAuthorityIdentity(
+  descriptor: PropertyDescriptor | undefined,
+  label: string,
+): string | undefined {
+  if (!descriptor) return undefined;
+  if (!("value" in descriptor)) {
+    throw new RangeError(`${label} must be a data property`);
+  }
+  return exactAuthorityIdentity(descriptor.value, label);
+}
+
+function exactAuthorityIdentity(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new RangeError(`${label} must be a string`);
+  }
+  if (value.length < 1 || value.length > 240) {
+    throw new RangeError(`${label} must contain 1 to 240 bytes`);
+  }
+  if (!/^[\x21-\x7e]+$/.test(value)) {
+    throw new RangeError(`${label} must use exact printable ASCII without whitespace`);
+  }
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,238}[A-Za-z0-9])?$/.test(value)) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  if (secretShapedAuthorityIdentityPattern.test(value)) {
+    throw new RangeError(`${label} cannot be secret-shaped`);
+  }
+  return value;
 }
 
 function boundedFingerprint(value: string, label: string): string {
