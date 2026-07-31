@@ -173,16 +173,17 @@ jobs:
           set +e
           status=0
           run_gate() {
-            label="$1"
-            output="$2"
+            local label="$1"
+            local output="$2"
+            local -a pipeline_status
             shift 2
             echo "::group::${label}"
             set -o pipefail
             "$@" 2>&1 | tee "${output}"
-            code=${PIPESTATUS[0]}
+            pipeline_status=("${PIPESTATUS[@]}")
             set +o pipefail
             echo "::endgroup::"
-            if [[ "${code}" -ne 0 ]]; then
+            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
               status=1
             fi
           }
