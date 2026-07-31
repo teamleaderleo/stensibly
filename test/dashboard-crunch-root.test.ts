@@ -12,7 +12,7 @@ describe("production root tactile presentation", () => {
     expect(calmIndex).toBeGreaterThan(0);
     expect(statusIndex).toBeGreaterThan(calmIndex);
     expect(crunchIndex).toBeGreaterThan(statusIndex);
-    expect(html).toContain("<h1>Shared work. Made legible.</h1>");
+    expect(html).toContain("<h1>Shared work.</h1>");
     expect(html).toContain('class="brand-copy"');
     expect(html).toContain('class="hero-lede"');
     expect(html).toContain('class="hero-principles"');
