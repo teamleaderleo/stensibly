@@ -79,7 +79,7 @@ const sourceManifest = [
     thesis: "An artifact-first workspace with work navigation, versions, evidence, comments, and commands around the selected output.",
     owner: "Cinder",
     status: "prototype",
-    revision: "999a0fbed6cec364674d28c37bc0bf35286a99b2",
+    revision: "11b745b461905851383c884ac79754a2f79e4cb1",
     issue: 612,
     path: "./studio-canvas/",
     support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion"],

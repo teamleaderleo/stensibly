@@ -1,4 +1,9 @@
-const artifacts = Object.freeze([
+const fixtureApi = globalThis.StensiblyFrontendLabFixtures;
+if (!fixtureApi) throw new Error("Studio Canvas requires the shared frontend labs fixture contract");
+const studioPolicy = globalThis.StensiblyStudioCanvasPolicy;
+if (!studioPolicy) throw new Error("Studio Canvas requires its shared-fixture command policy");
+
+const baseArtifacts = Object.freeze([
   artifact({
     id: "approve-release-note",
     kind: "decision document",
@@ -120,6 +125,7 @@ const artifacts = Object.freeze([
   }),
 ]);
 
+const artifacts = studioPolicy.projectArtifacts(baseArtifacts);
 const tabs = Object.freeze(["evidence", "comments", "versions", "activity"]);
 const workList = required("#work-list");
 const artifactSheet = required("#artifact-sheet");
@@ -131,29 +137,47 @@ const commandDialog = required("#command-dialog");
 const commandInput = required("#command-input");
 const commandList = required("#command-list");
 const commandTrigger = required("#command-trigger");
+const localActionResult = required("#local-action-result");
+const collapseWork = required("#collapse-work");
+const collapseInspector = required("#collapse-inspector");
+const reopenWork = required("#reopen-work");
+const reopenInspector = required("#reopen-inspector");
 const announcer = required("#announcer");
+const narrowMedia = window.matchMedia("(max-width: 48rem)");
 
 let selectedArtifactIndex = 0;
 let selectedTabIndex = 0;
 let compareVersionId = null;
 let commandReturnFocus = commandTrigger;
 
+clearCollapsedState();
 renderWorkList();
 renderInspectorTabs();
 renderWorkspace();
 renderCommands("");
 
-required("#collapse-work").addEventListener("click", () => setCollapsed("work", true));
-required("#collapse-inspector").addEventListener("click", () => setCollapsed("inspector", true));
-required("#reopen-work").addEventListener("click", () => setCollapsed("work", false));
-required("#reopen-inspector").addEventListener("click", () => setCollapsed("inspector", false));
+collapseWork.addEventListener("click", () => setCollapsed("work", true));
+collapseInspector.addEventListener("click", () => setCollapsed("inspector", true));
+reopenWork.addEventListener("click", () => setCollapsed("work", false));
+reopenInspector.addEventListener("click", () => setCollapsed("inspector", false));
 compareToggle.addEventListener("click", toggleCompare);
 commandTrigger.addEventListener("click", openCommands);
 commandInput.addEventListener("input", () => renderCommands(commandInput.value));
-commandDialog.addEventListener("close", () => commandReturnFocus?.focus());
+commandDialog.addEventListener("close", restoreCommandFocus);
+narrowMedia.addEventListener?.("change", syncNarrowContract);
 
 document.querySelectorAll("[data-mobile-pane]").forEach((button) => {
   button.addEventListener("click", () => setMobilePane(button.dataset.mobilePane));
+});
+
+document.querySelectorAll("[data-local-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const message = studioPolicy.localActionCopy(selectedArtifact(), button.dataset.localAction);
+    localActionResult.textContent = message;
+    localActionResult.hidden = false;
+    localActionResult.focus({ preventScroll: true });
+    announce(message);
+  });
 });
 
 document.addEventListener("keydown", (keyboardEvent) => {
@@ -341,6 +365,7 @@ function renderActivity(entry) {
 function selectArtifact(index, focus) {
   selectedArtifactIndex = (index + artifacts.length) % artifacts.length;
   compareVersionId = null;
+  hideLocalResult();
   renderWorkspace();
   if (focus) workList.querySelector(`[data-artifact-id="${selectedArtifact().id}"]`)?.focus();
   announce(`${selectedArtifact().title}. ${selectedArtifact().state}.`);
@@ -359,15 +384,25 @@ function selectTab(index, focus) {
 
 function toggleCompare() {
   const entry = selectedArtifact();
-  compareVersionId = compareVersionId ? null : entry.versions[1]?.id ?? null;
+  const comparison = entry.versions[1] ?? null;
+  if (!compareVersionId && !comparison) {
+    announce("No earlier revision is available for comparison.");
+    return;
+  }
+  compareVersionId = compareVersionId ? null : comparison.id;
   renderWorkspace();
   artifactSheet.focus({ preventScroll: true });
   announce(compareVersionId ? `Comparing with ${compareVersionId}. Local view only.` : "Revision comparison closed");
 }
 
 function setCollapsed(region, collapsed) {
+  if (collapsed && narrowMedia.matches) {
+    clearCollapsedState();
+    announce("Collapse controls are disabled in the narrow stacked layout.");
+    return;
+  }
   document.body.dataset[`${region}Collapsed`] = String(collapsed);
-  const recovery = required(region === "work" ? "#reopen-work" : "#reopen-inspector");
+  const recovery = region === "work" ? reopenWork : reopenInspector;
   if (collapsed) recovery.focus();
   else required(region === "work" ? "#work-list button" : "#inspector-tabs button").focus();
   announce(`${region} region ${collapsed ? "collapsed" : "restored"}`);
@@ -390,7 +425,7 @@ function focusRegion(number) {
 
 function openCommands() {
   if (commandDialog.open) return;
-  commandReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : commandTrigger;
+  commandReturnFocus = isUsefulReturnTarget(document.activeElement) ? document.activeElement : commandTrigger;
   commandInput.value = "";
   renderCommands("");
   commandDialog.showModal();
@@ -399,20 +434,24 @@ function openCommands() {
 
 function renderCommands(query) {
   const normalized = query.trim().toLowerCase();
+  const availableKinds = new Set(studioPolicy.commandKinds(narrowMedia.matches, selectedArtifact().versions.length > 1));
   const commands = [
-    ...artifacts.map((entry, index) => ({ label: `Open ${entry.title}`, detail: entry.kind, run: () => selectArtifact(index, false) })),
-    ...tabs.map((tab, index) => ({ label: `Open ${capitalize(tab)} inspector`, detail: "context panel", run: () => selectTab(index, false) })),
-    { label: "Toggle revision comparison", detail: "local view only", run: toggleCompare },
-    { label: "Collapse work region", detail: "recoverable layout", run: () => setCollapsed("work", true) },
-    { label: "Collapse inspector region", detail: "recoverable layout", run: () => setCollapsed("inspector", true) },
-  ].filter((entry) => `${entry.label} ${entry.detail}`.toLowerCase().includes(normalized));
+    ...artifacts.map((entry, index) => ({ kind: "artifact", label: `Open ${entry.title}`, detail: entry.kind, run: () => selectArtifact(index, true) })),
+    ...tabs.map((tab, index) => ({ kind: "inspector", label: `Open ${capitalize(tab)} inspector`, detail: "context panel", run: () => selectTab(index, true) })),
+    { kind: "compare", label: "Toggle revision comparison", detail: "local view only", run: toggleCompare },
+    { kind: "collapse-work", label: "Collapse work region", detail: "recoverable layout", run: () => setCollapsed("work", true) },
+    { kind: "collapse-inspector", label: "Collapse inspector region", detail: "recoverable layout", run: () => setCollapsed("inspector", true) },
+  ].filter((entry) => availableKinds.has(entry.kind))
+    .filter((entry) => `${entry.label} ${entry.detail}`.toLowerCase().includes(normalized));
 
   commandList.replaceChildren(...commands.map((entry) => {
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.commandKind = entry.kind;
     button.append(document.createTextNode(entry.label), text("span", entry.detail));
     button.addEventListener("click", () => {
+      commandReturnFocus = null;
       commandDialog.close();
       requestAnimationFrame(entry.run);
     });
@@ -421,8 +460,41 @@ function renderCommands(query) {
   }));
 }
 
+function restoreCommandFocus() {
+  if (!commandReturnFocus) return;
+  const target = isUsefulReturnTarget(commandReturnFocus) ? commandReturnFocus : commandTrigger;
+  if (document.activeElement !== target) target.focus();
+}
+
+function isUsefulReturnTarget(value) {
+  return value instanceof HTMLElement
+    && studioPolicy.usefulReturnTarget(value, document.body, commandDialog);
+}
+
+function clearCollapsedState() {
+  document.body.dataset.workCollapsed = "false";
+  document.body.dataset.inspectorCollapsed = "false";
+}
+
+function syncNarrowContract() {
+  if (narrowMedia.matches) {
+    const active = document.activeElement;
+    clearCollapsedState();
+    if (active === reopenWork) workList.querySelector("button")?.focus();
+    if (active === reopenInspector) inspectorTabs.querySelector("button")?.focus();
+  }
+  if (commandDialog.open) renderCommands(commandInput.value);
+}
+
+function hideLocalResult() {
+  localActionResult.hidden = true;
+  localActionResult.textContent = "";
+}
+
 function selectedArtifact() {
-  return artifacts[selectedArtifactIndex];
+  const entry = artifacts[selectedArtifactIndex];
+  if (!entry) throw new Error("Studio Canvas selected artifact is missing");
+  return entry;
 }
 
 function artifact(value) {
