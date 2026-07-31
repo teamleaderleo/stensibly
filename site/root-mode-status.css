@@ -1,0 +1,46 @@
+.root-connecting-status {
+  display: none;
+}
+
+html[data-app-mode="connecting"] .shell::after {
+  content: none;
+  display: none;
+}
+
+html[data-app-mode="connecting"] .root-connecting-status {
+  display: grid;
+  place-items: center;
+  min-height: min(30rem, calc(100vh - 8rem));
+  border: 1px solid var(--line);
+  border-radius: .9rem;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: .82rem;
+  letter-spacing: .01em;
+}
+
+.root-connecting-status span {
+  max-width: 28rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+html[data-app-mode="editing"] .hero-copy {
+  display: none;
+}
+
+html[data-app-mode="editing"] .hero-login {
+  display: block;
+  min-height: 0;
+  margin: 0 0 .85rem;
+}
+
+html[data-app-mode="editing"] .login-card {
+  max-width: none;
+  padding: .5rem .85rem;
+  border-radius: .75rem;
+}
+
+html[data-app-mode="editing"] .login-card .connection-head {
+  padding: 0 0 .65rem;
+}
