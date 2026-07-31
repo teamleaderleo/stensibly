@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const labsRoot = join(import.meta.dir, "..", "site", "labs");
+const catalogue = readFileSync(join(labsRoot, "catalogue.js"), "utf8");
 const softCompanion = readFileSync(join(labsRoot, "soft-companion", "app.js"), "utf8");
+const softCompanionHtml = readFileSync(join(labsRoot, "soft-companion", "index.html"), "utf8");
 const fieldConsole = readFileSync(join(labsRoot, "field-console", "styles.css"), "utf8");
 
 describe("browser-exposed frontend route repairs", () => {
@@ -14,6 +16,16 @@ describe("browser-exposed frontend route repairs", () => {
     expect(softCompanion.split(declaration)).toHaveLength(2);
     expect(softCompanion.indexOf(declaration)).toBeGreaterThan(-1);
     expect(softCompanion.indexOf(declaration)).toBeLessThan(softCompanion.indexOf(initialization));
+  });
+
+  test("keeps the exact Soft Companion identity visible when comparison CSS hides the detail span", () => {
+    expect(softCompanionHtml).toContain('<span class="brand-seal" aria-hidden="true">S</span>\n        <strong>Soft Companion</strong>');
+    expect(softCompanionHtml).toContain("<span><small>Paper Lantern · shared fictional fixtures</small></span>");
+  });
+
+  test("writes complete advertised revisions in the catalogue", () => {
+    expect(catalogue).toContain('metadata("Revision", variant.revision ?? "unpublished")');
+    expect(catalogue).not.toContain("variant.revision.slice");
   });
 
   test("lets Field Console controls and headings reflow inside the narrow viewport", () => {
@@ -32,8 +44,8 @@ describe("browser-exposed frontend route repairs", () => {
     expect(narrow).toContain("overflow-wrap: anywhere");
   });
 
-  test("keeps both route repairs local and gradient-free", () => {
-    for (const source of [softCompanion, fieldConsole]) {
+  test("keeps every repair local and gradient-free", () => {
+    for (const source of [catalogue, softCompanion, softCompanionHtml, fieldConsole]) {
       expect(source).not.toMatch(/https?:\/\//);
       expect(source).not.toMatch(/(?:linear|radial|conic)-gradient\s*\(/i);
     }
