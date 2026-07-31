@@ -261,7 +261,7 @@ html[data-app-mode="editing"] .login-card .connection-head {
 }
 
 html[data-app-mode="editing"] .login-card form {
-  margin-top: .7rem;
+  margin-top: .2rem;
 }
 
 @media (max-width: 900px) {
