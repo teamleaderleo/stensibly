@@ -276,6 +276,7 @@ function pullRequestResult(
     updatedMs < createdMs
     || (closedMs !== null && (closedMs < createdMs || closedMs > updatedMs))
     || (mergedMs !== null && (mergedMs < createdMs || mergedMs > updatedMs))
+    || (merged && closedMs !== null && mergedMs !== null && mergedMs > closedMs)
     || (state === "open" && closedAt !== null)
     || (state === "closed" && closedAt === null)
     || (merged && (
