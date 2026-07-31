@@ -1,0 +1,13 @@
+.work-list button[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: inset .2rem 0 0 var(--accent);
+}
+
+.empty-state {
+  padding: 1rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: .65rem;
+  color: var(--muted);
+  background: var(--surface);
+  line-height: 1.5;
+}
