@@ -126,6 +126,8 @@ A bounded MCP client entry can invoke the repository-pinned server from the repo
 
 Set the MCP client's working directory to the Stensibly repository. Replace the example origins with the exact sites required for one research question and put the output directory outside the repository. Do not add `--allow-unrestricted-file-access`, `--secrets`, `--storage-state`, or `--save-session` for ordinary public research.
 
+The wrapper creates a fresh child environment from an explicit execution-path and locale allowlist. Parent tokens, proxy credentials, provider variables, and unrelated environment values are omitted. Credential-shaped or control-bearing values in an admitted variable fail with fixed content-minimised diagnostics before the MCP child starts.
+
 Playwright MCP states that origin filters are not a complete security boundary and do not constrain redirects. Keep research profiles isolated and free of sensitive logins even when an allowlist is configured. The browser extension can attach to an existing Chrome or Edge tab, but that exposes the selected tab's logged-in state and requires an explicit connection approval by default; reserve it for a narrowly reviewed authenticated task.
 
 A browser research result should record:
