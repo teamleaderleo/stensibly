@@ -127,8 +127,11 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(plan.configuration.mcp).toEqual({});
     expect(plan.budget.enforcedByHarness).toBe(false);
     expect(plan.budget.liveExecutionDefault).toBe("disabled");
-    expect(plan.liveExecutionEligible).toBe(true);
+    expect(plan.liveExecutionEligible).toBe(false);
     expect(plan.externalSandboxRequired).toBe(false);
+    expect(plan.requiredBeforeLive).toContain("exact-model-and-system-fingerprint-admission");
+    expect(plan.requiredBeforeLive).toContain("deepseek-reasoning-tool-turn-replay");
+    expect(plan.requiredBeforeLive).toContain("supervisor-owned-budget-breaker");
     expect(Object.values(plan.authority)).toEqual([false, false, false, false, false, false]);
     expect(Object.isFrozen(plan)).toBe(true);
   });
@@ -157,6 +160,7 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(plan.authority.deployment).toBe(false);
     expect(plan.liveExecutionEligible).toBe(false);
     expect(plan.externalSandboxRequired).toBe(true);
+    expect(plan.requiredBeforeLive).toContain("secret-stripping-egress-denying-process-sandbox");
   });
 
   test("fails closed on unsafe identities, paths, prompts, and limits", () => {
@@ -168,10 +172,15 @@ describe("DeepSeek V4 Flash harness campaign", () => {
       ...baseInput,
       worktree: "relative/worktree",
     })).toThrow("absolute path");
-    expect(() => planDeepSeekOpenCodeEpisode({
-      ...baseInput,
-      runtimeDirectory: `${baseInput.worktree}/runtime`,
-    })).toThrow("outside the worktree");
+    for (const runtimeDirectory of [
+      `${baseInput.worktree}/runtime`,
+      `${baseInput.worktree}/..runtime`,
+    ]) {
+      expect(() => planDeepSeekOpenCodeEpisode({
+        ...baseInput,
+        runtimeDirectory,
+      })).toThrow("outside the worktree");
+    }
     expect(() => planDeepSeekOpenCodeEpisode({
       ...baseInput,
       prompt: "Use Bearer abcdefghijklmnopqrstuvwxyz",
@@ -190,11 +199,10 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     for (const source of [plannerSource, inventorySource]) {
       expect(source).not.toMatch(/(?:github_pat_|gh[pousr]_|stn\.tok_|sk-proj-)[A-Za-z0-9._~+\/-]+/iu);
     }
-    expect(plannerSource).toContain("STENSIBLY_DEEPSEEK_LIVE");
-    expect(plannerSource).toContain("STENSIBLY_DEEPSEEK_ACCEPT_OPENCODE_BUDGET_GAP");
-    expect(plannerSource).toContain("rejectProjectOverrides");
-    expect(plannerSource).toContain("permits observe episodes only");
-    expect(plannerSource).toContain("did not expose exact model selector");
+    expect(plannerSource).not.toContain("--execute");
+    expect(plannerSource).not.toContain("DEEPSEEK_API_KEY");
+    expect(plannerSource).not.toContain("Bun.spawn");
+    expect(plannerSource).toContain("JSON.stringify(plan");
     expect(inventorySource).toContain('Bun.spawnSync(["git", "-C", root, "ls-files", "-z"]');
     expect(inventorySource).toContain("metadata.isSymbolicLink()");
     expect(inventorySource).not.toContain("repositoryRoot: root");
