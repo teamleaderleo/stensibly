@@ -8,6 +8,16 @@ const routeRoot = join(import.meta.dir, "..", "site", "labs", "field-console");
 const html = readFileSync(join(routeRoot, "index.html"), "utf8");
 const bridge = readFileSync(join(routeRoot, "fixture-bridge.js"), "utf8");
 
+type DetailPresentation = {
+  facts: readonly (readonly [string, string])[];
+  connections: readonly string[];
+};
+
+type FieldConsolePolicy = {
+  projectRecords(records: readonly BaseRecord[], scenario: string): readonly ProjectedRecord[];
+  detailPresentation(records: readonly ProjectedRecord[]): DetailPresentation;
+};
+
 describe("Field Console shared fixture bridge", () => {
   test("loads the shared fixture before the app and projects one synchronous record set", () => {
     expect(html.indexOf('../fixtures.classic.js')).toBeLessThan(html.indexOf('./app.js'));
@@ -15,21 +25,33 @@ describe("Field Console shared fixture bridge", () => {
 
     const baseRecords = fixtureBaseRecords();
     const connectionHealth = new FakeContainer();
+    const detailGrid = new FakeNode();
+    const connectionList = new FakeNode();
+    const detailBody = {
+      querySelector(selector: string) {
+        if (selector === ".detail-grid") return detailGrid;
+        if (selector === ".detail-list") return connectionList;
+        return null;
+      },
+    };
     let renderCount = 0;
+    let baseDetailRenderCount = 0;
     const runtime: Record<string, unknown> & {
-      StensiblyFieldConsolePolicy?: {
-        projectRecords(records: readonly BaseRecord[], scenario: string): readonly ProjectedRecord[];
-      };
+      StensiblyFieldConsolePolicy?: FieldConsolePolicy;
       scenarioRecords?: () => readonly ProjectedRecord[];
       byId?: (id: string) => ProjectedRecord;
       renderHealth?: () => void;
+      renderDetail?: () => void;
     } = {
       StensiblyFrontendLabFixtures: { frontendLabFixture },
       records: baseRecords,
       scenario: "degraded",
+      selectedId: "sync-violet",
+      detailBody,
       scenarioRecords: () => baseRecords,
       byId: (id: string) => requiredRecord(baseRecords, id),
       renderHealth: () => undefined,
+      renderDetail: () => { baseDetailRenderCount += 1; },
       renderAll: () => { renderCount += 1; },
       required: (selector: string) => {
         if (selector !== "#connection-health") throw new Error(`Unexpected selector ${selector}`);
@@ -41,6 +63,7 @@ describe("Field Console shared fixture bridge", () => {
         reconnecting: "reconnecting",
         offline: "offline",
       },
+      document: { createElement: () => new FakeNode() },
       Map,
       Set,
       Object,
@@ -85,6 +108,25 @@ describe("Field Console shared fixture bridge", () => {
       { state: "reconnecting", label: "API reconnecting" },
       { state: "offline", label: "MCP offline" },
     ]);
+
+    const presentation = runtime.StensiblyFieldConsolePolicy?.detailPresentation(first ?? []);
+    expect(presentation?.facts).toEqual([
+      ["Authority", "Fixture guidance only"],
+      ["Persistence", "Page instance only; nothing saved"],
+    ]);
+    expect(presentation?.connections).toEqual([
+      `GitHub: healthy — ${frontendLabFixture.connections[0]?.detail}`,
+      `API: reconnecting — ${frontendLabFixture.connections[1]?.detail}`,
+      `MCP: offline — ${frontendLabFixture.connections[2]?.detail}`,
+    ]);
+
+    runtime.renderDetail?.();
+    expect(baseDetailRenderCount).toBe(1);
+    expect(detailGrid.children.map(nodeText)).toEqual([
+      "AuthorityFixture guidance only",
+      "PersistencePage instance only; nothing saved",
+    ]);
+    expect(connectionList.children.map(nodeText)).toEqual(presentation?.connections);
   });
 
   test("rejects incomplete or duplicate local identity metadata", () => {
@@ -94,10 +136,13 @@ describe("Field Console shared fixture bridge", () => {
     expect(() => policy.projectRecords([...complete, complete[0]!], "default")).toThrow("must be unique");
     expect(() => policy.projectRecords(complete.map((entry) => entry.id === "moss" ? { ...entry, kind: "operation" } : entry), "default"))
       .toThrow("must keep its shared fixture kind");
+    expect(() => policy.detailPresentation(complete.slice(0, 2))).toThrow("requires every shared connection");
   });
 
   test("stays local, fixture-only, and gradient-free", () => {
     expect(() => new Function(bridge)).not.toThrow();
+    expect(bridge).toContain("renderDetail = function renderProjectedDetail");
+    expect(bridge).toContain("policy.detailPresentation(scenarioRecords())");
     expect(bridge).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/);
     expect(bridge).not.toMatch(/https?:\/\//);
     expect(bridge).not.toMatch(/\b(?:localStorage|sessionStorage|indexedDB)\b/);
@@ -122,6 +167,22 @@ class FakeContainer {
   replaceChildren(...children: unknown[]) {
     this.children = children;
   }
+}
+
+class FakeNode {
+  children: FakeNode[] = [];
+  className = "";
+  textContent = "";
+  append(...children: FakeNode[]) {
+    this.children.push(...children);
+  }
+  replaceChildren(...children: FakeNode[]) {
+    this.children = children;
+  }
+}
+
+function nodeText(node: FakeNode): string {
+  return `${node.textContent}${node.children.map(nodeText).join("")}`;
 }
 
 function fixtureBaseRecords(): BaseRecord[] {
@@ -157,23 +218,25 @@ function requiredRecord(records: readonly BaseRecord[], id: string): BaseRecord 
   return entry;
 }
 
-function executePolicy() {
+function executePolicy(): FieldConsolePolicy {
   const records = fixtureBaseRecords();
   const runtime: Record<string, unknown> & {
-    StensiblyFieldConsolePolicy?: {
-      projectRecords(records: readonly BaseRecord[], scenario: string): readonly ProjectedRecord[];
-    };
+    StensiblyFieldConsolePolicy?: FieldConsolePolicy;
   } = {
     StensiblyFrontendLabFixtures: { frontendLabFixture },
     records,
     scenario: "default",
+    selectedId: null,
+    detailBody: { querySelector: () => null },
     scenarioRecords: () => records,
     byId: (id: string) => requiredRecord(records, id),
     renderHealth: () => undefined,
+    renderDetail: () => undefined,
     renderAll: () => undefined,
     required: () => new FakeContainer(),
     stateChip: (state: string, label: string) => ({ state, label }),
     stateLabels: { healthy: "healthy", reconnecting: "reconnecting", offline: "offline" },
+    document: { createElement: () => new FakeNode() },
     Map,
     Set,
     Object,
