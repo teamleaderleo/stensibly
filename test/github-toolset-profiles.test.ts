@@ -39,12 +39,12 @@ describe("GitHub toolset profiles", () => {
       "users",
     ];
 
-    expect(resolveGitHubToolsetProfile("default", "remote").toolsets).toEqual(
-      expected,
-    );
-    expect(resolveGitHubToolsetProfile("default", "local").toolsets).toEqual(
-      expected,
-    );
+    expect(
+      resolveGitHubToolsetProfile("default", "remote").toolsets.join(","),
+    ).toBe(expected.join(","));
+    expect(
+      resolveGitHubToolsetProfile("default", "local").toolsets.join(","),
+    ).toBe(expected.join(","));
   });
 
   test("resolves the remote all profile from the inventory", () => {
