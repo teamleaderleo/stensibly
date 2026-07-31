@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export const DEEPSEEK_HARNESS_CAMPAIGN_V1 = 1 as const;
 
@@ -44,8 +44,9 @@ export interface DeepSeekOpenCodeLaunchPlan {
   runtimeDirectory: string;
   wallTimeSeconds: number;
   maximumAgentSteps: number;
-  liveExecutionEligible: boolean;
+  liveExecutionEligible: false;
   externalSandboxRequired: boolean;
+  requiredBeforeLive: readonly string[];
   promptFilePath: string;
   promptReceipt: {
     digest: string;
@@ -193,7 +194,10 @@ export function planDeepSeekOpenCodeEpisode(
   const worktree = absolutePath(input.worktree, "DeepSeek worktree");
   const runtimeDirectory = absolutePath(input.runtimeDirectory, "DeepSeek runtime directory");
   const runtimeRelation = relative(worktree, runtimeDirectory);
-  if (runtimeRelation === "" || (!runtimeRelation.startsWith("..") && !isAbsolute(runtimeRelation))) {
+  const runtimeIsOutside = runtimeRelation === ".." ||
+    runtimeRelation.startsWith(`..${sep}`) ||
+    isAbsolute(runtimeRelation);
+  if (runtimeRelation === "" || !runtimeIsOutside) {
     throw new RangeError("DeepSeek runtime directory must remain outside the worktree");
   }
   const prompt = boundedPrompt(input.prompt);
@@ -288,8 +292,16 @@ export function planDeepSeekOpenCodeEpisode(
     runtimeDirectory,
     wallTimeSeconds,
     maximumAgentSteps,
-    liveExecutionEligible: phase === "observe",
+    liveExecutionEligible: false as const,
     externalSandboxRequired: phase === "candidate",
+    requiredBeforeLive: [
+      "recorded-opencode-json-event-fixture",
+      "exact-model-and-system-fingerprint-admission",
+      "deepseek-reasoning-tool-turn-replay",
+      "usage-and-cost-receipt-parser",
+      "supervisor-owned-budget-breaker",
+      ...(phase === "candidate" ? ["secret-stripping-egress-denying-process-sandbox"] : []),
+    ],
     promptFilePath,
     promptReceipt,
     configPath,
