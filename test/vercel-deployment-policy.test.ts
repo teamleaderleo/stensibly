@@ -14,11 +14,13 @@ const dashboardHeaders = new Map<string, Map<string, string>>(
   ]),
 );
 
-const labsSource = "/labs/:path*";
+const labsRootSource = "/labs";
+const labsNestedSource = "/labs/:path(.*)";
 const productionSource = "/((?!labs(?:/|$)).*)";
 
 function matchesDashboardHeaderSource(source: string, path: string): boolean {
-  if (source === labsSource) return path === "/labs" || path.startsWith("/labs/");
+  if (source === labsRootSource) return path === "/labs";
+  if (source === labsNestedSource) return path.startsWith("/labs/");
   return new RegExp(`^${source}$`).test(path);
 }
 
@@ -33,19 +35,33 @@ describe("Vercel deployment policy", () => {
 
   test("preserves clean static hosting with disjoint labs and production header policies", () => {
     expect(dashboardConfig.cleanUrls).toBe(true);
-    expect([...dashboardHeaders.keys()]).toEqual([labsSource, productionSource]);
+    expect([...dashboardHeaders.keys()]).toEqual([
+      labsRootSource,
+      labsNestedSource,
+      productionSource,
+    ]);
 
-    for (const path of ["/labs", "/labs/", "/labs/quiet-control/index.html"]) {
-      expect(matchesDashboardHeaderSource(labsSource, path)).toBe(true);
+    expect(matchesDashboardHeaderSource(labsRootSource, "/labs")).toBe(true);
+    expect(matchesDashboardHeaderSource(labsNestedSource, "/labs")).toBe(false);
+    for (const path of [
+      "/labs/",
+      "/labs/quiet-control/",
+      "/labs/soft-companion/",
+      "/labs/quiet-control/index.html",
+    ]) {
+      expect(matchesDashboardHeaderSource(labsNestedSource, path)).toBe(true);
       expect(matchesDashboardHeaderSource(productionSource, path)).toBe(false);
     }
     expect(matchesDashboardHeaderSource(productionSource, "/index.html")).toBe(true);
   });
 
   test("allows only same-origin labs framing while keeping the production dashboard unframeable", () => {
-    expect(dashboardHeaders.get(labsSource)?.get("Content-Security-Policy")).toContain("frame-ancestors 'self'");
+    for (const source of [labsRootSource, labsNestedSource]) {
+      expect(dashboardHeaders.get(source)?.get("Content-Security-Policy")).toContain("frame-ancestors 'self'");
+      expect(dashboardHeaders.get(source)?.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+      expect(dashboardHeaders.get(source)?.get("X-Content-Type-Options")).toBe("nosniff");
+    }
     expect(dashboardHeaders.get(productionSource)?.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
-    expect(dashboardHeaders.get(labsSource)?.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
     expect(dashboardHeaders.get(productionSource)?.get("X-Content-Type-Options")).toBe("nosniff");
   });
 });
