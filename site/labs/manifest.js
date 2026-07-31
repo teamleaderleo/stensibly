@@ -35,7 +35,7 @@ const sourceManifest = [
     thesis: "A restrained operator console with ranked attention, persistent evidence, and calm visual hierarchy.",
     owner: "Cinder",
     status: "prototype",
-    revision: "a50d2045084eae6f13a794e2fc583e3af2da8ee0",
+    revision: "9349f135134177904a2efb50f187cf6237f7d6ba",
     issue: 620,
     path: "./quiet-control/",
     support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion", "empty", "degraded"],
