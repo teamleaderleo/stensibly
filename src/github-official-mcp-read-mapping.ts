@@ -542,8 +542,7 @@ function exactSnapshotList(value: unknown): string[] {
   if (Object.getOwnPropertySymbols(value).length > 0) {
     throw policyDivergence();
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-    as unknown as Record<string, PropertyDescriptor>;
+  const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<string, PropertyDescriptor>;
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
   if (
     !lengthDescriptor
