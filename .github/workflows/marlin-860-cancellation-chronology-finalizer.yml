@@ -1,0 +1,401 @@
+name: Marlin 860 cancellation chronology follow-up
+
+on:
+  pull_request:
+    types: [synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'oriole/857-cancellation-attribution-repair'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: oriole/857-cancellation-attribution-repair
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply two-clock attribution follow-up
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source_path = Path('src/runner-cancellation-settlement.ts')
+          source = source_path.read_text()
+
+          interface_anchor = '''  commandId: string;
+            adapterId: string;
+          '''
+          interface_replacement = '''  commandId: string;
+            commandFingerprint: string;
+            adapterId: string;
+          '''
+          if interface_anchor not in source:
+              raise SystemExit('result interface anchor changed')
+          source = source.replace(interface_anchor, interface_replacement, 1)
+          source = source.replace(
+              'const resultPolicyVersion = "runner-cancellation-settlement-v1";',
+              'const resultPolicyVersion = "runner-cancellation-settlement-v2";',
+              1,
+          )
+
+          field_anchor = '''  readonly #command: RunnerCancellationCommandV1;
+            readonly #clock: RunnerCancellationSettlementClock;
+          '''
+          field_replacement = '''  readonly #command: RunnerCancellationCommandV1;
+            readonly #commandFingerprint: string;
+            readonly #clock: RunnerCancellationSettlementClock;
+          '''
+          if field_anchor not in source:
+              raise SystemExit('command field anchor changed')
+          source = source.replace(field_anchor, field_replacement, 1)
+
+          constructor_anchor = '''    this.#command = parseCancellationCommand(commandValue, this.#descriptor);
+            if (typeof clock !== "function") {
+          '''
+          constructor_replacement = '''    this.#command = parseCancellationCommand(commandValue, this.#descriptor);
+            this.#commandFingerprint = fingerprintCancellationCommand(this.#command);
+            if (typeof clock !== "function") {
+          '''
+          if constructor_anchor not in source:
+              raise SystemExit('constructor anchor changed')
+          source = source.replace(constructor_anchor, constructor_replacement, 1)
+
+          execute_pattern = re.compile(
+              r'  async #execute\(\): Promise<RunnerCancellationSettlementResultV1> \{.*?'
+              r'\n  \}\n\}\n\nfunction adapterPort',
+              re.S,
+          )
+          execute_replacement = '''  async #execute(): Promise<RunnerCancellationSettlementResultV1> {
+            const execution = resolveExecutionAuthority(
+              this.#clock,
+              this.#command.requestedAt,
+              this.#command.authority.expiresAt,
+            );
+            if (!execution.allowed) {
+              return this.#buildResult("adapter_failure", null, execution.observedAt);
+            }
+
+            let outcome: RunnerCancellationSettlementOutcomeV1 = "adapter_failure";
+            let cancellation: RunnerCancellationObservationV1 | null = null;
+            try {
+              const returned = await this.#adapter.requestCancellation(this.#command);
+              cancellation = parseCancellationObservation(
+                returned,
+                this.#command,
+                this.#descriptor,
+              );
+              if (cancellation.observedAt < execution.observedAt) {
+                throw new RangeError(
+                  "Runner cancellation observation predates adapter execution",
+                );
+              }
+              outcome = "cancellation_observed";
+            } catch {
+              cancellation = null;
+              outcome = "adapter_failure";
+            }
+
+            const timing = resolveSettlementTime(
+              this.#clock,
+              this.#command.requestedAt,
+              execution.observedAt,
+              cancellation?.observedAt ?? null,
+            );
+            if (timing.failed) {
+              cancellation = null;
+              outcome = "adapter_failure";
+            }
+            return this.#buildResult(outcome, cancellation, timing.observedAt);
+          }
+
+          #buildResult(
+            outcome: RunnerCancellationSettlementOutcomeV1,
+            cancellation: RunnerCancellationObservationV1 | null,
+            observedAt: string,
+          ): RunnerCancellationSettlementResultV1 {
+            const settlement = createResourceSettlementReceipt({
+              workspace: this.#scope.workspace,
+              project: this.#scope.project,
+              resourceId: `run:${this.#command.runId}`,
+              resourceKind: "runner_adapter",
+              generation: this.#command.runGeneration,
+              operationRef: this.#commandFingerprint,
+              policyVersion: resultPolicyVersion,
+              failureMode: "continue_through_error",
+              admissionState: "closed",
+              disposition: "reconciliation_hold",
+              openedAt: this.#command.requestedAt,
+              closingStartedAt: this.#command.requestedAt,
+              terminalAt: observedAt,
+              observedAt,
+              owners: [{
+                id: `${this.#command.adapterId}:${this.#command.profileId}`,
+                kind: "worker",
+                generation: this.#command.runGeneration,
+                attempted: true,
+                state: "reconciliation_required",
+                attemptedAt: this.#command.requestedAt,
+                settledAt: observedAt,
+                failureClass: "unknown_outcome",
+                reconciliationRequired: true,
+                canPublishLate: true,
+                outputFingerprint: cancellation?.reference?.digest ?? null,
+                publicationFenceFingerprint: null,
+              }],
+            });
+            const generationAdvance = evaluateResourceGenerationAdvance(
+              settlement,
+              this.#command.runGeneration + 1,
+            );
+            if (generationAdvance.allowed) {
+              throw new Error(
+                "Runner cancellation settlement unexpectedly allowed generation advance",
+              );
+            }
+
+            const withoutFingerprint = {
+              version: RUNNER_CANCELLATION_SETTLEMENT_V1,
+              workspace: this.#scope.workspace,
+              project: this.#scope.project,
+              commandId: this.#command.commandId,
+              commandFingerprint: this.#commandFingerprint,
+              adapterId: this.#command.adapterId,
+              adapterVersion: this.#command.adapterVersion,
+              profileId: this.#command.profileId,
+              runId: this.#command.runId,
+              runGeneration: this.#command.runGeneration,
+              leaseGeneration: this.#command.leaseGeneration,
+              requestedAt: this.#command.requestedAt,
+              observedAt,
+              outcome,
+              cancellation,
+              settlement,
+              generationAdvance,
+              containsPrivateContent: false as const,
+              containsCredentials: false as const,
+            };
+            return deepFreeze({
+              ...withoutFingerprint,
+              resultFingerprint: fingerprintCanonicalRequest(withoutFingerprint),
+            });
+          }
+          }
+
+          function adapterPort'''
+          source, count = execute_pattern.subn(lambda _: execute_replacement, source, count=1)
+          if count != 1:
+              raise SystemExit('execute method anchor changed')
+
+          timing_pattern = re.compile(
+              r'function resolveExecutionTime\(.*?\n\}\n\nfunction exactRecord',
+              re.S,
+          )
+          timing_replacement = '''function resolveExecutionAuthority(
+            clock: RunnerCancellationSettlementClock,
+            requestedAt: string,
+            expiresAt: string,
+          ): { observedAt: string; allowed: boolean } {
+            let value: unknown;
+            try {
+              value = clock();
+            } catch {
+              return { observedAt: requestedAt, allowed: false };
+            }
+            let observedAt: string;
+            try {
+              observedAt = canonicalTimestamp(
+                value,
+                "Runner cancellation execution time",
+              );
+            } catch {
+              return { observedAt: requestedAt, allowed: false };
+            }
+            if (observedAt < requestedAt || observedAt >= expiresAt) {
+              return { observedAt: requestedAt, allowed: false };
+            }
+            return { observedAt, allowed: true };
+          }
+
+          function resolveSettlementTime(
+            clock: RunnerCancellationSettlementClock,
+            requestedAt: string,
+            executionObservedAt: string,
+            cancellationObservedAt: string | null,
+          ): { observedAt: string; failed: boolean } {
+            let value: unknown;
+            try {
+              value = clock();
+            } catch {
+              return { observedAt: requestedAt, failed: true };
+            }
+            let observedAt: string;
+            try {
+              observedAt = canonicalTimestamp(
+                value,
+                "Runner cancellation settlement observation time",
+              );
+            } catch {
+              return { observedAt: requestedAt, failed: true };
+            }
+            const minimum = [
+              requestedAt,
+              executionObservedAt,
+              cancellationObservedAt,
+            ].filter((entry): entry is string => entry !== null).sort().at(-1)!;
+            if (observedAt < minimum) {
+              return { observedAt: requestedAt, failed: true };
+            }
+            return { observedAt, failed: false };
+          }
+
+          function fingerprintCancellationCommand(
+            command: RunnerCancellationCommandV1,
+          ): string {
+            return fingerprintCanonicalRequest({
+              version: command.version,
+              commandId: command.commandId,
+              adapterId: command.adapterId,
+              adapterVersion: command.adapterVersion,
+              profileId: command.profileId,
+              runId: command.runId,
+              runGeneration: command.runGeneration,
+              leaseGeneration: command.leaseGeneration,
+              authority: {
+                resource: command.authority.resource,
+                holderId: command.authority.holderId,
+                generation: command.authority.generation,
+                expiresAt: command.authority.expiresAt,
+              },
+              requestedAt: command.requestedAt,
+              reason: command.reason,
+            });
+          }
+
+          function exactRecord'''
+          source, count = timing_pattern.subn(lambda _: timing_replacement, source, count=1)
+          if count != 1:
+              raise SystemExit('timing helper anchor changed')
+          source_path.write_text(source)
+
+          test_path = Path('test/runner-cancellation-settlement-attribution-boundaries.test.ts')
+          tests = test_path.read_text()
+          identity_anchor = '''    expect(firstResult.commandId).toBe(secondResult.commandId);
+            expect(firstResult.resultFingerprint).not.toBe(secondResult.resultFingerprint);
+          '''
+          identity_replacement = '''    expect(firstResult.commandId).toBe(secondResult.commandId);
+            expect(firstResult.commandFingerprint).not.toBe(secondResult.commandFingerprint);
+            expect(firstResult.resultFingerprint).not.toBe(secondResult.resultFingerprint);
+          '''
+          if identity_anchor not in tests:
+              raise SystemExit('identity test anchor changed')
+          tests = tests.replace(identity_anchor, identity_replacement, 1)
+
+          future_clock = '      () => "2026-08-01T01:00:01.000Z",\n'
+          if future_clock not in tests:
+              raise SystemExit('future-reference clock anchor changed')
+          tests = tests.replace(
+              future_clock,
+              '      () => "2026-08-01T00:00:10.000Z",\n',
+              1,
+          )
+          future_result = '''    const result = await coordinator.request();
+
+            expect(result.outcome).toBe("adapter_failure");
+          '''
+          future_result_replacement = '''    const result = await coordinator.request();
+
+            expect(adapter.calls).toBe(1);
+            expect(result.outcome).toBe("adapter_failure");
+          '''
+          if future_result not in tests:
+              raise SystemExit('future-reference result anchor changed')
+          tests = tests.replace(future_result, future_result_replacement, 1)
+
+          sequential = r'''
+
+            test("accepts adapter evidence after execution when settlement follows it", async () => {
+              const adapter = new CancellationPort();
+              const values = [
+                "2026-08-01T00:00:02.000Z",
+                "2026-08-01T00:00:06.000Z",
+              ];
+              const coordinator = new RunnerCancellationSettlementCoordinatorV1(
+                adapter.asAdapter(),
+                scope,
+                command(),
+                () => values.shift()!,
+              );
+
+              const result = await coordinator.request();
+
+              expect(adapter.calls).toBe(1);
+              expect(result.outcome).toBe("cancellation_observed");
+              expect(result.cancellation?.observedAt).toBe(observedAt);
+              expect(result.observedAt).toBe("2026-08-01T00:00:06.000Z");
+              expect(values).toEqual([]);
+            });
+          '''
+          marker = '\n  test("does not retain a reference created after its observation"'
+          if marker not in tests:
+              raise SystemExit('sequential-clock insertion anchor changed')
+          test_path.write_text(tests.replace(marker, sequential + marker, 1))
+
+          docs_path = Path('docs/runner-cancellation-settlement.md')
+          docs = docs_path.read_text()
+          docs = docs.replace(
+              '- one trusted execution clock;\n',
+              '- one trusted clock provider read once for execution authority and once for terminal settlement;\n',
+              1,
+          )
+          old_clock = '''Before dispatch, the coordinator reads the trusted execution clock once. A thrown, malformed, or pre-request value prevents adapter activity and still publishes bounded recovery evidence. If valid execution time predates returned adapter evidence, that evidence is discarded.
+
+          In those cases the coordinator:
+
+          - reports `adapter_failure`;
+          - uses the accepted request time as the deterministic settlement observation time when clock or evidence chronology fails;
+          - publishes the same reconciliation hold;
+          - retains no raw clock error text or contradictory external-reference digest.
+          '''
+          new_clock = '''Before dispatch, the coordinator reads trusted execution time and requires `requestedAt <= executionTime < authority.expiresAt`. A thrown, malformed, retrograde, or expired value prevents adapter activity and still publishes bounded recovery evidence.
+
+          After adapter activity, the coordinator reads trusted settlement time. It must be no earlier than the accepted request, execution time, and any accepted cancellation observation. A malformed or retrograde settlement value discards adapter evidence and uses the request time for the fixed failure receipt.
+
+          In those cases the coordinator:
+
+          - reports `adapter_failure`;
+          - publishes the same reconciliation hold;
+          - retains no raw clock error text or contradictory external-reference digest.
+          '''
+          if old_clock not in docs:
+              raise SystemExit('trusted clock documentation changed')
+          docs = docs.replace(old_clock, new_clock, 1)
+          result_anchor = '''The settlement operation identity is the SHA-256 fingerprint of the complete admitted cancellation command. Reusing a command ID with different authority, expiry, or reason therefore produces a different receipt and result identity.
+          '''
+          result_replacement = result_anchor + '\nThe same `commandFingerprint` is retained in the public result. Policy version `runner-cancellation-settlement-v2` identifies the two-clock attribution contract.\n'
+          if result_anchor not in docs:
+              raise SystemExit('result documentation changed')
+          docs_path.write_text(docs.replace(result_anchor, result_replacement, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify current-main follow-up
+        run: |
+          bun run typecheck
+          bun test test/runner-cancellation-settlement.test.ts test/runner-cancellation-settlement-attribution-boundaries.test.ts
+      - name: Publish clean current-main head
+        shell: bash
+        run: |
+          rm .github/workflows/marlin-860-cancellation-chronology-finalizer.yml
+          git config user.name 'Marlin'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/runner-cancellation-settlement.ts test/runner-cancellation-settlement-attribution-boundaries.test.ts docs/runner-cancellation-settlement.md .github/workflows/marlin-860-cancellation-chronology-finalizer.yml
+          git diff --cached --check
+          git commit -m 'Separate cancellation execution and settlement time'
+          git push origin HEAD:oriole/857-cancellation-attribution-repair
