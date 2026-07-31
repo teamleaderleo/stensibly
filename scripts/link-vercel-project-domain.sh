@@ -135,6 +135,11 @@ while :; do
   fi
   page_source="$(jq --raw-output '.[0] // empty' <<< "${page_sources}")"
   if [ -n "${page_source}" ]; then
+    if [[ ! "${page_source}" =~ ^prj_[A-Za-z0-9]+$ ]]; then
+      fail_local_contract \
+        "discovery" \
+        "Vercel returned an invalid source project identity."
+    fi
     if [ -n "${source_project}" ] && [ "${source_project}" != "${page_source}" ]; then
       fail_local_contract \
         "discovery" \
