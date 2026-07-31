@@ -26,7 +26,7 @@ const supportValues = new Set([
 ]);
 const idPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const revisionPattern = /^[0-9a-f]{7,40}$/;
-const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const unsafeTextPattern = /[\x00-\x1f\x7f-\x9f\u{2028}\u{2029}\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
 
 const sourceManifest = [
   {
@@ -55,12 +55,12 @@ const sourceManifest = [
     id: "field-console",
     title: "Field Console",
     thesis: "A dense operational view pairing exact object state, alert triage, topology, timeline, and detail.",
-    owner: "unclaimed",
-    status: "planned",
-    revision: null,
+    owner: "Cinder",
+    status: "prototype",
+    revision: "a665bfd8b449940423838e31622d5c19e8603c7d",
     issue: 610,
     path: "./field-console/",
-    support: ["wide", "medium", "narrow", "dark", "keyboard", "reduced-motion"],
+    support: ["wide", "medium", "narrow", "dark", "keyboard", "reduced-motion", "empty", "degraded", "error"],
   },
   {
     id: "signal-atlas",
