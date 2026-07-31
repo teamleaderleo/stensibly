@@ -55,6 +55,7 @@ async function resolveFixturePath(rawPathname: string): Promise<string | null> {
   if (!pathname.startsWith("/") || pathname.includes("\\") || pathname.includes("\0")) {
     return null;
   }
+  if (pathname === "/package.json") return null;
 
   const segments = pathname.split("/").filter(Boolean);
   if (segments.some((segment) => segment === "." || segment === "..")) {
