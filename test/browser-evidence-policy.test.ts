@@ -21,7 +21,6 @@ const playwrightConfig = readFileSync(join(repositoryRoot, "playwright.config.ts
 const browserSuite = readFileSync(join(repositoryRoot, "browser-tests", "frontend-labs.spec.ts"), "utf8");
 const serviceWorkerSuite = readFileSync(join(repositoryRoot, "browser-tests", "frontend-service-worker-boundary.spec.ts"), "utf8");
 const fixtureServer = readFileSync(join(repositoryRoot, "scripts", "serve-frontend-fixtures.ts"), "utf8");
-const launcher = readFileSync(join(repositoryRoot, "scripts", "run-playwright-mcp.ts"), "utf8");
 const verifier = readFileSync(join(repositoryRoot, "scripts", "verify-browser-evidence-artifacts.ts"), "utf8");
 
 const acceptedArgs = [
@@ -190,10 +189,10 @@ describe("browser evidence policy", () => {
   });
 
   test("routes repository scripts through deterministic path-backed evidence", () => {
-    expect(packageJson.scripts["browser:mcp"]).toBe("bun scripts/run-playwright-mcp.ts");
+    expect(packageJson.scripts["browser:mcp"]).toBeUndefined();
+    expect(packageJson.scripts["browser:cli"]).toBe("playwright cli");
+    expect(Object.values(packageJson.scripts)).not.toContain("bun scripts/run-playwright-mcp.ts");
     expect(packageJson.scripts["test:browser"]).toBe("playwright test");
-    expect(launcher).toContain("validatePlaywrightMcpArgs");
-    expect(launcher).toContain('["bunx", "playwright", "mcp", ...args]');
     expect(verifier).not.toContain("testDurations");
     expect(verifier).toContain('keys.join(",") !== "failedTests,status"');
     expect(verifier).toContain("uninspectable compressed archive");
