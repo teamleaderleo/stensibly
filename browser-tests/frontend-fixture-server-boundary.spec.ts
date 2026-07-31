@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-const labsRoot = resolve(import.meta.dir, "..", "site", "labs");
+const labsRoot = resolve(process.cwd(), "site", "labs");
 
 test("rejects an in-root symlink whose target escapes site", async ({ request }) => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "stensibly-browser-boundary-"));
