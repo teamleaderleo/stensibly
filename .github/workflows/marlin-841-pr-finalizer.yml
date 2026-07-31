@@ -1,0 +1,52 @@
+name: Marlin 841 reconciliation repair finalizer
+
+on:
+  pull_request:
+    types: [synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'kestrel/591-pr-reconciliation'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: kestrel/591-pr-reconciliation
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply exact reconciliation repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          carrier = Path('.github/workflows/marlin-841-reconciliation-repair.yml').read_text()
+          marker = "python3 - <<'PY'\n"
+          if marker not in carrier:
+              raise SystemExit('reconciliation carrier block missing')
+          block = carrier.split(marker, 1)[1].split('\n          PY', 1)[0]
+          exec(compile(textwrap.dedent(block), 'marlin-841-source-repair', 'exec'))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify exact repair
+        run: |
+          bun run typecheck
+          bun test test/github-pull-request-reconciliation.test.ts
+      - name: Publish clean source head
+        shell: bash
+        run: |
+          rm .github/workflows/marlin-841-reconciliation-repair.yml
+          rm .github/workflows/marlin-841-pr-finalizer.yml
+          git config user.name 'Marlin'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/github-pull-request-reconciliation.ts test/github-pull-request-reconciliation.test.ts .github/workflows/marlin-841-reconciliation-repair.yml .github/workflows/marlin-841-pr-finalizer.yml
+          git diff --cached --check
+          git commit -m 'Repair reconciliation identity and chronology admission'
+          git push origin HEAD:kestrel/591-pr-reconciliation
