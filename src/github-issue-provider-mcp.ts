@@ -42,7 +42,7 @@ export function registerGitHubIssueProviderTools(
   ledger: WorkLedger,
   context: McpRequestContext,
 ): void {
-  registerGitHubCapabilityTools(server);
+  registerGitHubCapabilityTools(server, ledger, context);
 
   server.registerTool(
     "github_list_issues",

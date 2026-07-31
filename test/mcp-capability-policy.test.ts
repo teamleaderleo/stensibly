@@ -17,7 +17,7 @@ describe("MCP capability policy registry", () => {
     const names = mcpCapabilityPolicyRegistry.policies.map((policy) => policy.toolName);
 
     expect(mcpCapabilityPolicyRegistry.version).toBe(1);
-    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(32);
+    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(33);
     expect(names).toEqual([...names].sort());
     expect(new Set(names).size).toBe(names.length);
     expect(mcpCapabilityPolicyRegistry.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -26,6 +26,14 @@ describe("MCP capability policy registry", () => {
     expect(Object.isFrozen(mcpCapabilityPolicyRegistry.policies[0])).toBe(true);
     expect(Object.isFrozen(mcpCapabilityPolicyRegistry.policies[0]!.projectResolution))
       .toBe(true);
+    expect(getMcpCapabilityPolicy("github_call_tool")).toMatchObject({
+      scope: "read",
+      riskClass: "read",
+      projectResolution: { kind: "project_argument", argument: "project" },
+      approvalPolicy: "none",
+      receiptPolicy: "none",
+      reconciliationPolicy: "none",
+    });
 
     const recompiled = compileMcpCapabilityPolicyRegistry(
       [...mcpCapabilityPolicyRegistry.policies].reverse(),

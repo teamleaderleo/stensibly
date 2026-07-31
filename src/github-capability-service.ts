@@ -17,8 +17,11 @@ export interface GitHubCapabilityToolsetList {
   catalogueRevision: string;
   sourceRevision: string;
   fingerprint: string;
-  dispatchSurface: "typed_first_party_only";
-  delegatedDispatchEnabled: false;
+  dispatchSurface:
+    | "typed_first_party_only"
+    | "typed_first_party_and_guarded_delegated";
+  delegatedDispatchEnabled: boolean;
+  delegatedTools: string[];
   visibilityPolicy: {
     defaultVisibleTiers: GitHubCapabilityTier[];
     searchableTiers: GitHubCapabilityTier[];
@@ -70,6 +73,7 @@ export class GitHubCapabilityCatalogueService {
       fingerprint: this.registry.fingerprint,
       dispatchSurface: "typed_first_party_only",
       delegatedDispatchEnabled: false,
+      delegatedTools: [],
       visibilityPolicy: {
         defaultVisibleTiers: ["essential"],
         searchableTiers: ["essential", "secondary", "advanced"],
