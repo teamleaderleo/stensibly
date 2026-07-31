@@ -3,28 +3,113 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Soft Companion is a warm, fixture-only Stensibly Labs control-room prototype." />
   <title>Soft Companion · Stensibly Labs</title>
-  <link rel="stylesheet" href="../planned.css" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
-<body data-stensibly-lab="planned" data-variant="soft-companion">
-  <header><strong>Stensibly Labs · planned variant</strong><a href="../">All variants</a></header>
-  <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Cozy productivity avenue</p>
-        <h1 id="variant-title">Soft Companion</h1>
-        <p class="lede" id="variant-thesis"></p>
+<body data-stensibly-lab="prototype" data-scenario="default">
+  <a class="skip-link" href="#workbench">Skip to workbench</a>
+  <div class="room-shell">
+    <header class="room-header">
+      <a class="brand" href="../" aria-label="Return to all Stensibly Labs variants">
+        <span class="brand-seal" aria-hidden="true">S</span>
+        <span><strong>Soft Companion</strong><small>Paper Lantern · shared fictional fixtures</small></span>
+      </a>
+      <button class="command-trigger" id="command-trigger" type="button"><span>Find work or a shared task</span><kbd>⌘ K</kbd></button>
+      <div class="header-actions">
+        <span class="experiment-label">experiment</span>
+        <a href="../">All variants</a>
       </div>
-      <div class="seed" id="seed" aria-label="Soft Companion direction seed"></div>
-    </section>
-    <section class="meta" aria-label="Variant identity">
-      <div><span>Status</span><strong id="variant-status"></strong></div>
-      <div><span>Owner</span><strong id="variant-owner"></strong></div>
-      <div><span>Route</span><strong id="variant-route"></strong></div>
-    </section>
-    <div class="actions"><a id="variant-issue" href="#">Open issue</a><a href="../">Compare variants</a></div>
-    <p class="note">This is an explicit route reservation and visual seed. The full lane will add an original companion character, tactile work views, serious-state controls, keyboard behavior, responsive flows, and the shared fictional task fixtures.</p>
-  </main>
-  <script src="../planned.js"></script>
+    </header>
+
+    <main class="room-grid" id="workbench" data-mobile-detail="false">
+      <aside class="room-rail" aria-label="Project room navigation">
+        <div class="project-card">
+          <span class="project-symbol" aria-hidden="true">✦</span>
+          <div><strong id="project-name">Paper Lantern</strong><small>release room</small></div>
+        </div>
+        <nav aria-label="Soft Companion views">
+          <p class="rail-label">Desk drawers</p>
+          <ul class="mode-list" id="mode-list"></ul>
+        </nav>
+        <section class="scenario-panel" aria-labelledby="scenario-title">
+          <h2 id="scenario-title">Preview state</h2>
+          <select id="scenario-select" aria-labelledby="scenario-title">
+            <option value="default">Default</option>
+            <option value="empty">Empty</option>
+            <option value="loading">Loading</option>
+            <option value="degraded">Degraded</option>
+            <option value="error">Error</option>
+          </select>
+          <p>Local presentation only. Changing state makes no product action.</p>
+        </section>
+      </aside>
+
+      <section class="desk" aria-labelledby="view-title">
+        <header class="desk-header">
+          <div>
+            <p class="eyebrow" id="view-eyebrow">Today’s desk</p>
+            <h1 id="view-title">A gentle place for exact work.</h1>
+            <p id="view-description">One decision, clear worker health, ranked work, and safe recovery.</p>
+          </div>
+          <div class="connection-shelf" id="connection-shelf" tabindex="-1" aria-label="Connection health"></div>
+        </header>
+
+        <section class="companion-note" aria-labelledby="companion-message">
+          <div class="companion" id="companion" data-mood="calm" aria-hidden="true">
+            <span class="ear ear-left"></span><span class="ear ear-right"></span>
+            <span class="face"><i class="eye eye-left"></i><i class="eye eye-right"></i><i class="mouth"></i></span>
+            <span class="body"></span><span class="tail"></span><span class="spark spark-one">✦</span><span class="spark spark-two">•</span>
+          </div>
+          <div>
+            <p class="companion-name">Mallow · original paper-moth companion</p>
+            <h2 id="companion-message">Everything important is written out below.</h2>
+            <p id="companion-detail">Mallow’s expression is an extra cue. The literal state and next action stay primary.</p>
+          </div>
+        </section>
+
+        <div class="desk-toolbar">
+          <div class="filter-group" aria-label="Work filters">
+            <button type="button" data-filter="all" aria-pressed="true">All</button>
+            <button type="button" data-filter="action" aria-pressed="false">Needs action</button>
+            <button type="button" data-filter="unhealthy" aria-pressed="false">Unhealthy</button>
+          </div>
+          <p id="result-summary" role="status">Showing shared fixture work.</p>
+        </div>
+
+        <div class="work-layout">
+          <section class="card-stack" aria-labelledby="stack-title">
+            <h2 class="sr-only" id="stack-title">Work in selected drawer</h2>
+            <ul id="work-list" class="work-list"></ul>
+          </section>
+          <section class="work-detail" id="work-detail" tabindex="-1" aria-label="Selected work detail">
+            <header class="detail-header">
+              <button class="back-button" id="back-button" type="button">← Back to cards</button>
+              <div id="detail-heading"></div>
+            </header>
+            <div id="detail-content"></div>
+            <footer class="detail-footer">
+              <button type="button" id="secondary-action">Open fixture evidence</button>
+              <button class="primary-action" type="button" id="primary-action">Review next action</button>
+            </footer>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="command-dialog" aria-labelledby="command-title">
+    <div class="command-head">
+      <div><p class="eyebrow">Quick switcher</p><h2 id="command-title">Find a drawer or shared task</h2></div>
+      <button id="command-close" type="button" aria-label="Close command menu">×</button>
+    </div>
+    <input id="command-input" type="search" autocomplete="off" aria-label="Search drawers and shared tasks" placeholder="Try “unhealthy lease” or “connection health”" />
+    <ul class="command-list" id="command-list"></ul>
+  </dialog>
+
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+  <script src="../fixtures.classic.js"></script>
+  <script src="./compat.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
