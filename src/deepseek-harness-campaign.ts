@@ -174,6 +174,10 @@ export function fitsDeepSeekEpisodeBudget(input: DeepSeekUsageInput): boolean {
   return calculateDeepSeekCostMicroUsd(input) <= budget.episodeMicroUsd;
 }
 
+export function compareDeepSeekInventoryNames(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function estimateRepositoryTokenRange(
   utf8Bytes: number,
 ): Readonly<{ minimum: number; maximum: number; exact: false }> {
@@ -433,4 +437,4 @@ function deepFreeze<T>(value: T): T {
 }
 
 const unsafeTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\ufeff]/u;
-const credentialPattern = /(?:stn\.tok_|github_pat_|gh[pousr]_|sk-(?:proj-)?|Bearer\s+)[A-Za-z0-9._~+\/-]+/iu;
+const credentialPattern = /(?:stn\.tok_|github_pat_|gh[pousr]_)[A-Za-z0-9._~+\/-]+|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._~+\/-]+/iu;

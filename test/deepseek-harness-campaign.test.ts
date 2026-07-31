@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   calculateDeepSeekCostMicroUsd,
+  compareDeepSeekInventoryNames,
   deepSeekHarnessCampaign,
   estimateRepositoryTokenRange,
   fitsDeepSeekEpisodeBudget,
@@ -82,6 +83,12 @@ describe("DeepSeek V4 Flash harness campaign", () => {
       })).toThrow("safe integer");
     }
   });
+
+  test("orders repository inventory by literal Unicode code units", () => {
+  expect(["é", "a", "Z", "ä", "A"].sort(compareDeepSeekInventoryNames))
+    .toEqual(["A", "Z", "a", "ä", "é"]);
+  expect(compareDeepSeekInventoryNames("same", "same")).toBe(0);
+});
 
   test("labels repository token sizing as a bounded estimate", () => {
     expect(estimateRepositoryTokenRange(4_000_000)).toEqual({
@@ -188,6 +195,20 @@ describe("DeepSeek V4 Flash harness campaign", () => {
         runtimeDirectory,
       })).toThrow("outside the worktree");
     }
+    for (const prompt of [
+  "Review task-sk-research before dispatch.",
+  "Run sk-review checks.",
+  "Keep sk-proj-research as an ordinary campaign label.",
+]) {
+  expect(() => planDeepSeekOpenCodeEpisode({ ...baseInput, prompt })).not.toThrow();
+}
+  for (const prompt of [
+  "Use sk-abcdefghijklmnopqrst for the provider call.",
+  "Use sk-proj-abcdefghijklmnopqrst for the provider call.",
+]) {
+  expect(() => planDeepSeekOpenCodeEpisode({ ...baseInput, prompt }))
+    .toThrow("credential-shaped");
+}
     expect(() => planDeepSeekOpenCodeEpisode({
       ...baseInput,
       prompt: "Use Bearer abcdefghijklmnopqrstuvwxyz",
@@ -214,5 +235,7 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(inventorySource).toContain("metadata.isSymbolicLink()");
     expect(inventorySource).not.toContain("repositoryRoot: root");
     expect(inventorySource).not.toContain("workingDirectory");
+  expect(inventorySource).toContain("compareDeepSeekInventoryNames");
+  expect(inventorySource).not.toContain("localeCompare");
   });
 });

@@ -1,6 +1,9 @@
 import { lstat, readFile } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { estimateRepositoryTokenRange } from "../src/deepseek-harness-campaign.js";
+import {
+  compareDeepSeekInventoryNames,
+  estimateRepositoryTokenRange,
+} from "../src/deepseek-harness-campaign.js";
 
 const root = resolve(process.argv[2] ?? process.cwd());
 const filesResult = Bun.spawnSync(["git", "-C", root, "ls-files", "-z"], { stdout: "pipe", stderr: "pipe" });
@@ -49,7 +52,9 @@ for (const path of paths) {
   largest.push({ path, utf8Bytes: bytes.byteLength });
 }
 
-largest.sort((left, right) => right.utf8Bytes - left.utf8Bytes || left.path.localeCompare(right.path));
+largest.sort((left, right) =>
+  right.utf8Bytes - left.utf8Bytes || compareDeepSeekInventoryNames(left.path, right.path)
+);
 const report = {
   version: 1,
   repository: basename(root),
@@ -62,7 +67,9 @@ const report = {
   utf8Bytes,
   estimatedTokens: estimateRepositoryTokenRange(utf8Bytes),
   estimateNotice: "The token range is a byte-based planning estimate, not an exact DeepSeek tokenizer result.",
-  byTopLevel: Object.fromEntries([...byTopLevel.entries()].sort(([left], [right]) => left.localeCompare(right))),
+  byTopLevel: Object.fromEntries(
+  [...byTopLevel.entries()].sort(([left], [right]) => compareDeepSeekInventoryNames(left, right)),
+),
   largestTextFiles: largest.slice(0, 25),
 };
 
