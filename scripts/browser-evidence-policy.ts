@@ -100,7 +100,7 @@ export function validatePlaywrightMcpArgs(
       index += 1;
       continue;
     }
-    throw new TypeError(`Playwright MCP does not allow argument: ${argument}`);
+    throw new TypeError("Playwright MCP arguments must use the reviewed switch set");
   }
 
   for (const required of requiredMcpSwitches) {
@@ -162,13 +162,13 @@ function validateOrigin(value: string): void {
   try {
     url = new URL(value);
   } catch {
-    throw new TypeError(`Playwright MCP allowed origin is invalid: ${value}`);
+    throw new TypeError("Playwright MCP allowed origin is invalid");
   }
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    throw new TypeError(`Playwright MCP allowed origin must use HTTPS or loopback HTTP: ${value}`);
+    throw new TypeError("Playwright MCP allowed origin must use HTTPS or loopback HTTP");
   }
   if (url.username || url.password || url.pathname !== "/" || url.search || url.hash || url.origin !== value) {
-    throw new TypeError(`Playwright MCP requires an exact credential-free origin: ${value}`);
+    throw new TypeError("Playwright MCP requires an exact credential-free origin");
   }
 }
