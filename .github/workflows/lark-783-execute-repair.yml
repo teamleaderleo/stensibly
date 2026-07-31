@@ -27,6 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The reviewed carrier already contains the exact source/test rewrite.
           python3 - <<'PY'
           from pathlib import Path
 
