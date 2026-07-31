@@ -81,14 +81,12 @@ describe("dashboard release-window policy", () => {
       activeRun: true,
       currentSha,
       baselineSha: currentSha,
-      attemptedSha: currentSha,
     })).toEqual({ action: "dispatch", reason: "manual_force" });
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
       currentSha,
       baselineSha,
-      attemptedSha: baselineSha,
       compareStatus: "ahead",
       changedFiles: ["docs/readme.md", "site/app.js"],
     })).toEqual({ action: "dispatch", reason: "relevant_changes" });
@@ -97,17 +95,15 @@ describe("dashboard release-window policy", () => {
       activeRun: false,
       currentSha,
       baselineSha: null,
-      attemptedSha: null,
     })).toEqual({ action: "dispatch", reason: "missing_baseline" });
   });
 
-  test("skips occupied, current, attempted, empty, uncertain, and non-linear windows", () => {
+  test("skips occupied, current, empty, uncertain, and non-linear windows", () => {
     expect(decideDashboardRelease({
       force: false,
       activeRun: true,
       currentSha,
       baselineSha,
-      attemptedSha: baselineSha,
       compareStatus: "ahead",
       changedFiles: ["site/app.js"],
     })).toEqual({ action: "skip", reason: "active_run" });
@@ -116,21 +112,12 @@ describe("dashboard release-window policy", () => {
       activeRun: false,
       currentSha,
       baselineSha: currentSha,
-      attemptedSha: currentSha,
     })).toEqual({ action: "skip", reason: "already_current" });
     expect(decideDashboardRelease({
       force: false,
       activeRun: false,
       currentSha,
       baselineSha,
-      attemptedSha: currentSha,
-    })).toEqual({ action: "skip", reason: "already_attempted" });
-    expect(decideDashboardRelease({
-      force: false,
-      activeRun: false,
-      currentSha,
-      baselineSha,
-      attemptedSha: baselineSha,
       compareStatus: "ahead",
       changedFiles: ["test/dashboard.test.ts"],
     })).toEqual({ action: "skip", reason: "no_relevant_changes" });
@@ -139,7 +126,6 @@ describe("dashboard release-window policy", () => {
       activeRun: false,
       currentSha,
       baselineSha,
-      attemptedSha: baselineSha,
       compareStatus: "unavailable",
     })).toEqual({ action: "skip", reason: "comparison_unavailable" });
     for (const compareStatus of ["diverged", "behind"] as const) {
@@ -148,7 +134,6 @@ describe("dashboard release-window policy", () => {
         activeRun: false,
         currentSha,
         baselineSha,
-        attemptedSha: baselineSha,
         compareStatus,
       })).toEqual({ action: "skip", reason: "history_not_linear" });
     }
@@ -157,7 +142,6 @@ describe("dashboard release-window policy", () => {
       activeRun: false,
       currentSha,
       baselineSha,
-      attemptedSha: baselineSha,
       compareStatus: "ahead",
       changedFiles: Array.from({ length: 300 }, (_, index) => `test/file-${index}.ts`),
       compareTruncated: true,
@@ -194,7 +178,7 @@ describe("dashboard release-window GitHub coordinator", () => {
     expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
   });
 
-  test("does not retry an unchanged failed publication automatically", async () => {
+  test("retries a failed unchanged publication on the next window", async () => {
     const calls: ApiCall[] = [];
     await expect(runDashboardReleaseWindow(baseEnvironment, createGithubStub(calls, {
       currentSha,
@@ -202,8 +186,10 @@ describe("dashboard release-window GitHub coordinator", () => {
         workflowRun({ headSha: baselineSha, conclusion: "success", createdAt: "2026-07-31T10:00:00Z" }),
         workflowRun({ headSha: currentSha, conclusion: "failure", createdAt: "2026-07-31T12:00:00Z" }),
       ],
-    }))).resolves.toEqual({ action: "skip", reason: "already_attempted" });
-    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
+      comparison: { status: "ahead", files: ["site/app.js"] },
+    }))).resolves.toEqual({ action: "dispatch", reason: "relevant_changes" });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET", "GET", "POST"]);
+    expect(calls.at(-1)?.body).toContain(currentSha);
   });
 
   test("coalesces scheduled work while force queues the publisher", async () => {
