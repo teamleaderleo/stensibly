@@ -304,13 +304,10 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   let totalBytes = 0;
   try {
     while (true) {
-      let result: ReadableStreamReadResult<Uint8Array>;
-      try {
-        result = await reader.read();
-      } catch {
+      const result = await reader.read().catch(async () => {
         await cancelReader(reader);
         throw new Error("Hosted observation readback response stream failed");
-      }
+      });
       if (result.done) break;
       if (!(result.value instanceof Uint8Array)) {
         await cancelReader(reader);
