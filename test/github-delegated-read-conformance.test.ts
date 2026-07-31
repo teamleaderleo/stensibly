@@ -8,20 +8,60 @@ import type {
   GitHubProjectRepositoryBinding,
   GitHubProviderBindingStore,
   GitHubProviderConnection,
+  GitHubProviderProjectReader,
 } from "../src/github-provider-contracts.ts";
+import type { ProjectAttachmentRecord } from "../src/project-attachment-ledger.ts";
+import {
+  compileProjectContract,
+  renderProjectContract,
+} from "../src/project-contract.ts";
 import { FakeGitHubDelegatedReadAdapter } from "./support/github-delegated-read-fake.ts";
 
 const repository = "teamleaderleo/stensibly";
+const project = "oauth-dogfood";
+const commitSha = "a".repeat(40);
 const catalogue = new GitHubCapabilityCatalogueService();
+const snapshot = compileProjectContract(renderProjectContract({
+  version: 1,
+  project,
+  repositories: [repository],
+  runnerProfiles: [],
+  concurrency: { project: 1, global: 1 },
+  autonomousActions: ["inspect"],
+  approvalRequired: ["write"],
+  checks: [],
+  tags: [],
+  relatedProjects: [],
+}, {
+  goal: "Conform delegated GitHub reads.",
+  boundaries: "Keep repository authority explicit.",
+  evidenceAndHandoff: "Return attributable bounded receipts.",
+  escalation: "Stop on stale binding or provider ambiguity.",
+}));
+const attachment: ProjectAttachmentRecord = {
+  id: "attachment_conformance",
+  project,
+  snapshot,
+  sourceRevision: "main@delegated-conformance",
+  acceptedBy: "test",
+  authorityWidening: false,
+  acceptedAt: "2026-07-31T00:00:00.000Z",
+};
+
+class FixedProjects implements GitHubProviderProjectReader {
+  async getProjectAttachment(requestedProject: string) {
+    return requestedProject === project ? attachment : null;
+  }
+}
 
 class FixedBindings implements GitHubProviderBindingStore {
   readonly binding: GitHubProjectRepositoryBinding = {
     id: "ghbind_conformance",
-    project: "oauth-dogfood",
+    project,
     repositoryFullName: repository,
     connectionId: "ghconn_conformance",
-    attachmentId: "attachment_conformance",
-    attachmentSnapshotSha256: `sha256:${"a".repeat(64)}`,
+    attachmentId: attachment.id,
+    attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
     status: "active",
     acceptedAt: "2026-07-31T00:00:00.000Z",
   };
@@ -38,10 +78,10 @@ class FixedBindings implements GitHubProviderBindingStore {
   };
 
   async getGitHubProjectRepositoryBinding(
-    project: string,
+    requestedProject: string,
     repositoryFullName: string,
   ): Promise<GitHubProjectRepositoryBinding | null> {
-    return project === this.binding.project && repositoryFullName === repository
+    return requestedProject === project && repositoryFullName === repository
       ? this.binding
       : null;
   }
@@ -63,6 +103,7 @@ const authority: GitHubDelegatedReadAuthority = {
 
 function service(adapter: FakeGitHubDelegatedReadAdapter): GitHubDelegatedReadService {
   return new GitHubDelegatedReadService({
+    projects: new FixedProjects(),
     bindings: new FixedBindings(),
     authority,
     adapter,
@@ -72,10 +113,10 @@ function service(adapter: FakeGitHubDelegatedReadAdapter): GitHubDelegatedReadSe
 
 function input() {
   return {
-    project: "oauth-dogfood",
+    project,
     repository,
     tool: "fetch_file",
-    arguments: { path: "README.md", ref: "main" },
+    arguments: { path: "README.md", ref: commitSha },
     actorId: "agent:rook",
     clientId: "mcp:conformance",
     catalogueFingerprint: catalogue.registry.fingerprint,
@@ -94,7 +135,7 @@ describe("delegated GitHub read provider conformance", () => {
 
     expect(adapter.calls).toEqual([{
       tool: "fetch_file",
-      arguments: { path: "README.md", ref: "main" },
+      arguments: { path: "README.md", ref: commitSha },
       repositoryFullName: repository,
       connectionId: "ghconn_conformance",
       installationId: "98765",
@@ -102,13 +143,15 @@ describe("delegated GitHub read provider conformance", () => {
       catalogueFingerprint: catalogue.registry.fingerprint,
     }]);
     expect(receipt).toMatchObject({
-      project: "oauth-dogfood",
+      project,
       repositoryFullName: repository,
       tool: "fetch_file",
       actorId: "agent:rook",
       clientId: "mcp:conformance",
       connectionId: "ghconn_conformance",
       bindingId: "ghbind_conformance",
+      attachmentId: attachment.id,
+      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
       capabilityGrantId: "grant_conformance",
       approvalId: "approval_conformance",
       providerRequestId: "provider-conformance-1",
@@ -127,8 +170,9 @@ describe("delegated GitHub read provider conformance", () => {
     const receipt = await service(adapter).call(call);
     call.arguments.path = "mutated-after-call";
 
-    expect(adapter.calls[0]?.arguments).toEqual({ path: "README.md", ref: "main" });
+    expect(adapter.calls[0]?.arguments).toEqual({ path: "README.md", ref: commitSha });
     expect(receipt.result).toEqual({ files: [{ path: "README.md" }] });
+    expect(Object.isFrozen(receipt.result)).toBe(true);
   });
 
   test("fails closed for an unconfigured upstream capability", async () => {
