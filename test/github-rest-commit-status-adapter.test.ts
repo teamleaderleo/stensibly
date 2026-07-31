@@ -274,7 +274,10 @@ describe("native GitHub delegated combined commit status reads", () => {
       tool: "get_repo",
     });
 
-    expect(tokens.requests[0]?.permission).toEqual({ name: "metadata", access: "read" });
+    const firstRequest = tokens.requests[0] as {
+      permission?: { name: string; access: string };
+    } | undefined;
+    expect(firstRequest?.permission).toEqual({ name: "metadata", access: "read" });
     expect((called.result as { repositoryFullName: string }).repositoryFullName)
       .toBe(repositoryFullName);
   });
