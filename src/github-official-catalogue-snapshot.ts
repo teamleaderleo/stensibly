@@ -16,8 +16,7 @@ const sourceTotalMaximumBytes = 8 * 1024 * 1024;
 const maximumSourceFiles = 16;
 const maximumWarnings = 32;
 const repositoryName = "github/github-mcp-server" as const;
-const commitPattern = /^[a-f0-9]{40}$/;
-const fingerprintPattern = /^sha256:[a-f0-9]{64}$/;
+const sha1Pattern = /^[a-f0-9]{40}$/;
 const pathPattern = /^[A-Za-z0-9._/-]+$/;
 
 export type GitHubOfficialProviderMode = "local" | "remote";
@@ -108,12 +107,7 @@ export interface GitHubOfficialCatalogueDriftReport {
   reportFingerprint: string;
 }
 
-/**
- * Imports one exact, review-authored snapshot manifest.
- *
- * Source bytes are retained only long enough to verify exact Git blob identity and
- * content fingerprints. The returned immutable snapshot omits source content.
- */
+/** Imports one exact review-authored manifest and discards copied source text. */
 export function importGitHubOfficialCatalogueSnapshot(
   manifestJson: string,
 ): GitHubOfficialCatalogueSnapshot {
@@ -144,24 +138,25 @@ export function importGitHubOfficialCatalogueSnapshot(
     input.commitSha,
     input.providerMode,
   );
-  const catalogueInput = exactCatalogueInput(input.catalogue);
-  if (catalogueInput.sourceRevision !== sourceRevision) {
+  if (input.catalogue.sourceRevision !== sourceRevision) {
     throw new RangeError(
       `GitHub official catalogue source revision must equal ${sourceRevision}`,
     );
   }
-  const catalogue = compileGitHubToolCatalogue(catalogueInput);
+  const catalogue = compileGitHubToolCatalogue(input.catalogue);
   const warnings = warningList(input.warnings);
-  const sourceIdentity = {
+  const sourceFingerprint = sha256(stableJson({
+    version: 1,
+    repository: repositoryName,
+    providerMode: input.providerMode,
+    files,
+  }));
+  const canonical = {
     version: 1 as const,
     repository: repositoryName,
     commitSha: input.commitSha,
     providerMode: input.providerMode,
     files,
-  };
-  const sourceFingerprint = sha256(stableJson(sourceIdentity));
-  const canonical = {
-    ...sourceIdentity,
     sourceFingerprint,
     catalogueFingerprint: catalogue.fingerprint,
     warnings,
@@ -186,19 +181,10 @@ export function compareGitHubOfficialCatalogueManifests(
 ): GitHubOfficialCatalogueDriftReport {
   const previous = importGitHubOfficialCatalogueSnapshot(previousManifestJson);
   const next = importGitHubOfficialCatalogueSnapshot(nextManifestJson);
-  return compareGitHubOfficialCatalogueSnapshots(previous, next);
-}
-
-function compareGitHubOfficialCatalogueSnapshots(
-  previous: GitHubOfficialCatalogueSnapshot,
-  next: GitHubOfficialCatalogueSnapshot,
-): GitHubOfficialCatalogueDriftReport {
-  if (previous.repository !== next.repository) {
-    throw new RangeError("GitHub official catalogue repositories do not match");
-  }
   if (previous.providerMode !== next.providerMode) {
     throw new RangeError("GitHub official catalogue provider modes do not match");
   }
+
   const entries: GitHubOfficialCatalogueDriftEntry[] = [];
   if (previous.commitSha !== next.commitSha) {
     addEntry(
@@ -224,23 +210,45 @@ function compareGitHubOfficialCatalogueSnapshots(
   const reviewedToolsets = new Set(
     githubUpstreamToolsets.map((toolset) => toolset.name),
   );
-  const previousToolsets = new Map(
-    previous.catalogue.toolsets.map((toolset) => [toolset.name, toolset]),
+  compareToolsets(entries, previous.catalogue, next.catalogue, reviewedToolsets);
+  compareTools(entries, previous.catalogue, next.catalogue, reviewedToolsets);
+  entries.sort((left, right) =>
+    codeUnitCompare(left.path, right.path)
+      || codeUnitCompare(left.kind, right.kind)
   );
-  const nextToolsets = new Map(
-    next.catalogue.toolsets.map((toolset) => [toolset.name, toolset]),
+
+  const coarse = classifyGitHubToolCatalogueChange(
+    previous.catalogue,
+    next.catalogue,
   );
-  for (const [name, prior] of previousToolsets) {
-    const current = nextToolsets.get(name);
+  const sourceOnly = entries.length > 0
+    && entries.every((entry) => entry.kind.startsWith("source_"));
+  const canonical = {
+    version: 1 as const,
+    previousSnapshotFingerprint: previous.snapshotFingerprint,
+    nextSnapshotFingerprint: next.snapshotFingerprint,
+    coarse,
+    sourceOnly,
+    entries,
+  };
+  return deepFreeze({
+    ...canonical,
+    reportFingerprint: sha256(stableJson(canonical)),
+  });
+}
+
+function compareToolsets(
+  entries: GitHubOfficialCatalogueDriftEntry[],
+  previous: GitHubToolCatalogue,
+  next: GitHubToolCatalogue,
+  reviewedToolsets: ReadonlySet<string>,
+): void {
+  const before = new Map(previous.toolsets.map((value) => [value.name, value]));
+  const after = new Map(next.toolsets.map((value) => [value.name, value]));
+  for (const [name, prior] of before) {
+    const current = after.get(name);
     if (!current) {
-      addEntry(
-        entries,
-        `toolsets.${name}`,
-        "toolset_removed",
-        "reject",
-        prior,
-        null,
-      );
+      addEntry(entries, `toolsets.${name}`, "toolset_removed", "reject", prior, null);
       continue;
     }
     if (prior.description !== current.description) {
@@ -264,8 +272,8 @@ function compareGitHubOfficialCatalogueSnapshots(
       );
     }
   }
-  for (const [name, current] of nextToolsets) {
-    if (previousToolsets.has(name)) continue;
+  for (const [name, current] of after) {
+    if (before.has(name)) continue;
     const pending = !reviewedToolsets.has(name);
     addEntry(
       entries,
@@ -276,26 +284,26 @@ function compareGitHubOfficialCatalogueSnapshots(
       current,
     );
   }
+}
 
-  const previousTools = toolMap(previous.catalogue);
-  const nextTools = toolMap(next.catalogue);
-  for (const [name, prior] of previousTools) {
-    const current = nextTools.get(name);
+function compareTools(
+  entries: GitHubOfficialCatalogueDriftEntry[],
+  previous: GitHubToolCatalogue,
+  next: GitHubToolCatalogue,
+  reviewedToolsets: ReadonlySet<string>,
+): void {
+  const before = toolMap(previous);
+  const after = toolMap(next);
+  for (const [name, prior] of before) {
+    const current = after.get(name);
     if (!current) {
-      addEntry(
-        entries,
-        `tools.${name}`,
-        "tool_removed",
-        "reject",
-        prior,
-        null,
-      );
+      addEntry(entries, `tools.${name}`, "tool_removed", "reject", prior, null);
       continue;
     }
     compareTool(entries, prior, current, reviewedToolsets.has(current.toolset));
   }
-  for (const [name, current] of nextTools) {
-    if (previousTools.has(name)) continue;
+  for (const [name, current] of after) {
+    if (before.has(name)) continue;
     addEntry(
       entries,
       `tools.${name}`,
@@ -307,29 +315,6 @@ function compareGitHubOfficialCatalogueSnapshots(
       current,
     );
   }
-
-  entries.sort((left, right) =>
-    codeUnitCompare(left.path, right.path)
-      || codeUnitCompare(left.kind, right.kind)
-  );
-  const coarse = classifyGitHubToolCatalogueChange(
-    previous.catalogue,
-    next.catalogue,
-  );
-  const sourceOnly = entries.length > 0
-    && entries.every((entry) => entry.kind.startsWith("source_"));
-  const canonical = {
-    version: 1 as const,
-    previousSnapshotFingerprint: previous.snapshotFingerprint,
-    nextSnapshotFingerprint: next.snapshotFingerprint,
-    coarse,
-    sourceOnly,
-    entries,
-  };
-  return deepFreeze({
-    ...canonical,
-    reportFingerprint: sha256(stableJson(canonical)),
-  });
 }
 
 function compareTool(
@@ -421,24 +406,24 @@ function compareSchema(
   path: string,
   reviewedToolset: boolean,
 ): void {
-  if (stableJson(previous) === stableJson(next)) return;
+  if (jsonEqual(previous, next)) return;
   compareRequired(entries, previous.required, next.required, path);
   compareEnum(entries, previous.enum, next.enum, path);
   compareProperties(
     entries,
     plainRecord(previous.properties),
     plainRecord(next.properties),
+    new Set(stringArray(next.required)),
     path,
     reviewedToolset,
   );
 
   for (const key of ["type", "minimum", "maximum", "pattern", "additionalProperties"] as const) {
-    if (stableJson(previous[key]) === stableJson(next[key])) continue;
-    const kind = schemaKind(key);
+    if (jsonEqual(previous[key], next[key])) continue;
     addEntry(
       entries,
       `${path}.${key}`,
-      kind,
+      schemaKind(key),
       schemaPromotion(key, previous[key], next[key]),
       previous[key] ?? null,
       next[key] ?? null,
@@ -455,10 +440,8 @@ function compareSchema(
     "pattern",
     "additionalProperties",
   ]);
-  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
-  for (const key of keys) {
-    if (handled.has(key)) continue;
-    if (stableJson(previous[key]) === stableJson(next[key])) continue;
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+    if (handled.has(key) || jsonEqual(previous[key], next[key])) continue;
     addEntry(
       entries,
       `${path}.${key}`,
@@ -474,14 +457,12 @@ function compareProperties(
   entries: GitHubOfficialCatalogueDriftEntry[],
   previous: Record<string, unknown>,
   next: Record<string, unknown>,
+  nextRequired: ReadonlySet<string>,
   path: string,
   reviewedToolset: boolean,
 ): void {
-  const previousRequired = new Set(stringArray((previous as { required?: unknown }).required));
-  const nextRequired = new Set(stringArray((next as { required?: unknown }).required));
   for (const [name, prior] of Object.entries(previous)) {
-    const current = next[name];
-    if (current === undefined) {
+    if (!Object.hasOwn(next, name)) {
       addEntry(
         entries,
         `${path}.properties.${name}`,
@@ -492,6 +473,7 @@ function compareProperties(
       );
       continue;
     }
+    const current = next[name];
     const priorRecord = plainRecord(prior);
     const currentRecord = plainRecord(current);
     if (Object.keys(priorRecord).length || Object.keys(currentRecord).length) {
@@ -502,14 +484,14 @@ function compareProperties(
         `${path}.properties.${name}`,
         reviewedToolset,
       );
-    } else if (stableJson(prior) !== stableJson(current)) {
+    } else if (!jsonEqual(prior, current)) {
       addEntry(
         entries,
         `${path}.properties.${name}`,
         "schema_value_changed",
         "review_required",
         prior,
-        current,
+        current ?? null,
       );
     }
   }
@@ -526,7 +508,6 @@ function compareProperties(
       current,
     );
   }
-  void previousRequired;
 }
 
 function compareRequired(
@@ -538,26 +519,28 @@ function compareRequired(
   const before = new Set(stringArray(previous));
   const after = new Set(stringArray(next));
   for (const name of after) {
-    if (before.has(name)) continue;
-    addEntry(
-      entries,
-      `${path}.required.${name}`,
-      "schema_required_added",
-      "reject",
-      false,
-      true,
-    );
+    if (!before.has(name)) {
+      addEntry(
+        entries,
+        `${path}.required.${name}`,
+        "schema_required_added",
+        "reject",
+        false,
+        true,
+      );
+    }
   }
   for (const name of before) {
-    if (after.has(name)) continue;
-    addEntry(
-      entries,
-      `${path}.required.${name}`,
-      "schema_required_removed",
-      "auto_additive",
-      true,
-      false,
-    );
+    if (!after.has(name)) {
+      addEntry(
+        entries,
+        `${path}.required.${name}`,
+        "schema_required_removed",
+        "auto_additive",
+        true,
+        false,
+      );
+    }
   }
 }
 
@@ -570,26 +553,28 @@ function compareEnum(
   const before = new Map(jsonArray(previous).map((value) => [stableJson(value), value]));
   const after = new Map(jsonArray(next).map((value) => [stableJson(value), value]));
   for (const [key, value] of after) {
-    if (before.has(key)) continue;
-    addEntry(
-      entries,
-      `${path}.enum.${key}`,
-      "schema_enum_added",
-      "auto_additive",
-      null,
-      value,
-    );
+    if (!before.has(key)) {
+      addEntry(
+        entries,
+        `${path}.enum.${key}`,
+        "schema_enum_added",
+        "auto_additive",
+        null,
+        value,
+      );
+    }
   }
   for (const [key, value] of before) {
-    if (after.has(key)) continue;
-    addEntry(
-      entries,
-      `${path}.enum.${key}`,
-      "schema_enum_removed",
-      "reject",
-      value,
-      null,
-    );
+    if (!after.has(key)) {
+      addEntry(
+        entries,
+        `${path}.enum.${key}`,
+        "schema_enum_removed",
+        "reject",
+        value,
+        null,
+      );
+    }
   }
 }
 
@@ -642,11 +627,10 @@ function manifestInput(value: unknown): GitHubOfficialCatalogueManifestInput {
   }
   const commitSha = exactPatternString(
     record.commitSha,
-    commitPattern,
+    sha1Pattern,
     "GitHub official catalogue commit SHA",
   );
-  const providerMode = record.providerMode;
-  if (providerMode !== "local" && providerMode !== "remote") {
+  if (record.providerMode !== "local" && record.providerMode !== "remote") {
     throw new RangeError("GitHub official catalogue provider mode is invalid");
   }
   if (!Array.isArray(record.files) || record.files.length < 1
@@ -655,16 +639,18 @@ function manifestInput(value: unknown): GitHubOfficialCatalogueManifestInput {
       `GitHub official catalogue manifest accepts 1 to ${maximumSourceFiles} source files`,
     );
   }
-  const files = record.files.map((file, index) =>
-    sourceFileInput(file, index)
-  );
+  const catalogue = exactRecord(
+    record.catalogue,
+    ["version", "source", "sourceRevision", "toolsets"],
+    "GitHub official catalogue payload",
+  ) as unknown as GitHubToolCatalogueInput;
   return {
     version: 1,
     repository: repositoryName,
     commitSha,
-    providerMode,
-    files,
-    catalogue: exactCatalogueInput(record.catalogue),
+    providerMode: record.providerMode,
+    files: record.files.map((file, index) => sourceFileInput(file, index)),
+    catalogue,
     ...(record.warnings === undefined
       ? {}
       : { warnings: warningList(record.warnings) }),
@@ -691,7 +677,7 @@ function sourceFileInput(
   }
   const blobSha = exactPatternString(
     record.blobSha,
-    commitPattern,
+    sha1Pattern,
     "GitHub official catalogue blob SHA",
   );
   if (typeof record.content !== "string") {
@@ -705,7 +691,7 @@ function compileSourceFiles(
 ): GitHubOfficialCatalogueSourceFile[] {
   const seen = new Set<string>();
   let totalBytes = 0;
-  const files = values.map((value) => {
+  return values.map((value) => {
     if (seen.has(value.path)) {
       throw new RangeError(
         `Duplicate GitHub official catalogue source path: ${value.path}`,
@@ -724,8 +710,7 @@ function compileSourceFiles(
         `GitHub official catalogue sources exceed ${sourceTotalMaximumBytes} UTF-8 bytes`,
       );
     }
-    const actualBlobSha = gitBlobSha(value.content);
-    if (actualBlobSha !== value.blobSha) {
+    if (gitBlobSha(value.content) !== value.blobSha) {
       throw new RangeError(
         `GitHub official catalogue blob SHA mismatch for ${value.path}`,
       );
@@ -737,18 +722,6 @@ function compileSourceFiles(
       byteLength,
     };
   }).sort((left, right) => codeUnitCompare(left.path, right.path));
-  return files;
-}
-
-function exactCatalogueInput(value: unknown): GitHubToolCatalogueInput {
-  return value as GitHubToolCatalogueInput;
-}
-
-function officialSourceRevision(
-  commitSha: string,
-  providerMode: GitHubOfficialProviderMode,
-): string {
-  return `${repositoryName}@${commitSha}:${providerMode}`;
 }
 
 function warningList(value: unknown): string[] {
@@ -759,10 +732,8 @@ function warningList(value: unknown): string[] {
     );
   }
   const warnings = value.map((warning) => {
-    if (typeof warning !== "string") {
-      throw new RangeError("GitHub official catalogue warning must be a string");
-    }
-    if (!warning.trim() || warning !== warning.trim()
+    if (typeof warning !== "string" || !warning.trim()
+      || warning !== warning.trim()
       || /[\u0000-\u001f\u007f-\u009f]/u.test(warning)
       || [...warning].length > 500) {
       throw new RangeError("GitHub official catalogue warning is invalid");
@@ -804,6 +775,13 @@ function exactPatternString(
   return value;
 }
 
+function officialSourceRevision(
+  commitSha: string,
+  providerMode: GitHubOfficialProviderMode,
+): string {
+  return `${repositoryName}@${commitSha}:${providerMode}`;
+}
+
 function gitBlobSha(content: string): string {
   const bytes = Buffer.byteLength(content, "utf8");
   return createHash("sha1")
@@ -829,12 +807,18 @@ function plainRecord(value: unknown): Record<string, unknown> {
 }
 
 function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string");
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 function jsonArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function jsonEqual(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return stableJson(left) === stableJson(right);
 }
 
 function addEntry(
