@@ -23,7 +23,6 @@ export default defineConfig({
     colorScheme: "light",
     locale: "en-US",
     permissions: [],
-    serviceWorkers: "block",
     timezoneId: "UTC",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
