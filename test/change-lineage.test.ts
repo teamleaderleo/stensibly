@@ -128,6 +128,48 @@ describe("change lineage compiler", () => {
     });
   });
 
+  test("classifies completed non-success checks separately from pending checks", () => {
+    for (const conclusion of ["neutral", "skipped"] as const) {
+      const result = compile([change("change-a", firstSha, [revision(firstSha, 1)], {
+        checks: [{ name: "test", revisionId: firstSha, conclusion }],
+      })]);
+      expect(result.evaluations[0]).toMatchObject({
+        state: "waiting_for_checks",
+        reasons: ["required_check_failed"],
+        checksFresh: true,
+      });
+    }
+
+    const pending = compile([change("change-a", firstSha, [revision(firstSha, 1)], {
+      checks: [{ name: "test", revisionId: firstSha, conclusion: "pending" }],
+    })]);
+    expect(pending.evaluations[0]).toMatchObject({
+      state: "waiting_for_checks",
+      reasons: ["required_check_pending"],
+      checksFresh: true,
+    });
+  });
+
+  test("preserves historical state while reporting stale required-check evidence", () => {
+    const original = revision(firstSha, 1);
+    const amended = revision(secondSha, 2, {
+      predecessors: [{ changeId: "change-a", revisionId: firstSha }],
+    });
+    const result = compile([change("change-a", secondSha, [original, amended], {
+      lifecycle: "merged",
+      checks: [{ name: "test", revisionId: firstSha, conclusion: "success" }],
+      reviewedRevisionId: null,
+      reviewDisposition: "none",
+    })]);
+
+    expect(result.evaluations[0]).toMatchObject({
+      state: "historical",
+      reasons: ["change_merged"],
+      reviewFresh: false,
+      checksFresh: false,
+    });
+  });
+
   test("scopes provider change identity by target ref and preserves exact check names", () => {
     const main = change("gerrit-main", firstSha, [revision(firstSha, 1)], {
       provider: "gerrit",
@@ -331,6 +373,40 @@ describe("change lineage compiler", () => {
       observedAt: "2026-07-31",
       changes: [],
     })).toThrow("ISO UTC timestamp");
+  });
+
+  test("rejects namespaced credential-shaped identities without blocking ordinary references", () => {
+    const candidates = [
+      change("change:github_pat_private", firstSha, [revision(firstSha, 1)]),
+      change("change-a", firstSha, [revision(firstSha, 1)], {
+        providerChangeId: "provider/ghp_private",
+      }),
+      change("change-a", firstSha, [revision(firstSha, 1, {
+        sourceReferences: ["source:stn.tok_private"],
+      })]),
+      change("change-a", firstSha, [revision(firstSha, 1, {
+        sourceReferences: ["source/sk-proj-private"],
+      })]),
+      change("change-a", firstSha, [revision(firstSha, 1, {
+        recoveryReference: "recovery:xoxb-private",
+      })]),
+      change("change-a", firstSha, [revision(firstSha, 1, {
+        recoveryReference: "ref:env://PRIVATE_TOKEN",
+      })]),
+      change("change-a", firstSha, [revision(firstSha, 1, {
+        sourceReferences: ["ref/secret://private"],
+      })]),
+    ];
+    for (const candidate of candidates) {
+      expect(() => compile([candidate])).toThrow("secret-shaped");
+    }
+
+    const accepted = compile([change("change-a", firstSha, [revision(firstSha, 1, {
+      sourceReferences: ["source:github/pull-42"],
+      recoveryReference: "git:refs/heads/main@aaaaaaaa",
+    })])]);
+    expect(accepted.changes[0]?.revisions[0]?.sourceReferences)
+      .toEqual(["source:github/pull-42"]);
   });
 
   test("requires monotonic revision observations and credential-safe recovery evidence", () => {
