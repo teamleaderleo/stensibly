@@ -45,6 +45,7 @@ const maximumThreadPages = 4;
 const maximumThreads = threadPageSize * maximumThreadPages;
 const maximumComments = 400;
 const providerResponseMaximumBytes = 256 * 1024;
+const providerRequestTimeoutMs = 10_000;
 const delegatedResultMaximumBytes = 256 * 1024;
 const maximumReviewBodyCharacters = 16 * 1024;
 const unsafeTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
@@ -367,6 +368,7 @@ export class GitHubRestPullRequestReviewThreadAdapter
         },
         body,
         redirect: "error",
+        signal: AbortSignal.timeout(providerRequestTimeoutMs),
       });
     } catch {
       throw rejected(
@@ -428,7 +430,7 @@ function parseReviewThreadPage(
   const root = providerRecord(
     value,
     ["data", "errors", "extensions"],
-    ["data"],
+    [],
     "GitHub GraphQL response",
   );
   if (root.errors !== undefined) {
@@ -789,7 +791,7 @@ function minimizedReviewBody(value: unknown): Readonly<{
   characterCount: number;
   minimized: boolean;
 }> {
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string") {
     throw rejected(
       "github_delegated_provider_invalid_response",
       "GitHub review comment body was invalid",
@@ -1294,14 +1296,24 @@ function exactTimestamp(value: unknown, label: string): string {
       `${label} was absent`,
     );
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/.exec(
+    value,
+  );
+  if (!match) {
     throw rejected(
       "github_delegated_provider_invalid_response",
       `${label} was invalid`,
     );
   }
-  return date.toISOString();
+  const date = new Date(value);
+  const canonical = `${match[1]}.${(match[2] ?? "").padEnd(3, "0")}Z`;
+  if (Number.isNaN(date.getTime()) || date.toISOString() !== canonical) {
+    throw rejected(
+      "github_delegated_provider_invalid_response",
+      `${label} was invalid`,
+    );
+  }
+  return canonical;
 }
 
 function nullableTimestamp(value: unknown, label: string): string | null {
