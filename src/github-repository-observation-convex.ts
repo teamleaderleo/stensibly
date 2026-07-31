@@ -290,17 +290,19 @@ function snapshotArray(
     throw new RangeError(`${label} arrays must use the default prototype`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const lengthDescriptor = descriptors.length;
+  const lengthDescriptor = descriptors["length"];
+  const rawLength = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : null;
   if (
-    !lengthDescriptor
-    || !("value" in lengthDescriptor)
-    || !Number.isSafeInteger(lengthDescriptor.value)
-    || lengthDescriptor.value < 0
-    || lengthDescriptor.value > maximumArrayLength
+    typeof rawLength !== "number"
+    || !Number.isSafeInteger(rawLength)
+    || rawLength < 0
+    || rawLength > maximumArrayLength
   ) {
     throw new RangeError(`${label} has an invalid array length`);
   }
-  const length = lengthDescriptor.value;
+  const length = rawLength;
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") {
       throw new RangeError(`${label} arrays cannot contain symbol fields`);
