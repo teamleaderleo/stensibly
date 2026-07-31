@@ -80,6 +80,17 @@ jobs:
             '.name == $name and .rootDirectory == "site"' \
             /tmp/vercel-project.json > /dev/null
 
+      - name: Keep production public and previews protected
+        run: |
+          set -euo pipefail
+          project_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_ORG_ID}"
+          curl --fail --silent --show-error \
+            --request PATCH \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"ssoProtection":{"deploymentType":"preview"}}' \
+            "${project_url}" > /tmp/vercel-project-protection.json
+
       - name: Link the canonical domain to this project
         run: |
           set -euo pipefail
@@ -130,7 +141,7 @@ jobs:
           esac
           echo "deployment_url=${deployment_url}" >> "${GITHUB_OUTPUT}"
 
-          for route in / /labs/ /labs/quiet-control/ /labs/soft-companion/; do
+          for route in / /labs/ /labs/quiet-control/ /labs/soft-companion/ /labs/field-console/; do
             output="/tmp/dashboard-$(printf '%s' "${route}" | tr '/.' '__').html"
             npx --yes vercel@${VERCEL_CLI_VERSION} curl "${route}" \
               --deployment "${deployment_url}" \
@@ -143,6 +154,7 @@ jobs:
           grep --fixed-strings --quiet "Stensibly Labs" /tmp/dashboard-_labs_.html
           grep --fixed-strings --quiet "Quiet Control" /tmp/dashboard-_labs_quiet-control_.html
           grep --fixed-strings --quiet "Soft Companion" /tmp/dashboard-_labs_soft-companion_.html
+          grep --fixed-strings --quiet "Field Console" /tmp/dashboard-_labs_field-console_.html
 
       - name: Assign the canonical domain to the verified deployment
         env:
@@ -161,7 +173,8 @@ jobs:
             if bun run verify:dashboard -- --url "https://${DASHBOARD_HOST}" --github-annotation \
               && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/" | grep --fixed-strings --quiet "Stensibly Labs" \
               && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/quiet-control/" | grep --fixed-strings --quiet "Quiet Control" \
-              && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/soft-companion/" | grep --fixed-strings --quiet "Soft Companion"; then
+              && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/soft-companion/" | grep --fixed-strings --quiet "Soft Companion" \
+              && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/field-console/" | grep --fixed-strings --quiet "Field Console"; then
               exit 0
             fi
             sleep $((attempt * 5))
@@ -180,5 +193,5 @@ jobs:
             echo "- project: \`${EXPECTED_VERCEL_PROJECT}\` (\`${VERCEL_PROJECT_ID}\`)"
             echo "- immutable deployment: ${DEPLOYMENT_URL}"
             echo "- canonical domain: https://${DASHBOARD_HOST}"
-            echo "- verified routes: \`/\`, \`/labs/\`, \`/labs/quiet-control/\`, \`/labs/soft-companion/\`"
+            echo "- verified routes: \`/\`, \`/labs/\`, \`/labs/quiet-control/\`, \`/labs/soft-companion/\`, \`/labs/field-console/\`"
           } >> "${GITHUB_STEP_SUMMARY}"
