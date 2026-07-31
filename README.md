@@ -265,6 +265,8 @@ See [issue #214](https://github.com/teamleaderleo/stensibly/issues/214) for the 
 
 ## Documentation
 
+- [Engineering handbook](docs/engineering-handbook.md)
+- [Current-main code atlas](docs/code-atlas.md)
 - [Product model: authority and responsibility](docs/product-model.md)
 - [Agent and work-group nomenclature](docs/agent-nomenclature.md)
 - [Distributed coordination correctness](docs/coordination-correctness.md)

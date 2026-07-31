@@ -2,10 +2,42 @@ import { createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 
-export interface GitHubInstallationTokenRequest {
-  repositoryFullName: string;
-  issues: "read" | "write";
-}
+export const githubInstallationPermissionNames = [
+  "issues",
+  "metadata",
+  "contents",
+  "pull_requests",
+  "statuses",
+  "actions",
+] as const;
+
+export type GitHubInstallationPermissionName =
+  typeof githubInstallationPermissionNames[number];
+
+type GitHubReadInstallationPermissionName = Exclude<
+  GitHubInstallationPermissionName,
+  "issues"
+>;
+
+export type GitHubInstallationPermissionInput =
+  | {
+    name: "issues";
+    access: "read" | "write";
+  }
+  | {
+    name: GitHubReadInstallationPermissionName;
+    access: "read";
+  };
+
+export type GitHubInstallationTokenRequest =
+  | {
+    repositoryFullName: string;
+    issues: "read" | "write";
+  }
+  | {
+    repositoryFullName: string;
+    permission: GitHubInstallationPermissionInput;
+  };
 
 export interface GitHubInstallationToken {
   token: string;
@@ -30,6 +62,11 @@ export interface GitHubAppInstallationTokenMinterOptions {
   refreshSkewSeconds?: number;
 }
 
+interface AdmittedInstallationTokenRequest {
+  repositoryFullName: string;
+  permission: Readonly<GitHubInstallationPermissionInput>;
+}
+
 interface CachedToken extends GitHubInstallationToken {
   expiresAtMs: number;
 }
@@ -43,6 +80,9 @@ interface InstallationTokenResponse {
 }
 
 const githubApiVersion = "2022-11-28";
+const installationTokenResponseMaximumBytes = 64 * 1024;
+const decimalByteLengthPattern = /^(?:0|[1-9][0-9]*)$/;
+const permissionNames = new Set<string>(githubInstallationPermissionNames);
 
 /**
  * Mints short-lived, repository-narrowed GitHub App installation tokens.
@@ -107,20 +147,17 @@ export class GitHubAppInstallationTokenMinter
   async getInstallationToken(
     input: GitHubInstallationTokenRequest,
   ): Promise<GitHubInstallationToken> {
-    const repositoryFullName = normalizeGitHubRepository(
-      input.repositoryFullName,
-    ).toLowerCase();
+    const admitted = admitInstallationTokenRequest(input);
+    const repositoryFullName = admitted.repositoryFullName;
     if (!this.#repositories.has(repositoryFullName)) {
       throw new GitHubProviderRejectedError(
         "github_repository_outside_installation",
         `GitHub App installation is not configured for ${repositoryFullName}`,
       );
     }
-    const issues = input.issues;
-    if (issues !== "read" && issues !== "write") {
-      throw new RangeError("GitHub App issues permission must be read or write");
-    }
-    const cacheKey = `${repositoryFullName}:${issues}`;
+    const permission = admitted.permission;
+    const cacheKey =
+      `${repositoryFullName}:${permission.name}:${permission.access}`;
     const cached = this.#cache.get(cacheKey);
     const now = this.#now();
     if (!Number.isFinite(now)) {
@@ -150,17 +187,18 @@ export class GitHubAppInstallationTokenMinter
           },
           body: JSON.stringify({
             repositories: [repository],
-            permissions: { issues },
+            permissions: { [permission.name]: permission.access },
           }),
         },
       );
     } catch {
       throw credentialTransportError("request");
     }
-    const payload = await readJson(response);
     if (!response.ok) {
+      await discardResponseBody(response);
       throw githubHttpError(response.status, "mint installation token");
     }
+    const payload = await readBoundedJson(response);
     const tokenResponse = payload as InstallationTokenResponse;
     const token = secretString(tokenResponse.token, "GitHub installation token");
     const expiresAt = timestamp(tokenResponse.expires_at, "GitHub installation token expiry");
@@ -171,10 +209,10 @@ export class GitHubAppInstallationTokenMinter
         "GitHub returned an installation token without a usable lifetime",
       );
     }
-    if (!hasExactPermissionScope(tokenResponse.permissions, issues)) {
+    if (!hasExactPermissionScope(tokenResponse.permissions, permission)) {
       throw new GitHubProviderRejectedError(
         "github_installation_permission_insufficient",
-        `GitHub App installation did not grant exact issues:${issues} permission scope`,
+        `GitHub App installation did not grant exact ${permission.name}:${permission.access} permission scope`,
       );
     }
     if (!hasExactRepositoryScope(tokenResponse, repositoryFullName)) {
@@ -201,6 +239,120 @@ export class GitHubAppInstallationTokenMinter
     const signature = sign("RSA-SHA256", Buffer.from(unsigned), this.#privateKey);
     return `${unsigned}.${base64Url(signature)}`;
   }
+}
+
+function admitInstallationTokenRequest(
+  input: unknown,
+): AdmittedInstallationTokenRequest {
+  const record = exactDataRecord(
+    input,
+    ["repositoryFullName", "issues", "permission"],
+    ["repositoryFullName"],
+    "GitHub installation token request",
+  );
+  const repositoryFullName = exactRepository(record.repositoryFullName);
+  const hasIssues = Object.hasOwn(record, "issues");
+  const hasPermission = Object.hasOwn(record, "permission");
+  if (hasIssues === hasPermission) {
+    throw new RangeError(
+      "GitHub installation token request requires exactly one permission profile",
+    );
+  }
+  if (hasIssues) {
+    const issues = record.issues;
+    if (issues !== "read" && issues !== "write") {
+      throw new RangeError("GitHub App issues permission must be read or write");
+    }
+    return Object.freeze({
+      repositoryFullName,
+      permission: Object.freeze({ name: "issues", access: issues }),
+    });
+  }
+  return Object.freeze({
+    repositoryFullName,
+    permission: admitPermission(record.permission),
+  });
+}
+
+function admitPermission(value: unknown): Readonly<GitHubInstallationPermissionInput> {
+  const record = exactDataRecord(
+    value,
+    ["name", "access"],
+    ["name", "access"],
+    "GitHub installation permission profile",
+  );
+  const name = record.name;
+  if (typeof name !== "string" || !permissionNames.has(name)) {
+    throw new RangeError("GitHub installation permission name is unsupported");
+  }
+  const access = record.access;
+  if (access !== "read" && access !== "write") {
+    throw new RangeError("GitHub installation permission access is invalid");
+  }
+  if (name !== "issues" && access !== "read") {
+    throw new RangeError(
+      `GitHub installation permission ${name} supports read access only`,
+    );
+  }
+  return Object.freeze({
+    name: name as GitHubInstallationPermissionName,
+    access,
+  } as GitHubInstallationPermissionInput);
+}
+
+function exactDataRecord(
+  value: unknown,
+  allowedFields: readonly string[],
+  requiredFields: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RangeError(`${label} must be a plain object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new RangeError(`${label} must use a plain or null prototype`);
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new RangeError(`${label} contains a symbol field`);
+  }
+  const allowed = new Set<string>(allowedFields);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const result = Object.create(null) as Record<string, unknown>;
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!allowed.has(key)) {
+      throw new RangeError(`${label} has an unknown field`);
+    }
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new RangeError(
+        `${label} field ${key} must be an enumerable data property`,
+      );
+    }
+    result[key] = descriptor.value;
+  }
+  for (const key of requiredFields) {
+    if (!Object.hasOwn(result, key)) {
+      throw new RangeError(`${label} is missing field ${key}`);
+    }
+  }
+  return result;
+}
+
+function exactRepository(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new RangeError("GitHub installation token repository must be a string");
+  }
+  if (
+    !value
+    || value.length > 4_096
+    || value !== value.trim()
+    || !/^[\x20-\x7e]+$/.test(value)
+  ) {
+    throw new RangeError(
+      "GitHub installation token repository must use exact printable ASCII without surrounding whitespace",
+    );
+  }
+  return normalizeGitHubRepository(value).toLowerCase();
 }
 
 function numericIdentifier(value: string, label: string): string {
@@ -249,22 +401,122 @@ function base64Url(value: string | Uint8Array): string {
   return Buffer.from(value).toString("base64url");
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  let text: string;
+async function discardResponseBody(response: Response): Promise<void> {
   try {
-    text = await response.text();
+    await response.body?.cancel();
   } catch {
+    // Provider body disposal never changes the fixed status-derived diagnostic.
+  }
+}
+
+async function readBoundedJson(response: Response): Promise<unknown> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    if (!decimalByteLengthPattern.test(declaredLength)) {
+      await discardResponseBody(response);
+      throw invalidCredentialResponse(
+        "GitHub installation token response declared an invalid content length",
+      );
+    }
+    const declaredBytes = Number(declaredLength);
+    if (
+      !Number.isSafeInteger(declaredBytes)
+      || declaredBytes > installationTokenResponseMaximumBytes
+    ) {
+      await discardResponseBody(response);
+      throw credentialResponseTooLarge();
+    }
+  }
+
+  if (!("body" in response)) {
     throw credentialTransportError("response");
   }
-  if (!text) return {};
+  const body = response.body;
+  if (body === null) return {};
+  const bytes = await readBoundedBody(body);
+  if (bytes.byteLength === 0) return {};
+
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw invalidCredentialResponse(
+      "GitHub installation token response was not valid UTF-8",
+    );
+  }
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new GitHubProviderRejectedError(
-      "github_provider_invalid_response",
-      "GitHub returned a non-JSON response",
-    );
+    throw invalidCredentialResponse("GitHub returned a non-JSON response");
   }
+}
+
+async function readBoundedBody(
+  body: ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = body.getReader();
+  } catch {
+    throw credentialTransportError("response");
+  }
+
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  let failure: GitHubProviderRejectedError | undefined;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      if (!(next.value instanceof Uint8Array)) {
+        throw invalidCredentialResponse(
+          "GitHub installation token response body was invalid",
+        );
+      }
+      byteLength += next.value.byteLength;
+      if (byteLength > installationTokenResponseMaximumBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The bounded rejection remains authoritative if provider cancellation fails.
+        }
+        throw credentialResponseTooLarge();
+      }
+      chunks.push(next.value);
+    }
+  } catch (error) {
+    failure = error instanceof GitHubProviderRejectedError
+      ? error
+      : credentialTransportError("response");
+  }
+
+  try {
+    reader.releaseLock();
+  } catch {
+    failure ??= credentialTransportError("response");
+  }
+  if (failure) throw failure;
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function credentialResponseTooLarge(): GitHubProviderRejectedError {
+  return invalidCredentialResponse(
+    `GitHub installation token response exceeded ${installationTokenResponseMaximumBytes} bytes`,
+  );
+}
+
+function invalidCredentialResponse(message: string): GitHubProviderRejectedError {
+  return new GitHubProviderRejectedError(
+    "github_provider_invalid_response",
+    message,
+  );
 }
 
 function credentialTransportError(
@@ -307,14 +559,28 @@ function timestamp(value: unknown, label: string): string {
 
 function hasExactPermissionScope(
   value: unknown,
-  issues: GitHubInstallationTokenRequest["issues"],
+  requested: Readonly<GitHubInstallationPermissionInput>,
 ): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const permissions = value as Record<string, unknown>;
-  const keys = Object.keys(permissions);
-  if (keys.some((key) => key !== "issues" && key !== "metadata")) return false;
-  if (permissions.issues !== issues) return false;
-  return !Object.hasOwn(permissions, "metadata") || permissions.metadata === "read";
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const allowed = new Set<string>([requested.name]);
+  if (requested.name !== "metadata") allowed.add("metadata");
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!allowed.has(key) || !descriptor.enumerable || !("value" in descriptor)) {
+      return false;
+    }
+  }
+  const requestedDescriptor = descriptors[requested.name];
+  if (
+    !requestedDescriptor
+    || !("value" in requestedDescriptor)
+    || requestedDescriptor.value !== requested.access
+  ) return false;
+  const metadata = descriptors.metadata;
+  return !metadata || ("value" in metadata && metadata.value === "read");
 }
 
 function hasExactRepositoryScope(
