@@ -9,9 +9,6 @@ describe("Playwright last-run browser evidence control", () => {
     const fixture = createEvidenceFixture({
       status: "passed",
       failedTests: [],
-      testDurations: {
-        "chromium::frontend-labs::catalogue": 147,
-      },
     });
     try {
       const summary = await verifyBrowserEvidenceArtifacts(fixture.root);
@@ -23,8 +20,12 @@ describe("Playwright last-run browser evidence control", () => {
     }
   });
 
-  test("rejects the stale two-field Playwright control envelope", async () => {
-    const fixture = createEvidenceFixture({ status: "passed", failedTests: [] });
+  test("rejects unknown control fields", async () => {
+    const fixture = createEvidenceFixture({
+      status: "passed",
+      failedTests: [],
+      testDurations: { "chromium::frontend-labs::catalogue": 147 },
+    });
     try {
       await expect(verifyBrowserEvidenceArtifacts(fixture.root)).rejects.toThrow(
         "must use exact Playwright 1.62 control fields",
@@ -34,11 +35,10 @@ describe("Playwright last-run browser evidence control", () => {
     }
   });
 
-  test("rejects failed identities and invalid duration values", async () => {
+  test("rejects failed status and failed test identities", async () => {
     for (const lastRun of [
-      { status: "failed", failedTests: ["fixture failure"], testDurations: {} },
-      { status: "passed", failedTests: [], testDurations: { fixture: -1 } },
-      { status: "passed", failedTests: [], testDurations: { fixture: Number.NaN } },
+      { status: "failed", failedTests: ["fixture failure"] },
+      { status: "passed", failedTests: ["fixture failure"] },
     ]) {
       const fixture = createEvidenceFixture(lastRun);
       try {
