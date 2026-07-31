@@ -1,0 +1,120 @@
+name: Marlin 859 source cleanup
+
+on:
+  pull_request:
+    types: [synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'marlin/852-cancellation-attribution-repair'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: marlin/852-cancellation-attribution-repair
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Normalize source and contract prose
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source_path = Path('src/runner-cancellation-settlement.ts')
+          source = source_path.read_text()
+
+          start = source.index('  async #execute(): Promise<RunnerCancellationSettlementResultV1> {')
+          end = source.index('\n}\n}\n\nfunction adapterPort', start)
+          method = source[start:end + 2]
+          lines = method.splitlines()
+          normalized = [lines[0]]
+          normalized.extend(('  ' + line) if line else line for line in lines[1:-1])
+          normalized.append('  }')
+          source = source[:start] + '\n'.join(normalized) + source[end + 2:]
+
+          reference_pattern = re.compile(
+              r'  if \(reference !== null\) \{.*?\n  \}\n  return observation;',
+              re.S,
+          )
+          reference_replacement = '''  if (reference !== null) {
+            if (reference.createdAt > observation.observedAt) {
+              throw new RangeError(
+                "Runner cancellation reference cannot follow its observation",
+              );
+            }
+            if (reference.adapterId !== descriptor.adapterId) {
+              throw new RangeError(
+                "Runner cancellation reference adapter does not match descriptor",
+              );
+            }
+            if (
+              reference.generation !== null
+              && reference.generation !== command.runGeneration
+            ) {
+              throw new RangeError(
+                "Runner cancellation reference generation does not match run",
+              );
+            }
+          }
+          return observation;'''
+          source, count = reference_pattern.subn(
+              lambda _: reference_replacement,
+              source,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('reference block changed before cleanup')
+          source_path.write_text(source)
+
+          docs_path = Path('docs/runner-cancellation-settlement.md')
+          docs = docs_path.read_text()
+          docs = docs.replace(
+              '- one trusted observation clock;\n',
+              '- one trusted execution clock;\n',
+              1,
+          )
+          old = '''A started cancellation operation must still publish bounded recovery evidence when the trusted observation clock throws, returns a malformed timestamp, predates the accepted request, or predates retained adapter evidence.
+
+          In those cases the coordinator:
+
+          - discards the adapter observation;
+          - reports `adapter_failure`;
+          - uses the accepted request time as the deterministic settlement observation time;
+          - publishes the same reconciliation hold;
+          - retains no raw clock error text or contradictory external-reference digest.
+          '''
+          new = '''Before dispatch, the coordinator reads the trusted execution clock once. A thrown, malformed, or pre-request value prevents adapter activity and still publishes bounded recovery evidence. If valid execution time predates returned adapter evidence, that evidence is discarded.
+
+          In those cases the coordinator:
+
+          - reports `adapter_failure`;
+          - uses the accepted request time as the deterministic settlement observation time when clock or evidence chronology fails;
+          - publishes the same reconciliation hold;
+          - retains no raw clock error text or contradictory external-reference digest.
+          '''
+          if old not in docs:
+              raise SystemExit('trusted clock documentation changed')
+          docs_path.write_text(docs.replace(old, new, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify cleaned repair
+        run: |
+          bun run typecheck
+          bun test test/runner-cancellation-settlement.test.ts test/runner-cancellation-settlement-attribution-boundaries.test.ts
+      - name: Publish source-only head
+        shell: bash
+        run: |
+          rm .github/workflows/marlin-859-source-cleanup.yml
+          git config user.name 'Marlin'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/runner-cancellation-settlement.ts docs/runner-cancellation-settlement.md .github/workflows/marlin-859-source-cleanup.yml
+          git diff --cached --check
+          git commit -m 'Clean cancellation attribution repair'
+          git push origin HEAD:marlin/852-cancellation-attribution-repair
