@@ -5,32 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Quiet Control · Stensibly Labs</title>
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./semantics.css" />
 </head>
 <body data-stensibly-lab="prototype">
   <div class="app">
     <header class="topbar">
       <a class="brand" href="../">
         <span class="mark" aria-hidden="true">S</span>
-        <span class="brand-copy"><strong>Quiet Control</strong><small>Stensibly Labs · fictional fixtures</small></span>
+        <span class="brand-copy"><strong>Quiet Control</strong><small>Stensibly Labs · shared fictional fixtures</small></span>
       </a>
-      <button class="command-button" id="command-button" type="button"><span>Search work or run a command</span><kbd>⌘ K</kbd></button>
-      <div class="top-actions"><span class="fixture">experiment</span><span class="health">GitHub and API healthy</span><a href="../">All variants</a></div>
+      <button class="command-button" id="command-button" type="button"><span>Search work, tasks, or commands</span><kbd>⌘ K</kbd></button>
+      <div class="top-actions"><span class="fixture">experiment</span><span class="fixture" id="connection-health" tabindex="0">Loading connection health</span><a href="../">All variants</a></div>
     </header>
 
     <div class="workspace" id="workspace" data-mobile-detail="false">
       <nav aria-label="Primary views">
         <p class="nav-label">Work</p>
         <ul class="nav-list" id="nav-list"></ul>
-        <p class="nav-note">Keys 1–4 switch views. J/K or arrows move the selected row.</p>
+        <p class="nav-note">Keys 1–4 switch views. J/K or arrows move the selected row. Slash opens shared evaluation tasks.</p>
       </nav>
 
       <section class="list-pane" aria-labelledby="view-title">
         <header class="pane-head"><h1 id="view-title"></h1><p id="view-description"></p></header>
-        <div class="filters"><button type="button" aria-pressed="true">All projects</button><button type="button" aria-pressed="false">Assigned</button><button type="button" aria-pressed="false">Unhealthy</button></div>
+        <div class="filters" aria-label="Work filters"><button type="button" data-filter="all" aria-pressed="true">All work</button><button type="button" data-filter="action" aria-pressed="false">Needs action</button><button type="button" data-filter="unhealthy" aria-pressed="false">Unhealthy</button></div>
         <ul class="work-list" id="work-list" aria-label="Work in selected view"></ul>
       </section>
 
-      <main class="detail-pane" id="detail-pane" tabindex="-1">
+      <main class="detail-pane" id="detail-pane" tabindex="-1" aria-label="Selected work detail">
         <header class="detail-head">
           <div class="detail-title"><button class="mobile-back" id="mobile-back" type="button">← List</button><div id="detail-title"></div></div>
           <div class="detail-actions"><button type="button" data-action="source">Open source</button><button type="button" data-action="evidence">Evidence</button><button class="primary" id="primary-action" type="button">Review decision</button></div>
@@ -41,11 +42,13 @@
   </div>
 
   <dialog id="command-dialog" aria-labelledby="command-title">
-    <h2 class="sr-only" id="command-title">Search and commands</h2>
-    <input id="command-input" type="search" placeholder="Type a command…" autocomplete="off" />
+    <h2 class="sr-only" id="command-title">Search, shared tasks, and commands</h2>
+    <input id="command-input" type="search" aria-label="Search work, shared tasks, and commands" placeholder="Type a command or shared task…" autocomplete="off" />
     <ul class="commands" id="commands"></ul>
   </dialog>
   <p class="sr-only" id="announcer" aria-live="polite"></p>
+  <script src="../fixtures.classic.js"></script>
   <script src="./app.js"></script>
+  <script src="./nav-focus.js"></script>
 </body>
 </html>
