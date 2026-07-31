@@ -57,7 +57,7 @@ const sourceManifest = [
     thesis: "A dense operational view pairing exact object state, alert triage, topology, timeline, and detail.",
     owner: "Cinder",
     status: "prototype",
-    revision: "54f0f684bc52eccec9e069292992d5dbb37cbece",
+    revision: "b00657024e00545ed88603fe1e33ce603c83e17a",
     issue: 610,
     path: "./field-console/",
     support: ["wide", "medium", "narrow", "dark", "keyboard", "reduced-motion", "empty", "degraded", "error"],
