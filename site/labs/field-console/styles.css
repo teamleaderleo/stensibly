@@ -260,9 +260,16 @@ body[data-density="compact"] .row-summary, body[data-density="compact"] .topolog
 
 @media (max-width: 48rem) {
   .topbar { align-items: flex-start; flex-wrap: wrap; }
+  .topbar > * { max-width: 100%; }
+  .brand, .brand-copy { min-width: 0; }
   .top-health { order: 3; width: 100%; }
+  .top-actions { width: 100%; min-width: 0; flex-wrap: wrap; }
+  .top-actions > * { min-width: 0; max-width: 100%; }
+  .top-actions select { flex: 1 1 12rem; }
   .console { display: block; }
   .region { border-right: 0; border-bottom: 1px solid var(--border); }
+  .region-head > div { min-width: 0; }
+  .region-head h1, .region-head h2, .region-head p { overflow-wrap: anywhere; }
   .object-list { max-height: none; }
   .topology-shell { min-height: 34rem; }
   .topology-node { width: clamp(7.25rem, 28%, 9rem); }

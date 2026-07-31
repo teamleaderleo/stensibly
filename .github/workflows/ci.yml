@@ -34,6 +34,7 @@ permissions:
 
 jobs:
   browser-evidence:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -215,7 +216,10 @@ jobs:
           exit 1
       - name: Install committed dependencies once
         run: bun install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
       - name: Run serial full validation
+        id: serial-validation
         run: |
           set +e
           status=0
@@ -235,11 +239,26 @@ jobs:
             fi
           }
           run_gate typecheck typecheck-output.txt bun run typecheck
+          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
           run_gate bun-tests test-output.txt bun run test
+          run_gate browser-tests browser-test-output.txt bun run test:browser
+          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
           run_gate convex-tests convex-test-output.txt bun run test:convex
           run_gate worker-check worker-check-output.txt bun run worker:check
           run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
           exit "${status}"
+      - name: Upload verified frontend browser evidence
+        if: steps.serial-validation.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence-${{ github.sha }}
+          path: |
+            artifacts/playwright-report
+            artifacts/playwright-results
+            browser-test-output.txt
+            browser-artifact-output.txt
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload serial full diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -247,7 +266,10 @@ jobs:
           name: serial-full-diagnostics
           path: |
             typecheck-output.txt
+            browser-typecheck-output.txt
             test-output.txt
+            browser-test-output.txt
+            browser-artifact-output.txt
             convex-test-output.txt
             worker-check-output.txt
             runtime-parity-output.txt
