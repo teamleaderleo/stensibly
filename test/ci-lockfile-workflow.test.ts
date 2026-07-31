@@ -2,6 +2,15 @@ import { describe, expect, test } from "bun:test";
 
 const workflowPath = new URL("../.github/workflows/ci.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
+const testJob = workflow.match(
+  /\n  test:\n([\s\S]*?)\n  runtime-parity:\n/u,
+)?.[1];
+const runtimeParityJob = workflow.match(
+  /\n  runtime-parity:\n([\s\S]*?)\n  serial-full:\n/u,
+)?.[1];
+const serialFullJob = workflow.match(
+  /\n  serial-full:\n([\s\S]*)$/u,
+)?.[1];
 
 describe("canonical CI dependency lock", () => {
   test("generates a bounded replacement artifact before rejecting drift", () => {
@@ -19,8 +28,11 @@ describe("canonical CI dependency lock", () => {
     );
   });
 
-  test("uses the committed lock for both validation jobs", () => {
-    expect(workflow.match(/bun install --frozen-lockfile/g)).toHaveLength(2);
+  test("uses the committed lock once in each validation job", () => {
+    expect(testJob?.match(/bun install --frozen-lockfile/g)).toHaveLength(1);
+    expect(runtimeParityJob?.match(/bun install --frozen-lockfile/g))
+      .toHaveLength(1);
+    expect(serialFullJob?.match(/bun install --frozen-lockfile/g)).toHaveLength(1);
     expect(workflow).not.toContain("contents: write");
     expect(workflow).not.toContain("pull-requests: write");
     expect(workflow).not.toContain("git commit");

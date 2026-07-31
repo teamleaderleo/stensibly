@@ -7,6 +7,15 @@ const workflowPath = new URL(
 const ciWorkflowPath = new URL("../.github/workflows/ci.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
 const ciWorkflow = await Bun.file(ciWorkflowPath).text();
+const ciTestJob = ciWorkflow.match(
+  /\n  test:\n([\s\S]*?)\n  runtime-parity:\n/u,
+)?.[1];
+const ciRuntimeParityJob = ciWorkflow.match(
+  /\n  runtime-parity:\n([\s\S]*?)\n  serial-full:\n/u,
+)?.[1];
+const ciSerialFullJob = ciWorkflow.match(
+  /\n  serial-full:\n([\s\S]*)$/u,
+)?.[1];
 
 describe("fenced Bun lock writer workflow", () => {
   test("runs only for one exact current same-repository pull request", () => {
@@ -76,11 +85,15 @@ describe("fenced Bun lock writer workflow", () => {
     expect(workflow).not.toContain("--force\n");
   });
 
-  test("dispatches canonical CI for the exact generated commit", () => {
+  test("dispatches each canonical CI topology for the exact generated commit", () => {
     expect(ciWorkflow).toContain("workflow_dispatch:");
     expect(ciWorkflow).toContain("expected_sha:");
     expect(ciWorkflow).toContain("required: true");
-    expect(ciWorkflow.match(/Verify manually dispatched revision/g)).toHaveLength(2);
+    expect(ciTestJob?.match(/Verify manually dispatched revision/g)).toHaveLength(1);
+    expect(ciRuntimeParityJob?.match(/Verify manually dispatched revision/g))
+      .toHaveLength(1);
+    expect(ciSerialFullJob?.match(/Verify manually dispatched revision/g))
+      .toHaveLength(1);
     expect(ciWorkflow).toContain(
       '"${GITHUB_SHA}" != "${EXPECTED_SHA}"',
     );
