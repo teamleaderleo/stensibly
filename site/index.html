@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/hosted-session.css" />
     <link rel="stylesheet" href="/login-scrapbook.css" />
     <link rel="stylesheet" href="/calm-root.css" />
+    <link rel="stylesheet" href="/root-mode-status.css" />
   </head>
   <body>
     <main class="shell">
@@ -21,6 +22,10 @@
         </a>
         <a class="github" href="https://github.com/teamleaderleo/stensibly">source ↗</a>
       </header>
+
+      <section class="root-connecting-status" id="root-connecting-status" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
+        <span>Opening project desk…</span>
+      </section>
 
       <section class="hero hero-login">
         <div class="hero-copy">
@@ -236,6 +241,7 @@
     </dialog>
     <p class="sr-only" id="create-item-announcer" aria-live="polite"></p>
 
+    <script src="/root-mode-status-bridge.js" type="module"></script>
     <script src="/hosted-session-bridge.js" type="module"></script>
     <script src="/app.js" type="module"></script>
   </body>

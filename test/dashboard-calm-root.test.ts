@@ -15,24 +15,29 @@ function sliceBetween(source: string, start: string, end: string): string {
 }
 
 describe("calm production dashboard root", () => {
-  test("loads the calm typography layer after existing root styles", () => {
+  test("loads the calm presentation layer after existing root styles", () => {
     const baseIndex = html.indexOf('href="/styles.css"');
     const loginIndex = html.indexOf('href="/login-scrapbook.css"');
     const calmIndex = html.indexOf('href="/calm-root.css"');
+    const statusIndex = html.indexOf('href="/root-mode-status.css"');
 
     expect(baseIndex).toBeGreaterThanOrEqual(0);
     expect(loginIndex).toBeGreaterThan(baseIndex);
     expect(calmIndex).toBeGreaterThan(loginIndex);
+    expect(statusIndex).toBeGreaterThan(calmIndex);
     expect(html.match(/calm-root\.css/g)).toHaveLength(1);
+    expect(html.match(/root-mode-status\.css/g)).toHaveLength(1);
   });
 
-  test("uses local calm display and interface font stacks", () => {
+  test("uses one local neutral interface and display stack", () => {
     expect(calm).toContain('--font-interface: Aptos, "Segoe UI Variable Text", "Segoe UI"');
-    expect(calm).toContain('--font-display: "Iowan Old Style", "Palatino Linotype"');
+    expect(calm).toContain("--font-display: var(--font-interface)");
     expect(calm).toContain("font-family: var(--font-display)");
     expect(calm).toContain("font-family: var(--font-interface)");
     expect(calm).toContain("font-weight: 400");
-    expect(calm).toContain("font-weight: 500");
+    expect(calm).toContain("font-weight: 600");
+    expect(calm).not.toContain("Iowan Old Style");
+    expect(calm).not.toContain("Palatino Linotype");
     expect(calm).not.toContain("@import");
     expect(calm).not.toContain("url(");
     expect(calm).not.toMatch(/(?:linear|radial|conic)-gradient\s*\(/i);
@@ -75,8 +80,12 @@ describe("calm production dashboard root", () => {
     );
     expect(html).toContain('<button id="create-item" type="button" hidden>');
     expect(html).toContain('<form class="actor-form" id="actor-form" hidden>');
-    expect(html.match(/<script /g)).toHaveLength(2);
+    expect(html.match(/<script /g)).toHaveLength(3);
+    expect(html).toContain('<script src="/root-mode-status-bridge.js" type="module"></script>');
     expect(html).toContain('<script src="/hosted-session-bridge.js" type="module"></script>');
     expect(html).toContain('<script src="/app.js" type="module"></script>');
+    expect(html.indexOf('/root-mode-status-bridge.js')).toBeLessThan(
+      html.indexOf('/hosted-session-bridge.js'),
+    );
   });
 });

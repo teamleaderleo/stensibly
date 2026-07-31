@@ -1,9 +1,77 @@
 :root {
   --font-interface: Aptos, "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif;
+  --font-display: var(--font-interface);
   --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --bg: #f5f5f4;
+  --paper: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f1f1ef;
+  --input: #ffffff;
+  --line: #e2e2df;
+  --line-strong: #c9c9c5;
+  --muted: #6d6d68;
+  --text: #181817;
+  --ink: #181817;
+  --accent: #8f8998;
+  --accent-strong: #625d69;
+  --accent-soft: #f0eef2;
+  --ready: #eef0f1;
+  --ready-ink: #474b4e;
+  --active: #f0efec;
+  --active-ink: #514e47;
+  --blocked: #f2eeee;
+  --blocked-ink: #604c49;
+  --done: #edf0ee;
+  --done-ink: #465148;
+  --danger: #7a3934;
+  --danger-soft: #f8efee;
+  --shadow: 0 0 0;
+  --focus: #625d69;
   font-family: var(--font-interface);
   font-weight: 400;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f0f10;
+    --paper: #151516;
+    --panel: #151516;
+    --panel-2: #1d1d1f;
+    --input: #19191a;
+    --line: #2d2d30;
+    --line-strong: #49494d;
+    --muted: #a6a6a1;
+    --text: #f2f2ef;
+    --ink: #f2f2ef;
+    --accent: #9b95a3;
+    --accent-strong: #c5bfcc;
+    --accent-soft: #242229;
+    --ready: #222529;
+    --ready-ink: #d3d6d8;
+    --active: #282722;
+    --active-ink: #ddd9cd;
+    --blocked: #2a2424;
+    --blocked-ink: #e2cfcc;
+    --done: #222724;
+    --done-ink: #d0ddd3;
+    --danger: #e1a8a2;
+    --danger-soft: #2b2020;
+    --focus: #c5bfcc;
+  }
+}
+
+@keyframes root-reveal-fallback {
+  to { visibility: visible; }
+}
+
+html:not([data-root-ready="true"]) body {
+  visibility: hidden;
+  animation: root-reveal-fallback 0s 2s forwards;
+}
+
+html[data-root-ready="true"] body {
+  visibility: visible;
+  animation: none;
 }
 
 body,
@@ -22,13 +90,13 @@ h2,
 .create-item-head h2,
 .item-detail-head h2 {
   font-family: var(--font-display);
-  font-weight: 500;
-  letter-spacing: -.035em;
+  font-weight: 600;
+  letter-spacing: -.045em;
 }
 
 .hero-login h1 {
   line-height: .98;
-  letter-spacing: -.045em;
+  letter-spacing: -.055em;
 }
 
 .brand strong,
@@ -67,6 +135,179 @@ button,
 .card-top,
 .card-meta {
   font-family: var(--font-code);
+}
+
+.topbar {
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: .85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.mark {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-color: var(--line-strong);
+  border-radius: .6rem;
+  color: var(--text);
+  background: var(--accent-soft);
+  box-shadow: none;
+  transform: none;
+}
+
+.github,
+.frontend-labs-link {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.frontend-labs-link {
+  margin-left: auto;
+}
+
+.frontend-labs-link::before {
+  content: "preview · ";
+  color: var(--accent-strong);
+}
+
+.connection,
+.session-context,
+.metrics article,
+.agents-panel,
+.column,
+.board-filter-panel,
+.card,
+.connected-copy,
+.principal-summary > div,
+.actor-summary,
+.actor-form,
+.detail-dependency,
+.detail-reservation,
+.detail-run,
+.detail-event,
+.detail-artifact {
+  border-color: var(--line);
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.connection::before {
+  display: none;
+}
+
+input,
+select,
+textarea,
+button {
+  border-radius: .6rem;
+  box-shadow: none;
+}
+
+button {
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+button:active:not(:disabled),
+.card:hover {
+  transform: none;
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+
+.connection-form-actions button:first-child,
+.actor-form-actions button:first-child,
+.create-item-actions button:first-child {
+  color: var(--paper);
+  border-color: var(--text);
+  background: var(--text);
+  box-shadow: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .connection-form-actions button:first-child,
+  .actor-form-actions button:first-child,
+  .create-item-actions button:first-child {
+    color: var(--bg);
+  }
+}
+
+.status-ready,
+.status-active,
+.status-blocked,
+.status-done {
+  color: var(--text);
+}
+
+html[data-app-mode="connecting"] .hero-login,
+html[data-app-mode="connecting"] .dashboard,
+html[data-app-mode="connecting"] .disconnected {
+  display: none !important;
+}
+
+html[data-app-mode="connecting"] .shell::after {
+  content: "Opening project desk…";
+  display: grid;
+  place-items: center;
+  min-height: min(30rem, calc(100vh - 8rem));
+  border: 1px solid var(--line);
+  border-radius: .9rem;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: .82rem;
+  letter-spacing: .01em;
+}
+
+html[data-app-mode="connected"] .hero-copy,
+html[data-app-mode="degraded"] .hero-copy {
+  display: none;
+}
+
+html[data-app-mode="connected"] .hero-login,
+html[data-app-mode="degraded"] .hero-login {
+  display: block;
+  min-height: 0;
+  margin: 0 0 .85rem;
+}
+
+html[data-app-mode="connected"] .login-card,
+html[data-app-mode="degraded"] .login-card {
+  max-width: none;
+  padding: .75rem .85rem;
+  border-radius: .75rem;
+}
+
+html[data-app-mode="connected"] .login-card .connection-head,
+html[data-app-mode="degraded"] .login-card .connection-head {
+  padding: 0 0 .65rem;
+}
+
+html[data-app-mode="connected"] .connected-summary,
+html[data-app-mode="degraded"] .connected-summary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .65rem;
+  margin-top: .65rem;
+}
+
+html[data-app-mode="connected"] .connected-copy,
+html[data-app-mode="degraded"] .connected-copy {
+  padding: .6rem .7rem;
+  border-radius: .6rem;
+  background: var(--panel-2);
+}
+
+html[data-app-mode="connected"] .connected-actions,
+html[data-app-mode="degraded"] .connected-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+html[data-app-mode="connected"] .login-card .connection-note {
+  display: none;
 }
 
 .session-context {
@@ -143,6 +384,22 @@ button,
   outline-offset: -2px;
 }
 
+@media (max-width: 760px) {
+  .frontend-labs-link::before {
+    content: "";
+  }
+
+  html[data-app-mode="connected"] .connected-summary,
+  html[data-app-mode="degraded"] .connected-summary {
+    grid-template-columns: 1fr;
+  }
+
+  html[data-app-mode="connected"] .connected-actions,
+  html[data-app-mode="degraded"] .connected-actions {
+    justify-content: stretch;
+  }
+}
+
 @media (max-width: 560px) {
   .session-context > summary {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -152,5 +409,16 @@ button,
     grid-column: 1 / -1;
     min-width: 0;
     text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
