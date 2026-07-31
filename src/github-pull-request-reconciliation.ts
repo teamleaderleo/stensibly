@@ -162,6 +162,7 @@ const providerRequestPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/u;
 const boundedIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,239}$/u;
 const unsafeTextPattern =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const realisticCredentialPattern = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/u;
 
 export function compileGitHubPullRequestReconciliationV1(
   value: unknown,
@@ -196,8 +197,9 @@ export function compileGitHubPullRequestReconciliationV1(
 
   if (
     Date.parse(provider.updatedAt) > Date.parse(reconciledAt)
-    || (observation !== null
-      && Date.parse(observation.receivedAt) > Date.parse(reconciledAt))
+  || (observation !== null
+    && (Date.parse(observation.receivedAt) > Date.parse(reconciledAt)
+      || Date.parse(observation.sourceTime) > Date.parse(reconciledAt)))
   ) {
     throw new RangeError(
       "GitHub pull request evidence follows the reconciliation time",
@@ -406,7 +408,7 @@ function parseProviderRead(value: unknown): ParsedProviderRead {
   );
   const providerRequestId = receipt.providerRequestId === null
     ? null
-    : pattern(
+    : credentialSafePattern(
       receipt.providerRequestId,
       providerRequestPattern,
       "GitHub provider request ID",
@@ -705,7 +707,7 @@ function fingerprint(value: unknown, label: string): string {
 }
 
 function boundedIdentity(value: unknown, label: string): string {
-  return pattern(value, boundedIdentityPattern, label);
+  return credentialSafePattern(value, boundedIdentityPattern, label);
 }
 
 function nullableIdentity(value: unknown, label: string): string | null {
@@ -739,6 +741,18 @@ function pattern(
     throw new RangeError(`${label} is invalid`);
   }
   return value;
+}
+
+function credentialSafePattern(
+  value: unknown,
+  expected: RegExp,
+  label: string,
+): string {
+  const admitted = pattern(value, expected, label);
+  if (realisticCredentialPattern.test(admitted)) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return admitted;
 }
 
 function closed<const T extends readonly string[]>(

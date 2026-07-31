@@ -234,6 +234,45 @@ describe("GitHub pull request reconciliation", () => {
     }, () => new Date("2026-08-01T00:10:01.000Z")))
       .toThrow("trusted clock");
   });
+
+  test("rejects credential-shaped retained provider identities", () => {
+    const cases = [
+      { field: "bindingId" as const, value: `github_pat_${"A".repeat(82)}` },
+      { field: "providerRequestId" as const, value: `ghp_${"A".repeat(36)}` },
+    ];
+    for (const { field, value } of cases) {
+      const receipt = providerRead();
+      expect(() => compile({
+        observation: observation(),
+        providerRead: { ...receipt, [field]: value },
+      })).toThrow();
+    }
+
+    const benign = providerRead();
+    const result = compile({
+      observation: observation(),
+      providerRead: {
+        ...benign,
+        bindingId: "task-sk-review",
+        providerRequestId: "PRINFO:sk-review",
+      },
+    });
+    expect(result.providerBindingId).toBe("task-sk-review");
+    expect(result.providerRequestId).toBe("PRINFO:sk-review");
+  });
+
+  test("rejects provider source evidence after the trusted reconciliation time", () => {
+    expect(() => compile({
+      observation: observation({
+        updatedAt: "2026-08-01T00:11:00.000Z",
+        receivedAt: "2026-08-01T00:09:00.000Z",
+      }),
+      providerRead: providerRead({
+        updatedAt: "2026-08-01T00:07:00.000Z",
+      }),
+    })).toThrow("evidence follows the reconciliation time");
+  });
+
 });
 
 function compile(input: {
