@@ -285,8 +285,12 @@ function snapshotCatalogueArray(
     throw new RangeError(`${label} array contains a symbol field`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const lengthDescriptor = descriptors.length;
-  if (!lengthDescriptor || !("value" in lengthDescriptor)) {
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    !lengthDescriptor
+    || !("value" in lengthDescriptor)
+    || typeof lengthDescriptor.value !== "number"
+  ) {
     throw new RangeError(`${label} array length is invalid`);
   }
   const length = lengthDescriptor.value;
