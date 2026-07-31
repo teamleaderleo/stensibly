@@ -149,9 +149,11 @@ describe("Signal Atlas frontend lab", () => {
     });
 
     expect(listenerOptions).toEqual({ capture: true });
+    const registeredClickListener = clickListener as ((event: { target: FakeElement }) => void) | null;
+    if (!registeredClickListener) throw new Error("Signal Atlas map listener was not registered");
     const oldNode = new FakeElement("deploy-amber");
     nodes = [oldNode];
-    clickListener?.({ target: oldNode });
+    registeredClickListener({ target: oldNode });
     expect(animationFrames).toHaveLength(1);
 
     const hiddenDuplicate = new FakeElement("deploy-amber", true);
