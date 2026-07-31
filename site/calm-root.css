@@ -1,0 +1,156 @@
+:root {
+  --font-interface: Aptos, "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif;
+  --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-interface);
+  font-weight: 400;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-interface);
+  font-weight: 400;
+}
+
+h1,
+h2,
+.hero-login h1,
+.dashboard-head h2,
+.create-item-head h2,
+.item-detail-head h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -.035em;
+}
+
+.hero-login h1 {
+  line-height: .98;
+  letter-spacing: -.045em;
+}
+
+.brand strong,
+.connection-head strong,
+.section-head h3,
+.column h3,
+.card h4,
+.detail-section > h3,
+.detail-copy h4,
+.session-context-summary-copy strong {
+  font-weight: 600;
+}
+
+.eyebrow,
+.hero-login .eyebrow,
+label,
+button,
+.connection button,
+.hosted-sign-in button,
+.metrics span,
+.disconnected p {
+  font-weight: 600;
+}
+
+.mark,
+.connection-head span,
+.section-head span,
+.item-detail-toolbar span,
+.create-item-actions span,
+.connected-copy strong,
+.principal-summary strong,
+.actor-summary strong,
+.metrics strong,
+.agent,
+.count,
+.card-top,
+.card-meta {
+  font-family: var(--font-code);
+}
+
+.session-context {
+  padding: 0;
+  overflow: clip;
+}
+
+.session-context > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: .8rem;
+  min-height: 3.6rem;
+  padding: .8rem 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.session-context > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-context > summary::after {
+  content: "show";
+  min-width: 2.8rem;
+  color: var(--muted);
+  font: 600 .68rem var(--font-interface);
+  text-align: right;
+}
+
+.session-context[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.session-context[open] > summary::after {
+  content: "hide";
+}
+
+.session-context-summary-copy {
+  display: grid;
+  gap: .15rem;
+  min-width: 0;
+}
+
+.session-context-summary-copy .eyebrow {
+  margin: 0;
+}
+
+.session-context-summary-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-context > .principal-summary,
+.session-context > .actor-summary,
+.session-context > .actor-form,
+.session-context > .actor-unavailable,
+.session-context > .session-context-error,
+.session-context > .session-context-note {
+  margin-inline: 1rem;
+}
+
+.session-context > .principal-summary {
+  margin-top: 1rem;
+}
+
+.session-context > .session-context-note {
+  margin-bottom: 1rem;
+}
+
+.session-context > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+@media (max-width: 560px) {
+  .session-context > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .session-context > summary::after {
+    grid-column: 1 / -1;
+    min-width: 0;
+    text-align: left;
+  }
+}

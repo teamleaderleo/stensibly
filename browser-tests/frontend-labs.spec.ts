@@ -1,15 +1,36 @@
+import { execFileSync } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
-import {
-  createFrontendLabEvidencePlan,
-  type FrontendLabEvidenceCase,
-} from "../site/labs/evidence.js";
-import { frontendLabFixture, frontendLabTasks } from "../site/labs/fixtures.js";
-import { frontendLabManifest } from "../site/labs/manifest.js";
+import type { FrontendLabEvidenceCase } from "../site/labs/evidence.js";
+import type { FrontendLabFixture, FrontendLabTask } from "../site/labs/fixtures.js";
+import type { FrontendLabVariant } from "../site/labs/manifest.js";
+
+interface FrontendLabEvidencePlan {
+  readonly version: 2;
+  readonly fixtureId: string;
+  readonly fixtureRevision: string;
+  readonly planRevision: string;
+  readonly cases: readonly FrontendLabEvidenceCase[];
+}
+
+interface FrontendLabPlannerSnapshot {
+  readonly evidencePlan: FrontendLabEvidencePlan;
+  readonly frontendLabFixture: FrontendLabFixture;
+  readonly frontendLabTasks: readonly FrontendLabTask[];
+  readonly frontendLabManifest: readonly FrontendLabVariant[];
+}
 
 const allowedOrigin = "http://127.0.0.1:4173";
 const maximumAttachmentStemLength = 180;
-const evidencePlan = createFrontendLabEvidencePlan();
+const repositoryRoot = process.cwd();
+const {
+  evidencePlan,
+  frontendLabFixture,
+  frontendLabTasks,
+  frontendLabManifest,
+} = loadPlannerSnapshot(repositoryRoot);
 const tasksById = new Map(frontendLabTasks.map((task) => [task.id, task]));
 const variantsById = new Map(frontendLabManifest.map((variant) => [variant.id, variant]));
 const canonicalRoutes = canonicalRouteCases();
@@ -141,13 +162,17 @@ test("executes every shared task through canonical Quiet Control task cases", as
 
     await selectSharedTask(page, task.prompt);
     const expectedIds = evidenceCase.expectedIdentity.split(",");
-    const expectedConnections = frontendLabFixture.connections.filter((connection) => expectedIds.includes(connection.id));
+    const expectedConnections = frontendLabFixture.connections.filter((connection) =>
+      expectedIds.includes(requiredRecordString(connection, "id", "connection identity"))
+    );
 
     if (expectedConnections.length === expectedIds.length) {
       const connectionHealth = page.locator("#connection-health");
       await expect(connectionHealth).toBeFocused();
       for (const connection of expectedConnections) {
-        await expect(connectionHealth).toContainText(`${connection.label} ${connection.state}`);
+        const label = requiredRecordString(connection, "label", "connection label");
+        const state = requiredRecordString(connection, "state", "connection state");
+        await expect(connectionHealth).toContainText(`${label} ${state}`);
       }
     } else {
       const target = recordByIdentity(page, requiredFirst(expectedIds, `${task.id} success identities`));
@@ -155,7 +180,10 @@ test("executes every shared task through canonical Quiet Control task cases", as
       await expect(target).toBeFocused();
       if (task.id === "worker-health") {
         for (const worker of frontendLabFixture.workers) {
-          await expect(recordByIdentity(page, worker.id)).toBeVisible();
+          await expect(recordByIdentity(
+            page,
+            requiredRecordString(worker, "id", "worker identity"),
+          )).toBeVisible();
         }
       }
     }
@@ -179,7 +207,10 @@ test("preserves Quiet Control keyboard movement and exact command return focus",
 
   const unhealthyWorker = frontendLabFixture.workers.find((worker) => worker.state === "unhealthy");
   if (!unhealthyWorker) throw new Error("Shared fixture requires one unhealthy worker");
-  const unhealthyRecord = recordByIdentity(page, unhealthyWorker.id);
+  const unhealthyRecord = recordByIdentity(
+    page,
+    requiredRecordString(unhealthyWorker, "id", "unhealthy worker identity"),
+  );
   await expect(unhealthyRecord).toHaveAttribute("aria-current", "true");
   await expect(unhealthyRecord).toBeFocused();
 
@@ -195,7 +226,10 @@ test("preserves Quiet Control keyboard movement and exact command return focus",
   await expect(page.getByRole("heading", { name: "Recover" })).toBeVisible();
   const ambiguousOperation = frontendLabFixture.operations.find((operation) => operation.state === "ambiguous");
   if (!ambiguousOperation) throw new Error("Shared fixture requires one ambiguous operation");
-  await expect(recordByIdentity(page, ambiguousOperation.id)).toBeFocused();
+  await expect(recordByIdentity(
+    page,
+    requiredRecordString(ambiguousOperation, "id", "ambiguous operation identity"),
+  )).toBeFocused();
 
   await attachEvidenceCase(page, testInfo, evidenceCase);
   await evidence.assertClean();
@@ -216,7 +250,9 @@ test("preserves canonical task identity through narrow list and detail navigatio
 
   const workspace = page.locator("#workspace");
   await expect(workspace).toHaveAttribute("data-mobile-detail", "true");
-  await expect(page.getByRole("heading", { name: frontendLabFixture.decision.title })).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: requiredRecordString(frontendLabFixture.decision, "title", "decision title"),
+  })).toBeVisible();
   const back = page.getByRole("button", { name: "← List" });
   await expect(back).toBeVisible();
   await assertNoHorizontalOverflow(page);
@@ -229,6 +265,116 @@ test("preserves canonical task identity through narrow list and detail navigatio
 
   await evidence.assertClean();
 });
+
+function loadPlannerSnapshot(root: string): FrontendLabPlannerSnapshot {
+  const evidenceUrl = pathToFileURL(resolve(root, "site", "labs", "evidence.js")).href;
+  const fixturesUrl = pathToFileURL(resolve(root, "site", "labs", "fixtures.js")).href;
+  const manifestUrl = pathToFileURL(resolve(root, "site", "labs", "manifest.js")).href;
+  const script = `
+const [{ createFrontendLabEvidencePlan }, fixtures, manifest] = await Promise.all([
+  import(${JSON.stringify(evidenceUrl)}),
+  import(${JSON.stringify(fixturesUrl)}),
+  import(${JSON.stringify(manifestUrl)}),
+]);
+process.stdout.write(JSON.stringify({
+  evidencePlan: createFrontendLabEvidencePlan(),
+  frontendLabFixture: fixtures.frontendLabFixture,
+  frontendLabTasks: fixtures.frontendLabTasks,
+  frontendLabManifest: manifest.frontendLabManifest,
+}));
+`;
+
+  let serialized: string;
+  try {
+    serialized = execFileSync("bun", ["--eval", script], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "" },
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 15_000,
+    });
+  } catch {
+    throw new Error("Canonical frontend evidence modules failed to produce browser planner data");
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized) as unknown;
+  } catch {
+    throw new Error("Canonical frontend evidence modules produced invalid browser planner data");
+  }
+  return admitPlannerSnapshot(value);
+}
+
+function admitPlannerSnapshot(value: unknown): FrontendLabPlannerSnapshot {
+  const snapshot = exactRecord(value, "Browser planner snapshot");
+  requireExactKeys(snapshot, [
+    "evidencePlan",
+    "frontendLabFixture",
+    "frontendLabManifest",
+    "frontendLabTasks",
+  ], "Browser planner snapshot");
+
+  const plan = exactRecord(snapshot.evidencePlan, "Browser evidence plan");
+  if (
+    plan.version !== 2
+    || typeof plan.fixtureId !== "string"
+    || typeof plan.fixtureRevision !== "string"
+    || typeof plan.planRevision !== "string"
+    || !Array.isArray(plan.cases)
+    || plan.cases.length === 0
+  ) {
+    throw new Error("Browser evidence plan has an invalid public envelope");
+  }
+  exactRecord(snapshot.frontendLabFixture, "Browser fixture");
+  if (!Array.isArray(snapshot.frontendLabTasks) || snapshot.frontendLabTasks.length === 0) {
+    throw new Error("Browser task catalogue has an invalid public envelope");
+  }
+  if (!Array.isArray(snapshot.frontendLabManifest) || snapshot.frontendLabManifest.length === 0) {
+    throw new Error("Browser variant catalogue has an invalid public envelope");
+  }
+
+  return freezeJson(value as FrontendLabPlannerSnapshot);
+}
+
+function exactRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireExactKeys(
+  record: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+) {
+  const actual = Object.keys(record).sort();
+  const canonical = [...expected].sort();
+  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
+    throw new Error(`${label} must use exact public fields`);
+  }
+}
+
+function freezeJson<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) freezeJson(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function requiredRecordString(
+  record: Readonly<Record<string, unknown>>,
+  key: string,
+  label: string,
+): string {
+  const value = record[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
+}
 
 function canonicalRouteCases(): FrontendLabEvidenceCase[] {
   return frontendLabManifest.map((variant) => requiredRouteCase(

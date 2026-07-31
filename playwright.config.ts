@@ -10,6 +10,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   forbidOnly: Boolean(process.env.CI),
+  captureGitInfo: { commit: false, diff: false },
   timeout: 30_000,
   expect: { timeout: 5_000 },
   reporter: [
