@@ -46,7 +46,7 @@ test("copies admitted commit-status chunks before producer mutation", async () =
     credentialRef: "secret://github/app-private-key",
     tokenProvider: new StaticTokenProvider(),
     apiBaseUrl: "https://api.github.test",
-    fetch: (async (input) => {
+    fetch: (async (input: RequestInfo | URL) => {
       setTimeout(() => {
         first.fill(0x78);
         streamController!.enqueue(second);
