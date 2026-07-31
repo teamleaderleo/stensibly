@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  CI_CANONICAL_COMMAND_IDS_V1,
+  CI_VALIDATION_PROFILE_COMMANDS_V1,
+} from "../src/ci-queue-receipt.ts";
 
 const workflow = await Bun.file(
   new URL("../.github/workflows/ci.yml", import.meta.url),
@@ -19,6 +23,17 @@ const runtimeParityJob = workflow.match(
 const serialFullJob = workflow.match(
   /\n  serial-full:\n([\s\S]*)$/u,
 )?.[1];
+const commandMarkers = {
+  lockfile: "bun run lockfile:check",
+  typecheck: "bun run typecheck",
+  "bun-tests": "bun run test",
+  "convex-tests": "bun run test:convex",
+  "worker-check": "bun run worker:check",
+  "runtime-parity": "bun run test:runtime-parity",
+} as const satisfies Record<
+  typeof CI_CANONICAL_COMMAND_IDS_V1[number],
+  string
+>;
 
 describe("canonical CI scheduling", () => {
   test("runs feature revisions once through pull requests", () => {
@@ -65,6 +80,18 @@ describe("canonical CI scheduling", () => {
     );
   });
 
+  test("uses one canonical gate contract for both full profiles", () => {
+    expect(CI_VALIDATION_PROFILE_COMMANDS_V1.full_parallel)
+      .toBe(CI_CANONICAL_COMMAND_IDS_V1);
+    expect(CI_VALIDATION_PROFILE_COMMANDS_V1.serial_full)
+      .toBe(CI_CANONICAL_COMMAND_IDS_V1);
+    const parallelTopology = `${testJob ?? ""}\n${runtimeParityJob ?? ""}`;
+    for (const commandId of CI_CANONICAL_COMMAND_IDS_V1) {
+      expect(parallelTopology).toContain(commandMarkers[commandId]);
+      expect(serialFullJob).toContain(commandMarkers[commandId]);
+    }
+  });
+
   test("runs the opt-in serial full profile on one hosted runner", () => {
     expect(serialFullJob).toBeDefined();
     expect(serialFullJob).toContain(
@@ -74,12 +101,6 @@ describe("canonical CI scheduling", () => {
     expect(serialFullJob?.match(/oven-sh\/setup-bun@v2/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/actions\/setup-node@v6/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/bun install --frozen-lockfile/gu)).toHaveLength(1);
-    expect(serialFullJob).toContain("bun run lockfile:check");
-    expect(serialFullJob).toContain("bun run typecheck");
-    expect(serialFullJob).toContain("bun run test");
-    expect(serialFullJob).toContain("bun run test:convex");
-    expect(serialFullJob).toContain("bun run worker:check");
-    expect(serialFullJob).toContain("bun run test:runtime-parity");
     expect(serialFullJob).toContain('pipeline_status=("${PIPESTATUS[@]}")');
     expect(serialFullJob).toContain('"${pipeline_status[0]}" -ne 0');
     expect(serialFullJob).toContain('"${pipeline_status[1]}" -ne 0');
