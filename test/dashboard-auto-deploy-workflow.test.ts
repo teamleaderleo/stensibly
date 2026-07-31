@@ -4,52 +4,37 @@ const workflow = await Bun.file(
   new URL("../.github/workflows/auto-deploy-dashboard.yml", import.meta.url),
 ).text();
 
-describe("automatic dashboard production dispatch", () => {
-  test("reacts immediately to deployable main changes", () => {
-    expect(workflow).toContain("push:");
-    expect(workflow).toContain("branches:");
-    expect(workflow).toContain("- main");
+describe("dashboard release-window workflow", () => {
+  test("runs every two hours and retains an explicit manual queue", () => {
+    expect(workflow).toContain("schedule:");
+    expect(workflow).toContain('cron: "17 */2 * * *"');
     expect(workflow).toContain("workflow_dispatch:");
-    expect(workflow).not.toContain("schedule:");
-
-    for (const path of [
-      '"site/**"',
-      '"src/dashboard-assets.ts"',
-      '"src/dashboard-deployment-diagnostics.ts"',
-      '"src/verify-dashboard.ts"',
-      '"package.json"',
-      '"bun.lock"',
-      '".github/workflows/deploy-dashboard.yml"',
-      '".github/workflows/auto-deploy-dashboard.yml"',
-    ]) {
-      expect(workflow).toContain(path);
-    }
+    expect(workflow).toContain("force:");
+    expect(workflow).toContain("type: boolean");
+    expect(workflow).not.toContain("push:");
+    expect(workflow).not.toContain("pull_request:");
   });
 
-  test("has only the authority needed to dispatch the guarded workflow", () => {
+  test("uses only repository reads and guarded workflow dispatch authority", () => {
     expect(workflow).toContain("actions: write");
     expect(workflow).toContain("contents: read");
+    expect(workflow).not.toContain("contents: write");
     expect(workflow).not.toContain("secrets.");
     expect(workflow).not.toContain("VERCEL_TOKEN");
-    expect(workflow).not.toContain("actions/checkout");
-    expect(workflow).not.toContain("persist-credentials");
+    expect(workflow).toContain("actions/checkout@v6");
+    expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain("oven-sh/setup-bun@v2");
   });
 
-  test("does not delay or drop a relevant main push", () => {
-    expect(workflow).not.toContain("MAX_AUTO_DEPLOYS_PER_24H");
-    expect(workflow).not.toContain("MIN_SECONDS_BETWEEN_AUTO_DEPLOYS");
-    expect(workflow).not.toContain("24 hours ago");
-    expect(workflow).not.toContain("release window");
-    expect(workflow).not.toContain("cooldown");
-    expect(workflow).not.toContain("active_count");
-    expect(workflow).not.toContain("deployment coalesced");
-  });
-
-  test("dispatches the guarded main production target", () => {
-    expect(workflow).toContain("actions/workflows/deploy-dashboard.yml/dispatches");
-    expect(workflow).toContain("--data '{\"ref\":\"main\"}'");
-    expect(workflow).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
-    expect(workflow).toContain("X-GitHub-Api-Version: 2022-11-28");
+  test("serializes coordinator decisions and delegates production effects", () => {
+    expect(workflow).toContain("group: stensibly-dashboard-auto-dispatch");
     expect(workflow).toContain("cancel-in-progress: true");
+    expect(workflow).toContain("timeout-minutes: 5");
+    expect(workflow).toContain("bun scripts/dashboard-release-window.ts");
+    expect(workflow).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    expect(workflow).toContain("FORCE_DASHBOARD_RELEASE: ${{ inputs.force || false }}");
+    expect(workflow).not.toContain("vercel");
+    expect(workflow).not.toContain("curl");
+    expect(workflow).not.toContain("alias set");
   });
 });
