@@ -116,6 +116,8 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     const agent = (plan.configuration.agent as Record<string, { permission: Record<string, unknown> }>)["stensibly-deepseek-observe"]!;
     expect(agent.permission.read).toBe("allow");
     expect(agent.permission.edit).toBeUndefined();
+    expect(agent.permission.lsp).toBeUndefined();
+    expect(agent.permission.skill).toBeUndefined();
     expect(agent.permission.bash).toBeUndefined();
     expect(agent.permission.webfetch).toBe("deny");
     expect(agent.permission.external_directory).toBe("deny");
@@ -125,6 +127,8 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(plan.configuration.mcp).toEqual({});
     expect(plan.budget.enforcedByHarness).toBe(false);
     expect(plan.budget.liveExecutionDefault).toBe("disabled");
+    expect(plan.liveExecutionEligible).toBe(true);
+    expect(plan.externalSandboxRequired).toBe(false);
     expect(Object.values(plan.authority)).toEqual([false, false, false, false, false, false]);
     expect(Object.isFrozen(plan)).toBe(true);
   });
@@ -151,6 +155,8 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(plan.authority.githubWrite).toBe(false);
     expect(plan.authority.merge).toBe(false);
     expect(plan.authority.deployment).toBe(false);
+    expect(plan.liveExecutionEligible).toBe(false);
+    expect(plan.externalSandboxRequired).toBe(true);
   });
 
   test("fails closed on unsafe identities, paths, prompts, and limits", () => {
@@ -187,6 +193,7 @@ describe("DeepSeek V4 Flash harness campaign", () => {
     expect(plannerSource).toContain("STENSIBLY_DEEPSEEK_LIVE");
     expect(plannerSource).toContain("STENSIBLY_DEEPSEEK_ACCEPT_OPENCODE_BUDGET_GAP");
     expect(plannerSource).toContain("rejectProjectOverrides");
+    expect(plannerSource).toContain("permits observe episodes only");
     expect(plannerSource).toContain("did not expose exact model selector");
     expect(inventorySource).toContain('Bun.spawnSync(["git", "-C", root, "ls-files", "-z"]');
     expect(inventorySource).toContain("metadata.isSymbolicLink()");
