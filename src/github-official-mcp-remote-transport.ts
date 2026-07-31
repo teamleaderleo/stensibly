@@ -221,12 +221,22 @@ function admittedCallInput(value: unknown): GitHubOfficialMcpRemoteCallInput {
   );
   return Object.freeze({
     mapping: record.mapping as GitHubOfficialMcpMappedRead,
-    credentialRef: exactPrintableText(
-      record.credentialRef,
-      "Official GitHub MCP credential reference",
-      240,
-    ),
+    credentialRef: admittedCredentialReference(record.credentialRef),
   });
+}
+
+function admittedCredentialReference(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value.length > 240
+    || !/^(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}$/.test(value)
+  ) {
+    throw remoteError(
+      "github_official_mcp_credential_unavailable",
+      "Official GitHub MCP credential reference is invalid",
+    );
+  }
+  return value;
 }
 
 function admittedEndpoint(value: unknown): URL {
