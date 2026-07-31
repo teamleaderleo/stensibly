@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ConvexGitHubRepositoryObservationService,
   GitHubRepositoryObservationConflictError,
+  GitHubRepositoryObservationStorageError,
 } from "../src/github-repository-observation-convex.ts";
 import { mapGitHubRepositoryWebhook } from "../src/github-repository-observation.ts";
 import type { HostedGitHubRepositoryObservationInput } from "../src/hosted-provider-capacity-api.ts";
@@ -49,7 +50,7 @@ describe("Convex GitHub repository observation service", () => {
     expect(observationJson).toContain(observation.semanticFingerprint);
   });
 
-  test("rejects accessors without invoking them or calling Convex", async () => {
+  test("rejects input accessors without invoking them or calling Convex", async () => {
     const observation = issueObservation();
     let getterCalls = 0;
     let mutationCalls = 0;
@@ -87,6 +88,45 @@ describe("Convex GitHub repository observation service", () => {
     );
     expect(getterCalls).toBe(0);
     expect(mutationCalls).toBe(0);
+  });
+
+  test("rejects backend result accessors without invoking them", async () => {
+    const observation = issueObservation();
+    let getterCalls = 0;
+    const hostileResult = Object.create(null) as Record<string, unknown>;
+    Object.defineProperties(hostileResult, {
+      duplicate: {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          throw new Error("backend credential-shaped getter text");
+        },
+      },
+      record: {
+        enumerable: true,
+        value: storedRecord(canonicalJson(observation)),
+      },
+    });
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          return hostileResult;
+        },
+        async query() {
+          throw new Error("not used");
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await expect(service.ingestRepositoryObservation({
+      deliveryId: observation.deliveryId,
+      eventType: observation.eventType,
+      payloadDigest: observation.payloadDigest,
+      receivedAt: observation.receivedAt,
+      observation,
+    })).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
+    expect(getterCalls).toBe(0);
   });
 
   test("maps changed delivery reuse to one typed conflict", async () => {
