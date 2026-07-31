@@ -71,6 +71,71 @@ describe("Signal Atlas shared fixture policy", () => {
       .toThrow("without symbol fields");
   });
 
+  test("admits arrays without invoking caller methods, iterators, or slot accessors", () => {
+    const policy = executePolicy();
+    const complete = completeMetadata();
+    let calls = 0;
+
+    for (const key of ["map", "every"] as const) {
+      const decorated = [...complete] as MetadataRecord[] & Record<string, unknown>;
+      Object.defineProperty(decorated, key, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          calls += 1;
+          return () => [];
+        },
+      });
+      expect(() => policy.projectRecords(decorated)).toThrow("contains an unsupported field");
+    }
+
+    const iterated = [...complete];
+    Object.defineProperty(iterated, Symbol.iterator, {
+      enumerable: false,
+      configurable: true,
+      get() {
+        calls += 1;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    expect(() => policy.projectRecords(iterated)).toThrow("cannot contain symbol fields");
+
+    const accessor = [...complete];
+    Object.defineProperty(accessor, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        calls += 1;
+        return complete[0];
+      },
+    });
+    expect(() => policy.projectRecords(accessor)).toThrow("must be a dense data array");
+
+    const sparse = [...complete];
+    delete sparse[0];
+    expect(() => policy.projectRecords(sparse)).toThrow("must be a dense data array");
+
+    const nonCanonicalIndex = [...complete] as MetadataRecord[] & Record<string, unknown>;
+    Object.defineProperty(nonCanonicalIndex, "01", {
+      enumerable: true,
+      configurable: true,
+      value: complete[0],
+    });
+    expect(() => policy.projectRecords(nonCanonicalIndex)).toThrow("contains an unsupported field");
+
+    const hostilePosition = complete.map((entry) => ({ ...entry, position: [...entry.position] }));
+    Object.defineProperty(hostilePosition[0]!.position, "every", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        calls += 1;
+        return () => true;
+      },
+    });
+    expect(() => policy.projectRecords(hostilePosition)).toThrow("contains an unsupported field");
+    expect(calls).toBe(0);
+  });
+
   test("publishes an immutable local policy without external authority", () => {
     const runtime = executeRuntime();
     expect(Object.isFrozen(runtime.StensiblySignalAtlasPolicy)).toBe(true);
@@ -166,6 +231,7 @@ function executeRuntime(): { StensiblySignalAtlasPolicy?: Policy } {
     Object: ObjectConstructor;
     Array: ArrayConstructor;
     Number: NumberConstructor;
+    Reflect: typeof Reflect;
     Error: ErrorConstructor;
     TypeError: TypeErrorConstructor;
   } = {
@@ -175,6 +241,7 @@ function executeRuntime(): { StensiblySignalAtlasPolicy?: Policy } {
     Object,
     Array,
     Number,
+    Reflect,
     Error,
     TypeError,
   };
