@@ -12,7 +12,7 @@ const ledgerModal = readFileSync(join(routeRoot, "ledger-modal.js"), "utf8");
 describe("Signal Atlas ledger modal boundary", () => {
   test("loads before app and binds the manifest to the contained implementation", () => {
     const variant = frontendLabManifest.find((entry) => entry.id === "signal-atlas");
-    expect(variant?.revision).toBe("a4296f97402c76b02ed797177efc398814244e76");
+    expect(variant?.revision).toBe("2e10f2fc9ba04f532d794d0b5ea76168a6b43ae1");
     expect(html.indexOf('<script src="./ledger-modal.js"></script>')).toBeGreaterThan(0);
     expect(html.indexOf('<script src="./ledger-modal.js"></script>')).toBeLessThan(html.indexOf('<script src="./app.js"></script>'));
     expect(ledgerModal).toContain('ledger.setAttribute("role", "dialog")');

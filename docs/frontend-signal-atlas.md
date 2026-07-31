@@ -1,10 +1,8 @@
 # Signal Atlas frontend prototype
 
-**Owner issue:** #611  
-**Parent programme:** #605  
-**Route:** `/labs/signal-atlas/`
-
-## Thesis
+Owner: #611  
+Programme: #605  
+Route: `/labs/signal-atlas/`
 
 Signal Atlas tests whether Stensibly can explain a complicated work lineage as a sequence without forcing routine operation into a cinematic experience.
 
@@ -53,9 +51,9 @@ Selecting a landscape node updates the rail. The post-render focus adapter resto
 
 ## Shared fixture contract
 
-`../fixtures.classic.js` loads before the route. `fixture-bridge.js` admits the exact Signal Atlas subset from the shared Paper Lantern fixture and combines it with local chapter prose, map positions, evidence heads, times, and routes.
+`../fixtures.classic.js` and `fixture-policy.js` load before `app.js`. The policy admits exact enumerable data metadata, rejects accessors and symbol or extra fields, validates the exact Signal Atlas record subset and shared task identities, and derives shared title, state, detail or reason, provider health, and operation guidance before the first render.
 
-The bridge requires unique exact identities and matching kinds. Shared title, state, detail/reason, provider health, and operation actions feed the final map, evidence rail, and ledger. It performs one synchronous final render before the completed document can paint.
+The app keeps only local chapter prose, landscape positions, evidence heads, times, routes, and safe explanatory guidance. One frozen projected record set feeds landscape nodes, evidence, provider capability, ledger titles and states, selection announcements, and chapter navigation. There is no post-render monkey patch or second initialization render.
 
 ## Ledger destinations and modal return
 
@@ -66,7 +64,7 @@ Every timestamped ledger event has one explicit chapter identity:
 - `api` → provider health;
 - `approve-release-note` → decision.
 
-The bridge validates that each declared chapter contains its record before rendering the ledger. Activating an event opens that chapter and selected evidence directly.
+The app validates that every event is covered exactly once and that each declared chapter contains its record before rendering the ledger. Activating an event opens that chapter and selected evidence directly.
 
 The ledger modal admits a return target only when it is connected, visible, focusable, and outside the ledger. Keyboard-open from `body` falls back to **Show all evidence**. Closing after a chapter or landscape control returns there. Ledger-item navigation may focus selected evidence without being overridden by modal cleanup.
 
