@@ -1,0 +1,158 @@
+name: marlin-789-deterministic-plan
+
+on:
+  push:
+    branches:
+      - cinder/782-deepseek-harness-campaign
+    paths:
+      - .github/workflows/marlin-789-deterministic-plan.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: marlin-789-deterministic-plan
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cinder/782-deepseek-harness-campaign
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Repair deterministic campaign admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          campaign_path = Path("src/deepseek-harness-campaign.ts")
+          campaign = campaign_path.read_text()
+          old_pattern = '''const credentialPattern = /(?:stn\\.tok_|github_pat_|gh[pousr]_|sk-(?:proj-)?|Bearer\\s+)[A-Za-z0-9._~+\\/-]+/iu;'''
+          new_pattern = '''const credentialPattern = /(?:stn\\.tok_|github_pat_|gh[pousr]_)[A-Za-z0-9._~+\\/-]+|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|Bearer\\s+[A-Za-z0-9._~+\\/-]+/iu;'''
+          if campaign.count(old_pattern) != 1:
+              raise SystemExit("credential pattern anchor drifted")
+          campaign = campaign.replace(old_pattern, new_pattern, 1)
+
+          comparator_anchor = '''export function estimateRepositoryTokenRange(
+            utf8Bytes: number,
+          ): Readonly<{ minimum: number; maximum: number; exact: false }> {
+          '''
+          comparator = '''export function compareDeepSeekInventoryNames(left: string, right: string): number {
+            return left < right ? -1 : left > right ? 1 : 0;
+          }
+
+          ''' + comparator_anchor
+          if campaign.count(comparator_anchor) != 1:
+              raise SystemExit("comparator insertion anchor drifted")
+          campaign = campaign.replace(comparator_anchor, comparator, 1)
+          campaign_path.write_text(campaign)
+
+          inventory_path = Path("scripts/measure-repository-context.ts")
+          inventory = inventory_path.read_text()
+          old_import = '''import { estimateRepositoryTokenRange } from "../src/deepseek-harness-campaign.js";'''
+          new_import = '''import {
+            compareDeepSeekInventoryNames,
+            estimateRepositoryTokenRange,
+          } from "../src/deepseek-harness-campaign.js";'''
+          if inventory.count(old_import) != 1:
+              raise SystemExit("inventory import anchor drifted")
+          inventory = inventory.replace(old_import, new_import, 1)
+          inventory = inventory.replace(
+              '''largest.sort((left, right) => right.utf8Bytes - left.utf8Bytes || left.path.localeCompare(right.path));''',
+              '''largest.sort((left, right) =>
+            right.utf8Bytes - left.utf8Bytes || compareDeepSeekInventoryNames(left.path, right.path)
+          );''',
+              1,
+          )
+          inventory = inventory.replace(
+              '''byTopLevel: Object.fromEntries([...byTopLevel.entries()].sort(([left], [right]) => left.localeCompare(right))),''',
+              '''byTopLevel: Object.fromEntries(
+            [...byTopLevel.entries()].sort(([left], [right]) => compareDeepSeekInventoryNames(left, right)),
+          ),''',
+              1,
+          )
+          if "localeCompare" in inventory:
+              raise SystemExit("locale-dependent comparator remains")
+          inventory_path.write_text(inventory)
+
+          test_path = Path("test/deepseek-harness-campaign.test.ts")
+          tests = test_path.read_text()
+          old_import_name = '''  calculateDeepSeekCostMicroUsd,
+            deepSeekHarnessCampaign,'''
+          new_import_name = '''  calculateDeepSeekCostMicroUsd,
+            compareDeepSeekInventoryNames,
+            deepSeekHarnessCampaign,'''
+          if tests.count(old_import_name) != 1:
+              raise SystemExit("test import anchor drifted")
+          tests = tests.replace(old_import_name, new_import_name, 1)
+
+          token_marker = '''  test("labels repository token sizing as a bounded estimate", () => {'''
+          comparator_test = '''  test("orders repository inventory by literal Unicode code units", () => {
+            expect(["é", "a", "Z", "ä", "A"].sort(compareDeepSeekInventoryNames))
+              .toEqual(["A", "Z", "a", "ä", "é"]);
+            expect(compareDeepSeekInventoryNames("same", "same")).toBe(0);
+          });
+
+          '''
+          if tests.count(token_marker) != 1:
+              raise SystemExit("comparator test marker drifted")
+          tests = tests.replace(token_marker, comparator_test + token_marker, 1)
+
+          prompt_marker = '''    expect(() => planDeepSeekOpenCodeEpisode({
+                ...baseInput,
+                prompt: "Use Bearer abcdefghijklmnopqrstuvwxyz",
+              })).toThrow("credential-shaped");'''
+          prompt_tests = '''    for (const prompt of [
+            "Review task-sk-research before dispatch.",
+            "Run sk-review checks.",
+            "Keep sk-proj-research as an ordinary campaign label.",
+          ]) {
+            expect(() => planDeepSeekOpenCodeEpisode({ ...baseInput, prompt })).not.toThrow();
+          }
+            for (const prompt of [
+            "Use sk-abcdefghijklmnopqrst for the provider call.",
+            "Use sk-proj-abcdefghijklmnopqrst for the provider call.",
+          ]) {
+            expect(() => planDeepSeekOpenCodeEpisode({ ...baseInput, prompt }))
+              .toThrow("credential-shaped");
+          }
+          ''' + prompt_marker
+          if tests.count(prompt_marker) != 1:
+              raise SystemExit("prompt test marker drifted")
+          tests = tests.replace(prompt_marker, prompt_tests, 1)
+
+          inventory_assertion = '''    expect(inventorySource).not.toContain("workingDirectory");'''
+          inventory_repair_assertion = '''    expect(inventorySource).not.toContain("workingDirectory");
+            expect(inventorySource).toContain("compareDeepSeekInventoryNames");
+            expect(inventorySource).not.toContain("localeCompare");'''
+          if tests.count(inventory_assertion) != 1:
+              raise SystemExit("inventory assertion anchor drifted")
+          tests = tests.replace(inventory_assertion, inventory_repair_assertion, 1)
+          test_path.write_text(tests)
+          PY
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Run focused campaign tests
+        run: bun test ./test/deepseek-harness-campaign.test.ts
+      - name: Publish clean candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/marlin-789-deterministic-plan.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/deepseek-harness-campaign.ts scripts/measure-repository-context.ts test/deepseek-harness-campaign.test.ts .github/workflows/marlin-789-deterministic-plan.yml
+          git commit -m "Repair deterministic DeepSeek campaign admission"
+          git push origin HEAD:cinder/782-deepseek-harness-campaign
+          head_sha="$(git rev-parse HEAD)"
+          gh pr comment 789 --body "Marlin deterministic-admission repair published at \`${head_sha}\`. Typecheck and focused DeepSeek campaign tests passed in Actions run \`${GITHUB_RUN_ID}\`; canonical PR CI now owns the clean five-file head."
