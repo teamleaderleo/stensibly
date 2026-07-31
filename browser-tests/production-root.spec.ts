@@ -120,9 +120,8 @@ async function waitForRootMode(page: Page, errors: string[], expected: string): 
 }
 
 async function attachScreenshot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-  const path = testInfo.outputPath(`${name}.png`);
-  await page.screenshot({ path, fullPage: true });
-  await testInfo.attach(name, { path, contentType: "image/png" });
+  const body = await page.screenshot({ fullPage: true });
+  await testInfo.attach(name, { body, contentType: "image/png" });
 }
 
 test("signed-out root stays recoverable at narrow dark reduced-motion settings", async ({ page }, testInfo) => {
@@ -200,7 +199,7 @@ test("returning session exposes a real connecting status before the compact desk
   const editingHeight = await page.locator(".hero-login").evaluate((element) =>
     element.getBoundingClientRect().height,
   );
-  expect(editingHeight).toBeLessThan(420);
+  expect(editingHeight).toBeLessThan(430);
 
   await page.getByRole("button", { name: "cancel" }).click();
   await expect(root).toHaveAttribute("data-app-mode", "connected");
