@@ -44,6 +44,8 @@ export interface DeepSeekOpenCodeLaunchPlan {
   runtimeDirectory: string;
   wallTimeSeconds: number;
   maximumAgentSteps: number;
+  liveExecutionEligible: boolean;
+  externalSandboxRequired: boolean;
   promptFilePath: string;
   promptReceipt: {
     digest: string;
@@ -286,6 +288,8 @@ export function planDeepSeekOpenCodeEpisode(
     runtimeDirectory,
     wallTimeSeconds,
     maximumAgentSteps,
+    liveExecutionEligible: phase === "observe",
+    externalSandboxRequired: phase === "candidate",
     promptFilePath,
     promptReceipt,
     configPath,
@@ -319,8 +323,6 @@ function openCodePermissions(phase: DeepSeekHarnessPhase): Readonly<Record<strin
       glob: "allow",
       grep: "allow",
       list: "allow",
-      lsp: "allow",
-      skill: "allow",
       external_directory: "deny",
       webfetch: "deny",
       websearch: "deny",
