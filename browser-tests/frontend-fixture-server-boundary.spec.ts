@@ -5,6 +5,18 @@ import { join, resolve } from "node:path";
 
 const labsRoot = resolve(process.cwd(), "site", "labs");
 
+test("serves the production root and Labs directory indexes", async ({ request }) => {
+  const root = await request.get("/");
+  expect(root.status()).toBe(200);
+  expect(root.headers()["content-type"]).toContain("text/html");
+  expect(await root.text()).toContain("<title>Stensibly");
+
+  const labs = await request.get("/labs/");
+  expect(labs.status()).toBe(200);
+  expect(labs.headers()["content-type"]).toContain("text/html");
+  expect(await labs.text()).toContain("Frontend Labs");
+});
+
 test("rejects an in-root symlink whose target escapes site", async ({ request }) => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "stensibly-browser-boundary-"));
   const target = join(temporaryRoot, "outside.txt");
