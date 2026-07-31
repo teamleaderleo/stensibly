@@ -36,6 +36,7 @@ interface AdmittedPullRequestCall {
 
 const maximumRetainedResultBytes = 64 * 1024;
 const unsafeTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const officialTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 /**
  * Verifies one official GitHub MCP pull-request metadata result before it
@@ -675,16 +676,13 @@ function pullRequestState(value: unknown): "open" | "closed" {
 }
 
 function exactTimestamp(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length > 40) {
-    throw invalidResponse(`${label} was invalid`);
-  }
-  const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds)) {
-    throw invalidResponse(`${label} was invalid`);
-  }
-  const normalized = new Date(milliseconds).toISOString();
-  if (normalized !== value) {
-    throw invalidResponse(`${label} must use canonical UTC form`);
+  if (
+    typeof value !== "string"
+    || value.length !== 20
+    || !officialTimestampPattern.test(value)
+    || !Number.isFinite(Date.parse(value))
+  ) {
+    throw invalidResponse(`${label} must use canonical RFC3339 UTC seconds`);
   }
   return value;
 }
