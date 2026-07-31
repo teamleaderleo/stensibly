@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   bindOpenAIAgentsExecutableToolV1,
   buildOpenAIAgentsRuntimeManifestV1,
+  requireOpenAIAgentsRuntimeManifestV1,
 } from "../src/runner-adapters/openai-agents-runtime-safety.ts";
 
 describe("OpenAI Agents runtime identity collisions", () => {
@@ -65,14 +66,93 @@ describe("OpenAI Agents runtime identity collisions", () => {
       "duplicates handoff identity Child Agent",
     );
   });
+
+  test("uses the executable revision as the closure-semantic identity", () => {
+    const first = buildOpenAIAgentsRuntimeManifestV1(graphWithCapturedValue(
+      "first",
+      "captured-tool-v1",
+    ));
+    const changed = buildOpenAIAgentsRuntimeManifestV1(graphWithCapturedValue(
+      "second",
+      "captured-tool-v2",
+    ));
+
+    expect(first.agents[0]?.tools[0]?.invokeDigest).toBe(
+      changed.agents[0]?.tools[0]?.invokeDigest,
+    );
+    expect(() => requireOpenAIAgentsRuntimeManifestV1(first, changed)).toThrow(
+      "runtime graph identity is stale",
+    );
+  });
+
+  test("rejects unsupported behavior-changing function-tool fields", () => {
+    const mutations: Array<(value: Record<string, unknown>) => void> = [
+      (value) => {
+        value.allowedCallers = ["direct"];
+      },
+      (value) => {
+        value.providerData = { mode: "different" };
+      },
+      (value) => {
+        value.outputSchema = { type: "object" };
+      },
+      (value) => {
+        value.errorFunction = async () => "fallback";
+      },
+      (value) => {
+        value.timeoutMs = 10;
+      },
+      (value) => {
+        value.timeoutBehavior = "raise_exception";
+      },
+      (value) => {
+        value.timeoutErrorFunction = async () => "timeout";
+      },
+      (value) => {
+        value.customDataExtractor = () => ({ private: true });
+      },
+      (value) => {
+        value.inputGuardrails = [{ name: "input", run: async () => ({}) }];
+      },
+      (value) => {
+        value.outputGuardrails = [{ name: "output", run: async () => ({}) }];
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const candidate = functionTool("policy_tool", "policy-tool-v1");
+      mutate(candidate as unknown as Record<string, unknown>);
+      expect(() => buildOpenAIAgentsRuntimeManifestV1(new Agent({
+        name: "Root Agent",
+        instructions: "Stable instructions",
+        tools: [candidate],
+      }))).toThrow("uses unsupported first-slice policy");
+    }
+  });
 });
 
-function functionTool(name: string, executableId: string) {
+function graphWithCapturedValue(value: string, executableId: string) {
+  return new Agent({
+    name: "Root Agent",
+    instructions: "Stable instructions",
+    tools: [functionTool(
+      "captured_tool",
+      executableId,
+      () => value,
+    )],
+  });
+}
+
+function functionTool(
+  name: string,
+  executableId: string,
+  execute: (input: { value?: string }) => string = ({ value }) => value ?? name,
+) {
   return bindOpenAIAgentsExecutableToolV1(tool({
     name,
     description: `Execute ${name}.`,
     parameters: z.object({ value: z.string().optional() }),
     needsApproval: async () => true,
-    execute: ({ value }) => value ?? name,
+    execute,
   }), executableId);
 }
