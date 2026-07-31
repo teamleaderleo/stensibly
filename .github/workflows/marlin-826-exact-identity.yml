@@ -1,0 +1,189 @@
+name: marlin-826-exact-identity
+
+on:
+  push:
+    branches:
+      - lumen/786-current-main-replay
+    paths:
+      - .github/workflows/marlin-826-exact-identity.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: marlin-826-exact-identity
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/786-current-main-replay
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Repair exact identity admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/coordination-graph.ts")
+          source = source_path.read_text()
+
+          replacements = [
+              (
+                  '''      ).map(boundedNodeKey),''',
+                  '''      ).map(exactNodeKey),''',
+              ),
+              (
+                  ''': parseReference(record.selectedProducer, "Coordination selected producer"),''',
+                  ''': parseExactReference(record.selectedProducer, "Coordination selected producer"),''',
+              ),
+          ]
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f"expected one source match for {old!r}, found {source.count(old)}")
+              source = source.replace(old, new, 1)
+
+          reference_anchor = '''function parseReference(input: unknown, label: string): CoordinationNodeReference {
+            const record = exactRecord(input, referenceKeys, referenceKeys, label);
+            return {
+              id: boundedIdentifier(record.id, `${label} ID`, 160),
+              generation: positiveInteger(record.generation, `${label} generation`),
+            };
+          }
+          '''
+          exact_reference = '''function parseReference(input: unknown, label: string): CoordinationNodeReference {
+            const record = exactRecord(input, referenceKeys, referenceKeys, label);
+            return {
+              id: boundedIdentifier(record.id, `${label} ID`, 160),
+              generation: positiveInteger(record.generation, `${label} generation`),
+            };
+          }
+
+          function parseExactReference(input: unknown, label: string): CoordinationNodeReference {
+            const record = exactRecord(input, referenceKeys, referenceKeys, label);
+            return {
+              id: exactIdentifier(record.id, `${label} ID`, 160),
+              generation: positiveInteger(record.generation, `${label} generation`),
+            };
+          }
+          '''
+          if source.count(reference_anchor) != 1:
+              raise SystemExit("parseReference anchor drifted")
+          source = source.replace(reference_anchor, exact_reference, 1)
+
+          node_key_anchor = '''function boundedNodeKey(value: unknown): string {
+            if (typeof value !== "string") throw new Error("Coordination node key must be a string");
+            const match = /^(.+)@([1-9][0-9]*)$/.exec(value.trim());
+            if (!match) throw new Error("Coordination node key is invalid");
+            return coordinationNodeKey({
+              id: boundedIdentifier(match[1], "Coordination node key ID", 160),
+              generation: positiveInteger(Number(match[2]), "Coordination node key generation"),
+            });
+          }
+          '''
+          exact_node_key = node_key_anchor + '''
+          function exactNodeKey(value: unknown): string {
+            if (typeof value !== "string") throw new Error("Coordination node key must be a string");
+            const match = /^(.+)@([1-9][0-9]*)$/.exec(value);
+            if (!match) throw new Error("Coordination node key is invalid");
+            return coordinationNodeKey({
+              id: exactIdentifier(match[1], "Coordination node key ID", 160),
+              generation: positiveInteger(Number(match[2]), "Coordination node key generation"),
+            });
+          }
+          '''
+          if source.count(node_key_anchor) != 1:
+              raise SystemExit("boundedNodeKey anchor drifted")
+          source = source.replace(node_key_anchor, exact_node_key, 1)
+
+          identifier_anchor = '''function boundedIdentifier(value: unknown, label: string, maximum: number): string {
+            if (typeof value !== "string") throw new Error(`${label} must be a string`);
+            const normalized = value.trim();
+            if (
+              normalized.length < 1
+              || normalized.length > maximum
+              || !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(normalized)
+            ) {
+              throw new Error(`${label} is invalid`);
+            }
+            return normalized;
+          }
+          '''
+          exact_identifier = '''function exactIdentifier(value: unknown, label: string, maximum: number): string {
+            if (typeof value !== "string") throw new Error(`${label} must be a string`);
+            if (
+              value.length < 1
+              || value.length > maximum
+              || value.trim() !== value
+              || !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(value)
+            ) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }
+
+          ''' + identifier_anchor
+          if source.count(identifier_anchor) != 1:
+              raise SystemExit("boundedIdentifier anchor drifted")
+          source = source.replace(identifier_anchor, exact_identifier, 1)
+          source_path.write_text(source)
+
+          test_path = Path("test/coordination-graph-integrity.test.ts")
+          test_source = test_path.read_text()
+          marker = '''  test("deeply freezes issued evaluations and rejects forged rendering inputs", () => {'''
+          if marker not in test_source:
+              raise SystemExit("test insertion marker drifted")
+          insertion = '''  test("admits exact selected and changed identities while rejecting padded aliases", () => {
+            const input = fixture();
+            expect(canonicalizeCoordinationGraph(input).nodes.find(
+              ({ id }) => id === "decision",
+            )?.selectedProducer).toEqual({ id: "candidate-a", generation: 1 });
+            expect(evaluateCoordinationGraph(input, {
+              evaluatedAt,
+              changedNodeKeys: ["decision@1"],
+            }).nodes.find(({ key }) => key === "decision@1")?.affected).toBe(true);
+
+            const paddedSelection = {
+              ...input,
+              nodes: input.nodes.map((node) => node.id === "decision"
+                ? { ...node, selectedProducer: { id: " candidate-a ", generation: 1 } }
+                : node),
+            };
+            expect(() => canonicalizeCoordinationGraph(paddedSelection))
+              .toThrow("Coordination selected producer ID is invalid");
+            expect(() => evaluateCoordinationGraph(input, {
+              evaluatedAt,
+              changedNodeKeys: [" decision@1 "],
+            })).toThrow("Coordination node key is invalid");
+          });
+
+          '''
+          test_source = test_source.replace(marker, insertion + marker, 1)
+          test_path.write_text(test_source)
+          PY
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Run focused coordination tests
+        run: bun test ./test/coordination-graph-integrity.test.ts
+      - name: Publish clean candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/marlin-826-exact-identity.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/coordination-graph.ts test/coordination-graph-integrity.test.ts .github/workflows/marlin-826-exact-identity.yml
+          git commit -m "Repair exact coordination identity admission"
+          git push origin HEAD:lumen/786-current-main-replay
+          head_sha="$(git rev-parse HEAD)"
+          gh pr comment 826 --body "Marlin exact-identity repair published at \`${head_sha}\`. Typecheck and focused coordination integrity tests passed in Actions run \`${GITHUB_RUN_ID}\`; canonical PR CI now owns the clean three-file head."
