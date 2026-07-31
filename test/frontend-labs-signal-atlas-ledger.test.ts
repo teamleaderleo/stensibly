@@ -133,6 +133,7 @@ describe("Signal Atlas ledger and fixture policy", () => {
 const hiddenValues = new WeakMap<object, boolean>();
 
 class FakeHTMLElement {
+  declare hidden: boolean;
   inert = false;
   isConnected: boolean;
   focused = false;
