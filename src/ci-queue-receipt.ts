@@ -106,8 +106,15 @@ const jobKeys = [
   "completedAt", "runnerOs", "runnerArch", "runnerImage", "failedStep", "diagnosticsFingerprint",
 ] as const;
 const preExecutionStatuses = new Set<CiRunStatus>(["requested", "waiting", "pending", "queued"]);
-const noStartJobConclusions = new Set<CiJobConclusion>(["skipped", "action_required", "stale", "startup_failure"]);
-const zeroJobRunConclusions = new Set<CiRunConclusion>(["cancelled", "skipped", "action_required", "stale", "startup_failure"]);
+const noStartAllowedJobConclusions = new Set<CiJobConclusion>([
+  "cancelled", "skipped", "action_required", "stale", "startup_failure",
+]);
+const startForbiddenJobConclusions = new Set<CiJobConclusion>([
+  "skipped", "action_required", "stale", "startup_failure",
+]);
+const zeroJobRunConclusions = new Set<CiRunConclusion>([
+  "cancelled", "skipped", "action_required", "stale", "startup_failure",
+]);
 const compatibility = {
   success: ["success", "neutral", "skipped"],
   failure: ["success", "failure", "cancelled", "neutral", "skipped"],
@@ -237,10 +244,10 @@ function parseJob(value: unknown, runCreatedAt: CanonicalTimestamp, observedAt: 
   }
   if (status === "in_progress" && (startedAt === null || completedAt !== null)) throw new RangeError("In-progress CI jobs require only a start time");
   if (status === "completed" && completedAt === null) throw new RangeError("Completed CI jobs require a completion time");
-  if (status === "completed" && startedAt === null && conclusion !== null && !noStartJobConclusions.has(conclusion)) {
+  if (status === "completed" && startedAt === null && conclusion !== null && !noStartAllowedJobConclusions.has(conclusion)) {
     throw new RangeError("This CI job conclusion requires execution start evidence");
   }
-  if (status === "completed" && startedAt !== null && conclusion !== null && noStartJobConclusions.has(conclusion)) {
+  if (status === "completed" && startedAt !== null && conclusion !== null && startForbiddenJobConclusions.has(conclusion)) {
     throw new RangeError("This CI job conclusion cannot carry execution start evidence");
   }
 
