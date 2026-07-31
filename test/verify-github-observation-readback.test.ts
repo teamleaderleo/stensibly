@@ -103,19 +103,22 @@ describe("hosted GitHub observation readback verifier", () => {
   });
 
   test("finds the exact deployed push through the confined request", async () => {
-    let requested: Request | null = null;
+    const requests: Request[] = [];
     let redirect: RequestRedirect | undefined;
     const receipt = await verifyGitHubObservationReadback(verifierOptions({ limit: 50 }), async (input, init) => {
-      requested = new Request(input, init);
+      const request = new Request(input, init);
+      requests.push(request);
       redirect = init?.redirect;
-      return jsonResponseAt(requested.url, responseBody());
+      return jsonResponseAt(request.url, responseBody());
     });
 
-    expect(requested?.url).toBe(
+    expect(requests).toHaveLength(1);
+    const requested = requests[0]!;
+    expect(requested.url).toBe(
       `${endpoint}/api/v1/github/repository-observations?repository=${repository.replace("/", "%2F")}&limit=50`,
     );
-    expect(requested?.headers.get("authorization")).toBe(`Bearer ${token}`);
-    expect(requested?.headers.get("accept-encoding")).toBe("identity");
+    expect(requested.headers.get("authorization")).toBe(`Bearer ${token}`);
+    expect(requested.headers.get("accept-encoding")).toBe("identity");
     expect(redirect).toBe("error");
     expect(receipt).toEqual({
       repository,
