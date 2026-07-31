@@ -63,8 +63,8 @@ async function resolveFixturePath(rawPathname: string): Promise<string | null> {
   }
 
   const relativePath = segments.join("/");
-  const directPath = resolve(siteRoot, relativePath || "index.html");
-  const candidates = pathname.endsWith("/")
+  const directPath = resolve(siteRoot, relativePath);
+  const candidates = !relativePath || pathname.endsWith("/")
     ? [resolve(directPath, "index.html")]
     : [directPath, resolve(directPath, "index.html")];
 
