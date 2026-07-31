@@ -66,6 +66,27 @@ describe("CI browser evidence profile", () => {
     }
   });
 
+  test("automatically follows a green parallel pull-request candidate with exact-head serial validation", () => {
+    expect(serialJob).toBeDefined();
+    expect(serialJob).toContain("needs: [browser-evidence, test, runtime-parity]");
+    expect(serialJob).toContain("always()");
+    expect(serialJob).toContain("github.event_name == 'pull_request'");
+    expect(serialJob).toContain("needs.browser-evidence.result == 'success'");
+    expect(serialJob).toContain("needs.test.result == 'success'");
+    expect(serialJob).toContain("needs.runtime-parity.result == 'success'");
+    expect(serialJob).toContain(
+      "github.event_name == 'workflow_dispatch' &&",
+    );
+    expect(serialJob).toContain("inputs.validation_profile == 'serial_full'");
+    expect(serialJob).toContain("github.event.pull_request.head.sha");
+    expect(serialJob).toContain("SERIAL_VALIDATION_SHA:");
+    expect(serialJob).toContain("ref: ${{ env.SERIAL_VALIDATION_SHA }}");
+    expect(serialJob).toContain("persist-credentials: false");
+    expect(serialJob).toContain('actual_sha="$(git rev-parse HEAD)"');
+    expect(serialJob).toContain('! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$');
+    expect(serialJob).toContain('"${actual_sha}" != "${SERIAL_VALIDATION_SHA}"');
+  });
+
   test("executes the same browser commands on the serial profile's single runner", () => {
     expect(serialJob).toBeDefined();
     expect(serialJob?.match(/actions\/checkout@v6/gu)).toHaveLength(1);
@@ -82,7 +103,7 @@ describe("CI browser evidence profile", () => {
       previousIndex = index;
     }
 
-    expect(serialJob).toContain("frontend-browser-evidence-${{ github.sha }}");
+    expect(serialJob).toContain("frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}");
     expect(serialJob).toContain("browser-typecheck-output.txt");
     expect(serialJob).toContain("browser-test-output.txt");
     expect(serialJob).toContain("browser-artifact-output.txt");
@@ -90,6 +111,7 @@ describe("CI browser evidence profile", () => {
 
   test("retains browser outputs only after the serial privacy fence succeeds", () => {
     expect(serialDiagnostics).toBeDefined();
+    expect(serialDiagnostics).toContain("serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}");
     expect(serialDiagnostics).toContain("browser-typecheck-output.txt");
     expect(serialDiagnostics).not.toContain("browser-test-output.txt");
     expect(serialDiagnostics).not.toContain("browser-artifact-output.txt");

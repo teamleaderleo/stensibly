@@ -63,4 +63,17 @@ describe("production root first paint", () => {
     expect(css).not.toContain('content: "Advanced connection";');
     expect(css).not.toContain("font-size: 0;");
   });
+
+  test("opens connection editing controls and closes them on return", async () => {
+    const bridge = await readSiteFile("root-mode-status-bridge.js");
+
+    expect(bridge).toContain('document.querySelector(".advanced-connection")');
+    expect(bridge).toContain('document.querySelector("#change-connection")');
+    expect(bridge).toContain('document.querySelector("#cancel-connection")');
+    expect(bridge).toContain("advancedConnection.open = open;");
+    expect(bridge).toContain('root.dataset.appMode === "editing"');
+    expect(bridge).toContain('root.dataset.appMode === "connected"');
+    expect(bridge).toContain('root.dataset.appMode === "degraded"');
+    expect(bridge).toContain('attributeFilter: ["data-app-mode"]');
+  });
 });

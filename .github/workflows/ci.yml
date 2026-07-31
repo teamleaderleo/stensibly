@@ -179,17 +179,31 @@ jobs:
           if-no-files-found: ignore
 
   serial-full:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_profile == 'serial_full' }}
+    needs: [browser-evidence, test, runtime-parity]
+    if: >-
+      ${{ always() &&
+      ((github.event_name == 'pull_request' &&
+      needs.browser-evidence.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.runtime-parity.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' &&
+      inputs.validation_profile == 'serial_full')) }}
     runs-on: ubuntu-latest
+    env:
+      SERIAL_VALIDATION_SHA: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha || inputs.expected_sha }}
     steps:
       - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        with:
+          ref: ${{ env.SERIAL_VALIDATION_SHA }}
+          persist-credentials: false
+      - name: Verify exact serial revision
         run: |
           set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
+            echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
             exit 1
           fi
       - uses: oven-sh/setup-bun@v2
@@ -203,14 +217,14 @@ jobs:
         if: steps.bun-lock.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: bun-lock-candidate-${{ github.sha }}
+          name: bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}
           path: artifacts/bun-lock-candidate
           if-no-files-found: error
           retention-days: 7
       - name: Reject stale committed Bun lockfile
         if: steps.bun-lock.outputs.changed == 'true'
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${SERIAL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
           echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
           echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
           exit 1
@@ -251,7 +265,7 @@ jobs:
         if: steps.serial-validation.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-evidence-${{ github.sha }}
+          name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
           path: |
             artifacts/playwright-report
             artifacts/playwright-results
@@ -263,7 +277,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: serial-full-diagnostics
+          name: serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}
           path: |
             typecheck-output.txt
             browser-typecheck-output.txt
