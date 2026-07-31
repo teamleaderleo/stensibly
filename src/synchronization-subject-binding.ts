@@ -160,19 +160,19 @@ function normalizeSubjectBoundInput(input: unknown): NormalizedSubjectBoundInput
     subject: record.subject as SynchronizationSubjectV1,
     source: record.source === null
       ? null
-      : stripBoundFact(record.source, sourceFields, subjectFingerprint, "GitHub source fact") as GitHubSourceFactV1,
+      : stripBoundFact(record.source, sourceFields, subjectFingerprint, "GitHub source fact") as unknown as GitHubSourceFactV1,
     evidence: record.evidence === null
       ? null
-      : stripBoundFact(record.evidence, evidenceFields, subjectFingerprint, "ProofWake evidence fact") as ProofWakeEvidenceFactV1,
+      : stripBoundFact(record.evidence, evidenceFields, subjectFingerprint, "ProofWake evidence fact") as unknown as ProofWakeEvidenceFactV1,
     operation: record.operation === null
       ? null
-      : stripBoundFact(record.operation, operationFields, subjectFingerprint, "Stensibly operation fact") as StensiblyOperationFactV1,
+      : stripBoundFact(record.operation, operationFields, subjectFingerprint, "Stensibly operation fact") as unknown as StensiblyOperationFactV1,
     authority: record.authority === null
       ? null
-      : stripBoundFact(record.authority, authorityFields, subjectFingerprint, "Stensibly authority fact") as StensiblyAuthorityFactV1,
+      : stripBoundFact(record.authority, authorityFields, subjectFingerprint, "Stensibly authority fact") as unknown as StensiblyAuthorityFactV1,
     coordination: record.coordination === null
       ? null
-      : stripBoundFact(record.coordination, coordinationFields, subjectFingerprint, "Stensibly coordination fact") as StensiblyCoordinationFactV1,
+      : stripBoundFact(record.coordination, coordinationFields, subjectFingerprint, "Stensibly coordination fact") as unknown as StensiblyCoordinationFactV1,
     declaredConflicts: record.declaredConflicts as SynchronizationCompilerInputV1["declaredConflicts"],
   };
   return { subjectFingerprint, baseInput };
