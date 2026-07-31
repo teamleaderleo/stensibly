@@ -60,7 +60,7 @@ describe("native GitHub delegated combined commit status reads", () => {
     expect(Object.isFrozen((called.result as { statuses: unknown[] }).statuses)).toBe(true);
   });
 
-  test("separates caller admission, malformed provider evidence, and identity mismatch", async () => {
+  test("separates caller admission, malformed evidence, and identity mismatch", async () => {
     const tokens = new RecordingTokenProvider();
     let providerCalls = 0;
     const adapter = createAdapter(tokens, async (input) => {
@@ -102,50 +102,29 @@ describe("native GitHub delegated combined commit status reads", () => {
 
   test("rejects status, final URL, redirect, and media defects before body reads", async () => {
     const cases: Array<{
-      name: string;
       status?: number;
       url?: string;
       redirected?: boolean;
       contentType?: string | null;
       code: string;
     }> = [
+      { status: 206, code: "github_delegated_provider_http_error" },
+      { url: "", code: "github_delegated_provider_invalid_response" },
       {
-        name: "partial status",
-        status: 206,
-        code: "github_delegated_provider_http_error",
-      },
-      {
-        name: "empty final URL",
-        url: "",
-        code: "github_delegated_provider_invalid_response",
-      },
-      {
-        name: "wrong repository URL",
         url: firstUrl.replace("stensibly", "other"),
         code: "github_delegated_provider_invalid_response",
       },
       {
-        name: "wrong commit URL",
         url: firstUrl.replace(commitSha, "e".repeat(40)),
         code: "github_delegated_provider_invalid_response",
       },
       {
-        name: "wrong page URL",
-        url: firstUrl.replace("page=1", "page=2"),
+        url: firstUrl.replace("&page=1", "&page=2"),
         code: "github_delegated_provider_invalid_response",
       },
+      { redirected: true, code: "github_delegated_provider_invalid_response" },
+      { contentType: null, code: "github_delegated_provider_invalid_response" },
       {
-        name: "redirected response",
-        redirected: true,
-        code: "github_delegated_provider_invalid_response",
-      },
-      {
-        name: "missing media",
-        contentType: null,
-        code: "github_delegated_provider_invalid_response",
-      },
-      {
-        name: "plain text media",
         contentType: "text/plain",
         code: "github_delegated_provider_invalid_response",
       },
@@ -164,7 +143,7 @@ describe("native GitHub delegated combined commit status reads", () => {
         }));
 
       await expectCode(adapter.callReadTool(callInput(commitSha)), entry.code);
-      expect(counters, entry.name).toEqual({ cancel: 1, getReader: 0, read: 0 });
+      expect(counters).toEqual({ cancel: 1, getReader: 0, read: 0 });
     }
   });
 
@@ -204,7 +183,7 @@ describe("native GitHub delegated combined commit status reads", () => {
     }
   });
 
-  test("admits benign sk prose and rejects realistic credential-shaped evidence", async () => {
+  test("admits benign sk prose and rejects credential-shaped evidence", async () => {
     const secret = `sk-proj-${"x".repeat(24)}`;
     const payloads = [
       { ...combinedStatus(), statuses: [{ ...status(), context: secret }] },
@@ -213,7 +192,10 @@ describe("native GitHub delegated combined commit status reads", () => {
         ...combinedStatus(),
         statuses: [{ ...status(), creator: { login: secret, id: 42 } }],
       },
-      { ...combinedStatus(), statuses: [{ ...status(), target_url: `https://ci.example/${secret}` }] },
+      {
+        ...combinedStatus(),
+        statuses: [{ ...status(), target_url: `https://ci.example/${secret}` }],
+      },
     ];
     for (const payload of payloads) {
       const adapter = createAdapter(new RecordingTokenProvider(), async (input) =>
@@ -243,8 +225,8 @@ describe("native GitHub delegated combined commit status reads", () => {
     );
   });
 
-  test("paginates within the exact accepted request and rejects duplicate contexts", async () => {
-    const secondUrl = firstUrl.replace("page=1", "page=2");
+  test("paginates inside the accepted request and rejects duplicate contexts", async () => {
+    const secondUrl = firstUrl.replace("&page=1", "&page=2");
     const calls: string[] = [];
     const adapter = createAdapter(new RecordingTokenProvider(), async (input) => {
       const url = String(input);
@@ -262,6 +244,7 @@ describe("native GitHub delegated combined commit status reads", () => {
         statuses: [{ ...status(), id: 778, context: "security" }],
       });
     });
+
     const called = await adapter.callReadTool(callInput(commitSha));
     expect(calls).toEqual([firstUrl, secondUrl]);
     expect((called.result as { totalCount: number }).totalCount).toBe(2);
@@ -300,7 +283,7 @@ describe("native GitHub delegated combined commit status reads", () => {
         default_branch: "main",
         updated_at: "2026-07-31T01:02:03Z",
         pushed_at: "2026-07-31T01:01:00Z",
-      }));
+      }, { "x-github-request-id": "TRACE:repo" }));
 
     const called = await adapter.callReadTool({
       ...callInput(commitSha),
@@ -438,6 +421,7 @@ function controlledResponse(
   };
   return {
     status: options.status,
+    ok: options.status >= 200 && options.status < 300,
     redirected: options.redirected,
     url: options.url,
     headers,
