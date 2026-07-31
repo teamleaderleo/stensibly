@@ -289,7 +289,7 @@ function snapshotArray(
   if (Object.getPrototypeOf(value) !== Array.prototype) {
     throw new RangeError(`${label} arrays must use the default prototype`);
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value as object);
   const lengthDescriptor = descriptors["length"];
   const rawLength = lengthDescriptor && "value" in lengthDescriptor
     ? lengthDescriptor.value
