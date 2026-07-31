@@ -111,6 +111,9 @@ describe("Field Console shared fixture bridge", () => {
 
     const presentation = runtime.StensiblyFieldConsolePolicy?.detailPresentation(first ?? []);
     if (!presentation) throw new Error("Field Console detail presentation was not published");
+    expect(Object.isFrozen(presentation)).toBe(true);
+    expect(Object.isFrozen(presentation.facts)).toBe(true);
+    expect(Object.isFrozen(presentation.connections)).toBe(true);
     expect(presentation.facts).toEqual([
       ["Authority", "Fixture guidance only"],
       ["Persistence", "Page instance only; nothing saved"],
