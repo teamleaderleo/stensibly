@@ -225,7 +225,7 @@ describe("dashboard release-window GitHub coordinator", () => {
     const request = (async () => {
       calls += 1;
       return new Response(null, { status: 500 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     await expect(runDashboardReleaseWindow(
       { ...baseEnvironment, GITHUB_REF: "refs/heads/feature" },
       request,
