@@ -1,0 +1,66 @@
+name: Execute signed Actions receipt repair
+
+on:
+  push:
+    branches:
+      - tern/700-signed-actions-ci-receipts
+    paths:
+      - .github/workflows/lark-783-execute-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-783-execute-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: tern/700-signed-actions-ci-receipts
+      - uses: oven-sh/setup-bun@v2
+      - name: Execute reviewed repair payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          carrier = Path('.github/workflows/plover-783-browser-receipt-repair.yml')
+          lines = carrier.read_text().splitlines()
+          start_marker = "          python3 - <<'PY'"
+          end_marker = "          PY"
+          try:
+              start = lines.index(start_marker) + 1
+              end = lines.index(end_marker, start)
+          except ValueError as exc:
+              raise SystemExit(f'repair payload markers drifted: {exc}')
+          payload = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in lines[start:end]
+          ) + '\n'
+          Path('/tmp/plover-783-repair.py').write_text(payload)
+          PY
+          python3 /tmp/plover-783-repair.py
+          bun test test/github-actions-ci-receipt.test.ts \
+            test/ci-queue-receipt-cancelled-before-start.test.ts
+      - name: Publish source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lark"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/plover-783-browser-receipt-repair.yml \
+            .github/workflows/lark-783-execute-repair.yml
+          git add src/ci-queue-receipt.ts \
+            src/github-actions-ci-receipt-normalized.ts \
+            src/github-actions-ci-receipt.ts \
+            test/ci-queue-receipt-cancelled-before-start.test.ts \
+            test/github-actions-ci-receipt.test.ts \
+            docs/github-actions-ci-receipt-emitter.md
+          git commit -m "Repair signed GitHub Actions CI receipts"
+          git push origin HEAD:tern/700-signed-actions-ci-receipts
