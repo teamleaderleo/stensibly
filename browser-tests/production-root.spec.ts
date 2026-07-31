@@ -99,6 +99,26 @@ function collectBrowserErrors(page: Page): string[] {
   return errors;
 }
 
+async function waitForRootMode(page: Page, errors: string[], expected: string): Promise<void> {
+  try {
+    await page.waitForFunction(
+      (mode) => document.documentElement.dataset.appMode === mode,
+      expected,
+      { timeout: 5_000 },
+    );
+  } catch {
+    const diagnostics = await page.evaluate(() => ({
+      mode: document.documentElement.dataset.appMode ?? null,
+      title: document.title,
+      heading: document.querySelector("h1")?.textContent ?? null,
+      scripts: Array.from(document.scripts, (script) => script.src || "inline"),
+      bridgePresent: Boolean(document.querySelector('script[src="/hosted-session-bridge.js"]')),
+      readyState: document.readyState,
+    }));
+    throw new Error(`Root mode ${expected} was not reached: ${JSON.stringify({ errors, diagnostics })}`);
+  }
+}
+
 async function attachScreenshot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const path = testInfo.outputPath(`${name}.png`);
   await page.screenshot({ path, fullPage: true });
@@ -113,7 +133,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
 
   await page.goto("/");
 
-  await expect(page.locator("html")).toHaveAttribute("data-app-mode", "signed-out");
+  await waitForRootMode(page, errors, "signed-out");
   await expect(page.getByRole("heading", { name: "Shared work." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue with GitHub" })).toBeVisible();
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-busy", "false");
@@ -147,7 +167,7 @@ test("returning session exposes a real connecting status before the compact desk
 
   const root = page.locator("html");
   const status = page.locator("#root-connecting-status");
-  await expect(root).toHaveAttribute("data-app-mode", "connecting");
+  await waitForRootMode(page, errors, "connecting");
   await expect(status).toBeVisible();
   await expect(status).toHaveAttribute("aria-busy", "true");
   await expect(status).toHaveAttribute("aria-hidden", "false");
