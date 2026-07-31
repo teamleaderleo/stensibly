@@ -3,28 +3,81 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A fixture-only Stensibly topology and operations prototype." />
   <title>Field Console · Stensibly Labs</title>
-  <link rel="stylesheet" href="../planned.css" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
-<body data-stensibly-lab="planned" data-variant="field-console">
-  <header><strong>Stensibly Labs · planned variant</strong><a href="../">All variants</a></header>
-  <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Operational awareness avenue</p>
-        <h1 id="variant-title">Field Console</h1>
-        <p class="lede" id="variant-thesis"></p>
+<body data-stensibly-lab="prototype" data-density="comfortable" data-scenario="default" data-mobile-detail="false">
+  <header class="topbar">
+    <a class="brand" href="../" aria-label="Return to all Stensibly Labs variants">
+      <span class="brand-mark" aria-hidden="true">FC</span>
+      <span class="brand-copy"><strong>Field Console</strong><small>fictional topology · issue #610</small></span>
+    </a>
+    <div class="top-health" id="connection-health" aria-label="Connection health"></div>
+    <div class="top-actions">
+      <label class="scenario-label" for="scenario-select">Scenario</label>
+      <select id="scenario-select" aria-label="Local fixture scenario">
+        <option value="default">Default</option>
+        <option value="empty">Empty</option>
+        <option value="degraded">Degraded</option>
+        <option value="error">Error</option>
+      </select>
+      <button id="density-toggle" type="button" aria-pressed="false">Density: <span id="density-value">comfortable</span></button>
+      <a href="../">All variants</a>
+    </div>
+  </header>
+
+  <div class="scenario-panel" id="scenario-panel" role="status" hidden></div>
+
+  <main class="console">
+    <section class="region alerts" aria-labelledby="alerts-title">
+      <header class="region-head">
+        <div><h1 id="alerts-title">Objects and alerts</h1><p>Text-first path to every task and state.</p></div>
+        <span class="region-key" aria-label="Keyboard region 1">1</span>
+      </header>
+      <div class="boundary" role="note"><strong>Experiment boundary:</strong> shared fictional fixtures only. Guidance has no product authority, nothing is saved, and no map coordinates, API calls, credentials, or product actions are available.</div>
+      <div class="search-row">
+        <label class="sr-only" for="object-search">Search fictional objects</label>
+        <input id="object-search" type="search" placeholder="Search object, owner, or evidence…" autocomplete="off" />
+        <span id="result-summary" class="meta-label" role="status"></span>
       </div>
-      <div class="seed" id="seed" aria-label="Field Console direction seed"></div>
+      <div class="filters" id="filters" role="group" aria-label="Object filters"></div>
+      <ul class="object-list" id="object-list" aria-label="Visible fictional objects"></ul>
     </section>
-    <section class="meta" aria-label="Variant identity">
-      <div><span>Status</span><strong id="variant-status"></strong></div>
-      <div><span>Owner</span><strong id="variant-owner"></strong></div>
-      <div><span>Route</span><strong id="variant-route"></strong></div>
+
+    <section class="region situation" aria-labelledby="situation-title">
+      <header class="region-head">
+        <div><h2 id="situation-title">Dependency topology</h2><p>Abstract relationships are repeated as text below.</p></div>
+        <span class="region-key" aria-label="Keyboard region 2">2</span>
+      </header>
+      <div class="topology-shell" aria-label="Interactive fictional dependency topology">
+        <svg class="topology-links" id="topology-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div class="topology" id="topology"></div>
+      </div>
+      <section class="relationships" aria-labelledby="relationships-title">
+        <h3 id="relationships-title">Selected relationships in text</h3>
+        <ul class="relation-list" id="relationship-summary"></ul>
+      </section>
+      <section class="timeline" aria-labelledby="timeline-title">
+        <div class="row-top"><h3 id="timeline-title">Event timeline</h3><span class="region-key" aria-label="Keyboard region 4">4</span></div>
+        <ul class="timeline-list" id="timeline-list"></ul>
+      </section>
     </section>
-    <div class="actions"><a id="variant-issue" href="#">Open issue</a><a href="../">Compare variants</a></div>
-    <p class="note">This route reserves a dense operational lane. The complete prototype will coordinate text-first work, topology or map context, exact health, timestamps, alert triage, event playback, and comfortable versus compact density without military theater.</p>
+
+    <aside class="region detail" aria-labelledby="detail-region-title">
+      <header class="region-head">
+        <div><h2 id="detail-region-title">Selected object</h2><p>Identity, evidence, health, relationships, authority, persistence, and safe next action.</p></div>
+        <span class="region-key" aria-label="Keyboard region 3">3</span>
+      </header>
+      <div class="detail-body" id="detail-body" tabindex="-1">
+        <button class="mobile-detail-back" id="mobile-back" type="button">← Return to objects</button>
+      </div>
+    </aside>
   </main>
-  <script src="../planned.js"></script>
+
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+  <script src="../fixtures.classic.js"></script>
+  <script src="./compat.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
