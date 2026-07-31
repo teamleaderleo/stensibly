@@ -16,6 +16,7 @@ const repository = "teamleaderleo/stensibly";
 const catalogueFingerprint =
   new GitHubCapabilityCatalogueService().registry.fingerprint;
 const commitSha = "a".repeat(40);
+const pullRequestNumber = 42;
 
 describe("guarded GitHub delegated-read MCP dispatch", () => {
   test("omits public dispatch when the backend has no mounted delegated provider", async () => {
@@ -46,7 +47,7 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
     }
   });
 
-  test("registers only the two enabled reads and derives principal identity", async () => {
+  test("registers only the three enabled reads and derives principal identity", async () => {
     const calls: HostedGitHubDelegatedReadInput[] = [];
     const mounted = mountedLedger(calls);
     const server = createMcpServer(mounted.ledger, {
@@ -69,7 +70,7 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
       expect(toolsets).toMatchObject({
         dispatchSurface: "typed_first_party_and_guarded_delegated",
         delegatedDispatchEnabled: true,
-        delegatedTools: ["get_repo", "fetch_file"],
+        delegatedTools: ["get_repo", "fetch_file", "get_pr_info"],
       });
 
       const searched = await call<Array<{
@@ -91,12 +92,18 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
       }>(client, "github_get_tool", { name: "get_repo" });
       expect(repositoryCapability.delegatedDispatchEnabled).toBe(true);
       expect(repositoryCapability.recommendedAction).toContain("github_call_tool");
+      const pullRequestCapability = await call<{
+        delegatedDispatchEnabled: boolean;
+        recommendedAction: string;
+      }>(client, "github_get_tool", { name: "get_pr_info" });
+      expect(pullRequestCapability.delegatedDispatchEnabled).toBe(true);
+      expect(pullRequestCapability.recommendedAction).toContain("github_call_tool");
       const disabledCapability = await call<{
         delegatedDispatchEnabled: boolean;
-      }>(client, "github_get_tool", { name: "get_pr_info" });
+      }>(client, "github_get_tool", { name: "get_pr_diff" });
       expect(disabledCapability.delegatedDispatchEnabled).toBe(false);
 
-      const receipt = await call<Record<string, unknown>>(
+      const fileReceipt = await call<Record<string, unknown>>(
         client,
         "github_call_tool",
         {
@@ -107,7 +114,7 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
           catalogueFingerprint,
         },
       );
-      expect(receipt).toMatchObject({
+      expect(fileReceipt).toMatchObject({
         project,
         repositoryFullName: repository,
         tool: "fetch_file",
@@ -115,15 +122,47 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
         clientId: "mcp:api-token:delegated-read-token",
         catalogueFingerprint,
       });
-      expect(calls).toEqual([{
+
+      const pullRequestReceipt = await call<Record<string, unknown>>(
+        client,
+        "github_call_tool",
+        {
+          project,
+          repository,
+          tool: "get_pr_info",
+          arguments: { pr_number: pullRequestNumber },
+          catalogueFingerprint,
+        },
+      );
+      expect(pullRequestReceipt).toMatchObject({
         project,
-        repository,
-        tool: "fetch_file",
-        arguments: { path: "README.md", ref: commitSha },
+        repositoryFullName: repository,
+        tool: "get_pr_info",
         actorId: "api-token:delegated-read-token",
         clientId: "mcp:api-token:delegated-read-token",
         catalogueFingerprint,
-      }]);
+        result: { number: pullRequestNumber },
+      });
+      expect(calls).toEqual([
+        {
+          project,
+          repository,
+          tool: "fetch_file",
+          arguments: { path: "README.md", ref: commitSha },
+          actorId: "api-token:delegated-read-token",
+          clientId: "mcp:api-token:delegated-read-token",
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "get_pr_info",
+          arguments: { pr_number: pullRequestNumber },
+          actorId: "api-token:delegated-read-token",
+          clientId: "mcp:api-token:delegated-read-token",
+          catalogueFingerprint,
+        },
+      ]);
 
       for (const argumentsValue of [
         {
@@ -151,7 +190,14 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
           project,
           repository,
           tool: "get_pr_info",
-          arguments: { pr_number: 1 },
+          arguments: { pr_number: 0 },
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "get_pr_diff",
+          arguments: { pr_number: pullRequestNumber, format: "diff" },
           catalogueFingerprint,
         },
       ]) {
@@ -160,7 +206,7 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
           arguments: argumentsValue,
         });
         expect(denied.isError).toBe(true);
-        expect(calls).toHaveLength(1);
+        expect(calls).toHaveLength(2);
       }
     } finally {
       await client.close();
@@ -216,6 +262,9 @@ function mountedLedger(calls: HostedGitHubDelegatedReadInput[]) {
   const provider: HostedGitHubDelegatedReadProvider = {
     async callGitHubDelegatedRead(input) {
       calls.push(input);
+      const result = input.tool === "get_pr_info"
+        ? Object.freeze({ number: input.arguments.pr_number })
+        : Object.freeze({ path: "README.md", ref: commitSha });
       return Object.freeze({
         version: 1,
         project: input.project,
@@ -234,7 +283,7 @@ function mountedLedger(calls: HostedGitHubDelegatedReadInput[]) {
         parametersSha256: `sha256:${"c".repeat(64)}`,
         providerRequestId: "REQ:PUBLIC:1",
         resultSha256: `sha256:${"d".repeat(64)}`,
-        result: Object.freeze({ path: "README.md", ref: commitSha }),
+        result,
       });
     },
   };
