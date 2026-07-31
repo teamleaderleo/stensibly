@@ -46,7 +46,7 @@ const sourceManifest = [
     thesis: "A warm pastel productivity desk with tactile controls, gentle feedback, and an original companion character.",
     owner: "Cinder",
     status: "prototype",
-    revision: "3b4fc7d2e2748d7b027089e0a656fe532f860b17",
+    revision: "8dc94e166f4711fff2edcf91c6d8ba299417f785",
     issue: 608,
     path: "./soft-companion/",
     support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion", "loading", "empty", "degraded", "error"],
