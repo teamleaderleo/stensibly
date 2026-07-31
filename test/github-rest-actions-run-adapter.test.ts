@@ -176,7 +176,10 @@ describe("native GitHub delegated Actions run and job reads", () => {
     const called = await adapter.callReadTool(callInput("get_repo", {}));
     expect((called.result as { repositoryFullName: string }).repositoryFullName)
       .toBe(repositoryFullName);
-    expect(tokens.requests[0]?.permission).toEqual({ name: "metadata", access: "read" });
+    expect(tokens.requests[0]).toEqual({
+      repositoryFullName,
+      permission: { name: "metadata", access: "read" },
+    });
   });
 });
 
