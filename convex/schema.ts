@@ -522,6 +522,30 @@ export default defineSchema({
     .index("by_workspace_delivery", ["workspaceId", "provider", "deliveryId"])
     .index("by_observation", ["observationId", "createdAt"]),
 
+  githubRepositoryObservations: defineTable({
+    workspaceId: v.id("workspaces"),
+    observationId: v.string(),
+    deliveryId: v.string(),
+    payloadDigest: v.string(),
+    semanticFingerprint: v.string(),
+    eventType: v.string(),
+    action: v.string(),
+    repository: v.string(),
+    actor: v.union(v.string(), v.null()),
+    subjectKind: v.string(),
+    subjectExternalId: v.string(),
+    sourceTime: v.number(),
+    sourceTimeSource: v.union(v.literal("provider"), v.literal("received")),
+    receivedAt: v.number(),
+    observationJson: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_workspace_delivery", ["workspaceId", "deliveryId"])
+    .index("by_workspace_observation", ["workspaceId", "observationId"])
+    .index("by_workspace_repository_received", ["workspaceId", "repository", "receivedAt"])
+    .index("by_workspace_subject_received", ["workspaceId", "subjectExternalId", "receivedAt"])
+    .index("by_workspace_semantic_received", ["workspaceId", "semanticFingerprint", "receivedAt"]),
+
   apiTokens: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
