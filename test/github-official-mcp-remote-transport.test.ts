@@ -72,6 +72,76 @@ describe("official GitHub MCP remote transport", () => {
     expect(JSON.stringify(called)).not.toContain(credentialRef);
   });
 
+  test("admits only server-side credential references before resolver activity", async () => {
+    for (const acceptedRef of [
+      credentialRef,
+      "env://GITHUB_OFFICIAL_MCP_TOKEN",
+    ]) {
+      const credentialCalls: unknown[] = [];
+      const harness = createHarness(successEnvelope({ ok: true }));
+      const transport = new GitHubOfficialMcpRemoteTransport({
+        credentials: {
+          async resolveGitHubOfficialMcpBearer(input) {
+            credentialCalls.push(input);
+            return bearer;
+          },
+        },
+        sessionFactory: harness.factory,
+      });
+
+      await transport.callMappedRead({
+        mapping: pullRequestMapping(),
+        credentialRef: acceptedRef,
+      });
+
+      expect(credentialCalls).toEqual([{
+        credentialRef: acceptedRef,
+        repositoryFullName: "teamleaderleo/stensibly",
+        officialTool: "pull_request_read",
+      }]);
+      expect(harness.factoryInputs).toHaveLength(1);
+    }
+
+    for (const rejectedRef of [
+      "github_pat_raw_secret_1234567890",
+      `ghp_${"A".repeat(36)}`,
+      `sk-${"A".repeat(24)}`,
+      `xoxb-${"1".repeat(24)}`,
+      "Bearer github_pat_raw_secret_1234567890",
+      " plain-reference ",
+      "vault://github/official-mcp",
+      "secret://github/official-mcp\n",
+      "secret://",
+      "secret:///github/official-mcp",
+    ]) {
+      let credentialCalls = 0;
+      const harness = createHarness(successEnvelope({ ok: true }));
+      const transport = new GitHubOfficialMcpRemoteTransport({
+        credentials: {
+          async resolveGitHubOfficialMcpBearer() {
+            credentialCalls += 1;
+            return bearer;
+          },
+        },
+        sessionFactory: harness.factory,
+      });
+
+      const error = await capturedError(() =>
+        transport.callMappedRead({
+          mapping: pullRequestMapping(),
+          credentialRef: rejectedRef,
+        })
+      );
+
+      expect(error.code).toBe("github_official_mcp_credential_unavailable");
+      expect(error.message).toBe(
+        "Official GitHub MCP credential reference is invalid",
+      );
+      expect(credentialCalls).toBe(0);
+      expect(harness.factoryInputs).toHaveLength(0);
+    }
+  });
+
   test("rejects stale mapping before credential or session activity", async () => {
     const mapping = {
       ...pullRequestMapping(),
@@ -546,5 +616,4 @@ async function capturedError(
 function deepValue(depth: number): unknown {
   let value: unknown = "leaf";
   for (let index = 0; index < depth; index += 1) value = { value };
-  return value;
 }
