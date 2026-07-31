@@ -100,16 +100,20 @@ describe("documentation brief experiment", () => {
     expect((handbook.match(/^\| [^\n]+ \| [^\n]+ \| [^\n]+ \|$/gm) ?? []).length)
       .toBeGreaterThanOrEqual(11);
 
-    for (const heading of [
+    const headings = [
       "## 1. Strict GitHub provider binding admission",
       "## 2. Invocation-time runner authority",
       "## 3. Append-only SQLite provider binding history",
       "## 4. Guarded delegated GitHub read boundary",
-    ]) {
+      "## 5. Exact GitHub App installation permission profiles",
+      "## 6. Literal CI queue receipts with zero mutation authority",
+    ];
+    for (const heading of headings) {
       expect(atlas).toContain(heading);
     }
+    expect((atlas.match(/^## \d+\. /gm) ?? []).length).toBe(6);
     expect(atlas).toContain(
-      "**Source pin for this edition:** `e6a586a0d5d8f0693b295680e89bca699ce41417`",
+      "**Source pin for this edition:** `3cb781b530550ae0274b5c1f166ec289918eabce`",
     );
     expect(decision).toContain("- **Status:** experimenting");
     expect(decision).toContain("- **Owning issue:** #693");
