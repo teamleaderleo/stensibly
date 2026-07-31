@@ -31,7 +31,7 @@ describe("dashboard visual language", () => {
     ]);
     const loginSurface = `${html}\n${loginStyles}\n${bridge}`;
 
-    expect(html).toContain("<h1>Shared work.</h1>");
+    expect(html).toContain("<h1>Shared work, made legible.</h1>");
     expect(html).toContain('class="connection login-card"');
     expect(html).toContain('href="/login-scrapbook.css"');
     expect(html).toContain('id="github-sign-in"');
