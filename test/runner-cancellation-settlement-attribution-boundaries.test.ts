@@ -190,9 +190,33 @@ describe("runner cancellation attribution boundaries", () => {
     ]);
 
     expect(firstResult.commandId).toBe(secondResult.commandId);
+    expect(firstResult.commandFingerprint)
+      .not.toBe(secondResult.commandFingerprint);
     expect(firstResult.resultFingerprint).not.toBe(secondResult.resultFingerprint);
     expect(firstResult.settlement.receiptFingerprint)
       .not.toBe(secondResult.settlement.receiptFingerprint);
+  });
+
+  test("accepts adapter evidence after execution when settlement follows it", async () => {
+    const adapter = new CancellationPort();
+    const values = [
+      "2026-08-01T00:00:02.000Z",
+      "2026-08-01T00:00:06.000Z",
+    ];
+    const coordinator = new RunnerCancellationSettlementCoordinatorV1(
+      adapter.asAdapter(),
+      scope,
+      command(),
+      () => values.shift()!,
+    );
+
+    const result = await coordinator.request();
+
+    expect(adapter.calls).toBe(1);
+    expect(result.outcome).toBe("cancellation_observed");
+    expect(result.cancellation?.observedAt).toBe(observedAt);
+    expect(result.observedAt).toBe("2026-08-01T00:00:06.000Z");
+    expect(values).toEqual([]);
   });
 
   test("does not retain a reference created after its observation", async () => {
@@ -206,11 +230,12 @@ describe("runner cancellation attribution boundaries", () => {
       adapter.asAdapter(),
       scope,
       command(),
-      () => "2026-08-01T01:00:01.000Z",
+      () => "2026-08-01T00:00:10.000Z",
     );
 
     const result = await coordinator.request();
 
+    expect(adapter.calls).toBe(1);
     expect(result.outcome).toBe("adapter_failure");
     expect(result.cancellation).toBeNull();
     expect(result.settlement.successfulOutputs).toEqual([]);
