@@ -24,7 +24,6 @@ export default defineConfig({
     permissions: [],
     serviceWorkers: "block",
     timezoneId: "UTC",
-    reducedMotion: "reduce",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
