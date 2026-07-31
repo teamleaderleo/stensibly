@@ -21,9 +21,10 @@ describe("hosted GitHub observation reader mount", () => {
       STENSIBLY_GITHUB_WEBHOOK_SECRET: "shared-webhook-secret",
     });
     expect(options).toBeDefined();
-    expect(options?.repositoryObservationReader).toBe(
-      options?.repositoryObservationSink,
-    );
+    expect(Object.is(
+      options?.repositoryObservationReader as unknown,
+      options?.repositoryObservationSink as unknown,
+    )).toBe(true);
     expect(options?.repositoryObservationReader).toBeDefined();
   });
 });
