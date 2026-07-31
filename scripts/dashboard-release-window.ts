@@ -3,14 +3,8 @@ import { appendFile } from "node:fs/promises";
 
 export const DASHBOARD_RELEASE_WINDOW_CONTRACT_VERSION = 1 as const;
 
-const activeRunStatuses = new Set([
-  "requested",
-  "waiting",
-  "pending",
-  "queued",
-  "in_progress",
-]);
-const exactDashboardPaths = new Set([
+const activeStatuses = new Set(["requested", "waiting", "pending", "queued", "in_progress"]);
+const exactPaths = new Set([
   ".github/workflows/auto-deploy-dashboard.yml",
   ".github/workflows/deploy-dashboard.yml",
   ".github/workflows/publish-dashboard-on-main.yml",
@@ -25,6 +19,7 @@ const shaPattern = /^[0-9a-f]{40}$/u;
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const maximumApiResponseBytes = 2 * 1024 * 1024;
 const maximumComparedFiles = 300;
+const publisherWorkflow = "publish-dashboard-on-main.yml";
 
 export interface DashboardWorkflowRun {
   readonly status: string;
@@ -60,58 +55,41 @@ export type DashboardReleaseDecision = Readonly<{
 }>;
 
 export function isDashboardReleasePath(path: string): boolean {
-  if (!isSafePath(path)) return false;
-  return path.startsWith("site/") || exactDashboardPaths.has(path);
+  return isSafePath(path) && (path.startsWith("site/") || exactPaths.has(path));
 }
 
 export function hasActiveDashboardRun(runs: readonly DashboardWorkflowRun[]): boolean {
-  return runs.some((run) => activeRunStatuses.has(run.status));
+  return runs.some((run) => activeStatuses.has(run.status));
 }
 
-export function latestSuccessfulDashboardSha(
-  runs: readonly DashboardWorkflowRun[],
-): string | null {
+export function latestSuccessfulDashboardSha(runs: readonly DashboardWorkflowRun[]): string | null {
   return latestRunSha(runs.filter((run) => run.conclusion === "success"));
 }
 
-export function latestAttemptedDashboardSha(
-  runs: readonly DashboardWorkflowRun[],
-): string | null {
+export function latestAttemptedDashboardSha(runs: readonly DashboardWorkflowRun[]): string | null {
   return latestRunSha(runs);
 }
 
-export function decideDashboardRelease(
-  input: DashboardReleaseDecisionInput,
-): DashboardReleaseDecision {
+export function decideDashboardRelease(input: DashboardReleaseDecisionInput): DashboardReleaseDecision {
   requireSha(input.currentSha, "Current main revision");
   if (input.baselineSha !== null) requireSha(input.baselineSha, "Dashboard baseline revision");
   if (input.attemptedSha !== null) requireSha(input.attemptedSha, "Dashboard attempted revision");
 
   if (input.force) return Object.freeze({ action: "dispatch", reason: "manual_force" });
   if (input.activeRun) return Object.freeze({ action: "skip", reason: "active_run" });
-  if (input.baselineSha === input.currentSha) {
-    return Object.freeze({ action: "skip", reason: "already_current" });
-  }
-  if (input.attemptedSha === input.currentSha) {
-    return Object.freeze({ action: "skip", reason: "already_attempted" });
-  }
-  if (input.baselineSha === null) {
-    return Object.freeze({ action: "dispatch", reason: "missing_baseline" });
-  }
-  if (input.compareStatus === "unavailable" || input.compareStatus === undefined) {
+  if (input.baselineSha === input.currentSha) return Object.freeze({ action: "skip", reason: "already_current" });
+  if (input.attemptedSha === input.currentSha) return Object.freeze({ action: "skip", reason: "already_attempted" });
+  if (input.baselineSha === null) return Object.freeze({ action: "dispatch", reason: "missing_baseline" });
+  if (input.compareStatus === undefined || input.compareStatus === "unavailable") {
     return Object.freeze({ action: "skip", reason: "comparison_unavailable" });
   }
   if (input.compareStatus === "behind" || input.compareStatus === "diverged") {
     return Object.freeze({ action: "skip", reason: "history_not_linear" });
   }
-
-  const changedFiles = input.changedFiles ?? [];
-  if (changedFiles.some(isDashboardReleasePath)) {
+  if ((input.changedFiles ?? []).some(isDashboardReleasePath)) {
     return Object.freeze({ action: "dispatch", reason: "relevant_changes" });
   }
-  if (input.compareTruncated) {
-    return Object.freeze({ action: "skip", reason: "comparison_truncated" });
-  }
+  if (input.compareTruncated) return Object.freeze({ action: "skip", reason: "comparison_truncated" });
   return Object.freeze({ action: "skip", reason: "no_relevant_changes" });
 }
 
@@ -123,15 +101,17 @@ export async function runDashboardReleaseWindow(
     throw new Error("Dashboard release windows must run from the main branch");
   }
 
-  const token = requiredEnvironment(env, "GITHUB_TOKEN");
   const repository = requiredEnvironment(env, "GITHUB_REPOSITORY");
   if (!repositoryPattern.test(repository)) throw new Error("GITHUB_REPOSITORY is invalid");
-  const apiBase = parseApiBase(requiredEnvironment(env, "GITHUB_API_URL"));
+  const client = githubClient({
+    apiBase: parseApiBase(requiredEnvironment(env, "GITHUB_API_URL")),
+    repository,
+    token: requiredEnvironment(env, "GITHUB_TOKEN"),
+    request,
+  });
   const force = parseBoolean(env.FORCE_DASHBOARD_RELEASE ?? "false", "FORCE_DASHBOARD_RELEASE");
-  const client = githubClient({ apiBase, repository, token, request });
-
   const currentSha = await client.mainSha();
-  const runs = await client.dashboardRuns();
+  const runs = await client.publisherRuns();
   const baselineSha = latestSuccessfulDashboardSha(runs);
   const attemptedSha = latestAttemptedDashboardSha(runs);
   const activeRun = hasActiveDashboardRun(runs);
@@ -139,13 +119,7 @@ export async function runDashboardReleaseWindow(
   let compareStatus: DashboardReleaseDecisionInput["compareStatus"];
   let changedFiles: readonly string[] | undefined;
   let compareTruncated = false;
-  if (
-    !force
-    && !activeRun
-    && baselineSha !== null
-    && baselineSha !== currentSha
-    && attemptedSha !== currentSha
-  ) {
+  if (!force && !activeRun && baselineSha !== null && baselineSha !== currentSha && attemptedSha !== currentSha) {
     try {
       const comparison = await client.compare(baselineSha, currentSha);
       compareStatus = comparison.status;
@@ -166,20 +140,18 @@ export async function runDashboardReleaseWindow(
     changedFiles,
     compareTruncated,
   });
-
-  if (decision.action === "dispatch") await client.dispatch();
+  if (decision.action === "dispatch") await client.dispatchPublisher();
   emitDecision(decision, currentSha, baselineSha, attemptedSha);
   await appendSummary(env.GITHUB_STEP_SUMMARY, decision, currentSha, baselineSha, attemptedSha);
   return decision;
 }
 
 function latestRunSha(runs: readonly DashboardWorkflowRun[]): string | null {
-  const ordered = runs
+  return runs
     .filter((run) => shaPattern.test(run.headSha))
     .map((run) => ({ ...run, epoch: Date.parse(run.createdAt) }))
     .filter((run) => Number.isFinite(run.epoch))
-    .sort((left, right) => right.epoch - left.epoch);
-  return ordered[0]?.headSha ?? null;
+    .sort((left, right) => right.epoch - left.epoch)[0]?.headSha ?? null;
 }
 
 function githubClient(input: {
@@ -193,17 +165,11 @@ function githubClient(input: {
     Authorization: `Bearer ${input.token}`,
     "X-GitHub-Api-Version": "2022-11-28",
   });
-
   const readJson = async (path: string): Promise<unknown> => {
-    const response = await input.request(`${input.apiBase}/repos/${input.repository}${path}`, {
-      headers,
-      method: "GET",
-    });
+    const response = await input.request(`${input.apiBase}/repos/${input.repository}${path}`, { headers, method: "GET" });
     const text = await response.text();
     if (!response.ok) throw new Error(`GitHub API request failed with HTTP ${response.status}`);
-    if (Buffer.byteLength(text, "utf8") > maximumApiResponseBytes) {
-      throw new Error("GitHub API response exceeded the dashboard release bound");
-    }
+    if (Buffer.byteLength(text, "utf8") > maximumApiResponseBytes) throw new Error("GitHub API response exceeded the dashboard release bound");
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -213,73 +179,58 @@ function githubClient(input: {
 
   return Object.freeze({
     async mainSha(): Promise<string> {
-      const value = exactRecord(await readJson("/git/ref/heads/main"), "Main ref");
-      const object = exactRecord(value.object, "Main ref object");
-      return requireSha(object.sha, "Current main revision");
+      const ref = exactRecord(await readJson("/git/ref/heads/main"), "Main ref");
+      return requireSha(exactRecord(ref.object, "Main ref object").sha, "Current main revision");
     },
-
-    async dashboardRuns(): Promise<readonly DashboardWorkflowRun[]> {
-      const value = exactRecord(
-        await readJson("/actions/workflows/deploy-dashboard.yml/runs?branch=main&per_page=100"),
-        "Dashboard workflow runs",
+    async publisherRuns(): Promise<readonly DashboardWorkflowRun[]> {
+      const envelope = exactRecord(
+        await readJson(`/actions/workflows/${publisherWorkflow}/runs?branch=main&per_page=100`),
+        "Dashboard publisher runs",
       );
-      if (!Array.isArray(value.workflow_runs) || value.workflow_runs.length > 100) {
-        throw new Error("Dashboard workflow runs have an invalid envelope");
+      if (!Array.isArray(envelope.workflow_runs) || envelope.workflow_runs.length > 100) {
+        throw new Error("Dashboard publisher runs have an invalid envelope");
       }
-      return Object.freeze(value.workflow_runs.map((entry, index) => {
-        const run = exactRecord(entry, `Dashboard workflow run ${index + 1}`);
-        const status = boundedText(run.status, 40, `Dashboard workflow run ${index + 1} status`);
-        const conclusion = run.conclusion === null
-          ? null
-          : boundedText(run.conclusion, 40, `Dashboard workflow run ${index + 1} conclusion`);
-        const createdAt = boundedText(run.created_at, 64, `Dashboard workflow run ${index + 1} timestamp`);
+      return Object.freeze(envelope.workflow_runs.map((entry, index) => {
+        const run = exactRecord(entry, `Dashboard publisher run ${index + 1}`);
         return Object.freeze({
-          status,
-          conclusion,
-          headSha: requireSha(run.head_sha, `Dashboard workflow run ${index + 1} revision`),
-          createdAt,
+          status: boundedText(run.status, 40, `Dashboard publisher run ${index + 1} status`),
+          conclusion: run.conclusion === null
+            ? null
+            : boundedText(run.conclusion, 40, `Dashboard publisher run ${index + 1} conclusion`),
+          headSha: requireSha(run.head_sha, `Dashboard publisher run ${index + 1} revision`),
+          createdAt: boundedText(run.created_at, 64, `Dashboard publisher run ${index + 1} timestamp`),
         });
       }));
     },
-
-    async compare(base: string, head: string): Promise<Readonly<{
-      status: "ahead" | "identical" | "behind" | "diverged";
-      files: readonly string[];
-    }>> {
+    async compare(base: string, head: string) {
       requireSha(base, "Dashboard comparison base");
       requireSha(head, "Dashboard comparison head");
-      const value = exactRecord(
-        await readJson(`/compare/${base}...${head}?per_page=100`),
-        "Dashboard comparison",
-      );
-      if (!["ahead", "identical", "behind", "diverged"].includes(String(value.status))) {
+      const comparison = exactRecord(await readJson(`/compare/${base}...${head}?per_page=100`), "Dashboard comparison");
+      if (!["ahead", "identical", "behind", "diverged"].includes(String(comparison.status))) {
         throw new Error("Dashboard comparison status is invalid");
       }
-      if (!Array.isArray(value.files) || value.files.length > maximumComparedFiles) {
+      if (!Array.isArray(comparison.files) || comparison.files.length > maximumComparedFiles) {
         throw new Error("Dashboard comparison files have an invalid envelope");
       }
-      const files = value.files.map((entry, index) => {
-        const file = exactRecord(entry, `Dashboard comparison file ${index + 1}`);
-        return boundedText(file.filename, 1024, `Dashboard comparison file ${index + 1} path`);
-      });
       return Object.freeze({
-        status: value.status as "ahead" | "identical" | "behind" | "diverged",
-        files: Object.freeze(files),
+        status: comparison.status as "ahead" | "identical" | "behind" | "diverged",
+        files: Object.freeze(comparison.files.map((entry, index) => boundedText(
+          exactRecord(entry, `Dashboard comparison file ${index + 1}`).filename,
+          1024,
+          `Dashboard comparison file ${index + 1} path`,
+        ))),
       });
     },
-
-    async dispatch(): Promise<void> {
+    async dispatchPublisher(): Promise<void> {
       const response = await input.request(
-        `${input.apiBase}/repos/${input.repository}/actions/workflows/deploy-dashboard.yml/dispatches`,
+        `${input.apiBase}/repos/${input.repository}/actions/workflows/${publisherWorkflow}/dispatches`,
         {
           body: JSON.stringify({ ref: "main" }),
           headers: { ...headers, "Content-Type": "application/json" },
           method: "POST",
         },
       );
-      if (response.status !== 204) {
-        throw new Error(`Dashboard workflow dispatch failed with HTTP ${response.status}`);
-      }
+      if (response.status !== 204) throw new Error(`Dashboard publisher dispatch failed with HTTP ${response.status}`);
     },
   });
 }
@@ -289,63 +240,54 @@ function emitDecision(
   currentSha: string,
   baselineSha: string | null,
   attemptedSha: string | null,
-) {
+): void {
   const messages: Record<DashboardReleaseDecision["reason"], readonly [string, string]> = {
     manual_force: ["Dashboard release queued", `Manual force queued current main ${currentSha}.`],
-    active_run: ["Dashboard release coalesced", "A guarded dashboard deployment is already active."],
-    missing_baseline: ["Dashboard release queued", `No successful baseline exists; queued current main ${currentSha}.`],
+    active_run: ["Dashboard release coalesced", "A guarded dashboard publication is already active."],
+    missing_baseline: ["Dashboard release queued", `No successful publication baseline exists; queued current main ${currentSha}.`],
     already_current: ["Dashboard already current", `Production already covers current main ${currentSha}.`],
-    already_attempted: ["Dashboard revision already attempted", `Guarded deployment already attempted current main ${attemptedSha ?? currentSha}; use manual force for an intentional retry.`],
+    already_attempted: ["Dashboard revision already attempted", `Guarded publication already attempted current main ${attemptedSha ?? currentSha}; use manual force for an intentional retry.`],
     relevant_changes: ["Dashboard release queued", `Dashboard changes accumulated after ${baselineSha ?? "missing baseline"}; queued ${currentSha}.`],
-    no_relevant_changes: ["Dashboard release window empty", "No dashboard-relevant files changed since the latest successful release."],
-    comparison_unavailable: ["Dashboard comparison unavailable", "Automatic dispatch was skipped; the guarded manual workflow remains available."],
-    comparison_truncated: ["Dashboard comparison truncated", "Automatic dispatch was skipped because the file comparison reached its bound."],
-    history_not_linear: ["Dashboard history uncertain", "Automatic dispatch was skipped because the successful baseline is not an ancestor of current main."],
+    no_relevant_changes: ["Dashboard release window empty", "No dashboard-relevant files changed since the latest successful publication."],
+    comparison_unavailable: ["Dashboard comparison unavailable", "Automatic publication was skipped; the manual queue remains available."],
+    comparison_truncated: ["Dashboard comparison truncated", "Automatic publication was skipped because the file comparison reached its bound."],
+    history_not_linear: ["Dashboard history uncertain", "Automatic publication was skipped because the successful baseline is not an ancestor of current main."],
   };
   const [title, message] = messages[decision.reason];
-  const level = decision.action === "dispatch" || [
-    "active_run",
-    "already_current",
-    "already_attempted",
-    "no_relevant_changes",
-  ].includes(decision.reason)
-    ? "notice"
-    : "warning";
+  const noticeReasons: readonly DashboardReleaseDecision["reason"][] = [
+    "active_run", "already_current", "already_attempted", "no_relevant_changes",
+  ];
+  const level = decision.action === "dispatch" || noticeReasons.includes(decision.reason) ? "notice" : "warning";
   console.log(`::${level} title=${title}::${message}`);
 }
 
 async function appendSummary(
-  summaryPath: string | undefined,
+  path: string | undefined,
   decision: DashboardReleaseDecision,
   currentSha: string,
   baselineSha: string | null,
   attemptedSha: string | null,
-) {
-  if (!summaryPath) return;
-  await appendFile(summaryPath, [
+): Promise<void> {
+  if (!path) return;
+  await appendFile(path, [
     "## Dashboard release window",
     "",
     `- contract: \`dashboard-release-window/v${DASHBOARD_RELEASE_WINDOW_CONTRACT_VERSION}\``,
     `- decision: \`${decision.action}\``,
     `- reason: \`${decision.reason}\``,
     `- current main: \`${currentSha}\``,
-    `- latest successful dashboard release: ${baselineSha ? `\`${baselineSha}\`` : "none"}`,
-    `- latest guarded attempt: ${attemptedSha ? `\`${attemptedSha}\`` : "none"}`,
+    `- latest successful publication: ${baselineSha ? `\`${baselineSha}\`` : "none"}`,
+    `- latest publication attempt: ${attemptedSha ? `\`${attemptedSha}\`` : "none"}`,
     "",
   ].join("\n"), "utf8");
 }
 
 function exactRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
   return value as Record<string, unknown>;
 }
 
-function requiredEnvironment(
-  env: Readonly<Record<string, string | undefined>>,
-  name: string,
-): string {
+function requiredEnvironment(env: Readonly<Record<string, string | undefined>>, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
@@ -371,9 +313,7 @@ function parseBoolean(value: string, label: string): boolean {
 }
 
 function requireSha(value: unknown, label: string): string {
-  if (typeof value !== "string" || !shaPattern.test(value)) {
-    throw new Error(`${label} must be a lowercase 40-character commit SHA`);
-  }
+  if (typeof value !== "string" || !shaPattern.test(value)) throw new Error(`${label} must be a lowercase 40-character commit SHA`);
   return value;
 }
 
@@ -393,6 +333,4 @@ function isSafePath(value: string): boolean {
     && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value);
 }
 
-if (import.meta.main) {
-  await runDashboardReleaseWindow();
-}
+if (import.meta.main) await runDashboardReleaseWindow();
