@@ -75,10 +75,10 @@ export interface GitHubOfficialMcpRemoteCallResult {
 }
 
 /**
- * Executes one already-mapped read through an official-server-compatible
- * Streamable HTTP MCP endpoint. Mapping evidence remains non-authorizing; the
- * caller must complete Stensibly authority and binding checks before entering
- * this transport boundary.
+ * Executes one already-mapped read through the official GitHub Streamable HTTP
+ * MCP endpoint. Mapping evidence remains non-authorizing; the caller must
+ * complete Stensibly authority and binding checks before entering this
+ * transport boundary.
  */
 export class GitHubOfficialMcpRemoteTransport {
   readonly #credentials: GitHubOfficialMcpBearerResolver;
@@ -245,24 +245,10 @@ function admittedEndpoint(value: unknown): URL {
     "Official GitHub MCP endpoint",
     2_048,
   );
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
+  if (text !== githubOfficialMcpRemoteEndpoint) {
     throw new Error("Official GitHub MCP endpoint is invalid");
   }
-  if (
-    url.protocol !== "https:"
-    || url.username !== ""
-    || url.password !== ""
-    || url.search !== ""
-    || url.hash !== ""
-    || !url.pathname.endsWith("/mcp/")
-    || url.href !== text
-  ) {
-    throw new Error("Official GitHub MCP endpoint is invalid");
-  }
-  return url;
+  return new URL(text);
 }
 
 function admittedBearer(value: unknown): string {
