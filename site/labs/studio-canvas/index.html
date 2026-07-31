@@ -3,28 +3,53 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A fixture-only artifact-first workspace for Stensibly Labs." />
   <title>Studio Canvas · Stensibly Labs</title>
-  <link rel="stylesheet" href="../planned.css" />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./responsive.css" />
 </head>
-<body data-stensibly-lab="planned" data-variant="studio-canvas">
-  <header><strong>Stensibly Labs · planned variant</strong><a href="../">All variants</a></header>
-  <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Artifact-first workspace avenue</p>
-        <h1 id="variant-title">Studio Canvas</h1>
-        <p class="lede" id="variant-thesis"></p>
-      </div>
-      <div class="seed" id="seed" aria-label="Studio Canvas direction seed"></div>
+<body data-stensibly-lab="prototype" data-work-collapsed="false" data-inspector-collapsed="false">
+  <header class="topbar">
+    <a class="brand" href="../"><strong>Studio Canvas</strong><small>artifact-first fictional workspace · issue #612</small></a>
+    <button class="command-trigger" id="command-trigger" type="button"><span>Switch artifact, inspector, or layout…</span><kbd>⌘ K</kbd></button>
+    <div class="mode-strip"><span class="mode-chip">review mode</span><span class="mode-chip">fixture only</span><span class="mode-chip">nothing saved</span><a href="../">All variants</a></div>
+  </header>
+
+  <main class="workspace">
+    <nav class="region work-region" aria-labelledby="work-title">
+      <header class="region-head"><div><h1 id="work-title">Artifact work</h1><p>J/K or arrows move selection. Key 1 focuses this region.</p></div><button id="collapse-work" type="button">Collapse work</button></header>
+      <div class="boundary" role="note"><strong>Experiment boundary:</strong> invented local artifacts only. Proposed does not mean saved, accepted, approved, or published.</div>
+      <ul class="work-list" id="work-list"></ul>
+    </nav>
+
+    <section class="region canvas-region" aria-labelledby="canvas-region-title">
+      <header class="canvas-toolbar">
+        <div class="canvas-identity" id="canvas-identity"><span class="eyebrow">artifact</span><strong id="canvas-region-title">Loading artifact</strong></div>
+        <div class="canvas-actions"><button id="compare-toggle" type="button" aria-pressed="false">Compare revision</button><button type="button" data-local-action="source">Open source summary</button><button type="button" data-local-action="next">Explain next action</button></div>
+      </header>
+      <p class="artifact-callout local-action-result" id="local-action-result" role="status" tabindex="-1" hidden></p>
+      <div class="canvas-scroll"><article class="artifact-sheet" id="artifact-sheet" tabindex="-1"></article></div>
     </section>
-    <section class="meta" aria-label="Variant identity">
-      <div><span>Status</span><strong id="variant-status"></strong></div>
-      <div><span>Owner</span><strong id="variant-owner"></strong></div>
-      <div><span>Route</span><strong id="variant-route"></strong></div>
-    </section>
-    <div class="actions"><a id="variant-issue" href="#">Open issue</a><a href="../">Compare variants</a></div>
-    <p class="note">This route reserves an artifact-first workspace. The complete prototype will place the selected output at the center with work navigation, evidence, versions, comments, commands, and explicit local, proposed, attached, accepted, and stale states.</p>
+
+    <aside class="region inspector-region" aria-labelledby="inspector-title">
+      <header class="region-head"><div><h2 id="inspector-title">Context inspector</h2><p>Evidence, comments, versions, and activity. Key 3 focuses tabs.</p></div><button id="collapse-inspector" type="button">Collapse inspector</button></header>
+      <div class="inspector-tabs" id="inspector-tabs" role="tablist" aria-label="Artifact inspector tabs"></div>
+      <div class="inspector-content" id="inspector-content"></div>
+    </aside>
   </main>
-  <script src="../planned.js"></script>
+
+  <button class="reopen-control" id="reopen-work" type="button">Restore work region</button>
+  <button class="reopen-control" id="reopen-inspector" type="button">Restore inspector</button>
+
+  <dialog class="command-dialog" id="command-dialog" aria-labelledby="command-title">
+    <header><h2 class="sr-only" id="command-title">Studio Canvas commands</h2><input id="command-input" type="search" aria-label="Search artifacts, inspectors, and layout commands" placeholder="Search artifacts, inspectors, and layout commands…" autocomplete="off" /></header>
+    <ul class="command-list" id="command-list"></ul>
+  </dialog>
+
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+  <script src="../fixtures.classic.js"></script>
+  <script src="./app.js"></script>
+  <script src="./runtime-boundary.js"></script>
+  <script src="./workspace-bridge.js"></script>
 </body>
 </html>
