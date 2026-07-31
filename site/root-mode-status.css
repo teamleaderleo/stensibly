@@ -37,7 +37,7 @@ html[data-app-mode="editing"] .hero-login {
 
 html[data-app-mode="editing"] .login-card {
   max-width: none;
-  padding: .75rem .85rem;
+  padding: .6rem .85rem;
   border-radius: .75rem;
 }
 
