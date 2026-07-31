@@ -1,13 +1,20 @@
 import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { canonicalJsonString, fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint";
+import {
+  canonicalJsonString,
+  fingerprintCanonicalRequest,
+} from "../src/idempotency-request-fingerprint";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
 const serviceSecret = "github-repository-observation-service-secret";
-const ingestRef = makeFunctionReference<"mutation">("githubRepositoryObservations:ingest");
-const listRecentRef = makeFunctionReference<"query">("githubRepositoryObservations:listRecent");
+const ingestRef = makeFunctionReference<"mutation">(
+  "githubRepositoryObservations:ingest",
+);
+const listRecentRef = makeFunctionReference<"query">(
+  "githubRepositoryObservations:listRecent",
+);
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
@@ -81,6 +88,28 @@ describe("hosted GitHub repository observations", () => {
     })).rejects.toThrow("semantic fingerprint is invalid");
   });
 
+  test("rejects raw prose hidden in a newly fingerprinted fact", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    const forged = input();
+    const decoded = JSON.parse(forged.observationJson);
+    decoded.facts.rawBody = "secret issue body";
+    const {
+      observationId: _observationId,
+      deliveryId: _deliveryId,
+      payloadDigest: _payloadDigest,
+      semanticFingerprint: _semanticFingerprint,
+      receivedAt: _receivedAt,
+      ...canonicalSemantics
+    } = decoded;
+    decoded.semanticFingerprint = fingerprintCanonicalRequest(canonicalSemantics);
+
+    await expect(t.mutation(ingestRef, {
+      ...forged,
+      observationJson: canonicalJsonString(decoded),
+    })).rejects.toThrow("GitHub issue facts has noncanonical fields");
+  });
+
   test("requires the service boundary", async () => {
     const t = convexTest(schema, modules);
     await seedWorkspace(t);
@@ -131,6 +160,7 @@ function input(overrides: {
     facts: {
       locked: false,
       state: "open",
+      stateReason: null,
     },
     contentRevisions: [{
       name: "body" as const,
