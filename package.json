@@ -13,7 +13,6 @@
     "attach": "bun src/project-attach-cli.ts",
     "callsigns": "bun src/callsigns.ts",
     "callsign-catalog": "bun src/callsign-catalog-cli.ts",
-    "browser:cli": "playwright cli",
     "verify:hosted": "bun src/verify-hosted.ts",
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
