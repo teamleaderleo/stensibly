@@ -7,6 +7,21 @@ const dashboardConfig = await Bun.file(
   new URL("../site/vercel.json", import.meta.url),
 ).json();
 
+const dashboardHeaders = new Map<string, Map<string, string>>(
+  dashboardConfig.headers.map((entry: { source: string; headers: Array<{ key: string; value: string }> }): [string, Map<string, string>] => [
+    entry.source,
+    new Map<string, string>(entry.headers.map((header): [string, string] => [header.key, header.value])),
+  ]),
+);
+
+const labsSource = "/labs/:path*";
+const productionSource = "/((?!labs(?:/|$)).*)";
+
+function matchesDashboardHeaderSource(source: string, path: string): boolean {
+  if (source === labsSource) return path === "/labs" || path.startsWith("/labs/");
+  return new RegExp(`^${source}$`).test(path);
+}
+
 describe("Vercel deployment policy", () => {
   test("disables automatic Git deployments for the repository-root project", () => {
     expect(repositoryConfig.git?.deploymentEnabled).toBe(false);
@@ -16,9 +31,21 @@ describe("Vercel deployment policy", () => {
     expect(dashboardConfig.git?.deploymentEnabled).toBe(false);
   });
 
-  test("preserves the dashboard static hosting configuration", () => {
+  test("preserves clean static hosting with disjoint labs and production header policies", () => {
     expect(dashboardConfig.cleanUrls).toBe(true);
-    expect(Array.isArray(dashboardConfig.headers)).toBe(true);
-    expect(dashboardConfig.headers[0]?.source).toBe("/(.*)");
+    expect([...dashboardHeaders.keys()]).toEqual([labsSource, productionSource]);
+
+    for (const path of ["/labs", "/labs/", "/labs/quiet-control/index.html"]) {
+      expect(matchesDashboardHeaderSource(labsSource, path)).toBe(true);
+      expect(matchesDashboardHeaderSource(productionSource, path)).toBe(false);
+    }
+    expect(matchesDashboardHeaderSource(productionSource, "/index.html")).toBe(true);
+  });
+
+  test("allows only same-origin labs framing while keeping the production dashboard unframeable", () => {
+    expect(dashboardHeaders.get(labsSource)?.get("Content-Security-Policy")).toContain("frame-ancestors 'self'");
+    expect(dashboardHeaders.get(productionSource)?.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+    expect(dashboardHeaders.get(labsSource)?.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(dashboardHeaders.get(productionSource)?.get("X-Content-Type-Options")).toBe("nosniff");
   });
 });
