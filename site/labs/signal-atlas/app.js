@@ -1,14 +1,23 @@
-const records = Object.freeze([
-  record("approve-release-note", "decision", "attention", "Approve the release note", "The concise wording is the only human decision preventing fictional publication.", "operator", "09:42 UTC", "7ac91de", "Review the wording, then approve it or return it for revision.", [50, 14]),
-  record("moss", "worker", "healthy", "Moss", "Reviewing accessibility evidence with a healthy fictional lease.", "Moss", "09:40 UTC", "lease-moss-14", "Open the evidence and let the bounded review continue.", [18, 33]),
-  record("ember", "worker", "unhealthy", "Ember", "Lease expired 12 minutes ago; safe reassignment is available.", "Ember", "09:28 UTC", "lease-ember-09", "Confirm the lease expired, then recover or reassign the work.", [82, 33]),
-  record("repair-focus-order", "ready work", "ready", "Repair focus order", "Top recommendation because it unlocks keyboard evidence across every frontend variant.", "unclaimed", "rank 1", "task-focus-01", "Repair shared focus order, then repeat keyboard evidence.", [21, 62]),
-  record("deploy-amber", "operation", "ambiguous", "Dashboard publication", "The client timed out before receiving a provider receipt; settlement is unknown.", "operator", "09:36 UTC", "preview-amber-17", "Read the remote receipt and target state before accepting or retrying.", [51, 55]),
-  record("archive-coral", "operation", "recovered", "Artifact archive", "A stale lease was recovered without duplicate writes.", "Moss", "09:31 UTC", "archive-coral-04", "Review the recovery receipt; no further action is required.", [78, 69]),
-  record("github", "connection", "healthy", "GitHub", "Issue reads and bounded writes are available.", "provider", "09:41 UTC", "connection-github", "No recovery action is required.", [24, 90]),
-  record("api", "connection", "reconnecting", "API", "Refreshing a fictional short-lived session.", "provider", "09:41 UTC", "connection-api", "Allow the reconnect to finish, then recheck health.", [52, 90]),
-  record("mcp", "connection", "offline", "MCP", "Unavailable in this preview scenario; other paths remain explicit.", "provider", "09:39 UTC", "connection-mcp", "Use GitHub or API and preserve the offline explanation.", [80, 90]),
-]);
+const fixtureApi = globalThis.StensiblyFrontendLabFixtures;
+if (!fixtureApi) throw new Error("Signal Atlas requires the shared frontend labs fixture contract");
+const policy = globalThis.StensiblySignalAtlasPolicy;
+if (!policy) throw new Error("Signal Atlas requires its shared-fixture projection policy");
+const fixture = fixtureApi.frontendLabFixture;
+
+const metadata = Object.freeze({
+  "approve-release-note": meta("decision", "operator", "09:42 UTC", "7ac91de", "Review the wording, then approve it or return it for revision.", [50, 14], "human-decision"),
+  moss: meta("worker", "Moss", "09:40 UTC", "lease-moss-14", "Open the evidence and let the bounded review continue.", [18, 33], "worker-health"),
+  ember: meta("worker", "Ember", "09:28 UTC", "lease-ember-09", "Confirm the lease expired, then recover or reassign the work.", [82, 33], "worker-health"),
+  "repair-focus-order": meta("ready work", "unclaimed", "rank 1", "task-focus-01", "Repair shared focus order, then repeat keyboard evidence.", [21, 62], "recommended-work"),
+  "deploy-amber": meta("operation", "operator", "09:36 UTC", "preview-amber-17", "Read the remote receipt and target state before accepting or retrying.", [51, 55], "safe-reconciliation"),
+  "archive-coral": meta("operation", "Moss", "09:31 UTC", "archive-coral-04", "Review the recovery receipt; no further action is required.", [78, 69], null),
+  github: meta("connection", "provider", "09:41 UTC", "connection-github", "No recovery action is required.", [24, 90], "connection-health"),
+  api: meta("connection", "provider", "09:41 UTC", "connection-api", "Allow the reconnect to finish, then recheck health.", [52, 90], "connection-health"),
+  mcp: meta("connection", "provider", "09:39 UTC", "connection-mcp", "Use GitHub or API and preserve the offline explanation.", [80, 90], "connection-health"),
+});
+
+const baseRecords = Object.freeze(Object.entries(metadata).map(([id, details]) => Object.freeze({ id, ...details })));
+const records = policy.projectRecords(baseRecords);
 
 const chapters = Object.freeze([
   chapter({
@@ -80,13 +89,23 @@ const routes = Object.freeze([
 ]);
 
 const ledgerEvents = Object.freeze([
-  event("09:28 UTC", "ember", "Lease crossed the recovery threshold.", "unhealthy"),
-  event("09:31 UTC", "archive-coral", "Artifact archive recovery settled without duplicate writes.", "recovered"),
-  event("09:36 UTC", "deploy-amber", "Publication client timed out before receiving a provider receipt.", "ambiguous"),
-  event("09:40 UTC", "moss", "Accessibility evidence review remained active and healthy.", "healthy"),
-  event("09:41 UTC", "api", "API began refreshing a fictional short-lived session.", "reconnecting"),
-  event("09:42 UTC", "approve-release-note", "Release wording remained the only human decision.", "attention"),
+  event("09:28 UTC", "ember", "Lease crossed the recovery threshold."),
+  event("09:31 UTC", "archive-coral", "Artifact archive recovery settled without duplicate writes."),
+  event("09:36 UTC", "deploy-amber", "Publication client timed out before receiving a provider receipt."),
+  event("09:40 UTC", "moss", "Accessibility evidence review remained active and healthy."),
+  event("09:41 UTC", "api", "API began refreshing a fictional short-lived session."),
+  event("09:42 UTC", "approve-release-note", "Release wording remained the only human decision."),
 ]);
+
+const ledgerChapterIds = Object.freeze({
+  ember: "workers",
+  "archive-coral": "ambiguity",
+  "deploy-amber": "ambiguity",
+  moss: "workers",
+  api: "connections",
+  "approve-release-note": "decision",
+});
+validateLedgerDestinations();
 
 const stateLabels = Object.freeze({
   attention: "human decision",
@@ -165,11 +184,7 @@ function renderChapterList() {
     button.type = "button";
     button.dataset.chapterId = entry.id;
     button.setAttribute("aria-current", index === chapterIndex ? "step" : "false");
-    button.append(
-      text("span", `0${index + 1}`, "chapter-number"),
-      text("strong", entry.title),
-      text("span", entry.short),
-    );
+    button.append(text("span", `0${index + 1}`, "chapter-number"), text("strong", entry.title), text("span", entry.short));
     button.addEventListener("click", () => selectChapter(index, true));
     item.append(button);
     return item;
@@ -187,9 +202,7 @@ function renderChapter() {
   previousButton.disabled = chapterIndex === 0;
   nextButton.disabled = chapterIndex === chapters.length - 1;
   nextButton.textContent = chapterIndex === chapters.length - 1 ? "End of story" : `Next: 0${chapterIndex + 2}`;
-  chapterList.querySelectorAll("button").forEach((button, index) => {
-    button.setAttribute("aria-current", index === chapterIndex ? "step" : "false");
-  });
+  chapterList.querySelectorAll("button").forEach((button, index) => button.setAttribute("aria-current", index === chapterIndex ? "step" : "false"));
   renderRoutes(entry);
   renderMap(entry);
   renderStaticStory();
@@ -217,11 +230,7 @@ function renderMap(entry) {
     button.hidden = !entry.active.includes(recordEntry.id);
     button.setAttribute("aria-current", String(recordEntry.id === selectedRecordId));
     button.setAttribute("aria-label", `${recordEntry.title}. ${stateLabels[recordEntry.state]}. ${recordEntry.summary}`);
-    button.append(
-      text("span", symbolFor(recordEntry.state), "node-symbol"),
-      text("strong", recordEntry.title),
-      text("small", stateLabels[recordEntry.state]),
-    );
+    button.append(text("span", symbolFor(recordEntry.state), "node-symbol"), text("strong", recordEntry.title), text("small", stateLabels[recordEntry.state]));
     button.addEventListener("click", () => selectRecord(recordEntry.id, button));
     return button;
   }));
@@ -237,18 +246,14 @@ function renderStaticStory() {
     button.type = "button";
     button.textContent = `Open chapter 0${index + 1}`;
     button.addEventListener("click", () => selectChapter(index, true));
-    article.append(
-      text("span", `0${index + 1} · ${entry.kicker.replace(/^Chapter \d+ · /, "")}`, "chapter-number"),
-      text("h4", entry.title),
-      text("p", entry.narrative),
-      button,
-    );
+    article.append(text("span", `0${index + 1} · ${entry.kicker.replace(/^Chapter \d+ · /, "")}`, "chapter-number"), text("h4", entry.title), text("p", entry.narrative), button);
     return article;
   }));
 }
 
 function renderEvidence() {
   const recordEntry = byId(selectedRecordId);
+  const providers = ["github", "api", "mcp"].map(byId);
   evidenceBody.replaceChildren(
     text("span", stateLabels[recordEntry.state], "evidence-state"),
     text("h2", recordEntry.title, "evidence-title"),
@@ -259,39 +264,35 @@ function renderEvidence() {
       ["Owner", recordEntry.owner],
       ["Observed", recordEntry.time],
       ["Evidence head", recordEntry.evidence],
-      ["Source", "Paper Lantern fictional fixture"],
+      ["Source", "Paper Lantern shared fictional fixture"],
     ])),
     section("Safe next action", elementWithChildren("div", "next-action", text("strong", recordEntry.nextAction))),
-    section("Available providers", evidenceList([
-      ["GitHub", "healthy"],
-      ["API", "reconnecting"],
-      ["MCP", "offline"],
-    ])),
+    section("Available providers", evidenceList(providers.map((entry) => [entry.title, stateLabels[entry.state]]))),
   );
 }
 
 function renderLedger() {
   ledgerList.replaceChildren(...ledgerEvents.map((entry) => {
     const recordEntry = byId(entry.recordId);
+    const chapterId = ledgerChapter(entry.recordId);
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.recordId = entry.recordId;
+    button.dataset.chapterId = chapterId;
     button.textContent = `Open ${recordEntry.title}`;
     button.addEventListener("click", () => {
       closeLedger(false);
-      const containingChapter = chapters.findIndex((chapterEntry) => chapterEntry.active.includes(entry.recordId));
-      chapterIndex = Math.max(0, containingChapter);
+      const targetIndex = chapters.findIndex((chapterEntry) => chapterEntry.id === chapterId);
+      if (targetIndex < 0) throw new Error(`Unknown Signal Atlas chapter: ${chapterId}`);
+      chapterIndex = targetIndex;
       selectedRecordId = entry.recordId;
       renderChapterList();
       renderChapter();
       evidenceBody.focus({ preventScroll: true });
       announce(`${recordEntry.title} selected from the complete ledger`);
     });
-    item.append(
-      text("time", entry.time),
-      elementWithChildren("div", "", text("code", stateLabels[entry.state]), text("strong", recordEntry.title)),
-      elementWithChildren("div", "", text("p", entry.copy), button),
-    );
+    item.append(text("time", entry.time), elementWithChildren("div", "", text("code", stateLabels[recordEntry.state]), text("strong", recordEntry.title)), elementWithChildren("div", "", text("p", entry.copy), button));
     return item;
   }));
 }
@@ -314,7 +315,8 @@ function selectRecord(id, focusTarget) {
   renderMap(chapters[chapterIndex]);
   renderEvidence();
   focusTarget?.focus();
-  announce(`${byId(id).title}. ${stateLabels[byId(id).state]}.`);
+  const recordEntry = byId(id);
+  announce(`${recordEntry.title}. ${stateLabels[recordEntry.state]}.`);
 }
 
 function openLedger() {
@@ -332,22 +334,41 @@ function closeLedger(restore = true) {
   announce("Complete static timeline closed");
 }
 
-function record(id, kind, state, title, summary, owner, time, evidence, nextAction, position) {
-  return Object.freeze({ id, kind, state, title, summary, owner, time, evidence, nextAction, position: Object.freeze(position) });
+function validateLedgerDestinations() {
+  const ids = ledgerEvents.map((entry) => entry.recordId);
+  if (new Set(ids).size !== ids.length) throw new TypeError("Signal Atlas ledger record identities must be unique");
+  if (Object.keys(ledgerChapterIds).sort().join(",") !== [...ids].sort().join(",")) {
+    throw new TypeError("Signal Atlas ledger destinations must cover every event exactly");
+  }
+  for (const id of ids) ledgerChapter(id);
+}
+
+function ledgerChapter(recordId) {
+  const chapterId = ledgerChapterIds[recordId];
+  if (!chapterId) throw new TypeError(`Signal Atlas ledger event ${recordId} requires an explicit chapter`);
+  const chapterEntry = chapters.find((entry) => entry.id === chapterId);
+  if (!chapterEntry || !chapterEntry.active.includes(recordId)) {
+    throw new TypeError(`Signal Atlas chapter ${chapterId} must contain ledger record ${recordId}`);
+  }
+  return chapterId;
+}
+
+function meta(kind, owner, time, evidence, nextAction, position, task) {
+  return Object.freeze({ kind, owner, time, evidence, nextAction, position: Object.freeze(position), task });
 }
 
 function chapter(value) {
   return Object.freeze({ ...value, active: Object.freeze([...value.active]) });
 }
 
-function event(time, recordId, copy, state) {
-  return Object.freeze({ time, recordId, copy, state });
+function event(time, recordId, copy) {
+  return Object.freeze({ time, recordId, copy });
 }
 
 function symbolFor(state) {
   if (["attention", "ambiguous"].includes(state)) return "◆";
   if (["unhealthy", "offline"].includes(state)) return "×";
-  if (["reconnecting"].includes(state)) return "▲";
+  if (state === "reconnecting") return "▲";
   if (state === "recovered") return "✓";
   return "●";
 }
@@ -364,9 +385,7 @@ function section(title, content) {
 
 function evidenceList(entries) {
   const list = element("ul", "evidence-list");
-  for (const [label, value] of entries) {
-    list.append(elementWithChildren("li", "", text("span", label, "meta-label"), text("strong", value)));
-  }
+  for (const [label, value] of entries) list.append(elementWithChildren("li", "", text("span", label, "meta-label"), text("strong", value)));
   return list;
 }
 

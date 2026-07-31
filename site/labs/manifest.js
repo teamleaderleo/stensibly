@@ -68,7 +68,7 @@ const sourceManifest = [
     thesis: "An editorial map and timeline treatment for explaining incidents, dependencies, and evidence as a guided narrative.",
     owner: "Cinder",
     status: "prototype",
-    revision: "a4296f97402c76b02ed797177efc398814244e76",
+    revision: "2e10f2fc9ba04f532d794d0b5ea76168a6b43ae1",
     issue: 611,
     path: "./signal-atlas/",
     support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion"],
