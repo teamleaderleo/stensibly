@@ -67,55 +67,88 @@
 
   const fixture = globalThis.StensiblyFrontendLabFixtures?.frontendLabFixture;
   const connectionShelf = document.querySelector("#connection-shelf");
-  if (fixture && connectionShelf) {
+  const detailContent = document.querySelector("#detail-content");
+  if (fixture && (connectionShelf || detailContent)) {
     let connectionRepairScheduled = false;
     const repairConnections = () => {
       connectionRepairScheduled = false;
       const projections = policy.projectConnections(fixture.connections, document.body.dataset.scenario ?? "default");
-      const chips = [...connectionShelf.querySelectorAll(".connection-chip")];
-      projections.forEach((connection, index) => {
-        const chip = chips[index];
-        if (!chip) return;
-        const suffix = connection.previewState ? ` · ${connection.previewState} preview` : "";
-        const label = `${connection.label} · ${connection.state}${suffix}`;
-        if (chip.textContent !== label) chip.textContent = label;
-        if (chip.dataset.state !== connection.state) chip.dataset.state = connection.state;
-        if (connection.previewState) {
-          if (chip.dataset.previewState !== connection.previewState) chip.dataset.previewState = connection.previewState;
-        } else if (chip.dataset.previewState !== undefined) {
-          delete chip.dataset.previewState;
-        }
-        const symbol = connection.state === "healthy" ? "✓" : connection.state === "offline" ? "×" : "△";
-        if (chip.dataset.symbol !== symbol) chip.dataset.symbol = symbol;
-        const title = connection.previewDetail ?? connection.detail;
-        if (chip.title !== title) chip.title = title;
-      });
-      const ariaLabel = `Connection health: ${projections.map((connection) => {
-        const suffix = connection.previewState ? `, ${connection.previewState} preview` : "";
-        return `${connection.label} ${connection.state}${suffix}`;
-      }).join(", ")}`;
-      if (connectionShelf.getAttribute("aria-label") !== ariaLabel) connectionShelf.setAttribute("aria-label", ariaLabel);
+      repairConnectionShelf(projections);
+      repairConnectionDetail(projections);
     };
     const scheduleConnectionRepair = () => {
       if (connectionRepairScheduled) return;
       connectionRepairScheduled = true;
       queueMicrotask(repairConnections);
     };
-    new MutationObserver(scheduleConnectionRepair).observe(connectionShelf, {
-      attributes: true,
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
+
+    if (connectionShelf) {
+      new MutationObserver(scheduleConnectionRepair).observe(connectionShelf, {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+    if (detailContent) {
+      new MutationObserver(scheduleConnectionRepair).observe(detailContent, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
     new MutationObserver(scheduleConnectionRepair).observe(document.body, {
       attributes: true,
       attributeFilter: ["data-scenario"],
     });
     scheduleConnectionRepair();
+
+    function repairConnectionShelf(projections) {
+      if (!connectionShelf) return;
+      const chips = [...connectionShelf.querySelectorAll(".connection-chip")];
+      projections.forEach((connection, index) => {
+        const chip = chips[index];
+        if (!chip) return;
+        const previewSuffix = connection.previewState ? ` · ${connection.previewState} preview` : "";
+        const label = `${connection.label} · ${connection.state}${previewSuffix}`;
+        if (chip.textContent !== label) chip.textContent = label;
+        chip.dataset.state = connection.state;
+        if (connection.previewState) chip.dataset.previewState = connection.previewState;
+        else delete chip.dataset.previewState;
+        chip.dataset.symbol = connection.state === "healthy" ? "✓" : connection.state === "offline" ? "×" : "△";
+        chip.title = connection.previewDetail ?? connection.detail;
+      });
+      const ariaLabel = `Connection health: ${projections.map((connection) => {
+        const previewSuffix = connection.previewState ? `, ${connection.previewState} preview` : "";
+        return `${connection.label} ${connection.state}${previewSuffix}`;
+      }).join(", ")}`;
+      if (connectionShelf.getAttribute("aria-label") !== ariaLabel) connectionShelf.setAttribute("aria-label", ariaLabel);
+    }
+
+    function repairConnectionDetail(projections) {
+      if (!detailContent) return;
+      const section = [...detailContent.querySelectorAll(".detail-section")]
+        .find((candidate) => candidate.querySelector("h3")?.textContent === "Connection health");
+      const items = section ? [...section.querySelectorAll(".evidence-list > li")] : [];
+      projections.forEach((connection, index) => {
+        const item = items[index];
+        if (!item) return;
+        const label = item.querySelector("span:first-child");
+        const state = item.querySelector("code");
+        const detail = item.querySelector("span:last-child");
+        const detailText = connection.previewState
+          ? `${connection.previewState} preview · ${connection.previewDetail}`
+          : connection.detail;
+        if (label && label.textContent !== connection.label) label.textContent = connection.label;
+        if (state && state.textContent !== connection.state) state.textContent = connection.state;
+        if (detail && detail.textContent !== detailText) detail.textContent = detailText;
+        if (connection.previewState) item.dataset.previewState = connection.previewState;
+        else delete item.dataset.previewState;
+      });
+    }
   }
 
   const primaryAction = document.querySelector("#primary-action");
-  const detailContent = document.querySelector("#detail-content");
   const announcer = document.querySelector("#announcer");
   if (primaryAction && detailContent && announcer) {
     let actionRepairScheduled = false;
@@ -138,10 +171,11 @@
     });
     primaryAction.addEventListener("click", (event) => {
       if (primaryAction.disabled) return;
-      const actionBlock = [...detailContent.querySelectorAll(".detail-block")]
-        .find((block) => ["Next action", "Safe next action"].includes(block.querySelector("strong")?.textContent ?? ""));
-      const heading = actionBlock?.querySelector("strong")?.textContent ?? "";
-      const nextAction = actionBlock?.querySelector("p")?.textContent ?? "Review the exact fixture next action";
+      const nextNote = detailContent.querySelector(".next-note");
+      const heading = nextNote?.querySelector("strong")?.textContent?.trim() ?? "";
+      const completeText = nextNote?.textContent?.trim() ?? "";
+      const nextAction = completeText.replace(/^(?:Safe next action|Next action)\s*/u, "").trim()
+        || "Review the exact fixture next action";
       event.preventDefault();
       event.stopImmediatePropagation();
       announcer.textContent = policy.primaryActionAnnouncement(nextAction, heading === "Safe next action");
