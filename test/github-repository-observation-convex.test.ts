@@ -115,19 +115,22 @@ describe("Convex GitHub repository observation service", () => {
     expect(getterCalls).toBe(0);
   });
 
-  test("does not invoke a backend proxy get trap", async () => {
+  test("does not invoke a nested backend proxy get trap", async () => {
     const observation = issueObservation();
     let getCalls = 0;
-    const result = new Proxy({
-      duplicate: false,
-      record: storedRecord(canonicalJson(observation)),
-    }, {
-      get() {
-        getCalls += 1;
-        throw new Error("proxy get trap must not run");
+    const proxiedRecord = new Proxy(
+      storedRecord(canonicalJson(observation)),
+      {
+        get() {
+          getCalls += 1;
+          throw new Error("nested proxy get trap must not run");
+        },
       },
+    );
+    const service = serviceWithMutationResult({
+      duplicate: false,
+      record: proxiedRecord,
     });
-    const service = serviceWithMutationResult(result);
 
     expect(await service.ingestRepositoryObservation(observationInput(observation)))
       .toEqual({ duplicate: false });
