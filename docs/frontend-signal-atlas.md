@@ -12,9 +12,9 @@ It borrows editorial grammar—chapters, annotations, a persistent evidence rail
 
 ## Why the landscape is abstract
 
-Paper Lantern has no relevant real-world coordinates. The central visual is therefore labeled an **abstract fictional work landscape**. Its shapes group decision, worker, ready-work, operation, and provider records. It makes causal distance visible without claiming latitude, region, infrastructure location, or geographic precision.
+Paper Lantern has no relevant real-world coordinates. The central visual is therefore labeled an **abstract fictional work landscape**. Its shapes group decision, worker, ready-work, operation, and provider records. It makes causal distance visible without claiming latitude, region, hosting location, or geographic precision.
 
-No real data layer is used. A future real layer would require explicit source, freshness, coordinate meaning, privacy review, and a textual equivalent.
+The shared source is fictional and contains no coordinate layer. A future real layer would require explicit source, freshness, coordinate meaning, privacy review, and a textual equivalent.
 
 ## Narrative chapters
 
@@ -28,11 +28,13 @@ The route has five directly selectable chapters:
 
 Users can open any chapter through ordinary buttons, keys 1–5, Arrow Left/Right, or J/K. The chapter order is explanatory, not authoritative.
 
+Ledger events carry an explicit chapter identity. The route policy validates that the named chapter contains the named record before the page renders, so overlapping records never fall into the first chapter that happens to mention them.
+
 ## Static and reduced-motion parity
 
 Every chapter appears in a complete static explanation beneath the landscape. A “Show all evidence” control opens a complete timestamped ledger without requiring chapter navigation or animated travel.
 
-Reduced-motion mode changes chapter travel to immediate positioning. It does not remove text, nodes, evidence, source, time, state, route meaning, or next action.
+Reduced-motion mode changes chapter travel to immediate positioning. It preserves text, nodes, evidence, source, time, state, route meaning, and next action.
 
 Native document scrolling remains enabled. There is no wheel interception, scroll snapping, forced autoplay, timed chapter advance, or locked progression.
 
@@ -51,6 +53,8 @@ The selected evidence rail remains visible beside the narrative at wide widths a
 
 Selecting a landscape node updates the rail. The post-render focus adapter restores focus to the replacement node after the scene layer is rebuilt.
 
+The full ledger is a modal boundary. Opening it makes the masthead and atlas inert before focus moves inside. Closing releases that boundary before focus returns. Keyboard opening from the document body falls back to the visible “Show all evidence” control; a connected focusable control outside the ledger keeps exact return focus.
+
 ## State language
 
 State is literal and non-color-only:
@@ -61,17 +65,17 @@ State is literal and non-color-only:
 - `✓` recovered;
 - `●` healthy or recommended work.
 
-The ambiguous operation never exposes a retry action. Its next action is to read the remote receipt and target state before accepting or retrying.
+The ambiguous operation never exposes a retry action. Its shared next-action text is `Reconcile publication`; the prototype displays that fixture guidance and performs zero retry, write, network request, or simulated settlement.
 
 ## Adopted storytelling patterns
 
-- direct, titled chapters rather than implicit scroll positions;
+- direct, titled chapters instead of implicit scroll positions;
 - one annotation that explains why the selected relationship matters;
 - persistent source, evidence, and time;
 - coordinated visual and textual records;
 - an immediate exit to the complete ledger;
 - route emphasis only when it clarifies cause or dependency;
-- a static alternative that is not treated as a degraded experience.
+- a static alternative treated as a complete experience.
 
 ## Deliberately rejected patterns
 
@@ -87,9 +91,9 @@ The ambiguous operation never exposes a retry action. Its next action is to read
 
 ## Fixture and authority boundary
 
-The route is a zero-build classic-script prototype using locally authored HTML, CSS, JavaScript, inline SVG route paths, and fictional Paper Lantern identities. It contains no remote map tile, image, library, font, iframe, API request, storage state, credential, private record, analytics, or live product action.
+The route is a zero-build classic-script prototype using locally authored HTML, CSS, JavaScript, inline SVG route paths, and the merged shared fictional Paper Lantern fixture. It contains no remote map tile, image, library, font, iframe, API request, storage state, credential, private record, analytics, or live product action.
 
-It temporarily duplicates the shared fictional identities so it remains independently interactive in the catalogue's opaque `sandbox="allow-scripts"` frame. A later reviewed change may consume the shared classic fixture bridge once that bridge is merged and stable.
+`../fixtures.classic.js` loads before the route policy and app. The policy admits exact shared identities and kinds, then projects shared title, detail or reason, state, and operation action into local presentation metadata such as position, observed time, evidence label, and owner. Duplicate identities, missing shared records, kind mismatches, and incomplete presentation truth fail closed before the app renders.
 
 ## Recovery
 
