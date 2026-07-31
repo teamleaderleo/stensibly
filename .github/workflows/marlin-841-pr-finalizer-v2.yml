@@ -1,0 +1,160 @@
+name: Marlin 841 reconciliation repair finalizer v2
+
+on:
+  pull_request:
+    types: [synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'kestrel/591-pr-reconciliation'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: kestrel/591-pr-reconciliation
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply exact live-byte repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/github-pull-request-reconciliation.ts')
+          source = source_path.read_text()
+
+          unsafe = '''const unsafeTextPattern =
+            /[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]/u;
+          '''
+          detector = unsafe + '''const realisticCredentialPattern = /(?:Bearer\\s+[A-Za-z0-9._~+\\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\\/\\/[^\\s]+|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,})/u;
+          '''
+          if unsafe not in source or 'const realisticCredentialPattern =' in source:
+              raise SystemExit('credential detector anchor changed')
+          source = source.replace(unsafe, detector, 1)
+
+          chronology = '''    Date.parse(provider.updatedAt) > Date.parse(reconciledAt)
+            || (observation !== null
+              && Date.parse(observation.receivedAt) > Date.parse(reconciledAt))'''
+          chronology_repaired = '''    Date.parse(provider.updatedAt) > Date.parse(reconciledAt)
+            || (observation !== null
+              && (Date.parse(observation.receivedAt) > Date.parse(reconciledAt)
+                || Date.parse(observation.sourceTime) > Date.parse(reconciledAt)))'''
+          if chronology not in source:
+              raise SystemExit('chronology anchor changed')
+          source = source.replace(chronology, chronology_repaired, 1)
+
+          provider_request = '''    : pattern(
+                receipt.providerRequestId,
+                providerRequestPattern,
+                "GitHub provider request ID",
+              );'''
+          provider_request_repaired = '''    : credentialSafePattern(
+                receipt.providerRequestId,
+                providerRequestPattern,
+                "GitHub provider request ID",
+              );'''
+          if provider_request not in source:
+              raise SystemExit('provider request anchor changed')
+          source = source.replace(provider_request, provider_request_repaired, 1)
+
+          bounded = '''function boundedIdentity(value: unknown, label: string): string {
+            return pattern(value, boundedIdentityPattern, label);
+          }'''
+          bounded_repaired = '''function boundedIdentity(value: unknown, label: string): string {
+            return credentialSafePattern(value, boundedIdentityPattern, label);
+          }'''
+          if bounded not in source:
+              raise SystemExit('bounded identity anchor changed')
+          source = source.replace(bounded, bounded_repaired, 1)
+
+          anchor = 'function closed<const T extends readonly string[]>(\n'
+          helper = '''function credentialSafePattern(
+            value: unknown,
+            expected: RegExp,
+            label: string,
+          ): string {
+            const admitted = pattern(value, expected, label);
+            if (realisticCredentialPattern.test(admitted)) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return admitted;
+          }
+
+          '''
+          if anchor not in source:
+              raise SystemExit('helper insertion anchor changed')
+          source = source.replace(anchor, helper + anchor, 1)
+          source_path.write_text(source)
+
+          test_path = Path('test/github-pull-request-reconciliation.test.ts')
+          tests = test_path.read_text()
+          if 'rejects credential-shaped retained provider identities' in tests:
+              raise SystemExit('credential test already present')
+          insertion = r'''
+
+            test("rejects credential-shaped retained provider identities", () => {
+              const cases = [
+                { field: "bindingId" as const, value: `github_pat_${"A".repeat(82)}` },
+                { field: "providerRequestId" as const, value: `ghp_${"A".repeat(36)}` },
+              ];
+              for (const { field, value } of cases) {
+                const receipt = providerRead();
+                expect(() => compile({
+                  observation: observation(),
+                  providerRead: { ...receipt, [field]: value },
+                })).toThrow();
+              }
+
+              const benign = providerRead();
+              const result = compile({
+                observation: observation(),
+                providerRead: {
+                  ...benign,
+                  bindingId: "task-sk-review",
+                  providerRequestId: "PRINFO:sk-review",
+                },
+              });
+              expect(result.providerBindingId).toBe("task-sk-review");
+              expect(result.providerRequestId).toBe("PRINFO:sk-review");
+            });
+
+            test("rejects provider source evidence after the trusted reconciliation time", () => {
+              expect(() => compile({
+                observation: observation({
+                  updatedAt: "2026-08-01T00:11:00.000Z",
+                  receivedAt: "2026-08-01T00:09:00.000Z",
+                }),
+                providerRead: providerRead({
+                  updatedAt: "2026-08-01T00:07:00.000Z",
+                }),
+              })).toThrow("evidence follows the reconciliation time");
+            });
+          '''
+          marker = '\n});\n\nfunction compile(input:'
+          if marker not in tests:
+              raise SystemExit('test insertion anchor changed')
+          test_path.write_text(tests.replace(marker, insertion + marker, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify exact repair
+        run: |
+          bun run typecheck
+          bun test test/github-pull-request-reconciliation.test.ts
+      - name: Publish clean source head
+        shell: bash
+        run: |
+          rm .github/workflows/marlin-841-reconciliation-repair.yml
+          rm .github/workflows/marlin-841-pr-finalizer.yml
+          rm .github/workflows/marlin-841-pr-finalizer-v2.yml
+          git config user.name 'Marlin'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/github-pull-request-reconciliation.ts test/github-pull-request-reconciliation.test.ts .github/workflows/marlin-841-reconciliation-repair.yml .github/workflows/marlin-841-pr-finalizer.yml .github/workflows/marlin-841-pr-finalizer-v2.yml
+          git diff --cached --check
+          git commit -m 'Repair reconciliation identity and chronology admission'
+          git push origin HEAD:kestrel/591-pr-reconciliation
