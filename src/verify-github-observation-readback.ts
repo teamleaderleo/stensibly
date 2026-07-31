@@ -121,40 +121,46 @@ export async function verifyGitHubObservationReadback(
   const url = new URL("/api/v1/github/repository-observations", `${endpoint}/`);
   url.searchParams.set("repository", repository);
   url.searchParams.set("limit", String(limit));
-  const response = await request(fetchImpl, url, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      "Accept-Encoding": "identity",
-      Authorization: `Bearer ${token}`,
-    },
-    redirect: "error",
-  }, timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await request(fetchImpl, url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Accept-Encoding": "identity",
+        Authorization: `Bearer ${token}`,
+      },
+      redirect: "error",
+    }, controller.signal, timeoutMs);
 
-  if (response.redirected || response.url !== url.toString()) {
-    await cancelResponseBody(response);
-    throw new Error("Hosted observation readback returned from an unexpected URL");
-  }
-  if (response.status !== 200) {
-    await cancelResponseBody(response);
-    throw new Error(`Hosted observation readback returned HTTP ${response.status}`);
-  }
+    if (response.redirected || response.url !== url.toString()) {
+      await cancelResponseBody(response);
+      throw new Error("Hosted observation readback returned from an unexpected URL");
+    }
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      throw new Error(`Hosted observation readback returned HTTP ${response.status}`);
+    }
 
-  const body = await readBoundedJson(response);
-  if (!isRecord(body) || !hasExactKeys(body, ["observations"])) {
-    throw new Error("Hosted observation readback returned a noncanonical envelope");
-  }
-  if (!Array.isArray(body.observations) || body.observations.length > limit) {
-    throw new Error("Hosted observation readback returned an invalid row set");
-  }
+    const body = await readBoundedJson(response, controller.signal, timeoutMs);
+    if (!isRecord(body) || !hasExactKeys(body, ["observations"])) {
+      throw new Error("Hosted observation readback returned a noncanonical envelope");
+    }
+    if (!Array.isArray(body.observations) || body.observations.length > limit) {
+      throw new Error("Hosted observation readback returned an invalid row set");
+    }
 
-  for (const raw of body.observations) {
-    const receipt = matchingReceipt(raw, repository, revision);
-    if (receipt) return Object.freeze(receipt);
+    for (const raw of body.observations) {
+      const receipt = matchingReceipt(raw, repository, revision);
+      if (receipt) return Object.freeze(receipt);
+    }
+    throw new Error(
+      `No signed push observation for ${repository}@${revision} was found in the latest ${limit} rows`,
+    );
+  } finally {
+    clearTimeout(timer);
   }
-  throw new Error(
-    `No signed push observation for ${repository}@${revision} was found in the latest ${limit} rows`,
-  );
 }
 
 export function formatGitHubObservationReadbackReceipt(
@@ -266,23 +272,22 @@ async function request(
   fetchImpl: FetchLike,
   input: URL,
   init: RequestInit,
+  signal: AbortSignal,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetchImpl(input, { ...init, signal: controller.signal });
+    return await fetchImpl(input, { ...init, signal });
   } catch {
-    if (controller.signal.aborted) {
-      throw new Error(`Request timed out after ${timeoutMs}ms`);
-    }
+    if (signal.aborted) throw timeoutError(timeoutMs);
     throw new Error("Hosted observation readback request failed");
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+async function readBoundedJson(
+  response: Response,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<unknown> {
   let declaredLength: number | null;
   try {
     declaredLength = admitContentLength(response.headers.get("content-length"));
@@ -307,10 +312,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   let totalBytes = 0;
   try {
     while (true) {
-      const result = await reader.read().catch(async () => {
-        await cancelReader(reader);
-        throw new Error("Hosted observation readback response stream failed");
-      });
+      const result = await readWithDeadline(reader, signal, timeoutMs);
       if (result.done) break;
       if (!(result.value instanceof Uint8Array)) {
         await cancelReader(reader);
@@ -324,7 +326,11 @@ async function readBoundedJson(response: Response): Promise<unknown> {
       chunks.push(result.value.slice());
     }
   } finally {
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {
+      // A cancelled or failed stream can keep a pending read until cancellation settles.
+    }
   }
 
   if (declaredLength !== null && declaredLength !== totalBytes) {
@@ -350,6 +356,42 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   } catch {
     throw new Error("Hosted observation readback returned invalid JSON");
   }
+}
+
+async function readWithDeadline(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) {
+    await cancelReader(reader);
+    throw timeoutError(timeoutMs);
+  }
+
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      void cancelReader(reader);
+      reject(timeoutError(timeoutMs));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([
+      reader.read().catch(async () => {
+        await cancelReader(reader);
+        if (signal.aborted) throw timeoutError(timeoutMs);
+        throw new Error("Hosted observation readback response stream failed");
+      }),
+      aborted,
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function timeoutError(timeoutMs: number): Error {
+  return new Error(`Request timed out after ${timeoutMs}ms`);
 }
 
 function admitContentLength(value: string | null): number | null {
