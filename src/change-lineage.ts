@@ -200,15 +200,22 @@ function evaluateChange(change: ChangeLineageChange): ChangeLineageEvaluation {
   const checksByName = new Map<string, ChangeLineageCheck[]>();
   for (const check of change.checks) checksByName.set(check.name, [...(checksByName.get(check.name) ?? []), check]);
   let checksFresh = true;
-  if (change.lifecycle === "open") for (const name of change.requiredChecks) {
+  for (const name of change.requiredChecks) {
     const checks = checksByName.get(name) ?? [];
     const current = checks.find((check) => check.revisionId === change.currentRevisionId);
     if (!current) {
       checksFresh = false;
-      reasons.add(checks.length === 0 ? "required_check_missing" : "required_check_stale");
-    } else if (current.conclusion === "failure" || current.conclusion === "cancelled") {
+      if (change.lifecycle === "open") {
+        reasons.add(checks.length === 0 ? "required_check_missing" : "required_check_stale");
+      }
+      continue;
+    }
+    if (change.lifecycle !== "open") continue;
+    if (["failure", "cancelled", "neutral", "skipped"].includes(current.conclusion)) {
       reasons.add("required_check_failed");
-    } else if (current.conclusion !== "success") reasons.add("required_check_pending");
+    } else if (current.conclusion === "pending") {
+      reasons.add("required_check_pending");
+    }
   }
 
   let state: ChangeLineageEvaluation["state"];
