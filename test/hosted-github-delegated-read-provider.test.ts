@@ -59,7 +59,7 @@ const attachment: ProjectAttachmentRecord = {
 };
 
 describe("private hosted GitHub delegated reads", () => {
-  test("mints exact per-tool tokens and returns attributable two-tool receipts", async () => {
+  test("mints exact per-tool tokens and returns attributable repository/file receipts", async () => {
     const calls: Array<{
       url: string;
       method: string;
@@ -226,8 +226,8 @@ describe("private hosted GitHub delegated reads", () => {
     })).rejects.toThrow("outside the accepted project attachment");
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      tool: "get_pr_diff",
-      arguments: { pr_number: 1, format: "diff" },
+      tool: "list_pull_request_review_threads",
+      arguments: { pr_number: 1 },
     })).rejects.toThrow("authority denied");
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
