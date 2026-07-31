@@ -372,32 +372,52 @@ async function readBoundedJson(
       "GitHub delegated provider returned an empty response",
     );
   }
-  const reader = response.body.getReader();
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = response.body.getReader();
+  } catch {
+    throw responseReadFailure();
+  }
+
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let failure: GitHubProviderRejectedError | null = null;
   try {
     while (true) {
       const read = await reader.read();
       if (read.done) break;
+      if (!(read.value instanceof Uint8Array)) {
+        await cancelReader(reader);
+        failure = rejected(
+          "github_delegated_provider_invalid_response",
+          "GitHub delegated provider returned a non-byte response chunk",
+        );
+        break;
+      }
       total += read.value.byteLength;
       if (total > maximumBytes) {
-        await reader.cancel();
-        throw rejected(
+        await cancelReader(reader);
+        failure = rejected(
           "github_delegated_provider_result_too_large",
           `GitHub delegated provider response exceeds ${maximumBytes} bytes`,
         );
+        break;
       }
       chunks.push(read.value);
     }
   } catch (error) {
-    if (error instanceof GitHubProviderRejectedError) throw error;
-    throw rejected(
-      "github_delegated_provider_response_failed",
-      "GitHub delegated provider response could not be read",
-    );
-  } finally {
-    reader.releaseLock();
+    failure = error instanceof GitHubProviderRejectedError
+      ? error
+      : responseReadFailure();
   }
+
+  try {
+    reader.releaseLock();
+  } catch {
+    failure ??= responseReadFailure();
+  }
+  if (failure) throw failure;
 
   const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
   let text: string;
@@ -417,6 +437,23 @@ async function readBoundedJson(
       "GitHub delegated provider returned invalid JSON",
     );
   }
+}
+
+async function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // Preserve the fixed admission result as authoritative over cleanup failure.
+  }
+}
+
+function responseReadFailure(): GitHubProviderRejectedError {
+  return rejected(
+    "github_delegated_provider_response_failed",
+    "GitHub delegated provider response could not be read",
+  );
 }
 
 async function discardResponseBody(response: Response): Promise<void> {
