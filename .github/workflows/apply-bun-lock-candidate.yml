@@ -24,11 +24,12 @@ jobs:
       github.event.workflow_run.head_branch != github.event.repository.default_branch
     runs-on: ubuntu-latest
     env:
+      TRIGGERING_RUN_ID: ${{ github.event.workflow_run.id }}
       EXPECTED_HEAD: ${{ github.event.workflow_run.head_sha }}
       HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-      REPOSITORY_OWNER: ${{ github.repository_owner }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
-      - name: Verify one current same-repository pull request
+      - name: Resolve the exact failed pull-request candidate and current authority
         id: eligibility
         shell: bash
         env:
@@ -36,45 +37,144 @@ jobs:
         run: |
           set -euo pipefail
 
-          pulls="$(
+          run_artifacts="$(
             gh api \
               --method GET \
-              "repos/${GITHUB_REPOSITORY}/pulls" \
-              -f state=open \
-              -f head="${REPOSITORY_OWNER}:${HEAD_BRANCH}"
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${TRIGGERING_RUN_ID}/artifacts?per_page=100"
+          )"
+          candidate_artifacts="$(
+            jq '[
+              .artifacts[]
+              | select(.expired == false)
+              | select(.name | test("^bun-lock-candidate-[0-9a-f]{40}$"))
+            ]' <<<"${run_artifacts}"
+          )"
+          artifact_count="$(jq 'length' <<<"${candidate_artifacts}")"
+          if [[ "${artifact_count}" != "1" ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Expected one live Bun lock candidate artifact for workflow run ${TRIGGERING_RUN_ID}; found ${artifact_count}." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          validation_sha="$(
+            jq -r '.[0].name | sub("^bun-lock-candidate-"; "")' \
+              <<<"${candidate_artifacts}"
           )"
 
-          count="$(jq 'length' <<<"${pulls}")"
+          associated_pulls="$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${TRIGGERING_RUN_ID}/pull_requests"
+          )"
+          count="$(jq 'length' <<<"${associated_pulls}")"
           if [[ "${count}" != "1" ]]; then
             echo "eligible=false" >>"${GITHUB_OUTPUT}"
-            echo "Expected one open pull request for ${HEAD_BRANCH}; found ${count}." >>"${GITHUB_STEP_SUMMARY}"
+            echo "Expected one pull request associated with workflow run ${TRIGGERING_RUN_ID}; found ${count}." >>"${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
-          pull_head_repository="$(jq -r '.[0].head.repo.full_name' <<<"${pulls}")"
-          pull_head_sha="$(jq -r '.[0].head.sha' <<<"${pulls}")"
-          pull_number="$(jq -r '.[0].number' <<<"${pulls}")"
+          pull_number="$(jq -r '.[0].number' <<<"${associated_pulls}")"
+          associated_head_repository="$(jq -r '.[0].head.repo.full_name // ""' <<<"${associated_pulls}")"
+          associated_head_branch="$(jq -r '.[0].head.ref // ""' <<<"${associated_pulls}")"
+          associated_head="$(jq -r '.[0].head.sha // ""' <<<"${associated_pulls}")"
+          associated_base_repository="$(jq -r '.[0].base.repo.full_name // ""' <<<"${associated_pulls}")"
+          associated_base_branch="$(jq -r '.[0].base.ref // ""' <<<"${associated_pulls}")"
+          associated_base="$(jq -r '.[0].base.sha // ""' <<<"${associated_pulls}")"
 
-          if [[ "${pull_head_repository}" != "${GITHUB_REPOSITORY}" ]]; then
+          current_pull="$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}"
+          )"
+          current_state="$(jq -r '.state // ""' <<<"${current_pull}")"
+          current_head_repository="$(jq -r '.head.repo.full_name // ""' <<<"${current_pull}")"
+          current_head_branch="$(jq -r '.head.ref // ""' <<<"${current_pull}")"
+          current_head="$(jq -r '.head.sha // ""' <<<"${current_pull}")"
+          current_base_repository="$(jq -r '.base.repo.full_name // ""' <<<"${current_pull}")"
+          current_base_branch="$(jq -r '.base.ref // ""' <<<"${current_pull}")"
+          current_base="$(jq -r '.base.sha // ""' <<<"${current_pull}")"
+          current_merge="$(jq -r '.merge_commit_sha // ""' <<<"${current_pull}")"
+
+          validation_commit="$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/commits/${validation_sha}"
+          )"
+          validation_commit_sha="$(jq -r '.sha // ""' <<<"${validation_commit}")"
+          parent_count="$(jq '.parents | length' <<<"${validation_commit}")"
+          validated_base="$(jq -r '.parents[0].sha // ""' <<<"${validation_commit}")"
+          embedded_head="$(jq -r '.parents[1].sha // ""' <<<"${validation_commit}")"
+
+          if [[ "${current_state}" != "open" ]]; then
             echo "eligible=false" >>"${GITHUB_OUTPUT}"
-            echo "Pull request #${pull_number} is not sourced from this repository." >>"${GITHUB_STEP_SUMMARY}"
+            echo "Pull request #${pull_number} is no longer open." >>"${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
-          if [[ "${pull_head_sha}" != "${EXPECTED_HEAD}" ]]; then
+          if [[
+            "${associated_head_repository}" != "${GITHUB_REPOSITORY}" ||
+            "${current_head_repository}" != "${GITHUB_REPOSITORY}" ||
+            "${associated_base_repository}" != "${GITHUB_REPOSITORY}" ||
+            "${current_base_repository}" != "${GITHUB_REPOSITORY}"
+          ]]; then
             echo "eligible=false" >>"${GITHUB_OUTPUT}"
-            echo "Pull request #${pull_number} advanced beyond triggering head ${EXPECTED_HEAD}." >>"${GITHUB_STEP_SUMMARY}"
+            echo "Pull request #${pull_number} is not fully bound to this repository." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          if [[
+            "${associated_head_branch}" != "${HEAD_BRANCH}" ||
+            "${current_head_branch}" != "${HEAD_BRANCH}" ||
+            "${associated_base_branch}" != "${DEFAULT_BRANCH}" ||
+            "${current_base_branch}" != "${DEFAULT_BRANCH}"
+          ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Pull request #${pull_number} no longer matches ${HEAD_BRANCH} into ${DEFAULT_BRANCH}." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          if [[
+            -z "${EXPECTED_HEAD}" ||
+            "${associated_head}" != "${EXPECTED_HEAD}" ||
+            "${current_head}" != "${EXPECTED_HEAD}"
+          ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Pull request #${pull_number} advanced beyond workflow head ${EXPECTED_HEAD}." >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          if [[
+            "${validation_commit_sha}" != "${validation_sha}" ||
+            "${parent_count}" != "2" ||
+            "${embedded_head}" != "${EXPECTED_HEAD}" ||
+            -z "${validated_base}" ||
+            "${associated_base}" != "${validated_base}" ||
+            "${current_base}" != "${validated_base}" ||
+            "${current_merge}" != "${validation_sha}"
+          ]]; then
+            echo "eligible=false" >>"${GITHUB_OUTPUT}"
+            echo "Pull request #${pull_number} no longer matches failed candidate ${validation_sha}." >>"${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
           echo "eligible=true" >>"${GITHUB_OUTPUT}"
           echo "pull_number=${pull_number}" >>"${GITHUB_OUTPUT}"
+          echo "validation_sha=${validation_sha}" >>"${GITHUB_OUTPUT}"
+          echo "validated_base=${validated_base}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "Resolved pull request #${pull_number} from workflow run ${TRIGGERING_RUN_ID}."
+            echo ""
+            echo "- failed pull-request candidate: \`${validation_sha}\`"
+            echo "- validated base: \`${validated_base}\`"
+            echo "- feature-head lease: \`${EXPECTED_HEAD}\`"
+            echo "- pull-request branch: \`${HEAD_BRANCH}\`"
+            echo "- pull-request base: \`${DEFAULT_BRANCH}\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: Check out the exact pull-request head
+      - name: Check out the exact failed pull-request candidate
         if: steps.eligibility.outputs.eligible == 'true'
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.HEAD_BRANCH }}
+          ref: ${{ steps.eligibility.outputs.validation_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -82,25 +182,27 @@ jobs:
         if: steps.eligibility.outputs.eligible == 'true'
         uses: oven-sh/setup-bun@v2
 
-      - name: Regenerate and fence the Bun lockfile
+      - name: Regenerate on the failed candidate and stage only its lock on the feature head
         if: steps.eligibility.outputs.eligible == 'true'
         id: generate
         shell: bash
+        env:
+          VALIDATION_SHA: ${{ steps.eligibility.outputs.validation_sha }}
         run: |
           set -euo pipefail
 
-          checked_out_head="$(git rev-parse HEAD)"
-          if [[ "${checked_out_head}" != "${EXPECTED_HEAD}" ]]; then
-            echo "Checked-out head ${checked_out_head} does not match triggering head ${EXPECTED_HEAD}." >&2
+          checked_out_validation="$(git rev-parse HEAD)"
+          if [[ "${checked_out_validation}" != "${VALIDATION_SHA}" ]]; then
+            echo "Checked-out candidate ${checked_out_validation} does not match failed candidate ${VALIDATION_SHA}." >&2
             exit 1
           fi
 
           if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
-            echo "The exact pull-request head did not produce a clean worktree." >&2
+            echo "The exact failed candidate did not produce a clean worktree." >&2
             exit 1
           fi
 
-          committed_sha256="sha256:$(sha256sum bun.lock | awk '{print $1}')"
+          validation_committed_sha256="sha256:$(sha256sum bun.lock | awk '{print $1}')"
           bun install --lockfile-only --ignore-scripts
 
           mapfile -t changed_paths < <(
@@ -110,7 +212,7 @@ jobs:
 
           if [[ "${#changed_paths[@]}" == "0" ]]; then
             echo "changed=false" >>"${GITHUB_OUTPUT}"
-            echo "The committed Bun lockfile already matches package declarations." >>"${GITHUB_STEP_SUMMARY}"
+            echo "The failed pull-request candidate now regenerates the committed Bun lockfile." >>"${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
@@ -120,13 +222,48 @@ jobs:
           fi
 
           candidate_sha256="sha256:$(sha256sum bun.lock | awk '{print $1}')"
-          if [[ "${candidate_sha256}" == "${committed_sha256}" ]]; then
+          if [[ "${candidate_sha256}" == "${validation_committed_sha256}" ]]; then
             echo "bun.lock has a worktree diff without a content digest change." >&2
             exit 1
           fi
 
+          candidate_path="${RUNNER_TEMP}/bun-lock-candidate-${TRIGGERING_RUN_ID}"
+          install -m 0600 bun.lock "${candidate_path}"
+
+          git reset --hard "${VALIDATION_SHA}"
+          git checkout --detach "${EXPECTED_HEAD}"
+          checked_out_head="$(git rev-parse HEAD)"
+          if [[ "${checked_out_head}" != "${EXPECTED_HEAD}" ]]; then
+            echo "Checked-out feature head ${checked_out_head} does not match lease ${EXPECTED_HEAD}." >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "The exact feature head did not produce a clean worktree." >&2
+            exit 1
+          fi
+
+          feature_committed_sha256="sha256:$(sha256sum bun.lock | awk '{print $1}')"
+          if cmp -s "${candidate_path}" bun.lock; then
+            echo "The failed candidate lock cannot be repaired by a new feature-head lock commit; restack the pull request." >&2
+            exit 1
+          fi
+          install -m 0644 "${candidate_path}" bun.lock
+
+          mapfile -t feature_changed_paths < <(
+            git status --porcelain=v1 --untracked-files=all \
+              | sed -E 's/^.. //'
+          )
+          if [[
+            "${#feature_changed_paths[@]}" != "1" ||
+            "${feature_changed_paths[0]}" != "bun.lock"
+          ]]; then
+            printf 'Feature-head staging changed an unsupported path: %s\n' "${feature_changed_paths[@]}" >&2
+            exit 1
+          fi
+
           echo "changed=true" >>"${GITHUB_OUTPUT}"
-          echo "committed_sha256=${committed_sha256}" >>"${GITHUB_OUTPUT}"
+          echo "validation_committed_sha256=${validation_committed_sha256}" >>"${GITHUB_OUTPUT}"
+          echo "feature_committed_sha256=${feature_committed_sha256}" >>"${GITHUB_OUTPUT}"
           echo "candidate_sha256=${candidate_sha256}" >>"${GITHUB_OUTPUT}"
 
       - name: Commit, publish, and validate only the generated lockfile
@@ -136,11 +273,42 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ steps.eligibility.outputs.pull_number }}
+          VALIDATION_SHA: ${{ steps.eligibility.outputs.validation_sha }}
+          VALIDATED_BASE: ${{ steps.eligibility.outputs.validated_base }}
         run: |
           set -euo pipefail
 
+          publication_pull="$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PULL_NUMBER}"
+          )"
+          publication_state="$(jq -r '.state // ""' <<<"${publication_pull}")"
+          publication_head_repository="$(jq -r '.head.repo.full_name // ""' <<<"${publication_pull}")"
+          publication_head_branch="$(jq -r '.head.ref // ""' <<<"${publication_pull}")"
+          publication_head="$(jq -r '.head.sha // ""' <<<"${publication_pull}")"
+          publication_base_repository="$(jq -r '.base.repo.full_name // ""' <<<"${publication_pull}")"
+          publication_base_branch="$(jq -r '.base.ref // ""' <<<"${publication_pull}")"
+          publication_base="$(jq -r '.base.sha // ""' <<<"${publication_pull}")"
+          publication_merge="$(jq -r '.merge_commit_sha // ""' <<<"${publication_pull}")"
+
+          if [[
+            "${publication_state}" != "open" ||
+            "${publication_head_repository}" != "${GITHUB_REPOSITORY}" ||
+            "${publication_head_branch}" != "${HEAD_BRANCH}" ||
+            "${publication_head}" != "${EXPECTED_HEAD}" ||
+            "${publication_base_repository}" != "${GITHUB_REPOSITORY}" ||
+            "${publication_base_branch}" != "${DEFAULT_BRANCH}" ||
+            "${publication_base}" != "${VALIDATED_BASE}" ||
+            "${publication_merge}" != "${VALIDATION_SHA}"
+          ]]; then
+            echo "Pull request #${PULL_NUMBER} no longer authorizes lockfile publication for failed candidate ${VALIDATION_SHA}." >&2
+            exit 1
+          fi
+
           if [[ "$(git rev-parse HEAD)" != "${EXPECTED_HEAD}" ]]; then
-            echo "Branch head changed before lockfile publication." >&2
+            echo "Feature-head lease changed before lockfile publication." >&2
             exit 1
           fi
 
@@ -156,7 +324,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- bun.lock
-          git commit -m "Update Bun lockfile for ${EXPECTED_HEAD:0:12}"
+          git commit -m "Update Bun lockfile for ${VALIDATION_SHA:0:12}"
           generated_head="$(git rev-parse HEAD)"
 
           gh auth setup-git
@@ -175,11 +343,15 @@ jobs:
             -f expected_sha="${generated_head}"
 
           {
-            echo "Updated Bun lockfile for pull request #${{ steps.eligibility.outputs.pull_number }}."
+            echo "Updated Bun lockfile for pull request #${PULL_NUMBER}."
             echo ""
-            echo "- triggering head: \`${EXPECTED_HEAD}\`"
+            echo "- triggering workflow run: \`${TRIGGERING_RUN_ID}\`"
+            echo "- failed pull-request candidate: \`${VALIDATION_SHA}\`"
+            echo "- validated base: \`${VALIDATED_BASE}\`"
+            echo "- feature-head lease: \`${EXPECTED_HEAD}\`"
             echo "- generated commit: \`${generated_head}\`"
-            echo "- committed lock: \`${{ steps.generate.outputs.committed_sha256 }}\`"
+            echo "- failed-candidate committed lock: \`${{ steps.generate.outputs.validation_committed_sha256 }}\`"
+            echo "- feature-head committed lock: \`${{ steps.generate.outputs.feature_committed_sha256 }}\`"
             echo "- generated lock: \`${{ steps.generate.outputs.candidate_sha256 }}\`"
             echo "- changed path: \`bun.lock\`"
             echo "- validation: explicit CI dispatch bound to the generated commit"
