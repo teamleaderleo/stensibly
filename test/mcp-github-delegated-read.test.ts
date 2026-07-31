@@ -30,10 +30,12 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).not.toContain("github_call_tool");
       const toolsets = await call<{
+        dispatchSurface: string;
         delegatedDispatchEnabled: boolean;
         delegatedTools: string[];
       }>(client, "github_list_toolsets", {});
       expect(toolsets).toMatchObject({
+        dispatchSurface: "typed_first_party_only",
         delegatedDispatchEnabled: false,
         delegatedTools: [],
       });
@@ -60,13 +62,28 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
       expect(tools.tools.map((tool) => tool.name)).toContain("github_call_tool");
 
       const toolsets = await call<{
+        dispatchSurface: string;
         delegatedDispatchEnabled: boolean;
         delegatedTools: string[];
       }>(client, "github_list_toolsets", {});
       expect(toolsets).toMatchObject({
+        dispatchSurface: "typed_first_party_and_guarded_delegated",
         delegatedDispatchEnabled: true,
         delegatedTools: ["get_repo", "fetch_file"],
       });
+
+      const searched = await call<Array<{
+        name: string;
+        delegatedDispatchEnabled: boolean;
+      }>>(client, "github_search_tools", {
+        query: "file",
+        skills: ["github"],
+        limit: 10,
+      });
+      expect(searched).toContainEqual(expect.objectContaining({
+        name: "fetch_file",
+        delegatedDispatchEnabled: true,
+      }));
 
       const repositoryCapability = await call<{
         delegatedDispatchEnabled: boolean;
@@ -108,18 +125,43 @@ describe("guarded GitHub delegated-read MCP dispatch", () => {
         catalogueFingerprint,
       }]);
 
-      const disabled = await client.callTool({
-        name: "github_call_tool",
-        arguments: {
+      for (const argumentsValue of [
+        {
+          project: ` ${project}`,
+          repository,
+          tool: "get_repo",
+          arguments: {},
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository: `${repository} `,
+          tool: "get_repo",
+          arguments: {},
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "fetch_file",
+          arguments: { path: "README.md", ref: "A".repeat(40) },
+          catalogueFingerprint,
+        },
+        {
           project,
           repository,
           tool: "get_pr_info",
           arguments: { pr_number: 1 },
           catalogueFingerprint,
         },
-      });
-      expect(disabled.isError).toBe(true);
-      expect(calls).toHaveLength(1);
+      ]) {
+        const denied = await client.callTool({
+          name: "github_call_tool",
+          arguments: argumentsValue,
+        });
+        expect(denied.isError).toBe(true);
+        expect(calls).toHaveLength(1);
+      }
     } finally {
       await client.close();
       await server.close();

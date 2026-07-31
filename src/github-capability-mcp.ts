@@ -16,7 +16,7 @@ import {
 
 const catalogue = new GitHubCapabilityCatalogueService();
 const delegatedToolNames = ["get_repo", "fetch_file"] as const;
-const delegatedTools = new Set<string>(delegatedToolNames);
+const delegatedToolSet = new Set<string>(delegatedToolNames);
 
 export function registerGitHubCapabilityTools(
   server: McpServer,
@@ -66,7 +66,7 @@ export function registerGitHubCapabilityTools(
       catalogue.searchTools(input).map((capability) => ({
         ...capability,
         delegatedDispatchEnabled:
-          delegated !== null && delegatedTools.has(capability.name),
+          delegated !== null && delegatedToolSet.has(capability.name),
       }))
     ),
   );
@@ -83,7 +83,7 @@ export function registerGitHubCapabilityTools(
     async ({ name }) => asToolResult(async () => {
       const capability = catalogue.getTool(name);
       const delegatedDispatchEnabled =
-        delegated !== null && delegatedTools.has(capability.name);
+        delegated !== null && delegatedToolSet.has(capability.name);
       return {
         ...capability,
         catalogueRevision: catalogue.registry.curationRevision,
@@ -116,7 +116,7 @@ export function registerGitHubCapabilityTools(
           z.object({}).strict(),
           z.object({
             path: z.string().min(1).max(4_096),
-            ref: z.string().regex(/^[A-Fa-f0-9]{40}$/),
+            ref: z.string().regex(/^[a-f0-9]{40}$/),
           }).strict(),
         ]),
         catalogueFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -182,7 +182,6 @@ function delegatedPrincipal(
 function projectSchema() {
   return z
     .string()
-    .trim()
     .min(1)
     .max(80)
     .regex(/^[a-z0-9][a-z0-9_-]*$/, "Use a lowercase project slug");
@@ -191,7 +190,6 @@ function projectSchema() {
 function repositorySchema() {
   return z
     .string()
-    .trim()
     .min(3)
     .max(200)
     .regex(
