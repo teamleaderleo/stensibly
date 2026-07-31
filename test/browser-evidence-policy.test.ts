@@ -19,6 +19,8 @@ const repositoryRoot = join(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8"));
 const playwrightConfig = readFileSync(join(repositoryRoot, "playwright.config.ts"), "utf8");
 const browserSuite = readFileSync(join(repositoryRoot, "browser-tests", "frontend-labs.spec.ts"), "utf8");
+const serviceWorkerSuite = readFileSync(join(repositoryRoot, "browser-tests", "frontend-service-worker-boundary.spec.ts"), "utf8");
+const fixtureServer = readFileSync(join(repositoryRoot, "scripts", "serve-frontend-fixtures.ts"), "utf8");
 const launcher = readFileSync(join(repositoryRoot, "scripts", "run-playwright-mcp.ts"), "utf8");
 const verifier = readFileSync(join(repositoryRoot, "scripts", "verify-browser-evidence-artifacts.ts"), "utf8");
 
@@ -200,8 +202,12 @@ describe("browser evidence policy", () => {
     expect(browserSuite).toContain("testInfo.attach(name, { path: sourcePath, contentType:");
     expect(browserSuite).toContain("maximumAttachmentStemLength");
     expect(browserSuite).not.toContain("testInfo.attach(name, { body:");
+    expect(serviceWorkerSuite).toContain("navigator.serviceWorker.register");
+    expect(serviceWorkerSuite).toContain("context.serviceWorkers()");
+    expect(fixtureServer).toContain("worker-src 'none'");
     expect(playwrightConfig).toContain("retries: 0");
     expect(playwrightConfig).toContain('["json", { outputFile: "artifacts/playwright-report/report.json" }]');
+    expect(playwrightConfig).not.toContain('serviceWorkers: "block"');
     expect(playwrightConfig).not.toContain('["html"');
   });
 });
