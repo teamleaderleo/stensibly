@@ -1,17 +1,6 @@
-name: Publish Dashboard On Main
+name: Publish Dashboard Production
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "site/**"
-      - ".github/workflows/publish-dashboard-on-main.yml"
-      - "scripts/link-vercel-project-domain.sh"
-      - "src/dashboard-assets.ts"
-      - "src/verify-dashboard.ts"
-      - "package.json"
-      - "bun.lock"
   workflow_dispatch:
 
 permissions:
