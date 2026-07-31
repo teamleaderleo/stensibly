@@ -94,7 +94,7 @@ function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`page:${error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console:${message.text()}`);
+    if (message.type() === "error") errors.push(`console:${message.text()}`));
   });
   return errors;
 }
@@ -199,7 +199,7 @@ test("returning session exposes a real connecting status before the compact desk
   const editingHeight = await page.locator(".hero-login").evaluate((element) =>
     element.getBoundingClientRect().height,
   );
-  expect(editingHeight).toBeLessThan(430);
+  expect(editingHeight).toBeLessThan(420);
 
   await page.getByRole("button", { name: "cancel" }).click();
   await expect(root).toHaveAttribute("data-app-mode", "connected");
