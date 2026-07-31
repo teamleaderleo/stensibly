@@ -145,7 +145,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   expect(response?.status()).toBe(200);
 
   await waitForRootMode(page, errors, "signed-out");
-  await expect(page.getByRole("heading", { name: "Shared work." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shared work, made legible." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue with GitHub" })).toBeVisible();
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-hidden", "true");
