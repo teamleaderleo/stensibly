@@ -1,5 +1,5 @@
 import { lstat, readFile } from "node:fs/promises";
-import { basename, resolve, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { estimateRepositoryTokenRange } from "../src/deepseek-harness-campaign.js";
 
 const root = resolve(process.argv[2] ?? process.cwd());
@@ -20,7 +20,8 @@ const largest: Array<{ path: string; utf8Bytes: number }> = [];
 
 for (const path of paths) {
   const absolute = resolve(root, path);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
+  const relation = relative(root, absolute);
+  if (relation === ".." || relation.startsWith(`..${sep}`) || isAbsolute(relation)) {
     throw new Error(`Tracked path escaped repository root: ${path}`);
   }
   const metadata = await lstat(absolute);
