@@ -33,6 +33,17 @@ describe("hosted GitHub observation verification workflow", () => {
     expect(workflow).not.toContain("ref: ${{ env.TARGET_REVISION }}");
   });
 
+  test("keeps the protected environment outside the credential-free admission job", () => {
+    const admitIndex = workflow.indexOf("\n  admit:");
+    const verifyIndex = workflow.indexOf("\n  verify:");
+    expect(admitIndex).toBeGreaterThan(-1);
+    expect(verifyIndex).toBeGreaterThan(admitIndex);
+    expect(workflow.slice(admitIndex, verifyIndex)).not.toContain("environment:");
+    expect(workflow.slice(verifyIndex)).toContain("needs: admit");
+    expect(workflow.slice(verifyIndex)).toContain("environment:");
+    expect(workflow.slice(verifyIndex)).toContain("name: production");
+  });
+
   test("validates branch, padded, and unrelated manual targets before privileged work", () => {
     expect(workflow).toContain('if [[ ! "$TARGET_REVISION" =~ ^[a-f0-9]{40}$ ]]');
     expect(workflow).toContain('if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "$TARGET_REVISION" != "$SOURCE_REVISION" ]]');
