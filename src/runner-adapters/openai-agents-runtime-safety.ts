@@ -270,19 +270,21 @@ function digestInstruction(
   value: Agent<any, any>["instructions"],
   agentName: string,
 ): string {
-  return typeof value === "string"
-    ? digestText(value, `OpenAI Agents runtime agent ${agentName} instructions`)
-    : digestFunction(
-        value,
-        `OpenAI Agents runtime agent ${agentName} instructions`,
-      );
+  if (typeof value !== "string") {
+    throw new RangeError(
+      `OpenAI Agents runtime agent ${agentName} uses unsupported dynamic instructions`,
+    );
+  }
+  return digestText(
+    value,
+    `OpenAI Agents runtime agent ${agentName} instructions`,
+  );
 }
 
 function digestToolUseBehavior(value: unknown, agentName: string): string {
   if (typeof value === "function") {
-    return digestFunction(
-      value,
-      `OpenAI Agents runtime agent ${agentName} tool-use behavior`,
+    throw new RangeError(
+      `OpenAI Agents runtime agent ${agentName} uses unsupported dynamic tool-use behavior`,
     );
   }
   return digestCanonical(
