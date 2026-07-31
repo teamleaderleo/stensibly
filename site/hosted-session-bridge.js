@@ -23,6 +23,7 @@ const connectionError = document.querySelector('#connection-error');
 const endpointInput = document.querySelector('#connect-form [name="endpoint"]');
 const disconnectButton = document.querySelector('#disconnect-connection');
 let hostedAuthorizationDenied = false;
+let hostedSessionRejectedStatus = 0;
 
 persistEndpoint(savedEndpoint);
 installSessionMarker(savedEndpoint);
@@ -30,7 +31,7 @@ window.fetch = installHostedSessionFetchBridge({
   fetchImpl: originalFetch,
   sessionOrigin: DEFAULT_ENDPOINT,
   sentinel,
-  onHostedAccessDenied: preserveHostedSignOut,
+  onHostedSessionRejected: preserveHostedSessionRecovery,
 });
 installProviderCapacityCard();
 
@@ -104,11 +105,18 @@ function beginGithubSignIn() {
   }
 }
 
-function preserveHostedSignOut() {
+function preserveHostedSessionRecovery(status) {
+  if (status !== 401 && status !== 403) return;
+  hostedSessionRejectedStatus = status;
   hostedAuthorizationDenied = true;
-  if (hostedSignOutButton) hostedSignOutButton.hidden = false;
+  if (hostedSignOutButton) {
+    hostedSignOutButton.hidden = false;
+    hostedSignOutButton.textContent = status === 401 ? 'Reset sign-in' : 'Sign out';
+  }
   if (signInState) {
-    signInState.textContent = 'This account cannot access this workspace.';
+    signInState.textContent = status === 401
+      ? 'This browser session expired. Reset sign-in to continue.'
+      : 'This account cannot access this workspace.';
   }
 }
 
@@ -132,6 +140,7 @@ async function signOutHostedSession(event) {
   if (disconnectButton) disconnectButton.disabled = true;
   if (hostedSignOutButton) hostedSignOutButton.disabled = true;
   clearError();
+  const restartGithubSignIn = hostedSessionRejectedStatus === 401;
 
   try {
     await revokeHostedSession(originalFetch, DEFAULT_ENDPOINT);
@@ -147,14 +156,20 @@ async function signOutHostedSession(event) {
 
   clearHostedDenialRecovery();
   clearHostedMarker();
+  if (restartGithubSignIn) {
+    beginGithubSignIn();
+    return;
+  }
   window.location.reload();
 }
 
 function clearHostedDenialRecovery() {
   hostedAuthorizationDenied = false;
+  hostedSessionRejectedStatus = 0;
   if (hostedSignOutButton) {
     hostedSignOutButton.disabled = false;
     hostedSignOutButton.hidden = true;
+    hostedSignOutButton.textContent = 'Sign out';
   }
   if (signInState) {
     signInState.textContent = 'Use your GitHub account.';

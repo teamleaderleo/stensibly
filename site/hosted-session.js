@@ -81,20 +81,34 @@ export function installHostedSessionFetchBridge({
   sessionOrigin,
   sentinel = hostedSessionSentinel(),
   onHostedAccessDenied,
+  onHostedSessionRejected,
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
   if (onHostedAccessDenied !== undefined && typeof onHostedAccessDenied !== 'function') {
     throw new TypeError('Hosted access-denied callback must be a function.');
   }
+  if (onHostedSessionRejected !== undefined && typeof onHostedSessionRejected !== 'function') {
+    throw new TypeError('Hosted session-rejected callback must be a function.');
+  }
   const allowedOrigin = normalizeOrigin(sessionOrigin, 'Hosted session origin');
   return async (input, init) => {
     const prepared = prepareHostedSessionRequest(input, init, allowedOrigin, sentinel);
     const response = await fetchImpl(prepared.request, { credentials: prepared.credentials });
+    if (
+      prepared.hostedSession
+      && (response.status === 401 || response.status === 403)
+    ) {
+      try {
+        onHostedSessionRejected?.(response.status);
+      } catch {
+        // UI notification must not replace the authenticated HTTP response.
+      }
+    }
     if (prepared.hostedSession && response.status === 403) {
       try {
         onHostedAccessDenied?.();
       } catch {
-        // UI notification must not replace the authenticated HTTP response.
+        // Compatibility notification must not replace the authenticated HTTP response.
       }
     }
     return response;

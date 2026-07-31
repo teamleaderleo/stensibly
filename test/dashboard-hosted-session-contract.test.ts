@@ -99,12 +99,17 @@ describe("hosted dashboard request bridge", () => {
     expect(observedRequest.request.headers.get("authorization")).toBeNull();
   });
 
-  test("reports only authenticated hosted REST denials", async () => {
+  test("reports hosted 401 and 403 while preserving the legacy 403 callback", async () => {
+    const rejections: number[] = [];
     let denials = 0;
-    const deniedFetch = (async () => new Response(null, { status: 403 })) as unknown as typeof fetch;
+    let status = 401;
+    const rejectedFetch = (async () => new Response(null, { status })) as unknown as typeof fetch;
     const bridgedFetch = installHostedSessionFetchBridge({
-      fetchImpl: deniedFetch,
+      fetchImpl: rejectedFetch,
       sessionOrigin: endpoint,
+      onHostedSessionRejected: (rejectedStatus) => {
+        rejections.push(rejectedStatus);
+      },
       onHostedAccessDenied: () => {
         denials += 1;
       },
@@ -115,6 +120,14 @@ describe("hosted dashboard request bridge", () => {
     await bridgedFetch(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${marker}` },
     });
+    expect(rejections).toEqual([401]);
+    expect(denials).toBe(0);
+
+    status = 403;
+    await bridgedFetch(`${endpoint}/api/v1/items`, {
+      headers: { authorization: `Bearer ${marker}` },
+    });
+    expect(rejections).toEqual([401, 403]);
     expect(denials).toBe(1);
 
     await bridgedFetch(`${endpoint}/api/v1/items`, {
@@ -127,25 +140,26 @@ describe("hosted dashboard request bridge", () => {
     await bridgedFetch("https://other.example/api/v1/items", {
       headers: { authorization: `Bearer ${marker}` },
     });
+    expect(rejections).toEqual([401, 403]);
     expect(denials).toBe(1);
   });
 
-  test("does not replace a hosted 403 when denial notification fails", async () => {
-    const deniedFetch = (async () => new Response(null, { status: 403 })) as unknown as typeof fetch;
+  test("does not replace a hosted rejection when notification fails", async () => {
+    const rejectedFetch = (async () => new Response(null, { status: 401 })) as unknown as typeof fetch;
     const bridgedFetch = installHostedSessionFetchBridge({
-      fetchImpl: deniedFetch,
+      fetchImpl: rejectedFetch,
       sessionOrigin: endpoint,
-      onHostedAccessDenied: () => {
+      onHostedSessionRejected: () => {
         throw new Error("private UI failure");
       },
     });
     const response = await bridgedFetch(`${endpoint}/api/v1/items`, {
       headers: { authorization: `Bearer ${hostedSessionSentinel()}` },
     });
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
-  test("rejects an invalid hosted denial callback", () => {
+  test("rejects invalid hosted notification callbacks", () => {
     const fetchImpl = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
     expect(() => installHostedSessionFetchBridge({
       fetchImpl,
@@ -153,6 +167,12 @@ describe("hosted dashboard request bridge", () => {
       onHostedAccessDenied: "not-a-function",
     } as unknown as Parameters<typeof installHostedSessionFetchBridge>[0]))
       .toThrow("Hosted access-denied callback must be a function");
+    expect(() => installHostedSessionFetchBridge({
+      fetchImpl,
+      sessionOrigin: endpoint,
+      onHostedSessionRejected: "not-a-function",
+    } as unknown as Parameters<typeof installHostedSessionFetchBridge>[0]))
+      .toThrow("Hosted session-rejected callback must be a function");
   });
 });
 
@@ -179,18 +199,21 @@ describe("hosted dashboard auth URLs and logout", () => {
     await expect(revokeHostedSession(failure, endpoint)).rejects.toThrow("Sign out returned HTTP 503");
   });
 
-  test("wires denial recovery while yielding a later bearer disconnect", async () => {
+  test("wires expired-session reset and forbidden-session sign-out", async () => {
     const [html, bridge] = await Promise.all([
       readFile(new URL("../site/index.html", import.meta.url), "utf8"),
       readFile(new URL("../site/hosted-session-bridge.js", import.meta.url), "utf8"),
     ]);
     expect(html).toContain('id="hosted-sign-out"');
-    expect(bridge).toContain("onHostedAccessDenied: preserveHostedSignOut");
+    expect(bridge).toContain("onHostedSessionRejected: preserveHostedSessionRecovery");
+    expect(bridge).toContain("status === 401 ? 'Reset sign-in' : 'Sign out'");
+    expect(bridge).toContain("This browser session expired. Reset sign-in to continue.");
     expect(bridge).toContain("classifyHostedSessionDisconnect(stored, hostedAuthorizationDenied)");
     expect(bridge).toContain("if (mode === 'bearer')");
-    expect(bridge).toContain("clearHostedDenialRecovery()");
-    expect(bridge).toContain("if (mode !== 'hosted') return");
-    expect(bridge).toContain("hostedSignOutButton.hidden = true");
+    expect(bridge).toContain("const restartGithubSignIn = hostedSessionRejectedStatus === 401");
+    expect(bridge).toContain("if (restartGithubSignIn)");
+    expect(bridge).toContain("beginGithubSignIn();");
+    expect(bridge).toContain("hostedSignOutButton.textContent = 'Sign out'");
     expect(bridge).toContain("clearHostedMarker()");
   });
 

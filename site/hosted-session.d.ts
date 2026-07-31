@@ -33,4 +33,5 @@ export function installHostedSessionFetchBridge(options: {
   sessionOrigin: string;
   sentinel?: string;
   onHostedAccessDenied?: () => void;
+  onHostedSessionRejected?: (status: 401 | 403) => void;
 }): typeof fetch;
