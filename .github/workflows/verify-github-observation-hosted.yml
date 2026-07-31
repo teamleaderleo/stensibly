@@ -1,0 +1,172 @@
+name: Verify hosted GitHub observation
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Worker Production
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Predeclared Stensibly Worker origin
+        required: true
+        default: canonical
+        type: choice
+        options:
+          - canonical
+          - worker-fallback
+      revision:
+        description: Exact deployed 40-character Git revision
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-github-observation-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      endpoint: ${{ steps.admit.outputs.endpoint }}
+      repository: ${{ steps.admit.outputs.repository }}
+      source_revision: ${{ steps.admit.outputs.source_revision }}
+      target: ${{ steps.admit.outputs.target }}
+      target_revision: ${{ steps.admit.outputs.target_revision }}
+    env:
+      SOURCE_REVISION: ${{ github.sha }}
+      TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'canonical' }}
+      TARGET_REPOSITORY: ${{ github.repository }}
+      TARGET_REVISION: ${{ github.event_name == 'workflow_dispatch' && inputs.revision || github.event.workflow_run.head_sha }}
+    steps:
+      - name: Admit trusted source and deployed target
+        id: admit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Workflow source revision must be an exact lowercase 40-character Git SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$TARGET_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Target revision must be an exact lowercase 40-character Git SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$TARGET_REPOSITORY" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]]; then
+            echo "Target repository must be an exact lowercase owner/name identity" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "$TARGET_REVISION" != "$SOURCE_REVISION" ]]; then
+            echo "Manual verification target must equal the current main workflow revision" >&2
+            exit 1
+          fi
+          case "$TARGET" in
+            canonical)
+              endpoint="https://api.stensibly.com"
+              ;;
+            worker-fallback)
+              endpoint="https://stensibly-api.leoli-082000.workers.dev"
+              ;;
+            *)
+              echo "Unsupported target choice" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "endpoint=$endpoint"
+            echo "repository=$TARGET_REPOSITORY"
+            echo "source_revision=$SOURCE_REVISION"
+            echo "target=$TARGET"
+            echo "target_revision=$TARGET_REVISION"
+          } >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: admit
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment:
+      name: production
+      url: https://api.stensibly.com/health
+    env:
+      ENDPOINT: ${{ needs.admit.outputs.endpoint }}
+      SOURCE_REVISION: ${{ needs.admit.outputs.source_revision }}
+      TARGET: ${{ needs.admit.outputs.target }}
+      TARGET_REPOSITORY: ${{ needs.admit.outputs.repository }}
+      TARGET_REVISION: ${{ needs.admit.outputs.target_revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Require protected read credential
+        env:
+          STENSIBLY_READ_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${STENSIBLY_READ_TOKEN:-}" ]]; then
+            echo "Missing required production environment secret: STENSIBLY_READ_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Wait for exact signed push observation
+        env:
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          : > github-observation-verification.txt
+          for attempt in $(seq 1 12); do
+            echo "attempt=$attempt observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              | tee -a github-observation-verification.txt
+            if bun src/verify-github-observation-readback.ts -- \
+              --endpoint "$ENDPOINT" \
+              --repository "$TARGET_REPOSITORY" \
+              --revision "$TARGET_REVISION" \
+              --limit 100 2>&1 \
+              | tee -a github-observation-verification.txt; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 12 ]]; then
+              sleep 10
+            fi
+          done
+          exit 1
+
+      - name: Publish verification summary
+        if: always()
+        run: |
+          {
+            echo "## Hosted GitHub observation verification"
+            echo
+            echo "- Repository: \`$TARGET_REPOSITORY\`"
+            echo "- Target revision: \`$TARGET_REVISION\`"
+            echo "- Trusted verifier revision: \`$SOURCE_REVISION\`"
+            echo "- Target: \`$TARGET\`"
+            echo
+            echo '```text'
+            cat github-observation-verification.txt 2>/dev/null \
+              || echo "Verifier did not produce output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bounded verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-github-observation-${{ env.TARGET_REVISION }}
+          path: github-observation-verification.txt
+          if-no-files-found: warn
+          retention-days: 14

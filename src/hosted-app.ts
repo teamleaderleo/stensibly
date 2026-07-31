@@ -161,17 +161,19 @@ export function hostedProviderCapacityFromEnv(
 ): HostedProviderCapacityOptions | undefined {
   const githubWebhookSecret = trimmed(env.STENSIBLY_GITHUB_WEBHOOK_SECRET);
   if (!githubWebhookSecret) return undefined;
+  const repositoryObservationService = new ConvexGitHubRepositoryObservationService({
+    client: ledger.client,
+    serviceSecret: ledger.serviceSecret,
+    workspace: ledger.workspace,
+  });
   return {
     service: new ConvexProviderCapacityService({
       client: ledger.client,
       serviceSecret: ledger.serviceSecret,
       workspace: ledger.workspace,
     }),
-    repositoryObservationSink: new ConvexGitHubRepositoryObservationService({
-      client: ledger.client,
-      serviceSecret: ledger.serviceSecret,
-      workspace: ledger.workspace,
-    }),
+    repositoryObservationSink: repositoryObservationService,
+    repositoryObservationReader: repositoryObservationService,
     githubWebhookSecret,
   };
 }
