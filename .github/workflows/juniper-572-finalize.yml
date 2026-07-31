@@ -171,3 +171,5 @@ jobs:
           git commit -m 'feat: add execution certainty receipt core'
           git push --force-with-lease=refs/heads/juniper/572-execution-certainty-core:$GITHUB_SHA \
             origin HEAD:refs/heads/juniper/572-execution-certainty-core
+
+# retriggered by Sable after exact compiler failure classification
