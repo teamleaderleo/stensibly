@@ -40,7 +40,16 @@ describe("automatic dashboard publication workflow", () => {
     expect(workflow).toContain("api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}");
     expect(workflow).toContain('.name == $name and .rootDirectory == "site"');
     expect(position("Validate Vercel project and credentials"))
+      .toBeLessThan(position("Keep production public and previews protected"));
+    expect(position("Keep production public and previews protected"))
       .toBeLessThan(position("Link the canonical domain to this project"));
+  });
+
+  test("keeps production public while retaining preview SSO", () => {
+    expect(workflow).toContain("--request PATCH");
+    expect(workflow).toContain("ssoProtection");
+    expect(workflow).toContain('deploymentType\\":\\"preview');
+    expect(workflow).not.toContain('deploymentType\\":\\"all');
   });
 
   test("reassigns the canonical domain only when absent", () => {
@@ -59,6 +68,7 @@ describe("automatic dashboard publication workflow", () => {
     expect(workflow).toContain("--skip-domain");
     expect(workflow).toContain("/labs/quiet-control/");
     expect(workflow).toContain("/labs/soft-companion/");
+    expect(workflow).toContain("/labs/field-console/");
     expect(workflow).toContain("alias set");
     expect(position("Create and verify an immutable production deployment"))
       .toBeLessThan(position("Assign the canonical domain to the verified deployment"));
@@ -68,6 +78,7 @@ describe("automatic dashboard publication workflow", () => {
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/');
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/quiet-control/');
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/soft-companion/');
+    expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/field-console/');
     expect(position("Verify the public dashboard and Labs routes"))
       .toBeLessThan(position("Record publication receipt"));
     expect(workflow).toContain("source: \\`${GITHUB_SHA}\\`");
