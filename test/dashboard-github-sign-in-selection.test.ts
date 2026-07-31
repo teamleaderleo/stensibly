@@ -10,7 +10,7 @@ describe("dashboard GitHub sign-in selection", () => {
     const beginSignIn = between(
       bridge,
       "function beginGithubSignIn()",
-      "function preserveHostedSignOut()",
+      "function preserveHostedSessionRecovery(",
     );
     const activateSession = between(
       bridge,
