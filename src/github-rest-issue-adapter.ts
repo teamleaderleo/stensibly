@@ -239,15 +239,20 @@ export class GitHubRestIssueProviderAdapter implements GitHubIssueProviderAdapte
       repositoryFullName,
       issues: "read",
     });
-    const response = await this.#fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${credential.token}`,
-        "User-Agent": "stensibly",
-        "X-GitHub-Api-Version": githubApiVersion,
-      },
-    });
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${credential.token}`,
+          "User-Agent": "stensibly",
+          "X-GitHub-Api-Version": githubApiVersion,
+        },
+      });
+    } catch {
+      throw providerTransportError("request");
+    }
     const value = await readJson(response);
     if (!response.ok) {
       throw githubHttpError(response.status, operation);
@@ -539,13 +544,29 @@ function normalizedApiBaseUrl(value: string): string {
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw providerTransportError("response");
+  }
   if (!text) return {};
   try {
     return JSON.parse(text) as unknown;
   } catch {
     throw invalidResponse("GitHub returned a non-JSON response");
   }
+}
+
+function providerTransportError(
+  stage: "request" | "response",
+): GitHubProviderRejectedError {
+  return new GitHubProviderRejectedError(
+    "github_provider_temporarily_unavailable",
+    stage === "request"
+      ? "GitHub provider request failed before a response was available"
+      : "GitHub provider response could not be read",
+  );
 }
 
 function githubHttpError(
