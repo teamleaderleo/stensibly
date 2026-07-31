@@ -296,6 +296,9 @@ export function planDeepSeekOpenCodeEpisode(
     externalSandboxRequired: phase === "candidate",
     requiredBeforeLive: [
       "recorded-opencode-json-event-fixture",
+      "effective-opencode-config-and-provider-allowlist-receipt",
+      "minimal-child-environment-without-ambient-secrets",
+      "symlink-safe-runtime-directory-and-exclusive-files",
       "exact-model-and-system-fingerprint-admission",
       "deepseek-reasoning-tool-turn-replay",
       "usage-and-cost-receipt-parser",
