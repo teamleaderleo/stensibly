@@ -39,9 +39,9 @@ DeepSeek currently recommends OpenCode `1.14.24` or newer. The planner therefore
 
 The generated runtime uses a fresh external directory for `HOME`, XDG state, OpenCode data, and configuration. Sharing, plugins, MCP servers, Claude Code imports, external-directory access, web tools, GitHub commands, push, commit, and deployment paths stay disabled. Project-local `.env`, `.dev.vars`, `opencode.json`, and `.opencode` paths block live launch because OpenCode can load those files automatically or give them higher configuration precedence.
 
-OpenCode reports token and cost usage, while its ordinary CLI lacks a pre-turn dollar breaker. Live launch consequently requires a separate acknowledgement of this budget gap. A later supervisor must ingest JSON usage events and cancel before the daily or episode reservation is exhausted.
+OpenCode reports token and cost usage, while its ordinary CLI lacks a pre-turn dollar breaker. This first slice therefore emits a launch plan only. Paid execution remains blocked until recorded JSON events prove exact `model` and `system_fingerprint` admission, DeepSeek reasoning/tool-turn replay, usage parsing, and a supervisor-owned budget breaker.
 
-The first executable wrapper permits **observe only**. Candidate execution is blocked because a worker that can edit and run tests can create code that reads inherited environment variables or opens network connections. Candidate mode requires an external process/container sandbox that removes the provider key from tool subprocesses, denies egress, and mounts only the disposable worktree.
+Candidate execution needs one additional boundary: an external process/container sandbox that removes the provider key from tool subprocesses, denies egress, and mounts only the disposable worktree. An edit-capable worker can otherwise write test code that reads inherited environment variables or opens network connections.
 
 ### 2. Claude Code over the Anthropic-compatible endpoint
 
@@ -145,16 +145,7 @@ bun scripts/plan-deepseek-opencode.ts \
 
 The plan prints the exact model probe, run command, isolated environment, OpenCode configuration, permissions, limits, prompt digest/byte count, budget facts, and false authority fields. Prompt text is copied into the private runtime directory only for an explicitly enabled launch and stays out of the printed plan. The API key appears only as `<secret-handle:deepseek>`.
 
-Live execution additionally requires:
-
-```text
---execute
-STENSIBLY_DEEPSEEK_LIVE=1
-STENSIBLY_DEEPSEEK_ACCEPT_OPENCODE_BUDGET_GAP=1
-DEEPSEEK_API_KEY=<operator secret>
-```
-
-This wrapper accepts paid observe episodes only. The first accepted paid run should remain an observe episode against public or fictional data. Keep concurrency at one until at least twenty episodes establish median cost, cache-hit rate, useful checkpoint rate, repair burden, and reviewer demand.
+Paid execution is deliberately absent from this script. The next slice must add recorded OpenCode JSON-event fixtures and an admitted executor. The first eventual paid run remains an observe episode against public or fictional data, with concurrency one until at least twenty episodes establish median cost, cache-hit rate, useful checkpoint rate, repair burden, and reviewer demand.
 
 ## Integration with existing runner work
 
