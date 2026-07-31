@@ -116,31 +116,41 @@ export class RunnerCancellationSettlementCoordinatorV1 {
   }
 
   async #execute(): Promise<RunnerCancellationSettlementResultV1> {
-    let outcome: RunnerCancellationSettlementOutcomeV1 = "adapter_failure";
-    let cancellation: RunnerCancellationObservationV1 | null = null;
-    try {
-      const returned = await this.#adapter.requestCancellation(this.#command);
-      cancellation = parseCancellationObservation(
-        returned,
-        this.#command,
-        this.#descriptor,
-      );
-      outcome = "cancellation_observed";
-    } catch {
-      cancellation = null;
-      outcome = "adapter_failure";
-    }
-
-    const timing = resolveSettlementTime(
+    const commandFingerprint = fingerprintCanonicalRequest(this.#command);
+    const timing = resolveExecutionTime(
       this.#clock,
       this.#command.requestedAt,
-      cancellation?.observedAt ?? null,
     );
-    if (timing.failed) {
+    let observedAt = timing.observedAt;
+    let outcome: RunnerCancellationSettlementOutcomeV1 = "adapter_failure";
+    let cancellation: RunnerCancellationObservationV1 | null = null;
+
+    if (
+      !timing.failed
+      && observedAt < this.#command.authority.expiresAt
+    ) {
+      try {
+        const returned = await this.#adapter.requestCancellation(this.#command);
+        cancellation = parseCancellationObservation(
+          returned,
+          this.#command,
+          this.#descriptor,
+        );
+        outcome = "cancellation_observed";
+      } catch {
+        cancellation = null;
+        outcome = "adapter_failure";
+      }
+    }
+
+    if (
+      cancellation !== null
+      && cancellation.observedAt > observedAt
+    ) {
       cancellation = null;
       outcome = "adapter_failure";
+      observedAt = this.#command.requestedAt;
     }
-    const observedAt = timing.observedAt;
 
     const settlement = createResourceSettlementReceipt({
       workspace: this.#scope.workspace,
@@ -148,7 +158,7 @@ export class RunnerCancellationSettlementCoordinatorV1 {
       resourceId: `run:${this.#command.runId}`,
       resourceKind: "runner_adapter",
       generation: this.#command.runGeneration,
-      operationRef: this.#command.commandId,
+      operationRef: commandFingerprint,
       policyVersion: resultPolicyVersion,
       failureMode: "continue_through_error",
       admissionState: "closed",
@@ -451,23 +461,31 @@ function parseCancellationObservation(
     throw new RangeError("Runner cancellation observation predates its request");
   }
   if (reference !== null) {
-    if (reference.adapterId !== descriptor.adapterId) {
-      throw new RangeError("Runner cancellation reference adapter does not match descriptor");
-    }
-    if (
-      reference.generation !== null
-      && reference.generation !== command.runGeneration
-    ) {
-      throw new RangeError("Runner cancellation reference generation does not match run");
-    }
+  if (reference.createdAt > observation.observedAt) {
+    throw new RangeError(
+      "Runner cancellation reference cannot follow its observation",
+    );
   }
-  return observation;
+  if (reference.adapterId !== descriptor.adapterId) {
+    throw new RangeError(
+      "Runner cancellation reference adapter does not match descriptor",
+    );
+  }
+  if (
+    reference.generation !== null
+    && reference.generation !== command.runGeneration
+  ) {
+    throw new RangeError(
+      "Runner cancellation reference generation does not match run",
+    );
+  }
+}
+return observation;
 }
 
-function resolveSettlementTime(
+function resolveExecutionTime(
   clock: RunnerCancellationSettlementClock,
   requestedAt: string,
-  cancellationObservedAt: string | null,
 ): { observedAt: string; failed: boolean } {
   let value: unknown;
   try {
@@ -484,8 +502,7 @@ function resolveSettlementTime(
   } catch {
     return { observedAt: requestedAt, failed: true };
   }
-  const minimum = cancellationObservedAt ?? requestedAt;
-  if (observedAt < minimum) {
+  if (observedAt < requestedAt) {
     return { observedAt: requestedAt, failed: true };
   }
   return { observedAt, failed: false };

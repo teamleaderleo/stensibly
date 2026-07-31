@@ -32,7 +32,8 @@ Before adapter activity, the coordinator exact-admits:
 - descriptor cancellation support;
 - command, adapter, profile, run, generation, and lease identity;
 - the exact `run:<runId>` authority resource;
-- authority generation and expiry;
+- authority generation and expiry at both request admission and the one trusted execution instant;
+- one complete command fingerprint binding command, authority holder/expiry, and cancellation reason;
 - canonical request time and bounded reason;
 - lowercase workspace and project identity;
 - credential-safe retained identifiers.
@@ -51,6 +52,8 @@ The observation may state:
 
 It may not claim remote settlement. Delivery cannot be known when the request was not accepted.
 
+An external reference must be created no later than the cancellation observation that publishes it. Future-dated references fail as adapter evidence and contribute no successful output.
+
 Malformed evidence, identity drift, adapter throws, and rejected references become the fixed outcome:
 
 ```text
@@ -61,13 +64,12 @@ Raw exception text is not retained.
 
 ## Trusted clock failure
 
-A started cancellation operation must still publish bounded recovery evidence when the trusted observation clock throws, returns a malformed timestamp, predates the accepted request, or predates retained adapter evidence.
+Before dispatch, the coordinator reads the trusted execution clock once. A thrown, malformed, or pre-request value prevents adapter activity and still publishes bounded recovery evidence. If valid execution time predates returned adapter evidence, that evidence is discarded.
 
 In those cases the coordinator:
 
-- discards the adapter observation;
 - reports `adapter_failure`;
-- uses the accepted request time as the deterministic settlement observation time;
+- uses the accepted request time as the deterministic settlement observation time when clock or evidence chronology fails;
 - publishes the same reconciliation hold;
 - retains no raw clock error text or contradictory external-reference digest.
 
@@ -76,6 +78,8 @@ The shared authoritative promise resolves with that bounded result rather than r
 ## Settlement result
 
 Every completed coordinator operation publishes one immutable `ResourceSettlementReceipt` for the exact run generation.
+
+The settlement operation identity is the SHA-256 fingerprint of the complete admitted cancellation command. Reusing a command ID with different authority, expiry, or reason therefore produces a different receipt and result identity.
 
 The adapter runtime owner is recorded as:
 
