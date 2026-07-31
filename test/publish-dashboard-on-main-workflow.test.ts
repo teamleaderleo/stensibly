@@ -20,6 +20,27 @@ describe("guarded dashboard publication workflow", () => {
     expect(workflow).toContain("cancel-in-progress: false");
   });
 
+  test("requires the coordinator's exact revision before checkout or protected publication", () => {
+    const revisionGate = position("Require the exact admitted revision");
+    const firstCheckout = position("actions/checkout@v6");
+    const publishJob = position("  publish:");
+
+    expect(workflow).toContain("expected_revision:");
+    expect(workflow).toContain("required: true");
+    expect(workflow).toContain("type: string");
+    expect(workflow).toContain("EXPECTED_REVISION: ${{ inputs.expected_revision }}");
+    expect(workflow).toContain('[[ ! "${EXPECTED_REVISION}" =~ ^[0-9a-f]{40}$ ]]');
+    expect(workflow).toContain('[ "${GITHUB_SHA}" != "${EXPECTED_REVISION}" ]');
+    expect(workflow).toContain("needs: validate");
+    expect(revisionGate).toBeLessThan(firstCheckout);
+    expect(firstCheckout).toBeLessThan(publishJob);
+
+    const validate = workflow.slice(position("  validate:"), publishJob);
+    expect(validate).not.toContain("secrets.");
+    expect(validate).not.toContain("VERCEL_TOKEN");
+    expect(validate).not.toContain("environment:");
+  });
+
   test("keeps validation secret-free and production effects environment-gated", () => {
     const validate = workflow.slice(position("  validate:"), position("  publish:"));
     expect(validate).not.toContain("secrets.");
@@ -81,6 +102,7 @@ describe("guarded dashboard publication workflow", () => {
     expect(position("Verify the public dashboard and Labs routes"))
       .toBeLessThan(position("Record publication receipt"));
     expect(workflow).toContain("source: \\`${GITHUB_SHA}\\`");
+    expect(workflow).toContain("expected revision: \\`${EXPECTED_REVISION}\\`");
     expect(workflow).toContain("immutable deployment:");
   });
 
