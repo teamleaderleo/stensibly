@@ -179,7 +179,10 @@ describe("dashboard release-window GitHub coordinator", () => {
     });
     expect(calls.map((call) => call.method)).toEqual(["GET", "GET", "GET", "POST"]);
     expect(calls.at(-1)?.url.endsWith(`${publisherPath}/dispatches`)).toBe(true);
-    expect(calls.at(-1)?.body).toBe('{"ref":"main"}');
+    expect(calls.at(-1)?.body).toBe(JSON.stringify({
+      ref: "main",
+      inputs: { expected_revision: currentSha },
+    }));
   });
 
   test("exits when the successful publication already covers main", async () => {
@@ -218,6 +221,7 @@ describe("dashboard release-window GitHub coordinator", () => {
       createGithubStub(forcedCalls, { currentSha, runs: [active] }),
     )).resolves.toEqual({ action: "dispatch", reason: "manual_force" });
     expect(forcedCalls.map((call) => call.method)).toEqual(["GET", "GET", "POST"]);
+    expect(forcedCalls.at(-1)?.body).toContain(currentSha);
   });
 
   test("fails closed before API use for an invalid ref or force value", async () => {
