@@ -65,6 +65,24 @@ Protected secret values must stay inside the protected execution surface. Using 
 credential is normal authorised work; printing, copying, publishing, or retaining the
 secret value is not.
 
+## Operator-only prerequisites
+
+When progress genuinely requires a human-only action from the operator, put a visible
+`Operator action required` block before every other section in the owning issue, pull
+request, campaign update, or handoff. Follow
+[`docs/operator-action-required.md`](docs/operator-action-required.md).
+
+The block must state the exact action, where it must be performed, the minimum safe
+scope or permission, why agents cannot complete it, and the observable evidence that
+clears the block. Never ask the operator to paste a token, key, secret, recovery code,
+session value, or other private credential into GitHub, chat, logs, screenshots, tests,
+or artifacts. Direct the operator to the protected provider or environment interface
+instead.
+
+Do not use this banner for work agents can complete under the standing grant, optional
+review, ordinary CI waiting, or speculative future setup. Remove it or mark it cleared
+as soon as the non-secret verification evidence exists.
+
 ## Active operator direction and self-review
 
 A direct instruction from the operator in the active chat is a current integration

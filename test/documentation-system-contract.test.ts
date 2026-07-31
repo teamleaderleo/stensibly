@@ -34,6 +34,39 @@ describe("documentation brief experiment", () => {
     expect(template).not.toContain("- Recovery:");
   });
 
+  test("puts genuine operator-only actions before the normal brief", async () => {
+    const template = await read(".github/pull_request_template.md");
+    const guide = await read("docs/operator-action-required.md");
+    const contributing = await read("CONTRIBUTING.md");
+    const policy = await read("STENSIBLY.md");
+
+    expect(template).toContain("## Operator action required");
+    expect(template.indexOf("## Operator action required")).toBeLessThan(
+      template.indexOf("## In simple words / purpose"),
+    );
+    for (const field of [
+      "**Action:**",
+      "**Where:**",
+      "**Minimum scope:**",
+      "**Why now:**",
+      "**Clears when:**",
+      "**Secret handling:**",
+    ]) {
+      expect(template).toContain(field);
+      expect(guide).toContain(field);
+    }
+    expect(guide).toContain(
+      "Never ask the operator to paste a secret value",
+    );
+    expect(guide).toContain("Do not use the banner for routine work agents can complete");
+    expect(contributing).toContain("docs/operator-action-required.md");
+    expect(contributing).toContain("never ask anyone to paste a secret value");
+    expect(policy).toContain("## Operator-only prerequisites");
+    expect(policy).toContain("docs/operator-action-required.md");
+    expect(policy).toContain("Never ask the operator to paste a token");
+    expect(policy).toContain("Do not use this banner for work agents can complete");
+  });
+
   test("uses issue-backed decision identities instead of sequential allocation", async () => {
     const guide = await read("docs/documentation-system.md");
     const decisions = await read("docs/decisions/README.md");
