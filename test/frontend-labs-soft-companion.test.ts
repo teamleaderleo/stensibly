@@ -190,7 +190,7 @@ describe("Soft Companion frontend lab", () => {
     expect(ordinaryEvent.stopped).toBe(false);
 
     ordinary.primary.textContent = "Undo preview acknowledgement";
-    ordinary.observerCallback?.();
+    (ordinary.observerCallback as (() => void) | null)?.();
     expect(ordinary.primary.textContent).toBe("Undo preview acknowledgement");
   });
 
@@ -314,11 +314,11 @@ function executePolicy(tone: "serious" | "healthy") {
   const connectionRows = frontendLabFixture.connections.map((connection) => {
     const row = new PolicyElement();
     const label = new PolicyElement();
-    label.textContent = connection.label;
+    label.textContent = connection.label ?? "";
     const value = new PolicyElement();
-    value.textContent = connection.state;
+    value.textContent = connection.state ?? "";
     const detail = new PolicyElement();
-    detail.textContent = connection.detail;
+    detail.textContent = connection.detail ?? "";
     row.children = [label, value, detail];
     return row;
   });
