@@ -1,10 +1,9 @@
-# Existing-workflow push retrigger for GitHub Actions.
 name: cinder-577-slug-repair
 
 on:
-  push:
+  pull_request:
     branches:
-      - cinder/577-slug-validator-repair
+      - main
     paths:
       - .github/workflows/cinder-577-slug-repair.yml
 
@@ -17,10 +16,13 @@ concurrency:
 
 jobs:
   repair-test-publish:
+    if: github.head_ref == 'cinder/577-slug-validator-repair'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    env:
+      TRIGGER_HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Check out exact trigger head
+      - name: Check out exact pull-request head
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: cinder/577-slug-validator-repair
@@ -30,7 +32,7 @@ jobs:
       - name: Rebase onto current main
         run: |
           set -euxo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$TRIGGER_HEAD"
           git fetch origin main
           git config user.name cinder-stensibly
           git config user.email cinder-stensibly@users.noreply.github.com
@@ -201,5 +203,5 @@ jobs:
           git add src convex site test .github/workflows
           git diff --cached --check
           git commit -m "Fix malformed lowercase slug validators"
-          git push --force-with-lease=refs/heads/cinder/577-slug-validator-repair:$GITHUB_SHA \
+          git push --force-with-lease=refs/heads/cinder/577-slug-validator-repair:$TRIGGER_HEAD \
             origin HEAD:refs/heads/cinder/577-slug-validator-repair
