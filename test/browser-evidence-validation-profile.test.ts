@@ -8,7 +8,7 @@ import {
 
 const repositoryRoot = join(import.meta.dir, "..");
 const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8");
-const guide = readFileSync(join(repositoryRoot, "docs", "frontend-browser-evidence.md"), "utf8");
+const guide = readFileSync(join(repositoryRoot, "docs", "frontend-browser-validation-profile.md"), "utf8");
 
 const fullParallelCondition = "if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}";
 const browserJob = workflow.slice(
@@ -37,6 +37,9 @@ describe("browser evidence validation profile", () => {
     expect(Object.isFrozen(browserEvidenceValidationProfile)).toBe(true);
     expect(Object.isFrozen(browserEvidenceValidationProfile.commands)).toBe(true);
     expect(guide).toContain("`browser-evidence/v1`");
+    for (const command of browserEvidenceValidationProfile.commands) {
+      expect(guide).toContain(`\`${command}\``);
+    }
   });
 
   test("runs the adjunct in parallel only for the full-parallel topology", () => {
