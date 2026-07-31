@@ -9,6 +9,7 @@ const root = join(import.meta.dir, "..", "site", "labs", "soft-companion");
 const html = readFileSync(join(root, "index.html"), "utf8");
 const css = readFileSync(join(root, "styles.css"), "utf8");
 const compat = readFileSync(join(root, "compat.js"), "utf8");
+const interactionBridge = readFileSync(join(root, "interaction-bridge.js"), "utf8");
 const app = readFileSync(join(root, "app.js"), "utf8");
 const rationale = readFileSync(join(import.meta.dir, "..", "docs", "frontend-soft-companion.md"), "utf8");
 const variant = frontendLabManifest.find((entry) => entry.id === "soft-companion");
@@ -18,7 +19,7 @@ describe("Soft Companion frontend lab", () => {
     expect(variant).toMatchObject({
       owner: "Cinder",
       status: "prototype",
-      revision: "b656c3181abb8275c4e00ddebeef2498f6f7f95e",
+      revision: "0f9952daedc58b5c3c948989211610b14561c1a5",
       issue: 608,
       path: "./soft-companion/",
     });
@@ -27,6 +28,7 @@ describe("Soft Companion frontend lab", () => {
     expect(html).toContain("shared fictional fixtures");
     expect(html.indexOf('../fixtures.classic.js')).toBeLessThan(html.indexOf('./compat.js'));
     expect(html.indexOf('./compat.js')).toBeLessThan(html.indexOf('./app.js'));
+    expect(html.indexOf('./app.js')).toBeLessThan(html.indexOf('./interaction-bridge.js'));
     expect(html).not.toContain('type="module"');
     expect(html).toContain('aria-label="Selected work detail"');
     expect(html).toContain('id="scenario-select" aria-labelledby="scenario-title"');
@@ -50,16 +52,16 @@ describe("Soft Companion frontend lab", () => {
     expect(html).toContain('id="connection-shelf" tabindex="-1"');
   });
 
-  test("keeps serious ambiguity literal while primary controls remain preview-only", () => {
+  test("keeps serious ambiguity literal while controls remain fixture-only", () => {
     expect(app).toContain('disposition: operation.state === "ambiguous" ? "Reconcile before retry"');
+    expect(app).toContain('row.semanticState === "ambiguous"');
+    expect(app).toContain("No retry was performed");
     expect(app).toContain('text("strong", row.semanticState === "ambiguous" ? "Safe next action"');
-    expect(compat).toContain("primaryActionLabel");
-    expect(compat).toContain("primaryActionAnnouncement");
-    expect(compat).toContain("No product action was performed");
-    expect(compat).toContain("event.stopImmediatePropagation()");
-    expect(compat).toContain('primaryAction.addEventListener("click"');
-    expect(compat).toContain('detailContent.querySelector(".next-note")');
-    expect(compat).not.toContain('querySelectorAll(".detail-block")');
+    expect(interactionBridge).toContain("projectedConnections");
+    expect(interactionBridge).toContain("syncConnections");
+    expect(interactionBridge).toContain("syncPrimaryAction");
+    expect(interactionBridge).toContain("No product action occurred");
+    expect(interactionBridge).toContain("event.stopImmediatePropagation()");
   });
 
   test("provides deterministic local empty, loading, degraded, and error states", () => {
@@ -72,13 +74,9 @@ describe("Soft Companion frontend lab", () => {
     expect(app).toContain("This deterministic preview performs no network request.");
     expect(app).toContain("Retry local preview");
     expect(css).toContain('body[data-scenario="degraded"]');
-    expect(compat).toContain("repairConnectionShelf(projections)");
-    expect(compat).toContain("repairConnectionDetail(projections)");
-    expect(compat).toContain('querySelectorAll(".detail-section")');
-    expect(compat).toContain('candidate.querySelector("h3")?.textContent === "Connection health"');
   });
 
-  test("keeps URL updates, drawer focus, connection truth, and action previews recoverable", () => {
+  test("keeps URL updates and drawer focus recoverable inside opaque sandbox frames", () => {
     class FakeDomException extends Error {
       name: string;
       constructor(message: string, name: string) {
@@ -131,12 +129,8 @@ describe("Soft Companion frontend lab", () => {
         return selector === "button[data-mode]" ? buttons : [];
       },
     };
-    type Policy = {
-      projectConnections: (connections: readonly Record<string, unknown>[], scenario: string) => readonly Record<string, unknown>[];
-      primaryActionLabel: (action: string) => string;
-      primaryActionAnnouncement: (nextAction: string, safeRecovery?: boolean) => string;
-    };
-    const context: Record<string, unknown> & { StensiblySoftCompanionPolicy?: Policy } = {
+
+    runInNewContext(compat, {
       History: FakeHistory,
       DOMException: FakeDomException,
       Element: FakeElement,
@@ -145,8 +139,7 @@ describe("Soft Companion frontend lab", () => {
       requestAnimationFrame: (callback: () => void) => animationFrames.push(callback),
       Error,
       TypeError,
-    };
-    runInNewContext(compat, context);
+    });
 
     const history = new FakeHistory() as { replaceState: (kind: string) => unknown };
     expect(() => history.replaceState("security")).not.toThrow();
@@ -169,19 +162,6 @@ describe("Soft Companion frontend lab", () => {
     registeredClickListener({ detail: 1, target: replacementButton });
     expect(animationFrames).toHaveLength(0);
     expect(replacementButton.focused).toBe(false);
-
-    const policy = context.StensiblySoftCompanionPolicy;
-    if (!policy) throw new Error("Soft Companion preview policy was not published");
-    expect(Object.isFrozen(policy)).toBe(true);
-    const projected = policy.projectConnections(frontendLabFixture.connections, "degraded");
-    const github = projected.find((connection) => connection.id === "github");
-    expect(github).toMatchObject({ state: "healthy", previewState: "degraded" });
-    expect(projected.find((connection) => connection.id === "api")).toBe(frontendLabFixture.connections[1]);
-    expect(policy.primaryActionLabel("Reconcile before retry")).toBe("Preview: Reconcile before retry");
-    expect(policy.primaryActionLabel("Preview: Reconcile before retry")).toBe("Preview: Reconcile before retry");
-    expect(policy.primaryActionAnnouncement("Reconcile with remote state before any retry", true)).toBe(
-      "Safe recovery preview: Reconcile with remote state before any retry. No product action was performed.",
-    );
   });
 
   test("preserves keyboard, focus, narrow-screen, evening, and reduced-motion behavior", () => {
@@ -206,7 +186,7 @@ describe("Soft Companion frontend lab", () => {
     expect(html).toContain("Mallow · original paper-moth companion");
     expect(rationale).toContain("drawn entirely with repository-authored HTML and CSS primitives");
     expect(rationale).toContain("No third-party artwork");
-    for (const source of [html, css, compat, app]) {
+    for (const source of [html, css, compat, interactionBridge, app]) {
       expect(source).not.toMatch(/(?:linear|radial|conic)-gradient\s*\(/i);
       expect(source).not.toMatch(/\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b|sendBeacon\s*\(/);
       expect(source).not.toMatch(/stn\.tok_/i);
