@@ -5,9 +5,13 @@ import {
   GitHubWebhookIngressError,
   type GitHubWebhookIngress,
 } from "./github-webhook-ingress.js";
+import type {
+  HostedGitHubRepositoryObservationReader,
+} from "./github-repository-observation-convex.js";
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
 import {
   createHttpAuthMiddleware,
+  currentPrincipal,
   requireHttpAccess,
   type HttpAuthOptions,
   type StensiblyEnv,
@@ -19,6 +23,7 @@ import {
 } from "./provider-capacity.js";
 import type { ProviderCapacityService } from "./provider-capacity-convex.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
+import { FAILURE_CATEGORY_HEADER } from "./worker-observability.js";
 
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const actorPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[bot\])?$/;
@@ -70,6 +75,7 @@ export interface HostedProviderCapacityOptions {
   service: ProviderCapacityService;
   githubWebhookSecret: string;
   repositoryObservationSink?: HostedGitHubRepositoryObservationSink;
+  repositoryObservationReader?: HostedGitHubRepositoryObservationReader;
   now?: () => number;
   maxBodyBytes?: number;
 }
@@ -77,6 +83,7 @@ export interface HostedProviderCapacityOptions {
 interface NormalizedOptions {
   service: ProviderCapacityService;
   repositoryObservationSink?: HostedGitHubRepositoryObservationSink;
+  repositoryObservationReader?: HostedGitHubRepositoryObservationReader;
   ingress: GitHubWebhookIngress;
   now: () => number;
 }
@@ -218,6 +225,36 @@ export function registerHostedProviderCapacityRoutes(
       return capacityError(context, error);
     }
   });
+  if (normalized.repositoryObservationReader) {
+    api.get("/github/repository-observations", async (context) => {
+      const denied = requireHttpAccess(context, "read");
+      if (denied) return denied;
+      const principal = currentPrincipal(context);
+      if (!principal || principal.projects !== null) {
+        context.header(FAILURE_CATEGORY_HEADER, "authorization_failure");
+        return context.json({
+          error: "Repository observation history requires workspace-wide read access",
+          code: "forbidden",
+        }, 403);
+      }
+      const repository = context.req.query("repository");
+      const limit = parseRecentObservationLimit(context.req.query("limit"));
+      if (!repository || limit === null) {
+        return context.json({
+          error: "GitHub repository observations require a repository and limit from 1 to 100",
+          code: "invalid_request",
+        }, 400);
+      }
+      try {
+        const observations = await normalized.repositoryObservationReader!
+          .listRecentRepositoryObservations(repository, limit);
+        context.header("Cache-Control", "no-store");
+        return context.json({ observations });
+      } catch (error) {
+        return repositoryObservationReadError(context, error);
+      }
+    });
+  }
   app.route("/api/v1", api);
 }
 
@@ -228,6 +265,9 @@ function normalizeOptions(options: HostedProviderCapacityOptions): NormalizedOpt
     ...(options.repositoryObservationSink
       ? { repositoryObservationSink: options.repositoryObservationSink }
       : {}),
+    ...(options.repositoryObservationReader
+      ? { repositoryObservationReader: options.repositoryObservationReader }
+      : {}),
     ingress: createGitHubWebhookIngress({
       secret: options.githubWebhookSecret,
       ...(options.maxBodyBytes === undefined
@@ -237,6 +277,12 @@ function normalizeOptions(options: HostedProviderCapacityOptions): NormalizedOpt
     }),
     now,
   };
+}
+
+function parseRecentObservationLimit(value: string | undefined): number | null {
+  if (value === undefined) return 50;
+  if (!/^(?:[1-9]|[1-9][0-9]|100)$/u.test(value)) return null;
+  return Number(value);
 }
 
 function legacyPayloadDigest(value: string): string {
@@ -307,6 +353,22 @@ function repositoryObservationError(
 ): Response {
   return context.json({
     error: "GitHub repository observation storage failed",
+    code: "backend_failure",
+  }, 500);
+}
+
+function repositoryObservationReadError(
+  context: Context<StensiblyEnv>,
+  error: unknown,
+): Response {
+  if (error instanceof RangeError) {
+    return context.json({
+      error: "GitHub repository observation read is invalid",
+      code: "invalid_request",
+    }, 400);
+  }
+  return context.json({
+    error: "GitHub repository observation read failed",
     code: "backend_failure",
   }, 500);
 }

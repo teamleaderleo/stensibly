@@ -16,6 +16,7 @@ const permanentWorkflows = [
   "mcp-stateful-replay-v130-probe.yml",
   "publish-dashboard-on-main.yml",
   "sync-issue-labels.yml",
+  "verify-github-observation-hosted.yml",
   "verify-oauth-hosted.yml",
 ] as const;
 
