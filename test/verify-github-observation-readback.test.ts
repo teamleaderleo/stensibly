@@ -209,6 +209,14 @@ describe("hosted GitHub observation readback verifier", () => {
     expect(cancelled).toBe(true);
   });
 
+  test("rejects hostile successful observation identities before receipt output", async () => {
+    const hostileIdentity = "github:push:delivery-live-readback\n::error::retained-command";
+    await expect(verifyGitHubObservationReadback(verifierOptions(), async () => jsonResponseAt(
+      requestUrl,
+      responseBody({ observationId: hostileIdentity }),
+    ))).rejects.toThrow("inconsistent observation identity");
+  });
+
   test("bounds declared and streamed response bytes before parse", async () => {
     let declaredCancelled = false;
     const declaredOverflow = responseAt(requestUrl, new ReadableStream<Uint8Array>({
@@ -238,6 +246,34 @@ describe("hosted GitHub observation readback verifier", () => {
     await expect(verifyGitHubObservationReadback(verifierOptions(), async () => streamedOverflow))
       .rejects.toThrow("exceeded 1 MiB");
     expect(streamedCancelled).toBe(true);
+  });
+
+  test("copies admitted stream chunks before producer mutation", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(responseBody()));
+    const split = Math.floor(bytes.byteLength / 2);
+    const oversizedBacking = new Uint8Array(maximumResponseBytes * 2);
+    const first = oversizedBacking.subarray(0, split);
+    first.set(bytes.subarray(0, split));
+    const second = bytes.slice(split);
+    let started = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (started) return;
+        started = true;
+        controller.enqueue(first);
+        setTimeout(() => {
+          first.fill(0x78);
+          controller.enqueue(second);
+          controller.close();
+        }, 0);
+      },
+    });
+
+    const receipt = await verifyGitHubObservationReadback(
+      verifierOptions(),
+      async () => responseAt(requestUrl, stream),
+    );
+    expect(receipt.revision).toBe(revision);
   });
 
   test("rejects invalid or conflicting response lengths", async () => {
