@@ -10,7 +10,7 @@ It performs no provider read itself.
 
 ## Evidence kinds
 
-The compiler accepts one closed evidence kind:
+The compiler accepts one closed set of four evidence kinds:
 
 - `provider_settled` — an attributable provider receipt proves the prior runtime has settled;
 - `provider_still_running` — the provider still reports live work;
