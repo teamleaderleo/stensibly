@@ -1,0 +1,165 @@
+name: Cicada 901 hosted context integrity
+
+on:
+  push:
+    branches:
+      - cicada/901-hosted-context-composition
+    paths:
+      - .github/workflows/cicada-901-hosted-context-composition.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cicada-901-hosted-context-composition
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/901-hosted-context-composition
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Complete hosted context integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          schema_path = Path("convex/schema.ts")
+          schema = schema_path.read_text()
+          schema_marker = '''
+
+  actors: defineTable({
+          '''
+          table = '''
+
+  githubProjectContexts: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    issueExternalId: v.string(),
+    repositoryFullName: v.string(),
+    sourceRevision: v.string(),
+    snapshotSha256: v.string(),
+    contentSha256: v.string(),
+    providerUpdatedAt: v.number(),
+    snapshotJson: v.string(),
+    projectAttachmentExternalId: v.string(),
+    projectAttachmentSnapshotSha256: v.string(),
+    instructionSetId: v.string(),
+    instructionSetSha256: v.string(),
+    instructionSetJson: v.string(),
+    syncStatus: v.union(v.literal("synchronized"), v.literal("degraded")),
+    syncCursor: v.optional(v.string()),
+    degradedReasonCode: v.optional(v.string()),
+    observationRef: v.string(),
+    observedAt: v.number(),
+    acceptedBy: v.string(),
+    acceptedAt: v.number(),
+    isCurrent: v.boolean(),
+    outcome: v.union(
+      v.literal("initial"),
+      v.literal("updated"),
+      v.literal("stale"),
+      v.literal("instruction_rebound"),
+      v.literal("synchronization_updated"),
+    ),
+  })
+    .index("by_project_observation", ["projectId", "observationRef"])
+    .index("by_project_issue_revision", [
+      "projectId",
+      "issueExternalId",
+      "sourceRevision",
+    ])
+    .index("by_project_issue_current", [
+      "projectId",
+      "issueExternalId",
+      "isCurrent",
+    ])
+    .index("by_project_current_issue", [
+      "projectId",
+      "isCurrent",
+      "issueExternalId",
+    ])
+    .index("by_project_issue_accepted", [
+      "projectId",
+      "issueExternalId",
+      "acceptedAt",
+    ]),
+
+  actors: defineTable({
+          '''
+          if schema.count(schema_marker) != 1:
+              raise SystemExit("Convex schema insertion marker changed")
+          schema_path.write_text(schema.replace(schema_marker, table, 1))
+
+          context_path = Path("convex/githubProjectContexts.ts")
+          context = context_path.read_text()
+          old_current = '''    const classification = classifyGitHubIssueContextAcceptance(
+      current === null
+        ? null
+        : {
+          sourceRevision: current.sourceRevision,
+          contentSha256: current.contentSha256,
+          providerUpdatedAt: new Date(current.providerUpdatedAt).toISOString(),
+          instructionSetId: current.instructionSetId,
+          observedAt: new Date(current.observedAt).toISOString(),
+        },
+      {
+'''
+          new_current = '''    const admittedCurrent = current === null
+      ? null
+      : admitStoredRecord(current, workspaceSlug, projectSlug);
+    const classification = classifyGitHubIssueContextAcceptance(
+      admittedCurrent === null
+        ? null
+        : {
+          sourceRevision: admittedCurrent.sourceRevision,
+          contentSha256: admittedCurrent.contentSha256,
+          providerUpdatedAt: admittedCurrent.providerUpdatedAt,
+          instructionSetId: admittedCurrent.instructionSetId,
+          observedAt: admittedCurrent.observedAt,
+        },
+      {
+'''
+          if context.count(old_current) != 1:
+              raise SystemExit("current-row classification marker changed")
+          context_path.write_text(context.replace(old_current, new_current, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify hosted integrity
+        run: |
+          bun run typecheck
+          bun run test:convex -- \
+            convex/githubProjectContexts.test.ts \
+            convex/githubProjectContexts-attachment-integrity-review.test.ts \
+            convex/githubProjectContexts-current-row-integrity-review.test.ts
+          bun test \
+            test/github-project-context-convex-ledger.test.ts \
+            test/github-project-context-convex-ledger-clock-skew-review.test.ts \
+            test/convex-work-ledger-github-project-context-review.test.ts
+          bun run worker:check
+      - name: Publish clean integrity repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Cicada'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/cicada-901-hosted-context-composition.yml
+          git add \
+            convex/schema.ts \
+            convex/githubProjectContexts.ts \
+            convex/githubProjectContexts-current-row-integrity-review.test.ts
+          git diff --cached --check
+          git commit -m 'Complete hosted GitHub context integrity'
+          git push \
+            --force-with-lease=refs/heads/cicada/901-hosted-context-composition:${SOURCE_HEAD} \
+            origin HEAD:cicada/901-hosted-context-composition
