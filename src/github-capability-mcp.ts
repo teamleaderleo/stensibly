@@ -125,7 +125,7 @@ export function registerGitHubCapabilityTools(
   server.registerTool(
     "github_call_tool",
     {
-      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.",
+      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
