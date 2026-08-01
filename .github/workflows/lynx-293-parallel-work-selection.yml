@@ -1,0 +1,178 @@
+name: Apply parallel work-selection policy
+
+on:
+  push:
+    branches:
+      - lynx/293-parallel-work-selection
+    paths:
+      - .github/workflows/lynx-293-parallel-work-selection.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v6
+        with:
+          ref: lynx/293-parallel-work-selection
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Apply accepted operator correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "AGENTS.md",
+              "**Operating protocol:** `stensibly-agent-ops/0.4.0`",
+              "**Operating protocol:** `stensibly-agent-ops/0.5.0`",
+          )
+          replace_once(
+              "AGENTS.md",
+              "Do not begin by creating speculative work. First determine whether existing work\nshould be finished, reviewed, repaired, integrated, merged, deployed, enabled,\ndogfooded, or explicitly superseded.",
+              "Inspect existing work for dependencies, useful continuations, and overlap before\ncommitting to a lane. Existing work provides context and options. New work may start\nwhenever it advances a current outcome, has a clear bounded fence, and avoids harmful\noverlap. Choose finishing, reviewing, repairing, integrating, deploying, or dogfooding\nexisting work when that is the higher-value move.",
+          )
+          replace_once(
+              "AGENTS.md",
+              "Prefer, in order:\n\n1. the primary current-wave outcome and demonstrated blockers;",
+              "Use this value order when choosing among eligible lanes. It guides prioritisation\nwhile allowing new bounded work to start at any point:\n\n1. the primary current-wave outcome and demonstrated blockers;",
+          )
+
+          replace_once(
+              "docs/chatgpt-project-instructions.md",
+              "**Bootstrap:** `stensibly-project-bootstrap/v2`",
+              "**Bootstrap:** `stensibly-project-bootstrap/v3`",
+          )
+          replace_once(
+              "docs/chatgpt-project-instructions.md",
+              "Stensibly Project bootstrap: stensibly-project-bootstrap/v2.",
+              "Stensibly Project bootstrap: stensibly-project-bootstrap/v3.",
+          )
+          replace_once(
+              "docs/chatgpt-project-instructions.md",
+              "Default to ambitious execution. Own a meaningful outcome, maintain a small non-conflicting portfolio, continue at natural boundaries without repeated operator prompts, and make dormant work recoverable. Before creating new work, inspect whether existing work should be finished, reviewed, repaired, integrated, deployed, enabled, dogfooded, or superseded.",
+              "Default to ambitious execution. Own a meaningful outcome, maintain a small non-conflicting portfolio, continue at natural boundaries without repeated operator prompts, and make dormant work recoverable. Inspect existing work for dependencies, useful continuations, and overlap. Existing work provides context and options; new bounded work may start whenever it advances a current outcome.",
+          )
+          replace_once(
+              "docs/chatgpt-project-instructions.md",
+              "Browse the callsign catalog or live registry, choose an available name distinct from active and recent history, and state it. Reserve it when the registry is available; use a generation only from the canonical accepted receipt and include exact run/session provenance when pending, unleased, reused, or inherited. Read AGENTS.md, STENSIBLY.md, the current wave, and live repository state. Select a meaningful outcome and a small non-conflicting portfolio. Finish, review, merge, deploy, enable, or dogfood existing work before creating speculative work. Continue without waiting for another prompt when a covered action is ready.",
+              "Browse the callsign catalog or live registry, choose an available name distinct from active and recent history, and state it. Reserve it when the registry is available; use a generation only from the canonical accepted receipt and include exact run/session provenance when pending, unleased, reused, or inherited. Read AGENTS.md, STENSIBLY.md, the current wave, and live repository state. Select a meaningful outcome and a small non-conflicting portfolio. Inspect existing work for dependencies, useful continuations, and overlap. Start new bounded work whenever it advances the current outcome, and choose existing work when it offers the highest-value next move. Continue without waiting for another prompt when a covered action is ready.",
+          )
+          replace_once(
+              "docs/chatgpt-project-instructions.md",
+              "Bootstrap `v2` changes the default authority and execution posture for internal dogfood\ndeployments and therefore replaces `v1`. Lane-specific state remains outside Project\nsettings.",
+              "Bootstrap `v3` removes the finish-existing-work-first gate while preserving overlap\ninspection, bounded portfolios, ambitious continuation, and the internal dogfood grant.\nIt replaces `v2`. Lane-specific state remains outside Project settings.",
+          )
+
+          replace_once(
+              "docs/operating-instruction-lifecycle.md",
+              "**Protocol:** `stensibly-agent-ops/0.4.0`",
+              "**Protocol:** `stensibly-agent-ops/0.5.0`",
+          )
+          replace_once(
+              "docs/operating-instruction-lifecycle.md",
+              "**Bootstrap:** `stensibly-project-bootstrap/v2`",
+              "**Bootstrap:** `stensibly-project-bootstrap/v3`",
+          )
+          replace_once(
+              "docs/operating-instruction-lifecycle.md",
+              "## Protocol history\n\nProtocol `0.4.0` makes accountable self-review",
+              "## Protocol history\n\nProtocol `0.5.0` removes the finish-existing-work-first gate. Existing work remains\nrequired context for dependencies, useful continuations, and overlap. New bounded lanes\nmay start whenever they advance the current outcome. Priority follows expected value,\ncoherence, collision risk, and recoverability instead of work age alone.\n\nBootstrap `v3` carries the same work-selection rule into ChatGPT Project settings and\nreplaces bootstrap `v2`.\n\nProtocol `0.4.0` makes accountable self-review",
+          )
+          replace_once(
+              "docs/operating-instruction-lifecycle.md",
+              "Bootstrap `v2` changes the default execution and authority posture and therefore\nreplaces bootstrap `v1`.",
+              "Bootstrap `v2` changed the default execution and authority posture and replaced\nbootstrap `v1`.",
+          )
+
+          replace_once(
+              "docs/current-wave.md",
+              "**Operating protocol:** `stensibly-agent-ops/0.4.0` plus standing policy `stensibly-internal-dogfood/v2`",
+              "**Operating protocol:** `stensibly-agent-ops/0.5.0` plus standing policy `stensibly-internal-dogfood/v2`",
+          )
+          replace_once(
+              "docs/documentation-system.md",
+              "**Base operating protocol:** `stensibly-agent-ops/0.4.0`",
+              "**Base operating protocol:** `stensibly-agent-ops/0.5.0`",
+          )
+          replace_once(
+              "test/documentation-system-contract.test.ts",
+              '"**Operating protocol:** `stensibly-agent-ops/0.4.0`",',
+              '"**Operating protocol:** `stensibly-agent-ops/0.5.0`",',
+          )
+
+          workflow = Path(".github/workflows/lynx-293-parallel-work-selection.yml")
+          workflow.unlink()
+          PY
+
+          test ! -e .github/workflows/lynx-293-parallel-work-selection.yml
+          grep -Fq 'stensibly-agent-ops/0.5.0' AGENTS.md
+          grep -Fq 'stensibly-project-bootstrap/v3' docs/chatgpt-project-instructions.md
+          grep -Fq 'New work may start' AGENTS.md
+          if grep -Fq 'Do not begin by creating speculative work' AGENTS.md; then
+            echo 'Retired hard gate remains in AGENTS.md' >&2
+            exit 1
+          fi
+          if grep -Fq 'before creating speculative work' docs/chatgpt-project-instructions.md; then
+            echo 'Retired hard gate remains in ChatGPT bootstrap' >&2
+            exit 1
+          fi
+
+      - name: Commit source-only policy update
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected_head="${GITHUB_SHA}"
+          if [[ "$(git rev-parse HEAD)" != "${expected_head}" ]]; then
+            echo "Checked-out head changed before publication." >&2
+            exit 1
+          fi
+
+          mapfile -t changed_paths < <(
+            git status --porcelain=v1 --untracked-files=all | sed -E 's/^.. //'
+          )
+          expected_paths=(
+            ".github/workflows/lynx-293-parallel-work-selection.yml"
+            "AGENTS.md"
+            "docs/chatgpt-project-instructions.md"
+            "docs/current-wave.md"
+            "docs/documentation-system.md"
+            "docs/operating-instruction-lifecycle.md"
+            "test/documentation-system-contract.test.ts"
+          )
+          printf '%s\n' "${changed_paths[@]}" | sort > /tmp/actual-paths
+          printf '%s\n' "${expected_paths[@]}" | sort > /tmp/expected-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- "${expected_paths[@]}"
+          git commit -m "Accept parallel work-selection policy"
+          generated_head="$(git rev-parse HEAD)"
+
+          gh auth setup-git
+          git push origin \
+            "HEAD:refs/heads/lynx/293-parallel-work-selection" \
+            --force-with-lease="refs/heads/lynx/293-parallel-work-selection:${expected_head}"
+
+          remote_head="$(git ls-remote origin refs/heads/lynx/293-parallel-work-selection | awk '{print $1}')"
+          if [[ "${remote_head}" != "${generated_head}" ]]; then
+            echo "Published branch head ${remote_head} differs from generated head ${generated_head}." >&2
+            exit 1
+          fi
