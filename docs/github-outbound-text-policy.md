@@ -56,7 +56,8 @@ rewritten.
 An optional external-contact authority may allow exact external repositories.
 It must bind:
 
-- a SHA-256 authority receipt;
+- a SHA-256 authority receipt recomputed over policy
+  `github-external-contact-authority/v1`, generation, and repositories;
 - the same authority generation as the provider operation;
 - a canonical, unique, sorted repository set.
 
@@ -106,6 +107,8 @@ ordinary-array prototype, bounded captured length, every dense enumerable data
 index, and no symbols or decorated keys. Sparse, accessor-backed, custom, or
 decorated arrays fail closed.
 
+Input destinations contain exactly `owner` and `repository`. Receipt
+destinations additionally require the exact derived `repositoryFullName`.
 Input fields must match the exact surface field names and canonical order.
 Controlled and authorized repository sets are canonical, unique, sorted, and
 admitted through the same dense-array boundary.
