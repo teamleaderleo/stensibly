@@ -5,6 +5,7 @@ import type {
   GitHubProviderReceiptState,
 } from "./github-provider-contracts.js";
 import { githubIssueProviderOperations } from "./github-provider-contracts.js";
+import type { GitHubIssueContext } from "./github-issue-context.js";
 import {
   canonicalJsonString,
   fingerprintExactText,
@@ -114,7 +115,8 @@ const relationshipKinds = [
 const timestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const hashPattern = /^sha256:[0-9a-f]{64}$/;
-const repositoryPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]{1,100}$/;
+const repositoryPattern =
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]{1,100}$/;
 const projectPattern = /^[a-z0-9][a-z0-9-_]{0,79}$/;
 const boundedIdentifierPattern = /^[A-Za-z0-9._:/@#-]+$/;
 const unsafeTextPattern =
@@ -122,6 +124,23 @@ const unsafeTextPattern =
 const credentialPattern =
   /(?:\bBearer\s+[A-Za-z0-9._~+\/-]+=*|\bgithub_pat_[A-Za-z0-9_]{20,}|\bgh[pousr]_[A-Za-z0-9_]{20,}|authorization\s*:|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 const maximumReceiptBytes = 512 * 1024;
+const maximumSnapshotDepth = 24;
+const maximumSnapshotValues = 2_048;
+const maximumSnapshotArrayLength = 256;
+const maximumSnapshotObjectKeys = 128;
+const maximumSnapshotStringBytes = 512 * 1024;
+
+type JsonPrimitive = string | number | boolean | null;
+type BoundedJsonValue =
+  | JsonPrimitive
+  | BoundedJsonValue[]
+  | { [key: string]: BoundedJsonValue };
+
+interface SnapshotState {
+  readonly active: WeakSet<object>;
+  visited: number;
+  stringBytes: number;
+}
 
 export function canonicalGitHubProviderReceiptJson(
   value: GitHubProviderReceipt,
@@ -143,13 +162,13 @@ export function parseGitHubProviderReceiptJson(
   }
   const parsed = parseStrictJson(value, {
     maxBytes: maximumReceiptBytes,
-    maxDepth: 24,
+    maxDepth: maximumSnapshotDepth,
     maxStringLength: 131_072,
-    maxObjectKeys: 128,
-    maxArrayLength: 128,
+    maxObjectKeys: maximumSnapshotObjectKeys,
+    maxArrayLength: maximumSnapshotArrayLength,
     prefix: "GITHUB_PROVIDER_RECEIPT",
   });
-  const receipt = admitGitHubProviderReceipt(parsed);
+  const receipt = admitReceiptSnapshot(parsed);
   if (canonicalJsonString(receipt) !== value) {
     throw new RangeError("GitHub provider receipt JSON must be canonical");
   }
@@ -159,6 +178,26 @@ export function parseGitHubProviderReceiptJson(
 export function admitGitHubProviderReceipt(
   value: unknown,
 ): GitHubProviderReceipt {
+  return admitReceiptSnapshot(snapshotBoundedJson(value));
+}
+
+export function interruptedGitHubProviderReceipt(
+  current: GitHubProviderReceipt,
+): GitHubProviderReceipt {
+  return admitGitHubProviderReceipt({
+    ...current,
+    state: "pending_reconciliation",
+    error: {
+      code: "provider_dispatch_in_progress_or_interrupted",
+      message:
+        "GitHub provider dispatch may still be in progress or may have been interrupted",
+      retry: "reconcile_before_retry",
+    },
+    recovery: { nextAction: "reconcile_exact_operation" },
+  });
+}
+
+function admitReceiptSnapshot(value: unknown): GitHubProviderReceipt {
   if (!isRecord(value) || !hasExactKeys(value, receiptKeys)) {
     throw new RangeError("GitHub provider receipt has an invalid field set");
   }
@@ -182,6 +221,21 @@ export function admitGitHubProviderReceipt(
   const updatedAt = timestamp(value.updatedAt, "updatedAt");
   if (Date.parse(updatedAt) < Date.parse(createdAt)) {
     throw new RangeError("GitHub provider receipt update precedes creation");
+  }
+  const result = admitResult(value.result, repositoryFullName);
+  if (
+    result !== null
+    && operation === "github_add_issue_comment"
+    && !isCommentResult(result)
+  ) {
+    throw new RangeError("GitHub comment operation has an issue result");
+  }
+  if (
+    result !== null
+    && operation !== "github_add_issue_comment"
+    && isCommentResult(result)
+  ) {
+    throw new RangeError("GitHub issue operation has a comment result");
   }
   const receipt: GitHubProviderReceipt = {
     version: 1,
@@ -218,7 +272,7 @@ export function admitGitHubProviderReceipt(
       "provider request ID",
       240,
     ),
-    result: admitResult(value.result, repositoryFullName),
+    result,
     verification: admitVerification(value.verification),
     error: admitError(value.error),
     recovery: admitRecovery(value.recovery),
@@ -235,58 +289,6 @@ export function admitGitHubProviderReceipt(
     throw new RangeError("GitHub provider receipt contains credential-shaped text");
   }
   return deepFreeze(receipt);
-}
-
-export function sameGitHubProviderReceiptRequest(
-  left: GitHubProviderReceipt,
-  right: GitHubProviderReceipt,
-): boolean {
-  return left.operation === right.operation
-    && left.parametersSha256 === right.parametersSha256
-    && left.repositoryFullName === right.repositoryFullName
-    && left.actorId === right.actorId
-    && left.clientId === right.clientId;
-}
-
-export function sameGitHubProviderReceiptImmutableIdentity(
-  left: GitHubProviderReceipt,
-  right: GitHubProviderReceipt,
-): boolean {
-  return left.version === right.version
-    && left.id === right.id
-    && left.project === right.project
-    && left.provider === right.provider
-    && left.repositoryFullName === right.repositoryFullName
-    && left.operation === right.operation
-    && left.target === right.target
-    && left.actorId === right.actorId
-    && left.clientId === right.clientId
-    && left.connectionId === right.connectionId
-    && left.installationId === right.installationId
-    && left.bindingId === right.bindingId
-    && left.attachmentId === right.attachmentId
-    && left.attachmentSnapshotSha256 === right.attachmentSnapshotSha256
-    && left.capabilityGrantId === right.capabilityGrantId
-    && left.approvalId === right.approvalId
-    && left.idempotencyKey === right.idempotencyKey
-    && left.parametersSha256 === right.parametersSha256
-    && left.createdAt === right.createdAt;
-}
-
-export function interruptedGitHubProviderReceipt(
-  current: GitHubProviderReceipt,
-): GitHubProviderReceipt {
-  return admitGitHubProviderReceipt({
-    ...current,
-    state: "pending_reconciliation",
-    error: {
-      code: "provider_dispatch_in_progress_or_interrupted",
-      message:
-        "GitHub provider dispatch may still be in progress or may have been interrupted",
-      retry: "reconcile_before_retry",
-    },
-    recovery: { nextAction: "reconcile_exact_operation" },
-  });
 }
 
 function admitVerification(value: unknown): GitHubProviderReceipt["verification"] {
@@ -355,15 +357,19 @@ function admitComment(
   ).test(canonicalUrl)) {
     throw new RangeError("GitHub issue comment URL is outside the bound repository");
   }
-  const bodyRevision = admitBodyRevision(value.bodyRevision, false);
+  const createdAt = timestamp(value.createdAt, "comment createdAt");
+  const updatedAt = timestamp(value.updatedAt, "comment updatedAt");
+  if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+    throw new RangeError("GitHub issue comment update precedes creation");
+  }
   return {
     id,
     issueNumber,
     canonicalUrl,
-    createdAt: timestamp(value.createdAt, "comment createdAt"),
-    updatedAt: timestamp(value.updatedAt, "comment updatedAt"),
+    createdAt,
+    updatedAt,
     sourceRevision: exactText(value.sourceRevision, "comment source revision", 512),
-    bodyRevision,
+    bodyRevision: admitBodyRevision(value.bodyRevision, false),
     containsBody: false,
   };
 }
@@ -371,7 +377,7 @@ function admitComment(
 function admitIssue(
   value: Record<string, unknown>,
   repositoryFullName: string,
-): GitHubProviderReceipt["result"] {
+): GitHubIssueContext {
   if (!hasExactKeys(value, issueKeys)) {
     throw new RangeError("GitHub issue result has an invalid field set");
   }
@@ -403,6 +409,11 @@ function admitIssue(
       ["completed", "not_planned", "reopened"] as const,
       "issue state reason",
     );
+  const createdAt = timestamp(value.createdAt, "issue createdAt");
+  const updatedAt = timestamp(value.updatedAt, "issue updatedAt");
+  if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+    throw new RangeError("GitHub issue update precedes creation");
+  }
   return {
     version: 1,
     provider: "github",
@@ -415,8 +426,8 @@ function admitIssue(
     assignees,
     milestone,
     relationships,
-    createdAt: timestamp(value.createdAt, "issue createdAt"),
-    updatedAt: timestamp(value.updatedAt, "issue updatedAt"),
+    createdAt,
+    updatedAt,
     providerNodeId: nullableText(value.providerNodeId, "provider node ID", 256),
     sourceRevision: exactText(value.sourceRevision, "issue source revision", 512),
     contentSha256: exactHash(value.contentSha256, "issue content hash"),
@@ -428,7 +439,7 @@ function admitIssue(
 function admitIssueReference(
   value: unknown,
   expectedRepositoryFullName: string | undefined,
-) {
+): GitHubIssueContext["reference"] {
   if (!isRecord(value) || !hasExactKeys(value, issueReferenceKeys)) {
     throw new RangeError("GitHub issue reference is invalid");
   }
@@ -459,8 +470,8 @@ function admitIssueReference(
     throw new RangeError("GitHub issue reference derived identity is invalid");
   }
   return {
-    provider: "github" as const,
-    host: "github.com" as const,
+    provider: "github",
+    host: "github.com",
     owner,
     repository,
     repositoryFullName,
@@ -470,7 +481,18 @@ function admitIssueReference(
   };
 }
 
-function admitBodyRevision(value: unknown, issue: boolean) {
+function admitBodyRevision(
+  value: unknown,
+  issue: true,
+): GitHubIssueContext["bodyRevision"];
+function admitBodyRevision(
+  value: unknown,
+  issue: false,
+): GitHubIssueComment["bodyRevision"];
+function admitBodyRevision(
+  value: unknown,
+  issue: boolean,
+): GitHubIssueContext["bodyRevision"] | GitHubIssueComment["bodyRevision"] {
   const keys = issue ? issueBodyRevisionKeys : bodyRevisionKeys;
   if (!isRecord(value) || !hasExactKeys(value, keys)) {
     throw new RangeError("GitHub body revision is invalid");
@@ -479,12 +501,14 @@ function admitBodyRevision(value: unknown, issue: boolean) {
     byteLength: nonnegativeInteger(value.byteLength, "body byte length"),
     sha256: exactHash(value.sha256, "body hash"),
   };
-  return issue
-    ? { present: Boolean(value.present), ...common }
-    : common;
+  if (!issue) return common;
+  if (typeof value.present !== "boolean") {
+    throw new RangeError("GitHub issue body presence is invalid");
+  }
+  return { present: value.present, ...common };
 }
 
-function admitMilestone(value: unknown) {
+function admitMilestone(value: unknown): NonNullable<GitHubIssueContext["milestone"]> {
   if (!isRecord(value) || !hasExactKeys(value, milestoneKeys)) {
     throw new RangeError("GitHub milestone is invalid");
   }
@@ -518,8 +542,13 @@ function exactArray(value: unknown, label: string, maximum: number): unknown[] {
 
 function timestamp(value: unknown, label: string): string {
   const result = exactString(value, label, 32, timestampPattern);
-  if (!Number.isFinite(Date.parse(result))) {
+  const milliseconds = Date.parse(result);
+  if (!Number.isFinite(milliseconds)) {
     throw new RangeError(`GitHub provider ${label} is invalid`);
+  }
+  const canonical = new Date(milliseconds).toISOString();
+  if (result !== canonical && result !== canonical.replace(".000Z", "Z")) {
+    throw new RangeError(`GitHub provider ${label} is not canonical`);
   }
   return result;
 }
@@ -597,6 +626,118 @@ function nonnegativeInteger(value: unknown, label: string): number {
     throw new RangeError(`GitHub provider ${label} is invalid`);
   }
   return Number(value);
+}
+
+function snapshotBoundedJson(value: unknown): BoundedJsonValue {
+  return snapshotValue(value, 0, {
+    active: new WeakSet<object>(),
+    visited: 0,
+    stringBytes: 0,
+  });
+}
+
+function snapshotValue(
+  value: unknown,
+  depth: number,
+  state: SnapshotState,
+): BoundedJsonValue {
+  state.visited += 1;
+  if (state.visited > maximumSnapshotValues || depth > maximumSnapshotDepth) {
+    throw new RangeError("GitHub provider receipt exceeds snapshot bounds");
+  }
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    state.stringBytes += byteLength(value);
+    if (state.stringBytes > maximumSnapshotStringBytes) {
+      throw new RangeError("GitHub provider receipt text is oversized");
+    }
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isSafeInteger(value)) {
+      throw new RangeError("GitHub provider receipt number is invalid");
+    }
+    return value;
+  }
+  if (typeof value !== "object") {
+    throw new RangeError("GitHub provider receipt contains a non-JSON value");
+  }
+  if (state.active.has(value)) {
+    throw new RangeError("GitHub provider receipt contains a cycle");
+  }
+  state.active.add(value);
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const symbols = Object.getOwnPropertySymbols(value);
+    if (symbols.length !== 0) {
+      throw new RangeError("GitHub provider receipt contains symbol fields");
+    }
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) {
+        throw new RangeError("GitHub provider receipt array prototype is invalid");
+      }
+      const lengthDescriptor = descriptors.length;
+      if (
+        !lengthDescriptor
+        || !("value" in lengthDescriptor)
+        || !Number.isSafeInteger(lengthDescriptor.value)
+        || lengthDescriptor.value < 0
+        || lengthDescriptor.value > maximumSnapshotArrayLength
+      ) {
+        throw new RangeError("GitHub provider receipt array length is invalid");
+      }
+      const length = Number(lengthDescriptor.value);
+      const keys = Object.keys(descriptors).filter((key) => key !== "length");
+      if (
+        keys.length !== length
+        || keys.some((key, index) => key !== String(index))
+      ) {
+        throw new RangeError("GitHub provider receipt array is sparse or decorated");
+      }
+      return keys.map((key) =>
+        snapshotDataDescriptor(descriptors[key], depth + 1, state)
+      );
+    }
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      throw new RangeError("GitHub provider receipt record prototype is invalid");
+    }
+    const keys = Object.keys(descriptors);
+    if (keys.length > maximumSnapshotObjectKeys) {
+      throw new RangeError("GitHub provider receipt has too many fields");
+    }
+    const output: Record<string, BoundedJsonValue> = {};
+    for (const key of keys.sort()) {
+      output[key] = snapshotDataDescriptor(
+        descriptors[key],
+        depth + 1,
+        state,
+      );
+    }
+    return output;
+  } finally {
+    state.active.delete(value);
+  }
+}
+
+function snapshotDataDescriptor(
+  descriptor: PropertyDescriptor | undefined,
+  depth: number,
+  state: SnapshotState,
+): BoundedJsonValue {
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || descriptor.enumerable !== true
+  ) {
+    throw new RangeError("GitHub provider receipt must use enumerable data fields");
+  }
+  return snapshotValue(descriptor.value, depth, state);
+}
+
+function isCommentResult(
+  value: Exclude<GitHubProviderReceipt["result"], null>,
+): value is GitHubIssueComment {
+  return "containsBody" in value && value.containsBody === false;
 }
 
 function byteLength(value: string): number {
