@@ -161,4 +161,23 @@ describe("synchronization proxy snapshot admission", () => {
       expect(projection.conflicts, field).toEqual([]);
     }
   });
+
+  test("only public wrappers import synchronization snapshot internals", async () => {
+    const stateWrapper = "src/synchronization-state.ts";
+    const subjectWrapper = "src/synchronization-subject-binding.ts";
+    const allowed = new Set([stateWrapper, subjectWrapper]);
+    const sourceFiles = Array.from(
+      new Bun.Glob("src/**/*.ts").scanSync({ cwd: "." }),
+    );
+
+    for (const path of sourceFiles) {
+      const source = await Bun.file(path).text();
+      const importsInternalBase = source.includes("synchronization-state-base.js")
+        || source.includes("synchronization-subject-binding-base.js");
+      const importsSnapshot = source.includes("synchronization-descriptor-snapshot.js");
+      if (importsInternalBase || importsSnapshot) {
+        expect(allowed.has(path), path).toBe(true);
+      }
+    }
+  });
 });
