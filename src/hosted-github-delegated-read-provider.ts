@@ -20,6 +20,7 @@ import {
   sha256,
   stableJson,
 } from "./github-provider-validation.js";
+import { GitHubRestActionsJobDetailAdapter } from "./github-rest-actions-job-detail-adapter.js";
 import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";
 import { GitHubRestCommitStatusAdapter } from "./github-rest-commit-status-adapter.js";
 import { GitHubRestPullRequestReviewThreadAdapter } from "./github-rest-pull-request-review-thread-adapter.js";
@@ -40,15 +41,25 @@ export const hostedGitHubDelegatedReadTools = Object.freeze([
   "fetch_workflow_run_jobs",
 ] as const);
 
+export const hostedGitHubDelegatedReadJobDetailTools = Object.freeze([
+  ...hostedGitHubDelegatedReadTools,
+  "fetch_workflow_job_steps",
+  "fetch_workflow_job_logs",
+] as const);
+
 export type HostedGitHubDelegatedReadTool =
-  typeof hostedGitHubDelegatedReadTools[number];
+  typeof hostedGitHubDelegatedReadJobDetailTools[number];
+
+export type HostedGitHubDelegatedReadToolDeclaration =
+  | typeof hostedGitHubDelegatedReadTools
+  | typeof hostedGitHubDelegatedReadJobDetailTools;
 
 export type HostedGitHubDelegatedReadInput = Parameters<
   GitHubDelegatedReadService["call"]
 >[0];
 
 export interface HostedGitHubDelegatedReadProvider {
-  readonly delegatedGitHubReadTools?: typeof hostedGitHubDelegatedReadTools;
+  readonly delegatedGitHubReadTools?: HostedGitHubDelegatedReadToolDeclaration;
   callGitHubDelegatedRead(
     input: HostedGitHubDelegatedReadInput,
   ): Promise<GitHubDelegatedReadReceipt>;
@@ -68,18 +79,23 @@ interface HostedGitHubDelegatedReadConfig {
   privateKeyPem: string;
   apiBaseUrl: string;
   credentialRef: string;
+  jobDetailReadsEnabled: boolean;
 }
 
-const enabledTools = new Set<string>(hostedGitHubDelegatedReadTools);
-const actionsTools = new Set<string>([
+const actionsRunTools = new Set<string>([
   "fetch_commit_workflow_runs",
   "fetch_workflow_run_jobs",
+]);
+const actionsJobDetailTools = new Set<string>([
+  "fetch_workflow_job_steps",
+  "fetch_workflow_job_logs",
 ]);
 
 /**
  * Mounts a private eight-tool delegated-read service when the explicit hosted
- * flag and the complete GitHub App configuration are present. Public MCP
- * dispatch and discovery remain separately controlled.
+ * flag and the complete GitHub App configuration are present. A separate exact
+ * flag extends that declaration to the reviewed ten-tool job-detail surface.
+ * Public MCP dispatch and discovery remain separately controlled.
  */
 export function mountHostedGitHubDelegatedReadProviderFromEnv<
   T extends WorkLedger,
@@ -98,6 +114,10 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
     );
   }
 
+  const delegatedTools = config.jobDetailReadsEnabled
+    ? hostedGitHubDelegatedReadJobDetailTools
+    : hostedGitHubDelegatedReadTools;
+  const enabledTools = new Set<string>(delegatedTools);
   const now = overrides.now ?? Date.now;
   const observedAt = exactObservationTime(now);
   const bindings = new AcceptedAttachmentDelegatedBindingStore(
@@ -128,12 +148,21 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
   );
   const statusAdapter = new GitHubRestCommitStatusAdapter(adapterOptions);
   const actionsAdapter = new GitHubRestActionsRunAdapter(adapterOptions);
+  const actionsJobDetailAdapter = config.jobDetailReadsEnabled
+    ? new GitHubRestActionsJobDetailAdapter(adapterOptions)
+    : null;
   const adapter: GitHubDelegatedReadAdapter = Object.freeze({
     callReadTool: (
       input: Parameters<GitHubDelegatedReadAdapter["callReadTool"]>[0],
     ) => input.tool === "get_commit_combined_status"
       ? statusAdapter.callReadTool(input)
-      : actionsTools.has(input.tool)
+      : actionsJobDetailTools.has(input.tool)
+      ? actionsJobDetailAdapter
+        ? actionsJobDetailAdapter.callReadTool(input)
+        : Promise.reject(
+          new Error("Hosted GitHub Actions job-detail reads are unavailable"),
+        )
+      : actionsRunTools.has(input.tool)
       ? actionsAdapter.callReadTool(input)
       : pullRequestAdapter.callReadTool(input),
   });
@@ -141,13 +170,13 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
   const service = new GitHubDelegatedReadService({
     projects,
     bindings,
-    authority: new HostedDelegatedReadAuthority(config),
+    authority: new HostedDelegatedReadAuthority(config, enabledTools),
     adapter,
     catalogue,
   });
 
   return Object.assign(ledger, {
-    delegatedGitHubReadTools: hostedGitHubDelegatedReadTools,
+    delegatedGitHubReadTools: delegatedTools,
     callGitHubDelegatedRead: (
       input: HostedGitHubDelegatedReadInput,
     ) => service.call(input),
@@ -194,6 +223,10 @@ function hostedGitHubDelegatedReadConfig(
   ).toLowerCase();
   const apiBaseUrl = trimmed(env.STENSIBLY_GITHUB_API_BASE_URL)
     ?? "https://api.github.com";
+  const jobDetailReadsEnabled = optionalBooleanEnv(
+    env,
+    "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED",
+  );
 
   return {
     project,
@@ -204,6 +237,7 @@ function hostedGitHubDelegatedReadConfig(
     privateKeyPem,
     apiBaseUrl,
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
+    jobDetailReadsEnabled,
   };
 }
 
@@ -275,9 +309,14 @@ class HostedDelegatedReadAuthority
   implements GitHubDelegatedReadAuthority
 {
   readonly #config: HostedGitHubDelegatedReadConfig;
+  readonly #enabledTools: ReadonlySet<string>;
 
-  constructor(config: HostedGitHubDelegatedReadConfig) {
+  constructor(
+    config: HostedGitHubDelegatedReadConfig,
+    enabledTools: ReadonlySet<string>,
+  ) {
     this.#config = config;
+    this.#enabledTools = enabledTools;
   }
 
   async authorizeGitHubDelegatedRead(input: {
@@ -294,7 +333,7 @@ class HostedDelegatedReadAuthority
       allowed:
         input.project === this.#config.project
         && input.repositoryFullName === this.#config.repositoryFullName
-        && enabledTools.has(input.tool),
+        && this.#enabledTools.has(input.tool),
     };
   }
 }
@@ -346,6 +385,18 @@ function exactAuthorityEnv(
     );
   }
   return value;
+}
+
+function optionalBooleanEnv(
+  env: Record<string, string | undefined>,
+  key: string,
+): boolean {
+  const value = env[key];
+  if (value === undefined || value === "" || value === "false") {
+    return false;
+  }
+  if (value === "true") return true;
+  throw new Error(`${key} must be exact true or false`);
 }
 
 function requiredEnv(
