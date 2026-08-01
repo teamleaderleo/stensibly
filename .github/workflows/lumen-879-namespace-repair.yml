@@ -1,3 +1,4 @@
+# Triggered after workflow registration.
 name: Lumen 879 namespace repair
 
 on:
