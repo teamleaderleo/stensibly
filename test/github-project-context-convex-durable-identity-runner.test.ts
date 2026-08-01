@@ -7,7 +7,6 @@ test("runs the durable workspace and project identity Convex control", () => {
       "vitest",
       "run",
       "convex/githubProjectContexts-durable-identity-review.test.ts",
-      "--reporter=basic",
     ],
     cwd: process.cwd(),
     env: {
