@@ -1,0 +1,19 @@
+exit_code=1
+bun test v1.3.14 (0d9b296a)
+
+::group::convex/itemReservations.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | /// <reference types="vite/client" />
+2 | 
+3 | export const modules = import.meta.glob("./**/*.ts");
+                                       ^
+TypeError: import.meta.glob is not a function. (In 'import.meta.glob("./**/*.ts")', 'import.meta.glob' is undefined)
+      at /home/runner/work/stensibly/stensibly/convex/test.setup.ts:3:36
+
+::error file=convex/test.setup.ts,line=3,col=36,title=TypeError: import.meta.glob is not a function. (In 'import.meta.glob("./**/*.ts")', 'import.meta.glob' is undefined)::%0A      at /home/runner/work/stensibly/stensibly/convex/test.setup.ts:3:36
+-------------------------------
+
+Ran 1 test across 1 file. [35.00ms]
+Bailed out after 1 failure
