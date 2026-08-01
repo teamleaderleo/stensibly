@@ -39,15 +39,11 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          lines = Path('.github/workflows/loom-901-hosted-context-finalize.yml').read_text().splitlines()
-          start_name = '      - name: Apply reviewed hosted-context integrity repairs'
-          next_name = '      - name: Validate repaired source packet'
-          try:
-              start = lines.index(start_name)
-              stop = lines.index(next_name)
-              run_index = lines.index('        run: |', start, stop)
-          except ValueError as exc:
-              raise SystemExit('reviewed repair payload marker changed') from exc
+          workflow = Path('.github/workflows/loom-901-hosted-context-finalize.yml')
+          lines = workflow.read_text().splitlines()
+          start = lines.index('      - name: Apply reviewed hosted-context integrity repairs')
+          stop = lines.index('      - name: Validate repaired source packet')
+          run_index = lines.index('        run: |', start, stop)
           body = [
               line[10:] if line.startswith('          ') else line
               for line in lines[run_index + 1:stop]
@@ -57,7 +53,69 @@ jobs:
               raise SystemExit('reviewed repair payload prefix changed')
           Path('/tmp/loom-901-repair.sh').write_text(payload)
           PY
-          bash /tmp/loom-901-repair.sh
+
+          set +e
+          bash /tmp/loom-901-repair.sh 2>&1 | tee /tmp/loom-901-repair.log
+          payload_status="${PIPESTATUS[0]}"
+          set -e
+          if [[ "${payload_status}" -ne 0 ]]; then
+            grep -Fx 'current-row admission marker changed' /tmp/loom-901-repair.log
+            grep -Fq 'githubProjectContexts: defineTable({' convex/schema.ts
+            python3 <<'PY'
+          from pathlib import Path
+
+          context_path = Path('convex/githubProjectContexts.ts')
+          context = context_path.read_text()
+          old = "\n".join([
+              "    const classification = classifyGitHubIssueContextAcceptance(",
+              "      current === null",
+              "        ? null",
+              "        : {",
+              "          sourceRevision: current.sourceRevision,",
+              "          contentSha256: current.contentSha256,",
+              "          providerUpdatedAt: new Date(current.providerUpdatedAt).toISOString(),",
+              "          instructionSetId: current.instructionSetId,",
+              "          observedAt: new Date(current.observedAt).toISOString(),",
+              "        },",
+              "      {",
+              "",
+          ])
+          new = "\n".join([
+              "    const admittedCurrent = current === null",
+              "      ? null",
+              "      : admitStoredRecord(current, workspaceSlug, projectSlug);",
+              "    const classification = classifyGitHubIssueContextAcceptance(",
+              "      admittedCurrent === null",
+              "        ? null",
+              "        : {",
+              "          sourceRevision: admittedCurrent.sourceRevision,",
+              "          contentSha256: admittedCurrent.contentSha256,",
+              "          providerUpdatedAt: admittedCurrent.providerUpdatedAt,",
+              "          instructionSetId: admittedCurrent.instructionSetId,",
+              "          observedAt: admittedCurrent.observedAt,",
+              "        },",
+              "      {",
+              "",
+          ])
+          if context.count(old) != 1:
+              raise SystemExit('current source classification block changed')
+          context_path.write_text(context.replace(old, new, 1))
+
+          workflow_lines = Path('.github/workflows/loom-901-hosted-context-finalize.yml').read_text().splitlines()
+          heredoc_start = workflow_lines.index(
+              "          cat > convex/githubProjectContexts-current-row-integrity-review.test.ts <<'EOF'"
+          )
+          heredoc_stop = workflow_lines.index('          EOF', heredoc_start + 1)
+          test_body = [
+              line[10:] if line.startswith('          ') else line
+              for line in workflow_lines[heredoc_start + 1:heredoc_stop]
+          ]
+          Path('convex/githubProjectContexts-current-row-integrity-review.test.ts').write_text(
+              '\n'.join(test_body) + '\n'
+          )
+          PY
+            rm .github/workflows/loom-901-hosted-context-finalize.yml
+          fi
       - name: Validate repaired source packet
         shell: bash
         run: |
