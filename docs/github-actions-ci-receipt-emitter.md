@@ -13,28 +13,37 @@ This first slice is pure source. A later mount may feed it completed `workflow_r
 The input bundle binds:
 
 - exact repository, workflow name, workflow path, run ID, attempt, event, and terminal outcome;
-- candidate, base, and workflow-file revisions;
-- the actual `full_parallel` or `serial_full` job topology;
-- exactly one record for each canonical `test`, `runtime-parity`, and `serial-full` job;
+- candidate, base, and workflow-file revisions as independent identities;
+- the active `full_parallel` or `serial_full` topology;
+- exactly one record for `browser-evidence`, `test`, `runtime-parity`, and `serial-full`;
 - each job's provider ID, run attempt, candidate revision, requested labels, creation, start, completion, terminal outcome, and bounded step summaries;
-- optional diagnostics artifact identities bound to exact run, run attempt, failed job ID, canonical artifact name, and lowercase SHA-256 digest;
+- diagnostics artifact identities bound to exact run, run attempt, failed canonical job ID, canonical artifact name, and lowercase SHA-256 digest;
 - one trusted receipt time.
 
-Job creation time comes from the signed `workflow_job` observation and becomes `queuedAt`. The compiler never derives queue duration from pull-request timestamps, log timestamps, or REST fields that omit queue admission.
+Job creation time from the signed `workflow_job` record becomes `queuedAt`. The compiler never derives queue duration from pull-request timestamps, log timestamps, or REST fields that omit queue admission.
 
-For pull-request CI, candidate, base, and workflow-file revisions remain three independent identities. The candidate is the exact pull-request head, the base is the exact pull-request base, and the workflow revision is the provider's exact workflow-file SHA. Push and manual exact-ref runs require the workflow revision to equal the candidate revision. A future mount must verify the provider path and ref before normalising the configured path to `.github/workflows/ci.yml`.
+For pull-request CI, candidate, base, and workflow-file revisions remain three independent identities. Push and manual exact-ref runs require the workflow revision to equal the candidate revision. A future mount must verify provider path and ref before normalising the configured path to `.github/workflows/ci.yml`.
 
 ## Canonical topology
 
-`full_parallel` requires `test` and `runtime-parity`; `serial-full` remains skipped. `serial_full` is admitted only for `workflow_dispatch`, requires `serial-full`, and keeps both parallel jobs skipped. All profiles carry the same ordered six-command contract.
+The compiler imports `ci-browser-evidence-profile/v1` rather than copying browser command vocabulary.
 
-A cancelled job may settle before runner assignment. Such a job retains `conclusion: cancelled`, `startedAt: null`, and unknown queue wait. Every job without start evidence must carry zero completed steps. Skipped, action-required, stale, and startup-failure jobs remain no-start-only. A job whose conclusion is not `failure` cannot contain a failed step, so contradictory step evidence never disappears during projection.
+- `full_parallel` binds the core six-command contract plus `browser-typecheck`, `browser-tests`, and `browser-artifacts`.
+- Pull-request runs retain all four active jobs, including exact-head `serial-full` validation.
+- Push runs retain `browser-evidence`, `test`, and `runtime-parity`, with `serial-full` skipped.
+- `serial_full` is admitted only for `workflow_dispatch`; browser commands run inside `serial-full` while the three parallel jobs remain skipped.
 
-The pure Actions bundle records cancellation only. It cannot claim which later revision caused cancellation. A later same-PR provider observation may append that relation after binding repository, pull-request number, prior head, current head, and observation time.
+A `failure`, `timed_out`, or `neutral` run requires a matching conclusion from an active-profile job. Browser-only failures therefore remain visible. All-skipped/no-start topology remains available only to terminal outcomes that genuinely permit zero execution.
+
+A cancelled job may settle before runner assignment. Such a job retains `conclusion: cancelled`, `startedAt: null`, and unknown queue wait. Every job without start evidence must carry zero completed steps. A job whose conclusion is not `failure` cannot contain a failed step.
+
+The pure Actions bundle records cancellation only. It always emits `supersededByRevision: null`; a later same-PR provider observation may append causality only after binding repository, pull-request number, prior head, current head, and observation time.
 
 ## Privacy and authority
 
-The compiler retains bounded identifiers, timestamps, closed outcomes, requested labels, one failed-step label, and diagnostics digests. It excludes logs, artifact bytes, runner names, provider bodies, URLs, credentials, and arbitrary diagnostics. Credential detection uses bounded real-token forms so ordinary names such as `task-sk-research`, `runner-sk-review`, and `Run sk-review checks` remain valid. Descriptor-bearing, sparse, decorated, symbolic, credential-shaped, cross-run, cross-attempt, cross-job, or contradictory input fails before receipt publication.
+The compiler retains bounded identifiers, timestamps, closed outcomes, requested labels, one failed-step label, and diagnostics digests. It excludes logs, artifact bytes, runner names, provider bodies, URLs, credentials, and arbitrary diagnostics.
+
+Credential detection uses delimiter-aware realistic token lengths. Ordinary names such as `task-sk-proj-research`, `runner-sk-proj-review`, and `Run sk-proj-review checks` remain valid, while realistic GitHub, Stensibly, OpenAI, Slack, bearer, JWT, `env://`, and `secret://` forms fail with fixed diagnostics.
 
 Every output remains deeply frozen with:
 
@@ -45,16 +54,8 @@ Every output remains deeply frozen with:
 
 ## Mount sequence
 
-The next slice may:
-
-1. collect one completed `workflow_run` and the three matching completed `workflow_job` observations behind the existing signed webhook route;
-2. verify exact delivery/run/attempt identities and obtain the exact workflow-file SHA and artifact identities through a read-only provider boundary;
-3. call this compiler once with the trusted webhook receipt time;
-4. append or upload only the compact canonical receipt and retain external diagnostics by digest;
-5. correlate a later same-PR head separately when exact provider evidence proves supersession.
-
-Scheduling, runner admission, retries, and required-check policy remain independent.
+A later slice may collect the signed run and four matching jobs, verify exact workflow and artifact identities through a read-only provider boundary, compile once with trusted time, and retain only the compact receipt plus external diagnostics digests. Scheduling, runner admission, retries, required-check policy, and same-PR supersession remain independent.
 
 ## Recovery
 
-Revert the additive compiler commit. Any later mount or durable sink can be disabled independently while previously accepted receipts remain available as historical evidence.
+Revert the additive compiler commit. Any later mount or durable sink can be disabled independently while previously accepted receipts remain historical evidence.
