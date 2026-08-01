@@ -1,212 +1,288 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA that this run must validate
+        required: true
+        type: string
+      validation_profile:
+        description: Validation topology for this exact revision
+        required: false
+        default: full_parallel
+        type: choice
+        options:
+          - full_parallel
+          - serial_full
+
+concurrency:
+  group: >-
+    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
+    format('pr-{0}', github.event.pull_request.number) ||
+    github.event_name == 'workflow_dispatch' &&
+    format('dispatch-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
+    format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  repair-artifact:
-    runs-on: ubuntu-24.04
+  browser-evidence:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify manually dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Dispatched browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck frontend browser evidence
+        run: |
+          set -o pipefail
+          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+      - name: Run frontend browser evidence
+        id: browser-test
+        run: |
+          set -o pipefail
+          bun run test:browser 2>&1 | tee browser-test-output.txt
+      - name: Verify frontend browser evidence artifacts
+        id: browser-artifacts
+        if: always() && steps.browser-test.outcome != 'skipped'
+        run: |
+          set -o pipefail
+          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
+      - name: Upload verified frontend browser evidence
+        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence-${{ github.sha }}
+          path: |
+            artifacts/playwright-report
+            artifacts/playwright-results
+            browser-test-output.txt
+            browser-artifact-output.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify manually dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - name: Prepare committed Bun lockfile candidate
+        id: bun-lock
+        run: bun run lockfile:check
+      - name: Upload refreshed Bun lockfile candidate
+        if: steps.bun-lock.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-lock-candidate-${{ github.sha }}
+          path: artifacts/bun-lock-candidate
+          if-no-files-found: error
+          retention-days: 7
+      - name: Reject stale committed Bun lockfile
+        if: steps.bun-lock.outputs.changed == 'true'
+        run: |
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
+          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
+          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
+          exit 1
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Run typecheck
+        run: |
+          set -o pipefail
+          bun run typecheck 2>&1 | tee typecheck-output.txt
+      - name: Run Bun tests
+        run: |
+          set -o pipefail
+          bun run test 2>&1 | tee test-output.txt
+      - name: Run Convex tests
+        run: |
+          set -o pipefail
+          bun run test:convex 2>&1 | tee convex-test-output.txt
+      - name: Bundle Cloudflare Worker
+        run: |
+          set -o pipefail
+          bun run worker:check 2>&1 | tee worker-check-output.txt
+      - name: Upload failing diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics
+          path: |
+            typecheck-output.txt
+            test-output.txt
+            convex-test-output.txt
+            worker-check-output.txt
+          if-no-files-found: ignore
+
+  runtime-parity:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify manually dispatched revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Run Bun, Node, and native workerd receiver checks
+        run: |
+          set -o pipefail
+          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
+      - name: Upload runtime parity diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-parity-diagnostics
+          path: runtime-parity-output.txt
+          if-no-files-found: ignore
+
+  serial-full:
+    needs: [browser-evidence, test, runtime-parity]
+    if: >-
+      ${{ always() &&
+      ((github.event_name == 'pull_request' &&
+      needs.browser-evidence.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.runtime-parity.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' &&
+      inputs.validation_profile == 'serial_full')) }}
+    runs-on: ubuntu-latest
+    env:
+      SERIAL_VALIDATION_SHA: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha || inputs.expected_sha }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: lumen/877-hosted-context-final
-      - name: Apply reviewed integrity repairs
-        shell: bash
+          ref: ${{ env.SERIAL_VALIDATION_SHA }}
+          persist-credentials: false
+      - name: Verify exact serial revision
         run: |
-          python3 <<'PY'
-          from pathlib import Path
-
-          schema_path = Path("convex/schema.ts")
-          schema = schema_path.read_text()
-          marker = '''
-
-  actors: defineTable({
-'''
-          table = '''
-
-  githubProjectContexts: defineTable({
-    workspaceId: v.id("workspaces"),
-    projectId: v.id("projects"),
-    externalId: v.string(),
-    issueExternalId: v.string(),
-    repositoryFullName: v.string(),
-    sourceRevision: v.string(),
-    snapshotSha256: v.string(),
-    contentSha256: v.string(),
-    providerUpdatedAt: v.number(),
-    snapshotJson: v.string(),
-    projectAttachmentExternalId: v.string(),
-    projectAttachmentSnapshotSha256: v.string(),
-    instructionSetId: v.string(),
-    instructionSetSha256: v.string(),
-    instructionSetJson: v.string(),
-    syncStatus: v.union(v.literal("synchronized"), v.literal("degraded")),
-    syncCursor: v.optional(v.string()),
-    degradedReasonCode: v.optional(v.string()),
-    observationRef: v.string(),
-    observedAt: v.number(),
-    acceptedBy: v.string(),
-    acceptedAt: v.number(),
-    isCurrent: v.boolean(),
-    outcome: v.union(
-      v.literal("initial"),
-      v.literal("updated"),
-      v.literal("stale"),
-      v.literal("instruction_rebound"),
-      v.literal("synchronization_updated"),
-    ),
-  })
-    .index("by_project_observation", ["projectId", "observationRef"])
-    .index("by_project_issue_revision", ["projectId", "issueExternalId", "sourceRevision"])
-    .index("by_project_issue_current", ["projectId", "issueExternalId", "isCurrent"])
-    .index("by_project_current_issue", ["projectId", "isCurrent", "issueExternalId"])
-    .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt"]),
-
-  actors: defineTable({
-'''
-          if schema.count(marker) != 1:
-              raise SystemExit("schema marker changed")
-          schema_path.write_text(schema.replace(marker, table, 1))
-
-          context_path = Path("convex/githubProjectContexts.ts")
-          context = context_path.read_text()
-          old = '''    const classification = classifyGitHubIssueContextAcceptance(
-      current === null
-        ? null
-        : {
-          sourceRevision: current.sourceRevision,
-          contentSha256: current.contentSha256,
-          providerUpdatedAt: new Date(current.providerUpdatedAt).toISOString(),
-          instructionSetId: current.instructionSetId,
-          observedAt: new Date(current.observedAt).toISOString(),
-        },
-      {
-'''
-          new = '''    const admittedCurrent = current === null
-      ? null
-      : admitStoredRecord(current, workspaceSlug, projectSlug);
-    const classification = classifyGitHubIssueContextAcceptance(
-      admittedCurrent === null
-        ? null
-        : {
-          sourceRevision: admittedCurrent.sourceRevision,
-          contentSha256: admittedCurrent.contentSha256,
-          providerUpdatedAt: admittedCurrent.providerUpdatedAt,
-          instructionSetId: admittedCurrent.instructionSetId,
-          observedAt: admittedCurrent.observedAt,
-        },
-      {
-'''
-          if context.count(old) != 1:
-              raise SystemExit("current row marker changed")
-          context_path.write_text(context.replace(old, new, 1))
-          PY
-          cat > convex/githubProjectContexts-current-row-integrity-review.test.ts <<'EOF'
-          import { makeFunctionReference } from "convex/server";
-          import { convexTest } from "convex-test";
-          import { beforeEach, expect, test, vi } from "vitest";
-          import {
-            buildAcceptedRepositoryInstructionSet,
-            canonicalGitHubIssueContextJson,
-            canonicalRepositoryInstructionSetJson,
-          } from "../src/github-project-context-admission";
-          import { buildGitHubIssueContext } from "../src/github-issue-context";
-          import { fingerprintExactText } from "../src/idempotency-request-fingerprint";
-          import schema from "./schema";
-          import { modules } from "./test.setup";
-
-          const serviceSecret = "github-project-context-service-secret";
-          const acceptRef = makeFunctionReference<"mutation">("githubProjectContexts:accept");
-
-          beforeEach(() => vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret));
-
-          test("rejects a corrupted current row before classifying a new source revision", async () => {
-            const t = convexTest(schema, modules);
-            const attachmentBase = {
-              format: "stensibly.project-attachment" as const,
-              schemaVersion: 1 as const,
-              contract: {
-                version: 1 as const,
-                project: "stensibly",
-                repositories: ["teamleaderleo/stensibly"],
-                runnerProfiles: [],
-                concurrency: { project: 1, global: 1 },
-                autonomousActions: [],
-                approvalRequired: [],
-                checks: [],
-                tags: [],
-                relatedProjects: [],
-              },
-              context: {
-                goal: "Test accepted GitHub context",
-                boundaries: "No external effects",
-                evidenceAndHandoff: "Retain exact test evidence",
-                escalation: "Fail closed",
-              },
-              source: { path: "STENSIBLY.md", contentSha256: `sha256:${"d".repeat(64)}` },
-            };
-            const attachmentSnapshotSha256 = fingerprintExactText(JSON.stringify(attachmentBase));
-            await t.run(async (ctx: any) => {
-              const now = Date.now();
-              const workspaceId = await ctx.db.insert("workspaces", {
-                externalId: "ws_default", slug: "default", name: "Default", createdAt: now, updatedAt: now,
-              });
-              const projectId = await ctx.db.insert("projects", {
-                workspaceId, externalId: "project_stensibly", slug: "stensibly", name: "Stensibly", createdAt: now, updatedAt: now,
-              });
-              await ctx.db.insert("projectAttachments", {
-                workspaceId, projectId, externalId: "attach_current",
-                snapshotJson: JSON.stringify({ ...attachmentBase, snapshotSha256: attachmentSnapshotSha256 }),
-                snapshotSha256: attachmentSnapshotSha256,
-                contentSha256: attachmentBase.source.contentSha256,
-                sourcePath: "STENSIBLY.md", sourceRevision: "main@current",
-                acceptedBy: "plover", authorityWidening: false, acceptedAt: now,
-              });
-            });
-            const instructionSet = buildAcceptedRepositoryInstructionSet({
-              projectAttachmentId: "attach_current",
-              projectAttachmentSnapshotSha256: attachmentSnapshotSha256,
-              sources: [{ path: "AGENTS.md", revision: "main@current", contentSha256: `sha256:${"b".repeat(64)}` }],
-            });
-            const accept = async (sourceRevision: string, updatedAt: string, observationRef: string) => t.mutation(acceptRef, {
-              serviceSecret, workspace: "default", project: "stensibly",
-              snapshotJson: canonicalGitHubIssueContextJson(buildGitHubIssueContext({
-                owner: "teamleaderleo", repository: "stensibly", number: 747,
-                title: "Rebuild hosted accepted GitHub context", body: "private issue body",
-                state: "open", stateReason: null, labels: [], assignees: [], milestone: null,
-                relationships: [], createdAt: "2026-08-01T08:00:00.000Z", updatedAt,
-                providerNodeId: "I_teamleaderleo_stensibly_747", sourceRevision,
-              })),
-              instructionSetJson: canonicalRepositoryInstructionSetJson(instructionSet),
-              syncStatus: "synchronized", syncCursor: `github:cursor:${sourceRevision}`,
-              degradedReasonCode: null, observationRef,
-              observedAt: "2026-08-01T08:10:00.000Z", acceptedBy: "cicada",
-            });
-            await expect(accept("github:issue:747:rev-1", "2026-08-01T08:05:00.000Z", "github:delivery:747:rev-1"))
-              .resolves.toMatchObject({ replayed: false });
-            await t.run(async (ctx: any) => {
-              const rows = await ctx.db.query("githubProjectContexts").collect();
-              expect(rows).toHaveLength(1);
-              await ctx.db.patch(rows[0]._id, { providerUpdatedAt: Date.parse("2099-01-01T00:00:00.000Z") });
-            });
-            await expect(accept("github:issue:747:rev-2", "2026-08-01T08:06:00.000Z", "github:delivery:747:rev-2"))
-              .rejects.toThrow();
-            await t.run(async (ctx: any) => {
-              const rows = await ctx.db.query("githubProjectContexts").collect();
-              expect(rows).toHaveLength(1);
-              expect(rows[0].isCurrent).toBe(true);
-            });
-          });
-          EOF
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
+            echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
         with:
-          name: lumen-901-repaired-files
+          node-version: "26"
+      - name: Prepare committed Bun lockfile candidate
+        id: bun-lock
+        run: bun run lockfile:check
+      - name: Upload refreshed Bun lockfile candidate
+        if: steps.bun-lock.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}
+          path: artifacts/bun-lock-candidate
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
+      - name: Reject stale committed Bun lockfile
+        if: steps.bun-lock.outputs.changed == 'true'
+        run: |
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${SERIAL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
+          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
+          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
+          exit 1
+      - name: Install committed dependencies once
+        run: bun install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+      - name: Run serial full validation
+        id: serial-validation
+        run: |
+          set +e
+          status=0
+          run_gate() {
+            local label="$1"
+            local output="$2"
+            local -a pipeline_status
+            shift 2
+            echo "::group::${label}"
+            set -o pipefail
+            "$@" 2>&1 | tee "${output}"
+            pipeline_status=("${PIPESTATUS[@]}")
+            set +o pipefail
+            echo "::endgroup::"
+            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
+              status=1
+            fi
+          }
+          run_gate typecheck typecheck-output.txt bun run typecheck
+          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
+          run_gate bun-tests test-output.txt bun run test
+          run_gate browser-tests browser-test-output.txt bun run test:browser
+          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
+          run_gate convex-tests convex-test-output.txt bun run test:convex
+          run_gate worker-check worker-check-output.txt bun run worker:check
+          run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
+          exit "${status}"
+      - name: Upload verified frontend browser evidence
+        if: steps.serial-validation.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
           path: |
-            convex/schema.ts
-            convex/githubProjectContexts.ts
-            convex/githubProjectContexts-current-row-integrity-review.test.ts
+            artifacts/playwright-report
+            artifacts/playwright-results
+            browser-test-output.txt
+            browser-artifact-output.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload serial full diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}
+          path: |
+            typecheck-output.txt
+            browser-typecheck-output.txt
+            test-output.txt
+            convex-test-output.txt
+            worker-check-output.txt
+            runtime-parity-output.txt
+          if-no-files-found: ignore
