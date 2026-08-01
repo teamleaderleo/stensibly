@@ -162,15 +162,18 @@ export const accept = mutation({
           .eq("isCurrent", true)
       )
       .unique();
+    const admittedCurrent = current === null
+      ? null
+      : admitStoredRecord(current, workspaceSlug, projectSlug);
     const classification = classifyGitHubIssueContextAcceptance(
-      current === null
+      admittedCurrent === null
         ? null
         : {
-          sourceRevision: current.sourceRevision,
-          contentSha256: current.contentSha256,
-          providerUpdatedAt: new Date(current.providerUpdatedAt).toISOString(),
-          instructionSetId: current.instructionSetId,
-          observedAt: new Date(current.observedAt).toISOString(),
+          sourceRevision: admittedCurrent.sourceRevision,
+          contentSha256: admittedCurrent.contentSha256,
+          providerUpdatedAt: admittedCurrent.providerUpdatedAt,
+          instructionSetId: admittedCurrent.instructionSetId,
+          observedAt: admittedCurrent.observedAt,
         },
       {
         snapshot: subject.snapshot,
