@@ -21,6 +21,61 @@ beforeEach(() => {
 });
 
 test("rejects a stored row outside the resolved durable workspace and project pair", async () => {
+  const fixture = await setupFixture();
+
+  await expect(fixture.accept(
+    "github:issue:747:rev-1",
+    "github:delivery:747:rev-1",
+  )).resolves.toMatchObject({ replayed: false });
+
+  await fixture.t.run(async (ctx: any) => {
+    const rows = await ctx.db.query("githubProjectContexts").collect();
+    expect(rows).toHaveLength(1);
+    await ctx.db.patch(rows[0]._id, {
+      workspaceId: fixture.foreignWorkspaceId,
+    });
+  });
+
+  await expect(fixture.t.query(getCurrentRef, queryArgs({
+    externalId: "github:teamleaderleo/stensibly#747",
+  }))).rejects.toThrow();
+  await expect(fixture.t.query(listCurrentRef, queryArgs({ limit: 20 }))).rejects.toThrow();
+  await expect(fixture.accept(
+    "github:issue:747:rev-2",
+    "github:delivery:747:rev-2",
+  )).rejects.toThrow();
+
+  await fixture.t.run(async (ctx: any) => {
+    const rows = await ctx.db.query("githubProjectContexts").collect();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].workspaceId).toBe(fixture.foreignWorkspaceId);
+    expect(rows[0].isCurrent).toBe(true);
+  });
+});
+
+test("rejects an accepted attachment outside the resolved durable workspace", async () => {
+  const fixture = await setupFixture();
+
+  await fixture.t.run(async (ctx: any) => {
+    await ctx.db.patch(fixture.attachmentId, {
+      workspaceId: fixture.foreignWorkspaceId,
+    });
+  });
+
+  await expect(fixture.accept(
+    "github:issue:747:rev-1",
+    "github:delivery:747:rev-1",
+  )).rejects.toThrow();
+
+  await fixture.t.run(async (ctx: any) => {
+    const rows = await ctx.db.query("githubProjectContexts").collect();
+    expect(rows).toHaveLength(0);
+    const attachment = await ctx.db.get("projectAttachments", fixture.attachmentId);
+    expect(attachment?.workspaceId).toBe(fixture.foreignWorkspaceId);
+  });
+});
+
+async function setupFixture() {
   const t = convexTest(schema, modules);
   const attachmentBase = {
     format: "stensibly.project-attachment" as const,
@@ -52,7 +107,8 @@ test("rejects a stored row outside the resolved durable workspace and project pa
     JSON.stringify(attachmentBase),
   );
 
-  let foreignWorkspaceId: unknown;
+  let foreignWorkspaceId: any;
+  let attachmentId: any;
   await t.run(async (ctx: any) => {
     const now = Date.now();
     const workspaceId = await ctx.db.insert("workspaces", {
@@ -77,7 +133,7 @@ test("rejects a stored row outside the resolved durable workspace and project pa
       createdAt: now,
       updatedAt: now,
     });
-    await ctx.db.insert("projectAttachments", {
+    attachmentId = await ctx.db.insert("projectAttachments", {
       workspaceId,
       projectId,
       externalId: "attach_current",
@@ -139,35 +195,13 @@ test("rejects a stored row outside the resolved durable workspace and project pa
     acceptedBy: "ember",
   });
 
-  await expect(accept(
-    "github:issue:747:rev-1",
-    "github:delivery:747:rev-1",
-  )).resolves.toMatchObject({ replayed: false });
-
-  await t.run(async (ctx: any) => {
-    const rows = await ctx.db.query("githubProjectContexts").collect();
-    expect(rows).toHaveLength(1);
-    await ctx.db.patch(rows[0]._id, {
-      workspaceId: foreignWorkspaceId,
-    });
-  });
-
-  await expect(t.query(getCurrentRef, queryArgs({
-    externalId: "github:teamleaderleo/stensibly#747",
-  }))).rejects.toThrow();
-  await expect(t.query(listCurrentRef, queryArgs({ limit: 20 }))).rejects.toThrow();
-  await expect(accept(
-    "github:issue:747:rev-2",
-    "github:delivery:747:rev-2",
-  )).rejects.toThrow();
-
-  await t.run(async (ctx: any) => {
-    const rows = await ctx.db.query("githubProjectContexts").collect();
-    expect(rows).toHaveLength(1);
-    expect(rows[0].workspaceId).toBe(foreignWorkspaceId);
-    expect(rows[0].isCurrent).toBe(true);
-  });
-});
+  return {
+    t,
+    accept,
+    foreignWorkspaceId,
+    attachmentId,
+  };
+}
 
 function queryArgs(overrides: Record<string, unknown>) {
   return {
