@@ -93,10 +93,21 @@ function snapshotInput(input: unknown): unknown {
     active.add(value);
     try {
       const prototype = Object.getPrototypeOf(value);
+      const isArray = Array.isArray(value);
       const descriptors = Object.getOwnPropertyDescriptors(value) as DescriptorMap;
+      const repeatedPrototype = Object.getPrototypeOf(value);
+      const repeatedIsArray = Array.isArray(value);
+      const repeatedDescriptors = Object.getOwnPropertyDescriptors(value) as DescriptorMap;
+      if (
+        !Object.is(prototype, repeatedPrototype)
+        || isArray !== repeatedIsArray
+        || !sameDescriptorMap(descriptors, repeatedDescriptors)
+      ) {
+        throw new RangeError("GitHub Actions CI receipt input changed during snapshot");
+      }
       const keys = Reflect.ownKeys(descriptors);
 
-      if (Array.isArray(value)) {
+      if (isArray) {
         const lengthDescriptor = descriptors["length"];
         if (
           !lengthDescriptor
@@ -130,6 +141,41 @@ function snapshotInput(input: unknown): unknown {
   };
 
   return copy(input, 0);
+}
+
+function sameDescriptorMap(left: DescriptorMap, right: DescriptorMap): boolean {
+  const leftKeys = Reflect.ownKeys(left);
+  const rightKeys = Reflect.ownKeys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+    const leftDescriptor = left[key]!;
+    const rightDescriptor = right[key]!;
+    if (
+      leftDescriptor.configurable !== rightDescriptor.configurable
+      || leftDescriptor.enumerable !== rightDescriptor.enumerable
+    ) {
+      return false;
+    }
+    const leftIsData = "value" in leftDescriptor;
+    const rightIsData = "value" in rightDescriptor;
+    if (leftIsData !== rightIsData) return false;
+    if (leftIsData && rightIsData) {
+      if (
+        leftDescriptor.writable !== rightDescriptor.writable
+        || !Object.is(leftDescriptor.value, rightDescriptor.value)
+      ) {
+        return false;
+      }
+    } else if (
+      leftDescriptor.get !== rightDescriptor.get
+      || leftDescriptor.set !== rightDescriptor.set
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
