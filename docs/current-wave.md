@@ -2,13 +2,13 @@
 
 **Status:** active P0 execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-07-29 after the first sustained ChatGPT self-dogfood failure  
+**Last reconciled:** 2026-08-02 after guarded GitHub read integration and backlog consolidation  
 **Tracking incident:** #490  
 **Programme:** #491  
 **Canonical queue:** #301  
 **GitHub context integration:** #492  
 **Wave:** `W01`  
-**Wave revision:** `5`  
+**Wave revision:** `6`  
 **Operating protocol:** `stensibly-agent-ops/0.4.0` plus standing policy `stensibly-internal-dogfood/v2`
 
 ## Primary outcome
@@ -56,7 +56,15 @@ Continued live use then failed:
 - GitHub disappeared from the connector registry and later returned a developer-MCP-only restriction despite earlier coexistence;
 - Stensibly later became unavailable while the incident was being recorded.
 
-The sustained-use incident is #490. Initial authentication evidence remains in #220 and #286. Keep those milestones open until #490 passes its repeated lifecycle and reconnect gate.
+GitHub-first execution has advanced since that incident:
+
+- the guarded hosted GitHub surface now covers repository metadata, immutable file reads, pull-request metadata, bounded diff or patch text, bounded review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata;
+- PR #911 merged the combined-status mount as `eda72ac74367e2c02f3345b571fe63286e7b3aec`, and #796 is complete;
+- each mounted read remains bound to the accepted project attachment, repository identity, narrow GitHub App permission, bounded result contract, and credential-safe receipt;
+- hosted GitHub-context persistence has one canonical source candidate, #909, with executable admission controls in #912; superseded carrier parents #901 and #908 are closed;
+- public GitHub-context MCP registration in #560 remains blocked until the repaired hosted persistence boundary lands.
+
+The sustained-use incident is #490. Initial authentication evidence remains in #220 and #286. Keep those milestones open until #490 passes its repeated lifecycle and reconnect gate. The expanded GitHub read surface improves diagnosis and recovery; it does not prove sustained GitHub-and-Stensibly coexistence by itself.
 
 Production OAuth remains enabled unless concrete hosted evidence shows that rollback or disablement is the safer recovery action. Do not disable a healthy authentication surface merely because another layer is unreliable.
 
@@ -159,13 +167,22 @@ Convert demonstrated #490 failures into bounded code changes covering, where evi
 
 #491 owns the operating model. Keep every active task visible through a real issue or PR. Review, implementation, verification, repair, and handoff are activities inside delivery rather than waiting-only roles.
 
-Keep #301, #24, and the relevant issue bodies synchronized with actual live evidence. Close only genuinely complete work and preserve one exact next action for every active lane.
+Keep #301, #24, and the relevant issue bodies synchronized with actual live evidence. Close genuinely complete or superseded work and preserve one exact next action for every active lane.
 
 ### Lane D — additive GitHub context integration
 
 #492 owns stable GitHub issue identity, source revision, synchronization freshness, accepted instruction-set identity, degraded state, and deterministic reconciliation.
 
 Reuse the existing project-attachment and context contracts from #217, #253, and #49. Do not create a second `STENSIBLY.md` parser, attachment snapshot, authority model, or context-packet system.
+
+The hosted persistence path is now consolidated around:
+
+```text
+#909 source-only hosted Convex candidate
+  + #912 executable admission controls
+  → repaired current-main hosted persistence
+  → #560 guarded public GitHub-context read
+```
 
 The first visible guarded feature chain remains:
 
@@ -207,8 +224,9 @@ A failed dogfood attempt is useful product evidence. It is not a reason to retre
 ## Immediate next actions
 
 - Complete the active fresh-conversation #490 reproduction and record the first exact failure or full successful lifecycle.
-- Repair the deterministic canonicalization finding on PR #465 before capability-grant integration.
-- Reconcile this instruction update through review and merge so every fresh worker starts from the GitHub-first reliability boundary.
+- Absorb #912 or equivalent admission controls into #909, replay the repaired source fence onto current `main`, and integrate the hosted GitHub-context persistence boundary.
+- Exercise an authenticated hosted `get_commit_combined_status` call through the guarded public path, preserve its attributable receipt, and use the read between #490 lifecycle segments.
+- Recover the source-only checkpoint chronology and holder-authority repair from #875 into parent #659; retire the inert self-registering carrier instead of retrying it.
 
 ## Retrospective
 
