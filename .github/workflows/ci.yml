@@ -1,207 +1,234 @@
-name: CI
+name: Repair checkpoint chronology and authority
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-  workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact commit SHA that this run must validate
-        required: true
-        type: string
-      validation_profile:
-        description: Validation topology for this exact revision
-        required: false
-        default: full_parallel
-        type: choice
-        options:
-          - full_parallel
-          - serial_full
-
-concurrency:
-  group: >-
-    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
-    format('pr-{0}', github.event.pull_request.number) ||
-    github.event_name == 'workflow_dispatch' &&
-    format('dispatch-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
-    format('push-{0}', github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    types:
+      - synchronize
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: repair-875-checkpoint-integrity
+  cancel-in-progress: false
 
 jobs:
-  test:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
+  repair:
+    if: >-
+      ${{ github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'rook/659-future-replay-repair' }}
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      TARGET_BRANCH: rook/659-future-replay-repair
+      PARENT_BRANCH: aster/openai-agents-adapter-641
+      EXPECTED_PARENT_HEAD: 530c4088579cddb9a41eb7646aa0f8f2c01c5fd7
     steps:
       - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+      - name: Verify exact branch and parent leases
+        shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ github.sha }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          git fetch origin \
+            "+refs/heads/${PARENT_BRANCH}:refs/remotes/origin/${PARENT_BRANCH}"
+          test "$(git rev-parse refs/remotes/origin/${PARENT_BRANCH})" = "${EXPECTED_PARENT_HEAD}"
+          git config user.name "stensibly-repair-bot"
+          git config user.email "stensibly-repair-bot@users.noreply.github.com"
+      - name: Apply accepted checkpoint repairs
+        shell: bash
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run typecheck
-        run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee typecheck-output.txt
-      - name: Run Bun tests
-        run: |
-          set -o pipefail
-          bun run test 2>&1 | tee test-output.txt
-      - name: Run Convex tests
-        run: |
-          set -o pipefail
-          bun run test:convex 2>&1 | tee convex-test-output.txt
-      - name: Bundle Cloudflare Worker
-        run: |
-          set -o pipefail
-          bun run worker:check 2>&1 | tee worker-check-output.txt
-      - name: Upload failing diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics
-          path: |
-            typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-          if-no-files-found: ignore
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
 
-  runtime-parity:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run Bun, Node, and native workerd receiver checks
-        run: |
-          set -o pipefail
-          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
-      - name: Upload runtime parity diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-parity-diagnostics
-          path: runtime-parity-output.txt
-          if-no-files-found: ignore
+          def once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one marker, found {count}")
+              return text.replace(old, new, 1)
 
-  serial-full:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_profile == 'serial_full' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          path = Path("src/runner-adapters/openai-agents.ts")
+          text = path.read_text()
+          text = once(
+              text,
+              '      || (input.replayed === false && record.createdAt !== append.proposedCreatedAt)\n',
+              '''      || (
+        input.replayed
+          ? record.createdAt > append.proposedCreatedAt
+          : record.createdAt !== append.proposedCreatedAt
+      )
+''',
+              "checkpoint replay chronology",
+          )
+          text = once(
+              text,
+              '''    assertControlAuthorityActive(input, clock.baseMilliseconds);
+    const checkpoint = this.#latestCheckpoints.get(controlKey(input));
+    if (!checkpoint) {
+      throw new RangeError(
+        "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
+      );
+    }
+    this.#assertControlBinding(input);
+    return checkpoint;
+''',
+              '''    assertControlAuthorityActive(input, clock.baseMilliseconds);
+    this.#assertControlBinding(input);
+    const checkpoint = this.#latestCheckpoints.get(controlKey(input));
+    if (!checkpoint) {
+      throw new RangeError(
+        "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
+      );
+    }
+    return checkpoint;
+''',
+              "checkpoint authority ordering",
+          )
+          path.write_text(text)
+
+          path = Path("test/openai-agents-runner-adapter-boundaries.test.ts")
+          text = path.read_text()
+          text = once(
+              text,
+              '''    expect(candidateFactory.prepareCalls).toBe(1);
+    expect(store.checkpointWrites).toBe(2);
+  });
+''',
+              '''    expect(candidateFactory.prepareCalls).toBe(1);
+    expect(store.checkpointWrites).toBe(2);
+
+    await expect(
+      (candidate.adapter.requestCheckpoint as any)({
+        ...checkpointCommand(),
+        authority: {
+          ...controlAuthority(),
+          holderId: "competing-boundary-actor",
+        },
+      }),
+    ).rejects.toThrow("authority holder is stale");
+  });
+''',
+              "competing holder regression",
+          )
+          text = once(
+              text,
+              '''      serializedState: "{}",
+      stateDigest: `sha256:${"0".repeat(64)}`,
+      runtimeManifest: {},
+''',
+              '''      serializedState: "{}",
+      runtimeManifest: {},
+''',
+              "hostile state digest fixture",
+          )
+          text = once(
+              text,
+              '''    Object.defineProperty(record, "stateDigest", {
+      enumerable: true,
+      get() {
+''',
+              '''    Object.defineProperty(record, "stateDigest", {
+      enumerable: true,
+      configurable: true,
+      get() {
+''',
+              "hostile state digest accessor",
+          )
+          path.write_text(text)
+
+          path = Path("test/openai-agents-runner-adapter.test.ts")
+          text = path.read_text()
+          text = once(
+              text,
+              '''function resumeCommand(
+  checkpointRef: RunnerExternalReferenceV1,
+  leaseGeneration = 1,
+): RunnerResumeCommandV1 {
+''',
+              '''function resumeCommand(
+  checkpointRef: RunnerExternalReferenceV1,
+  leaseGeneration = 1,
+  holderId = "runner-actor",
+): RunnerResumeCommandV1 {
+''',
+              "resume command holder",
+          )
+          text = once(
+              text,
+              '''      "2026-07-31T00:10:00.000Z",
+      leaseGeneration,
+    ),
+''',
+              '''      "2026-07-31T00:10:00.000Z",
+      leaseGeneration,
+      holderId,
+    ),
+''',
+              "resume command base call",
+          )
+          text = once(
+              text,
+              '''function commandBase(
+  commandId: string,
+  issuedAt: string,
+  leaseGeneration: number,
+) {
+''',
+              '''function commandBase(
+  commandId: string,
+  issuedAt: string,
+  leaseGeneration: number,
+  holderId = "runner-actor",
+) {
+''',
+              "command base holder",
+          )
+          text = once(
+              text,
+              '''      holderId: leaseGeneration === 1 ? "runner-actor" : "competing-actor",
+''',
+              '''      holderId,
+''',
+              "holder derivation",
+          )
+          text = once(
+              text,
+              '''      candidate.adapter.resume(resumeCommand(checkpoint, 2)),
+''',
+              '''      candidate.adapter.resume(resumeCommand(checkpoint, 2, "runner-actor")),
+''',
+              "competing lease regression",
+          )
+          path.write_text(text)
+          PY
+          git show 6d5606e3b50973c8eb7be0319f4d2e95535cd441:test/openai-agents-runner-adapter-future-replay.test.ts \
+            > test/openai-agents-runner-adapter-future-replay.test.ts
+          git checkout "refs/remotes/origin/${PARENT_BRANCH}" -- .github/workflows/ci.yml
+          rm -f \
+            .github/workflows/rook-659-future-replay-repair.yml \
+            .github/rook-659-trigger.txt
+      - uses: oven-sh/setup-bun@v2
+      - name: Validate focused adapter fence
+        shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ github.sha }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/openai-agents-runner-adapter.test.ts \
+            test/openai-agents-runner-adapter-review-repairs.test.ts \
+            test/openai-agents-runner-adapter-boundaries.test.ts \
+            test/openai-agents-runner-adapter-future-replay.test.ts
+      - name: Publish source-only repair
+        shell: bash
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies once
-        run: bun install --frozen-lockfile
-      - name: Run serial full validation
-        run: |
-          set +e
-          status=0
-          run_gate() {
-            local label="$1"
-            local output="$2"
-            local -a pipeline_status
-            shift 2
-            echo "::group::${label}"
-            set -o pipefail
-            "$@" 2>&1 | tee "${output}"
-            pipeline_status=("${PIPESTATUS[@]}")
-            set +o pipefail
-            echo "::endgroup::"
-            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
-              status=1
-            fi
-          }
-          run_gate typecheck typecheck-output.txt bun run typecheck
-          run_gate bun-tests test-output.txt bun run test
-          run_gate convex-tests convex-test-output.txt bun run test:convex
-          run_gate worker-check worker-check-output.txt bun run worker:check
-          run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
-          exit "${status}"
-      - name: Upload serial full diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: serial-full-diagnostics
-          path: |
-            typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-            runtime-parity-output.txt
-          if-no-files-found: ignore
+          set -euo pipefail
+          git add -A
+          git commit -m "Bind checkpoint chronology and authority"
+          git push \
+            --force-with-lease="refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${TARGET_BRANCH}"
