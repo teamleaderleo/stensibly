@@ -1,0 +1,105 @@
+name: Cicada 897 embedded URL repair
+
+on:
+  push:
+    branches:
+      - cicada/897-embedded-url-retention
+    paths:
+      - .github/workflows/cicada-897-embedded-url-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cicada-897-embedded-url-repair
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/897-embedded-url-retention
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Reject embedded direct URLs
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/execution-certainty.ts")
+          source = source_path.read_text()
+          old = '''    /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value) ||
+'''
+          new = '''    /[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value) ||
+'''
+          if source.count(old) != 1:
+              raise SystemExit("execution certainty URL predicate changed")
+          source_path.write_text(source.replace(old, new, 1))
+
+          test_path = Path("test/execution-certainty-url-retention-review.test.ts")
+          test = test_path.read_text()
+          marker = '''  test("rejects URL-shaped remote-result identities", () => {
+'''
+          addition = '''  test("rejects embedded direct URLs in retained identities", () => {
+    for (const field of ["operation", "operationRef"] as const) {
+      expect(() =>
+        createExecutionCertaintyReceipt({
+          ...baseInput(),
+          [field]: "receipt:https://github.com/teamleaderleo/stensibly/issues/1",
+        })
+      ).toThrow("is invalid");
+    }
+
+    expect(() =>
+      createExecutionCertaintyReceipt(
+        baseInput({
+          evidence: {
+            dispatchState: "started",
+            cancellationState: "not_requested",
+            remoteResult: {
+              outcome: "success",
+              resultIdentity: "receipt:file://provider/results/receipt-1",
+            },
+            localFailureClass: null,
+          },
+        }),
+      )
+    ).toThrow("is invalid");
+  });
+
+  test("rejects URL-shaped remote-result identities", () => {
+'''
+          if test.count(marker) != 1:
+              raise SystemExit("URL retention test marker changed")
+          test_path.write_text(test.replace(marker, addition, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/execution-certainty.test.ts \
+            test/execution-certainty-final-review.test.ts \
+            test/execution-certainty-url-retention-review.test.ts
+      - name: Publish clean repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Cicada'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/cicada-897-embedded-url-repair.yml
+          git add \
+            src/execution-certainty.ts \
+            test/execution-certainty-url-retention-review.test.ts
+          git diff --cached --check
+          git commit -m 'Reject embedded direct URLs in certainty receipts'
+          git push \
+            --force-with-lease=refs/heads/cicada/897-embedded-url-retention:${SOURCE_HEAD} \
+            origin HEAD:cicada/897-embedded-url-retention
