@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint.ts";
 import {
   evaluateGitHubOutboundText,
   parseGitHubOutboundTextReceipt,
@@ -7,6 +8,17 @@ import {
 
 function hash(seed: string): string {
   return `sha256:${seed.repeat(64).slice(0, 64)}`;
+}
+
+function authorityFingerprint(
+  generation: number,
+  repositories: readonly string[],
+): string {
+  return fingerprintCanonicalRequest({
+    policy: "github-external-contact-authority/v1",
+    generation,
+    repositories,
+  });
 }
 
 function input(
@@ -167,7 +179,7 @@ describe("outbound GitHub text exact admission", () => {
         input({
           fields: [{ name: "body", text: "external/project#1" }],
           externalContactAuthority: {
-            fingerprint: hash("a"),
+            fingerprint: authorityFingerprint(2, ["external/project"]),
             generation: 2,
             repositories: ["external/project"],
           },
