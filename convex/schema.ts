@@ -185,7 +185,7 @@ export default defineSchema({
     .index("by_project_issue_revision", ["projectId", "issueExternalId", "sourceRevision"])
     .index("by_project_issue_current", ["projectId", "issueExternalId", "isCurrent"])
     .index("by_project_current_issue", ["projectId", "isCurrent", "issueExternalId"])
-    .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt"]),
+    .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt", "externalId"]),
 
   actors: defineTable({
     workspaceId: v.id("workspaces"),
