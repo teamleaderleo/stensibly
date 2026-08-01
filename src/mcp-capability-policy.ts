@@ -116,6 +116,9 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy("release_work", itemId),
   writePolicy("record_event", itemId),
   writePolicy("complete_work", itemId),
+  writePolicy("github_add_issue_comment", directProject, "bounded_write", "tool_managed"),
+  writePolicy("github_create_issue", directProject, "bounded_write", "tool_managed"),
+  writePolicy("github_update_issue", directProject, "bounded_write", "tool_managed"),
   writePolicy("propose_continuation", sourceItemId),
   writePolicy("edit_continuation", continuationId),
   writePolicy("resolve_continuation", continuationId),
@@ -280,7 +283,7 @@ function validatePolicy(input: McpCapabilityPolicyInput): McpCapabilityPolicy {
   }
   if (!mcpCapabilityReconciliationPolicies.includes(input.reconciliationPolicy)) {
     throw new RangeError(
-      `MCP capability reconciliation policy is invalid for ${input.toolName}`,
+      `MCP capability ${input.toolName} reconciliation policy is invalid`,
     );
   }
   validateProjectResolution(input.projectResolution, input.toolName);
