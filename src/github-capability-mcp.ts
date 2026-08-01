@@ -117,6 +117,12 @@ export function registerGitHubCapabilityTools(
   );
 
   if (!delegated) return;
+  const delegatedToolSchema = z.enum(
+    delegatedToolNames as unknown as [
+      HostedGitHubDelegatedReadTool,
+      ...HostedGitHubDelegatedReadTool[],
+    ],
+  );
   server.registerTool(
     "github_call_tool",
     {
@@ -124,7 +130,7 @@ export function registerGitHubCapabilityTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        tool: z.enum(hostedGitHubDelegatedReadTools),
+        tool: delegatedToolSchema,
         arguments: z.union([
           z.object({}).strict(),
           z.object({
