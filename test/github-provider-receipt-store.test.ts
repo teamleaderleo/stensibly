@@ -62,43 +62,40 @@ describe("GitHub provider receipt request identity", () => {
         ...changes,
       }));
 
-      expect(conflict.outcome, name).toBe("conflict");
-      expect(conflict.receipt, name).toEqual(original);
+      expect(conflict.outcome).toBe("conflict");
+      expect(conflict.receipt).toEqual(original);
     }
   });
 
   test("rejects lifecycle updates that drift from the original reservation", async () => {
-    const variants: Array<[string, Partial<GitHubProviderReceipt>]> = [
-      ["receipt ID", { id: "ghop_other" }],
-      ["creation time", { createdAt: "2026-08-02T00:00:01.000Z" }],
-      ["target", { target: "teamleaderleo/stensibly#930" }],
-      ["connection", { connectionId: "ghconn_other" }],
-      ["installation", { installationId: "installation_other" }],
-      ["binding", { bindingId: "ghbind_other" }],
-      ["attachment", { attachmentId: "attachment_other" }],
-      ["attachment snapshot", {
-        attachmentSnapshotSha256: `sha256:${"c".repeat(64)}`,
-      }],
-      ["capability grant", { capabilityGrantId: "grant_other" }],
-      ["approval", { approvalId: "approval_other" }],
-      ["parameters", { parametersSha256: `sha256:${"d".repeat(64)}` }],
+    const variants: Array<Partial<GitHubProviderReceipt>> = [
+      { id: "ghop_other" },
+      { createdAt: "2026-08-02T00:00:01.000Z" },
+      { target: "teamleaderleo/stensibly#930" },
+      { connectionId: "ghconn_other" },
+      { installationId: "installation_other" },
+      { bindingId: "ghbind_other" },
+      { attachmentId: "attachment_other" },
+      { attachmentSnapshotSha256: `sha256:${"c".repeat(64)}` },
+      { capabilityGrantId: "grant_other" },
+      { approvalId: "approval_other" },
+      { parametersSha256: `sha256:${"d".repeat(64)}` },
     ];
 
-    for (const [name, changes] of variants) {
+    for (const changes of variants) {
       const store = new InMemoryGitHubProviderReceiptStore();
       const original = receipt();
       await store.reserveGitHubProviderReceipt(original);
 
-      expect(
+      await expect(
         store.updateGitHubProviderReceipt(succeededReceipt(original, changes)),
-        name,
       ).rejects.toThrow(
         "GitHub provider receipt update does not match the reservation",
       );
       expect(await store.getGitHubProviderReceipt(
         original.project,
         original.idempotencyKey,
-      ), name).toEqual(original);
+      )).toEqual(original);
     }
   });
 
