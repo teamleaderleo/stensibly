@@ -1,5 +1,5 @@
 # Triggered after workflow registration.
-name: Cicada 877 attachment integrity repair
+name: Cicada 877 hosted context integrity repair
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           ref: cicada/877-attachment-integrity-repair
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
-      - name: Bind repository authority to attachment integrity
+      - name: Bind durable hosted context integrity
         shell: bash
         run: |
           set -euo pipefail
@@ -99,9 +99,33 @@ jobs:
 
           '''
           path.write_text(source[:start] + replacement + source[end:])
+
+          service_path = Path("src/github-project-context-convex-ledger.ts")
+          service = service_path.read_text()
+          guidance_marker = '''const recoveryGuidance: GitHubProjectContextProjection["recovery"]["guidance"] = [
+          '''
+          if service.count(guidance_marker) != 1:
+              raise SystemExit("hosted context recovery guidance marker changed")
+          service = service.replace(
+              guidance_marker,
+              '''const maximumObservationFutureSkewMs = 5 * 60_000;
+          const recoveryGuidance: GitHubProjectContextProjection["recovery"]["guidance"] = [
+          ''',
+              1,
+          )
+          old_skew = '''    || subject.observedAt > raw.acceptedAt
+          '''
+          new_skew = '''    || Date.parse(subject.observedAt)
+              > Date.parse(raw.acceptedAt) + maximumObservationFutureSkewMs
+          '''
+          if service.count(old_skew) != 1:
+              raise SystemExit("hosted context observation chronology changed")
+          service_path.write_text(service.replace(old_skew, new_skew, 1))
           PY
           git show b42426d3e171f148c60aabf41093426ddb95b239:convex/githubProjectContexts-attachment-integrity-review.test.ts \
             > convex/githubProjectContexts-attachment-integrity-review.test.ts
+          git show 90fd3cb89dd051ab4348dd40c8c9b00398fd6268:test/github-project-context-convex-ledger-clock-skew-review.test.ts \
+            > test/github-project-context-convex-ledger-clock-skew-review.test.ts
       - name: Install committed dependencies
         run: bun install --frozen-lockfile
       - name: Verify focused repair
@@ -110,7 +134,9 @@ jobs:
           bun run test:convex -- \
             convex/githubProjectContexts.test.ts \
             convex/githubProjectContexts-attachment-integrity-review.test.ts
-          bun test test/github-project-context-convex-ledger.test.ts
+          bun test \
+            test/github-project-context-convex-ledger.test.ts \
+            test/github-project-context-convex-ledger-clock-skew-review.test.ts
           bun run worker:check
       - name: Publish clean repair
         shell: bash
@@ -121,9 +147,11 @@ jobs:
           git rm .github/workflows/cicada-877-attachment-integrity-repair.yml
           git add \
             convex/githubProjectContexts.ts \
-            convex/githubProjectContexts-attachment-integrity-review.test.ts
+            convex/githubProjectContexts-attachment-integrity-review.test.ts \
+            src/github-project-context-convex-ledger.ts \
+            test/github-project-context-convex-ledger-clock-skew-review.test.ts
           git diff --cached --check
-          git commit -m 'Bind GitHub context acceptance to attachment integrity'
+          git commit -m 'Bind hosted GitHub context integrity'
           git push \
             --force-with-lease=refs/heads/cicada/877-attachment-integrity-repair:${SOURCE_HEAD} \
             origin HEAD:cicada/877-attachment-integrity-repair
