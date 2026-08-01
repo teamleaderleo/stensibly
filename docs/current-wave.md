@@ -9,7 +9,7 @@
 **GitHub context integration:** #492  
 **Wave:** `W01`  
 **Wave revision:** `6`  
-**Operating protocol:** `stensibly-agent-ops/0.4.0` plus standing policy `stensibly-internal-dogfood/v2`
+**Operating protocol:** `stensibly-agent-ops/0.5.0` plus standing policy `stensibly-internal-dogfood/v2`
 
 ## Primary outcome
 

@@ -2,7 +2,7 @@
 
 **Status:** active instruction experiment  
 **Experiment identity:** `documentation-brief/1`  
-**Base operating protocol:** `stensibly-agent-ops/0.4.0`  
+**Base operating protocol:** `stensibly-agent-ops/0.5.0`  
 **Tracking issue:** #666  
 **Last researched:** 2026-07-31
 
