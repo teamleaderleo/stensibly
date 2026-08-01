@@ -46,11 +46,11 @@ async function readGitHubProjectContext(
   ledger: WorkLedger,
   input: GetGitHubProjectContextInput,
 ) {
-  const projected = githubProjectContextLedger(ledger);
-  if (projected) return await projected.getGitHubProjectContext(input);
-
   const store = sqliteStore(ledger);
   if (store) return getSqliteGitHubProjectContext(store, input);
+
+  const projected = githubProjectContextLedger(ledger);
+  if (projected) return await projected.getGitHubProjectContext(input);
 
   throw new Error("GitHub project context is unavailable on this backend");
 }
