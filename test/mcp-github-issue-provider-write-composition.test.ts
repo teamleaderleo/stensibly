@@ -35,7 +35,7 @@ describe("GitHub issue provider write composition", () => {
     };
 
     const composed = withGitHubIssueProviderWriteService(target, service);
-    expect(composed).toBe(target);
+    expect(Object.is(composed, target)).toBe(true);
 
     await composed.createIssue({
       ...context(),
