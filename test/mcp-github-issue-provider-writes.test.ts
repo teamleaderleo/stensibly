@@ -59,14 +59,14 @@ describe("remote GitHub issue provider MCP writes", () => {
         2,
         "github_create_issue",
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-title: "Provider write MCP test",
-body: "Bounded body",
-labels: ["area:github"],
-assignees: ["teamleaderleo"],
-idempotencyKey: "gh-write-create-1",
-capabilityGrantId: "grant_issue_write_1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          title: "Provider write MCP test",
+          body: "Bounded body",
+          labels: ["area:github"],
+          assignees: ["teamleaderleo"],
+          idempotencyKey: "gh-write-create-1",
+          capabilityGrantId: "grant_issue_write_1",
         },
       );
       expect(created).toMatchObject({
@@ -81,14 +81,14 @@ capabilityGrantId: "grant_issue_write_1",
         3,
         "github_update_issue",
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-issueNumber: 921,
-expectedSourceRevision: "github-rest:I_issue_921:rev-1",
-title: "Mounted provider write MCP test",
-state: "open",
-idempotencyKey: "gh-write-update-1",
-approvalId: "approval_issue_write_1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          issueNumber: 921,
+          expectedSourceRevision: "github-rest:I_issue_921:rev-1",
+          title: "Mounted provider write MCP test",
+          state: "open",
+          idempotencyKey: "gh-write-update-1",
+          approvalId: "approval_issue_write_1",
         },
       );
       expect(updated.operation).toBe("github_update_issue");
@@ -99,11 +99,11 @@ approvalId: "approval_issue_write_1",
         4,
         "github_add_issue_comment",
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-issueNumber: 921,
-body: "Exact bounded comment",
-idempotencyKey: "gh-write-comment-1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          issueNumber: 921,
+          body: "Exact bounded comment",
+          idempotencyKey: "gh-write-comment-1",
         },
       );
       expect(commented.operation).toBe("github_add_issue_comment");
@@ -111,37 +111,37 @@ idempotencyKey: "gh-write-comment-1",
       const tokenIdentity = `api-token:${writer.id}`;
       expect(calls).toEqual([
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-actorId: tokenIdentity,
-clientId: `mcp:${tokenIdentity}`,
-capabilityGrantId: "grant_issue_write_1",
-title: "Provider write MCP test",
-body: "Bounded body",
-labels: ["area:github"],
-assignees: ["teamleaderleo"],
-idempotencyKey: "gh-write-create-1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          actorId: tokenIdentity,
+          clientId: `mcp:${tokenIdentity}`,
+          capabilityGrantId: "grant_issue_write_1",
+          title: "Provider write MCP test",
+          body: "Bounded body",
+          labels: ["area:github"],
+          assignees: ["teamleaderleo"],
+          idempotencyKey: "gh-write-create-1",
         },
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-actorId: tokenIdentity,
-clientId: `mcp:${tokenIdentity}`,
-approvalId: "approval_issue_write_1",
-issueNumber: 921,
-expectedSourceRevision: "github-rest:I_issue_921:rev-1",
-title: "Mounted provider write MCP test",
-state: "open",
-idempotencyKey: "gh-write-update-1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          actorId: tokenIdentity,
+          clientId: `mcp:${tokenIdentity}`,
+          approvalId: "approval_issue_write_1",
+          issueNumber: 921,
+          expectedSourceRevision: "github-rest:I_issue_921:rev-1",
+          title: "Mounted provider write MCP test",
+          state: "open",
+          idempotencyKey: "gh-write-update-1",
         },
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-actorId: tokenIdentity,
-clientId: `mcp:${tokenIdentity}`,
-issueNumber: 921,
-body: "Exact bounded comment",
-idempotencyKey: "gh-write-comment-1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          actorId: tokenIdentity,
+          clientId: `mcp:${tokenIdentity}`,
+          issueNumber: 921,
+          body: "Exact bounded comment",
+          idempotencyKey: "gh-write-comment-1",
         },
       ]);
     } finally {
@@ -156,16 +156,16 @@ idempotencyKey: "gh-write-comment-1",
       new SqliteWorkLedger(store),
       {
         async createIssue(input) {
-calls += 1;
-return receipt("github_create_issue", input.idempotencyKey);
+          calls += 1;
+          return receipt("github_create_issue", input.idempotencyKey);
         },
         async updateIssue(input) {
-calls += 1;
-return receipt("github_update_issue", input.idempotencyKey);
+          calls += 1;
+          return receipt("github_update_issue", input.idempotencyKey);
         },
         async addIssueComment(input) {
-calls += 1;
-return receipt("github_add_issue_comment", input.idempotencyKey);
+          calls += 1;
+          return receipt("github_add_issue_comment", input.idempotencyKey);
         },
       },
     );
@@ -182,10 +182,10 @@ return receipt("github_add_issue_comment", input.idempotencyKey);
         11,
         "github_create_issue",
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-title: "Denied write",
-idempotencyKey: "gh-write-denied-1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          title: "Denied write",
+          idempotencyKey: "gh-write-denied-1",
         },
       ));
       expect(response.status).toBe(403);
@@ -215,11 +215,11 @@ idempotencyKey: "gh-write-denied-1",
         21,
         "github_add_issue_comment",
         {
-project: "stensibly",
-repository: "teamleaderleo/stensibly",
-issueNumber: 921,
-body: "Unavailable provider write",
-idempotencyKey: "gh-write-unavailable-1",
+          project: "stensibly",
+          repository: "teamleaderleo/stensibly",
+          issueNumber: 921,
+          body: "Unavailable provider write",
+          idempotencyKey: "gh-write-unavailable-1",
         },
       );
       expect(result.isError).toBe(true);
