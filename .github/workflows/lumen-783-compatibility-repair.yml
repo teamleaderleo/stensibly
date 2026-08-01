@@ -1,0 +1,123 @@
+name: Repair signed CI receipt compatibility
+
+on:
+  push:
+    branches:
+      - lumen/783-compatibility-repair
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-783-compatibility-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/783-compatibility-repair
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply compatibility control
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-actions-ci-receipt.ts")
+          text = source.read_text()
+          old = '''const failureEvidenceConclusions = new Set<CiRunConclusion>([
+            "failure", "timed_out", "neutral",
+          ]);
+          '''
+          new = '''const failureEvidenceConclusions = new Set<CiRunConclusion>([
+            "failure", "timed_out", "neutral",
+          ]);
+          const runJobCompatibility = Object.freeze({
+            success: Object.freeze(["success", "neutral", "skipped"] as const),
+            failure: Object.freeze(["success", "failure", "cancelled", "neutral", "skipped"] as const),
+            cancelled: Object.freeze(["success", "cancelled", "neutral", "skipped"] as const),
+            neutral: Object.freeze(["success", "neutral", "skipped"] as const),
+            skipped: Object.freeze(["skipped"] as const),
+            timed_out: Object.freeze(["success", "cancelled", "neutral", "skipped", "timed_out"] as const),
+            action_required: Object.freeze(["action_required", "skipped"] as const),
+            stale: Object.freeze(["stale", "skipped"] as const),
+            startup_failure: Object.freeze(["startup_failure", "skipped"] as const),
+          } satisfies Record<CiRunConclusion, readonly CiJobConclusion[]>);
+          '''
+          if old not in text:
+              raise SystemExit("compatibility constant insertion point moved")
+          text = text.replace(old, new, 1)
+          old = '''  requireCanonicalJobSet(jobs);
+            validateProfileTopology(run, validationProfile, jobs);
+          '''
+          new = '''  requireCanonicalJobSet(jobs);
+            validateRunJobCompatibility(run, jobs);
+            validateProfileTopology(run, validationProfile, jobs);
+          '''
+          if old not in text:
+              raise SystemExit("compatibility call insertion point moved")
+          text = text.replace(old, new, 1)
+          marker = '''function validateProfileTopology(
+          '''
+          insert = '''function validateRunJobCompatibility(
+            run: PublicRun,
+            jobs: readonly PublicJob[],
+          ): void {
+            const compatible: readonly CiJobConclusion[] = runJobCompatibility[run.conclusion];
+            for (const job of jobs) {
+              if (!compatible.includes(job.conclusion)) {
+                throw new RangeError(
+                  `GitHub Actions ${job.name} conclusion is incompatible with the run conclusion`,
+                );
+              }
+            }
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit("compatibility function insertion point moved")
+          text = text.replace(marker, insert + marker, 1)
+          source.write_text(text)
+
+          test = Path("test/github-actions-ci-receipt.test.ts")
+          text = test.read_text()
+          marker = '''  test("records browser-only failure as positive active-profile evidence", () => {
+          '''
+          insert = '''  test("rejects restored job conclusions that contradict a successful run", () => {
+            for (const name of ["browser-evidence", "serial-full"] as const) {
+              const jobs = parallelJobs().map((entry) =>
+                entry.name === name
+                  ? job(name, "failure", {
+                    steps: [step(1, "Set up job"), step(2, "Contradictory failure", "failure")],
+                  })
+                  : entry
+              );
+              expect(() => compile(bundle({ jobs }))).toThrow(
+                `${name} conclusion is incompatible with the run conclusion`,
+              );
+            }
+          });
+
+          '''
+          if marker not in text:
+              raise SystemExit("compatibility test insertion point moved")
+          test.write_text(text.replace(marker, insert + marker, 1))
+          PY
+
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-actions-ci-receipt.test.ts \
+            test/ci-queue-receipt-cancelled-before-start.test.ts
+
+          rm -f .lumen-783-trigger
+          git rm .github/workflows/lumen-783-compatibility-repair.yml
+          git add src/github-actions-ci-receipt.ts test/github-actions-ci-receipt.test.ts
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Bind every restored CI job to the run outcome"
+          git push origin HEAD:lumen/783-compatibility-repair
