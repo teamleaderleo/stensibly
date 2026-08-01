@@ -89,6 +89,7 @@ const continuationSupervisorPolicy = Object.freeze({
 const policyInputs: readonly McpCapabilityPolicyInput[] = [
   readPolicy("get_brief", directProject),
   readPolicy("get_project_attachment", directProject),
+  readPolicy("get_github_project_context", directProject),
   readPolicy("get_operation_receipt", directProject),
   readPolicy("github_call_tool", directProject),
   readPolicy("github_get_issue", directProject),
