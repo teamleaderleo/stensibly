@@ -528,6 +528,28 @@ describe("runner cancellation reconciliation", () => {
     )).toThrow("provider evidence cannot contain a publication fence");
   });
 
+  test("rejects retained provider URIs and non-project receipt access", async () => {
+    const original = await originalResult();
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original, {
+        reference: evidenceReference("provider_settled", {
+          uri: "https://provider.example/receipts/settlement-1",
+        }),
+      }),
+    )).toThrow("not attributable to the run");
+
+    for (const accessClass of ["private", "workspace"] as const) {
+      expect(() => reconcileRunnerCancellationSettlementV1(
+        original,
+        evidence(original, {
+          reference: evidenceReference("provider_settled", { accessClass }),
+        }),
+      )).toThrow("not attributable to the run");
+    }
+  });
+
   test("rejects credential-shaped reconciliation identities", async () => {
     const original = await originalResult();
     expect(() => reconcileRunnerCancellationSettlementV1(
