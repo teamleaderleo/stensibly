@@ -64,7 +64,7 @@ export interface GitHubIssueContextHistoryProjection {
 
 export interface GitHubProjectContextProjection {
   version: 1;
-  workspace: "default";
+  workspace: string;
   project: string;
   mode: "project" | "issue";
   requestedExternalId: string | null;

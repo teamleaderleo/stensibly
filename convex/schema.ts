@@ -149,6 +149,44 @@ export default defineSchema({
     .index("by_project_created", ["projectId", "acceptedAt"])
     .index("by_project_snapshot", ["projectId", "snapshotSha256", "acceptedAt"]),
 
+  githubProjectContexts: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    issueExternalId: v.string(),
+    repositoryFullName: v.string(),
+    sourceRevision: v.string(),
+    snapshotSha256: v.string(),
+    contentSha256: v.string(),
+    providerUpdatedAt: v.number(),
+    snapshotJson: v.string(),
+    projectAttachmentExternalId: v.string(),
+    projectAttachmentSnapshotSha256: v.string(),
+    instructionSetId: v.string(),
+    instructionSetSha256: v.string(),
+    instructionSetJson: v.string(),
+    syncStatus: v.union(v.literal("synchronized"), v.literal("degraded")),
+    syncCursor: v.optional(v.string()),
+    degradedReasonCode: v.optional(v.string()),
+    observationRef: v.string(),
+    observedAt: v.number(),
+    acceptedBy: v.string(),
+    acceptedAt: v.number(),
+    isCurrent: v.boolean(),
+    outcome: v.union(
+      v.literal("initial"),
+      v.literal("updated"),
+      v.literal("stale"),
+      v.literal("instruction_rebound"),
+      v.literal("synchronization_updated"),
+    ),
+  })
+    .index("by_project_observation", ["projectId", "observationRef"])
+    .index("by_project_issue_revision", ["projectId", "issueExternalId", "sourceRevision"])
+    .index("by_project_issue_current", ["projectId", "issueExternalId", "isCurrent"])
+    .index("by_project_current_issue", ["projectId", "isCurrent", "issueExternalId"])
+    .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt"]),
+
   actors: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
