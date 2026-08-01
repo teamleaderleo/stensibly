@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint.ts";
 import {
   evaluateGitHubOutboundText,
   parseGitHubOutboundTextReceipt,
@@ -7,6 +8,17 @@ import {
 
 function hash(seed: number): string {
   return `sha256:${(seed % 16).toString(16).repeat(64)}`;
+}
+
+function authorityFingerprint(
+  generation: number,
+  repositories: readonly string[],
+): string {
+  return fingerprintCanonicalRequest({
+    policy: "github-external-contact-authority/v1",
+    generation,
+    repositories,
+  });
 }
 
 function input(overrides: Partial<GitHubOutboundTextInput> = {}): GitHubOutboundTextInput {
@@ -102,7 +114,7 @@ describe("GitHub outbound text policy", () => {
     const receipt = evaluateGitHubOutboundText(input({
       fields: [{ name: "body", text: "See external/project#12." }],
       externalContactAuthority: {
-        fingerprint: hash(4),
+        fingerprint: authorityFingerprint(3, ["external/project"]),
         generation: 3,
         repositories: ["external/project"],
       },
@@ -114,7 +126,7 @@ describe("GitHub outbound text policy", () => {
     expect(() => evaluateGitHubOutboundText(input({
       fields: [{ name: "body", text: "See external/project#12." }],
       externalContactAuthority: {
-        fingerprint: hash(4),
+        fingerprint: authorityFingerprint(2, ["external/project"]),
         generation: 2,
         repositories: ["external/project"],
       },
@@ -123,7 +135,7 @@ describe("GitHub outbound text policy", () => {
     const wrongRepository = evaluateGitHubOutboundText(input({
       fields: [{ name: "body", text: "See external/project#12." }],
       externalContactAuthority: {
-        fingerprint: hash(4),
+        fingerprint: authorityFingerprint(3, ["other/project"]),
         generation: 3,
         repositories: ["other/project"],
       },
