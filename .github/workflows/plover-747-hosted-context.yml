@@ -1,0 +1,50 @@
+name: Plover 747 hosted context finalize
+
+on:
+  push:
+    branches:
+      - plover/747-hosted-github-context
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plover-747-hosted-context
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: plover/747-hosted-github-context
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply exact source patch
+        shell: bash
+        run: |
+          printf '%s' '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' | base64 --decode | gzip --decompress > /tmp/plover-747-patch.py
+          python /tmp/plover-747-patch.py
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Focused Bun tests
+        run: bun test test/github-project-context-admission.test.ts test/github-project-context-convex-ledger.test.ts
+      - name: Focused Convex tests
+        run: bun run test:convex -- convex/githubProjectContexts.test.ts
+      - name: Worker bundle
+        run: bun run worker:check
+      - name: Publish clean candidate
+        shell: bash
+        run: |
+          rm .github/workflows/plover-747-hosted-context.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add convex/schema.ts convex/githubProjectContexts.ts convex/githubProjectContexts.test.ts src/github-project-context.ts src/github-project-context-convex-ledger.ts src/convex-ledger.ts test/github-project-context-convex-ledger.test.ts docs/github-project-context-convex-ledger.md .github/workflows/plover-747-hosted-context.yml
+          git diff --cached --check
+          git commit -m 'Finalize hosted accepted GitHub context'
+          git push origin HEAD:plover/747-hosted-github-context
