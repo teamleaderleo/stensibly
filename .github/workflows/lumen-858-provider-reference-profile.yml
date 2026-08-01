@@ -1,0 +1,225 @@
+name: Lumen 858 cancellation reconciliation repair
+
+on:
+  push:
+    branches:
+      - morrow/574-cancellation-reconciliation
+    paths:
+      - .github/workflows/lumen-858-provider-reference-profile.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-858-cancellation-reconciliation-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: morrow/574-cancellation-reconciliation
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Replay current main and apply reviewed repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          temp_dir="$(mktemp -d)"
+          for path in \
+            src/runner-cancellation-reconciliation.ts \
+            test/runner-cancellation-reconciliation.test.ts \
+            docs/runner-cancellation-reconciliation.md
+          do
+            mkdir -p "$temp_dir/$(dirname "$path")"
+            git show "${source_head}:${path}" > "$temp_dir/$path"
+          done
+
+          git fetch origin main
+          git reset --hard origin/main
+          for path in \
+            src/runner-cancellation-reconciliation.ts \
+            test/runner-cancellation-reconciliation.test.ts \
+            docs/runner-cancellation-reconciliation.md
+          do
+            mkdir -p "$(dirname "$path")"
+            cp "$temp_dir/$path" "$path"
+          done
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label} changed')
+              return text.replace(old, new, 1)
+
+          source_path = Path('src/runner-cancellation-reconciliation.ts')
+          source = source_path.read_text()
+          source = replace_once(
+              source,
+              '''  commandId: string;
+  adapterId: string;
+''',
+              '''  commandId: string;
+  commandFingerprint: string;
+  adapterId: string;
+''',
+              'original identity interface',
+          )
+          source = replace_once(
+              source,
+              'const originalPolicyVersion = "runner-cancellation-settlement-v1";',
+              'const originalPolicyVersion = "runner-cancellation-settlement-v2";',
+              'original policy version',
+          )
+          source = replace_once(
+              source,
+              '''  "commandId",
+  "adapterId",
+''',
+              '''  "commandId",
+  "commandFingerprint",
+  "adapterId",
+''',
+              'original result keys',
+          )
+          source = replace_once(
+              source,
+              '''    commandId: boundedIdentifier(input.commandId, "Runner cancellation command ID", 160),
+    adapterId: boundedIdentifier(input.adapterId, "Runner cancellation adapter ID", 80),
+''',
+              '''    commandId: boundedIdentifier(input.commandId, "Runner cancellation command ID", 160),
+    commandFingerprint: digest(
+      input.commandFingerprint,
+      "Runner cancellation command fingerprint",
+    ),
+    adapterId: boundedIdentifier(input.adapterId, "Runner cancellation adapter ID", 80),
+''',
+              'original command fingerprint admission',
+          )
+          source = replace_once(
+              source,
+              '    || !digestPattern.test(settlement.operationRef)\n',
+              '    || settlement.operationRef !== identity.commandFingerprint\n',
+              'settlement command binding',
+          )
+          source = replace_once(
+              source,
+              '''    reference.kind !== "provider_receipt"
+    || reference.adapterId !== original.adapterId
+    || referenceDigest === null
+    || reference.generation !== original.runGeneration
+    || reference.createdAt < original.observedAt
+''',
+              '''    reference.kind !== "provider_receipt"
+    || reference.adapterId !== original.adapterId
+    || referenceDigest === null
+    || reference.generation !== original.runGeneration
+    || reference.uri !== null
+    || reference.accessClass !== "project"
+    || reference.createdAt < original.observedAt
+''',
+              'provider reference admission',
+          )
+          source_path.write_text(source)
+
+          test_path = Path('test/runner-cancellation-reconciliation.test.ts')
+          tests = test_path.read_text()
+          additions = []
+          if 'binds the admitted command fingerprint to the original settlement operation' not in tests:
+              additions.append(r'''
+
+  test("binds the admitted command fingerprint to the original settlement operation", async () => {
+    const original = structuredClone(await originalResult());
+    original.commandFingerprint = `sha256:${"f".repeat(64)}`;
+    refingerprint(original);
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("settlement receipt does not match result identity");
+  });
+''')
+          if 'rejects retained provider URIs and non-project receipt access' not in tests:
+              additions.append(r'''
+
+  test("rejects retained provider URIs and non-project receipt access", async () => {
+    const original = await originalResult();
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original, {
+        reference: evidenceReference("provider_settled", {
+          uri: "https://provider.example/receipts/settlement-1",
+        }),
+      }),
+    )).toThrow("not attributable to the run");
+
+    for (const accessClass of ["private", "workspace"] as const) {
+      expect(() => reconcileRunnerCancellationSettlementV1(
+        original,
+        evidence(original, {
+          reference: evidenceReference("provider_settled", { accessClass }),
+        }),
+      )).toThrow("not attributable to the run");
+    }
+  });
+''')
+          closing = '\n});\n'
+          if not tests.endswith(closing):
+              raise SystemExit('test suite closing marker changed')
+          if additions:
+              tests = tests[:-len(closing)] + ''.join(additions) + closing
+          test_path.write_text(tests)
+
+          docs_path = Path('docs/runner-cancellation-reconciliation.md')
+          docs = docs_path.read_text()
+          docs = replace_once(
+              docs,
+              '''- a creation time between the original settlement and reconciliation observation;
+- no private content or credentials;
+- one canonical external identity for the declared evidence kind.
+''',
+              '''- a creation time between the original settlement and reconciliation observation;
+- no retained URI;
+- project-scoped access;
+- no private content or credentials;
+- one canonical external identity for the declared evidence kind.
+''',
+              'provider reference documentation',
+          )
+          docs = replace_once(
+              docs,
+              '- one exact SHA-256 settlement operation identity produced from the complete admitted cancellation command, including authority holder, expiry, and reason;\n',
+              '- one exact admitted SHA-256 command fingerprint equal to the settlement operation identity produced by the original coordinator from the complete cancellation command, including authority holder, expiry, and reason;\n',
+              'command fingerprint documentation',
+          )
+          docs_path.write_text(docs)
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test test/runner-cancellation-reconciliation.test.ts
+      - name: Publish clean current-main candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Lumen'
+          git config user.email 'actions@users.noreply.github.com'
+          git add \
+            src/runner-cancellation-reconciliation.ts \
+            test/runner-cancellation-reconciliation.test.ts \
+            docs/runner-cancellation-reconciliation.md
+          git diff --cached --check
+          git commit -m 'Repair cancellation reconciliation admission'
+          git push \
+            --force-with-lease=refs/heads/morrow/574-cancellation-reconciliation:${SOURCE_HEAD} \
+            origin HEAD:morrow/574-cancellation-reconciliation
