@@ -31,13 +31,21 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
           import re
+          import textwrap
 
           def replace_once(text: str, old: str, new: str, label: str) -> str:
               if text.count(old) != 1:
-                  raise SystemExit(f'{label} changed')
+                  raise SystemExit(f'{label} changed: expected one exact marker, found {text.count(old)}')
               return text.replace(old, new, 1)
 
-          exact_helpers = r'''function exactRecord(
+          def sub_once(text: str, pattern: str, replacement: str, label: str, flags: int = 0) -> str:
+              result, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+              if count != 1:
+                  raise SystemExit(f'{label} changed: expected one regex marker, found {count}')
+              return result
+
+          exact_helpers = textwrap.dedent(r'''\
+          function exactRecord(
             value: unknown,
             keys: readonly string[],
             label: string,
@@ -122,25 +130,27 @@ jobs:
             return result;
           }
 
-          '''
+          ''')
 
           normalized_path = Path('src/github-actions-ci-receipt-normalized.ts')
           normalized = normalized_path.read_text()
           normalized = replace_once(
               normalized,
-              '''export const GITHUB_ACTIONS_CI_JOB_NAMES = [
-            "test",
-            "runtime-parity",
-            "serial-full",
-          ] as const;
-''',
-              '''export const GITHUB_ACTIONS_CI_JOB_NAMES = [
-            "browser-evidence",
-            "test",
-            "runtime-parity",
-            "serial-full",
-          ] as const;
-''',
+              textwrap.dedent('''\
+              export const GITHUB_ACTIONS_CI_JOB_NAMES = [
+                "test",
+                "runtime-parity",
+                "serial-full",
+              ] as const;
+              '''),
+              textwrap.dedent('''\
+              export const GITHUB_ACTIONS_CI_JOB_NAMES = [
+                "browser-evidence",
+                "test",
+                "runtime-parity",
+                "serial-full",
+              ] as const;
+              '''),
               'canonical job names',
           )
           normalized = replace_once(
@@ -149,18 +159,18 @@ jobs:
               'const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 4, 4)\n',
               'normalized job count',
           )
-          normalized = replace_once(
+          normalized = sub_once(
               normalized,
-              '''const credentialPattern =
-            /(?:^|[._:/-])(?:(?:env|secret):\\/\\/|github_pat_|gh[pousr]_|stn\\.tok_|sk-|xox[baprs]-)/iu;
-''',
-              '''const credentialPattern = /(?:Bearer\\s+[A-Za-z0-9._~+\\/-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:env|secret):\\/\\/[^\\s]+|eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,})/iu;
-''',
+              r'const credentialPattern =\n\s*/.*?/iu;\nconst fallbackFailedStep',
+              'const credentialPattern = /(?:Bearer\\s+[A-Za-z0-9._~+\\/-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:env|secret):\\/\\/[^\\s]+|eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,})/iu;\nconst fallbackFailedStep',
               'normalized credential detector',
+              re.DOTALL,
           )
+
           topology_start = normalized.index('function validateProfileTopology(')
           topology_end = normalized.index('function failedStep(', topology_start)
-          normalized = normalized[:topology_start] + r'''function validateProfileTopology(
+          normalized = normalized[:topology_start] + textwrap.dedent('''\
+          function validateProfileTopology(
             event: ParsedRun["event"],
             runConclusion: CiRunConclusion,
             profile: GitHubActionsCiValidationProfile,
@@ -227,36 +237,28 @@ jobs:
             }
           }
 
-          ''' + normalized[topology_end:]
-          normalized = replace_once(
+          ''') + normalized[topology_end:]
+
+          normalized = sub_once(
               normalized,
-              '''function diagnosticsFingerprint(
-            jobName: ParsedJob["name"],
-            artifacts: readonly ParsedArtifact[],
-          ): string | null {
-            const artifactName = jobName === "test"
-              ? "diagnostics"
-              : jobName === "runtime-parity"
-              ? "runtime-parity-diagnostics"
-              : "serial-full-diagnostics";
-            return artifacts.find((artifact) => artifact.name === artifactName)?.digest
-              ?? null;
-          }
-''',
-              '''function diagnosticsFingerprint(
-            jobName: ParsedJob["name"],
-            artifacts: readonly ParsedArtifact[],
-          ): string | null {
-            if (jobName === "browser-evidence") return null;
-            const artifactName = jobName === "test"
-              ? "diagnostics"
-              : jobName === "runtime-parity"
-              ? "runtime-parity-diagnostics"
-              : "serial-full-diagnostics";
-            return artifacts.find((artifact) => artifact.name === artifactName)?.digest
-              ?? null;
-          }
-''',
+              r'function diagnosticsFingerprint\([\s\S]*?\n\}\n\nfunction concurrencyGroup\(',
+              textwrap.dedent('''\
+              function diagnosticsFingerprint(
+                jobName: ParsedJob["name"],
+                artifacts: readonly ParsedArtifact[],
+              ): string | null {
+                if (jobName === "browser-evidence") return null;
+                const artifactName = jobName === "test"
+                  ? "diagnostics"
+                  : jobName === "runtime-parity"
+                  ? "runtime-parity-diagnostics"
+                  : "serial-full-diagnostics";
+                return artifacts.find((artifact) => artifact.name === artifactName)?.digest
+                  ?? null;
+              }
+
+              function concurrencyGroup(
+              '''),
               'browser diagnostics projection',
           )
           helper_start = normalized.index('function exactRecord(')
@@ -272,13 +274,10 @@ jobs:
               'const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 4, 4)\n',
               'wrapper job count',
           )
-          wrapper = replace_once(
+          wrapper = sub_once(
               wrapper,
-              '''    "(?:^|[._:/\\\\s-])sk-proj-[A-Za-z0-9_-]+",
-            "(?:^|[._:/\\\\s-])sk-[A-Za-z0-9_-]{20,}",
-''',
-              '''    "(?:^|[._:/\\\\s-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}",
-''',
+              r'\s+"\(\?:\^\|\[\._:/\\\\s-\]\)sk-proj-\[A-Za-z0-9_-\]\+",\n\s+"\(\?:\^\|\[\._:/\\\\s-\]\)sk-\[A-Za-z0-9_-\]\{20,\}",',
+              '\n    "(?:^|[._:/\\\\s-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}",',
               'wrapper OpenAI credential detector',
           )
           helper_start = wrapper.index('function exactRecord(')
@@ -295,7 +294,9 @@ jobs:
               'test job IDs',
           )
 
-          pattern = re.compile(r'(jobs: \[\n(?P<indent>\s*))job\("test", "(?P<conclusion>success|failure|cancelled|skipped)"')
+          pattern = re.compile(
+              r'(jobs: \[\n(?P<indent>\s*))job\("test", "(?P<conclusion>success|failure|cancelled|skipped)"',
+          )
           def add_browser(match: re.Match[str]) -> str:
               conclusion = match.group('conclusion')
               browser = 'success' if conclusion == 'failure' else conclusion
@@ -303,7 +304,7 @@ jobs:
               return f'{match.group(1)}job("browser-evidence", "{browser}"),\n{indent}job("test", "{conclusion}"'
           tests, replacements = pattern.subn(add_browser, tests)
           if replacements < 10:
-              raise SystemExit(f'expected browser job insertion points, found {replacements}')
+              raise SystemExit(f'expected at least ten browser job insertion points, found {replacements}')
 
           tests = tests.replace('task-sk-research', 'task-sk-proj-research')
           tests = tests.replace('runner-sk-review', 'runner-sk-proj-review')
@@ -312,136 +313,129 @@ jobs:
           insert_marker = '  test("keeps descriptor diagnostics fixed and invokes zero getters", () => {'
           if tests.count(insert_marker) != 1:
               raise SystemExit('focused test insertion marker changed')
-          additions = r'''
-  test("retains browser-only failure evidence", () => {
-    const receipt = compile(bundle({
-      run: { ...bundle().run, conclusion: "failure" },
-      jobs: [
-        job("browser-evidence", "failure", {
-          steps: [
-            step(1, "Set up job"),
-            step(2, "Run frontend browser evidence", "failure"),
-          ],
-        }),
-        job("test", "success"),
-        job("runtime-parity", "success"),
-        job("serial-full", "skipped"),
-      ],
-    }));
+          additions = textwrap.dedent(r'''
+            test("retains browser-only failure evidence", () => {
+              const receipt = compile(bundle({
+                run: { ...bundle().run, conclusion: "failure" },
+                jobs: [
+                  job("browser-evidence", "failure", {
+                    steps: [
+                      step(1, "Set up job"),
+                      step(2, "Run frontend browser evidence", "failure"),
+                    ],
+                  }),
+                  job("test", "success"),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "skipped"),
+                ],
+              }));
 
-    expect(receipt.jobs.find((entry) => entry.name === "browser-evidence"))
-      .toMatchObject({
-        conclusion: "failure",
-        failedStep: "Run frontend browser evidence",
-        diagnosticsFingerprint: null,
-      });
-  });
+              expect(receipt.jobs.find((entry) => entry.name === "browser-evidence"))
+                .toMatchObject({
+                  conclusion: "failure",
+                  failedStep: "Run frontend browser evidence",
+                  diagnosticsFingerprint: null,
+                });
+            });
 
-  test("rejects failed profiles with no active job evidence", () => {
-    expect(() => compile(bundle({
-      run: { ...bundle().run, conclusion: "failure" },
-      jobs: [
-        job("browser-evidence", "skipped"),
-        job("test", "skipped"),
-        job("runtime-parity", "skipped"),
-        job("serial-full", "skipped"),
-      ],
-    }))).toThrow("lacks active-profile job evidence");
+            test("rejects failed profiles with no active job evidence", () => {
+              expect(() => compile(bundle({
+                run: { ...bundle().run, conclusion: "failure" },
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "skipped"),
+                ],
+              }))).toThrow("lacks active-profile job evidence");
 
-    const serial = bundle({
-      workflowRevision: candidate,
-      validationProfile: "serial_full",
-      run: {
-        ...bundle().run,
-        event: "workflow_dispatch",
-        conclusion: "failure",
-        headSha: candidate,
-        pullRequests: [],
-      },
-      jobs: [
-        job("browser-evidence", "skipped"),
-        job("test", "skipped"),
-        job("runtime-parity", "skipped"),
-        job("serial-full", "skipped"),
-      ],
-    });
-    expect(() => compile(serial)).toThrow("lacks active-profile job evidence");
-  });
+              const serial = bundle({
+                workflowRevision: candidate,
+                validationProfile: "serial_full",
+                run: {
+                  ...bundle().run,
+                  event: "workflow_dispatch",
+                  conclusion: "failure",
+                  headSha: candidate,
+                  pullRequests: [],
+                },
+                jobs: [
+                  job("browser-evidence", "skipped"),
+                  job("test", "skipped"),
+                  job("runtime-parity", "skipped"),
+                  job("serial-full", "skipped"),
+                ],
+              });
+              expect(() => compile(serial)).toThrow("lacks active-profile job evidence");
+            });
 
-  test("admits one immutable descriptor snapshot", () => {
-    const hostileRecord = bundle() as unknown as Record<string, unknown>;
-    Object.defineProperty(hostileRecord, "escapedAdmission", {
-      configurable: true,
-      enumerable: true,
-      value: true,
-      writable: true,
-    });
-    let recordOwnKeys = 0;
-    const recordProxy = new Proxy(hostileRecord, {
-      ownKeys(target) {
-        recordOwnKeys += 1;
-        const keys = Reflect.ownKeys(target);
-        return recordOwnKeys === 1
-          ? keys
-          : keys.filter((key) => key !== "escapedAdmission");
-      },
-    });
-    expect(() => compileGitHubActionsCiReceiptV1(
-      recordProxy,
-      () => new Date("2026-07-31T10:31:00Z"),
-    )).toThrow("contains unknown fields");
+            test("admits one immutable descriptor snapshot", () => {
+              const hostileRecord = bundle() as unknown as Record<string, unknown>;
+              Object.defineProperty(hostileRecord, "escapedAdmission", {
+                configurable: true,
+                enumerable: true,
+                value: true,
+                writable: true,
+              });
+              let recordOwnKeys = 0;
+              const recordProxy = new Proxy(hostileRecord, {
+                ownKeys(target) {
+                  recordOwnKeys += 1;
+                  const keys = Reflect.ownKeys(target);
+                  return recordOwnKeys === 1
+                    ? keys
+                    : keys.filter((key) => key !== "escapedAdmission");
+                },
+              });
+              expect(() => compileGitHubActionsCiReceiptV1(
+                recordProxy,
+                () => new Date("2026-07-31T10:31:00Z"),
+              )).toThrow("contains unknown fields");
 
-    const input = bundle();
-    const decorated = [...input.jobs] as GitHubActionsCompletedJobV1[] & {
-      escapedAdmission?: boolean;
-    };
-    Object.defineProperty(decorated, "escapedAdmission", {
-      configurable: true,
-      enumerable: true,
-      value: true,
-      writable: true,
-    });
-    let lengthDescriptorRead = false;
-    const arrayProxy = new Proxy(decorated, {
-      getOwnPropertyDescriptor(target, property) {
-        if (property === "length") lengthDescriptorRead = true;
-        return Reflect.getOwnPropertyDescriptor(target, property);
-      },
-      ownKeys(target) {
-        const keys = Reflect.ownKeys(target);
-        return lengthDescriptorRead
-          ? keys.filter((key) => key !== "escapedAdmission")
-          : keys;
-      },
-    });
-    expect(() => compile({ ...input, jobs: arrayProxy }))
-      .toThrow("contains unsupported fields");
-  });
+              const input = bundle();
+              const decorated = [...input.jobs] as GitHubActionsCompletedJobV1[] & {
+                escapedAdmission?: boolean;
+              };
+              Object.defineProperty(decorated, "escapedAdmission", {
+                configurable: true,
+                enumerable: true,
+                value: true,
+                writable: true,
+              });
+              let descriptorSnapshotTaken = false;
+              const arrayProxy = new Proxy(decorated, {
+                ownKeys(target) {
+                  const keys = Reflect.ownKeys(target);
+                  return descriptorSnapshotTaken
+                    ? keys.filter((key) => key !== "escapedAdmission")
+                    : keys;
+                },
+                getOwnPropertyDescriptor(target, property) {
+                  if (property === "length") descriptorSnapshotTaken = true;
+                  return Reflect.getOwnPropertyDescriptor(target, property);
+                },
+              });
+              expect(() => compile({ ...input, jobs: arrayProxy }))
+                .toThrow("contains unsupported fields");
+            });
 
-'''
+            test("rejects realistic long project keys", () => {
+              const secret = `sk-proj-${"A".repeat(24)}`;
+              expect(() => compile(bundle({
+                run: { ...bundle().run, conclusion: "failure" },
+                jobs: [
+                  job("browser-evidence", "success"),
+                  job("test", "failure", {
+                    steps: [step(1, secret, "failure")],
+                  }),
+                  job("runtime-parity", "success"),
+                  job("serial-full", "skipped"),
+                ],
+              }))).toThrow("GitHub Actions step name is invalid");
+            });
+
+          ''')
           tests = tests.replace(insert_marker, additions + insert_marker, 1)
-
-          long_secret_marker = '    expect((error as Error).message).not.toContain(secret);\n'
-          long_secret_addition = '''    const projectSecret = `sk-proj-${"A".repeat(24)}`;
-            expect(() => compile(bundle({
-              run: { ...bundle().run, conclusion: "failure" },
-              jobs: [
-                job("browser-evidence", "success"),
-                job("test", "failure", {
-                  steps: [step(1, projectSecret, "failure")],
-                }),
-                job("runtime-parity", "success"),
-                job("serial-full", "skipped"),
-              ],
-            }))).toThrow("GitHub Actions step name is invalid");
-'''
-          if tests.count(long_secret_marker) != 1:
-              raise SystemExit('credential control marker changed')
-          tests = tests.replace(
-              long_secret_marker,
-              long_secret_marker + long_secret_addition,
-              1,
-          )
           test_path.write_text(tests)
 
           docs_path = Path('docs/github-actions-ci-receipt-emitter.md')
@@ -455,7 +449,7 @@ jobs:
           docs = replace_once(
               docs,
               '`full_parallel` requires `test` and `runtime-parity`; `serial-full` remains skipped. `serial_full` is admitted only for `workflow_dispatch`, requires `serial-full`, and keeps both parallel jobs skipped. All profiles carry the same ordered six-command contract.\n',
-              '`full_parallel` requires the adjunct `browser-evidence` job beside `test` and `runtime-parity`; `serial-full` remains skipped. `serial_full` is admitted only for `workflow_dispatch`, requires `serial-full`, and keeps all three parallel jobs skipped. All profiles retain the same ordered six-command core contract. The three browser commands remain owned by `ci-browser-evidence-profile/v1`; this queue receipt records the adjunct job outcome but does not synthesize the separate success-only browser evidence receipt.\n',
+              '`full_parallel` requires the adjunct `browser-evidence` job beside `test` and `runtime-parity`; `serial-full` remains skipped. `serial_full` is admitted only for `workflow_dispatch`, requires `serial-full`, and keeps all three parallel jobs skipped. All profiles retain the same ordered six-command core contract. The browser commands remain owned by `ci-browser-evidence-profile/v1`; this queue receipt records the adjunct job outcome but does not synthesize the separate success-only browser evidence receipt.\n',
               'topology documentation',
           )
           docs = docs.replace(
