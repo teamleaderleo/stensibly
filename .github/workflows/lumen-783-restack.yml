@@ -1,4 +1,4 @@
-name: Restack signed Actions receipt compiler
+name: Repair and restack signed Actions receipt compiler
 
 on:
   push:
@@ -15,14 +15,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  restack:
+  repair-restack:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: tern/700-signed-actions-ci-receipts
-      - name: Merge current main and remove carrier
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply reviewed topology repair, merge main, and remove carrier
         shell: bash
         run: |
           set -euo pipefail
@@ -30,6 +31,36 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git merge --no-edit origin/main
+
+          git show 876a9c68e91a7094f067819a9a039547fdca5a9b:.github/workflows/plover-783-browser-receipt-repair.yml > /tmp/plover-783-carrier.yml
+          python3 - <<'PY'
+          from pathlib import Path
+
+          lines = Path('/tmp/plover-783-carrier.yml').read_text().splitlines()
+          start_marker = "          python3 - <<'PY'"
+          end_marker = "          PY"
+          start = lines.index(start_marker) + 1
+          end = lines.index(end_marker, start)
+          payload = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in lines[start:end]
+          ) + '\n'
+          Path('/tmp/plover-783-repair.py').write_text(payload)
+          PY
+          python3 /tmp/plover-783-repair.py
+
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-actions-ci-receipt.test.ts \
+            test/ci-queue-receipt-cancelled-before-start.test.ts
+
           git rm .github/workflows/lumen-783-restack.yml
-          git commit -m "Restack signed Actions receipt compiler on current main"
+          git add src/ci-queue-receipt.ts \
+            src/github-actions-ci-receipt-normalized.ts \
+            src/github-actions-ci-receipt.ts \
+            test/ci-queue-receipt-cancelled-before-start.test.ts \
+            test/github-actions-ci-receipt.test.ts \
+            docs/github-actions-ci-receipt-emitter.md
+          git diff --cached --check
+          git commit -m "Repair and restack signed Actions receipt compiler"
           git push origin HEAD:tern/700-signed-actions-ci-receipts
