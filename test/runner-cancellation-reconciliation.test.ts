@@ -58,10 +58,36 @@ function command(): RunnerCancellationCommandV1 {
   };
 }
 
+function cancellationObservation(
+  input: RunnerCancellationCommandV1,
+  reference: RunnerExternalReferenceV1 | null = null,
+): RunnerCancellationObservationV1 {
+  return {
+    version: 1,
+    commandId: input.commandId,
+    adapterId: input.adapterId,
+    adapterVersion: input.adapterVersion,
+    profileId: input.profileId,
+    runId: input.runId,
+    runGeneration: input.runGeneration,
+    leaseGeneration: input.leaseGeneration,
+    observedAt: cancellationObservedAt,
+    requestAccepted: true,
+    deliveryKnown: true,
+    remoteSettlementKnown: false,
+    reference,
+  };
+}
+
 class ReconciliationAdapter implements RunnerAdapterV1 {
   readonly descriptor: RunnerAdapterDescriptorV1;
 
-  constructor() {
+  constructor(
+    readonly cancellationHandler: (
+      input: RunnerCancellationCommandV1,
+    ) => Promise<RunnerCancellationObservationV1> = async (input) =>
+      cancellationObservation(input),
+  ) {
     this.descriptor = parseRunnerAdapterDescriptorV1({
       version: 1,
       adapterId,
@@ -113,34 +139,53 @@ class ReconciliationAdapter implements RunnerAdapterV1 {
   async requestCancellation(
     input: RunnerCancellationCommandV1,
   ): Promise<RunnerCancellationObservationV1> {
-    return {
-      version: 1,
-      commandId: input.commandId,
-      adapterId: input.adapterId,
-      adapterVersion: input.adapterVersion,
-      profileId: input.profileId,
-      runId: input.runId,
-      runGeneration: input.runGeneration,
-      leaseGeneration: input.leaseGeneration,
-      observedAt: cancellationObservedAt,
-      requestAccepted: true,
-      deliveryKnown: true,
-      remoteSettlementKnown: false,
-      reference: null,
-    };
+    return await this.cancellationHandler(input);
   }
 }
 
-async function originalResult(): Promise<RunnerCancellationSettlementResultV1> {
+async function coordinatorResult(
+  adapter: RunnerAdapterV1,
+): Promise<RunnerCancellationSettlementResultV1> {
   const clock = [executionAt, settledAt];
   const result = await new RunnerCancellationSettlementCoordinatorV1(
-    new ReconciliationAdapter(),
+    adapter,
     { version: 1, workspace: "default", project: "scrapbook" },
     command(),
     () => clock.shift()!,
   ).request();
   expect(clock).toEqual([]);
   return result;
+}
+
+async function originalResult(): Promise<RunnerCancellationSettlementResultV1> {
+  return await coordinatorResult(new ReconciliationAdapter());
+}
+
+async function adapterFailureResult(): Promise<RunnerCancellationSettlementResultV1> {
+  return await coordinatorResult(new ReconciliationAdapter(async () => {
+    throw new Error("bounded provider failure");
+  }));
+}
+
+async function originalResultWithReference(
+  createdAt: string,
+): Promise<RunnerCancellationSettlementResultV1> {
+  const reference: RunnerExternalReferenceV1 = {
+    version: 1,
+    kind: "provider_receipt",
+    adapterId,
+    externalId: "cancel-observation-receipt",
+    digest: defaultDigest,
+    uri: null,
+    generation: 1,
+    createdAt,
+    accessClass: "project",
+    containsPrivateContent: false,
+    containsCredentials: false,
+  };
+  return await coordinatorResult(new ReconciliationAdapter(async (input) =>
+    cancellationObservation(input, reference)
+  ));
 }
 
 function evidenceExternalId(
@@ -222,6 +267,32 @@ function refingerprint(
 ): void {
   const { resultFingerprint: _discarded, ...withoutFingerprint } = result;
   result.resultFingerprint = fingerprintCanonicalRequest(withoutFingerprint);
+}
+
+function hideUnknownFieldOnSecondOwnKeys<T extends object>(
+  target: T,
+  field: string,
+): T {
+  let ownKeysCalls = 0;
+  return new Proxy(target, {
+    ownKeys(current) {
+      ownKeysCalls += 1;
+      const keys = Reflect.ownKeys(current);
+      return ownKeysCalls === 1
+        ? keys
+        : keys.filter((key) => key !== field);
+    },
+  });
+}
+
+function addUnknownField<T extends object>(target: T): T {
+  Object.defineProperty(target, "escapedAdmission", {
+    configurable: true,
+    enumerable: true,
+    value: true,
+    writable: true,
+  });
+  return target;
 }
 
 describe("runner cancellation reconciliation", () => {
@@ -316,6 +387,44 @@ describe("runner cancellation reconciliation", () => {
     }
   });
 
+  test("accepts an adapter-failure result with no retained cancellation output", async () => {
+    const original = await adapterFailureResult();
+    expect(original).toMatchObject({
+      outcome: "adapter_failure",
+      cancellation: null,
+    });
+    expect(original.settlement.owners[0]?.outputFingerprint).toBeNull();
+
+    const result = reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original, { kind: "provider_unknown" }),
+    );
+    expect(result.outcome).toBe("still_reconciling");
+    expect(result.generationAdvance.allowed).toBe(false);
+  });
+
+  test("rejects adapter-failure results that retain cancellation evidence", async () => {
+    const failed = structuredClone(await adapterFailureResult());
+    const observed = await originalResult();
+    failed.cancellation = observed.cancellation;
+    refingerprint(failed);
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      failed,
+      evidence(failed),
+    )).toThrow("adapter failure cannot retain cancellation evidence");
+  });
+
+  test("replays identical reconciliation inputs deterministically", async () => {
+    const original = await originalResult();
+    const proof = evidence(original);
+    const first = reconcileRunnerCancellationSettlementV1(original, proof);
+    const second = reconcileRunnerCancellationSettlementV1(original, proof);
+
+    expect(second).toEqual(first);
+    expect(second.resultFingerprint).toBe(first.resultFingerprint);
+  });
+
   test("rejects altered top-level identity through exact nested binding", async () => {
     const original = await originalResult();
     const altered = structuredClone(original);
@@ -374,6 +483,28 @@ describe("runner cancellation reconciliation", () => {
     )).toThrow();
   });
 
+  test("rejects nested cancellation references before the request", async () => {
+    const original = await originalResultWithReference(
+      "2026-08-01T00:59:59.999Z",
+    );
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("outside request and observation bounds");
+  });
+
+  test("rejects a recomputed generation-advance mismatch", async () => {
+    const original = structuredClone(await originalResult());
+    original.generationAdvance.allowed = true;
+    refingerprint(original);
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("generation-advance decision does not match settlement");
+  });
+
   test("rejects original-result accessors without invoking them", async () => {
     const clean = await originalResult();
     const proof = evidence(clean);
@@ -413,6 +544,32 @@ describe("runner cancellation reconciliation", () => {
       }),
     )).toThrow("must contain only enumerable data properties");
     expect(getterCalls).toBe(0);
+  });
+
+  test("rejects an unknown original-result field hidden between key reads", async () => {
+    const clean = await originalResult();
+    const hostile = hideUnknownFieldOnSecondOwnKeys(
+      addUnknownField(structuredClone(clean)),
+      "escapedAdmission",
+    );
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      hostile,
+      evidence(clean),
+    )).toThrow("has unknown field escapedAdmission");
+  });
+
+  test("rejects an unknown evidence field hidden between key reads", async () => {
+    const original = await originalResult();
+    const hostile = hideUnknownFieldOnSecondOwnKeys(
+      addUnknownField(structuredClone(evidence(original))),
+      "escapedAdmission",
+    );
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      hostile,
+    )).toThrow("has unknown field escapedAdmission");
   });
 
   test("retains and rejects own __proto__ fields on prior results", async () => {
@@ -490,28 +647,6 @@ describe("runner cancellation reconciliation", () => {
     )).toThrow("not attributable to the run");
   });
 
-  test("rejects retained provider URIs and non-project receipt access", async () => {
-    const original = await originalResult();
-
-    expect(() => reconcileRunnerCancellationSettlementV1(
-      original,
-      evidence(original, {
-        reference: evidenceReference("provider_settled", {
-          uri: "https://provider.example/receipts/settlement-1",
-        }),
-      }),
-    )).toThrow("not attributable to the run");
-
-    for (const accessClass of ["private", "workspace"] as const) {
-      expect(() => reconcileRunnerCancellationSettlementV1(
-        original,
-        evidence(original, {
-          reference: evidenceReference("provider_settled", { accessClass }),
-        }),
-      )).toThrow("not attributable to the run");
-    }
-  });
-
   test("binds each provider receipt to its declared evidence kind", async () => {
     const original = await originalResult();
     expect(() => reconcileRunnerCancellationSettlementV1(
@@ -553,6 +688,28 @@ describe("runner cancellation reconciliation", () => {
     )).toThrow("provider evidence cannot contain a publication fence");
   });
 
+  test("rejects retained provider URIs and non-project receipt access", async () => {
+    const original = await originalResult();
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original, {
+        reference: evidenceReference("provider_settled", {
+          uri: "https://provider.example/receipts/settlement-1",
+        }),
+      }),
+    )).toThrow("not attributable to the run");
+
+    for (const accessClass of ["private", "workspace"] as const) {
+      expect(() => reconcileRunnerCancellationSettlementV1(
+        original,
+        evidence(original, {
+          reference: evidenceReference("provider_settled", { accessClass }),
+        }),
+      )).toThrow("not attributable to the run");
+    }
+  });
+
   test("rejects credential-shaped reconciliation identities", async () => {
     const original = await originalResult();
     expect(() => reconcileRunnerCancellationSettlementV1(
@@ -563,59 +720,27 @@ describe("runner cancellation reconciliation", () => {
     )).toThrow("reconciliation ID is invalid");
   });
 
-  test("rejects unknown prior-result fields hidden between descriptor and key reads", async () => {
-    const clean = await originalResult();
-    const target = structuredClone(clean) as RunnerCancellationSettlementResultV1 & {
-      escapedAdmission?: boolean;
-    };
-    Object.defineProperty(target, "escapedAdmission", {
-      configurable: true,
-      enumerable: true,
-      value: true,
-      writable: true,
-    });
-    let ownKeysCalls = 0;
+  test("rejects nested array entries hidden by changing proxy length", async () => {
+    const original = structuredClone(await originalResult());
+    const target = [{
+      ownerKey: "worker:extra:g1",
+      outputFingerprint: `sha256:${"e".repeat(64)}`,
+    }];
+    let lengthReads = 0;
     const hostile = new Proxy(target, {
-      ownKeys(current) {
-        ownKeysCalls += 1;
-        const keys = Reflect.ownKeys(current);
-        return ownKeysCalls === 1
-          ? keys
-          : keys.filter((key) => key !== "escapedAdmission");
+      get(current, property, receiver) {
+        if (property === "length") {
+          lengthReads += 1;
+          return lengthReads < 3 ? 1 : 0;
+        }
+        return Reflect.get(current, property, receiver);
       },
     });
-
-    expect(() => reconcileRunnerCancellationSettlementV1(
-      hostile,
-      evidence(clean),
-    )).toThrow("has unknown field escapedAdmission");
-  });
-
-  test("rejects unknown evidence fields hidden between descriptor and key reads", async () => {
-    const original = await originalResult();
-    const target = structuredClone(evidence(original)) as RunnerCancellationReconciliationEvidenceV1 & {
-      escapedAdmission?: boolean;
-    };
-    Object.defineProperty(target, "escapedAdmission", {
-      configurable: true,
-      enumerable: true,
-      value: true,
-      writable: true,
-    });
-    let ownKeysCalls = 0;
-    const hostile = new Proxy(target, {
-      ownKeys(current) {
-        ownKeysCalls += 1;
-        const keys = Reflect.ownKeys(current);
-        return ownKeysCalls === 1
-          ? keys
-          : keys.filter((key) => key !== "escapedAdmission");
-      },
-    });
+    (original.settlement as unknown as { successfulOutputs: unknown }).successfulOutputs = hostile;
 
     expect(() => reconcileRunnerCancellationSettlementV1(
       original,
-      hostile,
-    )).toThrow("has unknown field escapedAdmission");
+      evidence(original),
+    )).toThrow("outputs are not derived correctly");
   });
 });
