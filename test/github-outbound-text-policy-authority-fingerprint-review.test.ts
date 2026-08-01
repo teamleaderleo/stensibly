@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint.ts";
 import {
   evaluateGitHubOutboundText,
+  parseGitHubOutboundTextReceipt,
   type GitHubOutboundTextInput,
 } from "../src/github-outbound-text-policy.ts";
 
@@ -66,5 +67,42 @@ describe("GitHub outbound authority fingerprint binding", () => {
         input("other/project", fingerprint),
       )
     ).toThrow("authority fingerprint does not match");
+  });
+});
+
+describe("GitHub outbound destination field-set admission", () => {
+  test("rejects the receipt-only full name on evaluator input", () => {
+    const repositories = ["external/project"] as const;
+    const candidate = input(
+      repositories[0],
+      authorityFingerprint(3, repositories),
+    );
+
+    expect(() =>
+      evaluateGitHubOutboundText({
+        ...candidate,
+        destination: {
+          ...candidate.destination,
+          repositoryFullName: "teamleaderleo/stensibly",
+        },
+      })
+    ).toThrow("unknown field repositoryFullName");
+  });
+
+  test("rejects a parsed receipt whose destination omits its full name", () => {
+    const repositories = ["external/project"] as const;
+    const receipt = evaluateGitHubOutboundText(
+      input(
+        repositories[0],
+        authorityFingerprint(3, repositories),
+      ),
+    );
+    const altered = JSON.parse(JSON.stringify(receipt)) as Record<string, unknown>;
+    const destination = altered.destination as Record<string, unknown>;
+    delete destination.repositoryFullName;
+
+    expect(() => parseGitHubOutboundTextReceipt(altered)).toThrow(
+      "receipt destination fields are invalid",
+    );
   });
 });
