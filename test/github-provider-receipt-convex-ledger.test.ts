@@ -137,13 +137,18 @@ describe("Convex GitHub provider receipt store", () => {
     expect(getterCalls).toBe(0);
   });
 
-  test("rejects noncanonical project scope before any backend query", async () => {
+  test("rejects noncanonical workspace and project scope before backend use", async () => {
     const client = new FakeClient();
+    expect(() => new ConvexGitHubProviderReceiptStore({
+      client,
+      serviceSecret: "service-secret",
+      workspace: "Default",
+    })).toThrow("lowercase slug");
+
     const store = new ConvexGitHubProviderReceiptStore({
       client,
       serviceSecret: "service-secret",
     });
-
     await expect(store.getGitHubProviderReceipt(
       "Stensibly",
       "provider-receipt-1",
