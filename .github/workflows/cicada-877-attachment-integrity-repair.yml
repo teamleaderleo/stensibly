@@ -88,7 +88,8 @@ jobs:
               || value.source.contentSha256 !== contentSha256
               || value.source.path !== sourcePath
             ) return false;
-            const { snapshotSha256: _snapshotSha256, ...base } = value;
+            const base = { ...value };
+            delete base.snapshotSha256;
             if (fingerprintCanonicalRequest(base) !== snapshotSha256) return false;
             const target = canonicalRepository(repositoryFullName);
             return target !== null && value.contract.repositories.some((entry) =>
