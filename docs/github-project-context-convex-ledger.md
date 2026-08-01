@@ -27,5 +27,3 @@ History is bounded and ordered by acceptance time with deterministic record iden
 ## Boundary and recovery
 
 This slice adds no public MCP registration, provider fetch, webhook change, GitHub mutation, raw provider payload, credential, deployment, or migration that deletes prior data. New acceptance can be disabled while append-only rows remain available for bounded export or projection repair. Before downstream public dependence, recovery is one squash revert.
-
-<!-- loom-ci-trigger -->
