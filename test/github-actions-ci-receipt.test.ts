@@ -108,6 +108,8 @@ function compile(input: GitHubActionsCiReceiptBundleV1 = bundle()) {
 describe("signed GitHub Actions CI receipt compiler", () => {
   test("retains the complete pull-request browser topology and exact queue evidence", () => {
     const receipt = compile();
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(Object.isFrozen(receipt.jobs)).toBe(true);
     expect(receipt).toMatchObject({
       workflowRunId: 30638086970,
       workflowAttempt: 1,
@@ -133,8 +135,6 @@ describe("signed GitHub Actions CI receipt compiler", () => {
     ]);
     expect(receipt.jobs.find((entry) => entry.name === "browser-evidence"))
       .toMatchObject({ queuedAt: "2026-07-31T10:00:01.000Z", queueWaitMs: 29_000 });
-    expect(Object.isFrozen(receipt)).toBe(true);
-    expect(Object.isFrozen(receipt.jobs)).toBe(true);
   });
 
   test("requires every canonical browser-profile job", () => {

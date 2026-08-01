@@ -8,7 +8,22 @@ import type {
   CiTrustedClock,
 } from "./ci-queue-receipt.js";
 
-export * from "./github-actions-ci-receipt-core.js";
+export {
+  GITHUB_ACTIONS_CI_JOB_NAMES,
+  GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
+  GITHUB_ACTIONS_CI_VALIDATION_PROFILES,
+  GITHUB_ACTIONS_CI_WORKFLOW_NAME,
+  GITHUB_ACTIONS_CI_WORKFLOW_PATH,
+} from "./github-actions-ci-receipt-core.js";
+export type {
+  GitHubActionsCiReceiptBundleV1,
+  GitHubActionsCiValidationProfile,
+  GitHubActionsCompletedJobV1,
+  GitHubActionsCompletedRunV1,
+  GitHubActionsCompletedStepV1,
+  GitHubActionsDiagnosticsArtifactV1,
+  GitHubActionsRunPullRequestV1,
+} from "./github-actions-ci-receipt-core.js";
 
 const runJobCompatibility = Object.freeze({
   success: Object.freeze(["success", "neutral", "skipped"] as const),
@@ -43,5 +58,15 @@ export function compileGitHubActionsCiReceiptV1(
       );
     }
   }
-  return receipt;
+  return deepFreeze(structuredClone(receipt));
+}
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  Object.freeze(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(nested, seen);
+  }
+  return value;
 }
