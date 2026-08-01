@@ -14,6 +14,9 @@ import {
   findWorkspace,
   normalizeWorkspace,
   requireServiceSecret,
+  type ProjectId,
+  type QueryContext,
+  type WorkspaceId,
 } from "./lib/domain";
 import { mutation, query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
@@ -27,6 +30,12 @@ const reservationResult = v.object({
   outcome: reservationOutcome,
   receiptJson: v.string(),
 });
+
+interface ResolvedProject {
+  workspaceId: WorkspaceId;
+  projectId: ProjectId;
+  projectSlug: string;
+}
 
 export const reserve = mutation({
   args: {
@@ -225,8 +234,8 @@ function admitStoredReceipt(
     createdAt: number;
     updatedAt: number;
   },
-  workspaceId: unknown,
-  projectId: unknown,
+  workspaceId: WorkspaceId,
+  projectId: ProjectId,
   project: string,
 ): GitHubProviderReceipt {
   const receipt = receiptForProject(row.receiptJson, project);
@@ -251,31 +260,23 @@ function admitStoredReceipt(
 }
 
 async function resolveProject(
-  ctx: Parameters<typeof findWorkspace>[0],
+  ctx: QueryContext,
   workspaceInput: string,
   projectInput: string,
   required?: true,
-): Promise<{
-  workspaceId: unknown;
-  projectId: unknown;
-  projectSlug: string;
-}>;
+): Promise<ResolvedProject>;
 async function resolveProject(
-  ctx: Parameters<typeof findWorkspace>[0],
+  ctx: QueryContext,
   workspaceInput: string,
   projectInput: string,
   required: false,
-): Promise<{
-  workspaceId: unknown;
-  projectId: unknown;
-  projectSlug: string;
-} | null>;
+): Promise<ResolvedProject | null>;
 async function resolveProject(
-  ctx: Parameters<typeof findWorkspace>[0],
+  ctx: QueryContext,
   workspaceInput: string,
   projectInput: string,
   required = true,
-) {
+): Promise<ResolvedProject | null> {
   const workspaceSlug = normalizeWorkspace(workspaceInput);
   const workspace = await findWorkspace(ctx, workspaceSlug);
   if (!workspace) {
