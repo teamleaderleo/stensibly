@@ -1,288 +1,357 @@
-name: CI
+name: Finalize Actions provider request identity
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-  workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact commit SHA that this run must validate
-        required: true
-        type: string
-      validation_profile:
-        description: Validation topology for this exact revision
-        required: false
-        default: full_parallel
-        type: choice
-        options:
-          - full_parallel
-          - serial_full
 
 concurrency:
-  group: >-
-    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
-    format('pr-{0}', github.event.pull_request.number) ||
-    github.event_name == 'workflow_dispatch' &&
-    format('dispatch-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
-    format('push-{0}', github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: lark-798-provider-request-identity-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  browser-evidence:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Typecheck frontend browser evidence
-        run: |
-          set -o pipefail
-          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run frontend browser evidence
-        id: browser-test
-        run: |
-          set -o pipefail
-          bun run test:browser 2>&1 | tee browser-test-output.txt
-      - name: Verify frontend browser evidence artifacts
-        id: browser-artifacts
-        if: always() && steps.browser-test.outcome != 'skipped'
-        run: |
-          set -o pipefail
-          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
-      - name: Upload verified frontend browser evidence
-        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-browser-evidence-${{ github.sha }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: error
-          retention-days: 7
-
-  test:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ github.sha }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
-        run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run typecheck
-        run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee typecheck-output.txt
-      - name: Run Bun tests
-        run: |
-          set -o pipefail
-          bun run test 2>&1 | tee test-output.txt
-      - name: Run Convex tests
-        run: |
-          set -o pipefail
-          bun run test:convex 2>&1 | tee convex-test-output.txt
-      - name: Bundle Cloudflare Worker
-        run: |
-          set -o pipefail
-          bun run worker:check 2>&1 | tee worker-check-output.txt
-      - name: Upload failing diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics
-          path: |
-            typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-          if-no-files-found: ignore
-
-  runtime-parity:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run Bun, Node, and native workerd receiver checks
-        run: |
-          set -o pipefail
-          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
-      - name: Upload runtime parity diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-parity-diagnostics
-          path: runtime-parity-output.txt
-          if-no-files-found: ignore
-
-  serial-full:
-    needs: [browser-evidence, test, runtime-parity]
+  finalize:
     if: >-
-      ${{ always() &&
-      ((github.event_name == 'pull_request' &&
-      needs.browser-evidence.result == 'success' &&
-      needs.test.result == 'success' &&
-      needs.runtime-parity.result == 'success') ||
-      (github.event_name == 'workflow_dispatch' &&
-      inputs.validation_profile == 'serial_full')) }}
-    runs-on: ubuntu-latest
+      ${{ github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'lark/798-provider-request-identity' }}
+    runs-on: ubuntu-24.04
     env:
-      SERIAL_VALIDATION_SHA: >-
-        ${{ github.event_name == 'pull_request' &&
-        github.event.pull_request.head.sha || inputs.expected_sha }}
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      TARGET_BRANCH: lark/798-provider-request-identity
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.SERIAL_VALIDATION_SHA }}
-          persist-credentials: false
-      - name: Verify exact serial revision
+          ref: ${{ env.EXPECTED_HEAD }}
+          fetch-depth: 0
+      - name: Verify exact branch lease
+        shell: bash
         run: |
           set -euo pipefail
-          actual_sha="$(git rev-parse HEAD)"
-          if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
-            echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
-            exit 1
-          fi
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          git fetch origin main "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          test "$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")" = "${EXPECTED_HEAD}"
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
+      - name: Require provider request identity
+        shell: bash
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${SERIAL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies once
-        run: bun install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run serial full validation
-        id: serial-validation
-        run: |
-          set +e
-          status=0
-          run_gate() {
-            local label="$1"
-            local output="$2"
-            local -a pipeline_status
-            shift 2
-            echo "::group::${label}"
-            set -o pipefail
-            "$@" 2>&1 | tee "${output}"
-            pipeline_status=("${PIPESTATUS[@]}")
-            set +o pipefail
-            echo "::endgroup::"
-            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
-              status=1
-            fi
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label} marker changed: {count} matches")
+              return text.replace(old, new, 1)
+
+          source_path = Path("src/github-rest-actions-job-detail-adapter.ts")
+          source = source_path.read_text()
+          source = replace_once(
+              source,
+              '''interface JobObservation {
+  identity: Readonly<JobIdentity>;
+  steps: readonly Readonly<JobStep>[];
+  requestId?: string;
+}''',
+              '''interface JobObservation {
+  identity: Readonly<JobIdentity>;
+  steps: readonly Readonly<JobStep>[];
+  requestId: string;
+}''',
+              "job observation request identity",
+          )
+          source = replace_once(
+              source,
+              '''      return Object.freeze({
+        result,
+        ...(job.requestId ? { providerRequestId: job.requestId } : {}),
+      });''',
+              '''      return Object.freeze({
+        result,
+        providerRequestId: job.requestId,
+      });''',
+              "step receipt identity",
+          )
+          source = replace_once(
+              source,
+              '''    return Object.freeze({
+      result,
+      ...(logs.requestId ?? job.requestId
+        ? { providerRequestId: logs.requestId ?? job.requestId }
+        : {}),
+    });''',
+              '''    return Object.freeze({
+      result,
+      providerRequestId: logs.requestId,
+    });''',
+              "log receipt identity",
+          )
+          source = replace_once(
+              source,
+              '''    const steps = parseSteps(record.steps);
+    return Object.freeze({
+      identity: identityValue,
+      steps,
+      ...(requestIdentity(response.headers.get("x-github-request-id"))
+        ? {
+            requestId: requestIdentity(
+              response.headers.get("x-github-request-id"),
+            ),
           }
-          run_gate typecheck typecheck-output.txt bun run typecheck
-          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
-          run_gate bun-tests test-output.txt bun run test
-          run_gate browser-tests browser-test-output.txt bun run test:browser
-          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
-          run_gate convex-tests convex-test-output.txt bun run test:convex
-          run_gate worker-check worker-check-output.txt bun run worker:check
-          run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
-          exit "${status}"
-      - name: Upload verified frontend browser evidence
-        if: steps.serial-validation.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: error
-          retention-days: 7
-      - name: Upload serial full diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}
-          path: |
-            typecheck-output.txt
-            browser-typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-            runtime-parity-output.txt
-          if-no-files-found: ignore
+        : {}),
+    });''',
+              '''    const steps = parseSteps(record.steps);
+    const requestId = requestIdentity(
+      response.headers.get("x-github-request-id"),
+    );
+    return Object.freeze({
+      identity: identityValue,
+      steps,
+      requestId,
+    });''',
+              "job response identity",
+          )
+          source = replace_once(
+              source,
+              '''    text: string;
+    requestId?: string;
+  }>> {''',
+              '''    text: string;
+    requestId: string;
+  }>> {''',
+              "log observation identity type",
+          )
+          source = replace_once(
+              source,
+              '''    return Object.freeze({
+      byteCount: Buffer.byteLength(text, "utf8"),
+      lineCount: lines.length,
+      text,
+      ...(requestId ? { requestId } : {}),
+    });''',
+              '''    return Object.freeze({
+      byteCount: Buffer.byteLength(text, "utf8"),
+      lineCount: lines.length,
+      text,
+      requestId,
+    });''',
+              "log observation identity",
+          )
+          source = replace_once(
+              source,
+              '''function requestIdentity(value: string | null): string | undefined {
+  if (value === null) return undefined;
+  if (
+    !value''',
+              '''function requestIdentity(value: string | null): string {
+  if (value === null) {
+    throw invalid("GitHub delegated provider request identity was missing");
+  }
+  if (
+    !value''',
+              "mandatory request identity",
+          )
+          source_path.write_text(source)
+
+          steps_path = Path("test/github-rest-actions-job-steps-adapter.test.ts")
+          steps = steps_path.read_text()
+          steps = replace_once(
+              steps,
+              '''
+  test("rejects caller drift before token activity and provider identity drift before publication", async () => {
+''',
+              '''
+  test("rejects a successful step response without provider request identity", async () => {
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async () => Response.json(workflowJob()),
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_steps",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+  });
+
+  test("rejects caller drift before token activity and provider identity drift before publication", async () => {
+''',
+              "missing step request identity test",
+          )
+          steps = replace_once(
+              steps,
+              '''      return Response.json({
+        ...workflowJob(),
+        url: `https://api.github.test/repos/teamleaderleo/other/actions/jobs/${jobId}`,
+      });''',
+              '''      return Response.json({
+        ...workflowJob(),
+        url: `https://api.github.test/repos/teamleaderleo/other/actions/jobs/${jobId}`,
+      }, {
+        headers: { "x-github-request-id": "ACTIONS:JOB:IDENTITY" },
+      });''',
+              "identity drift request identity",
+          )
+          steps = replace_once(
+              steps,
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [workflowStep(1), workflowStep(1)],
+      }));''',
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [workflowStep(1), workflowStep(1)],
+      }, {
+        headers: { "x-github-request-id": "ACTIONS:JOB:DUPLICATE" },
+      }));''',
+              "duplicate step request identity",
+          )
+          steps = replace_once(
+              steps,
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [{
+          ...workflowStep(1),
+          started_at: "2026-08-01T14:03:00Z",
+          completed_at: "2026-08-01T14:02:00Z",
+        }],
+      }));''',
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [{
+          ...workflowStep(1),
+          started_at: "2026-08-01T14:03:00Z",
+          completed_at: "2026-08-01T14:02:00Z",
+        }],
+      }, {
+        headers: { "x-github-request-id": "ACTIONS:JOB:CHRONOLOGY" },
+      }));''',
+              "chronology request identity",
+          )
+          steps_path.write_text(steps)
+
+          logs_path = Path("test/github-rest-actions-job-logs-adapter.test.ts")
+          logs = logs_path.read_text()
+          logs = logs.replace(
+              'if (url === jobUrl) return Response.json(workflowJob());',
+              'if (url === jobUrl) return workflowJobResponse();',
+          )
+          logs = replace_once(
+              logs,
+              '''        headers: { location: "https://evil.example/private/job.log" },''',
+              '''        headers: {
+          location: "https://evil.example/private/job.log",
+          "x-github-request-id": "ACTIONS:JOB:UNTRUSTED",
+        },''',
+              "untrusted redirect request identity",
+          )
+          logs = replace_once(
+              logs,
+              '''            headers: { location: downloadUrl },''',
+              '''            headers: {
+              location: downloadUrl,
+              "x-github-request-id": "ACTIONS:JOB:FAILURE",
+            },''',
+              "download failure request identity",
+          )
+          logs = replace_once(
+              logs,
+              '''        headers: { location: downloadUrl },
+      });''',
+              '''        headers: {
+          location: downloadUrl,
+          "x-github-request-id": "ACTIONS:JOB:SCENARIO",
+        },
+      });''',
+              "scenario request identity",
+          )
+          logs = replace_once(
+              logs,
+              '''
+  test("rejects an untrusted redirect before the credential-free download", async () => {
+''',
+              '''
+  test("rejects a successful log redirect without provider request identity", async () => {
+    let calls = 0;
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async (input) => {
+        calls += 1;
+        const url = String(input);
+        if (url === jobUrl) return workflowJobResponse();
+        if (url === logsUrl) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: downloadUrl },
+          });
+        }
+        return new Response("must not download", {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      },
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_logs",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+    expect(calls).toBe(2);
+  });
+
+  test("rejects an untrusted redirect before the credential-free download", async () => {
+''',
+              "missing log request identity test",
+          )
+          logs = replace_once(
+              logs,
+              '''
+function workflowJob() {
+''',
+              '''
+function workflowJobResponse(): Response {
+  return Response.json(workflowJob(), {
+    headers: { "x-github-request-id": "ACTIONS:JOB:METADATA" },
+  });
+}
+
+function workflowJob() {
+''',
+              "workflow job response helper",
+          )
+          logs_path.write_text(logs)
+          PY
+      - name: Validate focused repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-actions-job-steps-adapter.test.ts \
+            test/github-rest-actions-job-logs-adapter.test.ts
+      - name: Restore canonical CI and publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout origin/main -- .github/workflows/ci.yml
+          rm -f .github/workflows/lark-798-provider-request-identity.yml
+          rm -f .github/lark-798-provider-request-identity.trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/ci.yml \
+            .github/workflows/lark-798-provider-request-identity.yml \
+            .github/lark-798-provider-request-identity.trigger \
+            src/github-rest-actions-job-detail-adapter.ts \
+            test/github-rest-actions-job-steps-adapter.test.ts \
+            test/github-rest-actions-job-logs-adapter.test.ts
+          git diff --cached --quiet && { echo "No repair delta produced" >&2; exit 1; }
+          git commit -m "Require Actions provider request identity"
+          git push origin "HEAD:refs/heads/${TARGET_BRANCH}" \
+            --force-with-lease="refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}"
