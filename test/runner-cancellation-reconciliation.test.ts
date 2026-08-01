@@ -562,4 +562,60 @@ describe("runner cancellation reconciliation", () => {
       }),
     )).toThrow("reconciliation ID is invalid");
   });
+
+  test("rejects unknown prior-result fields hidden between descriptor and key reads", async () => {
+    const clean = await originalResult();
+    const target = structuredClone(clean) as RunnerCancellationSettlementResultV1 & {
+      escapedAdmission?: boolean;
+    };
+    Object.defineProperty(target, "escapedAdmission", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    let ownKeysCalls = 0;
+    const hostile = new Proxy(target, {
+      ownKeys(current) {
+        ownKeysCalls += 1;
+        const keys = Reflect.ownKeys(current);
+        return ownKeysCalls === 1
+          ? keys
+          : keys.filter((key) => key !== "escapedAdmission");
+      },
+    });
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      hostile,
+      evidence(clean),
+    )).toThrow("has unknown field escapedAdmission");
+  });
+
+  test("rejects unknown evidence fields hidden between descriptor and key reads", async () => {
+    const original = await originalResult();
+    const target = structuredClone(evidence(original)) as RunnerCancellationReconciliationEvidenceV1 & {
+      escapedAdmission?: boolean;
+    };
+    Object.defineProperty(target, "escapedAdmission", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    let ownKeysCalls = 0;
+    const hostile = new Proxy(target, {
+      ownKeys(current) {
+        ownKeysCalls += 1;
+        const keys = Reflect.ownKeys(current);
+        return ownKeysCalls === 1
+          ? keys
+          : keys.filter((key) => key !== "escapedAdmission");
+      },
+    });
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      hostile,
+    )).toThrow("has unknown field escapedAdmission");
+  });
 });
