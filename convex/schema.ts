@@ -127,7 +127,7 @@ export default defineSchema({
     slug: v.string(),
     name: v.string(),
     createdAt: v.number(),
-    updatedAt: v.numbr(),
+    updatedAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
     .index("by_workspace_slug", ["workspaceId", "slug"]),
@@ -185,7 +185,7 @@ export default defineSchema({
     .index("by_project_issue_revision", ["projectId", "issueExternalId", "sourceRevision"])
     .index("by_project_issue_current", ["projectId", "issueExternalId", "isCurrent"])
     .index("by_project_current_issue", ["projectId", "isCurrent", "issueExternalId"])
-    .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt", "externalId"]),
+    .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt"]),
 
   actors: defineTable({
     workspaceId: v.id("workspaces"),
@@ -263,106 +263,66 @@ export default defineSchema({
     .index("by_external_id", ["externalId"])
     .index("by_expiry", ["expiresAt"]),
 
-  oauthAuthorizationCodes: defineTable({
+  mcpOAuthClients: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
-    clientId: v.id("oauthClients"),
-    accountId: v.id("accounts"),
-    redirectUri: v.string(),
-    scopes: v.array(mcpOAuthScope),
-    codeChallenge: v.string(),
-    codeChallengeMethod: v.literal("s256"),
-    createdAt: v.number(),
-    expiresAt: v.number(),
-    consumedAt: v.optional(v.number()),
-  })
-    .index("by_external_id", ["externalId"])
-    .index("by_expiry", ["expiresAt"]),
-
-  oauthTokens: defineTable({
-    workspaceId: v.id("workspaces"),
-    externalId: v.string(),
-    clientId: v.id("oauthClients"),
-    accountId: v.id("accounts"),
-    type: v.union(v.literal("access"), v.literal("refresh")),
-    scopes: v.array(mcpOAuthScope),
-    parentId: v.optional(v.id("oauthTokens")),
-    chainRootId: v.id("oauthTokens"),
-    familyId: v.id("oauthTokens"),
-    generation: v.number(),
-    rotatedFromId: v.optional(v.id("oauthTokens")),
-    grantedAt: v.number(),
-    createdAt: v.number(),
-    expiresAt: v.number(),
-    consumedAt: v.optional(v.number()),
-    revokedAt: v.optional(v.number()),
-    replacedById: v.optional(v.id("oauthTokens")),
-  })
-    .index("by_external_id", ["externalId"])
-    .index("by_client_account_type", ["clientId", "accountId", "type", "createdAt"])
-    .index("by_account_type", ["accountId", "type", "createdAt"])
-    .index("by_family_generation", ["familyId", "generation"])
-    .index("by_parent_generation", ["parentId", "generation"]),
-
-  oauthClients: defineTable({
-    workspaceId: v.id("workspaces"),
-    externalId: v.string(),
+    clientName: v.string(),
     redirectUris: v.array(v.string()),
+    tokenEndpointAuthMethod: v.literal("none"),
+    grantTypes: v.array(v.string()),
+    responseTypes: v.array(v.string()),
+    lifecycleState: v.optional(v.union(v.literal("unused"), v.literal("used"))),
+    unusedExpiresAt: v.optional(v.number()),
+    firstUsedAt: v.optional(v.number()),
+    cleanupScheduledAt: v.optional(v.number()),
+    cleanupScheduleGeneration: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-    revokedAt: v.optional(v.number()),
   })
     .index("by_external_id", ["externalId"])
-    .index("by_workspace_created", ["workspaceId", "createdAt"]),
+    .index("by_workspace_created", ["workspaceId", "createdAt"])
+    .index("by_workspace_lifecycle_expiry", ["workspaceId", "lifecycleState", "unusedExpiresAt"]),
 
-  oauthClientRegistrationEvents: defineTable({
-    workspaceId: v.id("workspaces"),
-    clientId: v.id("oauthClients"),
-    externalId: v.string(),
-    fingerprint: v.string(),
-    protocolVersion: v.string(),
-    redirectUris: v.array(v.string()),
-    clientName: v.optional(v.string()),
-    createdAt: v.number(),
-  })
-    .index("by_external_id", ["externalId"])
-    .index("by_workspace_fingerprint", ["workspaceId", "fingerprint"]),
-
-  personalAccessTokens : defineTable({
+  mcpOAuthCodes: defineTable({
     workspaceId: v.id("workspaces"),
     accountId: v.id("accounts"),
     externalId: v.string(),
-    name: v.string(),
     secretHash: v.string(),
-    scopes: v.array(tokenScope),
-    projects: v.optional(v.array(v.string())),
+    clientExternalId: v.string(),
+    redirectUri: v.string(),
+    codeChallenge: v.string(),
+    scopes: v.array(mcpOAuthScope),
+    resource: v.string(),
     createdAt: v.number(),
-    revokedAt: v.optional(v.number()),
+    expiresAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
-    .index("by_account_created", ["accountId", "createdAt"]),
+    .index("by_expiry", ["expiresAt"])
+    .index("by_workspace_client_created", ["workspaceId", "clientExternalId", "createdAt"]),
 
-  accountTokenBudgets: defineTable({
+  mcpOAuthRefreshTokens: defineTable({
     workspaceId: v.id("workspaces"),
     accountId: v.id("accounts"),
-    monthKey: v.string(),
-    executionTokenLimit: v.number(),
-    executionTokenUsed: v.number(),
-    commitTokenLimit: v.number(),
-    commitTokenUsed: v.number(),
+    externalId: v.string(),
+    familyExternalId: v.string(),
+    familyExpiresAt: v.optional(v.number()),
+    cleanupScheduledAt: v.optional(v.number()),
+    cleanupScheduleGeneration: v.optional(v.number()),
+    secretHash: v.string(),
+    clientExternalId: v.string(),
+    scopes: v.array(mcpOAuthScope),
+    resource: v.string(),
     createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index("by_account_month", ["accountId", "monthKey"]),
-
-  workspaceAccountAssignments: defineTable({
-    workspaceId: v.id("workspaces"),
-    accountId: v.id("accounts"),
-    projects: v.optional(v.array(v.string()),
-    policyOverrides: v.optional(v.any()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
     revokedAt: v.optional(v.number()),
-  }).index("by_workspace_account", ["workspaceId", "accountId"]),
+    rotatedToExternalId: v.optional(v.string()),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_family_created", ["familyExternalId", "createdAt"])
+    .index("by_workspace_family_created", ["workspaceId", "familyExternalId", "createdAt"])
+    .index("by_workspace_client_created", ["workspaceId", "clientExternalId", "createdAt"])
+    .index("by_expiry", ["expiresAt"]),
 
   items: defineTable({
     workspaceId: v.id("workspaces"),
@@ -370,59 +330,87 @@ export default defineSchema({
     externalId: v.string(),
     kind: itemKind,
     title: v.string(),
+    summary: v.optional(v.string()),
     status: itemStatus,
     priority: v.number(),
-    body: v.string(),
-    actorId: v.id("actors"),
-    actorExternalId: v.string(),
-    generation: v.number(),
-    leaseGeneration: v.optional(v.number()),
-    leaseOwnerExternalId: v.optional(v.string()),
-    leaseExpiresAt: v.optional(v.number()),
-    checkpoint: v.optional(v.string()),
-    result: v.optional(v.any()),
-    endedAt: v.optional(v.number()),
-    continuationRef: v.optional(v.string()),
+    nextAction: v.optional(v.string()),
+    claimedByActorId: v.optional(v.id("actors")),
+    claimedByExternalId: v.optional(v.string()),
+    claimExpiresAt: v.optional(v.number()),
+    claimGeneration: v.number(),
+    version: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_external_id", ["externalId"])
-    .index("by_project_status", ["projectId", "status", "priority", "createdAt"])
-    .index("by_workspace_status", ["workspaceId", "status", "priority", "createdAt"])
-    .index("by_project_updated", ["projectId", "updatedAt"]),
+    .index("by_workspace_external", ["workspaceId", "externalId"])
+    .index("by_project_status", ["projectId", "status", "updatedAt"])
+    .index("by_workspace_status", ["workspaceId", "status", "updatedAt"])
+    .index("by_claim_expiry", ["status", "claimExpiresAt"])
+    .index("by_actor_status", ["claimedByActorId", "status", "updatedAt"]),
 
   events: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
+    itemId: v.id("items"),
     externalId: v.string(),
-    itemId: v.optional(v.id("items")),
-    itemExternalId: v.optional(v.string()),
-    actorId: v.id("actors"),
-    actorExternalId: v.string(),
+    actorId: v.optional(v.id("actors")),
+    actorExternalId: v.optional(v.string()),
     type: v.string(),
-    data: v.any(),
+    payload: v.any(),
+    idempotencyKey: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
+    .index("by_item_created", ["itemId", "createdAt"])
+    .index("by_item_type_created", ["itemId", "type", "createdAt"])
     .index("by_project_created", ["projectId", "createdAt"])
-    .index("by_item_created", ["itemId", "createdAt"]),
+    .index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 
   artifacts: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
+    itemId: v.id("items"),
     externalId: v.string(),
-    itemId: v.optional(v.id("items")),
-    itemExternalId: v.optional(v.string()),
+    actorId: v.id("actors"),
+    actorExternalId: v.string(),
     kind: artifactKind,
+    label: v.string(),
     uri: v.string(),
-    digest: v.optional(v.string()),
-    metadata: v.optional(v.any()),
+    mimeType: v.optional(v.string()),
+    metadata: v.any(),
     createdAt: v.number(),
   })
     .index("by_external_id", ["externalId"])
-    .index("by_item_created", ["itemId", "createdAt"]),
+    .index("by_item_created", ["itemId", "createdAt"])
+    .index("by_project_created", ["projectId", "createdAt"]),
 
   runs: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    itemId: v.id("items"),
+    externalId: v.string(),
+    actorId: v.id("actors"),
+    actorExternalId: v.string(),
+    harness: v.string(),
+    model: v.optional(v.string()),
+    externalRunId: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    branch: v.optional(v.string()),
+    worktree: v.optional(v.string()),
+    status: runStatus,
+    childAgentCount: v.optional(v.number()),
+    toolCallCount: v.optional(v.number()),
+    startedAt: v.number(),
+    lastHeartbeatAt: v.number(),
+    endedAt: v.optional(v.number()),
+    outcome: v.optional(v.string()),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_item_status", ["itemId", "status", "startedAt"])
+    .index("by_project_status", ["projectId", "status", "lastHeartbeatAt"])
+    .index("by_actor_status", ["actorId", "status", "lastHeartbeatAt"]),
+
+  queuedRuns: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
     itemId: v.id("items"),
@@ -521,7 +509,7 @@ export default defineSchema({
     idempotencyKey: v.string(),
     request: v.any(),
     result: v.any(),
-    createdAt: v.numer(),
+    createdAt: v.number(),
   }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 
   completionContinuationCommands: defineTable({
@@ -531,7 +519,7 @@ export default defineSchema({
     idempotencyKey: v.string(),
     request: v.any(),
     result: v.any(),
-    createdAt: v.numer(),
+    createdAt: v.number(),
   }).index("by_workspace_idempotency", ["workspaceId", "idempotencyKey"]),
 
   providerCapacityObservations: defineTable({
@@ -602,7 +590,7 @@ export default defineSchema({
     name: v.string(),
     secretHash: v.string(),
     scopes: v.array(tokenScope),
-    projects: v.optional(v.array(v.string()),
+    projects: v.optional(v.array(v.string())),
     createdAt: v.number(),
     revokedAt: v.optional(v.number()),
   })
