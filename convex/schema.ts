@@ -187,6 +187,32 @@ export default defineSchema({
     .index("by_project_current_issue", ["projectId", "isCurrent", "issueExternalId"])
     .index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt", "externalId"]),
 
+  githubProviderReceipts: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    idempotencyKey: v.string(),
+    repositoryFullName: v.string(),
+    operation: v.string(),
+    actorId: v.string(),
+    clientId: v.string(),
+    parametersSha256: v.string(),
+    state: v.union(
+      v.literal("reserved"),
+      v.literal("succeeded"),
+      v.literal("rejected"),
+      v.literal("stale"),
+      v.literal("pending_reconciliation"),
+      v.literal("reconciled"),
+    ),
+    receiptJson: v.string(),
+    receiptSha256: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_idempotency", ["projectId", "idempotencyKey"])
+    .index("by_project_external", ["projectId", "externalId"]),
+
   actors: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
