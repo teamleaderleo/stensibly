@@ -21,7 +21,7 @@ import {
   stableJson,
 } from "./github-provider-validation.js";
 import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";
-import { GitHubRestPullRequestDiffAdapter } from "./github-rest-pull-request-diff-adapter.js";
+import { GitHubRestPullRequestReviewThreadAdapter } from "./github-rest-pull-request-review-thread-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   projectAttachmentLedger,
@@ -33,6 +33,7 @@ export const hostedGitHubDelegatedReadTools = Object.freeze([
   "fetch_file",
   "get_pr_info",
   "get_pr_diff",
+  "list_pull_request_review_threads",
   "fetch_commit_workflow_runs",
   "fetch_workflow_run_jobs",
 ] as const);
@@ -74,7 +75,7 @@ const actionsTools = new Set<string>([
 ]);
 
 /**
- * Mounts a private six-tool delegated-read service when the explicit hosted
+ * Mounts a private seven-tool delegated-read service when the explicit hosted
  * flag and the complete GitHub App configuration are present. Public MCP
  * dispatch and discovery remain separately controlled.
  */
@@ -120,7 +121,9 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
   };
-  const pullRequestAdapter = new GitHubRestPullRequestDiffAdapter(adapterOptions);
+  const pullRequestAdapter = new GitHubRestPullRequestReviewThreadAdapter(
+    adapterOptions,
+  );
   const actionsAdapter = new GitHubRestActionsRunAdapter(adapterOptions);
   const adapter: GitHubDelegatedReadAdapter = Object.freeze({
     callReadTool: (
