@@ -68,6 +68,7 @@ export function compileGitHubActionsCiReceiptV1(
 
 function snapshotInput(input: unknown): unknown {
   const active = new WeakSet<object>();
+  const completed = new WeakMap<object, object>();
   let nodes = 0;
 
   const copyDescriptor = (
@@ -87,6 +88,8 @@ function snapshotInput(input: unknown): unknown {
       throw new RangeError("GitHub Actions CI receipt bundle exceeds snapshot limits");
     }
     if (value === null || typeof value !== "object") return value;
+    const existing = completed.get(value);
+    if (existing !== undefined) return existing;
     if (active.has(value)) {
       throw new RangeError("GitHub Actions CI receipt bundle must not contain cycles");
     }
@@ -126,6 +129,7 @@ function snapshotInput(input: unknown): unknown {
         }
         Object.defineProperty(output, "length", lengthDescriptor);
         Object.freeze(output);
+        completed.set(value, output);
         return output;
       }
 
@@ -134,6 +138,7 @@ function snapshotInput(input: unknown): unknown {
         Object.defineProperty(output, key, copyDescriptor(descriptors[key]!, depth));
       }
       Object.freeze(output);
+      completed.set(value, output);
       return output;
     } finally {
       active.delete(value);
