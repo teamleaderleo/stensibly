@@ -166,7 +166,7 @@ describe("private hosted GitHub delegated pull request reads", () => {
     expect(serialized).not.toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
   });
 
-  test("keeps every remaining delegated contract outside private authority", async () => {
+  test("keeps combined-status and remaining delegated contracts outside private authority", async () => {
     let externalCalls = 0;
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
       fakeLedger(),
@@ -182,8 +182,8 @@ describe("private hosted GitHub delegated pull request reads", () => {
 
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      tool: "list_pull_request_review_threads",
-      arguments: { pr_number: pullRequestNumber },
+      tool: "get_commit_combined_status",
+      arguments: { commit_sha: "a".repeat(40) },
     })).rejects.toThrow("authority denied");
     expect(externalCalls).toBe(0);
   });
