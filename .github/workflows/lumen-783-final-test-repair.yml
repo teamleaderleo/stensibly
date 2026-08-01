@@ -50,9 +50,7 @@ jobs:
           if export_old not in text:
               raise SystemExit("wrapper export insertion point moved")
           text = text.replace(export_old, export_new, 1)
-          old = '''  return receipt;
-          }
-          '''
+          old = "  return receipt;\n}\n"
           new = '''  return deepFreeze(structuredClone(receipt));
           }
 
@@ -145,25 +143,18 @@ jobs:
 
           test = Path("test/github-actions-ci-receipt.test.ts")
           text = test.read_text()
-          old = '''    const receipt = compile();
-            expect(receipt).toMatchObject({
-          '''
-          new = '''    const receipt = compile();
-            expect(Object.isFrozen(receipt)).toBe(true);
-            expect(Object.isFrozen(receipt.jobs)).toBe(true);
-            expect(receipt).toMatchObject({
-          '''
-          if old not in text:
-              raise SystemExit("freeze assertion insertion point moved")
-          text = text.replace(old, new, 1)
-          old = '''    expect(Object.isFrozen(receipt)).toBe(true);
-            expect(Object.isFrozen(receipt.jobs)).toBe(true);
-          '''
-          if text.count(old) != 2:
+          needle = "    const receipt = compile();\n"
+          assertions = (
+              "    expect(Object.isFrozen(receipt)).toBe(true);\n"
+              "    expect(Object.isFrozen(receipt.jobs)).toBe(true);\n"
+          )
+          if text.count(needle) != 1:
+              raise SystemExit("receipt declaration count changed")
+          text = text.replace(needle, needle + assertions, 1)
+          if text.count(assertions) != 2:
               raise SystemExit("freeze assertion count changed")
-          first = text.find(old)
-          second = text.find(old, first + 1)
-          text = text[:second] + text[second + len(old):]
+          last = text.rfind(assertions)
+          text = text[:last] + text[last + len(assertions):]
           test.write_text(text)
           PY
 
