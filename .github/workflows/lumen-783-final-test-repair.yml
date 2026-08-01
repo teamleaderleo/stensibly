@@ -30,6 +30,26 @@ jobs:
 
           wrapper = Path("src/github-actions-ci-receipt.ts")
           text = wrapper.read_text()
+          export_old = 'export * from "./github-actions-ci-receipt-core.js";'
+          export_new = '''export {
+            GITHUB_ACTIONS_CI_JOB_NAMES,
+            GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
+            GITHUB_ACTIONS_CI_VALIDATION_PROFILES,
+            GITHUB_ACTIONS_CI_WORKFLOW_NAME,
+            GITHUB_ACTIONS_CI_WORKFLOW_PATH,
+          } from "./github-actions-ci-receipt-core.js";
+          export type {
+            GitHubActionsCiReceiptBundleV1,
+            GitHubActionsCiValidationProfile,
+            GitHubActionsCompletedJobV1,
+            GitHubActionsCompletedRunV1,
+            GitHubActionsCompletedStepV1,
+            GitHubActionsDiagnosticsArtifactV1,
+            GitHubActionsRunPullRequestV1,
+          } from "./github-actions-ci-receipt-core.js";'''
+          if export_old not in text:
+              raise SystemExit("wrapper export insertion point moved")
+          text = text.replace(export_old, export_new, 1)
           old = '''  return receipt;
           }
           '''
