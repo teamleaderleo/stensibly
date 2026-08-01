@@ -16,7 +16,7 @@ jobs:
         with:
           ref: lumen/783-final-test-repair
       - uses: oven-sh/setup-bun@v2
-      - name: Inspect compiled result inside Bun test
+      - name: Compare wrapper and test references
         shell: bash
         run: |
           set -euo pipefail
@@ -48,6 +48,7 @@ jobs:
           text = text.replace(
               '  return receipt;\n}',
               '''  const frozen = deepFreeze(structuredClone(receipt));
+            (globalThis as Record<string, unknown>).__lumenFrozenReceipt = frozen;
             console.log("WRAPPER_FROZEN=" + Object.isFrozen(frozen));
             return frozen;
           }
@@ -67,7 +68,10 @@ jobs:
           text = test.read_text()
           text = text.replace(
               '    expect(Object.isFrozen(receipt)).toBe(true);',
-              '    console.log("TEST_FROZEN=" + Object.isFrozen(receipt));\n    console.log("TEST_COMPILER=" + compileGitHubActionsCiReceiptV1.toString());\n    expect(Object.isFrozen(receipt)).toBe(true);',
+              '''    console.log("TEST_FROZEN=" + Object.isFrozen(receipt));
+            console.log("TEST_SANITY=" + Object.isFrozen(Object.freeze({ probe: true })));
+            console.log("TEST_SAME=" + (receipt === (globalThis as Record<string, unknown>).__lumenFrozenReceipt));
+            expect(Object.isFrozen(receipt)).toBe(true);''',
               1,
           )
           test.write_text(text)
