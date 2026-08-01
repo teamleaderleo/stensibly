@@ -200,7 +200,7 @@ describe("private hosted GitHub review-thread delegated reads", () => {
       ...callBase(),
       tool: "add_review_to_pr",
       arguments: { pr_number: pullRequestNumber, action: "APPROVE" },
-    })).rejects.toThrow("authority denied");
+    })).rejects.toThrow("outside guarded delegated reads");
     expect(externalCalls).toBe(0);
   });
 });
