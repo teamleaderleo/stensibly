@@ -1,0 +1,338 @@
+name: Rook 853 proxy snapshot repair
+
+on:
+  push:
+    branches:
+      - rook/853-proxy-snapshot-repair
+    paths:
+      - .github/workflows/rook-853-proxy-snapshot-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-853-proxy-snapshot-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: rook/853-proxy-snapshot-repair
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Snapshot synchronization admission descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label} changed')
+              return text.replace(old, new, 1)
+
+          state_path = Path('src/synchronization-state.ts')
+          state = state_path.read_text()
+          old_state_helpers = '''function exactRecord(
+            value: unknown,
+            fields: readonly string[],
+            label: string,
+          ): Record<string, unknown> {
+            if (typeof value !== "object" || value === null || Array.isArray(value)) {
+              throw new TypeError(`${label} must be a plain object`);
+            }
+            const prototype = Object.getPrototypeOf(value);
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new TypeError(`${label} must use a plain or null prototype`);
+            }
+            if (Object.getOwnPropertySymbols(value).length !== 0) {
+              throw new TypeError(`${label} must not contain symbol keys`);
+            }
+            const names = Object.getOwnPropertyNames(value);
+            if (names.length !== fields.length || fields.some((field) => !names.includes(field))) {
+              throw new TypeError(`${label} fields were invalid`);
+            }
+            for (const field of fields) {
+              const descriptor = Object.getOwnPropertyDescriptor(value, field);
+              if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} fields must be enumerable data properties`);
+              }
+            }
+            return value as Record<string, unknown>;
+          }
+
+          function denseArray(value: unknown, maximum: number, label: string): unknown[] {
+            if (!Array.isArray(value) || value.length > maximum) {
+              throw new TypeError(`${label} must be a bounded array`);
+            }
+            if (Object.getPrototypeOf(value) !== Array.prototype) {
+              throw new TypeError(`${label} must use the ordinary array prototype`);
+            }
+            if (Object.getOwnPropertySymbols(value).length !== 0) {
+              throw new TypeError(`${label} must not contain symbol keys`);
+            }
+            const names = Object.getOwnPropertyNames(value);
+            if (
+              names.length !== value.length + 1
+              || names[names.length - 1] !== "length"
+              || names.slice(0, -1).some((name, index) => name !== String(index))
+            ) {
+              throw new TypeError(`${label} must be dense and undecorated`);
+            }
+            for (let index = 0; index < value.length; index += 1) {
+              const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} entries must be enumerable data properties`);
+              }
+            }
+            const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            if (!lengthDescriptor || !("value" in lengthDescriptor) || lengthDescriptor.enumerable) {
+              throw new TypeError(`${label} length must be a non-enumerable data property`);
+            }
+            return value;
+          }
+          '''
+          new_state_helpers = '''function exactRecord(
+            value: unknown,
+            fields: readonly string[],
+            label: string,
+          ): Record<string, unknown> {
+            if (typeof value !== "object" || value === null || Array.isArray(value)) {
+              throw new TypeError(`${label} must be a plain object`);
+            }
+            const prototype = Object.getPrototypeOf(value);
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new TypeError(`${label} must use a plain or null prototype`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const keys = Reflect.ownKeys(descriptors);
+            if (keys.some((key) => typeof key !== "string")) {
+              throw new TypeError(`${label} must not contain symbol keys`);
+            }
+            const names = keys as string[];
+            if (names.length !== fields.length || fields.some((field) => !names.includes(field))) {
+              throw new TypeError(`${label} fields were invalid`);
+            }
+            const snapshot = Object.create(null) as Record<string, unknown>;
+            for (const field of fields) {
+              const descriptor = descriptors[field];
+              if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} fields must be enumerable data properties`);
+              }
+              snapshot[field] = descriptor.value;
+            }
+            return Object.freeze(snapshot);
+          }
+
+          function denseArray(value: unknown, maximum: number, label: string): unknown[] {
+            if (!Array.isArray(value)) {
+              throw new TypeError(`${label} must be a bounded array`);
+            }
+            if (Object.getPrototypeOf(value) !== Array.prototype) {
+              throw new TypeError(`${label} must use the ordinary array prototype`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const keys = Reflect.ownKeys(descriptors);
+            if (keys.some((key) => typeof key !== "string")) {
+              throw new TypeError(`${label} must not contain symbol keys`);
+            }
+            const lengthDescriptor = descriptors.length;
+            if (
+              !lengthDescriptor
+              || !("value" in lengthDescriptor)
+              || lengthDescriptor.enumerable
+              || !Number.isSafeInteger(lengthDescriptor.value)
+              || lengthDescriptor.value < 0
+              || lengthDescriptor.value > maximum
+            ) {
+              throw new TypeError(`${label} must be a bounded array`);
+            }
+            const length = lengthDescriptor.value as number;
+            const names = keys as string[];
+            if (
+              names.length !== length + 1
+              || names[names.length - 1] !== "length"
+              || names.slice(0, -1).some((name, index) => name !== String(index))
+            ) {
+              throw new TypeError(`${label} must be dense and undecorated`);
+            }
+            const snapshot = Array.from({ length }, (_, index) => {
+              const descriptor = descriptors[String(index)];
+              if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} entries must be enumerable data properties`);
+              }
+              return descriptor.value;
+            });
+            return Object.freeze(snapshot);
+          }
+          '''
+          state = replace_once(
+              state,
+              old_state_helpers,
+              new_state_helpers,
+              'low-level admission helpers',
+          )
+          state_path.write_text(state)
+
+          binding_path = Path('src/synchronization-subject-binding.ts')
+          binding = binding_path.read_text()
+          binding = replace_once(
+              binding,
+              '''const inputFields = Object.freeze([
+            "schemaVersion",
+            "policyVersion",
+            "evaluatedAt",
+            "subject",
+            "source",
+            "evidence",
+            "operation",
+            "authority",
+            "coordination",
+            "declaredConflicts",
+          ]);
+
+          const sourceFields''',
+              '''const inputFields = Object.freeze([
+            "schemaVersion",
+            "policyVersion",
+            "evaluatedAt",
+            "subject",
+            "source",
+            "evidence",
+            "operation",
+            "authority",
+            "coordination",
+            "declaredConflicts",
+          ]);
+          const subjectFields = Object.freeze([
+            "owner",
+            "repository",
+            "kind",
+            "id",
+            "revision",
+          ]);
+
+          const sourceFields''',
+              'subject field declaration',
+          )
+          binding = replace_once(
+              binding,
+              '''  const record = exactRecord(input, inputFields, "Subject-bound synchronization input");
+            const subjectFingerprint = fingerprintSynchronizationSubject(record.subject);
+            const baseInput: SynchronizationCompilerInputV1 = {''',
+              '''  const record = exactRecord(input, inputFields, "Subject-bound synchronization input");
+            const admittedSubject = exactRecord(
+              record.subject,
+              subjectFields,
+              "Synchronization subject",
+            );
+            const subjectFingerprint = fingerprintSynchronizationSubject(admittedSubject);
+            const baseInput: SynchronizationCompilerInputV1 = {''',
+              'subject snapshot admission',
+          )
+          binding = replace_once(
+              binding,
+              '    subject: record.subject as SynchronizationSubjectV1,\n',
+              '    subject: admittedSubject as unknown as SynchronizationSubjectV1,\n',
+              'subject snapshot reuse',
+          )
+          old_binding_exact = '''function exactRecord(
+            value: unknown,
+            fields: readonly string[],
+            label: string,
+          ): Record<string, unknown> {
+            if (typeof value !== "object" || value === null || Array.isArray(value)) {
+              throw new TypeError(`${label} must be a plain object`);
+            }
+            const prototype = Object.getPrototypeOf(value);
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new TypeError(`${label} must use a plain or null prototype`);
+            }
+            if (Object.getOwnPropertySymbols(value).length !== 0) {
+              throw new TypeError(`${label} must not contain symbol keys`);
+            }
+            const names = Object.getOwnPropertyNames(value);
+            if (names.length !== fields.length || fields.some((field) => !names.includes(field))) {
+              throw new TypeError(`${label} fields were invalid`);
+            }
+            for (const field of fields) {
+              const descriptor = Object.getOwnPropertyDescriptor(value, field);
+              if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} fields must be enumerable data properties`);
+              }
+            }
+            return value as Record<string, unknown>;
+          }
+          '''
+          new_binding_exact = '''function exactRecord(
+            value: unknown,
+            fields: readonly string[],
+            label: string,
+          ): Record<string, unknown> {
+            if (typeof value !== "object" || value === null || Array.isArray(value)) {
+              throw new TypeError(`${label} must be a plain object`);
+            }
+            const prototype = Object.getPrototypeOf(value);
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new TypeError(`${label} must use a plain or null prototype`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const keys = Reflect.ownKeys(descriptors);
+            if (keys.some((key) => typeof key !== "string")) {
+              throw new TypeError(`${label} must not contain symbol keys`);
+            }
+            const names = keys as string[];
+            if (names.length !== fields.length || fields.some((field) => !names.includes(field))) {
+              throw new TypeError(`${label} fields were invalid`);
+            }
+            const snapshot = Object.create(null) as Record<string, unknown>;
+            for (const field of fields) {
+              const descriptor = descriptors[field];
+              if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} fields must be enumerable data properties`);
+              }
+              snapshot[field] = descriptor.value;
+            }
+            return Object.freeze(snapshot);
+          }
+          '''
+          binding = replace_once(
+              binding,
+              old_binding_exact,
+              new_binding_exact,
+              'subject-bound exact record helper',
+          )
+          binding_path.write_text(binding)
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/synchronization-state.test.ts \
+            test/synchronization-subject-binding.test.ts \
+            test/synchronization-proxy-snapshot-boundaries.test.ts
+      - name: Publish source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Rook'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/rook-853-proxy-snapshot-repair.yml
+          git add \
+            src/synchronization-state.ts \
+            src/synchronization-subject-binding.ts \
+            test/synchronization-proxy-snapshot-boundaries.test.ts
+          git diff --cached --check
+          git commit -m 'Snapshot synchronization admission descriptors'
+          git push \
+            --force-with-lease=refs/heads/rook/853-proxy-snapshot-repair:${SOURCE_HEAD} \
+            origin HEAD:rook/853-proxy-snapshot-repair
