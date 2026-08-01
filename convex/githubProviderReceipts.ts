@@ -286,19 +286,19 @@ function sameReservationIdentity(
 
 async function resolveProject(
   ctx: QueryContext,
-  workspaceInput: string,
+  workspaceInput: string | undefined,
   projectInput: string,
   required?: true,
 ): Promise<ResolvedProject>;
 async function resolveProject(
   ctx: QueryContext,
-  workspaceInput: string,
+  workspaceInput: string | undefined,
   projectInput: string,
   required: false,
 ): Promise<ResolvedProject | null>;
 async function resolveProject(
   ctx: QueryContext,
-  workspaceInput: string,
+  workspaceInput: string | undefined,
   projectInput: string,
   required = true,
 ): Promise<ResolvedProject | null> {
