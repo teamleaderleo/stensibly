@@ -13,8 +13,17 @@ import {
 import { buildGitHubIssueContext } from "../src/github-issue-context.ts";
 import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint.ts";
 
-class AcceptanceResultClient implements ConvexCaller {
-  constructor(readonly mutationResult: unknown) {}
+class ResultClient implements ConvexCaller {
+  readonly mutationResult: unknown;
+  readonly queryResults: unknown[];
+
+  constructor(options: {
+    mutationResult?: unknown;
+    queryResults?: unknown[];
+  }) {
+    this.mutationResult = options.mutationResult;
+    this.queryResults = [...(options.queryResults ?? [])];
+  }
 
   async mutation(
     _reference: FunctionReference<"mutation">,
@@ -27,13 +36,13 @@ class AcceptanceResultClient implements ConvexCaller {
     _reference: FunctionReference<"query">,
     _args: Record<string, unknown>,
   ): Promise<unknown> {
-    throw new Error("query is outside this acceptance control");
+    return this.queryResults.shift();
   }
 }
 
 test("rejects a backend acceptance with an unbound durable record ID", async () => {
   const subject = fixture();
-  const service = serviceFor(subject, {
+  const service = acceptanceServiceFor(subject, {
     id: "github_context_forged",
   });
 
@@ -45,7 +54,7 @@ test("rejects a backend acceptance with an unbound durable record ID", async () 
 
 test("rejects durable acceptance metadata dated far in the future", async () => {
   const subject = fixture();
-  const service = serviceFor(subject, {
+  const service = acceptanceServiceFor(subject, {
     acceptedAt: "2099-01-01T00:00:00.000Z",
   });
 
@@ -55,13 +64,31 @@ test("rejects durable acceptance metadata dated far in the future", async () => 
   })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
 });
 
-function serviceFor(
+test("rejects an issue query whose current row belongs to another issue", async () => {
+  const wrongIssue = fixture(748);
+  const service = new ConvexGitHubProjectContextService({
+    client: new ResultClient({
+      queryResults: [storedRecord(wrongIssue), []],
+    }),
+    serviceSecret: "service-secret",
+    workspace: "default",
+  });
+
+  await expect(service.getGitHubProjectContext({
+    project: "stensibly",
+    externalId: "github:teamleaderleo/stensibly#747",
+  })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+});
+
+function acceptanceServiceFor(
   subject: ReturnType<typeof fixture>,
   overrides: Partial<ReturnType<typeof storedRecord>>,
 ): ConvexGitHubProjectContextService {
-  const client = new AcceptanceResultClient({
-    replayed: false,
-    record: { ...storedRecord(subject), ...overrides },
+  const client = new ResultClient({
+    mutationResult: {
+      replayed: false,
+      record: { ...storedRecord(subject), ...overrides },
+    },
   });
   return new ConvexGitHubProjectContextService({
     client,
@@ -107,12 +134,12 @@ function storedRecord(subject: ReturnType<typeof fixture>) {
   };
 }
 
-function fixture() {
+function fixture(number = 747) {
   const snapshot = buildGitHubIssueContext({
     owner: "teamleaderleo",
     repository: "stensibly",
-    number: 747,
-    title: "Rebuild hosted accepted GitHub context",
+    number,
+    title: `Rebuild hosted accepted GitHub context ${number}`,
     body: "private issue body",
     state: "open",
     stateReason: null,
@@ -129,8 +156,8 @@ function fixture() {
     }],
     createdAt: "2026-07-31T14:58:08.000Z",
     updatedAt: "2026-07-31T16:03:53.000Z",
-    providerNodeId: "I_kwDOThZq1s7c",
-    sourceRevision: "github:issue:747:rev-1",
+    providerNodeId: `I_kwDOThZq1s7c_${number}`,
+    sourceRevision: `github:issue:${number}:rev-1`,
   });
   const instructionSet = buildAcceptedRepositoryInstructionSet({
     projectAttachmentId: "attach_current",
@@ -145,9 +172,9 @@ function fixture() {
     snapshot,
     instructionSet,
     syncStatus: "synchronized" as const,
-    syncCursor: "github:cursor:747",
+    syncCursor: `github:cursor:${number}`,
     degradedReasonCode: null,
-    observationRef: "github:delivery:747:first",
+    observationRef: `github:delivery:${number}:first`,
     observedAt: "2026-07-31T16:10:00.000Z",
     acceptedBy: "ember",
   };
