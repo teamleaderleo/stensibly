@@ -134,15 +134,19 @@ export const accept = mutation({
       return { record: existing, replayed: true };
     }
 
-    const sameRevision = await ctx.db
+    const sourceRevisionBinding = await ctx.db
       .query("githubProjectContexts")
       .withIndex("by_project_issue_revision", (q) =>
         q.eq("projectId", project._id)
           .eq("issueExternalId", subject.snapshot.reference.externalId)
           .eq("sourceRevision", subject.snapshot.sourceRevision)
       )
-      .collect();
-    if (sameRevision.some((row) => row.contentSha256 !== subject.snapshot.contentSha256)) {
+      .order("asc")
+      .first();
+    if (
+      sourceRevisionBinding
+      && sourceRevisionBinding.contentSha256 !== subject.snapshot.contentSha256
+    ) {
       throw new Error("GITHUB_PROJECT_CONTEXT_SOURCE_REVISION_CONFLICT");
     }
 
