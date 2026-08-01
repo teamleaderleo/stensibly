@@ -58,10 +58,36 @@ function command(): RunnerCancellationCommandV1 {
   };
 }
 
+function cancellationObservation(
+  input: RunnerCancellationCommandV1,
+  reference: RunnerExternalReferenceV1 | null = null,
+): RunnerCancellationObservationV1 {
+  return {
+    version: 1,
+    commandId: input.commandId,
+    adapterId: input.adapterId,
+    adapterVersion: input.adapterVersion,
+    profileId: input.profileId,
+    runId: input.runId,
+    runGeneration: input.runGeneration,
+    leaseGeneration: input.leaseGeneration,
+    observedAt: cancellationObservedAt,
+    requestAccepted: true,
+    deliveryKnown: true,
+    remoteSettlementKnown: false,
+    reference,
+  };
+}
+
 class ReconciliationAdapter implements RunnerAdapterV1 {
   readonly descriptor: RunnerAdapterDescriptorV1;
 
-  constructor() {
+  constructor(
+    readonly cancellationHandler: (
+      input: RunnerCancellationCommandV1,
+    ) => Promise<RunnerCancellationObservationV1> = async (input) =>
+      cancellationObservation(input),
+  ) {
     this.descriptor = parseRunnerAdapterDescriptorV1({
       version: 1,
       adapterId,
@@ -113,34 +139,53 @@ class ReconciliationAdapter implements RunnerAdapterV1 {
   async requestCancellation(
     input: RunnerCancellationCommandV1,
   ): Promise<RunnerCancellationObservationV1> {
-    return {
-      version: 1,
-      commandId: input.commandId,
-      adapterId: input.adapterId,
-      adapterVersion: input.adapterVersion,
-      profileId: input.profileId,
-      runId: input.runId,
-      runGeneration: input.runGeneration,
-      leaseGeneration: input.leaseGeneration,
-      observedAt: cancellationObservedAt,
-      requestAccepted: true,
-      deliveryKnown: true,
-      remoteSettlementKnown: false,
-      reference: null,
-    };
+    return await this.cancellationHandler(input);
   }
 }
 
-async function originalResult(): Promise<RunnerCancellationSettlementResultV1> {
+async function coordinatorResult(
+  adapter: RunnerAdapterV1,
+): Promise<RunnerCancellationSettlementResultV1> {
   const clock = [executionAt, settledAt];
   const result = await new RunnerCancellationSettlementCoordinatorV1(
-    new ReconciliationAdapter(),
+    adapter,
     { version: 1, workspace: "default", project: "scrapbook" },
     command(),
     () => clock.shift()!,
   ).request();
   expect(clock).toEqual([]);
   return result;
+}
+
+async function originalResult(): Promise<RunnerCancellationSettlementResultV1> {
+  return await coordinatorResult(new ReconciliationAdapter());
+}
+
+async function adapterFailureResult(): Promise<RunnerCancellationSettlementResultV1> {
+  return await coordinatorResult(new ReconciliationAdapter(async () => {
+    throw new Error("bounded provider failure");
+  }));
+}
+
+async function originalResultWithReference(
+  createdAt: string,
+): Promise<RunnerCancellationSettlementResultV1> {
+  const reference: RunnerExternalReferenceV1 = {
+    version: 1,
+    kind: "provider_receipt",
+    adapterId,
+    externalId: "cancel-observation-receipt",
+    digest: defaultDigest,
+    uri: null,
+    generation: 1,
+    createdAt,
+    accessClass: "project",
+    containsPrivateContent: false,
+    containsCredentials: false,
+  };
+  return await coordinatorResult(new ReconciliationAdapter(async (input) =>
+    cancellationObservation(input, reference)
+  ));
 }
 
 function evidenceExternalId(
@@ -313,6 +358,44 @@ describe("runner cancellation reconciliation", () => {
     }
   });
 
+  test("accepts an adapter-failure result with no retained cancellation output", async () => {
+    const original = await adapterFailureResult();
+    expect(original).toMatchObject({
+      outcome: "adapter_failure",
+      cancellation: null,
+    });
+    expect(original.settlement.owners[0]?.outputFingerprint).toBeNull();
+
+    const result = reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original, { kind: "provider_unknown" }),
+    );
+    expect(result.outcome).toBe("still_reconciling");
+    expect(result.generationAdvance.allowed).toBe(false);
+  });
+
+  test("rejects adapter-failure results that retain cancellation evidence", async () => {
+    const failed = structuredClone(await adapterFailureResult());
+    const observed = await originalResult();
+    failed.cancellation = observed.cancellation;
+    refingerprint(failed);
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      failed,
+      evidence(failed),
+    )).toThrow("adapter failure cannot retain cancellation evidence");
+  });
+
+  test("replays identical reconciliation inputs deterministically", async () => {
+    const original = await originalResult();
+    const proof = evidence(original);
+    const first = reconcileRunnerCancellationSettlementV1(original, proof);
+    const second = reconcileRunnerCancellationSettlementV1(original, proof);
+
+    expect(second).toEqual(first);
+    expect(second.resultFingerprint).toBe(first.resultFingerprint);
+  });
+
   test("rejects altered top-level identity through exact nested binding", async () => {
     const original = await originalResult();
     const altered = structuredClone(original);
@@ -369,6 +452,28 @@ describe("runner cancellation reconciliation", () => {
       original,
       evidence(original),
     )).toThrow();
+  });
+
+  test("rejects nested cancellation references before the request", async () => {
+    const original = await originalResultWithReference(
+      "2026-08-01T00:59:59.999Z",
+    );
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("outside request and observation bounds");
+  });
+
+  test("rejects a recomputed generation-advance mismatch", async () => {
+    const original = structuredClone(await originalResult());
+    original.generationAdvance.allowed = true;
+    refingerprint(original);
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("generation-advance decision does not match settlement");
   });
 
   test("rejects original-result accessors without invoking them", async () => {
