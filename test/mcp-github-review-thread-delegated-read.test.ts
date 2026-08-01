@@ -76,7 +76,9 @@ describe("guarded GitHub review-thread delegated-read MCP dispatch", () => {
         clientId: "mcp:api-token:delegated-review-thread-token",
         result: {
           number: pullRequestNumber,
-          threadCount: 1,
+          threadCount: 0,
+          commentCount: 0,
+          threads: [],
         },
       });
       expect(calls).toEqual([{
@@ -151,7 +153,7 @@ function mountedLedger(calls: HostedGitHubDelegatedReadInput[]) {
         result: Object.freeze({
           repositoryFullName: input.repository.toLowerCase(),
           number: input.arguments.pr_number,
-          threadCount: 1,
+          threadCount: 0,
           commentCount: 0,
           pageCount: 1,
           providerRequestIds: Object.freeze(["THREADS:PUBLIC:1"]),
