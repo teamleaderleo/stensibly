@@ -7,7 +7,7 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Current `main` defines **33** public MCP tools with manifest fingerprint:
 
 ```text
-sha256:cd3a7edfc2f0234d58ee95f844394244ae7707d348aa00096433e178cc43d83d
+sha256:81c67a109e9e84a8e015b48ca2db5ceba8b0c6f50bb7176ea29716ca1656012b
 ```
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
