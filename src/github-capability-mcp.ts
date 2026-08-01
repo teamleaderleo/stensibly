@@ -25,7 +25,6 @@ const legacyDelegatedToolNames = Object.freeze([
   "get_pr_info",
   "get_pr_diff",
 ] as const);
-const allDelegatedToolSet = new Set<string>(hostedGitHubDelegatedReadTools);
 
 export function registerGitHubCapabilityTools(
   server: McpServer,
@@ -210,35 +209,30 @@ function enabledDelegatedToolNames(
     !Array.isArray(value)
     || Object.getPrototypeOf(value) !== Array.prototype
     || Object.getOwnPropertySymbols(value).length > 0
-    || value.length < 1
-    || value.length > hostedGitHubDelegatedReadTools.length
+    || value.length !== hostedGitHubDelegatedReadTools.length
   ) {
     throw new Error("Hosted GitHub delegated tool declaration is invalid");
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const names: HostedGitHubDelegatedReadTool[] = [];
-  const seen = new Set<string>();
-  for (let index = 0; index < value.length; index += 1) {
+  for (let index = 0; index < hostedGitHubDelegatedReadTools.length; index += 1) {
     const item = descriptors[String(index)];
-    if (!item || !item.enumerable || !("value" in item)) {
-      throw new Error("Hosted GitHub delegated tool declaration is invalid");
-    }
-    const name = item.value;
     if (
-      typeof name !== "string"
-      || !allDelegatedToolSet.has(name)
-      || seen.has(name)
+      !item
+      || !item.enumerable
+      || !("value" in item)
+      || item.value !== hostedGitHubDelegatedReadTools[index]
     ) {
       throw new Error("Hosted GitHub delegated tool declaration is invalid");
     }
-    seen.add(name);
-    names.push(name as HostedGitHubDelegatedReadTool);
   }
-  const allowedKeys = new Set(["length", ...names.map((_, index) => String(index))]);
+  const allowedKeys = new Set([
+    "length",
+    ...hostedGitHubDelegatedReadTools.map((_, index) => String(index)),
+  ]);
   if (Object.keys(descriptors).some((key) => !allowedKeys.has(key))) {
     throw new Error("Hosted GitHub delegated tool declaration is invalid");
   }
-  return Object.freeze(names);
+  return hostedGitHubDelegatedReadTools;
 }
 
 function delegatedPrincipal(
