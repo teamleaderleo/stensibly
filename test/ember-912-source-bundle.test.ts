@@ -13,7 +13,7 @@ function replaceExactlyOnce(
   return `${source.slice(0, first)}${after}${source.slice(first + before.length)}`;
 }
 
-test("emit exact hosted context service repair", async () => {
+test("emit exact hosted context repair blobs", async () => {
   let source = await Bun.file(
     "src/github-project-context-convex-ledger.ts",
   ).text();
@@ -109,8 +109,19 @@ test("emit exact hosted context service repair", async () => {
     "deep freeze helper",
   );
 
+  let schema = await Bun.file("convex/schema.ts").text();
+  schema = replaceExactlyOnce(
+    schema,
+    `.index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt"]),\n`,
+    `.index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt", "externalId"]),\n`,
+    "history index identity tie-breaker",
+  );
+
   console.log("EMBER912_SOURCE_BEGIN");
   console.log(Buffer.from(source, "utf8").toString("base64"));
   console.log("EMBER912_SOURCE_END");
-  expect("source emitted").toBe("intentional diagnostics failure");
+  console.log("EMBER912_SCHEMA_BEGIN");
+  console.log(Buffer.from(schema, "utf8").toString("base64"));
+  console.log("EMBER912_SCHEMA_END");
+  expect("repair blobs emitted").toBe("intentional diagnostics failure");
 });
