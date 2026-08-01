@@ -20,6 +20,7 @@ import type {
 } from "./github-project-context.js";
 import { parseStrictJson } from "./strict-json.js";
 import { snapshotBoundedJson } from "./github-repository-observation-admission.js";
+import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
 const acceptRef = makeFunctionReference<"mutation">("githubProjectContexts:accept");
 const getCurrentRef = makeFunctionReference<"query">("githubProjectContexts:getCurrent");
@@ -105,6 +106,7 @@ export interface ConvexGitHubProjectContextServiceOptions {
   client: ConvexCaller;
   serviceSecret: string;
   workspace?: string;
+  now?: () => number;
 }
 
 interface StoredRecord {
@@ -162,11 +164,13 @@ export class ConvexGitHubProjectContextService
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
+  readonly now: () => number;
 
   constructor(options: ConvexGitHubProjectContextServiceOptions) {
     this.client = options.client;
     this.serviceSecret = required(options.serviceSecret, "Convex service secret");
     this.workspace = exactWorkspace(options.workspace ?? "default");
+    this.now = options.now ?? Date.now;
   }
 
   async acceptGitHubIssueContext(
@@ -196,15 +200,23 @@ export class ConvexGitHubProjectContextService
         acceptedBy: subject.acceptedBy,
       }));
       const result = admitAcceptance(raw);
-      const admitted = validateStoredRecord(result.record);
-      if (!matchesSubject(admitted, project, subject)) {
+      const serviceNow = exactServiceTime(this.now);
+      const admitted = validateStoredRecord(result.record, serviceNow);
+      if (
+        admitted.raw.id !== deterministicRecordId(
+          this.workspace,
+          project,
+          subject.observationRef,
+        )
+        || !matchesSubject(admitted, project, subject)
+      ) {
         throw new GitHubProjectContextStorageError();
       }
       return Object.freeze({
-        recordId: result.record.id,
-        externalId: result.record.externalId,
-        outcome: result.record.outcome,
-        isCurrent: result.record.isCurrent,
+        recordId: admitted.raw.id,
+        externalId: admitted.raw.externalId,
+        outcome: admitted.raw.outcome,
+        isCurrent: admitted.raw.isCurrent,
         replayed: result.replayed,
       });
     } catch (error) {
@@ -226,6 +238,7 @@ export class ConvexGitHubProjectContextService
       ? null
       : exactIssueExternalId(input.externalId);
     try {
+      const serviceNow = exactServiceTime(this.now);
       const rawRecords = requestedExternalId === null
         ? await this.client.query(listCurrentRef, this.args({ project, limit }))
         : await this.client.query(getCurrentRef, this.args({
@@ -237,9 +250,21 @@ export class ConvexGitHubProjectContextService
         : rawRecords === null
           ? []
           : [admitStoredRecord(rawRecords)];
-      const admittedCurrent = currentRecords.map(validateStoredRecord);
+      const admittedCurrent = currentRecords.map((record) =>
+        validateStoredRecord(record, serviceNow)
+      );
+      const currentExternalIds = new Set<string>();
       for (const record of admittedCurrent) {
-        if (record.raw.project !== project) throw new GitHubProjectContextStorageError();
+        if (
+          record.raw.project !== project
+          || !record.raw.isCurrent
+          || (
+            requestedExternalId !== null
+            && record.raw.externalId !== requestedExternalId
+          )
+          || currentExternalIds.has(record.raw.externalId)
+        ) throw new GitHubProjectContextStorageError();
+        currentExternalIds.add(record.raw.externalId);
       }
       const history = requestedExternalId === null
         ? []
@@ -247,12 +272,24 @@ export class ConvexGitHubProjectContextService
           project,
           externalId: requestedExternalId,
           limit: historyLimit,
-        })), historyLimit).map(validateStoredRecord);
+        })), historyLimit).map((record) =>
+          validateStoredRecord(record, serviceNow)
+        );
+      let previousHistoryKey: string | null = null;
+      const historyIds = new Set<string>();
       for (const record of history) {
+        const historyKey = `${record.raw.acceptedAt}\u0000${record.raw.id}`;
         if (
           record.raw.project !== project
           || record.raw.externalId !== requestedExternalId
+          || historyIds.has(record.raw.id)
+          || (
+            previousHistoryKey !== null
+            && codeUnitCompare(previousHistoryKey, historyKey) >= 0
+          )
         ) throw new GitHubProjectContextStorageError();
+        historyIds.add(record.raw.id);
+        previousHistoryKey = historyKey;
       }
       return buildProjection(
         this.workspace,
@@ -343,7 +380,10 @@ function admitStoredRecord(value: unknown): StoredRecord {
   };
 }
 
-function validateStoredRecord(raw: StoredRecord): AdmittedRecord {
+function validateStoredRecord(
+  raw: StoredRecord,
+  serviceNow: number,
+): AdmittedRecord {
   let snapshotValue: unknown;
   let instructionValue: unknown;
   try {
@@ -394,6 +434,8 @@ function validateStoredRecord(raw: StoredRecord): AdmittedRecord {
     || instructionSet.sha256 !== raw.instructionSetSha256
     || Date.parse(subject.observedAt)
       > Date.parse(raw.acceptedAt) + maximumObservationFutureSkewMs
+    || Date.parse(raw.acceptedAt)
+      > serviceNow + maximumObservationFutureSkewMs
   ) {
     throw new GitHubProjectContextStorageError();
   }
@@ -424,7 +466,7 @@ function buildProjection(
   history: readonly AdmittedRecord[],
 ): GitHubProjectContextProjection {
   const issues = records.map(projectIssue);
-  return Object.freeze({
+  return deepFreezeProjection({
     version: 1 as const,
     workspace,
     project,
@@ -494,6 +536,41 @@ function projectHistory(record: AdmittedRecord): GitHubIssueContextHistoryProjec
     isCurrent: raw.isCurrent,
     instructionSetId: instructionSet.id,
   };
+}
+
+function deepFreezeProjection<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      deepFreezeProjection(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function deterministicRecordId(
+  workspace: string,
+  project: string,
+  observationRef: string,
+): string {
+  const digest = fingerprintCanonicalRequest({
+    version: 1,
+    workspace,
+    project,
+    observationRef,
+  });
+  return `github_context_${digest.slice("sha256:".length)}`;
+}
+
+function exactServiceTime(now: () => number): number {
+  let value: number;
+  try {
+    value = now();
+  } catch {
+    throw new GitHubProjectContextStorageError();
+  }
+  if (!Number.isFinite(value)) throw new GitHubProjectContextStorageError();
+  return value;
 }
 
 function mapStorageError(error: unknown): Error {
