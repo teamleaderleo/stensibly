@@ -99,6 +99,8 @@ export const accept = mutation({
       .first();
     if (
       !attachment
+      || attachment.workspaceId !== workspace._id
+      || attachment.projectId !== project._id
       || attachment.externalId !== subject.instructionSet.projectAttachmentId
       || attachment.snapshotSha256
         !== subject.instructionSet.projectAttachmentSnapshotSha256
@@ -127,7 +129,13 @@ export const accept = mutation({
       )
       .unique();
     if (existingObservation) {
-      const existing = admitStoredRecord(existingObservation, workspaceSlug, projectSlug);
+      const existing = admitStoredRecord(
+        existingObservation,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      );
       if (!isExactReplay(existingObservation, subject)) {
         throw new Error("GITHUB_PROJECT_CONTEXT_OBSERVATION_CONFLICT");
       }
@@ -145,7 +153,13 @@ export const accept = mutation({
       .first();
     const admittedSourceRevisionBinding = sourceRevisionBinding === null
       ? null
-      : admitStoredRecord(sourceRevisionBinding, workspaceSlug, projectSlug);
+      : admitStoredRecord(
+        sourceRevisionBinding,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      );
     if (
       admittedSourceRevisionBinding
       && admittedSourceRevisionBinding.contentSha256
@@ -164,7 +178,13 @@ export const accept = mutation({
       .unique();
     const admittedCurrent = current === null
       ? null
-      : admitStoredRecord(current, workspaceSlug, projectSlug);
+      : admitStoredRecord(
+        current,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      );
     const classification = classifyGitHubIssueContextAcceptance(
       admittedCurrent === null
         ? null
@@ -223,7 +243,13 @@ export const accept = mutation({
     const inserted = await ctx.db.get("githubProjectContexts", id);
     if (!inserted) throw new Error("GITHUB_PROJECT_CONTEXT_MISSING");
     return {
-      record: admitStoredRecord(inserted, workspaceSlug, projectSlug),
+      record: admitStoredRecord(
+        inserted,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      ),
       replayed: false,
     };
   },
@@ -253,7 +279,15 @@ export const getCurrent = query({
           .eq("isCurrent", true)
       )
       .unique();
-    return row ? admitStoredRecord(row, workspaceSlug, projectSlug) : null;
+    return row
+      ? admitStoredRecord(
+        row,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      )
+      : null;
   },
 });
 
@@ -279,7 +313,23 @@ export const listCurrent = query({
         q.eq("projectId", project._id).eq("isCurrent", true)
       )
       .take(limit);
-    return rows.map((row) => admitStoredRecord(row, workspaceSlug, projectSlug));
+    const records = rows.map((row) =>
+      admitStoredRecord(
+        row,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      )
+    );
+    const issues = new Set<string>();
+    for (const record of records) {
+      if (issues.has(record.externalId)) {
+        throw new Error("GITHUB_PROJECT_CONTEXT_MULTIPLE_CURRENT");
+      }
+      issues.add(record.externalId);
+    }
+    return records;
   },
 });
 
@@ -309,7 +359,13 @@ export const listHistory = query({
       .order("desc")
       .take(limit);
     return rows.reverse().map((row) =>
-      admitStoredRecord(row, workspaceSlug, projectSlug)
+      admitStoredRecord(
+        row,
+        workspace._id,
+        project._id,
+        workspaceSlug,
+        projectSlug,
+      )
     );
   },
 });
@@ -362,6 +418,8 @@ function admitSubject(args: {
 
 function admitStoredRecord(
   row: {
+    workspaceId: unknown;
+    projectId: unknown;
     externalId: string;
     issueExternalId: string;
     repositoryFullName: string;
@@ -385,6 +443,8 @@ function admitStoredRecord(
     isCurrent: boolean;
     outcome: AcceptedOutcome;
   },
+  workspaceId: unknown,
+  projectId: unknown,
   workspace: string,
   project: string,
 ) {
@@ -400,7 +460,9 @@ function admitStoredRecord(
   });
   const acceptedAt = exactStoredTimestamp(row.acceptedAt);
   if (
-    subject.snapshot.reference.externalId !== row.issueExternalId
+    row.workspaceId !== workspaceId
+    || row.projectId !== projectId
+    || subject.snapshot.reference.externalId !== row.issueExternalId
     || subject.snapshot.reference.repositoryFullName !== row.repositoryFullName
     || subject.snapshot.sourceRevision !== row.sourceRevision
     || subject.snapshot.snapshotSha256 !== row.snapshotSha256
