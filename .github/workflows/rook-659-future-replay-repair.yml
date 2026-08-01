@@ -1,12 +1,10 @@
-# Triggered after workflow registration.
+# Registered; this synchronize event executes the repair.
 name: Rook 659 checkpoint integrity repair
 
 on:
-  push:
-    branches:
-      - rook/659-future-replay-repair
-    paths:
-      - .github/workflows/rook-659-future-replay-repair.yml
+  pull_request:
+    types:
+      - synchronize
 
 permissions:
   contents: write
