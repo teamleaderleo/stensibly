@@ -4,10 +4,10 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-Current `main` defines **32** public MCP tools with manifest fingerprint:
+Current `main` defines **33** public MCP tools with manifest fingerprint:
 
 ```text
-sha256:f651fa13f910529c5bd0a4eb9d05069f572277a6a633623864e936f4c7874c6b
+sha256:cd3a7edfc2f0234d58ee95f844394244ae7707d348aa00096433e178cc43d83d
 ```
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
@@ -26,6 +26,7 @@ Before a dogfood run begins:
 
 Keep a compact set of frequent Stensibly workflow tools and GitHub discovery tools immediately visible. Group the broader GitHub surface by workflow and retrieve it on demand.
 
+- use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
 - use host-native tool search or deferred loading when the host supports it;
 - keep `github_list_toolsets`, `github_search_tools`, and `github_get_tool` as the ChatGPT-compatible discovery fallback;
 - load or return exact schemas before execution;
@@ -33,7 +34,7 @@ Keep a compact set of frequent Stensibly workflow tools and GitHub discovery too
 - keep write and admin operations approval-aware;
 - do not expose one universal unvalidated argument tunnel as the primary interface.
 
-The catalogue is a routing layer. Typed first-party actions remain appropriate where exact inputs, stale-version checks, readback verification, receipts, or recovery semantics improve execution.
+The catalogue is a routing layer. Typed first-party actions remain appropriate where exact inputs, stale-version checks, readback verification, receipts, or recovery semantics improve execution. Accepted GitHub context remains provider evidence and project continuity; it does not create a claim, lease, approval, capability grant, or GitHub write authority.
 
 ## Refresh path
 
@@ -70,7 +71,7 @@ GitHub read → Stensibly read → GitHub read → Stensibly read
 Recommended calls:
 
 1. GitHub: read #490 and current `main`.
-2. Stensibly: `survey_workspace` or `get_brief`.
+2. Stensibly: `get_github_project_context` for one exact accepted issue, then `survey_workspace` or `get_brief`.
 3. GitHub: add a pre-write checkpoint comment.
 4. Stensibly: `get_continuation` or `get_item`.
 5. Stensibly: create one uniquely named item with an idempotency key.
