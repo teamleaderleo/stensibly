@@ -69,7 +69,7 @@ interface JobStep {
 interface JobObservation {
   identity: Readonly<JobIdentity>;
   steps: readonly Readonly<JobStep>[];
-  requestId?: string;
+  requestId: string;
 }
 
 const apiVersion = "2022-11-28";
@@ -164,7 +164,7 @@ export class GitHubRestActionsJobDetailAdapter
       });
       return Object.freeze({
         result,
-        ...(job.requestId ? { providerRequestId: job.requestId } : {}),
+        providerRequestId: job.requestId,
       });
     }
 
@@ -181,9 +181,7 @@ export class GitHubRestActionsJobDetailAdapter
     });
     return Object.freeze({
       result,
-      ...(logs.requestId ?? job.requestId
-        ? { providerRequestId: logs.requestId ?? job.requestId }
-        : {}),
+      providerRequestId: logs.requestId,
     });
   }
 
@@ -235,6 +233,10 @@ export class GitHubRestActionsJobDetailAdapter
       throw providerHttp(response.status);
     }
     requireJsonContentType(response.headers.get("content-type"));
+    const requestId = requiredRequestIdentity(
+      response.headers.get("x-github-request-id"),
+      "workflow-job",
+    );
     const payload = await readStrictJson(response, maxJobResponseBytes);
     const record = jsonRecord(payload, "GitHub Actions workflow job");
     const identityValue = parseJobIdentity(
@@ -246,13 +248,7 @@ export class GitHubRestActionsJobDetailAdapter
     return Object.freeze({
       identity: identityValue,
       steps,
-      ...(requestIdentity(response.headers.get("x-github-request-id"))
-        ? {
-            requestId: requestIdentity(
-              response.headers.get("x-github-request-id"),
-            ),
-          }
-        : {}),
+      requestId,
     });
   }
 
@@ -263,7 +259,7 @@ export class GitHubRestActionsJobDetailAdapter
     byteCount: number;
     lineCount: number;
     text: string;
-    requestId?: string;
+    requestId: string;
   }>> {
     const url = logUrl(
       this.#apiBaseUrl,
@@ -279,8 +275,9 @@ export class GitHubRestActionsJobDetailAdapter
       await discard(redirect);
       throw providerHttp(redirect.status);
     }
-    const requestId = requestIdentity(
+    const requestId = requiredRequestIdentity(
       redirect.headers.get("x-github-request-id"),
+      "workflow-job log",
     );
     const location = admittedLogLocation(redirect.headers.get("location"));
     await discard(redirect);
@@ -336,7 +333,7 @@ export class GitHubRestActionsJobDetailAdapter
       byteCount: Buffer.byteLength(text, "utf8"),
       lineCount: lines.length,
       text,
-      ...(requestId ? { requestId } : {}),
+      requestId,
     });
   }
 
@@ -933,6 +930,19 @@ function requestIdentity(value: string | null): string | undefined {
     throw invalid("GitHub delegated provider request identity was invalid");
   }
   return value;
+}
+
+function requiredRequestIdentity(
+  value: string | null,
+  label: string,
+): string {
+  const admitted = requestIdentity(value);
+  if (admitted === undefined) {
+    throw invalid(
+      `GitHub delegated provider ${label} request identity was missing`,
+    );
+  }
+  return admitted;
 }
 
 async function discard(response: Response): Promise<void> {

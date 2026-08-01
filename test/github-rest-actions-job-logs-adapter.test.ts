@@ -41,7 +41,7 @@ describe("native GitHub delegated Actions workflow-job log reads", () => {
         authorization: headers.get("authorization"),
         accept: headers.get("accept"),
       });
-      if (url === jobUrl) return Response.json(workflowJob());
+      if (url === jobUrl) return jobResponse("ACTIONS:JOB:METADATA");
       if (url === logsUrl) {
         return new Response(null, {
           status: 302,
@@ -106,15 +106,66 @@ describe("native GitHub delegated Actions workflow-job log reads", () => {
     expect(Object.isFrozen(called.result)).toBe(true);
   });
 
+  test("requires metadata request identity before the logs endpoint", async () => {
+    let calls = 0;
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async () => {
+        calls += 1;
+        return Response.json(workflowJob());
+      },
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_logs",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+    expect(calls).toBe(1);
+  });
+
+  test("requires log request identity before the credential-free download", async () => {
+    let calls = 0;
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async (input) => {
+        calls += 1;
+        if (String(input) === jobUrl) {
+          return jobResponse("ACTIONS:JOB:METADATA");
+        }
+        return new Response(null, {
+          status: 302,
+          headers: { location: downloadUrl },
+        });
+      },
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_logs",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+    expect(calls).toBe(2);
+  });
+
   test("rejects an untrusted redirect before the credential-free download", async () => {
     const tokens = new RecordingTokenProvider();
     let calls = 0;
     const adapter = createAdapter(tokens, async (input) => {
       calls += 1;
-      if (String(input) === jobUrl) return Response.json(workflowJob());
+      if (String(input) === jobUrl) {
+        return jobResponse("ACTIONS:JOB:METADATA");
+      }
       return new Response(null, {
         status: 302,
-        headers: { location: "https://evil.example/private/job.log" },
+        headers: {
+          location: "https://evil.example/private/job.log",
+          "x-github-request-id": "ACTIONS:JOB:UNTRUSTED-REDIRECT",
+        },
       });
     });
 
@@ -179,11 +230,16 @@ describe("native GitHub delegated Actions workflow-job log reads", () => {
     const adapter = createAdapter(
       new RecordingTokenProvider(),
       async (input) => {
-        if (String(input) === jobUrl) return Response.json(workflowJob());
+        if (String(input) === jobUrl) {
+          return jobResponse("ACTIONS:JOB:METADATA");
+        }
         if (String(input) === logsUrl) {
           return new Response(null, {
             status: 302,
-            headers: { location: downloadUrl },
+            headers: {
+              location: downloadUrl,
+              "x-github-request-id": "ACTIONS:JOB:LOGS",
+            },
           });
         }
         throw new Error(`private provider failure ${secret}`);
@@ -244,11 +300,14 @@ function sequenceFetch(
 ): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
   return async (input) => {
     const url = String(input);
-    if (url === jobUrl) return Response.json(workflowJob());
+    if (url === jobUrl) return jobResponse("ACTIONS:JOB:METADATA");
     if (url === logsUrl) {
       return new Response(null, {
         status: 302,
-        headers: { location: downloadUrl },
+        headers: {
+          location: downloadUrl,
+          "x-github-request-id": "ACTIONS:JOB:LOGS",
+        },
       });
     }
     if (url === downloadUrl) {
@@ -281,6 +340,12 @@ async function expectRejectionCode(
     expect(error).toBeInstanceOf(GitHubProviderRejectedError);
     expect((error as GitHubProviderRejectedError).code).toBe(expectedCode);
   }
+}
+
+function jobResponse(requestId: string): Response {
+  return Response.json(workflowJob(), {
+    headers: { "x-github-request-id": requestId },
+  });
 }
 
 function workflowJob() {
