@@ -17,6 +17,15 @@ import type {
   ProposeContinuationInput,
   ResolveContinuationInput,
 } from "./continuations.js";
+import {
+  ConvexGitHubProjectContextService,
+  type AcceptHostedGitHubIssueContextInput,
+  type HostedGitHubIssueContextAcceptance,
+} from "./github-project-context-convex-ledger.js";
+import type {
+  GetGitHubProjectContextInput,
+  GitHubProjectContextLedger,
+} from "./github-project-context.js";
 import type {
   AttachWorkArtifactInput,
   BlockWorkInput,
@@ -87,17 +96,24 @@ export class ConvexWorkLedger implements
   ContinuationLedger,
   CompletionContinuationLedger,
   ContinuationSupervisorLedger,
-  OperationReceiptLedger
+  OperationReceiptLedger,
+  GitHubProjectContextLedger
 {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
   private historyCapabilityPromise: Promise<void> | null = null;
+  private readonly githubProjectContextService: ConvexGitHubProjectContextService;
 
   constructor(options: ConvexWorkLedgerOptions) {
     this.client = options.client;
     this.serviceSecret = required(options.serviceSecret, "Convex service secret");
     this.workspace = normalizeWorkspace(options.workspace ?? "default");
+    this.githubProjectContextService = new ConvexGitHubProjectContextService({
+      client: this.client,
+      serviceSecret: this.serviceSecret,
+      workspace: this.workspace,
+    });
   }
 
   async getBrief(project: string, limit: number) {
@@ -112,6 +128,16 @@ export class ConvexWorkLedger implements
       convexApi.operationReceipts.get,
       this.args(input),
     ) as Awaited<ReturnType<OperationReceiptLedger["getOperationReceipt"]>>;
+  }
+
+  async acceptGitHubIssueContext(
+    input: AcceptHostedGitHubIssueContextInput,
+  ): Promise<HostedGitHubIssueContextAcceptance> {
+    return await this.githubProjectContextService.acceptGitHubIssueContext(input);
+  }
+
+  async getGitHubProjectContext(input: GetGitHubProjectContextInput) {
+    return await this.githubProjectContextService.getGitHubProjectContext(input);
   }
 
   async listWork(input: ListWorkInput = {}) {
