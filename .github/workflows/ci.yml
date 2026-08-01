@@ -1,10 +1,10 @@
-name: Repair hosted context projection freeze
+name: Repair hosted context admission boundaries
 
 on:
   pull_request:
 
 concurrency:
-  group: loom-908-projection-freeze-${{ github.event.pull_request.number }}
+  group: loom-908-hosted-context-repair-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -19,6 +19,7 @@ jobs:
     env:
       EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
       TARGET_BRANCH: loom/901-hosted-context-current-main
+      REVIEW_HEAD: 563eeff601f0d96d970f4c7527e729042c801ab7
     steps:
       - uses: actions/checkout@v6
         with:
@@ -32,25 +33,200 @@ jobs:
           git fetch origin main "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
           test "$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")" = "${EXPECTED_HEAD}"
       - uses: oven-sh/setup-bun@v2
-      - name: Deep-freeze the bounded projection
+      - name: Repair hosted context admission
         shell: bash
         run: |
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
 
-          path = Path('src/github-project-context-convex-ledger.ts')
-          text = path.read_text()
+          service_path = Path('src/github-project-context-convex-ledger.ts')
+          service = service_path.read_text()
+
+          old = 'import { snapshotBoundedJson } from "./github-repository-observation-admission.js";\n'
+          new = old + 'import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";\n'
+          if service.count(old) != 1 or 'fingerprintCanonicalRequest' in service:
+              raise SystemExit('service fingerprint import marker changed')
+          service = service.replace(old, new, 1)
+
+          old = '''export interface ConvexGitHubProjectContextServiceOptions {
+  client: ConvexCaller;
+  serviceSecret: string;
+  workspace?: string;
+}
+'''
+          new = '''export interface ConvexGitHubProjectContextServiceOptions {
+  client: ConvexCaller;
+  serviceSecret: string;
+  workspace?: string;
+  now?: () => number;
+}
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service options marker changed')
+          service = service.replace(old, new, 1)
+
+          old = '''  readonly serviceSecret: string;
+  readonly workspace: string;
+
+  constructor(options: ConvexGitHubProjectContextServiceOptions) {
+    this.client = options.client;
+    this.serviceSecret = required(options.serviceSecret, "Convex service secret");
+    this.workspace = exactWorkspace(options.workspace ?? "default");
+  }
+'''
+          new = '''  readonly serviceSecret: string;
+  readonly workspace: string;
+  readonly now: () => number;
+
+  constructor(options: ConvexGitHubProjectContextServiceOptions) {
+    this.client = options.client;
+    this.serviceSecret = required(options.serviceSecret, "Convex service secret");
+    this.workspace = exactWorkspace(options.workspace ?? "default");
+    this.now = options.now ?? Date.now;
+  }
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service constructor marker changed')
+          service = service.replace(old, new, 1)
+
+          old = '''      const result = admitAcceptance(raw);
+      const admitted = validateStoredRecord(result.record);
+      if (!matchesSubject(admitted, project, subject)) {
+        throw new GitHubProjectContextStorageError();
+      }
+      return Object.freeze({
+        recordId: result.record.id,
+        externalId: result.record.externalId,
+        outcome: result.record.outcome,
+        isCurrent: result.record.isCurrent,
+        replayed: result.replayed,
+      });
+'''
+          new = '''      const result = admitAcceptance(raw);
+      const serviceNow = exactServiceTime(this.now);
+      const admitted = validateStoredRecord(result.record, serviceNow);
+      if (
+        admitted.raw.id !== deterministicRecordId(
+          this.workspace,
+          project,
+          subject.observationRef,
+        )
+        || !matchesSubject(admitted, project, subject)
+      ) {
+        throw new GitHubProjectContextStorageError();
+      }
+      return Object.freeze({
+        recordId: admitted.raw.id,
+        externalId: admitted.raw.externalId,
+        outcome: admitted.raw.outcome,
+        isCurrent: admitted.raw.isCurrent,
+        replayed: result.replayed,
+      });
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service acceptance marker changed')
+          service = service.replace(old, new, 1)
+
+          old = '''    try {
+      const rawRecords = requestedExternalId === null
+'''
+          new = '''    try {
+      const serviceNow = exactServiceTime(this.now);
+      const rawRecords = requestedExternalId === null
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service query clock marker changed')
+          service = service.replace(old, new, 1)
+
+          old = '''      const admittedCurrent = currentRecords.map(validateStoredRecord);
+      for (const record of admittedCurrent) {
+        if (record.raw.project !== project) throw new GitHubProjectContextStorageError();
+      }
+'''
+          new = '''      const admittedCurrent = currentRecords.map((record) =>
+        validateStoredRecord(record, serviceNow)
+      );
+      const currentExternalIds = new Set<string>();
+      for (const record of admittedCurrent) {
+        if (
+          record.raw.project !== project
+          || !record.raw.isCurrent
+          || (
+            requestedExternalId !== null
+            && record.raw.externalId !== requestedExternalId
+          )
+          || currentExternalIds.has(record.raw.externalId)
+        ) throw new GitHubProjectContextStorageError();
+        currentExternalIds.add(record.raw.externalId);
+      }
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service current admission marker changed')
+          service = service.replace(old, new, 1)
+
+          old = '''        })), historyLimit).map(validateStoredRecord);
+      for (const record of history) {
+        if (
+          record.raw.project !== project
+          || record.raw.externalId !== requestedExternalId
+        ) throw new GitHubProjectContextStorageError();
+      }
+'''
+          new = '''        })), historyLimit).map((record) =>
+          validateStoredRecord(record, serviceNow)
+        );
+      let previousHistoryKey: string | null = null;
+      const historyIds = new Set<string>();
+      for (const record of history) {
+        const historyKey = `${record.raw.acceptedAt}\\u0000${record.raw.id}`;
+        if (
+          record.raw.project !== project
+          || record.raw.externalId !== requestedExternalId
+          || historyIds.has(record.raw.id)
+          || (
+            previousHistoryKey !== null
+            && codeUnitCompare(previousHistoryKey, historyKey) >= 0
+          )
+        ) throw new GitHubProjectContextStorageError();
+        historyIds.add(record.raw.id);
+        previousHistoryKey = historyKey;
+      }
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service history admission marker changed')
+          service = service.replace(old, new, 1)
+
+          old = 'function validateStoredRecord(raw: StoredRecord): AdmittedRecord {\n'
+          new = 'function validateStoredRecord(raw: StoredRecord, serviceNow: number): AdmittedRecord {\n'
+          if service.count(old) != 1:
+              raise SystemExit('service stored validation signature changed')
+          service = service.replace(old, new, 1)
+
+          old = '''    || Date.parse(subject.observedAt)
+      > Date.parse(raw.acceptedAt) + maximumObservationFutureSkewMs
+'''
+          new = '''    || Date.parse(subject.observedAt)
+      > Date.parse(raw.acceptedAt) + maximumObservationFutureSkewMs
+    || Date.parse(raw.acceptedAt)
+      > serviceNow + maximumObservationFutureSkewMs
+'''
+          if service.count(old) != 1:
+              raise SystemExit('service acceptance chronology marker changed')
+          service = service.replace(old, new, 1)
+
           old = '''  const issues = records.map(projectIssue);
   return Object.freeze({
 '''
           new = '''  const issues = records.map(projectIssue);
   return deepFreezeProjection({
 '''
-          if text.count(old) != 1:
+          if service.count(old) != 1:
               raise SystemExit('projection return marker changed')
-          helper = '''
+          service = service.replace(old, new, 1)
 
+          helper_marker = '\nfunction mapStorageError(error: unknown): Error {'
+          helper = '''
 function deepFreezeProjection<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value as Record<string, unknown>)) {
@@ -60,27 +236,186 @@ function deepFreezeProjection<T>(value: T): T {
   }
   return value;
 }
+
+function deterministicRecordId(
+  workspace: string,
+  project: string,
+  observationRef: string,
+): string {
+  const digest = fingerprintCanonicalRequest({
+    version: 1,
+    workspace,
+    project,
+    observationRef,
+  });
+  return `github_context_${digest.slice("sha256:".length)}`;
+}
+
+function exactServiceTime(now: () => number): number {
+  let value: number;
+  try {
+    value = now();
+  } catch {
+    throw new GitHubProjectContextStorageError();
+  }
+  if (!Number.isFinite(value)) throw new GitHubProjectContextStorageError();
+  return value;
+}
 '''
-          if 'function deepFreezeProjection<' in text:
-              raise SystemExit('projection freeze helper already exists')
-          path.write_text(text.replace(old, new, 1) + helper)
+          if service.count(helper_marker) != 1 or 'function deepFreezeProjection<' in service:
+              raise SystemExit('service helper marker changed')
+          service = service.replace(helper_marker, helper + helper_marker, 1)
+          service_path.write_text(service)
+
+          convex_path = Path('convex/githubProjectContexts.ts')
+          convex = convex_path.read_text()
+
+          old = '''      !attachment
+      || attachment.externalId !== subject.instructionSet.projectAttachmentId
+'''
+          new = '''      !attachment
+      || attachment.workspaceId !== workspace._id
+      || attachment.projectId !== project._id
+      || attachment.externalId !== subject.instructionSet.projectAttachmentId
+'''
+          if convex.count(old) != 1:
+              raise SystemExit('attachment identity marker changed')
+          convex = convex.replace(old, new, 1)
+
+          replacements = {
+            'admitStoredRecord(existingObservation, workspaceSlug, projectSlug)': 'admitStoredRecord(existingObservation, workspace._id, project._id, workspaceSlug, projectSlug)',
+            'admitStoredRecord(sourceRevisionBinding, workspaceSlug, projectSlug)': 'admitStoredRecord(sourceRevisionBinding, workspace._id, project._id, workspaceSlug, projectSlug)',
+            'admitStoredRecord(current, workspaceSlug, projectSlug)': 'admitStoredRecord(current, workspace._id, project._id, workspaceSlug, projectSlug)',
+            'admitStoredRecord(inserted, workspaceSlug, projectSlug)': 'admitStoredRecord(inserted, workspace._id, project._id, workspaceSlug, projectSlug)',
+            'admitStoredRecord(row, workspaceSlug, projectSlug)': 'admitStoredRecord(row, workspace._id, project._id, workspaceSlug, projectSlug)',
+          }
+          for prior, after in replacements.items():
+              if prior not in convex:
+                  raise SystemExit(f'row admission marker changed: {prior}')
+              convex = convex.replace(prior, after)
+
+          old = '''function admitStoredRecord(
+  row: {
+    externalId: string;
+'''
+          new = '''function admitStoredRecord(
+  row: {
+    workspaceId: unknown;
+    projectId: unknown;
+    externalId: string;
+'''
+          if convex.count(old) != 1:
+              raise SystemExit('stored row identity fields marker changed')
+          convex = convex.replace(old, new, 1)
+
+          old = '''  },
+  workspace: string,
+  project: string,
+) {
+'''
+          new = '''  },
+  workspaceId: unknown,
+  projectId: unknown,
+  workspace: string,
+  project: string,
+) {
+'''
+          if convex.count(old) != 1:
+              raise SystemExit('stored row expected identity marker changed')
+          convex = convex.replace(old, new, 1)
+
+          old = '''  if (
+    subject.snapshot.reference.externalId !== row.issueExternalId
+'''
+          new = '''  if (
+    row.workspaceId !== workspaceId
+    || row.projectId !== projectId
+    || subject.snapshot.reference.externalId !== row.issueExternalId
+'''
+          if convex.count(old) != 1:
+              raise SystemExit('stored row identity check marker changed')
+          convex = convex.replace(old, new, 1)
+
+          old = '''    const rows = await ctx.db
+      .query("githubProjectContexts")
+      .withIndex("by_project_current_issue", (q) =>
+        q.eq("projectId", project._id).eq("isCurrent", true)
+      )
+      .take(limit);
+    return rows.map((row) => admitStoredRecord(row, workspace._id, project._id, workspaceSlug, projectSlug));
+'''
+          new = '''    const rows = await ctx.db
+      .query("githubProjectContexts")
+      .withIndex("by_project_current_issue", (q) =>
+        q.eq("projectId", project._id).eq("isCurrent", true)
+      )
+      .take(limit);
+    const records = rows.map((row) =>
+      admitStoredRecord(row, workspace._id, project._id, workspaceSlug, projectSlug)
+    );
+    const issues = new Set<string>();
+    for (const record of records) {
+      if (issues.has(record.externalId)) {
+        throw new Error("GITHUB_PROJECT_CONTEXT_MULTIPLE_CURRENT");
+      }
+      issues.add(record.externalId);
+    }
+    return records;
+'''
+          if convex.count(old) != 1:
+              raise SystemExit('current uniqueness marker changed')
+          convex = convex.replace(old, new, 1)
+          convex_path.write_text(convex)
+
+          schema_path = Path('convex/schema.ts')
+          schema = schema_path.read_text()
+          old = '.index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt"]),'
+          new = '.index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt", "externalId"]),'
+          if schema.count(old) != 1:
+              raise SystemExit('history index marker changed')
+          schema_path.write_text(schema.replace(old, new, 1))
           PY
+
+          git show "${REVIEW_HEAD}:test/github-project-context-convex-ledger-record-id-review.test.ts" \
+            > test/github-project-context-convex-ledger-record-id-review.test.ts
+          git show "${REVIEW_HEAD}:convex/githubProjectContexts-durable-identity-review.test.ts" \
+            > convex/githubProjectContexts-durable-identity-review.test.ts
+          git show "${REVIEW_HEAD}:test/github-project-context-convex-durable-identity-runner.test.ts" \
+            > test/github-project-context-convex-durable-identity-runner.test.ts
       - name: Validate focused repair
         shell: bash
         run: |
           set -euo pipefail
           bun install --frozen-lockfile
           bun run typecheck
-          bun test test/github-project-context-convex-ledger.test.ts
-      - name: Restore canonical CI and publish repaired source
+          bun test \
+            test/github-project-context-convex-ledger.test.ts \
+            test/github-project-context-convex-ledger-clock-skew-review.test.ts \
+            test/github-project-context-convex-ledger-record-id-review.test.ts \
+            test/github-project-context-convex-durable-identity-runner.test.ts
+          bunx vitest run \
+            convex/githubProjectContexts.test.ts \
+            convex/githubProjectContexts-attachment-integrity-review.test.ts \
+            convex/githubProjectContexts-current-row-integrity-review.test.ts \
+            convex/githubProjectContexts-durable-identity-review.test.ts
+          bun run worker:check
+      - name: Restore canonical CI and publish source-only repair
         shell: bash
         run: |
           set -euo pipefail
           git checkout origin/main -- .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/ci.yml src/github-project-context-convex-ledger.ts
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            .github/workflows/ci.yml \
+            convex/schema.ts \
+            convex/githubProjectContexts.ts \
+            convex/githubProjectContexts-durable-identity-review.test.ts \
+            src/github-project-context-convex-ledger.ts \
+            test/github-project-context-convex-ledger-record-id-review.test.ts \
+            test/github-project-context-convex-durable-identity-runner.test.ts
+          git diff --cached --check
           git diff --cached --quiet && { echo "No repair delta produced" >&2; exit 1; }
-          git commit -m "Deep-freeze hosted GitHub context projection"
+          git commit -m "Bind hosted GitHub context identity"
           git push origin "HEAD:refs/heads/${TARGET_BRANCH}" \
             --force-with-lease="refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}"
