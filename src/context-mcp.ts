@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getRunnerContextPacket } from "./context-packets.js";
+import { registerGitHubProjectContextTools } from "./github-project-context-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 
@@ -21,4 +22,5 @@ export function registerContextPacketTools(server: McpServer, ledger: WorkLedger
     },
     async (input) => asToolResult(() => getRunnerContextPacket(ledger, input.id, input)),
   );
+  registerGitHubProjectContextTools(server, ledger);
 }

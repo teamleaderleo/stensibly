@@ -20,6 +20,7 @@ export const MCP_TOOL_NAMES = [
   "edit_continuation",
   "get_brief",
   "get_continuation",
+  "get_github_project_context",
   "get_item",
   "get_operation_receipt",
   "get_project_attachment",
