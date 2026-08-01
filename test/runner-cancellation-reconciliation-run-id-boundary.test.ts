@@ -172,11 +172,11 @@ describe("runner cancellation reconciliation run identity boundary", () => {
     };
 
     expect(() => reconcileRunnerCancellationSettlementV1(original, {
-...evidence,
-reference: {
-  ...evidence.reference,
-  externalId: collidingLegacyExternalId,
-},
+      ...evidence,
+      reference: {
+        ...evidence.reference,
+        externalId: collidingLegacyExternalId,
+      },
     })).toThrow("Runner cancellation reconciliation reference does not match evidence kind");
 
     const result = reconcileRunnerCancellationSettlementV1(original, evidence);
