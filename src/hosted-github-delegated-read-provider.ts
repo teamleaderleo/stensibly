@@ -21,6 +21,7 @@ import {
   stableJson,
 } from "./github-provider-validation.js";
 import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";
+import { GitHubRestCommitStatusAdapter } from "./github-rest-commit-status-adapter.js";
 import { GitHubRestPullRequestReviewThreadAdapter } from "./github-rest-pull-request-review-thread-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import {
@@ -34,6 +35,7 @@ export const hostedGitHubDelegatedReadTools = Object.freeze([
   "get_pr_info",
   "get_pr_diff",
   "list_pull_request_review_threads",
+  "get_commit_combined_status",
   "fetch_commit_workflow_runs",
   "fetch_workflow_run_jobs",
 ] as const);
@@ -75,7 +77,7 @@ const actionsTools = new Set<string>([
 ]);
 
 /**
- * Mounts a private seven-tool delegated-read service when the explicit hosted
+ * Mounts a private eight-tool delegated-read service when the explicit hosted
  * flag and the complete GitHub App configuration are present. Public MCP
  * dispatch and discovery remain separately controlled.
  */
@@ -124,11 +126,14 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
   const pullRequestAdapter = new GitHubRestPullRequestReviewThreadAdapter(
     adapterOptions,
   );
+  const statusAdapter = new GitHubRestCommitStatusAdapter(adapterOptions);
   const actionsAdapter = new GitHubRestActionsRunAdapter(adapterOptions);
   const adapter: GitHubDelegatedReadAdapter = Object.freeze({
     callReadTool: (
       input: Parameters<GitHubDelegatedReadAdapter["callReadTool"]>[0],
-    ) => actionsTools.has(input.tool)
+    ) => input.tool === "get_commit_combined_status"
+      ? statusAdapter.callReadTool(input)
+      : actionsTools.has(input.tool)
       ? actionsAdapter.callReadTool(input)
       : pullRequestAdapter.callReadTool(input),
   });

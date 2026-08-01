@@ -4,6 +4,7 @@ import {
   GitHubCapabilityCatalogueService,
 } from "../src/github-capability-service.ts";
 import {
+  hostedGitHubDelegatedReadTools,
   mountHostedGitHubDelegatedReadProviderFromEnv,
 } from "../src/hosted-github-delegated-read-provider.ts";
 import type { WorkLedger } from "../src/ledger.ts";
@@ -18,12 +19,11 @@ import {
 
 const repositoryFullName = "teamleaderleo/stensibly";
 const project = "oauth-dogfood";
-const pullRequestNumber = 42;
-const headSha = "d".repeat(40);
-const baseSha = "e".repeat(40);
-const fixedNow = Date.parse("2026-07-31T00:00:00.000Z");
+const commitSha = "a".repeat(40);
+const fixedNow = Date.parse("2026-08-01T09:00:00.000Z");
 const catalogueFingerprint =
   new GitHubCapabilityCatalogueService().registry.fingerprint;
+const statusUrl = `https://api.github.test/repos/teamleaderleo/stensibly/commits/${commitSha}/status?per_page=100&page=1`;
 const privateKey = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   publicKeyEncoding: { type: "spki", format: "pem" },
@@ -42,29 +42,29 @@ const snapshot = compileProjectContract(renderProjectContract({
   tags: [],
   relatedProjects: [],
 }, {
-  goal: "Exercise private hosted delegated GitHub pull request reads.",
-  boundaries: "Keep credentials, writes, and public exposure outside this slice.",
-  evidenceAndHandoff: "Return exact binding and provider receipts.",
+  goal: "Exercise private hosted GitHub combined-status reads.",
+  boundaries: "Keep status writes, credentials, and unrelated GitHub tools outside this slice.",
+  evidenceAndHandoff: "Return one bounded attributable combined-status receipt.",
   escalation: "Stop before dispatch when authority or binding changes.",
 }));
 
 const attachment: ProjectAttachmentRecord = {
-  id: "attach_hosted_delegated_pr_reads",
+  id: "attach_hosted_commit_status",
   project,
   snapshot,
-  sourceRevision: "main@hosted-delegated-pr-read-test",
+  sourceRevision: "main@hosted-commit-status-test",
   acceptedBy: "test",
   authorityWidening: false,
-  acceptedAt: "2026-07-31T00:00:00.000Z",
+  acceptedAt: "2026-08-01T09:00:00.000Z",
 };
 
-describe("private hosted GitHub delegated pull request reads", () => {
-  test("mints pull-request-only authority and publishes an attributable receipt", async () => {
+describe("private hosted GitHub combined-status delegated reads", () => {
+  test("routes the exact SHA through statuses:read and returns a frozen content-minimised receipt", async () => {
     const calls: Array<{
       url: string;
       method: string;
       authorization: string | null;
-      body: unknown;
+      body: Record<string, unknown> | null;
     }> = [];
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
       fakeLedger(),
@@ -73,100 +73,93 @@ describe("private hosted GitHub delegated pull request reads", () => {
         now: () => fixedNow,
         fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
           const url = String(input);
-          const method = init?.method ?? "GET";
           const headers = new Headers(init?.headers);
           const body = init?.body
             ? JSON.parse(String(init.body)) as Record<string, unknown>
             : null;
           calls.push({
             url,
-            method,
+            method: init?.method ?? "GET",
             authorization: headers.get("authorization"),
             body,
           });
           if (url.endsWith("/app/installations/98765/access_tokens")) {
+            expect(body).toEqual({
+              repositories: ["stensibly"],
+              permissions: { statuses: "read" },
+            });
             return Response.json({
-              token: "pull-request-installation-token-secret",
-              expires_at: "2026-07-31T01:00:00Z",
-              permissions: {
-                pull_requests: "read",
-                metadata: "read",
-              },
+              token: "commit-status-installation-token-secret",
+              expires_at: "2026-08-01T10:00:00Z",
+              permissions: { statuses: "read", metadata: "read" },
               repository_selection: "selected",
               repositories: [{ full_name: "TeamLeaderLeo/Stensibly" }],
             }, { status: 201 });
           }
-          if (
-            url
-              === "https://api.github.test/repos/teamleaderleo/stensibly/pulls/42"
-          ) {
-            return Response.json(pullRequestPayload(), {
-              headers: { "x-github-request-id": "PRINFO:1234" },
-            });
+          if (url === statusUrl) {
+            return statusResponse(combinedStatusPayload(), "STATUS:MOUNT:1");
           }
           return Response.json({ message: "unexpected request" }, { status: 500 });
-        }) as unknown as typeof fetch,
+        }) as typeof fetch,
       },
     );
 
+    expect(mounted.delegatedGitHubReadTools)
+      .toBe(hostedGitHubDelegatedReadTools);
+    expect(mounted.delegatedGitHubReadTools)
+      .toContain("get_commit_combined_status");
+
     const receipt = await mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      repository: "TeamLeaderLeo/Stensibly",
-      tool: "get_pr_info",
-      arguments: { pr_number: pullRequestNumber },
+      tool: "get_commit_combined_status",
+      arguments: { commit_sha: commitSha },
     });
 
     expect(receipt).toMatchObject({
-      version: 1,
       project,
       repositoryFullName,
-      tool: "get_pr_info",
-      connectionId: "ghconn_installation_98765",
-      installationId: "98765",
-      attachmentId: attachment.id,
-      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
-      capabilityGrantId: null,
-      approvalId: null,
-      catalogueFingerprint,
-      providerRequestId: "PRINFO:1234",
+      tool: "get_commit_combined_status",
+      providerRequestId: "STATUS:MOUNT:1",
       result: {
         repositoryFullName,
-        number: pullRequestNumber,
-        id: 987654,
-        state: "open",
-        title: "Add one guarded pull request read",
-        headRepositoryFullName: repositoryFullName,
-        headSha,
-        baseSha,
+        commitSha,
+        state: "success",
+        totalCount: 1,
+        statuses: [{
+          id: 123,
+          state: "success",
+          context: "ci/serial",
+          description: "Exact head passed",
+          targetUrlPresent: true,
+          creatorLogin: "github-actions",
+          creatorId: 41898282,
+          createdAt: "2026-08-01T09:01:00.000Z",
+          updatedAt: "2026-08-01T09:02:00.000Z",
+        }],
       },
     });
-    expect(receipt.bindingId).toMatch(/^ghbind_[a-f0-9]{24}$/);
-    expect(receipt.parametersSha256).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(receipt.resultSha256).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(Object.isFrozen(receipt)).toBe(true);
     expect(Object.isFrozen(receipt.result)).toBe(true);
+    const result = receipt.result as { statuses: readonly unknown[] };
+    expect(Object.isFrozen(result.statuses)).toBe(true);
 
     expect(calls).toHaveLength(2);
-    expect(calls[0]).toMatchObject({
-      url: "https://api.github.test/app/installations/98765/access_tokens",
-      method: "POST",
-      body: {
-        repositories: ["stensibly"],
-        permissions: { pull_requests: "read" },
-      },
-    });
+    expect(calls[0]?.url)
+      .toBe("https://api.github.test/app/installations/98765/access_tokens");
+    expect(calls[0]?.authorization).toMatch(/^Bearer /);
     expect(calls[1]).toMatchObject({
-      url: "https://api.github.test/repos/teamleaderleo/stensibly/pulls/42",
+      url: statusUrl,
       method: "GET",
-      authorization: "Bearer pull-request-installation-token-secret",
+      authorization: "Bearer commit-status-installation-token-secret",
     });
     const serialized = JSON.stringify(receipt);
     expect(serialized).not.toContain(privateKey);
     expect(serialized).not.toContain("installation-token-secret");
+    expect(serialized).not.toContain("https://checks.github.test/private");
     expect(serialized).not.toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
   });
 
-  test("keeps Actions step and remaining delegated contracts outside private authority", async () => {
+  test("denies an unmounted Actions step read before token or provider activity", async () => {
     let externalCalls = 0;
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
       fakeLedger(),
@@ -223,38 +216,36 @@ function providerEnv(): Record<string, string> {
   };
 }
 
-function pullRequestPayload(): Record<string, unknown> {
+function combinedStatusPayload() {
   return {
-    id: 987654,
-    node_id: "PR_kwDOGitHub",
-    number: pullRequestNumber,
-    state: "open",
-    locked: false,
-    title: "Add one guarded pull request read",
-    user: { login: "teamleaderleo" },
-    draft: false,
-    merged: false,
-    merge_commit_sha: null,
-    head: {
-      ref: "sable/697-pr-info-native-read",
-      sha: headSha,
-      repo: { full_name: "TeamLeaderLeo/Stensibly" },
-    },
-    base: {
-      ref: "main",
-      sha: baseSha,
-      repo: { full_name: "TeamLeaderLeo/Stensibly" },
-    },
-    url: "https://api.github.test/repos/TeamLeaderLeo/Stensibly/pulls/42",
-    created_at: "2026-07-31T02:00:00Z",
-    updated_at: "2026-07-31T02:05:00Z",
-    closed_at: null,
-    merged_at: null,
-    additions: 120,
-    deletions: 12,
-    changed_files: 2,
-    commits: 1,
-    review_comments: 3,
-    comments: 4,
+    state: "success",
+    sha: commitSha,
+    total_count: 1,
+    repository: { full_name: "TeamLeaderLeo/Stensibly" },
+    statuses: [{
+      id: 123,
+      state: "success",
+      context: "ci/serial",
+      description: "Exact head passed",
+      target_url: "https://checks.github.test/private",
+      creator: { login: "github-actions", id: 41898282 },
+      created_at: "2026-08-01T09:01:00Z",
+      updated_at: "2026-08-01T09:02:00Z",
+    }],
   };
+}
+
+function statusResponse(payload: unknown, requestId: string): Response {
+  const response = Response.json(payload, {
+    status: 200,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "x-github-request-id": requestId,
+    },
+  });
+  Object.defineProperties(response, {
+    url: { configurable: true, value: statusUrl },
+    redirected: { configurable: true, value: false },
+  });
+  return response;
 }

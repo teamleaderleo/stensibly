@@ -211,7 +211,7 @@ describe("private hosted GitHub delegated pull request diff reads", () => {
     expect(serialized).not.toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
   });
 
-  test("keeps combined-status and remaining delegated reads outside private authority", async () => {
+  test("keeps Actions step and remaining delegated reads outside private authority", async () => {
     let externalCalls = 0;
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
       fakeLedger(),
@@ -227,8 +227,8 @@ describe("private hosted GitHub delegated pull request diff reads", () => {
 
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      tool: "get_commit_combined_status",
-      arguments: { commit_sha: "a".repeat(40) },
+      tool: "fetch_workflow_job_steps",
+      arguments: { job_id: 91345873454 },
     })).rejects.toThrow("authority denied");
     expect(externalCalls).toBe(0);
   });
