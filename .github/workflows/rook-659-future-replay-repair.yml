@@ -1,4 +1,5 @@
 # Registered; this synchronize event executes the repair.
+# Wake: Lumen 2026-08-02.
 name: Rook 659 checkpoint integrity repair
 
 on:
