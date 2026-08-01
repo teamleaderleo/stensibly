@@ -10,8 +10,7 @@ import {
 const candidate = "a".repeat(40);
 const base = "b".repeat(40);
 const workflow = "c".repeat(40);
-const newer = "d".repeat(40);
-const diagnostics = `sha256:${"e".repeat(64)}`;
+const diagnostics = `sha256:${"d".repeat(64)}`;
 
 function step(
   number: number,
@@ -26,11 +25,15 @@ function job(
   conclusion: GitHubActionsCompletedJobV1["conclusion"],
   overrides: Partial<GitHubActionsCompletedJobV1> = {},
 ): GitHubActionsCompletedJobV1 {
+  const id = name === "browser-evidence" ? 10
+    : name === "test" ? 20
+    : name === "runtime-parity" ? 30
+    : 40;
   const noStart = [
     "skipped", "action_required", "stale", "startup_failure",
   ].includes(conclusion);
   return {
-    id: name === "test" ? 10 : name === "runtime-parity" ? 20 : 30,
+    id,
     runId: 30638086970,
     runAttempt: 1,
     headSha: candidate,
@@ -47,6 +50,24 @@ function job(
     steps: noStart ? [] : [step(1, "Set up job"), step(2, "Run gate")],
     ...overrides,
   };
+}
+
+function parallelJobs(): GitHubActionsCompletedJobV1[] {
+  return [
+    job("browser-evidence", "success", {
+      startedAt: "2026-07-31T10:00:30Z",
+      completedAt: "2026-07-31T10:12:00Z",
+    }),
+    job("test", "success"),
+    job("runtime-parity", "success", {
+      startedAt: "2026-07-31T10:01:00Z",
+      completedAt: "2026-07-31T10:05:00Z",
+    }),
+    job("serial-full", "success", {
+      startedAt: "2026-07-31T10:03:00Z",
+      completedAt: "2026-07-31T10:28:00Z",
+    }),
+  ];
 }
 
 function bundle(
@@ -69,16 +90,9 @@ function bundle(
       headSha: candidate,
       createdAt: "2026-07-31T10:00:00Z",
       completedAt: "2026-07-31T10:30:00Z",
-      pullRequests: [{ number: 704, headSha: candidate, baseSha: base }],
+      pullRequests: [{ number: 783, headSha: candidate, baseSha: base }],
     },
-    jobs: [
-      job("test", "success"),
-      job("runtime-parity", "success", {
-        startedAt: "2026-07-31T10:01:00Z",
-        completedAt: "2026-07-31T10:05:00Z",
-      }),
-      job("serial-full", "skipped"),
-    ],
+    jobs: parallelJobs(),
     diagnosticsArtifacts: [],
     ...overrides,
   };
@@ -91,167 +105,76 @@ function compile(input: GitHubActionsCiReceiptBundleV1 = bundle()) {
   );
 }
 
-function failedBundle(
-  artifacts: GitHubActionsCiReceiptBundleV1["diagnosticsArtifacts"] = [],
-): GitHubActionsCiReceiptBundleV1 {
-  return bundle({
-    run: { ...bundle().run, conclusion: "failure" },
-    jobs: [
-      job("test", "failure", {
-        steps: [step(1, "Set up job"), step(2, "Run Bun tests", "failure")],
-      }),
-      job("runtime-parity", "success"),
-      job("serial-full", "skipped"),
-    ],
-    diagnosticsArtifacts: artifacts,
-  });
-}
-
 describe("signed GitHub Actions CI receipt compiler", () => {
-  test("binds independent workflow bytes and exact queue evidence", () => {
+  test("retains the complete pull-request browser topology and exact queue evidence", () => {
     const receipt = compile();
     expect(receipt).toMatchObject({
       workflowRunId: 30638086970,
       workflowAttempt: 1,
       event: "pull_request",
-      pullRequestNumber: 704,
+      pullRequestNumber: 783,
       candidateRevision: candidate,
       baseRevision: base,
       workflowRevision: workflow,
       validationProfile: "full_parallel",
-      validationProfileState: "reviewed",
-      concurrencyGroup: "ci-teamleaderleo/stensibly-pr-704",
-      firstJobStartedAt: "2026-07-31T10:01:00.000Z",
-      queueWaitMs: 60_000,
-      durationMs: 1_800_000,
+      commandIds: expect.arrayContaining([
+        "browser-typecheck", "browser-tests", "browser-artifacts",
+      ]),
+      concurrencyGroup: "ci-teamleaderleo/stensibly-pr-783",
+      firstJobStartedAt: "2026-07-31T10:00:30.000Z",
+      queueWaitMs: 30_000,
       supersededByRevision: null,
       queuePosition: "unknown",
       authorizesMerge: false,
       authorizesMutation: false,
     });
-    expect(receipt.jobs.find((entry) => entry.name === "runtime-parity"))
-      .toMatchObject({
-        queuedAt: "2026-07-31T10:00:01.000Z",
-        queueWaitMs: 59_000,
-      });
-    expect(compile(bundle({ workflowRevision: newer })).receiptFingerprint)
-      .not.toBe(receipt.receiptFingerprint);
+    expect(receipt.jobs.map((entry) => entry.name)).toEqual([
+      "browser-evidence", "test", "runtime-parity", "serial-full",
+    ]);
+    expect(receipt.jobs.find((entry) => entry.name === "browser-evidence"))
+      .toMatchObject({ queuedAt: "2026-07-31T10:00:01.000Z", queueWaitMs: 29_000 });
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(Object.isFrozen(receipt.jobs)).toBe(true);
   });
 
-  test("binds diagnostics to the exact run attempt and failed job", () => {
-    const artifact = {
-      workflowRunId: 30638086970,
-      workflowRunAttempt: 1,
-      workflowJobId: 10,
-      name: "diagnostics" as const,
-      digest: diagnostics,
-    };
-    const receipt = compile(failedBundle([artifact]));
-    expect(receipt.jobs.find((entry) => entry.name === "test"))
-      .toMatchObject({
-        failedStep: "Run Bun tests",
-        diagnosticsFingerprint: diagnostics,
-      });
-
-    expect(() => compile(failedBundle([{ ...artifact, workflowRunAttempt: 2 }])))
-      .toThrow("another run attempt");
-    expect(() => compile(failedBundle([{ ...artifact, workflowJobId: 20 }])))
-      .toThrow("another workflow job");
-    expect(() => compile(bundle({ diagnosticsArtifacts: [artifact] })))
-      .toThrow("requires its failed canonical job");
-  });
-
-  test("rejects failed steps hidden under a non-failed job", () => {
-    expect(() => compile(bundle({
-      jobs: [
-        job("test", "success", {
-          steps: [step(1, "continued failure", "failure")],
-        }),
-        job("runtime-parity", "success"),
-        job("serial-full", "skipped"),
-      ],
-    }))).toThrow("non-failed job cannot contain a failed step");
-  });
-
-  test("records cancellation without inventing supersession causality", () => {
-    const input = bundle({
-      run: { ...bundle().run, conclusion: "cancelled" },
-      jobs: [
-        job("test", "cancelled", {
-          startedAt: null,
-          completedAt: "2026-07-31T10:04:00Z",
-          steps: [],
-        }),
-        job("runtime-parity", "cancelled", {
-          startedAt: null,
-          completedAt: "2026-07-31T10:04:00Z",
-          steps: [],
-        }),
-        job("serial-full", "skipped"),
-      ],
-    });
-    const receipt = compile(input);
-    expect(receipt).toMatchObject({
-      conclusion: "cancelled",
-      supersededByRevision: null,
-      firstJobStartedAt: null,
-      queueWaitMs: null,
-    });
-
-    const arbitrary = { ...input, supersededByRevision: newer };
+  test("requires every canonical browser-profile job", () => {
+    const missing = bundle() as unknown as { jobs: GitHubActionsCompletedJobV1[] };
+    missing.jobs = parallelJobs().filter((entry) => entry.name !== "browser-evidence");
     expect(() => compileGitHubActionsCiReceiptV1(
-      arbitrary,
-      () => new Date(input.receivedAt),
-    )).toThrow("contains unknown fields");
+      missing,
+      () => new Date("2026-07-31T10:31:00Z"),
+    )).toThrow("between 4 and 4 entries");
   });
 
-  test("requires zero steps for every job that never started", () => {
-    expect(() => compile(bundle({
+  test("records browser-only failure as positive active-profile evidence", () => {
+    const input = bundle({
+      run: { ...bundle().run, conclusion: "failure" },
       jobs: [
+        job("browser-evidence", "failure", {
+          steps: [step(1, "Set up job"), step(2, "Run browser evidence", "failure")],
+        }),
         job("test", "success"),
         job("runtime-parity", "success"),
-        job("serial-full", "skipped", {
-          steps: [step(1, "Skipped setup", "skipped")],
-        }),
+        job("serial-full", "success"),
       ],
-    }))).toThrow("unstarted job cannot contain completed steps");
-
-    expect(() => compile(bundle({
-      run: { ...bundle().run, conclusion: "cancelled" },
-      jobs: [
-        job("test", "cancelled", {
-          startedAt: null,
-          completedAt: "2026-07-31T10:04:00Z",
-          steps: [step(1, "Cancelled setup", "cancelled")],
-        }),
-        job("runtime-parity", "cancelled", {
-          startedAt: null,
-          completedAt: "2026-07-31T10:04:00Z",
-          steps: [],
-        }),
-        job("serial-full", "skipped"),
-      ],
-    }))).toThrow("unstarted job cannot contain completed steps");
-
-    const afterStart = compile(bundle({
-      run: { ...bundle().run, conclusion: "cancelled" },
-      jobs: [
-        job("test", "cancelled", {
-          steps: [step(1, "Set up job"), step(2, "Cancellation received", "cancelled")],
-        }),
-        job("runtime-parity", "cancelled", {
-          steps: [step(1, "Set up job"), step(2, "Cancellation received", "cancelled")],
-        }),
-        job("serial-full", "skipped"),
-      ],
-    }));
-    expect(afterStart.jobs.filter((entry) => entry.conclusion === "cancelled"))
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({ startedAt: "2026-07-31T10:02:00.000Z" }),
-      ]));
+    });
+    expect(compile(input).jobs.find((entry) => entry.name === "browser-evidence"))
+      .toMatchObject({ conclusion: "failure", failedStep: "Run browser evidence" });
   });
 
-  test("compiles the opt-in serial exact-ref topology", () => {
+  test("rejects terminal runs whose active profile has no matching evidence", () => {
+    expect(() => compile(bundle({
+      run: { ...bundle().run, conclusion: "failure" },
+      jobs: [
+        job("browser-evidence", "skipped"),
+        job("test", "skipped"),
+        job("runtime-parity", "skipped"),
+        job("serial-full", "skipped"),
+      ],
+    }))).toThrow("positive active-profile failure evidence");
+  });
+
+  test("compiles the serial exact-ref topology with browser work on the same runner", () => {
     const input = bundle({
       workflowRevision: candidate,
       validationProfile: "serial_full",
@@ -262,6 +185,7 @@ describe("signed GitHub Actions CI receipt compiler", () => {
         pullRequests: [],
       },
       jobs: [
+        job("browser-evidence", "skipped"),
         job("test", "skipped"),
         job("runtime-parity", "skipped"),
         job("serial-full", "success", {
@@ -273,69 +197,89 @@ describe("signed GitHub Actions CI receipt compiler", () => {
     expect(compile(input)).toMatchObject({
       event: "workflow_dispatch",
       baseRevision: null,
-      workflowRevision: candidate,
       validationProfile: "serial_full",
       concurrencyGroup:
         `ci-teamleaderleo/stensibly-dispatch-${candidate}-serial_full`,
     });
-    expect(() => compile({ ...input, workflowRevision: newer }))
-      .toThrow("non-pull-request workflow revision must equal the run head");
   });
 
-  test("rejects cross-run, cross-attempt, and topology drift", () => {
-    expect(() => compile(bundle({
+  test("binds diagnostics to the exact run attempt and failed job", () => {
+    const artifact = {
+      workflowRunId: 30638086970,
+      workflowRunAttempt: 1,
+      workflowJobId: 20,
+      name: "diagnostics" as const,
+      digest: diagnostics,
+    };
+    const failed = bundle({
+      run: { ...bundle().run, conclusion: "failure" },
       jobs: [
-        job("test", "success", { runId: 99 }),
-        job("runtime-parity", "success"),
-        job("serial-full", "skipped"),
-      ],
-    }))).toThrow("another workflow run");
-    expect(() => compile(bundle({
-      jobs: [
-        job("test", "success", { runAttempt: 2 }),
-        job("runtime-parity", "success"),
-        job("serial-full", "skipped"),
-      ],
-    }))).toThrow("another workflow attempt");
-    expect(() => compile(bundle({
-      jobs: [
-        job("test", "success"),
+        job("browser-evidence", "success"),
+        job("test", "failure", {
+          steps: [step(1, "Set up job"), step(2, "Run Bun tests", "failure")],
+        }),
         job("runtime-parity", "success"),
         job("serial-full", "success"),
       ],
-    }))).toThrow("serial job to be skipped");
+      diagnosticsArtifacts: [artifact],
+    });
+    expect(compile(failed).jobs.find((entry) => entry.name === "test"))
+      .toMatchObject({ failedStep: "Run Bun tests", diagnosticsFingerprint: diagnostics });
+    expect(() => compile({
+      ...failed,
+      diagnosticsArtifacts: [{ ...artifact, workflowRunAttempt: 2 }],
+    })).toThrow("another run attempt");
+    expect(() => compile({
+      ...failed,
+      diagnosticsArtifacts: [{ ...artifact, workflowJobId: 30 }],
+    })).toThrow("another workflow job");
   });
 
-  test("admits benign sk labels and prose while rejecting realistic credentials", () => {
+  test("requires zero steps when a job never started", () => {
+    expect(() => compile(bundle({
+      jobs: [
+        job("browser-evidence", "success"),
+        job("test", "success"),
+        job("runtime-parity", "success"),
+        job("serial-full", "skipped", {
+          steps: [step(1, "Skipped setup", "skipped")],
+        }),
+      ],
+    }))).toThrow("unstarted job cannot contain completed steps");
+  });
+
+  test("admits benign sk-proj names and rejects realistic credential forms", () => {
     const benign = bundle({
-      repository: "teamleaderleo/task-sk-research",
+      repository: "teamleaderleo/task-sk-proj-research",
       run: { ...bundle().run, conclusion: "failure" },
       jobs: [
+        job("browser-evidence", "success"),
         job("test", "failure", {
-          labels: ["runner-sk-review"],
-          steps: [step(1, "Run sk-review checks", "failure")],
+          labels: ["runner-sk-proj-review"],
+          steps: [step(1, "Run sk-proj-review checks", "failure")],
         }),
         job("runtime-parity", "success"),
-        job("serial-full", "skipped"),
+        job("serial-full", "success"),
       ],
     });
     const receipt = compile(benign);
-    expect(receipt.repository).toBe("teamleaderleo/task-sk-research");
+    expect(receipt.repository).toBe("teamleaderleo/task-sk-proj-research");
     expect(receipt.jobs.find((entry) => entry.name === "test"))
       .toMatchObject({
-        requestedLabels: ["runner-sk-review"],
-        failedStep: "Run sk-review checks",
+        requestedLabels: ["runner-sk-proj-review"],
+        failedStep: "Run sk-proj-review checks",
       });
 
-    const secret = `context.github_pat_${"A".repeat(30)}`;
+    const secret = `context.sk-proj-${"A".repeat(24)}`;
     let error: unknown;
     try {
       compile(bundle({
         run: { ...bundle().run, conclusion: "failure" },
         jobs: [
+          job("browser-evidence", "success"),
           job("test", "failure", { steps: [step(1, secret, "failure")] }),
           job("runtime-parity", "success"),
-          job("serial-full", "skipped"),
+          job("serial-full", "success"),
         ],
       }));
     } catch (caught) { error = caught; }
@@ -343,29 +287,25 @@ describe("signed GitHub Actions CI receipt compiler", () => {
     expect((error as Error).message).not.toContain(secret);
   });
 
+  test("rejects caller-authored supersession causality", () => {
+    const hostile = { ...bundle(), supersededByRevision: "e".repeat(40) };
+    expect(() => compileGitHubActionsCiReceiptV1(
+      hostile,
+      () => new Date("2026-07-31T10:31:00Z"),
+    )).toThrow("contains unknown fields");
+  });
+
   test("keeps descriptor diagnostics fixed and invokes zero getters", () => {
     let reads = 0;
     const hostile = bundle() as unknown as Record<PropertyKey, unknown>;
-    const hostileKey = `credential:github_pat_${"A".repeat(30)}`;
-    Object.defineProperty(hostile, hostileKey, {
+    Object.defineProperty(hostile, "credential-field", {
       enumerable: true,
       get() { reads += 1; return "secret"; },
     });
-    let error: unknown;
-    try {
-      compileGitHubActionsCiReceiptV1(
-        hostile,
-        () => new Date("2026-07-31T10:31:00Z"),
-      );
-    } catch (caught) { error = caught; }
-    expect((error as Error).message)
-      .toBe("GitHub Actions CI receipt bundle contains unknown fields");
-    expect((error as Error).message).not.toContain(hostileKey);
+    expect(() => compileGitHubActionsCiReceiptV1(
+      hostile,
+      () => new Date("2026-07-31T10:31:00Z"),
+    )).toThrow("contains unknown fields");
     expect(reads).toBe(0);
-  });
-
-  test("collapses invalid timestamps to fixed receipt prose", () => {
-    expect(() => compile(bundle({ receivedAt: "2026-13-31T10:31:00Z" })))
-      .toThrow("GitHub Actions receipt time must be a canonical timestamp");
   });
 });

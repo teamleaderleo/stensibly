@@ -1,6 +1,6 @@
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+import { CI_BROWSER_EVIDENCE_TOPOLOGIES_V1 } from "./ci-browser-evidence-profile.js";
 import {
-  GITHUB_ACTIONS_CI_JOB_NAMES,
   GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
   GITHUB_ACTIONS_CI_VALIDATION_PROFILES,
   GITHUB_ACTIONS_CI_WORKFLOW_NAME,
@@ -11,19 +11,26 @@ import {
 import {
   CI_JOB_CONCLUSIONS,
   type CiJobConclusion,
+  type CiJobReceiptV1,
   type CiQueueReceiptV1,
   type CiRunConclusion,
   type CiTrustedClock,
 } from "./ci-queue-receipt.js";
 
 export {
-  GITHUB_ACTIONS_CI_JOB_NAMES,
   GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
   GITHUB_ACTIONS_CI_VALIDATION_PROFILES,
   GITHUB_ACTIONS_CI_WORKFLOW_NAME,
   GITHUB_ACTIONS_CI_WORKFLOW_PATH,
 };
 export type { GitHubActionsCiValidationProfile };
+
+export const GITHUB_ACTIONS_CI_JOB_NAMES = Object.freeze([
+  CI_BROWSER_EVIDENCE_TOPOLOGIES_V1.full_parallel.jobName,
+  "test",
+  "runtime-parity",
+  "serial-full",
+] as const);
 
 export interface GitHubActionsCiReceiptBundleV1 {
   readonly version: typeof GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1;
@@ -118,22 +125,28 @@ const realisticCredentialPattern = new RegExp(
     "(?:^|[._:/\\s-])github_pat_[A-Za-z0-9_]{20,}",
     "(?:^|[._:/\\s-])gh[pousr]_[A-Za-z0-9]{20,}",
     "(?:^|[._:/\\s-])stn\\.tok_[A-Za-z0-9._-]{20,}",
-    "(?:^|[._:/\\s-])sk-proj-[A-Za-z0-9_-]+",
-    "(?:^|[._:/\\s-])sk-[A-Za-z0-9_-]{20,}",
+    "(?:^|[._:/\\s-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}",
     "(?:^|[._:/\\s-])xox[baprs]-[A-Za-z0-9-]{20,}",
     "(?:^|[._:/\\s-])bearer[\\t ]+[A-Za-z0-9._~+/-]{20,}={0,2}",
     "(?:^|[._:/\\s-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
   ].join("|"),
   "iu",
 );
-const fallbackFailedStep = "GitHub Actions job failure";
 const internalRepository = "receipt/ci-evidence";
+const browserJobName = CI_BROWSER_EVIDENCE_TOPOLOGIES_V1.full_parallel.jobName;
+const failureEvidenceConclusions = new Set<CiRunConclusion>([
+  "failure", "timed_out", "neutral",
+]);
 
 interface PublicRun {
   readonly record: Record<string, unknown>;
   readonly id: number;
   readonly attempt: number;
   readonly event: typeof allowedEvents[number];
+  readonly conclusion: CiRunConclusion;
+  readonly headSha: string;
+  readonly createdAt: string;
+  readonly completedAt: string;
   readonly pullRequests: readonly Record<string, unknown>[];
 }
 
@@ -142,6 +155,9 @@ interface PublicJob {
   readonly id: number;
   readonly name: typeof GITHUB_ACTIONS_CI_JOB_NAMES[number];
   readonly conclusion: CiJobConclusion;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string;
   readonly labels: readonly string[];
   readonly steps: readonly PublicStep[];
 }
@@ -163,6 +179,9 @@ export function compileGitHubActionsCiReceiptV1(
   trustedClock: CiTrustedClock,
 ): CiQueueReceiptV1 {
   const input = exactRecord(value, bundleKeys, "GitHub Actions CI receipt bundle");
+  if (input.version !== GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1) {
+    throw new RangeError("GitHub Actions CI receipt bundle version is unsupported");
+  }
   const repository = repositoryName(input.repository);
   const workflowRevision = commitSha(
     input.workflowRevision,
@@ -174,10 +193,13 @@ export function compileGitHubActionsCiReceiptV1(
     "GitHub Actions validation profile",
   );
   const run = parseRun(input.run);
-  const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 3, 3)
-    .map((entry, index) => parseJob(entry, index));
+  const jobs = exactArray(input.jobs, "GitHub Actions CI jobs", 4, 4)
+    .map((entry, index) => parseJob(entry, index, run));
   requireUnique(jobs.map((job) => String(job.id)), "GitHub Actions CI jobs must have unique IDs");
   requireUnique(jobs.map((job) => job.name), "GitHub Actions CI jobs must have unique canonical names");
+  requireCanonicalJobSet(jobs);
+  validateProfileTopology(run, validationProfile, jobs);
+
   const artifacts = exactArray(
     input.diagnosticsArtifacts,
     "GitHub Actions diagnostics artifacts",
@@ -189,6 +211,7 @@ export function compileGitHubActionsCiReceiptV1(
     "GitHub Actions diagnostics artifacts must have unique names",
   );
 
+  const internalJobs = normalizedJobs(run, validationProfile, jobs);
   const internalWorkflowRevision = run.event === "pull_request"
     ? commitSha(
       run.pullRequests[0]?.baseSha,
@@ -203,7 +226,7 @@ export function compileGitHubActionsCiReceiptV1(
     validationProfile,
     supersededByRevision: null,
     run: cloneRun(run),
-    jobs: jobs.map((job, index) => cloneJob(job, index)),
+    jobs: internalJobs.map((job, index) => cloneJob(job, index)),
     diagnosticsArtifacts: artifacts.map((artifact) => ({
       workflowRunId: artifact.record.workflowRunId,
       name: artifact.name,
@@ -211,20 +234,16 @@ export function compileGitHubActionsCiReceiptV1(
     })),
   };
   const normalized = compileNormalizedReceipt(internalBundle, trustedClock);
-  const originalJobs = new Map(jobs.map((job) => [job.id, job]));
-  const restoredJobs = normalized.jobs.map((job) => {
-    const original = originalJobs.get(job.jobId)!;
-    return {
-      ...job,
-      requestedLabels: [...original.labels].sort(compare),
-      failedStep: job.conclusion === "failure"
-        ? original.steps.find((step) => step.conclusion === "failure")?.name
-          ?? fallbackFailedStep
-        : null,
-    };
-  });
-  const { receiptFingerprint: ignored, ...normalizedSubject } = normalized;
+  const restoredJobs = jobs
+    .map((job) => toReceiptJob(job, artifacts))
+    .sort((left, right) => left.jobId - right.jobId);
+  const started = restoredJobs
+    .filter((job) => job.startedAt !== null)
+    .sort((left, right) => Date.parse(left.startedAt!) - Date.parse(right.startedAt!))[0] ?? null;
+  const firstJobStartedAt = started?.startedAt ?? null;
+  const { receiptFingerprint: ignored, jobs: ignoredJobs, ...normalizedSubject } = normalized;
   void ignored;
+  void ignoredJobs;
   const subject = {
     ...normalizedSubject,
     repository,
@@ -237,6 +256,14 @@ export function compileGitHubActionsCiReceiptV1(
       normalized.validationProfile,
     ),
     supersededByRevision: null,
+    commandIds: Object.freeze([
+      ...normalized.commandIds,
+      ...CI_BROWSER_EVIDENCE_TOPOLOGIES_V1[validationProfile].commandIds,
+    ]),
+    firstJobStartedAt,
+    queueWaitMs: firstJobStartedAt === null
+      ? null
+      : Date.parse(firstJobStartedAt) - Date.parse(run.createdAt),
     jobs: restoredJobs,
   };
   return deepFreeze({
@@ -247,7 +274,22 @@ export function compileGitHubActionsCiReceiptV1(
 
 function parseRun(value: unknown): PublicRun {
   const record = exactRecord(value, runKeys, "GitHub Actions completed run");
+  if (record.name !== GITHUB_ACTIONS_CI_WORKFLOW_NAME) {
+    throw new RangeError("GitHub Actions completed run has the wrong workflow name");
+  }
+  if (record.path !== GITHUB_ACTIONS_CI_WORKFLOW_PATH) {
+    throw new RangeError("GitHub Actions completed run has the wrong workflow path");
+  }
+  if (record.status !== "completed") {
+    throw new RangeError("GitHub Actions completed run must be terminal");
+  }
   const event = closed(record.event, allowedEvents, "GitHub Actions run event");
+  const conclusion = closed(record.conclusion, CI_JOB_CONCLUSIONS, "GitHub Actions run conclusion");
+  const createdAt = timestamp(record.createdAt, "GitHub Actions run creation time");
+  const completedAt = timestamp(record.completedAt, "GitHub Actions run completion time");
+  if (Date.parse(completedAt) < Date.parse(createdAt)) {
+    throw new RangeError("GitHub Actions run completion cannot precede creation");
+  }
   const pullRequests = exactArray(
     record.pullRequests,
     "GitHub Actions run pull requests",
@@ -263,25 +305,74 @@ function parseRun(value: unknown): PublicRun {
     id: positiveInteger(record.id, "GitHub Actions workflow run ID"),
     attempt: positiveInteger(record.attempt, "GitHub Actions workflow attempt"),
     event,
+    conclusion,
+    headSha: commitSha(record.headSha, "GitHub Actions run head revision"),
+    createdAt,
+    completedAt,
     pullRequests,
   };
 }
 
-function parseJob(value: unknown, jobIndex: number): PublicJob {
+function parseJob(value: unknown, jobIndex: number, run: PublicRun): PublicJob {
   const record = exactRecord(value, jobKeys, "GitHub Actions completed job");
+  if (record.status !== "completed") {
+    throw new RangeError("GitHub Actions completed job must be terminal");
+  }
+  if (positiveInteger(record.runId, "GitHub Actions job run ID") !== run.id) {
+    throw new RangeError("GitHub Actions job belongs to another workflow run");
+  }
+  if (positiveInteger(record.runAttempt, "GitHub Actions job run attempt") !== run.attempt) {
+    throw new RangeError("GitHub Actions job belongs to another workflow attempt");
+  }
+  if (record.workflowName !== GITHUB_ACTIONS_CI_WORKFLOW_NAME) {
+    throw new RangeError("GitHub Actions job has the wrong workflow name");
+  }
+  if (commitSha(record.headSha, "GitHub Actions job head revision") !== run.headSha) {
+    throw new RangeError("GitHub Actions job head revision does not match its run");
+  }
+  const name = closed(
+    record.name,
+    GITHUB_ACTIONS_CI_JOB_NAMES,
+    "GitHub Actions canonical job name",
+  );
+  const conclusion = closed(
+    record.conclusion,
+    CI_JOB_CONCLUSIONS,
+    "GitHub Actions job conclusion",
+  );
+  const createdAt = timestamp(record.createdAt, "GitHub Actions job creation time");
+  const startedAt = nullableTimestamp(record.startedAt, "GitHub Actions job start time");
+  const completedAt = timestamp(record.completedAt, "GitHub Actions job completion time");
+  const createdMs = Date.parse(createdAt);
+  const startedMs = startedAt === null ? null : Date.parse(startedAt);
+  const completedMs = Date.parse(completedAt);
+  if (
+    createdMs < Date.parse(run.createdAt)
+    || completedMs > Date.parse(run.completedAt)
+    || completedMs < createdMs
+    || (startedMs !== null && (startedMs < createdMs || completedMs < startedMs))
+  ) {
+    throw new RangeError("GitHub Actions job timing is outside its workflow run");
+  }
   const labels = exactArray(record.labels, "GitHub Actions job labels", 1, 20)
     .map((entry) => identifier(entry, "GitHub Actions job label", 120));
   requireUnique(labels, "GitHub Actions job labels must be unique");
   const steps = exactArray(record.steps, "GitHub Actions job steps", 0, 100)
     .map((entry, stepIndex) => parseStep(entry, jobIndex, stepIndex));
-  if (record.startedAt === null && steps.length !== 0) {
+  if (startedAt === null && steps.length !== 0) {
     throw new RangeError("GitHub Actions unstarted job cannot contain completed steps");
+  }
+  if (conclusion !== "failure" && steps.some((step) => step.conclusion === "failure")) {
+    throw new RangeError("GitHub Actions non-failed job cannot contain a failed step");
   }
   return {
     record,
     id: positiveInteger(record.id, "GitHub Actions job ID"),
-    name: closed(record.name, GITHUB_ACTIONS_CI_JOB_NAMES, "GitHub Actions canonical job name"),
-    conclusion: closed(record.conclusion, CI_JOB_CONCLUSIONS, "GitHub Actions job conclusion"),
+    name,
+    conclusion,
+    createdAt,
+    startedAt,
+    completedAt,
     labels,
     steps,
   };
@@ -289,6 +380,9 @@ function parseJob(value: unknown, jobIndex: number): PublicJob {
 
 function parseStep(value: unknown, _jobIndex: number, _stepIndex: number): PublicStep {
   const record = exactRecord(value, stepKeys, "GitHub Actions completed step");
+  if (record.status !== "completed") {
+    throw new RangeError("GitHub Actions completed step must be terminal");
+  }
   return {
     record,
     name: displayText(record.name, "GitHub Actions step name", 240),
@@ -305,10 +399,7 @@ function parseArtifact(
   if (positiveInteger(record.workflowRunId, "GitHub Actions artifact run ID") !== run.id) {
     throw new RangeError("GitHub Actions diagnostics artifact belongs to another run");
   }
-  if (
-    positiveInteger(record.workflowRunAttempt, "GitHub Actions artifact run attempt")
-      !== run.attempt
-  ) {
+  if (positiveInteger(record.workflowRunAttempt, "GitHub Actions artifact run attempt") !== run.attempt) {
     throw new RangeError("GitHub Actions diagnostics artifact belongs to another run attempt");
   }
   const name = closed(
@@ -329,7 +420,99 @@ function parseArtifact(
   if (workflowJobId !== job.id) {
     throw new RangeError("GitHub Actions diagnostics artifact belongs to another workflow job");
   }
+  sha256(record.digest, "GitHub Actions diagnostics artifact digest");
   return { record, workflowJobId, name };
+}
+
+function requireCanonicalJobSet(jobs: readonly PublicJob[]): void {
+  const names = new Set(jobs.map((job) => job.name));
+  if (GITHUB_ACTIONS_CI_JOB_NAMES.some((name) => !names.has(name))) {
+    throw new RangeError("GitHub Actions CI run requires every canonical job record");
+  }
+}
+
+function validateProfileTopology(
+  run: PublicRun,
+  profile: GitHubActionsCiValidationProfile,
+  jobs: readonly PublicJob[],
+): void {
+  if (run.event !== "workflow_dispatch" && profile !== "full_parallel") {
+    throw new RangeError("Only manually dispatched CI may use the serial validation profile");
+  }
+  const byName = new Map(jobs.map((job) => [job.name, job]));
+  const browser = byName.get(browserJobName)!;
+  const test = byName.get("test")!;
+  const parity = byName.get("runtime-parity")!;
+  const serial = byName.get("serial-full")!;
+  if (profile === "full_parallel") {
+    if (run.event !== "pull_request" && serial.conclusion !== "skipped") {
+      throw new RangeError("Non-pull-request full-parallel CI requires the serial job to be skipped");
+    }
+    if (
+      run.conclusion === "success"
+      && [browser, test, parity, ...(run.event === "pull_request" ? [serial] : [])]
+        .some((job) => job.conclusion === "skipped")
+    ) {
+      throw new RangeError("Successful full-parallel CI requires every active-profile job");
+    }
+    if (failureEvidenceConclusions.has(run.conclusion)) {
+      const active = run.event === "pull_request"
+        ? [browser, test, parity, serial]
+        : [browser, test, parity];
+      if (!active.some((job) => job.conclusion === run.conclusion)) {
+        throw new RangeError("Terminal full-parallel CI requires positive active-profile failure evidence");
+      }
+    }
+    return;
+  }
+  if (
+    browser.conclusion !== "skipped"
+    || test.conclusion !== "skipped"
+    || parity.conclusion !== "skipped"
+  ) {
+    throw new RangeError("Serial-full CI requires every parallel job to be skipped");
+  }
+  if (run.conclusion === "success" && serial.conclusion === "skipped") {
+    throw new RangeError("Successful serial-full CI requires the serial job");
+  }
+  if (
+    failureEvidenceConclusions.has(run.conclusion)
+    && serial.conclusion !== run.conclusion
+  ) {
+    throw new RangeError("Terminal serial-full CI requires positive serial failure evidence");
+  }
+}
+
+function normalizedJobs(
+  run: PublicRun,
+  profile: GitHubActionsCiValidationProfile,
+  jobs: readonly PublicJob[],
+): PublicJob[] {
+  const selected = jobs.filter((job) => job.name !== browserJobName);
+  if (profile === "full_parallel" && run.event === "pull_request") {
+    return selected.map((job) => job.name === "serial-full"
+      ? syntheticSkippedJob(job)
+      : job);
+  }
+  return selected;
+}
+
+function syntheticSkippedJob(job: PublicJob): PublicJob {
+  const record = {
+    ...job.record,
+    conclusion: "skipped",
+    startedAt: null,
+    completedAt: job.createdAt,
+    steps: [],
+  };
+  return {
+    ...job,
+    record,
+    conclusion: "skipped",
+    startedAt: null,
+    completedAt: job.createdAt,
+    steps: [],
+  };
 }
 
 function cloneRun(run: PublicRun): Record<string, unknown> {
@@ -348,6 +531,48 @@ function cloneJob(job: PublicJob, jobIndex: number): Record<string, unknown> {
       name: `Step ${jobIndex + 1}.${stepIndex + 1}`,
     })),
   };
+}
+
+function toReceiptJob(
+  job: PublicJob,
+  artifacts: readonly PublicArtifact[],
+): CiJobReceiptV1 {
+  const startedMs = job.startedAt === null ? null : Date.parse(job.startedAt);
+  const completedMs = Date.parse(job.completedAt);
+  return {
+    jobId: job.id,
+    name: job.name,
+    requestedLabels: Object.freeze([...job.labels].sort(compare)),
+    status: "completed",
+    conclusion: job.conclusion,
+    queuedAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    queueWaitMs: startedMs === null ? null : startedMs - Date.parse(job.createdAt),
+    durationMs: startedMs === null ? null : completedMs - startedMs,
+    runnerOs: null,
+    runnerArch: null,
+    runnerImage: null,
+    failedStep: job.conclusion === "failure"
+      ? job.steps.find((step) => step.conclusion === "failure")?.name
+        ?? "GitHub Actions job failure"
+      : null,
+    diagnosticsFingerprint: diagnosticsFingerprint(job.name, artifacts),
+  };
+}
+
+function diagnosticsFingerprint(
+  jobName: PublicJob["name"],
+  artifacts: readonly PublicArtifact[],
+): string | null {
+  if (jobName === browserJobName) return null;
+  const artifactName = jobName === "test"
+    ? "diagnostics"
+    : jobName === "runtime-parity"
+    ? "runtime-parity-diagnostics"
+    : "serial-full-diagnostics";
+  return artifacts.find((artifact) => artifact.name === artifactName)?.record.digest as string | undefined
+    ?? null;
 }
 
 function concurrencyGroup(
@@ -462,6 +687,25 @@ function identifier(value: unknown, label: string, maximum: number): string {
   return result;
 }
 
+function timestamp(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+  ) throw new RangeError(`${label} must be an ISO UTC timestamp`);
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new RangeError(`${label} must be a canonical timestamp`);
+  }
+  const canonical = date.toISOString();
+  const expected = value.length === 20 ? value.replace(/Z$/u, ".000Z") : value;
+  if (canonical !== expected) throw new RangeError(`${label} must be a canonical timestamp`);
+  return canonical;
+}
+
+function nullableTimestamp(value: unknown, label: string): string | null {
+  return value === null ? null : timestamp(value, label);
+}
+
 function positiveInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new RangeError(`${label} must be a positive integer`);
@@ -472,6 +716,13 @@ function positiveInteger(value: unknown, label: string): number {
 function commitSha(value: unknown, label: string): string {
   if (typeof value !== "string" || !/^[a-f0-9]{40}$/u.test(value)) {
     throw new RangeError(`${label} must be a lowercase full commit SHA`);
+  }
+  return value;
+}
+
+function sha256(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(value)) {
+    throw new RangeError(`${label} must be a lowercase SHA-256 fingerprint`);
   }
   return value;
 }
