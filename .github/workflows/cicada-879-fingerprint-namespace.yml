@@ -1,0 +1,118 @@
+name: Cicada 879 fingerprint namespace
+
+on:
+  push:
+    branches:
+      - cicada/879-fingerprint-namespace
+    paths:
+      - .github/workflows/cicada-879-fingerprint-namespace.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cicada-879-fingerprint-namespace
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/879-fingerprint-namespace
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Separate fallback identity namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/runner-cancellation-reconciliation.ts')
+          source = source_path.read_text()
+          old_source = '  return `${prefix}:${commandFingerprint}:g${generation}`;\n'
+          new_source = '  return `${prefix}-fingerprint:${commandFingerprint}:g${generation}`;\n'
+          if source.count(old_source) != 1:
+              raise SystemExit('reconciliation fallback identity changed')
+          source_path.write_text(source.replace(old_source, new_source, 1))
+
+          test_path = Path('test/runner-cancellation-reconciliation-run-id-boundary.test.ts')
+          test = test_path.read_text()
+          old_test = (
+              '    const externalId = `remote-settlement:${original.commandFingerprint}:g1`;\n'
+              '    expect(externalId.length).toBeLessThanOrEqual(160);\n'
+              '    const evidence: RunnerCancellationReconciliationEvidenceV1 = {\n'
+          )
+          new_test = (
+              '    const collidingLegacyExternalId = `remote-settlement:${original.commandFingerprint}:g1`;\n'
+              '    expect(collidingLegacyExternalId.length).toBeLessThanOrEqual(160);\n'
+              '    const externalId = `remote-settlement-fingerprint:${original.commandFingerprint}:g1`;\n'
+              '    expect(externalId.length).toBeLessThanOrEqual(160);\n'
+              '    const evidence: RunnerCancellationReconciliationEvidenceV1 = {\n'
+          )
+          if test.count(old_test) != 1:
+              raise SystemExit('run identity boundary fixture changed')
+          test = test.replace(old_test, new_test, 1)
+          old_assertion = (
+              '\n'
+              '    const result = reconcileRunnerCancellationSettlementV1(original, evidence);\n'
+          )
+          new_assertion = (
+              '\n'
+              '    expect(() => reconcileRunnerCancellationSettlementV1(original, {\n'
+              '      ...evidence,\n'
+              '      reference: {\n'
+              '        ...evidence.reference,\n'
+              '        externalId: collidingLegacyExternalId,\n'
+              '      },\n'
+              '    })).toThrow("Runner cancellation reconciliation reference does not match evidence kind");\n'
+              '\n'
+              '    const result = reconcileRunnerCancellationSettlementV1(original, evidence);\n'
+          )
+          if test.count(old_assertion) != 1:
+              raise SystemExit('reconciliation success assertion changed')
+          test_path.write_text(test.replace(old_assertion, new_assertion, 1))
+
+          docs_path = Path('docs/runner-cancellation-reconciliation.md')
+          docs = docs_path.read_text()
+          replacements = {
+              'remote-settlement:<commandFingerprint>:g<generation>': 'remote-settlement-fingerprint:<commandFingerprint>:g<generation>',
+              'runtime-still-running:<commandFingerprint>:g<generation>': 'runtime-still-running-fingerprint:<commandFingerprint>:g<generation>',
+              'runtime-unknown:<commandFingerprint>:g<generation>': 'runtime-unknown-fingerprint:<commandFingerprint>:g<generation>',
+              'publication-fence:<commandFingerprint>:g<generation>': 'publication-fence-fingerprint:<commandFingerprint>:g<generation>',
+              'The command fingerprint is a bounded SHA-256 identity for the complete accepted cancellation command and is required to equal the prior settlement `operationRef`. The fallback therefore remains collision-resistant, kind-specific, generation-explicit, and attributable without making a previously valid cancellation run unreconcilable.': 'The command fingerprint is a bounded SHA-256 identity for the complete accepted cancellation command and is required to equal the prior settlement `operationRef`. The distinct `-fingerprint` prefix keeps fallback identities outside the legacy run-ID namespace, so a literal run ID equal to a command fingerprint cannot alias another run. The fallback therefore remains collision-resistant, kind-specific, generation-explicit, and attributable without making a previously valid cancellation run unreconcilable.'
+          }
+          for old, new in replacements.items():
+              if docs.count(old) != 1:
+                  raise SystemExit(f'documentation boundary changed: {old}')
+              docs = docs.replace(old, new, 1)
+          docs_path.write_text(docs)
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify namespace repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/runner-cancellation-reconciliation.test.ts \
+            test/runner-cancellation-reconciliation-run-id-boundary.test.ts
+      - name: Publish clean child
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Cicada'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/cicada-879-fingerprint-namespace.yml
+          git add \
+            src/runner-cancellation-reconciliation.ts \
+            test/runner-cancellation-reconciliation-run-id-boundary.test.ts \
+            docs/runner-cancellation-reconciliation.md
+          git diff --cached --check
+          git commit -m 'Separate cancellation fallback identity namespace'
+          git push \
+            --force-with-lease=refs/heads/cicada/879-fingerprint-namespace:${SOURCE_HEAD} \
+            origin HEAD:cicada/879-fingerprint-namespace
