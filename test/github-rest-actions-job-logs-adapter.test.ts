@@ -129,7 +129,11 @@ describe("native GitHub delegated Actions workflow-job log reads", () => {
   });
 
   test("rejects compression, binary controls, credential-shaped content, and overflow", async () => {
-    for (const scenario of [
+    const scenarios: Array<{
+      headers: Record<string, string>;
+      body: string;
+      code: string;
+    }> = [
       {
         headers: {
           "content-type": "text/plain; charset=utf-8",
@@ -153,7 +157,8 @@ describe("native GitHub delegated Actions workflow-job log reads", () => {
         body: "x".repeat(65),
         code: "github_delegated_provider_result_too_large",
       },
-    ]) {
+    ];
+    for (const scenario of scenarios) {
       const adapter = createAdapter(
         new RecordingTokenProvider(),
         sequenceFetch(scenario.body, scenario.headers),
