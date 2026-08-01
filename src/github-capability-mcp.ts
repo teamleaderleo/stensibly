@@ -5,7 +5,11 @@ import {
   githubCapabilityTiers,
 } from "./github-capability-curation.js";
 import { GitHubCapabilityCatalogueService } from "./github-capability-service.js";
-import type { HostedGitHubDelegatedReadProvider } from "./hosted-github-delegated-read-provider.js";
+import {
+  hostedGitHubDelegatedReadTools,
+  type HostedGitHubDelegatedReadProvider,
+  type HostedGitHubDelegatedReadTool,
+} from "./hosted-github-delegated-read-provider.js";
 import type { WorkLedger } from "./ledger.js";
 import type { McpRequestContext } from "./mcp-context.js";
 import { asToolResult } from "./mcp-tool-result.js";
@@ -15,13 +19,13 @@ import {
 } from "./token-contracts.js";
 
 const catalogue = new GitHubCapabilityCatalogueService();
-const delegatedToolNames = [
+const legacyDelegatedToolNames = Object.freeze([
   "get_repo",
   "fetch_file",
   "get_pr_info",
   "get_pr_diff",
-] as const;
-const delegatedToolSet = new Set<string>(delegatedToolNames);
+] as const);
+const allDelegatedToolSet = new Set<string>(hostedGitHubDelegatedReadTools);
 
 export function registerGitHubCapabilityTools(
   server: McpServer,
@@ -29,6 +33,10 @@ export function registerGitHubCapabilityTools(
   context: McpRequestContext,
 ): void {
   const delegated = delegatedReadProvider(ledger);
+  const delegatedToolNames = delegated
+    ? enabledDelegatedToolNames(delegated)
+    : Object.freeze([] as HostedGitHubDelegatedReadTool[]);
+  const delegatedToolSet = new Set<string>(delegatedToolNames);
 
   server.registerTool(
     "github_list_toolsets",
@@ -112,11 +120,11 @@ export function registerGitHubCapabilityTools(
   server.registerTool(
     "github_call_tool",
     {
-      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset is repository metadata, one file at an immutable commit, exact pull-request metadata, and bounded pull-request diff or patch text.",
+      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        tool: z.enum(delegatedToolNames),
+        tool: z.enum(hostedGitHubDelegatedReadTools),
         arguments: z.union([
           z.object({}).strict(),
           z.object({
@@ -130,12 +138,23 @@ export function registerGitHubCapabilityTools(
             pr_number: z.number().int().min(1),
             format: z.enum(["diff", "patch"]).optional(),
           }).strict(),
+          z.object({
+            commit_sha: z.string().regex(/^[a-f0-9]{40}$/),
+          }).strict(),
+          z.object({
+            run_id: z.number().int().min(1),
+          }).strict(),
         ]),
         catalogueFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
       },
       annotations: { readOnlyHint: true },
     },
     async (input) => asToolResult(async () => {
+      if (!delegatedToolSet.has(input.tool)) {
+        throw new Error(
+          `Guarded GitHub delegated read ${input.tool} is unavailable on this backend`,
+        );
+      }
       const principal = delegatedPrincipal(context, input.project);
       return delegated.callGitHubDelegatedRead({
         project: input.project,
@@ -167,6 +186,53 @@ function delegatedReadProvider(
     return null;
   }
   return value as HostedGitHubDelegatedReadProvider;
+}
+
+function enabledDelegatedToolNames(
+  provider: HostedGitHubDelegatedReadProvider,
+): readonly HostedGitHubDelegatedReadTool[] {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    provider,
+    "delegatedGitHubReadTools",
+  );
+  if (!descriptor) return legacyDelegatedToolNames;
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    throw new Error("Hosted GitHub delegated tool declaration is invalid");
+  }
+  const value = descriptor.value;
+  if (
+    !Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || Object.getOwnPropertySymbols(value).length > 0
+    || value.length < 1
+    || value.length > hostedGitHubDelegatedReadTools.length
+  ) {
+    throw new Error("Hosted GitHub delegated tool declaration is invalid");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const names: HostedGitHubDelegatedReadTool[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    const item = descriptors[String(index)];
+    if (!item || !item.enumerable || !("value" in item)) {
+      throw new Error("Hosted GitHub delegated tool declaration is invalid");
+    }
+    const name = item.value;
+    if (
+      typeof name !== "string"
+      || !allDelegatedToolSet.has(name)
+      || seen.has(name)
+    ) {
+      throw new Error("Hosted GitHub delegated tool declaration is invalid");
+    }
+    seen.add(name);
+    names.push(name as HostedGitHubDelegatedReadTool);
+  }
+  const allowedKeys = new Set(["length", ...names.map((_, index) => String(index))]);
+  if (Object.keys(descriptors).some((key) => !allowedKeys.has(key))) {
+    throw new Error("Hosted GitHub delegated tool declaration is invalid");
+  }
+  return Object.freeze(names);
 }
 
 function delegatedPrincipal(
