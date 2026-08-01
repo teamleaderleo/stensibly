@@ -81,7 +81,7 @@ test("rejects record fields hidden after descriptor capture", () => {
     },
   });
 
-  expect(() => compile(hostile)).toThrow("contains unknown fields");
+  expect(() => compile(hostile)).toThrow("changed during snapshot");
 });
 
 test("rejects array fields hidden during key validation", () => {
@@ -105,5 +105,5 @@ test("rejects array fields hidden during key validation", () => {
     },
   });
 
-  expect(() => compile(input)).toThrow("contains unsupported fields");
+  expect(() => compile(input)).toThrow("changed during snapshot");
 });
