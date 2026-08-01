@@ -66,17 +66,24 @@ test("rejects durable acceptance metadata dated far in the future", async () => 
 
 test("rejects an issue query whose current row belongs to another issue", async () => {
   const wrongIssue = fixture(748);
-  const service = new ConvexGitHubProjectContextService({
-    client: new ResultClient({
-      queryResults: [storedRecord(wrongIssue), []],
-    }),
-    serviceSecret: "service-secret",
-    workspace: "default",
-  });
+  const service = queryServiceFor(storedRecord(wrongIssue));
 
   await expect(service.getGitHubProjectContext({
     project: "stensibly",
     externalId: "github:teamleaderleo/stensibly#747",
+  })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+});
+
+test("rejects an issue current query that returns a non-current row", async () => {
+  const subject = fixture();
+  const service = queryServiceFor({
+    ...storedRecord(subject),
+    isCurrent: false,
+  });
+
+  await expect(service.getGitHubProjectContext({
+    project: "stensibly",
+    externalId: subject.snapshot.reference.externalId,
   })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
 });
 
@@ -92,6 +99,14 @@ function acceptanceServiceFor(
   });
   return new ConvexGitHubProjectContextService({
     client,
+    serviceSecret: "service-secret",
+    workspace: "default",
+  });
+}
+
+function queryServiceFor(record: ReturnType<typeof storedRecord>) {
+  return new ConvexGitHubProjectContextService({
+    client: new ResultClient({ queryResults: [record, []] }),
     serviceSecret: "service-secret",
     workspace: "default",
   });
