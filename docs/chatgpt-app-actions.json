@@ -1,8 +1,8 @@
 {
   "snapshotVersion": 4,
   "manifestVersion": 1,
-  "toolCount": 32,
-  "toolManifestFingerprint": "sha256:f651fa13f910529c5bd0a4eb9d05069f572277a6a633623864e936f4c7874c6b",
+  "toolCount": 33,
+  "toolManifestFingerprint": "sha256:cd3a7edfc2f0234d58ee95f844394244ae7707d348aa00096433e178cc43d83d",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -12,6 +12,7 @@
     "edit_continuation",
     "get_brief",
     "get_continuation",
+    "get_github_project_context",
     "get_item",
     "get_operation_receipt",
     "get_project_attachment",
@@ -40,5 +41,5 @@
   "releasePolicy": "latest_manifest_only",
   "requiredAdminActionAfterAnyManifestChange": "refresh_or_recreate_chatgpt_app",
   "latestManifestMustBeActiveBeforeDogfood": true,
-  "reviewedOn": "2026-07-31"
+  "reviewedOn": "2026-08-02"
 }
