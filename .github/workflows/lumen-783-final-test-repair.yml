@@ -21,7 +21,7 @@ jobs:
         with:
           ref: lumen/783-final-test-repair
       - uses: oven-sh/setup-bun@v2
-      - name: Apply browser evidence and freeze repair
+      - name: Apply final receipt controls
         shell: bash
         run: |
           set -euo pipefail
@@ -142,6 +142,29 @@ jobs:
           if old not in text:
               raise SystemExit("normalized job insertion point moved")
           core.write_text(text.replace(old, new, 1))
+
+          test = Path("test/github-actions-ci-receipt.test.ts")
+          text = test.read_text()
+          old = '''    const receipt = compile();
+            expect(receipt).toMatchObject({
+          '''
+          new = '''    const receipt = compile();
+            expect(Object.isFrozen(receipt)).toBe(true);
+            expect(Object.isFrozen(receipt.jobs)).toBe(true);
+            expect(receipt).toMatchObject({
+          '''
+          if old not in text:
+              raise SystemExit("freeze assertion insertion point moved")
+          text = text.replace(old, new, 1)
+          old = '''    expect(Object.isFrozen(receipt)).toBe(true);
+            expect(Object.isFrozen(receipt.jobs)).toBe(true);
+          '''
+          if text.count(old) != 2:
+              raise SystemExit("freeze assertion count changed")
+          first = text.find(old)
+          second = text.find(old, first + 1)
+          text = text[:second] + text[second + len(old):]
+          test.write_text(text)
           PY
 
           bun install --frozen-lockfile
@@ -150,8 +173,11 @@ jobs:
             test/github-actions-ci-receipt-compatibility.test.ts \
             test/ci-queue-receipt-cancelled-before-start.test.ts
 
-          git rm .github/workflows/lumen-783-final-test-repair.yml
-          git add src/github-actions-ci-receipt.ts src/github-actions-ci-receipt-core.ts
+          git rm .github/workflows/lumen-783-final-test-repair.yml \
+            .github/workflows/lumen-783-freeze-debug.yml
+          git add src/github-actions-ci-receipt.ts \
+            src/github-actions-ci-receipt-core.ts \
+            test/github-actions-ci-receipt.test.ts
           git diff --cached --check
           git config user.name "Lumen"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
