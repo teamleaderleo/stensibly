@@ -28,7 +28,7 @@ Every path requires a credential-safe `provider_receipt` reference with:
 - no private content or credentials;
 - one canonical external identity for the declared evidence kind.
 
-Canonical external identities are:
+When the complete run-based identity fits the shared 160-character external-reference limit, canonical identities remain:
 
 ```text
 remote-settlement:<runId>:g<generation>
@@ -36,6 +36,17 @@ runtime-still-running:<runId>:g<generation>
 runtime-unknown:<runId>:g<generation>
 publication-fence:<runId>:g<generation>
 ```
+
+If that run-based identity would exceed the shared limit, the compiler deterministically substitutes the already validated command fingerprint:
+
+```text
+remote-settlement-fingerprint:<commandFingerprint>:g<generation>
+runtime-still-running-fingerprint:<commandFingerprint>:g<generation>
+runtime-unknown-fingerprint:<commandFingerprint>:g<generation>
+publication-fence-fingerprint:<commandFingerprint>:g<generation>
+```
+
+The command fingerprint is a bounded SHA-256 identity for the complete accepted cancellation command and is required to equal the prior settlement `operationRef`. The distinct `-fingerprint` prefix keeps fallback identities outside the legacy run-ID namespace, so a literal run ID equal to a command fingerprint cannot alias another run. The fallback therefore remains collision-resistant, kind-specific, generation-explicit, and attributable without making a previously valid cancellation run unreconcilable.
 
 A receipt for one evidence kind cannot be reused as another kind.
 
