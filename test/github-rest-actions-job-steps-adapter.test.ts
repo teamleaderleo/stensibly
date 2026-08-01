@@ -25,9 +25,7 @@ describe("native GitHub delegated Actions workflow-job step reads", () => {
     const adapter = createAdapter(tokens, async (input, init) => {
       requestUrl = String(input);
       requestInit = init;
-      return Response.json(workflowJob(), {
-        headers: { "x-github-request-id": "ACTIONS:JOB:STEPS" },
-      });
+      return jobResponse(workflowJob(), "ACTIONS:JOB:STEPS");
     });
 
     const called = await adapter.callReadTool(callInput(
@@ -91,10 +89,10 @@ describe("native GitHub delegated Actions workflow-job step reads", () => {
     let calls = 0;
     const adapter = createAdapter(tokens, async () => {
       calls += 1;
-      return Response.json({
+      return jobResponse({
         ...workflowJob(),
         url: `https://api.github.test/repos/teamleaderleo/other/actions/jobs/${jobId}`,
-      });
+      }, "ACTIONS:JOB:CROSS-REPO");
     });
 
     await expectRejectionCode(
@@ -118,26 +116,41 @@ describe("native GitHub delegated Actions workflow-job step reads", () => {
     expect(calls).toBe(1);
   });
 
+  test("requires provider request identity before publishing steps", async () => {
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async () => Response.json(workflowJob()),
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_steps",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+  });
+
   test("rejects duplicate, reordered, and chronologically invalid steps", async () => {
     const duplicate = createAdapter(new RecordingTokenProvider(), async () =>
-      Response.json({
+      jobResponse({
         ...workflowJob(),
         steps: [workflowStep(1), workflowStep(1)],
-      }));
+      }, "ACTIONS:JOB:DUPLICATE-STEPS"));
     await expect(duplicate.callReadTool(callInput(
       "fetch_workflow_job_steps",
       { job_id: jobId },
     ))).rejects.toThrow("uniquely ordered");
 
     const chronology = createAdapter(new RecordingTokenProvider(), async () =>
-      Response.json({
+      jobResponse({
         ...workflowJob(),
         steps: [{
           ...workflowStep(1),
           started_at: "2026-08-01T14:03:00Z",
           completed_at: "2026-08-01T14:02:00Z",
         }],
-      }));
+      }, "ACTIONS:JOB:STEP-CHRONOLOGY"));
     await expect(chronology.callReadTool(callInput(
       "fetch_workflow_job_steps",
       { job_id: jobId },
@@ -217,6 +230,15 @@ async function expectRejectionCode(
     expect(error).toBeInstanceOf(GitHubProviderRejectedError);
     expect((error as GitHubProviderRejectedError).code).toBe(expectedCode);
   }
+}
+
+function jobResponse(
+  body: Record<string, unknown>,
+  requestId: string,
+): Response {
+  return Response.json(body, {
+    headers: { "x-github-request-id": requestId },
+  });
 }
 
 function workflowJob() {
