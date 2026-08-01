@@ -1,3 +1,4 @@
+# Triggered after workflow registration.
 name: Cicada 897 embedded URL repair
 
 on:
