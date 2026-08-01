@@ -107,3 +107,29 @@ test("rejects array fields hidden during key validation", () => {
 
   expect(() => compile(input)).toThrow("changed during snapshot");
 });
+
+test("snapshots repeated object identities only once", () => {
+  const input = bundle();
+  const variants = input.jobs as Record<string, unknown>[];
+  let descriptorPass = 0;
+  const shared = new Proxy(variants[0]!, {
+    ownKeys(target) {
+      descriptorPass += 1;
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+      if (!descriptor || !("value" in descriptor)) return descriptor;
+      const variantIndex = Math.floor((descriptorPass - 1) / 2);
+      const variant = variants[variantIndex] ?? variants[variants.length - 1]!;
+      if (key === "id" || key === "name") {
+        return { ...descriptor, value: variant[key] };
+      }
+      return descriptor;
+    },
+  });
+  input.jobs = [shared, shared, shared, shared];
+
+  expect(() => compile(input)).toThrow("unique IDs");
+  expect(descriptorPass).toBe(2);
+});
