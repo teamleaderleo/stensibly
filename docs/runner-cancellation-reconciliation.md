@@ -10,7 +10,7 @@ It performs no provider read itself.
 
 ## Evidence kinds
 
-The compiler accepts one closed evidence kind:
+The compiler accepts one of four closed evidence kinds:
 
 - `provider_settled` — an attributable provider receipt proves the prior runtime has settled;
 - `provider_still_running` — the provider still reports live work;
@@ -50,7 +50,7 @@ The compiler verifies:
 - the complete result fingerprint;
 - workspace, project, command, public command fingerprint, adapter, version, profile, run, run generation, and lease generation;
 - the exact nested cancellation observation when present;
-- cancellation identity, chronology, delivery rules, `remoteSettlementKnown: false`, and optional reference admission;
+- cancellation identity, chronology, delivery rules, `remoteSettlementKnown: false`, and optional reference creation bounded between the accepted request and cancellation observation;
 - the original reconciliation-held settlement receipt under policy `runner-cancellation-settlement-v2`;
 - exact equality between the retained `commandFingerprint` and settlement `operationRef`;
 - the one exact adapter owner and output-reference digest;
@@ -61,7 +61,7 @@ The reconciliation result retains that same command fingerprint, so downstream r
 
 A caller cannot alter nested cancellation evidence and merely recompute the outer result fingerprint. The nested observation is parsed and bound independently before fingerprint comparison.
 
-Objects and arrays are recursively copied through a bounded JSON-data admission layer. One captured property-descriptor snapshot supplies both the validated key set and copied values, so a Proxy cannot substitute a different graph between descriptor and key reads. Accessors, custom prototypes, symbols, hidden fields, sparse or decorated arrays, non-finite numbers, excessive depth, and excessive size fail without getter execution. Own fields such as `__proto__` remain own data on a null-prototype copy and therefore reach exact unknown-field rejection.
+Objects and arrays are recursively copied through a bounded JSON-data admission layer. One captured property-descriptor snapshot supplies the validated key set, array length, and copied values, so a Proxy cannot substitute a different graph between reads. Accessors, custom prototypes, symbols, hidden fields, sparse or decorated arrays, non-finite numbers, excessive depth, and excessive size fail without getter execution. Own fields such as `__proto__` remain own data on a null-prototype copy and therefore reach exact unknown-field rejection.
 
 ## Reconciled settlement
 
