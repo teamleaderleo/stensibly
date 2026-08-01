@@ -1,0 +1,127 @@
+name: Cicada 877 attachment integrity repair
+
+on:
+  push:
+    branches:
+      - cicada/877-attachment-integrity-repair
+    paths:
+      - .github/workflows/cicada-877-attachment-integrity-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cicada-877-attachment-integrity-repair
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/877-attachment-integrity-repair
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Bind repository authority to attachment integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("convex/githubProjectContexts.ts")
+          source = path.read_text()
+          old_call = '''    if (!attachmentDeclaresRepository(
+            attachment.snapshotJson,
+            subject.snapshot.reference.repositoryFullName,
+          )) {
+          '''
+          new_call = '''    if (!attachmentDeclaresRepository(
+            attachment.snapshotJson,
+            attachment.snapshotSha256,
+            attachment.contentSha256,
+            attachment.sourcePath,
+            subject.snapshot.reference.repositoryFullName,
+          )) {
+          '''
+          if source.count(old_call) != 1:
+              raise SystemExit("attachment repository call changed")
+          source = source.replace(old_call, new_call, 1)
+
+          start = source.index("function attachmentDeclaresRepository(")
+          end = source.index("function canonicalRepository(", start)
+          replacement = '''function attachmentDeclaresRepository(
+            snapshotJson: string,
+            snapshotSha256: string,
+            contentSha256: string,
+            sourcePath: string,
+            repositoryFullName: string,
+          ): boolean {
+            const value = parseStrictJson(snapshotJson, {
+              maxBytes: 256_000,
+              maxDepth: 16,
+              maxStringLength: 20_000,
+              maxObjectKeys: 128,
+              maxArrayLength: 64,
+              prefix: "PROJECT_ATTACHMENT_SNAPSHOT",
+            });
+            if (!isRecord(value) || !hasExactKeys(value, [
+              "contract",
+              "context",
+              "format",
+              "schemaVersion",
+              "snapshotSha256",
+              "source",
+            ])) return false;
+            if (
+              value.format !== "stensibly.project-attachment"
+              || value.schemaVersion !== 1
+              || value.snapshotSha256 !== snapshotSha256
+              || !isRecord(value.contract)
+              || !isRecord(value.context)
+              || !isRecord(value.source)
+              || !Array.isArray(value.contract.repositories)
+              || value.source.contentSha256 !== contentSha256
+              || value.source.path !== sourcePath
+            ) return false;
+            const { snapshotSha256: _snapshotSha256, ...base } = value;
+            if (fingerprintCanonicalRequest(base) !== snapshotSha256) return false;
+            const target = canonicalRepository(repositoryFullName);
+            return target !== null && value.contract.repositories.some((entry) =>
+              typeof entry === "string" && canonicalRepository(entry) === target
+            );
+          }
+
+          '''
+          path.write_text(source[:start] + replacement + source[end:])
+          PY
+          git show b42426d3e171f148c60aabf41093426ddb95b239:convex/githubProjectContexts-attachment-integrity-review.test.ts \
+            > convex/githubProjectContexts-attachment-integrity-review.test.ts
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun run test:convex -- \
+            convex/githubProjectContexts.test.ts \
+            convex/githubProjectContexts-attachment-integrity-review.test.ts
+          bun test test/github-project-context-convex-ledger.test.ts
+          bun run worker:check
+      - name: Publish clean repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Cicada'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/cicada-877-attachment-integrity-repair.yml
+          git add \
+            convex/githubProjectContexts.ts \
+            convex/githubProjectContexts-attachment-integrity-review.test.ts
+          git diff --cached --check
+          git commit -m 'Bind GitHub context acceptance to attachment integrity'
+          git push \
+            --force-with-lease=refs/heads/cicada/877-attachment-integrity-repair:${SOURCE_HEAD} \
+            origin HEAD:cicada/877-attachment-integrity-repair
