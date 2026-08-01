@@ -1,0 +1,63 @@
+name: Diagnose signed CI receipt freeze
+
+on:
+  pull_request:
+    branches: [lumen/783-final-test-repair]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/783-final-test-repair
+      - uses: oven-sh/setup-bun@v2
+      - name: Inspect imported compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/github-actions-ci-receipt.ts')
+          text = path.read_text()
+          text = text.replace(
+              'export * from "./github-actions-ci-receipt-core.js";',
+              '''export {
+            GITHUB_ACTIONS_CI_JOB_NAMES,
+            GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
+            GITHUB_ACTIONS_CI_VALIDATION_PROFILES,
+            GITHUB_ACTIONS_CI_WORKFLOW_NAME,
+            GITHUB_ACTIONS_CI_WORKFLOW_PATH,
+          } from "./github-actions-ci-receipt-core.js";
+          export type {
+            GitHubActionsCiReceiptBundleV1,
+            GitHubActionsCiValidationProfile,
+            GitHubActionsCompletedJobV1,
+            GitHubActionsCompletedRunV1,
+            GitHubActionsCompletedStepV1,
+            GitHubActionsDiagnosticsArtifactV1,
+            GitHubActionsRunPullRequestV1,
+          } from "./github-actions-ci-receipt-core.js";''',
+              1,
+          )
+          text = text.replace(
+              '  return receipt;\n}',
+              '''  return deepFreeze(structuredClone(receipt));
+          }
+
+          function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+            if (!value || typeof value !== "object" || seen.has(value)) return value;
+            seen.add(value);
+            Object.freeze(value);
+            for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
+            return value;
+          }''',
+              1,
+          )
+          path.write_text(text)
+          PY
+          bun -e 'import { compileGitHubActionsCiReceiptV1 } from "./src/github-actions-ci-receipt.ts"; console.log("COMPILER_SOURCE=" + compileGitHubActionsCiReceiptV1.toString()); console.log("FREEZE_SANITY=" + Object.isFrozen(Object.freeze({a: 1})));'
