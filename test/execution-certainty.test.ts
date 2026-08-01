@@ -100,7 +100,7 @@ describe("execution certainty projection", () => {
         remoteResultReceived: true,
         reconciliationRequired: "none",
         replayAuthorization: "not_authorized",
-        nextEvidence: "remote_result",
+        nextEvidence: "none",
       });
     }
   });

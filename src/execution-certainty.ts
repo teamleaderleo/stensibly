@@ -643,7 +643,7 @@ function deriveCertainty(input: ExecutionCertaintyInput): ExecutionCertaintyProj
       remoteResultReceived: true,
       reconciliationRequired: "none",
       replayAuthorization: "not_authorized",
-      nextEvidence: "remote_result",
+      nextEvidence: "none",
     };
   }
   if (evidence.dispatchState === "not_started") {
