@@ -23,7 +23,7 @@ test("ConvexWorkLedger exposes the hosted GitHub project-context ledger", async 
   const ledger = new ConvexWorkLedger({
     client,
     serviceSecret: "hosted-context-composition-secret",
-    workspace: "default",
+    workspace: "hosted-review",
   });
   const contextLedger = githubProjectContextLedger(ledger);
 
@@ -37,7 +37,7 @@ test("ConvexWorkLedger exposes the hosted GitHub project-context ledger", async 
 
   expect(projection).toMatchObject({
     version: 1,
-    workspace: "default",
+    workspace: "hosted-review",
     project: "scrapbook",
     mode: "project",
     requestedExternalId: null,
@@ -46,7 +46,7 @@ test("ConvexWorkLedger exposes the hosted GitHub project-context ledger", async 
   });
   expect(queries).toEqual([{
     serviceSecret: "hosted-context-composition-secret",
-    workspace: "default",
+    workspace: "hosted-review",
     project: "scrapbook",
     limit: 5,
   }]);
