@@ -1,12 +1,9 @@
-# Triggered after workflow registration.
 name: Cicada 897 embedded URL repair
 
 on:
-  push:
-    branches:
-      - cicada/897-embedded-url-retention
-    paths:
-      - .github/workflows/cicada-897-embedded-url-repair.yml
+  pull_request:
+    types:
+      - synchronize
 
 permissions:
   contents: write
