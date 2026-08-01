@@ -2,7 +2,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { registerGitHubCapabilityTools } from "./github-capability-mcp.js";
 import type { GitHubIssueContext } from "./github-issue-context.js";
-import type { GitHubProviderRequestContext } from "./github-provider-contracts.js";
+import type {
+  GitHubProviderReceipt,
+  GitHubProviderRequestContext,
+} from "./github-provider-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import type { McpRequestContext } from "./mcp-context.js";
@@ -24,6 +27,41 @@ export interface GitHubIssueProviderReadService {
   getIssue(input: GitHubProviderRequestContext & {
     issueNumber: number;
   }): Promise<GitHubIssueContext>;
+}
+
+export interface GitHubIssueProviderWriteService {
+  createIssue(input: GitHubProviderRequestContext & {
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+    idempotencyKey: string;
+  }): Promise<GitHubProviderReceipt>;
+  updateIssue(input: GitHubProviderRequestContext & {
+    issueNumber: number;
+    expectedSourceRevision: string;
+    title?: string;
+    body?: string;
+    state?: "open" | "closed";
+    stateReason?: "completed" | "not_planned" | "reopened" | null;
+    idempotencyKey: string;
+  }): Promise<GitHubProviderReceipt>;
+  addIssueComment(input: GitHubProviderRequestContext & {
+    issueNumber: number;
+    body: string;
+    idempotencyKey: string;
+  }): Promise<GitHubProviderReceipt>;
+}
+
+export function withGitHubIssueProviderWriteService<T extends object>(
+  target: T,
+  service: GitHubIssueProviderWriteService,
+): T & GitHubIssueProviderWriteService {
+  return Object.assign(target, {
+    createIssue: service.createIssue.bind(service),
+    updateIssue: service.updateIssue.bind(service),
+    addIssueComment: service.addIssueComment.bind(service),
+  });
 }
 
 export function withGitHubIssueProviderReadService<T extends object>(
