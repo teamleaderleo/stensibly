@@ -165,10 +165,10 @@ describe("private hosted GitHub review-thread delegated reads", () => {
     expect(Object.isFrozen(receipt.result)).toBe(true);
 
     expect(calls).toHaveLength(2);
-    expect(calls[0]).toMatchObject({
-      method: "POST",
-      authorization: null,
-    });
+    expect(calls[0]?.url)
+      .toBe("https://api.github.test/app/installations/98765/access_tokens");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.authorization).toMatch(/^Bearer /);
     expect(calls[1]).toMatchObject({
       url: graphqlUrl,
       method: "POST",
