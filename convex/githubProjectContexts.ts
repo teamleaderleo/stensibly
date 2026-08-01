@@ -143,9 +143,13 @@ export const accept = mutation({
       )
       .order("asc")
       .first();
+    const admittedSourceRevisionBinding = sourceRevisionBinding === null
+      ? null
+      : admitStoredRecord(sourceRevisionBinding, workspaceSlug, projectSlug);
     if (
-      sourceRevisionBinding
-      && sourceRevisionBinding.contentSha256 !== subject.snapshot.contentSha256
+      admittedSourceRevisionBinding
+      && admittedSourceRevisionBinding.contentSha256
+        !== subject.snapshot.contentSha256
     ) {
       throw new Error("GITHUB_PROJECT_CONTEXT_SOURCE_REVISION_CONFLICT");
     }
