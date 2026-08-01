@@ -33,23 +33,17 @@ jobs:
           old = '''  return receipt;
           }
           '''
-          new = '''  return deepFreeze({
-            ...receipt,
-            commandIds: [...receipt.commandIds],
-            jobs: receipt.jobs.map((job) => ({
-              ...job,
-              requestedLabels: [...job.requestedLabels],
-            })),
-          });
+          new = '''  return deepFreeze(structuredClone(receipt));
           }
 
           function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
             if (!value || typeof value !== "object" || seen.has(value)) return value;
             seen.add(value);
+            Object.freeze(value);
             for (const nested of Object.values(value as Record<string, unknown>)) {
               deepFreeze(nested, seen);
             }
-            return Object.freeze(value);
+            return value;
           }
           '''
           if old not in text:
