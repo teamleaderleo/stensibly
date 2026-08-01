@@ -165,6 +165,38 @@ describe("guarded GitHub Actions delegated-read MCP dispatch", () => {
       mounted.store.close();
     }
   });
+
+  test("rejects reordered or decorated hosted tool declarations", () => {
+    for (const tools of [
+      [
+        "fetch_file",
+        "get_repo",
+        "get_pr_info",
+        "get_pr_diff",
+        "fetch_commit_workflow_runs",
+        "fetch_workflow_run_jobs",
+      ],
+      Object.assign([...hostedGitHubDelegatedReadTools], { extra: true }),
+    ]) {
+      const store = new StensiblyStore(":memory:");
+      const ledger = new SqliteWorkLedger(store);
+      const provider: HostedGitHubDelegatedReadProvider = {
+        delegatedGitHubReadTools:
+          tools as unknown as typeof hostedGitHubDelegatedReadTools,
+        async callGitHubDelegatedRead() {
+          throw new Error("must not dispatch");
+        },
+      };
+      try {
+        expect(() => createMcpServer(
+          Object.assign(ledger, provider),
+          { principal: readPrincipal() },
+        )).toThrow("tool declaration is invalid");
+      } finally {
+        store.close();
+      }
+    }
+  });
 });
 
 function mountedLedger(calls: HostedGitHubDelegatedReadInput[]) {
