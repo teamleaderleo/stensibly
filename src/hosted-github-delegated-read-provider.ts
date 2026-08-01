@@ -6,6 +6,7 @@ import {
 } from "./github-capability-service.js";
 import {
   GitHubDelegatedReadService,
+  type GitHubDelegatedReadAdapter,
   type GitHubDelegatedReadAuthority,
   type GitHubDelegatedReadReceipt,
 } from "./github-delegated-read.js";
@@ -19,6 +20,7 @@ import {
   sha256,
   stableJson,
 } from "./github-provider-validation.js";
+import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";
 import { GitHubRestPullRequestDiffAdapter } from "./github-rest-pull-request-diff-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import {
@@ -26,11 +28,24 @@ import {
   type ProjectAttachmentLedger,
 } from "./project-attachment-ledger.js";
 
+export const hostedGitHubDelegatedReadTools = Object.freeze([
+  "get_repo",
+  "fetch_file",
+  "get_pr_info",
+  "get_pr_diff",
+  "fetch_commit_workflow_runs",
+  "fetch_workflow_run_jobs",
+] as const);
+
+export type HostedGitHubDelegatedReadTool =
+  typeof hostedGitHubDelegatedReadTools[number];
+
 export type HostedGitHubDelegatedReadInput = Parameters<
   GitHubDelegatedReadService["call"]
 >[0];
 
 export interface HostedGitHubDelegatedReadProvider {
+  readonly delegatedGitHubReadTools?: readonly HostedGitHubDelegatedReadTool[];
   callGitHubDelegatedRead(
     input: HostedGitHubDelegatedReadInput,
   ): Promise<GitHubDelegatedReadReceipt>;
@@ -52,15 +67,14 @@ interface HostedGitHubDelegatedReadConfig {
   credentialRef: string;
 }
 
-const enabledTools = new Set([
-  "get_repo",
-  "fetch_file",
-  "get_pr_info",
-  "get_pr_diff",
+const enabledTools = new Set<string>(hostedGitHubDelegatedReadTools);
+const actionsTools = new Set<string>([
+  "fetch_commit_workflow_runs",
+  "fetch_workflow_run_jobs",
 ]);
 
 /**
- * Mounts a private four-tool delegated-read service when the explicit hosted
+ * Mounts a private six-tool delegated-read service when the explicit hosted
  * flag and the complete GitHub App configuration are present. Public MCP
  * dispatch and discovery remain separately controlled.
  */
@@ -98,24 +112,32 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
     now,
   });
-  const adapter = new GitHubRestPullRequestDiffAdapter({
+  const adapterOptions = {
     connectionId: bindings.connection.id,
     installationId: config.installationId,
     credentialRef: config.credentialRef,
     tokenProvider: tokens,
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+  };
+  const pullRequestAdapter = new GitHubRestPullRequestDiffAdapter(adapterOptions);
+  const actionsAdapter = new GitHubRestActionsRunAdapter(adapterOptions);
+  const adapter: GitHubDelegatedReadAdapter = Object.freeze({
+    callReadTool: (input) => actionsTools.has(input.tool)
+      ? actionsAdapter.callReadTool(input)
+      : pullRequestAdapter.callReadTool(input),
   });
   const catalogue = new GitHubCapabilityCatalogueService();
   const service = new GitHubDelegatedReadService({
     projects,
     bindings,
-    authority: new HostedFourToolDelegatedReadAuthority(config),
+    authority: new HostedDelegatedReadAuthority(config),
     adapter,
     catalogue,
   });
 
   return Object.assign(ledger, {
+    delegatedGitHubReadTools: hostedGitHubDelegatedReadTools,
     callGitHubDelegatedRead: (
       input: HostedGitHubDelegatedReadInput,
     ) => service.call(input),
@@ -239,7 +261,7 @@ class AcceptedAttachmentDelegatedBindingStore
   }
 }
 
-class HostedFourToolDelegatedReadAuthority
+class HostedDelegatedReadAuthority
   implements GitHubDelegatedReadAuthority
 {
   readonly #config: HostedGitHubDelegatedReadConfig;
