@@ -1,288 +1,786 @@
-name: CI
+name: Finalize guarded Actions job-detail composition
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-  workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact commit SHA that this run must validate
-        required: true
-        type: string
-      validation_profile:
-        description: Validation topology for this exact revision
-        required: false
-        default: full_parallel
-        type: choice
-        options:
-          - full_parallel
-          - serial_full
 
 concurrency:
-  group: >-
-    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
-    format('pr-{0}', github.event.pull_request.number) ||
-    github.event_name == 'workflow_dispatch' &&
-    format('dispatch-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
-    format('push-{0}', github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: lark-697-actions-job-detail-mount-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  browser-evidence:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Typecheck frontend browser evidence
-        run: |
-          set -o pipefail
-          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run frontend browser evidence
-        id: browser-test
-        run: |
-          set -o pipefail
-          bun run test:browser 2>&1 | tee browser-test-output.txt
-      - name: Verify frontend browser evidence artifacts
-        id: browser-artifacts
-        if: always() && steps.browser-test.outcome != 'skipped'
-        run: |
-          set -o pipefail
-          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
-      - name: Upload verified frontend browser evidence
-        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-browser-evidence-${{ github.sha }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: error
-          retention-days: 7
-
-  test:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ github.sha }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
-        run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run typecheck
-        run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee typecheck-output.txt
-      - name: Run Bun tests
-        run: |
-          set -o pipefail
-          bun run test 2>&1 | tee test-output.txt
-      - name: Run Convex tests
-        run: |
-          set -o pipefail
-          bun run test:convex 2>&1 | tee convex-test-output.txt
-      - name: Bundle Cloudflare Worker
-        run: |
-          set -o pipefail
-          bun run worker:check 2>&1 | tee worker-check-output.txt
-      - name: Upload failing diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics
-          path: |
-            typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-          if-no-files-found: ignore
-
-  runtime-parity:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run Bun, Node, and native workerd receiver checks
-        run: |
-          set -o pipefail
-          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
-      - name: Upload runtime parity diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-parity-diagnostics
-          path: runtime-parity-output.txt
-          if-no-files-found: ignore
-
-  serial-full:
-    needs: [browser-evidence, test, runtime-parity]
+  finalize:
     if: >-
-      ${{ always() &&
-      ((github.event_name == 'pull_request' &&
-      needs.browser-evidence.result == 'success' &&
-      needs.test.result == 'success' &&
-      needs.runtime-parity.result == 'success') ||
-      (github.event_name == 'workflow_dispatch' &&
-      inputs.validation_profile == 'serial_full')) }}
-    runs-on: ubuntu-latest
+      ${{ github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'lark/697-actions-job-detail-mount' }}
+    runs-on: ubuntu-24.04
     env:
-      SERIAL_VALIDATION_SHA: >-
-        ${{ github.event_name == 'pull_request' &&
-        github.event.pull_request.head.sha || inputs.expected_sha }}
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      TARGET_BRANCH: lark/697-actions-job-detail-mount
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.SERIAL_VALIDATION_SHA }}
-          persist-credentials: false
-      - name: Verify exact serial revision
+          ref: ${{ env.EXPECTED_HEAD }}
+          fetch-depth: 0
+      - name: Verify exact branch lease
+        shell: bash
         run: |
           set -euo pipefail
-          actual_sha="$(git rev-parse HEAD)"
-          if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
-            echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
-            exit 1
-          fi
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          git fetch origin main "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          test "$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")" = "${EXPECTED_HEAD}"
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
+      - name: Mount guarded Actions job-detail reads
+        shell: bash
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${SERIAL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies once
-        run: bun install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run serial full validation
-        id: serial-validation
-        run: |
-          set +e
-          status=0
-          run_gate() {
-            local label="$1"
-            local output="$2"
-            local -a pipeline_status
-            shift 2
-            echo "::group::${label}"
-            set -o pipefail
-            "$@" 2>&1 | tee "${output}"
-            pipeline_status=("${PIPESTATUS[@]}")
-            set +o pipefail
-            echo "::endgroup::"
-            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
-              status=1
-            fi
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label} marker changed: {count} matches")
+              return text.replace(old, new, 1)
+
+          provider_path = Path("src/hosted-github-delegated-read-provider.ts")
+          provider = provider_path.read_text()
+          provider = replace_once(
+              provider,
+              'import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";\n',
+              'import { GitHubRestActionsJobDetailAdapter } from "./github-rest-actions-job-detail-adapter.js";\nimport { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";\n',
+              "job-detail adapter import",
+          )
+          provider = replace_once(
+              provider,
+              '''  "fetch_commit_workflow_runs",
+  "fetch_workflow_run_jobs",
+] as const);''',
+              '''  "fetch_commit_workflow_runs",
+  "fetch_workflow_run_jobs",
+  "fetch_workflow_job_steps",
+  "fetch_workflow_job_logs",
+] as const);''',
+              "ten-tool declaration",
+          )
+          provider = replace_once(
+              provider,
+              '''const actionsTools = new Set<string>([
+  "fetch_commit_workflow_runs",
+  "fetch_workflow_run_jobs",
+]);''',
+              '''const actionsRunTools = new Set<string>([
+  "fetch_commit_workflow_runs",
+  "fetch_workflow_run_jobs",
+]);
+const actionsJobDetailTools = new Set<string>([
+  "fetch_workflow_job_steps",
+  "fetch_workflow_job_logs",
+]);''',
+              "Actions routing sets",
+          )
+          provider = replace_once(
+              provider,
+              ' * Mounts a private eight-tool delegated-read service when the explicit hosted\n',
+              ' * Mounts a private ten-tool delegated-read service when the explicit hosted\n',
+              "ten-tool documentation",
+          )
+          provider = replace_once(
+              provider,
+              '''  const statusAdapter = new GitHubRestCommitStatusAdapter(adapterOptions);
+  const actionsAdapter = new GitHubRestActionsRunAdapter(adapterOptions);''',
+              '''  const statusAdapter = new GitHubRestCommitStatusAdapter(adapterOptions);
+  const actionsAdapter = new GitHubRestActionsRunAdapter(adapterOptions);
+  const actionsJobDetailAdapter = new GitHubRestActionsJobDetailAdapter(
+    adapterOptions,
+  );''',
+              "job-detail adapter composition",
+          )
+          provider = replace_once(
+              provider,
+              '''    ) => input.tool === "get_commit_combined_status"
+      ? statusAdapter.callReadTool(input)
+      : actionsTools.has(input.tool)
+      ? actionsAdapter.callReadTool(input)
+      : pullRequestAdapter.callReadTool(input),''',
+              '''    ) => input.tool === "get_commit_combined_status"
+      ? statusAdapter.callReadTool(input)
+      : actionsJobDetailTools.has(input.tool)
+      ? actionsJobDetailAdapter.callReadTool(input)
+      : actionsRunTools.has(input.tool)
+      ? actionsAdapter.callReadTool(input)
+      : pullRequestAdapter.callReadTool(input),''',
+              "job-detail adapter routing",
+          )
+          provider_path.write_text(provider)
+
+          capability_path = Path("src/github-capability-mcp.ts")
+          capability = capability_path.read_text()
+          capability = replace_once(
+              capability,
+              'The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.',
+              'The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, exact-run job metadata, bounded workflow-job steps, and bounded workflow-job text logs. Artifacts and writes remain unavailable.',
+              "public description",
+          )
+          capability = replace_once(
+              capability,
+              '''          z.object({
+            run_id: z.number().int().min(1),
+          }).strict(),
+        ]),''',
+              '''          z.object({
+            run_id: z.number().int().min(1),
+          }).strict(),
+          z.object({
+            job_id: z.number().int().min(1),
+          }).strict(),
+        ]),''',
+              "public job ID schema",
+          )
+          capability_path.write_text(capability)
+
+          stale_blocks = {
+            "test/hosted-github-delegated-pr-diff-provider.test.ts": '''
+  test("keeps Actions step and remaining delegated reads outside private authority", async () => {
+    let externalCalls = 0;
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(),
+      providerEnv(),
+      {
+        now: () => fixedNow,
+        fetch: (async () => {
+          externalCalls += 1;
+          return Response.json({ message: "must not dispatch" }, { status: 500 });
+        }) as unknown as typeof fetch,
+      },
+    );
+
+    await expect(mounted.callGitHubDelegatedRead!({
+      ...callBase(),
+      tool: "fetch_workflow_job_steps",
+      arguments: { job_id: 91345873454 },
+    })).rejects.toThrow("authority denied");
+    expect(externalCalls).toBe(0);
+  });
+''',
+            "test/hosted-github-delegated-pr-info-provider.test.ts": '''
+  test("keeps Actions step and remaining delegated contracts outside private authority", async () => {
+    let externalCalls = 0;
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(),
+      providerEnv(),
+      {
+        now: () => fixedNow,
+        fetch: (async () => {
+          externalCalls += 1;
+          return Response.json({ message: "must not dispatch" }, { status: 500 });
+        }) as unknown as typeof fetch,
+      },
+    );
+
+    await expect(mounted.callGitHubDelegatedRead!({
+      ...callBase(),
+      tool: "fetch_workflow_job_steps",
+      arguments: { job_id: 91345873454 },
+    })).rejects.toThrow("authority denied");
+    expect(externalCalls).toBe(0);
+  });
+''',
+            "test/hosted-github-commit-status-delegated-read-provider.test.ts": '''
+  test("denies an unmounted Actions step read before token or provider activity", async () => {
+    let externalCalls = 0;
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(),
+      providerEnv(),
+      {
+        now: () => fixedNow,
+        fetch: (async () => {
+          externalCalls += 1;
+          return Response.json({ message: "must not dispatch" }, { status: 500 });
+        }) as unknown as typeof fetch,
+      },
+    );
+
+    await expect(mounted.callGitHubDelegatedRead!({
+      ...callBase(),
+      tool: "fetch_workflow_job_steps",
+      arguments: { job_id: 91345873454 },
+    })).rejects.toThrow("authority denied");
+    expect(externalCalls).toBe(0);
+  });
+''',
           }
-          run_gate typecheck typecheck-output.txt bun run typecheck
-          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
-          run_gate bun-tests test-output.txt bun run test
-          run_gate browser-tests browser-test-output.txt bun run test:browser
-          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
-          run_gate convex-tests convex-test-output.txt bun run test:convex
-          run_gate worker-check worker-check-output.txt bun run worker:check
-          run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
-          exit "${status}"
-      - name: Upload verified frontend browser evidence
-        if: steps.serial-validation.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: error
-          retention-days: 7
-      - name: Upload serial full diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}
-          path: |
-            typecheck-output.txt
-            browser-typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-            runtime-parity-output.txt
-          if-no-files-found: ignore
+          for name, block in stale_blocks.items():
+              path = Path(name)
+              path.write_text(replace_once(path.read_text(), block, "\n", f"remove stale denial from {name}"))
+
+          generic_path = Path("test/hosted-github-delegated-read-provider.test.ts")
+          generic = generic_path.read_text()
+          generic = replace_once(
+              generic,
+              '''    await expect(mounted.callGitHubDelegatedRead!({
+      ...callBase(),
+      tool: "fetch_workflow_job_steps",
+      arguments: { job_id: 91345873454 },
+    })).rejects.toThrow("authority denied");
+''',
+              "",
+              "remove generic stale step denial",
+          )
+          generic_path.write_text(generic)
+
+          Path("test/hosted-github-actions-delegated-read-provider.test.ts").write_text(r'''import { describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
+import { GitHubCapabilityCatalogueService } from "../src/github-capability-service.ts";
+import {
+  hostedGitHubDelegatedReadTools,
+  mountHostedGitHubDelegatedReadProviderFromEnv,
+} from "../src/hosted-github-delegated-read-provider.ts";
+import type { WorkLedger } from "../src/ledger.ts";
+import type {
+  ProjectAttachmentLedger,
+  ProjectAttachmentRecord,
+} from "../src/project-attachment-ledger.ts";
+import {
+  compileProjectContract,
+  renderProjectContract,
+} from "../src/project-contract.ts";
+
+const repositoryFullName = "teamleaderleo/stensibly";
+const project = "oauth-dogfood";
+const fixedNow = Date.parse("2026-08-01T08:00:00.000Z");
+const commitSha = "d".repeat(40);
+const runId = 30691104156;
+const jobId = 91345873454;
+const catalogueFingerprint = new GitHubCapabilityCatalogueService().registry.fingerprint;
+const jobUrl = `https://api.github.test/repos/teamleaderleo/stensibly/actions/jobs/${jobId}`;
+const logsUrl = `${jobUrl}/logs`;
+const downloadUrl = "https://results-receiver.actions.githubusercontent.com/job-logs/91345873454?sig=bounded";
+const logText = "2026-08-01T08:02:00Z Run tests\nAll checks passed";
+const privateKey = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: "spki", format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+}).privateKey;
+
+const snapshot = compileProjectContract(renderProjectContract({
+  version: 1,
+  project,
+  repositories: [repositoryFullName],
+  runnerProfiles: [],
+  concurrency: { project: 1, global: 1 },
+  autonomousActions: ["inspect"],
+  approvalRequired: ["write"],
+  checks: [],
+  tags: [],
+  relatedProjects: [],
+}, {
+  goal: "Exercise guarded hosted GitHub Actions reads.",
+  boundaries: "Keep artifacts, credentials, and writes outside this slice.",
+  evidenceAndHandoff: "Return bounded run, job, step, and log receipts.",
+  escalation: "Stop before dispatch when authority or binding changes.",
+}));
+
+const attachment: ProjectAttachmentRecord = {
+  id: "attach_hosted_actions_reads",
+  project,
+  snapshot,
+  sourceRevision: "main@hosted-actions-read-test",
+  acceptedBy: "test",
+  authorityWidening: false,
+  acceptedAt: "2026-08-01T08:00:00.000Z",
+};
+
+describe("private hosted GitHub Actions delegated reads", () => {
+  test("routes run, job, step, and log reads through exact actions authority", async () => {
+    const calls: Array<{ url: string; authorization: string | null; body: unknown }> = [];
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(),
+      providerEnv(),
+      {
+        now: () => fixedNow,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          const headers = new Headers(init?.headers);
+          const body = init?.body ? JSON.parse(String(init.body)) : null;
+          calls.push({ url, authorization: headers.get("authorization"), body });
+          if (url.endsWith("/app/installations/98765/access_tokens")) {
+            return Response.json({
+              token: "actions-installation-token-secret",
+              expires_at: "2026-08-01T09:00:00Z",
+              permissions: { actions: "read", metadata: "read" },
+              repository_selection: "selected",
+              repositories: [{ full_name: "TeamLeaderLeo/Stensibly" }],
+            }, { status: 201 });
+          }
+          if (url === `https://api.github.test/repos/teamleaderleo/stensibly/actions/runs?head_sha=${commitSha}&per_page=50&page=1`) {
+            return Response.json({ total_count: 1, workflow_runs: [workflowRun()] }, {
+              headers: { "x-github-request-id": "ACTIONS:RUNS:1" },
+            });
+          }
+          if (url === `https://api.github.test/repos/teamleaderleo/stensibly/actions/runs/${runId}/jobs?filter=latest&per_page=100&page=1`) {
+            return Response.json({ total_count: 1, jobs: [workflowJob()] }, {
+              headers: { "x-github-request-id": "ACTIONS:JOBS:1" },
+            });
+          }
+          if (url === jobUrl) {
+            return Response.json(workflowJobDetail(), {
+              headers: { "x-github-request-id": "ACTIONS:JOB:DETAIL" },
+            });
+          }
+          if (url === logsUrl) {
+            return new Response(null, {
+              status: 302,
+              headers: {
+                location: downloadUrl,
+                "x-github-request-id": "ACTIONS:JOB:LOGS",
+              },
+            });
+          }
+          if (url === downloadUrl) {
+            expect(headers.get("authorization")).toBeNull();
+            return new Response(logText, {
+              status: 200,
+              headers: { "content-type": "text/plain; charset=utf-8" },
+            });
+          }
+          return Response.json({ message: "unexpected request" }, { status: 500 });
+        }) as typeof fetch,
+      },
+    );
+
+    expect(mounted.delegatedGitHubReadTools).toBe(hostedGitHubDelegatedReadTools);
+    expect(mounted.delegatedGitHubReadTools).toEqual([
+      "get_repo",
+      "fetch_file",
+      "get_pr_info",
+      "get_pr_diff",
+      "list_pull_request_review_threads",
+      "get_commit_combined_status",
+      "fetch_commit_workflow_runs",
+      "fetch_workflow_run_jobs",
+      "fetch_workflow_job_steps",
+      "fetch_workflow_job_logs",
+    ]);
+
+    const runReceipt = await mounted.callGitHubDelegatedRead!({
+      ...callBase(), tool: "fetch_commit_workflow_runs", arguments: { commit_sha: commitSha },
+    });
+    const jobsReceipt = await mounted.callGitHubDelegatedRead!({
+      ...callBase(), tool: "fetch_workflow_run_jobs", arguments: { run_id: runId },
+    });
+    const stepsReceipt = await mounted.callGitHubDelegatedRead!({
+      ...callBase(), tool: "fetch_workflow_job_steps", arguments: { job_id: jobId },
+    });
+    const logsReceipt = await mounted.callGitHubDelegatedRead!({
+      ...callBase(), tool: "fetch_workflow_job_logs", arguments: { job_id: jobId },
+    });
+
+    expect(runReceipt).toMatchObject({ tool: "fetch_commit_workflow_runs", providerRequestId: "ACTIONS:RUNS:1" });
+    expect(jobsReceipt).toMatchObject({ tool: "fetch_workflow_run_jobs", providerRequestId: "ACTIONS:JOBS:1" });
+    expect(stepsReceipt).toMatchObject({
+      tool: "fetch_workflow_job_steps",
+      providerRequestId: "ACTIONS:JOB:DETAIL",
+      result: { repositoryFullName, jobId, runId, totalCount: 2 },
+    });
+    expect(logsReceipt).toMatchObject({
+      tool: "fetch_workflow_job_logs",
+      providerRequestId: "ACTIONS:JOB:LOGS",
+      result: {
+        repositoryFullName,
+        jobId,
+        runId,
+        byteCount: Buffer.byteLength(logText, "utf8"),
+        lineCount: 2,
+        text: logText,
+      },
+    });
+    expect(Object.isFrozen(stepsReceipt)).toBe(true);
+    expect(Object.isFrozen(logsReceipt)).toBe(true);
+
+    const tokenCalls = calls.filter((call) => call.url.endsWith("/access_tokens"));
+    expect(tokenCalls).toHaveLength(1);
+    expect(tokenCalls[0]?.body).toEqual({
+      repositories: ["stensibly"],
+      permissions: { actions: "read" },
+    });
+    const downloadCall = calls.find((call) => call.url === downloadUrl);
+    expect(downloadCall?.authorization).toBeNull();
+    const serialized = JSON.stringify({ runReceipt, jobsReceipt, stepsReceipt, logsReceipt });
+    expect(serialized).not.toContain(privateKey);
+    expect(serialized).not.toContain("installation-token-secret");
+    expect(serialized).not.toContain(downloadUrl);
+  });
+
+  test("rejects malformed job arguments before token or provider activity", async () => {
+    let externalCalls = 0;
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(), providerEnv(), {
+        now: () => fixedNow,
+        fetch: (async () => {
+          externalCalls += 1;
+          return Response.json({ message: "must not dispatch" }, { status: 500 });
+        }) as unknown as typeof fetch,
+      },
+    );
+    await expect(mounted.callGitHubDelegatedRead!({
+      ...callBase(),
+      tool: "fetch_workflow_job_logs",
+      arguments: { job_id: 0 },
+    })).rejects.toThrow("workflow job ID");
+    expect(externalCalls).toBe(0);
+  });
+});
+
+function callBase() {
+  return {
+    project,
+    repository: repositoryFullName,
+    actorId: "api-token:test",
+    clientId: "mcp:api-token:test",
+    catalogueFingerprint,
+  };
+}
+
+function fakeLedger(): WorkLedger & ProjectAttachmentLedger {
+  return {
+    async getProjectAttachment(requestedProject: string) {
+      return requestedProject === project ? attachment : null;
+    },
+    async acceptProjectAttachment() {
+      throw new Error("acceptProjectAttachment is outside this test");
+    },
+  } as unknown as WorkLedger & ProjectAttachmentLedger;
+}
+
+function providerEnv(): Record<string, string> {
+  return {
+    STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",
+    STENSIBLY_GITHUB_APP_ID: "12345",
+    STENSIBLY_GITHUB_APP_PRIVATE_KEY: privateKey,
+    STENSIBLY_GITHUB_INSTALLATION_ID: "98765",
+    STENSIBLY_GITHUB_PROVIDER_PROJECT: project,
+    STENSIBLY_GITHUB_PROVIDER_REPOSITORY: repositoryFullName,
+    STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN: "teamleaderleo",
+    STENSIBLY_GITHUB_API_BASE_URL: "https://api.github.test",
+  };
+}
+
+function workflowRun() {
+  return {
+    id: runId,
+    run_attempt: 1,
+    workflow_id: 319014676,
+    name: "CI",
+    event: "pull_request",
+    status: "completed",
+    conclusion: "success",
+    head_sha: commitSha,
+    repository: { full_name: "TeamLeaderLeo/Stensibly" },
+    created_at: "2026-08-01T08:01:00Z",
+    updated_at: "2026-08-01T08:10:00Z",
+    run_started_at: "2026-08-01T08:02:00Z",
+  };
+}
+
+function workflowJob() {
+  return {
+    id: jobId,
+    run_id: runId,
+    run_attempt: 1,
+    head_sha: commitSha,
+    name: "test",
+    status: "completed",
+    conclusion: "success",
+    started_at: "2026-08-01T08:02:00Z",
+    completed_at: "2026-08-01T08:09:00Z",
+    labels: ["ubuntu-24.04"],
+    url: jobUrl,
+  };
+}
+
+function workflowJobDetail() {
+  return {
+    ...workflowJob(),
+    run_url: `https://api.github.test/repos/teamleaderleo/stensibly/actions/runs/${runId}`,
+    steps: [
+      {
+        number: 1,
+        name: "Set up job",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-01T08:02:00Z",
+        completed_at: "2026-08-01T08:03:00Z",
+      },
+      {
+        number: 2,
+        name: "Run tests",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-01T08:03:00Z",
+        completed_at: "2026-08-01T08:09:00Z",
+      },
+    ],
+  };
+}
+''')
+
+          Path("test/mcp-github-actions-delegated-read.test.ts").write_text(r'''import { describe, expect, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { GitHubCapabilityCatalogueService } from "../src/github-capability-service.ts";
+import type {
+  HostedGitHubDelegatedReadInput,
+  HostedGitHubDelegatedReadProvider,
+} from "../src/hosted-github-delegated-read-provider.ts";
+import { hostedGitHubDelegatedReadTools } from "../src/hosted-github-delegated-read-provider.ts";
+import { createMcpServer } from "../src/mcp.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
+import { StensiblyStore } from "../src/store.ts";
+import type { TokenPrincipal } from "../src/token-contracts.ts";
+
+const project = "scrapbook";
+const repository = "teamleaderleo/stensibly";
+const commitSha = "d".repeat(40);
+const runId = 30691104156;
+const jobId = 91345873454;
+const catalogueFingerprint = new GitHubCapabilityCatalogueService().registry.fingerprint;
+
+describe("guarded GitHub Actions delegated-read MCP dispatch", () => {
+  test("advertises and dispatches run, job, step, and log reads", async () => {
+    const calls: HostedGitHubDelegatedReadInput[] = [];
+    const mounted = mountedLedger(calls);
+    const server = createMcpServer(mounted.ledger, { principal: readPrincipal() });
+    const client = new Client(
+      { name: "github-actions-job-detail-mounted", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      const toolsets = await call<{ delegatedDispatchEnabled: boolean; delegatedTools: string[] }>(
+        client, "github_list_toolsets", {},
+      );
+      expect(toolsets).toMatchObject({
+        delegatedDispatchEnabled: true,
+        delegatedTools: [...hostedGitHubDelegatedReadTools],
+      });
+      for (const name of [
+        "fetch_commit_workflow_runs",
+        "fetch_workflow_run_jobs",
+        "fetch_workflow_job_steps",
+        "fetch_workflow_job_logs",
+      ]) {
+        const capability = await call<{ delegatedDispatchEnabled: boolean; recommendedAction: string }>(
+          client, "github_get_tool", { name },
+        );
+        expect(capability.delegatedDispatchEnabled).toBe(true);
+        expect(capability.recommendedAction).toContain("github_call_tool");
+      }
+
+      const requests = [
+        ["fetch_commit_workflow_runs", { commit_sha: commitSha }],
+        ["fetch_workflow_run_jobs", { run_id: runId }],
+        ["fetch_workflow_job_steps", { job_id: jobId }],
+        ["fetch_workflow_job_logs", { job_id: jobId }],
+      ] as const;
+      for (const [tool, argumentsValue] of requests) {
+        const receipt = await call<Record<string, unknown>>(client, "github_call_tool", {
+          project,
+          repository,
+          tool,
+          arguments: argumentsValue,
+          catalogueFingerprint,
+        });
+        expect(receipt).toMatchObject({
+          project,
+          repositoryFullName: repository,
+          tool,
+          actorId: "api-token:delegated-actions-token",
+          clientId: "mcp:api-token:delegated-actions-token",
+        });
+      }
+      expect(calls.map((call) => call.tool)).toEqual(requests.map(([tool]) => tool));
+      expect(calls[2]?.arguments).toEqual({ job_id: jobId });
+      expect(calls[3]?.arguments).toEqual({ job_id: jobId });
+
+      for (const argumentsValue of [
+        {
+          project,
+          repository,
+          tool: "fetch_workflow_job_steps",
+          arguments: { job_id: 0 },
+          catalogueFingerprint,
+        },
+        {
+          project,
+          repository,
+          tool: "fetch_workflow_run_artifacts",
+          arguments: { run_id: runId },
+          catalogueFingerprint,
+        },
+      ]) {
+        const denied = await client.callTool({ name: "github_call_tool", arguments: argumentsValue });
+        expect(denied.isError).toBe(true);
+        expect(calls).toHaveLength(4);
+      }
+
+      const stale = await client.callTool({
+        name: "github_call_tool",
+        arguments: {
+          project,
+          repository,
+          tool: "fetch_workflow_job_logs",
+          arguments: { job_id: jobId },
+          catalogueFingerprint: `sha256:${"0".repeat(64)}`,
+        },
+      });
+      expect(stale.isError).toBe(true);
+      expect(textContent(stale)).toContain("catalogue fingerprint is stale");
+      expect(calls).toHaveLength(4);
+    } finally {
+      await client.close();
+      await server.close();
+      mounted.store.close();
+    }
+  });
+
+  test("rejects reordered or decorated hosted tool declarations", () => {
+    for (const tools of [
+      [...hostedGitHubDelegatedReadTools].reverse(),
+      Object.assign([...hostedGitHubDelegatedReadTools], { extra: true }),
+    ]) {
+      const store = new StensiblyStore(":memory:");
+      const ledger = new SqliteWorkLedger(store);
+      const provider: HostedGitHubDelegatedReadProvider = {
+        delegatedGitHubReadTools: tools as unknown as typeof hostedGitHubDelegatedReadTools,
+        async callGitHubDelegatedRead() {
+          throw new Error("must not dispatch");
+        },
+      };
+      try {
+        expect(() => createMcpServer(
+          Object.assign(ledger, provider),
+          { principal: readPrincipal() },
+        )).toThrow("tool declaration is invalid");
+      } finally {
+        store.close();
+      }
+    }
+  });
+});
+
+function mountedLedger(calls: HostedGitHubDelegatedReadInput[]) {
+  const store = new StensiblyStore(":memory:");
+  const ledger = new SqliteWorkLedger(store);
+  const provider: HostedGitHubDelegatedReadProvider = {
+    delegatedGitHubReadTools: hostedGitHubDelegatedReadTools,
+    async callGitHubDelegatedRead(input) {
+      if (input.catalogueFingerprint !== catalogueFingerprint) {
+        throw new Error("GitHub delegated catalogue fingerprint is stale");
+      }
+      calls.push(input);
+      let result: Readonly<Record<string, unknown>>;
+      if (input.tool === "fetch_commit_workflow_runs") {
+        result = Object.freeze({ commitSha: input.arguments.commit_sha });
+      } else if (input.tool === "fetch_workflow_run_jobs") {
+        result = Object.freeze({ runId: input.arguments.run_id });
+      } else if (input.tool === "fetch_workflow_job_steps") {
+        result = Object.freeze({ jobId: input.arguments.job_id, totalCount: 0, steps: Object.freeze([]) });
+      } else {
+        result = Object.freeze({ jobId: input.arguments.job_id, byteCount: 7, lineCount: 1, text: "bounded" });
+      }
+      return Object.freeze({
+        version: 1,
+        project: input.project,
+        repositoryFullName: input.repository.toLowerCase(),
+        tool: input.tool,
+        actorId: input.actorId,
+        clientId: input.clientId,
+        connectionId: "ghconn_actions_dispatch",
+        installationId: "98765",
+        bindingId: "ghbind_actions_dispatch",
+        attachmentId: "attach_actions_dispatch",
+        attachmentSnapshotSha256: `sha256:${"b".repeat(64)}`,
+        capabilityGrantId: null,
+        approvalId: null,
+        catalogueFingerprint: input.catalogueFingerprint,
+        parametersSha256: `sha256:${"c".repeat(64)}`,
+        providerRequestId: "ACTIONS:PUBLIC:1",
+        resultSha256: `sha256:${"d".repeat(64)}`,
+        result,
+      });
+    },
+  };
+  return { store, ledger: Object.assign(ledger, provider) };
+}
+
+function readPrincipal(): TokenPrincipal {
+  return {
+    tokenId: "delegated-actions-token",
+    name: "delegated actions test",
+    scopes: ["read"],
+    projects: [project],
+  };
+}
+
+async function call<T>(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<T> {
+  const result = await client.callTool({ name, arguments: args });
+  if (result.isError) throw new Error(textContent(result));
+  return JSON.parse(textContent(result)) as T;
+}
+
+function textContent(result: unknown): string {
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content) || content.length === 0) {
+    throw new Error("MCP result had no content");
+  }
+  const first = content[0] as { type?: unknown; text?: unknown };
+  if (first.type !== "text" || typeof first.text !== "string") {
+    throw new Error("MCP result did not contain text");
+  }
+  return first.text;
+}
+''')
+          PY
+      - name: Validate focused composition
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/hosted-github-actions-delegated-read-provider.test.ts \
+            test/mcp-github-actions-delegated-read.test.ts \
+            test/hosted-github-delegated-read-provider.test.ts \
+            test/hosted-github-delegated-pr-info-provider.test.ts \
+            test/hosted-github-delegated-pr-diff-provider.test.ts \
+            test/hosted-github-commit-status-delegated-read-provider.test.ts
+      - name: Restore canonical CI and publish source-only packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout origin/main -- .github/workflows/ci.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/ci.yml \
+            src/hosted-github-delegated-read-provider.ts \
+            src/github-capability-mcp.ts \
+            test/hosted-github-actions-delegated-read-provider.test.ts \
+            test/mcp-github-actions-delegated-read.test.ts \
+            test/hosted-github-delegated-read-provider.test.ts \
+            test/hosted-github-delegated-pr-info-provider.test.ts \
+            test/hosted-github-delegated-pr-diff-provider.test.ts \
+            test/hosted-github-commit-status-delegated-read-provider.test.ts
+          git diff --cached --quiet && { echo "No composition delta produced" >&2; exit 1; }
+          git commit -m "Mount guarded GitHub Actions job-detail reads"
+          git push origin "HEAD:refs/heads/${TARGET_BRANCH}" \
+            --force-with-lease="refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}"
