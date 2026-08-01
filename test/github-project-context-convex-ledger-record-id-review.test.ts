@@ -66,7 +66,7 @@ test("rejects durable acceptance metadata dated far in the future", async () => 
 
 test("rejects an issue query whose current row belongs to another issue", async () => {
   const wrongIssue = fixture(748);
-  const service = queryServiceFor(storedRecord(wrongIssue));
+  const service = serviceForQueries(storedRecord(wrongIssue), []);
 
   await expect(service.getGitHubProjectContext({
     project: "stensibly",
@@ -76,10 +76,51 @@ test("rejects an issue query whose current row belongs to another issue", async 
 
 test("rejects an issue current query that returns a non-current row", async () => {
   const subject = fixture();
-  const service = queryServiceFor({
+  const service = serviceForQueries({
     ...storedRecord(subject),
     isCurrent: false,
-  });
+  }, []);
+
+  await expect(service.getGitHubProjectContext({
+    project: "stensibly",
+    externalId: subject.snapshot.reference.externalId,
+  })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+});
+
+test("rejects duplicate current generations for one issue", async () => {
+  const subject = fixture();
+  const competing = {
+    ...subject,
+    observationRef: "github:delivery:747:competing",
+    observedAt: "2026-07-31T16:10:01.000Z",
+  };
+  const service = serviceForQueries([
+    storedRecord(subject),
+    storedRecord(competing),
+  ]);
+
+  await expect(service.getGitHubProjectContext({
+    project: "stensibly",
+  })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+});
+
+test("rejects history rows outside canonical acceptance and identity order", async () => {
+  const subject = fixture();
+  const laterSubject = {
+    ...subject,
+    observationRef: "github:delivery:747:later",
+    observedAt: "2026-07-31T16:10:02.000Z",
+  };
+  const earlier = {
+    ...storedRecord(subject),
+    acceptedAt: "2026-07-31T16:10:01.000Z",
+    isCurrent: false,
+  };
+  const later = {
+    ...storedRecord(laterSubject),
+    acceptedAt: "2026-07-31T16:10:03.000Z",
+  };
+  const service = serviceForQueries(later, [later, earlier]);
 
   await expect(service.getGitHubProjectContext({
     project: "stensibly",
@@ -113,9 +154,9 @@ function acceptanceServiceFor(
   });
 }
 
-function queryServiceFor(record: ReturnType<typeof storedRecord>) {
+function serviceForQueries(...queryResults: unknown[]) {
   return new ConvexGitHubProjectContextService({
-    client: new ResultClient({ queryResults: [record, []] }),
+    client: new ResultClient({ queryResults }),
     serviceSecret: "service-secret",
     workspace: "default",
   });
