@@ -614,6 +614,8 @@ function parseEvidence(
     || reference.adapterId !== original.adapterId
     || referenceDigest === null
     || reference.generation !== original.runGeneration
+    || reference.uri !== null
+    || reference.accessClass !== "project"
     || reference.createdAt < original.observedAt
     || reference.createdAt > evidence.observedAt
   ) {
