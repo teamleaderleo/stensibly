@@ -1,0 +1,74 @@
+name: Rook 659 future replay repair
+
+on:
+  push:
+    branches:
+      - rook/659-future-replay-repair
+    paths:
+      - .github/workflows/rook-659-future-replay-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-659-future-replay-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: rook/659-future-replay-repair
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Fence replay receipt chronology
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/runner-adapters/openai-agents.ts')
+          source = source_path.read_text()
+          old = '      || (input.replayed === false && record.createdAt !== append.proposedCreatedAt)\n'
+          new = '''      || (
+        input.replayed
+          ? record.createdAt > append.proposedCreatedAt
+          : record.createdAt !== append.proposedCreatedAt
+      )
+'''
+          if source.count(old) != 1:
+              raise SystemExit('checkpoint replay chronology predicate changed')
+          source_path.write_text(source.replace(old, new, 1))
+          PY
+          git show 6d5606e3b50973c8eb7be0319f4d2e95535cd441:test/openai-agents-runner-adapter-future-replay.test.ts \
+            > test/openai-agents-runner-adapter-future-replay.test.ts
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/openai-agents-runner-adapter.test.ts \
+            test/openai-agents-runner-adapter-review-repairs.test.ts \
+            test/openai-agents-runner-adapter-boundaries.test.ts \
+            test/openai-agents-runner-adapter-future-replay.test.ts
+      - name: Publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Rook'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/rook-659-future-replay-repair.yml
+          git add \
+            src/runner-adapters/openai-agents.ts \
+            test/openai-agents-runner-adapter-future-replay.test.ts
+          git diff --cached --check
+          git commit -m 'Reject future-dated checkpoint replay receipts'
+          git push \
+            --force-with-lease=refs/heads/rook/659-future-replay-repair:${SOURCE_HEAD} \
+            origin HEAD:rook/659-future-replay-repair
