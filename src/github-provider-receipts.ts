@@ -17,11 +17,7 @@ export class InMemoryGitHubProviderReceiptStore
       this.#receipts.set(key, clone(receipt));
       return { outcome: "reserved", receipt: clone(receipt) };
     }
-    const sameRequest = current.operation === receipt.operation
-      && current.parametersSha256 === receipt.parametersSha256
-      && current.repositoryFullName === receipt.repositoryFullName
-      && current.actorId === receipt.actorId
-      && current.clientId === receipt.clientId;
+    const sameRequest = sameReplayIdentity(current, receipt);
     if (sameRequest && current.state === "reserved") {
       const pending: GitHubProviderReceipt = {
         ...current,
@@ -50,7 +46,7 @@ export class InMemoryGitHubProviderReceiptStore
     if (!current) {
       throw new Error("GitHub provider receipt must be reserved before update");
     }
-    if (current.id !== receipt.id) {
+    if (!sameReservationIdentity(current, receipt)) {
       throw new Error("GitHub provider receipt update does not match the reservation");
     }
     this.#receipts.set(key, clone(receipt));
@@ -63,6 +59,38 @@ export class InMemoryGitHubProviderReceiptStore
   ): Promise<GitHubProviderReceipt | null> {
     return clone(this.#receipts.get(receiptKey(project, idempotencyKey)) ?? null);
   }
+}
+
+function sameReplayIdentity(
+  current: GitHubProviderReceipt,
+  candidate: GitHubProviderReceipt,
+): boolean {
+  return current.version === candidate.version
+    && current.project === candidate.project
+    && current.provider === candidate.provider
+    && current.repositoryFullName === candidate.repositoryFullName
+    && current.operation === candidate.operation
+    && current.target === candidate.target
+    && current.actorId === candidate.actorId
+    && current.clientId === candidate.clientId
+    && current.connectionId === candidate.connectionId
+    && current.installationId === candidate.installationId
+    && current.bindingId === candidate.bindingId
+    && current.attachmentId === candidate.attachmentId
+    && current.attachmentSnapshotSha256 === candidate.attachmentSnapshotSha256
+    && current.capabilityGrantId === candidate.capabilityGrantId
+    && current.approvalId === candidate.approvalId
+    && current.idempotencyKey === candidate.idempotencyKey
+    && current.parametersSha256 === candidate.parametersSha256;
+}
+
+function sameReservationIdentity(
+  current: GitHubProviderReceipt,
+  candidate: GitHubProviderReceipt,
+): boolean {
+  return current.id === candidate.id
+    && current.createdAt === candidate.createdAt
+    && sameReplayIdentity(current, candidate);
 }
 
 function receiptKey(project: string, idempotencyKey: string): string {
