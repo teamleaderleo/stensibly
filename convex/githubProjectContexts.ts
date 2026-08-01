@@ -9,7 +9,10 @@ import {
   type GitHubIssueContextAcceptanceOutcome,
   type GitHubIssueContextAcceptanceSubject,
 } from "../src/github-project-context-admission";
-import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint";
+import {
+  fingerprintCanonicalRequest,
+  fingerprintExactText,
+} from "../src/idempotency-request-fingerprint";
 import { parseStrictJson } from "../src/strict-json";
 import {
   assertSlug,
@@ -106,6 +109,10 @@ export const accept = mutation({
     }
     if (!attachmentDeclaresRepository(
       attachment.snapshotJson,
+      attachment.snapshotSha256,
+      attachment.contentSha256,
+      attachment.sourcePath,
+      projectSlug,
       subject.snapshot.reference.repositoryFullName,
     )) {
       throw new Error(
@@ -470,6 +477,10 @@ function deterministicRecordId(
 
 function attachmentDeclaresRepository(
   snapshotJson: string,
+  snapshotSha256: string,
+  contentSha256: string,
+  sourcePath: string,
+  project: string,
   repositoryFullName: string,
 ): boolean {
   const value = parseStrictJson(snapshotJson, {
@@ -488,12 +499,21 @@ function attachmentDeclaresRepository(
     "snapshotSha256",
     "source",
   ])) return false;
-  if (value.format !== "stensibly.project-attachment" || value.schemaVersion !== 1) {
-    return false;
-  }
-  if (!isRecord(value.contract) || !Array.isArray(value.contract.repositories)) {
-    return false;
-  }
+  if (
+    value.format !== "stensibly.project-attachment"
+    || value.schemaVersion !== 1
+    || value.snapshotSha256 !== snapshotSha256
+    || !isRecord(value.contract)
+    || !isRecord(value.context)
+    || !isRecord(value.source)
+    || !Array.isArray(value.contract.repositories)
+    || value.contract.project !== project
+    || value.source.contentSha256 !== contentSha256
+    || value.source.path !== sourcePath
+  ) return false;
+  const base = { ...value };
+  delete base.snapshotSha256;
+  if (fingerprintExactText(JSON.stringify(base)) !== snapshotSha256) return false;
   const target = canonicalRepository(repositoryFullName);
   return target !== null && value.contract.repositories.some((entry) =>
     typeof entry === "string" && canonicalRepository(entry) === target
