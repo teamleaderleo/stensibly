@@ -1,7 +1,7 @@
 # Operating instruction lifecycle
 
-**Protocol:** `stensibly-agent-ops/0.4.0`  
-**Bootstrap:** `stensibly-project-bootstrap/v2`  
+**Protocol:** `stensibly-agent-ops/0.5.0`  
+**Bootstrap:** `stensibly-project-bootstrap/v3`  
 **Standing project policy:** `stensibly-internal-dogfood/v2`  
 **Tracking issue:** #293  
 **Status:** internal dogfood
@@ -226,6 +226,14 @@ operator correction.
 
 ## Protocol history
 
+Protocol `0.5.0` removes the finish-existing-work-first gate. Existing work remains
+required context for dependencies, useful continuations, and overlap. New bounded lanes
+may start whenever they advance the current outcome. Priority follows expected value,
+coherence, collision risk, and recoverability instead of work age alone.
+
+Bootstrap `v3` carries the same work-selection rule into ChatGPT Project settings and
+replaces bootstrap `v2`.
+
 Protocol `0.4.0` makes accountable self-review the default for operator-directed,
 reversible internal dogfood work. It removes the blanket second-agent gate for Tier 1
 and Tier 2 changes while retaining exact-candidate inspection, relevant checks,
@@ -236,5 +244,5 @@ enablement, credentialed workflow, and internal write is Tier 3. It adopted
 consequence-based review and the standing ambitious internal-dogfood grant in
 `STENSIBLY.md`.
 
-Bootstrap `v2` changes the default execution and authority posture and therefore
-replaces bootstrap `v1`.
+Bootstrap `v2` changed the default execution and authority posture and replaced
+bootstrap `v1`.

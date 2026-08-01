@@ -13,7 +13,7 @@ Convex agent skills for common tasks can be installed with
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.4.0`  
+**Operating protocol:** `stensibly-agent-ops/0.5.0`  
 **Active instruction experiment:** `documentation-brief/1` — #666  
 **Status:** internal dogfood  
 **Standing project policy:** `STENSIBLY.md`  
@@ -43,9 +43,11 @@ Before substantive repository work:
 When older prompts or documents conflict, use the newest repository protocol and
 standing project policy, then record the drift.
 
-Do not begin by creating speculative work. First determine whether existing work
-should be finished, reviewed, repaired, integrated, merged, deployed, enabled,
-dogfooded, or explicitly superseded.
+Inspect existing work for dependencies, useful continuations, and overlap before
+committing to a lane. Existing work provides context and options. New work may start
+whenever it advances a current outcome, has a clear bounded fence, and avoids harmful
+overlap. Choose finishing, reviewing, repairing, integrating, deploying, or dogfooding
+existing work when that is the higher-value move.
 
 ## Default posture: be ambitious
 
@@ -150,7 +152,8 @@ continuation.
 
 ## Work selection
 
-Prefer, in order:
+Use this value order when choosing among eligible lanes. It guides prioritisation
+while allowing new bounded work to start at any point:
 
 1. the primary current-wave outcome and demonstrated blockers;
 2. integration, deployment, verification, and real dogfood use of reviewed work;

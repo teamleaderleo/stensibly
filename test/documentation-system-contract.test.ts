@@ -11,7 +11,7 @@ describe("documentation brief experiment", () => {
     const agents = await read("AGENTS.md");
 
     expect(agents).toContain(
-      "**Operating protocol:** `stensibly-agent-ops/0.4.0`",
+      "**Operating protocol:** `stensibly-agent-ops/0.5.0`",
     );
     expect(agents).toContain(
       "**Active instruction experiment:** `documentation-brief/1` — #666",
