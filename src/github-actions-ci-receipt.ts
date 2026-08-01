@@ -41,11 +41,16 @@ const runJobCompatibility = Object.freeze({
   startup_failure: Object.freeze(["startup_failure", "skipped"] as const),
 } satisfies Record<CiRunConclusion, readonly CiJobConclusion[]>);
 
+const maximumSnapshotDepth = 24;
+const maximumSnapshotNodes = 10_000;
+const maximumSnapshotArrayLength = 1_024;
+type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;
+
 export function compileGitHubActionsCiReceiptV1(
   value: unknown,
   trustedClock: CiTrustedClock,
 ): CiQueueReceiptV1 {
-  const receipt = compileCoreReceipt(value, trustedClock);
+  const receipt = compileCoreReceipt(snapshotInput(value), trustedClock);
   if (receipt.conclusion === null) {
     throw new RangeError("GitHub Actions completed run requires a conclusion");
   }
@@ -59,6 +64,118 @@ export function compileGitHubActionsCiReceiptV1(
     }
   }
   return deepFreeze(structuredClone(receipt));
+}
+
+function snapshotInput(input: unknown): unknown {
+  const active = new WeakSet<object>();
+  let nodes = 0;
+
+  const copyDescriptor = (
+    descriptor: PropertyDescriptor,
+    depth: number,
+  ): PropertyDescriptor => {
+    if (!("value" in descriptor)) return descriptor;
+    return {
+      ...descriptor,
+      value: copy(descriptor.value, depth + 1),
+    };
+  };
+
+  const copy = (value: unknown, depth: number): unknown => {
+    nodes += 1;
+    if (depth > maximumSnapshotDepth || nodes > maximumSnapshotNodes) {
+      throw new RangeError("GitHub Actions CI receipt bundle exceeds snapshot limits");
+    }
+    if (value === null || typeof value !== "object") return value;
+    if (active.has(value)) {
+      throw new RangeError("GitHub Actions CI receipt bundle must not contain cycles");
+    }
+    active.add(value);
+    try {
+      const prototype = Object.getPrototypeOf(value);
+      const isArray = Array.isArray(value);
+      const descriptors = Object.getOwnPropertyDescriptors(value) as DescriptorMap;
+      const repeatedPrototype = Object.getPrototypeOf(value);
+      const repeatedIsArray = Array.isArray(value);
+      const repeatedDescriptors = Object.getOwnPropertyDescriptors(value) as DescriptorMap;
+      if (
+        !Object.is(prototype, repeatedPrototype)
+        || isArray !== repeatedIsArray
+        || !sameDescriptorMap(descriptors, repeatedDescriptors)
+      ) {
+        throw new RangeError("GitHub Actions CI receipt input changed during snapshot");
+      }
+      const keys = Reflect.ownKeys(descriptors);
+
+      if (isArray) {
+        const lengthDescriptor = descriptors["length"];
+        if (
+          !lengthDescriptor
+          || !("value" in lengthDescriptor)
+          || !Number.isSafeInteger(lengthDescriptor.value)
+          || (lengthDescriptor.value as number) < 0
+          || (lengthDescriptor.value as number) > maximumSnapshotArrayLength
+        ) {
+          throw new RangeError("GitHub Actions CI receipt bundle contains an invalid array length");
+        }
+        const output: unknown[] = [];
+        Object.setPrototypeOf(output, prototype);
+        for (const key of keys) {
+          if (key === "length") continue;
+          Object.defineProperty(output, key, copyDescriptor(descriptors[key]!, depth));
+        }
+        Object.defineProperty(output, "length", lengthDescriptor);
+        Object.freeze(output);
+        return output;
+      }
+
+      const output = Object.create(prototype) as Record<PropertyKey, unknown>;
+      for (const key of keys) {
+        Object.defineProperty(output, key, copyDescriptor(descriptors[key]!, depth));
+      }
+      Object.freeze(output);
+      return output;
+    } finally {
+      active.delete(value);
+    }
+  };
+
+  return copy(input, 0);
+}
+
+function sameDescriptorMap(left: DescriptorMap, right: DescriptorMap): boolean {
+  const leftKeys = Reflect.ownKeys(left);
+  const rightKeys = Reflect.ownKeys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+    const leftDescriptor = left[key]!;
+    const rightDescriptor = right[key]!;
+    if (
+      leftDescriptor.configurable !== rightDescriptor.configurable
+      || leftDescriptor.enumerable !== rightDescriptor.enumerable
+    ) {
+      return false;
+    }
+    const leftIsData = "value" in leftDescriptor;
+    const rightIsData = "value" in rightDescriptor;
+    if (leftIsData !== rightIsData) return false;
+    if (leftIsData && rightIsData) {
+      if (
+        leftDescriptor.writable !== rightDescriptor.writable
+        || !Object.is(leftDescriptor.value, rightDescriptor.value)
+      ) {
+        return false;
+      }
+    } else if (
+      leftDescriptor.get !== rightDescriptor.get
+      || leftDescriptor.set !== rightDescriptor.set
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
