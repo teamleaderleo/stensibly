@@ -1,0 +1,147 @@
+name: Lumen 858 cancellation reconciliation finalizer
+
+on:
+  push:
+    branches:
+      - lumen/858-cancellation-reconciliation-v2-candidate
+    paths:
+      - .github/workflows/lumen-858-v2-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-858-cancellation-reconciliation-v2
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/858-cancellation-reconciliation-v2-candidate
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply one-snapshot admission repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/runner-cancellation-reconciliation.ts')
+          source = source_path.read_text()
+          required = [
+            'commandFingerprint: string;',
+            'const originalPolicyVersion = "runner-cancellation-settlement-v2";',
+            'settlement.operationRef !== identity.commandFingerprint',
+            'reference.uri !== null',
+            'reference.accessClass !== "project"',
+          ]
+          for marker in required:
+            if marker not in source:
+              raise SystemExit(f'upstream v2 repair missing: {marker}')
+          old = 'const keys = Reflect.ownKeys(value);'
+          if source.count(old) != 2:
+            raise SystemExit('descriptor/key snapshot markers changed')
+          source_path.write_text(source.replace(old, 'const keys = Reflect.ownKeys(descriptors);'))
+
+          test_path = Path('test/runner-cancellation-reconciliation.test.ts')
+          tests = test_path.read_text()
+          test_name = 'rejects unknown prior-result fields hidden between descriptor and key reads'
+          if test_name in tests:
+            raise SystemExit('proxy admission controls already present')
+          closing = '\n});\n'
+          if not tests.endswith(closing):
+            raise SystemExit('test suite closing marker changed')
+          controls = r'''
+
+  test("rejects unknown prior-result fields hidden between descriptor and key reads", async () => {
+    const clean = await originalResult();
+    const target = structuredClone(clean) as RunnerCancellationSettlementResultV1 & {
+      escapedAdmission?: boolean;
+    };
+    Object.defineProperty(target, "escapedAdmission", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    let ownKeysCalls = 0;
+    const hostile = new Proxy(target, {
+      ownKeys(current) {
+        ownKeysCalls += 1;
+        const keys = Reflect.ownKeys(current);
+        return ownKeysCalls === 1
+          ? keys
+          : keys.filter((key) => key !== "escapedAdmission");
+      },
+    });
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      hostile,
+      evidence(clean),
+    )).toThrow("has unknown field escapedAdmission");
+  });
+
+  test("rejects unknown evidence fields hidden between descriptor and key reads", async () => {
+    const original = await originalResult();
+    const target = structuredClone(evidence(original)) as RunnerCancellationReconciliationEvidenceV1 & {
+      escapedAdmission?: boolean;
+    };
+    Object.defineProperty(target, "escapedAdmission", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    let ownKeysCalls = 0;
+    const hostile = new Proxy(target, {
+      ownKeys(current) {
+        ownKeysCalls += 1;
+        const keys = Reflect.ownKeys(current);
+        return ownKeysCalls === 1
+          ? keys
+          : keys.filter((key) => key !== "escapedAdmission");
+      },
+    });
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      hostile,
+    )).toThrow("has unknown field escapedAdmission");
+  });
+'''
+          test_path.write_text(tests[:-len(closing)] + controls + closing)
+
+          docs_path = Path('docs/runner-cancellation-reconciliation.md')
+          docs = docs_path.read_text()
+          old_docs = 'Objects and arrays are recursively copied through a bounded JSON-data admission layer. Accessors, custom prototypes, symbols, hidden fields, sparse/decorated arrays, non-finite numbers, excessive depth, and excessive size fail without getter execution.'
+          new_docs = 'Objects and arrays are recursively copied through a bounded JSON-data admission layer. One captured property-descriptor snapshot supplies both the validated key set and copied values, so a Proxy cannot substitute a different graph between descriptor and key reads. Accessors, custom prototypes, symbols, hidden fields, sparse/decorated arrays, non-finite numbers, excessive depth, and excessive size fail without getter execution.'
+          if docs.count(old_docs) != 1:
+            raise SystemExit('descriptor admission documentation marker changed')
+          docs_path.write_text(docs.replace(old_docs, new_docs, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify repaired compiler
+        run: |
+          bun run typecheck
+          bun test test/runner-cancellation-reconciliation.test.ts
+      - name: Publish clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-858-v2-repair.yml
+          git config user.name 'Lumen'
+          git config user.email 'actions@users.noreply.github.com'
+          git add \
+            src/runner-cancellation-reconciliation.ts \
+            test/runner-cancellation-reconciliation.test.ts \
+            docs/runner-cancellation-reconciliation.md \
+            .github/workflows/lumen-858-v2-repair.yml
+          git diff --cached --check
+          git commit -m 'Fence reconciliation proxy admission'
+          git push origin HEAD:lumen/858-cancellation-reconciliation-v2-candidate
