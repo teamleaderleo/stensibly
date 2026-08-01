@@ -1,0 +1,35 @@
+name: Restack signed Actions receipt compiler
+
+on:
+  push:
+    branches:
+      - tern/700-signed-actions-ci-receipts
+    paths:
+      - .github/workflows/lumen-783-restack.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-783-restack
+  cancel-in-progress: false
+
+jobs:
+  restack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: tern/700-signed-actions-ci-receipts
+      - name: Merge current main and remove carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lumen"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+          git rm .github/workflows/lumen-783-restack.yml
+          git commit -m "Restack signed Actions receipt compiler on current main"
+          git push origin HEAD:tern/700-signed-actions-ci-receipts
