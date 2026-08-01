@@ -1,0 +1,323 @@
+name: Lumen 862 final reconciliation admission repair
+
+on:
+  push:
+    branches:
+      - lumen/858-cancellation-reconciliation-v2-candidate
+    paths:
+      - .github/workflows/lumen-862-final-admission.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/lumen-862-final-admission.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-862-final-admission
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/858-cancellation-reconciliation-v2-candidate
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply final one-snapshot and chronology repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/runner-cancellation-reconciliation.ts')
+          source = source_path.read_text()
+
+          array_old = '''  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype || value.length > 1_024) {
+      throw new RangeError(`${label} contains an invalid array`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    const expected = new Set<string>([
+      "length",
+      ...Array.from({ length: value.length }, (_, index) => String(index)),
+    ]);
+'''
+          array_new = '''  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new RangeError(`${label} contains an invalid array`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const lengthDescriptor = descriptors.length;
+    if (
+      !lengthDescriptor
+      || lengthDescriptor.enumerable !== false
+      || !("value" in lengthDescriptor)
+      || lengthDescriptor.get !== undefined
+      || lengthDescriptor.set !== undefined
+      || !Number.isSafeInteger(lengthDescriptor.value)
+      || (lengthDescriptor.value as number) < 0
+      || (lengthDescriptor.value as number) > 1_024
+    ) {
+      throw new RangeError(`${label} contains an invalid array`);
+    }
+    const length = lengthDescriptor.value as number;
+    const keys = Reflect.ownKeys(descriptors);
+    const expected = new Set<string>([
+      "length",
+      ...Array.from({ length }, (_, index) => String(index)),
+    ]);
+'''
+          if source.count(array_old) != 1:
+            raise SystemExit('array snapshot marker changed')
+          source = source.replace(array_old, array_new, 1)
+          if source.count('return Array.from({ length: value.length },') != 1:
+            raise SystemExit('array copy length marker changed')
+          source = source.replace(
+            'return Array.from({ length: value.length },',
+            'return Array.from({ length },',
+            1,
+          )
+
+          chronology_old = '''    if (reference.createdAt > observation.observedAt) {
+      throw new RangeError(
+        "Runner cancellation observation reference postdates its observation",
+      );
+    }
+'''
+          chronology_new = '''    if (
+      reference.createdAt < identity.requestedAt
+      || reference.createdAt > observation.observedAt
+    ) {
+      throw new RangeError(
+        "Runner cancellation observation reference is outside request and observation bounds",
+      );
+    }
+'''
+          if source.count(chronology_old) != 1:
+            raise SystemExit('nested reference chronology marker changed')
+          source = source.replace(chronology_old, chronology_new, 1)
+
+          digest_marker = 'const digestPattern = /^sha256:[a-f0-9]{64}$/u;\n'
+          prefix_block = '''const evidenceExternalIdPrefixes: Readonly<
+  Record<RunnerCancellationReconciliationKindV1, string>
+> = Object.freeze({
+  provider_settled: "remote-settlement",
+  provider_still_running: "runtime-still-running",
+  provider_unknown: "runtime-unknown",
+  publication_fence: "publication-fence",
+});
+'''
+          if prefix_block not in source:
+            if source.count(digest_marker) != 1:
+              raise SystemExit('digest marker changed')
+            source = source.replace(digest_marker, digest_marker + prefix_block, 1)
+          external_old = '''function evidenceExternalId(
+  kind: RunnerCancellationReconciliationKindV1,
+  runId: string,
+  generation: number,
+): string {
+  const prefix = kind === "provider_settled"
+    ? "remote-settlement"
+    : kind === "provider_still_running"
+      ? "runtime-still-running"
+      : kind === "provider_unknown"
+        ? "runtime-unknown"
+        : "publication-fence";
+  return `${prefix}:${runId}:g${generation}`;
+}
+'''
+          external_new = '''function evidenceExternalId(
+  kind: RunnerCancellationReconciliationKindV1,
+  runId: string,
+  generation: number,
+): string {
+  return `${evidenceExternalIdPrefixes[kind]}:${runId}:g${generation}`;
+}
+'''
+          if source.count(external_old) != 1:
+            raise SystemExit('external ID mapping marker changed')
+          source = source.replace(external_old, external_new, 1)
+          source_path.write_text(source)
+
+          test_path = Path('test/runner-cancellation-reconciliation.test.ts')
+          tests = test_path.read_text()
+
+          helper_marker = '\nfunction evidenceExternalId(\n'
+          if 'class ReferenceReconciliationAdapter' not in tests:
+            helper = r'''
+
+class ReferenceReconciliationAdapter extends ReconciliationAdapter {
+  constructor(readonly referenceCreatedAt: string) {
+    super();
+  }
+
+  override async requestCancellation(
+    input: RunnerCancellationCommandV1,
+  ): Promise<RunnerCancellationObservationV1> {
+    return {
+      version: 1,
+      commandId: input.commandId,
+      adapterId: input.adapterId,
+      adapterVersion: input.adapterVersion,
+      profileId: input.profileId,
+      runId: input.runId,
+      runGeneration: input.runGeneration,
+      leaseGeneration: input.leaseGeneration,
+      observedAt: cancellationObservedAt,
+      requestAccepted: true,
+      deliveryKnown: true,
+      remoteSettlementKnown: false,
+      reference: {
+        version: 1,
+        kind: "provider_receipt",
+        adapterId,
+        externalId: "cancel-observation-receipt",
+        digest: defaultDigest,
+        uri: null,
+        generation: 1,
+        createdAt: this.referenceCreatedAt,
+        accessClass: "project",
+        containsPrivateContent: false,
+        containsCredentials: false,
+      },
+    };
+  }
+}
+
+async function originalResultWithReference(
+  createdAt: string,
+): Promise<RunnerCancellationSettlementResultV1> {
+  const clock = [executionAt, settledAt];
+  const result = await new RunnerCancellationSettlementCoordinatorV1(
+    new ReferenceReconciliationAdapter(createdAt),
+    { version: 1, workspace: "default", project: "scrapbook" },
+    command(),
+    () => clock.shift()!,
+  ).request();
+  expect(clock).toEqual([]);
+  return result;
+}
+'''
+            if tests.count(helper_marker) != 1:
+              raise SystemExit('test helper insertion marker changed')
+            tests = tests.replace(helper_marker, helper + helper_marker, 1)
+
+          closing = '\n});\n'
+          if not tests.endswith(closing):
+            raise SystemExit('test suite closing marker changed')
+          additions = []
+          if 'rejects nested cancellation references before the request' not in tests:
+            additions.append(r'''
+
+  test("rejects nested cancellation references before the request", async () => {
+    const original = await originalResultWithReference(
+      "2026-08-01T00:59:59.999Z",
+    );
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("outside request and observation bounds");
+  });
+''')
+          if 'rejects a recomputed generation-advance mismatch' not in tests:
+            additions.append(r'''
+
+  test("rejects a recomputed generation-advance mismatch", async () => {
+    const original = structuredClone(await originalResult());
+    original.generationAdvance.allowed = true;
+    refingerprint(original);
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("generation-advance decision does not match settlement");
+  });
+''')
+          if 'replays identical reconciliation inputs deterministically' not in tests:
+            additions.append(r'''
+
+  test("replays identical reconciliation inputs deterministically", async () => {
+    const original = await originalResult();
+    const proof = evidence(original);
+    const first = reconcileRunnerCancellationSettlementV1(original, proof);
+    const second = reconcileRunnerCancellationSettlementV1(original, proof);
+
+    expect(second).toEqual(first);
+    expect(second.resultFingerprint).toBe(first.resultFingerprint);
+  });
+''')
+          if 'rejects nested array entries hidden by changing proxy length' not in tests:
+            additions.append(r'''
+
+  test("rejects nested array entries hidden by changing proxy length", async () => {
+    const original = structuredClone(await originalResult());
+    const target = [{
+      ownerKey: "worker:extra:g1",
+      outputFingerprint: `sha256:${"e".repeat(64)}`,
+    }];
+    let lengthReads = 0;
+    const hostile = new Proxy(target, {
+      get(current, property, receiver) {
+        if (property === "length") {
+          lengthReads += 1;
+          return lengthReads < 3 ? 1 : 0;
+        }
+        return Reflect.get(current, property, receiver);
+      },
+    });
+    (original.settlement as unknown as { successfulOutputs: unknown }).successfulOutputs = hostile;
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      evidence(original),
+    )).toThrow("outputs are not derived correctly");
+  });
+''')
+          if additions:
+            tests = tests[:-len(closing)] + ''.join(additions) + closing
+          test_path.write_text(tests)
+
+          docs_path = Path('docs/runner-cancellation-reconciliation.md')
+          docs = docs_path.read_text()
+          docs = docs.replace(
+            'The compiler accepts one closed evidence kind:',
+            'The compiler accepts one of four closed evidence kinds:',
+          )
+          old_snapshot = 'Objects and arrays are recursively copied through a bounded JSON-data admission layer. One captured property-descriptor snapshot supplies both the validated key set and copied values, so a Proxy cannot substitute a different graph between descriptor and key reads.'
+          new_snapshot = 'Objects and arrays are recursively copied through a bounded JSON-data admission layer. One captured property-descriptor snapshot supplies the validated key set, array length, and copied values, so a Proxy cannot substitute a different graph between reads.'
+          if docs.count(old_snapshot) != 1:
+            raise SystemExit('snapshot documentation marker changed')
+          docs = docs.replace(old_snapshot, new_snapshot, 1)
+          chronology_doc = '- cancellation identity, chronology, delivery rules, `remoteSettlementKnown: false`, and optional reference admission;'
+          chronology_new = '- cancellation identity, chronology, delivery rules, `remoteSettlementKnown: false`, and optional reference creation bounded between the accepted request and cancellation observation;'
+          if docs.count(chronology_doc) != 1:
+            raise SystemExit('chronology documentation marker changed')
+          docs = docs.replace(chronology_doc, chronology_new, 1)
+          docs_path.write_text(docs)
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify final candidate
+        run: |
+          bun run typecheck
+          bun test test/runner-cancellation-reconciliation.test.ts
+      - name: Publish clean three-file head
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-862-final-admission.yml
+          git config user.name 'Lumen'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/runner-cancellation-reconciliation.ts test/runner-cancellation-reconciliation.test.ts docs/runner-cancellation-reconciliation.md .github/workflows/lumen-862-final-admission.yml
+          git diff --cached --check
+          git commit -m 'Complete cancellation reconciliation admission'
+          git push origin HEAD:lumen/858-cancellation-reconciliation-v2-candidate
