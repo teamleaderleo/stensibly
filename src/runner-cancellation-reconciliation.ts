@@ -739,7 +739,7 @@ function copyJsonData(
       throw new RangeError(`${label} contains an invalid array`);
     }
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(value);
+    const keys = Reflect.ownKeys(descriptors);
     const expected = new Set<string>([
       "length",
       ...Array.from({ length: value.length }, (_, index) => String(index)),
@@ -772,7 +772,7 @@ function copyJsonData(
     throw new RangeError(`${label} contains a non-plain object`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Reflect.ownKeys(value);
+  const keys = Reflect.ownKeys(descriptors);
   if (keys.length > 256 || keys.some((key) => typeof key !== "string")) {
     throw new RangeError(`${label} contains invalid object fields`);
   }
