@@ -23,6 +23,8 @@ Every path requires a credential-safe `provider_receipt` reference with:
 - the exact prior run generation;
 - a SHA-256 digest;
 - a creation time between the original settlement and reconciliation observation;
+- no retained URI;
+- project-scoped access;
 - no private content or credentials;
 - one canonical external identity for the declared evidence kind.
 
