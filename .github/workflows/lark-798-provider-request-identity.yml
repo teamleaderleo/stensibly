@@ -1,0 +1,344 @@
+name: Finalize Actions provider request identity
+
+on:
+  pull_request:
+
+concurrency:
+  group: lark-798-provider-request-identity-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: >-
+      ${{ github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'lark/798-provider-request-identity' }}
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      TARGET_BRANCH: lark/798-provider-request-identity
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          fetch-depth: 0
+      - name: Verify exact branch lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          git fetch origin main "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          test "$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")" = "${EXPECTED_HEAD}"
+      - uses: oven-sh/setup-bun@v2
+      - name: Require provider request identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label} marker changed: {count} matches")
+              return text.replace(old, new, 1)
+
+          source_path = Path("src/github-rest-actions-job-detail-adapter.ts")
+          source = source_path.read_text()
+          source = replace_once(
+              source,
+              '''interface JobObservation {
+  identity: Readonly<JobIdentity>;
+  steps: readonly Readonly<JobStep>[];
+  requestId?: string;
+}''',
+              '''interface JobObservation {
+  identity: Readonly<JobIdentity>;
+  steps: readonly Readonly<JobStep>[];
+  requestId: string;
+}''',
+              "job observation request identity",
+          )
+          source = replace_once(
+              source,
+              '''      return Object.freeze({
+        result,
+        ...(job.requestId ? { providerRequestId: job.requestId } : {}),
+      });''',
+              '''      return Object.freeze({
+        result,
+        providerRequestId: job.requestId,
+      });''',
+              "step receipt identity",
+          )
+          source = replace_once(
+              source,
+              '''    return Object.freeze({
+      result,
+      ...(logs.requestId ?? job.requestId
+        ? { providerRequestId: logs.requestId ?? job.requestId }
+        : {}),
+    });''',
+              '''    return Object.freeze({
+      result,
+      providerRequestId: logs.requestId,
+    });''',
+              "log receipt identity",
+          )
+          source = replace_once(
+              source,
+              '''    const steps = parseSteps(record.steps);
+    return Object.freeze({
+      identity: identityValue,
+      steps,
+      ...(requestIdentity(response.headers.get("x-github-request-id"))
+        ? {
+            requestId: requestIdentity(
+              response.headers.get("x-github-request-id"),
+            ),
+          }
+        : {}),
+    });''',
+              '''    const steps = parseSteps(record.steps);
+    const requestId = requestIdentity(
+      response.headers.get("x-github-request-id"),
+    );
+    return Object.freeze({
+      identity: identityValue,
+      steps,
+      requestId,
+    });''',
+              "job response identity",
+          )
+          source = replace_once(
+              source,
+              '''    text: string;
+    requestId?: string;
+  }>> {''',
+              '''    text: string;
+    requestId: string;
+  }>> {''',
+              "log observation identity type",
+          )
+          source = replace_once(
+              source,
+              '''    return Object.freeze({
+      byteCount: Buffer.byteLength(text, "utf8"),
+      lineCount: lines.length,
+      text,
+      ...(requestId ? { requestId } : {}),
+    });''',
+              '''    return Object.freeze({
+      byteCount: Buffer.byteLength(text, "utf8"),
+      lineCount: lines.length,
+      text,
+      requestId,
+    });''',
+              "log observation identity",
+          )
+          source = replace_once(
+              source,
+              '''function requestIdentity(value: string | null): string | undefined {
+  if (value === null) return undefined;
+  if (
+    !value''',
+              '''function requestIdentity(value: string | null): string {
+  if (value === null) {
+    throw invalid("GitHub delegated provider request identity was missing");
+  }
+  if (
+    !value''',
+              "mandatory request identity",
+          )
+          source_path.write_text(source)
+
+          steps_path = Path("test/github-rest-actions-job-steps-adapter.test.ts")
+          steps = steps_path.read_text()
+          marker = '''
+  test("rejects caller drift before token activity and provider identity drift before publication", async () => {
+'''
+          insertion = '''
+  test("rejects a successful step response without provider request identity", async () => {
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async () => Response.json(workflowJob()),
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_steps",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+  });
+
+  test("rejects caller drift before token activity and provider identity drift before publication", async () => {
+'''
+          steps = replace_once(steps, marker, insertion, "missing step request identity test")
+          steps = replace_once(
+              steps,
+              '''      return Response.json({
+        ...workflowJob(),
+        url: `https://api.github.test/repos/teamleaderleo/other/actions/jobs/${jobId}`,
+      });''',
+              '''      return Response.json({
+        ...workflowJob(),
+        url: `https://api.github.test/repos/teamleaderleo/other/actions/jobs/${jobId}`,
+      }, {
+        headers: { "x-github-request-id": "ACTIONS:JOB:IDENTITY" },
+      });''',
+              "identity drift request identity",
+          )
+          steps = replace_once(
+              steps,
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [workflowStep(1), workflowStep(1)],
+      }));''',
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [workflowStep(1), workflowStep(1)],
+      }, {
+        headers: { "x-github-request-id": "ACTIONS:JOB:DUPLICATE" },
+      }));''',
+              "duplicate step request identity",
+          )
+          steps = replace_once(
+              steps,
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [{
+          ...workflowStep(1),
+          started_at: "2026-08-01T14:03:00Z",
+          completed_at: "2026-08-01T14:02:00Z",
+        }],
+      }));''',
+              '''      Response.json({
+        ...workflowJob(),
+        steps: [{
+          ...workflowStep(1),
+          started_at: "2026-08-01T14:03:00Z",
+          completed_at: "2026-08-01T14:02:00Z",
+        }],
+      }, {
+        headers: { "x-github-request-id": "ACTIONS:JOB:CHRONOLOGY" },
+      }));''',
+              "chronology request identity",
+          )
+          steps_path.write_text(steps)
+
+          logs_path = Path("test/github-rest-actions-job-logs-adapter.test.ts")
+          logs = logs_path.read_text()
+          logs = logs.replace(
+              'if (url === jobUrl) return Response.json(workflowJob());',
+              'if (url === jobUrl) return workflowJobResponse();',
+          )
+          marker = '''
+  test("rejects an untrusted redirect before the credential-free download", async () => {
+'''
+          insertion = '''
+  test("rejects a successful log redirect without provider request identity", async () => {
+    let calls = 0;
+    const adapter = createAdapter(
+      new RecordingTokenProvider(),
+      async (input) => {
+        calls += 1;
+        const url = String(input);
+        if (url === jobUrl) return workflowJobResponse();
+        if (url === logsUrl) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: downloadUrl },
+          });
+        }
+        return new Response("must not download", {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      },
+    );
+
+    await expectRejectionCode(
+      adapter.callReadTool(callInput(
+        "fetch_workflow_job_logs",
+        { job_id: jobId },
+      )),
+      "github_delegated_provider_invalid_response",
+    );
+    expect(calls).toBe(2);
+  });
+
+  test("rejects an untrusted redirect before the credential-free download", async () => {
+'''
+          logs = replace_once(logs, marker, insertion, "missing log request identity test")
+          logs = replace_once(
+              logs,
+              '''        headers: { location: "https://evil.example/private/job.log" },''',
+              '''        headers: {
+          location: "https://evil.example/private/job.log",
+          "x-github-request-id": "ACTIONS:JOB:UNTRUSTED",
+        },''',
+              "untrusted redirect request identity",
+          )
+          logs = replace_once(
+              logs,
+              '''            headers: { location: downloadUrl },''',
+              '''            headers: {
+              location: downloadUrl,
+              "x-github-request-id": "ACTIONS:JOB:FAILURE",
+            },''',
+              "download failure request identity",
+          )
+          logs = replace_once(
+              logs,
+              '''        headers: { location: downloadUrl },
+      });''',
+              '''        headers: {
+          location: downloadUrl,
+          "x-github-request-id": "ACTIONS:JOB:SCENARIO",
+        },
+      });''',
+              "scenario request identity",
+          )
+          helper_marker = '''
+function workflowJob() {
+'''
+          helper = '''
+function workflowJobResponse(): Response {
+  return Response.json(workflowJob(), {
+    headers: { "x-github-request-id": "ACTIONS:JOB:METADATA" },
+  });
+}
+
+function workflowJob() {
+'''
+          logs = replace_once(logs, helper_marker, helper, "workflow job response helper")
+          logs_path.write_text(logs)
+          PY
+      - name: Validate focused repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-actions-job-steps-adapter.test.ts \
+            test/github-rest-actions-job-logs-adapter.test.ts
+      - name: Publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lark-798-provider-request-identity.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/lark-798-provider-request-identity.yml \
+            src/github-rest-actions-job-detail-adapter.ts \
+            test/github-rest-actions-job-steps-adapter.test.ts \
+            test/github-rest-actions-job-logs-adapter.test.ts
+          git diff --cached --quiet && { echo "No repair delta produced" >&2; exit 1; }
+          git commit -m "Require Actions provider request identity"
+          git push origin "HEAD:refs/heads/${TARGET_BRANCH}" \
+            --force-with-lease="refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}"
