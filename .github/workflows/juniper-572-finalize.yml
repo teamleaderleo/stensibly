@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: "26"
 
-      - name: Apply exact parser and typing repairs
+      - name: Apply exact parser, admission, and typing repairs
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -126,6 +126,128 @@ jobs:
             ? "required"
             : "resolved";
           ''', 'closed reconciliation status')
+
+          text = replace_indented(text, '''
+          function boundedSlug(value: unknown, label: string, maximum: number): string {
+            if (typeof value !== "string") throw new Error(`${label} must be a string`);
+            const normalized = value.trim();
+            if (
+              normalized.length < 1
+              || normalized.length > maximum
+              || !/^[a-z0-9][a-z0-9_-]*$/.test(normalized)
+            ) {
+              throw new Error(`${label} must be a bounded lowercase slug`);
+            }
+            return normalized;
+          }
+
+          function boundedIdentifier(value: unknown, label: string, maximum: number): string {
+            if (typeof value !== "string") throw new Error(`${label} must be a string`);
+            const normalized = value.trim();
+            if (
+              normalized.length < 1
+              || normalized.length > maximum
+              || !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(normalized)
+            ) {
+              throw new Error(`${label} is invalid`);
+            }
+            return normalized;
+          }
+          ''', '''
+          const realisticCredentialPattern = /(?:Bearer\\s+[A-Za-z0-9._~+\\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\\/\\/[^\\s]+|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,})/u;
+
+          function boundedSlug(value: unknown, label: string, maximum: number): string {
+            if (
+              typeof value !== "string"
+              || !value
+              || value.length > maximum
+              || value !== value.trim()
+              || value !== value.toLowerCase()
+              || !/^[a-z0-9][a-z0-9_-]*$/.test(value)
+              || realisticCredentialPattern.test(value)
+            ) {
+              throw new Error(`${label} must be a bounded lowercase slug`);
+            }
+            return value;
+          }
+
+          function boundedIdentifier(value: unknown, label: string, maximum: number): string {
+            if (
+              typeof value !== "string"
+              || !value
+              || value.length > maximum
+              || value !== value.trim()
+              || !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(value)
+              || realisticCredentialPattern.test(value)
+            ) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }
+          ''', 'exact credential-safe identifiers')
+
+          text = replace_indented(text, '''
+          function canonicalTimestamp(value: unknown, label: string): string {
+            if (
+              typeof value !== "string"
+              || !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$/.test(value)
+            ) {
+              throw new Error(`${label} must be a canonical UTC timestamp`);
+            }
+            const parsed = Date.parse(value);
+            if (!Number.isFinite(parsed)) throw new Error(`${label} must be a canonical UTC timestamp`);
+            const canonical = new Date(parsed).toISOString();
+            const supplied = value.includes(".") ? value : value.replace(/Z$/, ".000Z");
+            if (canonical !== supplied) throw new Error(`${label} must be a canonical UTC timestamp`);
+            return canonical;
+          }
+          ''', '''
+          function canonicalTimestamp(value: unknown, label: string): string {
+            if (
+              typeof value !== "string"
+              || !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/.test(value)
+            ) {
+              throw new Error(`${label} must be a canonical UTC timestamp`);
+            }
+            const parsed = Date.parse(value);
+            if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) {
+              throw new Error(`${label} must be a canonical UTC timestamp`);
+            }
+            return value;
+          }
+          ''', 'exact canonical timestamp')
+
+          text = replace_indented(text, '''
+          function requireRecord(value: unknown, label: string): Record<string, unknown> {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw new Error(`${label} must be an object`);
+            }
+            return value as Record<string, unknown>;
+          }
+          ''', '''
+          function requireRecord(value: unknown, label: string): Record<string, unknown> {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw new Error(`${label} must be a plain data object`);
+            }
+            const prototype = Object.getPrototypeOf(value);
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new Error(`${label} must be a plain data object`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const snapshot: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+            for (const key of Reflect.ownKeys(descriptors)) {
+              if (typeof key !== "string") {
+                throw new Error(`${label} must contain only enumerable data properties`);
+              }
+              const descriptor = descriptors[key];
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new Error(`${label} must contain only enumerable data properties`);
+              }
+              snapshot[key] = descriptor.value;
+            }
+            return snapshot;
+          }
+          ''', 'descriptor-snapshot record admission')
           source.write_text(text, encoding='utf-8')
 
           tests = Path('test/execution-certainty.test.ts')
@@ -149,6 +271,166 @@ jobs:
           expect(certainties).toEqual([expected, expected, expected, expected]);
           ''', 'strict parity assertion')
           tests.write_text(test_text, encoding='utf-8')
+
+          admission = Path('test/execution-certainty-admission.test.ts')
+          admission.write_text(block(r'''
+          import { describe, expect, test } from "bun:test";
+          import {
+            createExecutionCertaintyReceipt,
+            reconcileExecutionCertainty,
+            type ExecutionCertaintyInput,
+          } from "../src/execution-certainty.ts";
+
+          const observedAt = "2026-08-01T06:00:00.000Z";
+
+          function hash(seed: string): string {
+            return `sha256:${seed.repeat(64).slice(0, 64)}`;
+          }
+
+          function input(overrides: Partial<ExecutionCertaintyInput> = {}): ExecutionCertaintyInput {
+            return {
+              workspace: "default",
+              project: "certainty-review",
+              executionPath: "provider_adapter",
+              operation: "github.issue.update",
+              operationKind: "mutation",
+              operationRef: "operation-certainty-review",
+              requestFingerprint: hash("a"),
+              authorityFingerprint: hash("b"),
+              runGeneration: 2,
+              observedAt,
+              evidence: {
+                dispatchState: "possibly_started",
+                cancellationState: "requested_delivery_unknown",
+                remoteResult: null,
+                localFailureClass: "timeout",
+              },
+              ...overrides,
+            };
+          }
+
+          describe("execution certainty exact admission", () => {
+            test("rejects top-level and nested accessors without invocation", () => {
+              let topLevelReads = 0;
+              const topLevel = { ...input() } as Record<string, unknown>;
+              Object.defineProperty(topLevel, "workspace", {
+                enumerable: true,
+                get() {
+                  topLevelReads += 1;
+                  return "default";
+                },
+              });
+              expect(() => createExecutionCertaintyReceipt(topLevel)).toThrow(
+                "only enumerable data properties",
+              );
+              expect(topLevelReads).toBe(0);
+
+              let nestedReads = 0;
+              const evidence = { ...input().evidence } as Record<string, unknown>;
+              Object.defineProperty(evidence, "dispatchState", {
+                enumerable: true,
+                get() {
+                  nestedReads += 1;
+                  return "possibly_started";
+                },
+              });
+              expect(() => createExecutionCertaintyReceipt({ ...input(), evidence })).toThrow(
+                "only enumerable data properties",
+              );
+              expect(nestedReads).toBe(0);
+            });
+
+            test("rejects inherited, hidden, and symbol-decorated records", () => {
+              const inherited = Object.assign(Object.create({ escaped: true }), input());
+              expect(() => createExecutionCertaintyReceipt(inherited)).toThrow("plain data object");
+
+              const hidden = { ...input() } as Record<string, unknown>;
+              Object.defineProperty(hidden, "escaped", { enumerable: false, value: true });
+              expect(() => createExecutionCertaintyReceipt(hidden)).toThrow(
+                "only enumerable data properties",
+              );
+
+              const decorated = { ...input(), [Symbol("escaped")]: true };
+              expect(() => createExecutionCertaintyReceipt(decorated)).toThrow(
+                "only enumerable data properties",
+              );
+            });
+
+            test("rejects normalized aliases and requires millisecond UTC spelling", () => {
+              expect(() => createExecutionCertaintyReceipt({ ...input(), workspace: " default" }))
+                .toThrow("bounded lowercase slug");
+              expect(() => createExecutionCertaintyReceipt({
+                ...input(),
+                operationRef: "operation-certainty-review ",
+              })).toThrow("is invalid");
+              expect(() => createExecutionCertaintyReceipt({
+                ...input(),
+                observedAt: "2026-08-01T06:00:00Z",
+              })).toThrow("canonical UTC timestamp");
+            });
+
+            test("rejects realistic credential families while preserving benign identifiers", () => {
+              expect(() => createExecutionCertaintyReceipt({
+                ...input(),
+                operationRef: `github_pat_${"a".repeat(24)}`,
+              })).toThrow("is invalid");
+              expect(() => createExecutionCertaintyReceipt({
+                ...input(),
+                evidence: {
+                  dispatchState: "started",
+                  cancellationState: "not_requested",
+                  remoteResult: {
+                    outcome: "success",
+                    resultIdentity: `sk-proj-${"a".repeat(24)}`,
+                  },
+                  localFailureClass: null,
+                },
+              })).toThrow("is invalid");
+              expect(createExecutionCertaintyReceipt({
+                ...input(),
+                operationRef: "task-sk-review",
+              }).operationRef).toBe("task-sk-review");
+            });
+
+            test("applies exact admission to reconciliation inputs", () => {
+              const receipt = createExecutionCertaintyReceipt(input());
+              let reads = 0;
+              const resolution = {
+                resolvedAt: "2026-08-01T06:01:00.000Z",
+                source: "provider_state",
+                outcome: "still_unknown",
+                evidenceFingerprint: hash("c"),
+              } as Record<string, unknown>;
+              Object.defineProperty(resolution, "source", {
+                enumerable: true,
+                get() {
+                  reads += 1;
+                  return "provider_state";
+                },
+              });
+              expect(() => reconcileExecutionCertainty(receipt, resolution)).toThrow(
+                "only enumerable data properties",
+              );
+              expect(reads).toBe(0);
+            });
+          });
+          ''') + '\n', encoding='utf-8')
+
+          docs = Path('docs/execution-certainty.md')
+          docs_text = docs.read_text(encoding='utf-8').rstrip('\n')
+          docs_text += block(r'''
+
+          ## Exact admission
+
+          Public creators and parsers capture one own-property descriptor snapshot for every input
+          record. Only ordinary or null-prototype records with enumerable data properties are admitted;
+          accessors, symbols, hidden fields, inherited/custom records, and unknown fields fail without
+          invoking getters. Workspace, project, operation, reference, and retained remote-result
+          identities are accepted only in their exact spelling, without trimming or case normalization.
+          Canonical timestamps include UTC milliseconds, and realistic credential-family identifiers are
+          rejected while benign strings such as `task-sk-review` remain valid.
+          ''')
+          docs.write_text(docs_text + '\n', encoding='utf-8')
           PY
 
       - name: Run focused and repository gates
@@ -156,7 +438,7 @@ jobs:
           set -euxo pipefail
           bun install --frozen-lockfile
           bun run typecheck
-          bun test test/execution-certainty.test.ts
+          bun test test/execution-certainty.test.ts test/execution-certainty-admission.test.ts
           bun run test
           bun run test:convex
           bun run worker:check
@@ -168,9 +450,8 @@ jobs:
           rm .github/workflows/juniper-572-finalize.yml
           git diff --check
           git add src test docs .github
-          git commit -m 'feat: add execution certainty receipt core'
+          git commit -m 'feat: add exact execution certainty receipt core'
           git push --force-with-lease=refs/heads/juniper/572-execution-certainty-core:$GITHUB_SHA \
             origin HEAD:refs/heads/juniper/572-execution-certainty-core
 
-# retriggered by Sable after exact compiler failure classification
-# retriggered by Morrow for current-main source-only recovery
+# retriggered by Morrow with current-bar admission controls
