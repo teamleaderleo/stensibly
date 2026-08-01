@@ -29,7 +29,7 @@ describe("ChatGPT app action snapshot", () => {
   test("tracks only the current manifest and requires a host refresh after drift", () => {
     const snapshot = readSnapshot();
 
-    expect(snapshot.snapshotVersion).toBe(4);
+    expect(snapshot.snapshotVersion).toBe(5);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
     expect(snapshot.toolCount).toBe(MCP_TOOL_NAMES.length);
     expect(snapshot.toolManifestFingerprint).toBe(MCP_TOOL_MANIFEST_FINGERPRINT);

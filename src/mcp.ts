@@ -38,6 +38,7 @@ export function createMcpServer(
         "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
         "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
         "Use github_list_issues, github_search_issues, and github_get_issue only for repositories explicitly bound to the project through a server-side GitHub provider connection.",
+        "Use github_create_issue, github_update_issue, and github_add_issue_comment with one exact idempotency key; reconcile the returned provider receipt before retrying any ambiguous write.",
         "List relevant work before claiming it.",
         "Claims are temporary leases; renew active work and release work you abandon.",
         "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
