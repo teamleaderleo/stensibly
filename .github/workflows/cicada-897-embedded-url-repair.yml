@@ -1,3 +1,4 @@
+# Registered; this synchronize event executes the repair.
 name: Cicada 897 embedded URL repair
 
 on:
