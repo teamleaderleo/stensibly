@@ -5,8 +5,6 @@ import {
   fingerprintGitHubProviderReceipt,
   interruptedGitHubProviderReceipt,
   parseGitHubProviderReceiptJson,
-  sameGitHubProviderReceiptImmutableIdentity,
-  sameGitHubProviderReceiptRequest,
 } from "../src/github-provider-receipt-admission";
 import {
   assertSlug,
@@ -94,7 +92,7 @@ export const reserve = mutation({
       scope.projectId,
       scope.projectSlug,
     );
-    const sameRequest = sameGitHubProviderReceiptRequest(current, requested);
+    const sameRequest = sameReplayIdentity(current, requested);
     if (sameRequest && current.state === "reserved") {
       const pending = interruptedGitHubProviderReceipt(current);
       const receiptJson = canonicalGitHubProviderReceiptJson(pending);
@@ -150,14 +148,8 @@ export const update = mutation({
       scope.projectId,
       scope.projectSlug,
     );
-    if (!sameGitHubProviderReceiptImmutableIdentity(current, requested)) {
+    if (!sameReservationIdentity(current, requested)) {
       throw new Error("GITHUB_PROVIDER_RECEIPT_UPDATE_IDENTITY_MISMATCH");
-    }
-    if (
-      Date.parse(requested.updatedAt) < Date.parse(current.updatedAt)
-      || requested.attemptCount < current.attemptCount
-    ) {
-      throw new Error("GITHUB_PROVIDER_RECEIPT_STALE_UPDATE");
     }
     const receiptJson = canonicalGitHubProviderReceiptJson(requested);
     await ctx.db.patch(currentRow._id, {
@@ -257,6 +249,39 @@ function admitStoredReceipt(
     throw new Error("GITHUB_PROVIDER_RECEIPT_STORED_ROW_INVALID");
   }
   return receipt;
+}
+
+function sameReplayIdentity(
+  current: GitHubProviderReceipt,
+  candidate: GitHubProviderReceipt,
+): boolean {
+  return current.version === candidate.version
+    && current.project === candidate.project
+    && current.provider === candidate.provider
+    && current.repositoryFullName === candidate.repositoryFullName
+    && current.operation === candidate.operation
+    && current.target === candidate.target
+    && current.actorId === candidate.actorId
+    && current.clientId === candidate.clientId
+    && current.connectionId === candidate.connectionId
+    && current.installationId === candidate.installationId
+    && current.bindingId === candidate.bindingId
+    && current.attachmentId === candidate.attachmentId
+    && current.attachmentSnapshotSha256
+      === candidate.attachmentSnapshotSha256
+    && current.capabilityGrantId === candidate.capabilityGrantId
+    && current.approvalId === candidate.approvalId
+    && current.idempotencyKey === candidate.idempotencyKey
+    && current.parametersSha256 === candidate.parametersSha256;
+}
+
+function sameReservationIdentity(
+  current: GitHubProviderReceipt,
+  candidate: GitHubProviderReceipt,
+): boolean {
+  return current.id === candidate.id
+    && current.createdAt === candidate.createdAt
+    && sameReplayIdentity(current, candidate);
 }
 
 async function resolveProject(
