@@ -87,6 +87,15 @@ test("rejects an issue current query that returns a non-current row", async () =
   })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
 });
 
+test("uses deterministic record identity as the history index tie-breaker", async () => {
+  const schema = await Bun.file(
+    new URL("../convex/schema.ts", import.meta.url),
+  ).text();
+  expect(schema).toContain(
+    `.index("by_project_issue_accepted", ["projectId", "issueExternalId", "acceptedAt", "externalId"])`,
+  );
+});
+
 function acceptanceServiceFor(
   subject: ReturnType<typeof fixture>,
   overrides: Partial<ReturnType<typeof storedRecord>>,
