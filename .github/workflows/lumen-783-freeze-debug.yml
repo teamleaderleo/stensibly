@@ -16,12 +16,13 @@ jobs:
         with:
           ref: lumen/783-final-test-repair
       - uses: oven-sh/setup-bun@v2
-      - name: Inspect imported compiler
+      - name: Inspect compiled result inside Bun test
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path('src/github-actions-ci-receipt.ts')
           text = path.read_text()
           text = text.replace(
@@ -46,7 +47,9 @@ jobs:
           )
           text = text.replace(
               '  return receipt;\n}',
-              '''  return deepFreeze(structuredClone(receipt));
+              '''  const frozen = deepFreeze(structuredClone(receipt));
+            console.log("WRAPPER_FROZEN=" + Object.isFrozen(frozen));
+            return frozen;
           }
 
           function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
@@ -59,5 +62,15 @@ jobs:
               1,
           )
           path.write_text(text)
+
+          test = Path('test/github-actions-ci-receipt.test.ts')
+          text = test.read_text()
+          text = text.replace(
+              '    expect(Object.isFrozen(receipt)).toBe(true);',
+              '    console.log("TEST_FROZEN=" + Object.isFrozen(receipt));\n    console.log("TEST_COMPILER=" + compileGitHubActionsCiReceiptV1.toString());\n    expect(Object.isFrozen(receipt)).toBe(true);',
+              1,
+          )
+          test.write_text(text)
           PY
-          bun -e 'import { compileGitHubActionsCiReceiptV1 } from "./src/github-actions-ci-receipt.ts"; console.log("COMPILER_SOURCE=" + compileGitHubActionsCiReceiptV1.toString()); console.log("FREEZE_SANITY=" + Object.isFrozen(Object.freeze({a: 1})));'
+          bun install --frozen-lockfile
+          bun test test/github-actions-ci-receipt.test.ts --test-name-pattern "retains the complete pull-request browser topology"
