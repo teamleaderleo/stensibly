@@ -1,3 +1,4 @@
+# Triggered after workflow registration.
 name: Cicada 901 hosted context integrity
 
 on:
