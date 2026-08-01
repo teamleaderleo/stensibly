@@ -1,0 +1,56 @@
+exit_code=1
+bun test v1.3.14 (0d9b296a)
+
+::group::test/api-principal.test.ts:
+(pass) GET /api/v1/principal > reports a project-scoped read token without identifiers [8.43ms]
+(pass) GET /api/v1/principal > reports write-only capability without granting read [1.69ms]
+(pass) GET /api/v1/principal > reports effective read and write capability for admin [1.03ms]
+(pass) GET /api/v1/principal > requires an authenticated bearer principal [0.95ms]
+(pass) GET /api/v1/principal > propagates the configured hosted workspace [2.29ms]
+
+::endgroup::
+
+::group::test/api-v1-observability.test.ts:
+(pass) REST failure categories > sanitizes transport-style Convex failures [1.79ms]
+(pass) REST failure categories > preserves useful ordinary invalid-operation messages [0.80ms]
+(pass) REST failure categories > sanitizes service-secret failures as Convex failures [0.63ms]
+
+::endgroup::
+
+::group::test/api-v1.test.ts:
+(pass) REST API v1 > runs the generation-fenced work lifecycle through the async ledger [21.33ms]
+(pass) REST API v1 > returns stable request and conflict codes [7.00ms]
+(pass) REST API v1 > filters and rejects project access with scoped tokens [6.25ms]
+
+::endgroup::
+
+::group::test/app.test.ts:
+(pass) REST work transitions > hands off, blocks, and unblocks work at exact generations [10.76ms]
+(pass) REST work transitions > attaches and lists artifact references [4.51ms]
+(pass) REST work transitions > validates required handoff context [2.34ms]
+
+::endgroup::
+
+::group::test/apply-bun-lock-candidate-workflow.test.ts:
+(pass) fenced Bun lock writer workflow > runs only for one exact current same-repository pull request [0.09ms]
+(pass) fenced Bun lock writer workflow > regenerates independently and permits only bun.lock [0.15ms]
+(pass) fenced Bun lock writer workflow > isolates credentials from dependency resolution [0.08ms]
+(pass) fenced Bun lock writer workflow > uses bounded write permissions and an exact branch lease [0.08ms]
+84 |     expect(workflow).toContain('"HEAD:refs/heads/${HEAD_BRANCH}"');
+85 |     expect(workflow).not.toContain("--force\n");
+86 |   });
+87 | 
+88 |   test("dispatches exact generated commits into the canonical CI topology", () => {
+89 |     expect(ciWorkflow).toContain("workflow_dispatch:");
+                            ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "workflow_dispatch:"
+Received: "name: Diagnose canonical PR 927 Bun gate\n\non:\n  pull_request:\n\nconcurrency:\n  group: lark-927-canonical-bun-${{ github.event.pull_request.number }}\n  cancel-in-progress: false\n\npermissions:\n  contents: write\n\njobs:\n  diagnose:\n    if: ${{ github.event.pull_request.head.ref == 'lark/927-full-suite-diagnostic' }}\n    runs-on: ubuntu-24.04\n    env:\n      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}\n      TARGET_BRANCH: lark/927-full-suite-diagnostic\n    steps:\n      - uses: actions/checkout@v6\n        with:\n          ref: ${{ env.EXPECTED_HEAD }}\n          fetch-depth: 0\n      - uses: oven-sh/setup-bun@v2\n      - name: Capture first canonical Bun failure\n        shell: bash\n        run: |\n          set -uo pipefail\n          bun install --frozen-lockfile >/dev/null\n          mkdir -p .github/diagnostics\n          set +e\n          bun test ./test/*.test.ts --bail=1 > /tmp/pr927-canonical.log 2>&1\n          code=$?\n          set -e\n          {\n            printf 'exit_code=%s\\n' \"$code\"\n            tail -n 180 /tmp/pr927-canonical.log \\\n              | sed -E 's/(gh[pousr]_|github_pat_|sk-(proj-)?|stn\\.tok_|xox[baprs]-)[A-Za-z0-9._-]+/[REDACTED]/g' \\\n              | sed -E 's/Bearer [A-Za-z0-9._~+\\/-]+/Bearer [REDACTED]/g'\n          } > .github/diagnostics/pr-927-canonical-bun.txt\n      - name: Restore CI and publish diagnostic\n        shell: bash\n        run: |\n          set -euo pipefail\n          git fetch origin main \"refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}\"\n          test \"$(git rev-parse \"refs/remotes/origin/${TARGET_BRANCH}\")\" = \"${EXPECTED_HEAD}\"\n          git checkout origin/main -- .github/workflows/ci.yml\n          git config user.name \"github-actions[bot]\"\n          git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\n          git add .github/workflows/ci.yml .github/diagnostics/pr-927-canonical-bun.txt\n          git commit -m \"Record PR 927 canonical Bun failure\"\n          git push origin \"HEAD:refs/heads/${TARGET_BRANCH}\" --force-with-lease=\"refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}\"\n"
+
+      at <anonymous> (/home/runner/work/stensibly/stensibly/test/apply-bun-lock-candidate-workflow.test.ts:89:24)
+
+::error file=test/apply-bun-lock-candidate-workflow.test.ts,line=89,col=24,title=error: expect(received).toContain(expected)::Expected to contain: "workflow_dispatch:"%0AReceived: "name: Diagnose canonical PR 927 Bun gate\n\non:\n  pull_request:\n\nconcurrency:\n  group: lark-927-canonical-bun-${{ github.event.pull_request.number }}\n  cancel-in-progress: false\n\npermissions:\n  contents: write\n\njobs:\n  diagnose:\n    if: ${{ github.event.pull_request.head.ref == 'lark/927-full-suite-diagnostic' }}\n    runs-on: ubuntu-24.04\n    env:\n      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}\n      TARGET_BRANCH: lark/927-full-suite-diagnostic\n    steps:\n      - uses: actions/checkout@v6\n        with:\n          ref: ${{ env.EXPECTED_HEAD }}\n          fetch-depth: 0\n      - uses: oven-sh/setup-bun@v2\n      - name: Capture first canonical Bun failure\n        shell: bash\n        run: |\n          set -uo pipefail\n          bun install --frozen-lockfile >/dev/null\n          mkdir -p .github/diagnostics\n          set +e\n          bun test ./test/*.test.ts --bail=1 > /tmp/pr927-canonical.log 2>&1\n          code=$?\n          set -e\n          {\n            printf 'exit_code=%s\\n' \"$code\"\n            tail -n 180 /tmp/pr927-canonical.log \\\n              | sed -E 's/(gh[pousr]_|github_pat_|sk-(proj-)?|stn\\.tok_|xox[baprs]-)[A-Za-z0-9._-]+/[REDACTED]/g' \\\n              | sed -E 's/Bearer [A-Za-z0-9._~+\\/-]+/Bearer [REDACTED]/g'\n          } > .github/diagnostics/pr-927-canonical-bun.txt\n      - name: Restore CI and publish diagnostic\n        shell: bash\n        run: |\n          set -euo pipefail\n          git fetch origin main \"refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}\"\n          test \"$(git rev-parse \"refs/remotes/origin/${TARGET_BRANCH}\")\" = \"${EXPECTED_HEAD}\"\n          git checkout origin/main -- .github/workflows/ci.yml\n          git config user.name \"github-actions[bot]\"\n          git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\n          git add .github/workflows/ci.yml .github/diagnostics/pr-927-canonical-bun.txt\n          git commit -m \"Record PR 927 canonical Bun failure\"\n          git push origin \"HEAD:refs/heads/${TARGET_BRANCH}\" --force-with-lease=\"refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}\"\n"%0A%0A      at <anonymous> (/home/runner/work/stensibly/stensibly/test/apply-bun-lock-candidate-workflow.test.ts:89:24)
+(fail) fenced Bun lock writer workflow > dispatches exact generated commits into the canonical CI topology [0.19ms]
+Ran 19 tests across 5 files. [283.00ms]
+Bailed out after 1 failure
