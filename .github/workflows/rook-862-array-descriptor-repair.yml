@@ -1,0 +1,227 @@
+name: Rook 862 array descriptor repair
+
+on:
+  push:
+    branches:
+      - rook/862-array-descriptor-repair
+    paths:
+      - .github/workflows/rook-862-array-descriptor-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-862-array-descriptor-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: rook/862-array-descriptor-repair
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Admit one array descriptor snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/runner-cancellation-reconciliation.ts')
+          source = source_path.read_text()
+          old = '''  if (Array.isArray(value)) {
+            if (Object.getPrototypeOf(value) !== Array.prototype || value.length > 1_024) {
+              throw new RangeError(`${label} contains an invalid array`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const keys = Reflect.ownKeys(descriptors);
+            const expected = new Set<string>([
+              "length",
+              ...Array.from({ length: value.length }, (_, index) => String(index)),
+            ]);
+            if (
+              keys.some((key) => typeof key !== "string" || !expected.has(key))
+              || keys.length !== expected.size
+            ) {
+              throw new RangeError(`${label} contains a sparse or decorated array`);
+            }
+            return Array.from({ length: value.length }, (_, index) => {
+              const descriptor = descriptors[String(index)];
+              if (
+                !descriptor
+                || descriptor.enumerable !== true
+                || !("value" in descriptor)
+                || descriptor.get !== undefined
+                || descriptor.set !== undefined
+              ) {
+                throw new RangeError(`${label} contains a non-data array entry`);
+              }
+              return copyJsonData(descriptor.value, label, depth + 1, budget);
+            });
+          }
+          '''
+          new = '''  if (Array.isArray(value)) {
+            if (Object.getPrototypeOf(value) !== Array.prototype) {
+              throw new RangeError(`${label} contains an invalid array`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const keys = Reflect.ownKeys(descriptors);
+            const lengthDescriptor = descriptors.length;
+            if (
+              !lengthDescriptor
+              || !("value" in lengthDescriptor)
+              || lengthDescriptor.enumerable === true
+              || !Number.isSafeInteger(lengthDescriptor.value)
+              || lengthDescriptor.value < 0
+              || lengthDescriptor.value > 1_024
+            ) {
+              throw new RangeError(`${label} contains an invalid array`);
+            }
+            const length = lengthDescriptor.value as number;
+            const expected = new Set<string>([
+              "length",
+              ...Array.from({ length }, (_, index) => String(index)),
+            ]);
+            if (
+              keys.some((key) => typeof key !== "string" || !expected.has(key))
+              || keys.length !== expected.size
+            ) {
+              throw new RangeError(`${label} contains a sparse or decorated array`);
+            }
+            return Array.from({ length }, (_, index) => {
+              const descriptor = descriptors[String(index)];
+              if (
+                !descriptor
+                || descriptor.enumerable !== true
+                || !("value" in descriptor)
+                || descriptor.get !== undefined
+                || descriptor.set !== undefined
+              ) {
+                throw new RangeError(`${label} contains a non-data array entry`);
+              }
+              return copyJsonData(descriptor.value, label, depth + 1, budget);
+            });
+          }
+          '''
+          if source.count(old) != 1:
+              raise SystemExit('array admission block changed')
+          source_path.write_text(source.replace(old, new, 1))
+
+          test_path = Path('test/runner-cancellation-reconciliation.test.ts')
+          tests = test_path.read_text()
+          marker = 'rejects an array entry hidden between validation and copy length reads'
+          if marker in tests:
+              raise SystemExit('descriptor snapshot controls already present')
+          closing = '\n});\n'
+          if not tests.endswith(closing):
+              raise SystemExit('test suite closing marker changed')
+          controls = r'''
+
+  test("rejects an unknown original-result field hidden between descriptor and key reads", async () => {
+    const clean = await originalResult();
+    const target = structuredClone(clean) as RunnerCancellationSettlementResultV1 & {
+      escapedAdmission?: boolean;
+    };
+    Object.defineProperty(target, "escapedAdmission", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    let ownKeysCalls = 0;
+    const hostile = new Proxy(target, {
+      ownKeys(current) {
+        ownKeysCalls += 1;
+        const keys = Reflect.ownKeys(current);
+        return ownKeysCalls === 1
+          ? keys
+          : keys.filter((key) => key !== "escapedAdmission");
+      },
+    });
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      hostile,
+      evidence(clean),
+    )).toThrow("has unknown field escapedAdmission");
+  });
+
+  test("rejects an unknown evidence field hidden between descriptor and key reads", async () => {
+    const original = await originalResult();
+    const target = structuredClone(evidence(original)) as
+      RunnerCancellationReconciliationEvidenceV1 & {
+        escapedAdmission?: boolean;
+      };
+    Object.defineProperty(target, "escapedAdmission", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    let ownKeysCalls = 0;
+    const hostile = new Proxy(target, {
+      ownKeys(current) {
+        ownKeysCalls += 1;
+        const keys = Reflect.ownKeys(current);
+        return ownKeysCalls === 1
+          ? keys
+          : keys.filter((key) => key !== "escapedAdmission");
+      },
+    });
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      original,
+      hostile,
+    )).toThrow("has unknown field escapedAdmission");
+  });
+
+  test("rejects an array entry hidden between validation and copy length reads", async () => {
+    const clean = await originalResult();
+    const hostile = structuredClone(clean);
+    const target = [{ escapedAdmission: true }];
+    let lengthReads = 0;
+    const changingLength = new Proxy(target, {
+      get(current, key, receiver) {
+        if (key === "length") {
+          lengthReads += 1;
+          return lengthReads <= 2 ? 1 : 0;
+        }
+        return Reflect.get(current, key, receiver);
+      },
+    });
+    (hostile.settlement as unknown as { successfulOutputs: unknown[] })
+      .successfulOutputs = changingLength;
+
+    expect(() => reconcileRunnerCancellationSettlementV1(
+      hostile,
+      evidence(clean),
+    )).toThrow();
+  });
+'''
+          test_path.write_text(tests[:-len(closing)] + controls + closing)
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test test/runner-cancellation-reconciliation.test.ts
+      - name: Publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Rook'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/rook-862-array-descriptor-repair.yml
+          git add \
+            src/runner-cancellation-reconciliation.ts \
+            test/runner-cancellation-reconciliation.test.ts
+          git diff --cached --check
+          git commit -m 'Admit one reconciliation array descriptor snapshot'
+          git push \
+            --force-with-lease=refs/heads/rook/862-array-descriptor-repair:${SOURCE_HEAD} \
+            origin HEAD:rook/862-array-descriptor-repair
