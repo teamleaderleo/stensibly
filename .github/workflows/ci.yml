@@ -38,7 +38,6 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
-          from textwrap import dedent
 
           lines = Path('.github/workflows/loom-901-hosted-context-finalize.yml').read_text().splitlines()
           start_name = '      - name: Apply reviewed hosted-context integrity repairs'
@@ -49,7 +48,11 @@ jobs:
               run_index = lines.index('        run: |', start, stop)
           except ValueError as exc:
               raise SystemExit('reviewed repair payload marker changed') from exc
-          payload = dedent('\n'.join(lines[run_index + 1:stop]) + '\n')
+          body = [
+              line[10:] if line.startswith('          ') else line
+              for line in lines[run_index + 1:stop]
+          ]
+          payload = '\n'.join(body) + '\n'
           if not payload.startswith('set -euo pipefail\n'):
               raise SystemExit('reviewed repair payload prefix changed')
           Path('/tmp/loom-901-repair.sh').write_text(payload)
