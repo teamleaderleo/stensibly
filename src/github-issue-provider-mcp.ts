@@ -29,7 +29,6 @@ export interface GitHubIssueProviderReadService {
   }): Promise<GitHubIssueContext>;
 }
 
-
 export interface GitHubIssueProviderWriteService {
   createIssue(input: GitHubProviderRequestContext & {
     title: string;
@@ -64,7 +63,6 @@ export function withGitHubIssueProviderReadService<T extends object>(
     getIssue: service.getIssue.bind(service),
   });
 }
-
 
 export function withGitHubIssueProviderWriteService<T extends object>(
   target: T,
@@ -201,9 +199,9 @@ export function registerGitHubIssueProviderTools(
         body: z.string().max(128 * 1024).optional(),
         state: z.enum(["open", "closed"]).optional(),
         stateReason: z
-.enum(["completed", "not_planned", "reopened"])
-.nullable()
-.optional(),
+          .enum(["completed", "not_planned", "reopened"])
+          .nullable()
+          .optional(),
         idempotencyKey: idempotencyKeySchema(),
         capabilityGrantId: authorityIdSchema().optional(),
         approvalId: authorityIdSchema().optional(),
@@ -254,7 +252,6 @@ export function registerGitHubIssueProviderTools(
       idempotencyKey: input.idempotencyKey,
     })),
   );
-
 }
 
 function readService(ledger: WorkLedger): GitHubIssueProviderReadService {
@@ -273,7 +270,6 @@ function hasReadService(value: unknown): value is WorkLedger & GitHubIssueProvid
     && typeof candidate.searchIssues === "function"
     && typeof candidate.getIssue === "function";
 }
-
 
 function writeService(ledger: WorkLedger): GitHubIssueProviderWriteService {
   if (!hasWriteService(ledger)) {
@@ -321,7 +317,6 @@ function providerContext(
     ...(authority.approvalId ? { approvalId: authority.approvalId } : {}),
   };
 }
-
 
 function idempotencyKeySchema() {
   return z.string().trim().min(1).max(240);
