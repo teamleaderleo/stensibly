@@ -61,7 +61,7 @@ The reconciliation result retains that same command fingerprint, so downstream r
 
 A caller cannot alter nested cancellation evidence and merely recompute the outer result fingerprint. The nested observation is parsed and bound independently before fingerprint comparison.
 
-Objects and arrays are recursively copied through a bounded JSON-data admission layer. Accessors, custom prototypes, symbols, hidden fields, sparse or decorated arrays, non-finite numbers, excessive depth, and excessive size fail without getter execution. Own fields such as `__proto__` remain own data on a null-prototype copy and therefore reach exact unknown-field rejection.
+Objects and arrays are recursively copied through a bounded JSON-data admission layer. One captured property-descriptor snapshot supplies both the validated key set and copied values, so a Proxy cannot substitute a different graph between descriptor and key reads. Accessors, custom prototypes, symbols, hidden fields, sparse or decorated arrays, non-finite numbers, excessive depth, and excessive size fail without getter execution. Own fields such as `__proto__` remain own data on a null-prototype copy and therefore reach exact unknown-field rejection.
 
 ## Reconciled settlement
 
