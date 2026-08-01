@@ -20,6 +20,7 @@ import type {
 } from "./github-project-context.js";
 import { parseStrictJson } from "./strict-json.js";
 import { snapshotBoundedJson } from "./github-repository-observation-admission.js";
+import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
 const acceptRef = makeFunctionReference<"mutation">("githubProjectContexts:accept");
 const getCurrentRef = makeFunctionReference<"query">("githubProjectContexts:getCurrent");
@@ -105,6 +106,7 @@ export interface ConvexGitHubProjectContextServiceOptions {
   client: ConvexCaller;
   serviceSecret: string;
   workspace?: string;
+  now?: () => Date;
 }
 
 interface StoredRecord {
@@ -148,7 +150,7 @@ export class GitHubProjectContextConflictError extends Error {
   }
 }
 
-export class GitHubProjectContextStorageError extends Error {
+export class GitHubProjectContextStorageError extends Eror {
   readonly code = "github_project_context_storage_failed";
 
   constructor() {
@@ -162,11 +164,13 @@ export class ConvexGitHubProjectContextService
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
+  readonly #now: () => Date;
 
   constructor(options: ConvexGitHubProjectContextServiceOptions) {
     this.client = options.client;
     this.serviceSecret = required(options.serviceSecret, "Convex service secret");
     this.workspace = exactWorkspace(options.workspace ?? "default");
+    this.#now = options.now ?? (() => new Date());
   }
 
   async acceptGitHubIssueContext(
@@ -196,7 +200,13 @@ export class ConvexGitHubProjectContextService
         acceptedBy: subject.acceptedBy,
       }));
       const result = admitAcceptance(raw);
-      const admitted = validateStoredRecord(result.record);
+      const currentTime = this.#currentTime();
+      const admitted = validateStoredRecord(
+        result.record,
+        this.workspace,
+        project,
+        currentTime,
+      );
       if (!matchesSubject(admitted, project, subject)) {
         throw new GitHubProjectContextStorageError();
       }
@@ -226,6 +236,7 @@ export class ConvexGitHubProjectContextService
       ? null
       : exactIssueExternalId(input.externalId);
     try {
+      const currentTime = this.#currentTime();
       const rawRecords = requestedExternalId === null
         ? await this.client.query(listCurrentRef, this.args({ project, limit }))
         : await this.client.query(getCurrentRef, this.args({
@@ -237,9 +248,16 @@ export class ConvexGitHubProjectContextService
         : rawRecords === null
           ? []
           : [admitStoredRecord(rawRecords)];
-      const admittedCurrent = currentRecords.map(validateStoredRecord);
+      const admittedCurrent = currentRecords.map((record) =>
+        validateStoredRecord(record, this.workspace, project, currentTime)
+      );
       for (const record of admittedCurrent) {
-        if (record.raw.project !== project) throw new GitHubProjectContextStorageError();
+        if (
+          record.raw.project !== project
+          || record.raw.isCurrent !== true
+          || (requestedExternalId !== null
+            && record.raw.externalId !== requestedExternalId)
+        ) throw new GitHubProjectContextStorageError();
       }
       const history = requestedExternalId === null
         ? []
@@ -247,7 +265,9 @@ export class ConvexGitHubProjectContextService
           project,
           externalId: requestedExternalId,
           limit: historyLimit,
-        })), historyLimit).map(validateStoredRecord);
+        })), historyLimit).map((record) =>
+          validateStoredRecord(record, this.workspace, project, currentTime)
+        );
       for (const record of history) {
         if (
           record.raw.project !== project
@@ -263,6 +283,19 @@ export class ConvexGitHubProjectContextService
       );
     } catch (error) {
       throw mapStorageError(error);
+    }
+  }
+
+  #currentTime(): number {
+    try {
+      const current = this.#now();
+      const milliseconds = current instanceof Date ? current.getTime() : Number.NaN;
+      if (!Number.isFinite(milliseconds)) {
+        throw new GitHubProjectContextStorageError();
+      }
+      return milliseconds;
+    } catch {
+      throw new GitHubProjectContextStorageError();
     }
   }
 
@@ -343,7 +376,12 @@ function admitStoredRecord(value: unknown): StoredRecord {
   };
 }
 
-function validateStoredRecord(raw: StoredRecord): AdmittedRecord {
+function validateStoredRecord(
+  raw: StoredRecord,
+  workspace: string,
+  project: string,
+  currentTime: number,
+): AdmittedRecord {
   let snapshotValue: unknown;
   let instructionValue: unknown;
   try {
@@ -379,7 +417,11 @@ function validateStoredRecord(raw: StoredRecord): AdmittedRecord {
     acceptedBy: raw.acceptedBy,
   });
   if (
-    canonicalGitHubIssueContextJson(snapshot) !== raw.snapshotJson
+    raw.project !== project
+    || raw.id !== deterministicRecordId(workspace, project, raw.observationRef)
+    || Date.parse(raw.acceptedAt)
+      > currentTime + maximumObservationFutureSkewMs
+    || canonicalGitHubIssueContextJson(snapshot) !== raw.snapshotJson
     || canonicalRepositoryInstructionSetJson(instructionSet) !== raw.instructionSetJson
     || snapshot.reference.externalId !== raw.externalId
     || snapshot.reference.repositoryFullName !== raw.repositoryFullName
@@ -424,7 +466,7 @@ function buildProjection(
   history: readonly AdmittedRecord[],
 ): GitHubProjectContextProjection {
   const issues = records.map(projectIssue);
-  return Object.freeze({
+  return deepFreeze({
     version: 1 as const,
     workspace,
     project,
@@ -515,6 +557,20 @@ function ownDataErrorMessage(error: unknown): string {
     : "";
 }
 
+function deterministicRecordId(
+  workspace: string,
+  project: string,
+  observationRef: string,
+): string {
+  const digest = fingerprintCanonicalRequest({
+    version: 1,
+    workspace,
+    project,
+    observationRef,
+  });
+  return `github_context_${digest.slice("sha256:".length)}`;
+}
+
 function exactWorkspace(value: string): string {
   if (value !== value.trim() || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)) {
     throw new RangeError("Workspace must be an exact lowercase slug up to 80 characters");
@@ -592,6 +648,16 @@ function hasExactKeys(
   const sortedExpected = [...expected].sort(codeUnitCompare);
   return actual.length === sortedExpected.length
     && actual.every((key, index) => key === sortedExpected[index]);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function codeUnitCompare(left: string, right: string): number {
