@@ -1,0 +1,74 @@
+name: Polish GitHub issue write MCP candidate
+
+on:
+  push:
+    branches:
+      - lynx/921-github-issue-write-mcp
+    paths:
+      - .github/workflows/lynx-921-polish-write-mcp.yml
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lynx/921-github-issue-write-mcp
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Clean generated formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path("src/github-issue-provider-mcp.ts")
+          text = path.read_text()
+          replacements = {
+              "}\n\n\nexport interface GitHubIssueProviderWriteService": "}\n\nexport interface GitHubIssueProviderWriteService",
+              "}\n\n\nexport function withGitHubIssueProviderWriteService": "}\n\nexport function withGitHubIssueProviderWriteService",
+              '        stateReason: z\n.enum(["completed", "not_planned", "reopened"])\n.nullable()\n.optional(),': '        stateReason: z\n          .enum(["completed", "not_planned", "reopened"])\n          .nullable()\n          .optional(),',
+              "  );\n\n}\n\nfunction readService": "  );\n}\n\nfunction readService",
+              "}\n\n\nfunction writeService": "}\n\nfunction writeService",
+              "}\n\n\nfunction idempotencyKeySchema": "}\n\nfunction idempotencyKeySchema",
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected one formatting match, found {count}: {old!r}")
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          Path(".github/workflows/lynx-921-polish-write-mcp.yml").unlink()
+          PY
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/mcp-github-issue-provider-writes.test.ts
+      - name: Publish source-only polish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected_head="${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${expected_head}"
+          mapfile -t paths < <(git status --porcelain=v1 --untracked-files=all | sed -E 's/^.. //' | sort)
+          expected=(
+            ".github/workflows/lynx-921-polish-write-mcp.yml"
+            "src/github-issue-provider-mcp.ts"
+          )
+          printf '%s\n' "${paths[@]}" > /tmp/actual
+          printf '%s\n' "${expected[@]}" | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- "${expected[@]}"
+          git commit -m "Polish GitHub issue write MCP registration"
+          generated_head="$(git rev-parse HEAD)"
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/lynx/921-github-issue-write-mcp" \
+            --force-with-lease="refs/heads/lynx/921-github-issue-write-mcp:${expected_head}"
+          test "$(git ls-remote origin refs/heads/lynx/921-github-issue-write-mcp | awk '{print $1}')" = "${generated_head}"
