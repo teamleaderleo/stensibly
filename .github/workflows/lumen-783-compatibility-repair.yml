@@ -1,9 +1,13 @@
 name: Repair signed CI receipt compatibility
 
 on:
-  push:
+  pull_request:
     branches:
       - lumen/783-compatibility-repair
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
@@ -113,7 +117,7 @@ jobs:
           bun test test/github-actions-ci-receipt.test.ts \
             test/ci-queue-receipt-cancelled-before-start.test.ts
 
-          rm -f .lumen-783-trigger
+          rm -f .lumen-783-trigger .lumen-783-trigger-2
           git rm .github/workflows/lumen-783-compatibility-repair.yml
           git add src/github-actions-ci-receipt.ts test/github-actions-ci-receipt.test.ts
           git diff --cached --check
