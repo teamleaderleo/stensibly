@@ -488,13 +488,52 @@ function normalizedJobs(
   profile: GitHubActionsCiValidationProfile,
   jobs: readonly PublicJob[],
 ): PublicJob[] {
-  const selected = jobs.filter((job) => job.name !== browserJobName);
+  let selected = jobs.filter((job) => job.name !== browserJobName);
   if (profile === "full_parallel" && run.event === "pull_request") {
-    return selected.map((job) => job.name === "serial-full"
+    selected = selected.map((job) => job.name === "serial-full"
       ? syntheticSkippedJob(job)
       : job);
   }
+  const browser = jobs.find((job) => job.name === browserJobName);
+  if (
+    browser
+    && failureEvidenceConclusions.has(run.conclusion)
+    && browser.conclusion === run.conclusion
+    && !selected.some((job) => job.conclusion === run.conclusion)
+  ) {
+    const target = selected.find((job) => job.name === "test");
+    if (!target) {
+      throw new RangeError("GitHub Actions normalized CI jobs require the test job");
+    }
+    selected = selected.map((job) => job === target
+      ? syntheticEvidenceJob(job, browser, run.conclusion)
+      : job);
+  }
   return selected;
+}
+
+function syntheticEvidenceJob(
+  target: PublicJob,
+  evidence: PublicJob,
+  conclusion: CiRunConclusion,
+): PublicJob {
+  const record = {
+    ...target.record,
+    conclusion,
+    createdAt: evidence.createdAt,
+    startedAt: evidence.startedAt,
+    completedAt: evidence.completedAt,
+    steps: evidence.steps.map((step) => ({ ...step.record })),
+  };
+  return {
+    ...target,
+    record,
+    conclusion,
+    createdAt: evidence.createdAt,
+    startedAt: evidence.startedAt,
+    completedAt: evidence.completedAt,
+    steps: evidence.steps,
+  };
 }
 
 function syntheticSkippedJob(job: PublicJob): PublicJob {
