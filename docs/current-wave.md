@@ -2,20 +2,22 @@
 
 **Status:** active P0 execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-02 after guarded GitHub read integration and backlog consolidation  
+**Last reconciled:** 2026-08-02 after protocol 0.5.0, hosted GitHub-context persistence, and native Actions job-detail provider-identity repair  
 **Tracking incident:** #490  
 **Programme:** #491  
 **Canonical queue:** #301  
 **GitHub context integration:** #492  
 **Wave:** `W01`  
-**Wave revision:** `6`  
+**Wave revision:** `7`  
 **Operating protocol:** `stensibly-agent-ops/0.5.0` plus standing policy `stensibly-internal-dogfood/v2`
 
-## Primary outcome
+## In simple words / purpose
 
-Restore a repeatable ChatGPT journey in which GitHub and Stensibly remain executable together through repeated reads and mutations, disconnect, reconnect, and recovery.
+Make GitHub and Stensibly remain executable together through a sustained ChatGPT session, repeated reads and writes, disconnect, reconnect, and recovery.
 
-The required lifecycle is:
+GitHub stays independently usable as the public project and recovery record. Stensibly adds durable responsibility, authority, continuation, and execution history when its connector is available.
+
+## Required lifecycle
 
 ```text
 GitHub repository and issue reads
@@ -33,156 +35,117 @@ GitHub repository and issue reads
   → repeat bounded read/write
 ```
 
-One successful login, tool scan, read, or initial write is meaningful evidence. It does not complete the wave unless sustained same-conversation execution and reconnect recovery also pass.
+One successful login, discovery call, read, or initial write is useful evidence. W01 completes after repeated same-conversation execution and reconnect recovery pass.
 
-Read `STENSIBLY.md` before interpreting older approval, review, deployment, or disablement language. Current direct operator direction authorises accountable self-review, integration, deployment, and verification for covered reversible internal dogfood work.
+## Current verified reality
 
-## Current state
+### Hosted coexistence
 
-The hosted OAuth and MCP path reached real initial success:
+The hosted OAuth and MCP path reached initial success:
 
-- GitHub and Stensibly were both discovered and used in one authenticated ChatGPT conversation;
+- GitHub and Stensibly were discovered and used in one authenticated ChatGPT conversation;
 - repository instructions and open issues were read;
 - the Stensibly workspace was surveyed;
-- an idempotent Stensibly item was created and claimed;
-- the existing bearer and enabled OAuth public verification remained healthy.
+- one idempotent item was created and claimed;
+- bearer and OAuth public verification remained healthy.
 
-Continued live use then failed:
+Continued use then failed:
 
 - later Stensibly mutations disappeared or returned no useful result;
-- artifact attachment and completion did not reliably complete;
+- artifact attachment and completion became unreliable;
 - subsequent Stensibly reads and writes stopped executing;
-- tool rediscovery returned schemas without reliably restoring execution;
-- GitHub disappeared from the connector registry and later returned a developer-MCP-only restriction despite earlier coexistence;
-- Stensibly later became unavailable while the incident was being recorded.
+- rediscovery returned schemas without reliably restoring execution;
+- GitHub disappeared from the connector registry and later hit a developer-MCP-only restriction;
+- the Stensibly connector later became unavailable while the incident was being recorded.
 
-GitHub-first execution has advanced since that incident:
+Issue #490 owns this sustained-use failure. Initial authentication evidence remains in #220 and #286.
 
-- the guarded hosted GitHub surface now covers repository metadata, immutable file reads, pull-request metadata, bounded diff or patch text, bounded review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata;
-- PR #911 merged the combined-status mount as `eda72ac74367e2c02f3345b571fe63286e7b3aec`, and #796 is complete;
-- each mounted read remains bound to the accepted project attachment, repository identity, narrow GitHub App permission, bounded result contract, and credential-safe receipt;
-- hosted GitHub-context persistence has one canonical source candidate, #909, with executable admission controls in #912; superseded carrier parents #901 and #908 are closed;
-- public GitHub-context MCP registration in #560 remains blocked until the repaired hosted persistence boundary lands.
+### GitHub recovery surface
 
-The sustained-use incident is #490. Initial authentication evidence remains in #220 and #286. Keep those milestones open until #490 passes its repeated lifecycle and reconnect gate. The expanded GitHub read surface improves diagnosis and recovery; it does not prove sustained GitHub-and-Stensibly coexistence by itself.
+The guarded public GitHub path exposes eight repository-scoped reads:
 
-Production OAuth remains enabled unless concrete hosted evidence shows that rollback or disablement is the safer recovery action. Do not disable a healthy authentication surface merely because another layer is unreliable.
+1. `get_repo`;
+2. immutable-commit `fetch_file`;
+3. `get_pr_info`;
+4. bounded `get_pr_diff` / patch;
+5. bounded `list_pull_request_review_threads`;
+6. exact `get_commit_combined_status`;
+7. exact-commit `fetch_commit_workflow_runs`;
+8. exact-run `fetch_workflow_run_jobs`.
 
-## Temporary degraded operating mode
+Each mounted read is bound to the accepted project attachment, exact repository identity, minimum GitHub App permission, bounded result contract, and credential-safe receipt.
 
-GitHub is the independently usable public coordination and recovery surface while #490 is open.
+Native bounded `fetch_workflow_job_steps` and `fetch_workflow_job_logs` landed in #913. PR #920 then required exact provider request identity from the job response for step receipts and from the authenticated logs response for log receipts. The repaired native boundary is on `main` as `4b94c3f4243a435fab52f5ad625e04d3f21134ba`. Hosted and public mounting of those two tools is the remaining #697 step.
 
-### GitHub owns the public project record
+### GitHub project context
 
-- repository and operating instructions;
-- issues, priorities, discussion, assignments, dependencies, and sub-issues;
-- source code, commits, pull requests, reviews, checks, and deployments;
-- public progress, evidence, blockers, handoffs, and exact next actions.
+Hosted GitHub issue-context persistence landed through PR #908 as `d2880ea9f7efe6ad8f29107acde9db79bc0faed9`.
 
-### Stensibly adds execution state when available
+The merged boundary now enforces:
 
-- claims, leases, responsibility, run identity, and generation;
-- blockers, continuations, handoffs, approval, grants, and budgets;
-- attached commits, PRs, reviews, tests, logs, and deployments;
-- attributable execution history and reconciliation state.
+- durable workspace/project ownership for stored rows and selected attachments;
+- deterministic public record identity;
+- bounded acceptance chronology;
+- issue-scoped current-row identity and one current generation;
+- unique canonical `(acceptedAt, externalId)` history ordering;
+- recursively frozen public projections;
+- trusted acceptance and read composition through `ConvexWorkLedger`.
 
-A Stensibly, connector, runner, or chat outage must never hide the backlog or repository instructions.
+PRs #909 and #912 are closed as superseded and absorbed. Public `get_github_project_context` registration in #560 is now the next #492 delivery slice.
 
-Until #490 passes:
+### Operating protocol
 
-1. use Stensibly mutations only inside an explicitly identified #490 reliability run or another narrowly approved test lane;
-2. keep ordinary implementation, review, issue, PR, and handoff work fully recoverable through GitHub;
-3. reconcile ambiguous Stensibly writes by unique operation or idempotency identity before retrying;
-4. avoid parallel workers mutating the same dedicated dogfood record;
-5. continue useful GitHub-only work when another worker owns the active Stensibly reproduction.
+PR #917 merged as `a5444dce7d076335b5d6d9a49ee3fb832550921a`:
 
-This is degraded operation, not abandonment of the hosted service.
+- operating protocol `stensibly-agent-ops/0.5.0`;
+- ChatGPT bootstrap `stensibly-project-bootstrap/v3`;
+- existing work remains required context for dependencies, continuations, and overlap;
+- valuable bounded new lanes may start whenever they advance the current outcome;
+- selection uses expected value, coherence, collision risk, and recoverability.
+
+## Temporary degraded mode
+
+While #490 remains open:
+
+- GitHub owns repository instructions, issues, priorities, discussion, source, commits, pull requests, reviews, checks, deployments, public evidence, blockers, and handoffs;
+- Stensibly adds claims, leases, responsibility, run identity, generations, blockers, continuations, approvals, grants, budgets, artifacts, and attributable execution history;
+- ordinary implementation and review work stays fully recoverable through GitHub;
+- Stensibly mutations occur only inside an explicitly identified reliability run or another bounded test lane;
+- ambiguous writes are reconciled by unique operation or idempotency identity before replay;
+- only one worker mutates one dedicated lifecycle record at a time;
+- OAuth remains enabled unless concrete hosted evidence supports rollback or disablement.
+
+A connector or chat outage must never hide the backlog or repository instructions.
 
 ## Definition of done
 
-W01 is complete when fresh authenticated ChatGPT conversations repeatedly prove:
+W01 completes when fresh authenticated ChatGPT conversations repeatedly prove:
 
 1. repository instructions and the current GitHub backlog remain readable;
-2. OAuth discovery, GitHub-backed login, consent, and token exchange succeed;
-3. Stensibly tools are discovered and remain executable;
-4. bounded reads continue after several tool calls;
-5. the complete create/claim/event/artifact/read/complete/reread lifecycle succeeds;
-6. every mutation returns a visible typed success, actionable failure, or explicit ambiguity with a deterministic reconciliation path;
-7. GitHub and Stensibly remain usable together throughout the conversation;
-8. disconnect and reconnect restore authorised functionality;
-9. the lifecycle passes repeatedly in one conversation and across reconnects;
-10. automated regression coverage exercises repeated same-session operations and reconnects;
-11. diagnostics identify the layer that rejected, timed out, lost, or ambiguously completed a call without exposing secrets;
-12. GitHub remains independently readable and writable during Stensibly degradation.
+2. OAuth discovery, GitHub-backed login, consent, token exchange, refresh, and reconnect succeed;
+3. Stensibly tools remain discovered and executable after several calls;
+4. the complete create/claim/event/artifact/read/complete/reread lifecycle succeeds;
+5. every mutation returns typed success, actionable failure, or explicit ambiguity with deterministic reconciliation;
+6. GitHub and Stensibly remain usable together throughout the conversation;
+7. disconnect and reconnect restore authorised functionality;
+8. the lifecycle passes repeatedly in one conversation and across reconnects;
+9. automated coverage exercises repeated same-session operations and reconnects;
+10. diagnostics identify which layer rejected, timed out, lost, or ambiguously completed a call without exposing secrets;
+11. GitHub remains independently readable and writable during Stensibly degradation.
 
-A merged PR, setup document, metadata check, dashboard sign-in, or single successful write does not complete the wave by itself.
+A merged PR, setup document, dashboard sign-in, metadata check, or single successful write does not complete the wave.
 
-## Standing execution grant
+## Active lanes
 
-Under `STENSIBLY.md`, eligible workers may continue without another operator prompt through:
+| Priority | Lane | Current fact | Next executable action | Clearing condition |
+| --- | --- | --- | --- | --- |
+| P0 | #490 sustained-use incident | Initial coexistence passed; continued execution and reconnect remain unproved | Run the complete uniquely identified lifecycle in one fresh authenticated conversation, checkpointing GitHub between segments | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
+| P0 | #560 public GitHub context | Hosted persistence and projection are merged through #908 | Restack the read-only MCP packet on current `main`, add hosted execution coverage, and revalidate manifest identity | Authorised hosted `get_github_project_context` succeeds and the packet merges |
+| P0 | #697 Actions step/log mounting | Native reads and exact provider identity are merged on `main@4b94c3f4…` | Extend the hosted declaration from eight to ten tools, route step/log calls through the repaired adapter, and prove public dispatch | Authenticated hosted step/log receipt passes; ten-tool guarded path merges and deploys |
+| P1 | #591 / #744 signed observations | Operational lane owns signed receipt and replay/conflict evidence | Complete exact live receipt, replay, and conflict proof without overlapping provider-write or secret work | Signed observation lifecycle has attributable live evidence and deterministic conflict handling |
+| P1 | #659 runner adapter | Parent candidate remains open; accepted #875 chronology/holder repair stayed carrier-only | Apply the exact four-file source/test repair directly on a current-main candidate | Focused adapter suites, canonical CI, review, and integration pass |
 
-- exact-candidate review and fix-forward repair;
-- merge and automatic deployment of reviewed internal dogfood changes;
-- protected workflow and environment use without exposing secret values;
-- OAuth login, consent, token exchange, refresh, reconnect, and tool discovery;
-- uniquely named, idempotent, attributable test records in the dedicated dogfood project;
-- bounded operational evidence and diagnostics;
-- cleanup or reconciliation of dedicated test state when it improves the evidence.
-
-Fresh operator approval remains required for effects outside the standing internal-dogfood grant, including material spend, secret exposure, access widening, external publication or contact, destructive non-test data changes, or irreversible work without recovery.
-
-## Primary lane — #490 sustained-use incident
-
-Own the failing journey rather than stopping at a connector screenshot or another plan.
-
-1. start from one fresh authenticated conversation and unique run identity;
-2. checkpoint GitHub reads and writes before Stensibly discovery;
-3. execute the complete bounded Stensibly lifecycle;
-4. checkpoint GitHub coexistence between lifecycle segments;
-5. identify the first exact registry, routing, transport, server-completion, serialization, or result-delivery transition that fails;
-6. preserve operation IDs, request IDs, session classifications, and typed errors without private payloads or secrets;
-7. repair the responsible layer and add focused regression coverage;
-8. redeploy when required, repeat the failing segment, then repeat the whole lifecycle;
-9. disconnect, reconnect, and repeat again.
-
-Only one worker should mutate the same dedicated lifecycle record at a time. Parallel #490 workers must use distinct run and idempotency identities.
-
-## Supporting lanes
-
-### Lane B — repair and regression coverage
-
-Convert demonstrated #490 failures into bounded code changes covering, where evidence points:
-
-- OAuth token refresh;
-- MCP session and Streamable HTTP transport state;
-- dynamic tool registration and executable binding;
-- connector coexistence and conversation-level eviction;
-- mutation response serialization and delivery;
-- timeout, cancellation, retry, and ambiguity handling;
-- generation fencing and stale-session rejection;
-- server completion versus client result delivery;
-- privacy-safe diagnostics.
-
-### Lane C — GitHub-first execution and backlog accuracy
-
-#491 owns the operating model. Keep every active task visible through a real issue or PR. Review, implementation, verification, repair, and handoff are activities inside delivery rather than waiting-only roles.
-
-Keep #301, #24, and the relevant issue bodies synchronized with actual live evidence. Close genuinely complete or superseded work and preserve one exact next action for every active lane.
-
-### Lane D — additive GitHub context integration
-
-#492 owns stable GitHub issue identity, source revision, synchronization freshness, accepted instruction-set identity, degraded state, and deterministic reconciliation.
-
-Reuse the existing project-attachment and context contracts from #217, #253, and #49. Do not create a second `STENSIBLY.md` parser, attachment snapshot, authority model, or context-packet system.
-
-The hosted persistence path is now consolidated around:
-
-```text
-#909 source-only hosted Convex candidate
-  + #912 executable admission controls
-  → repaired current-main hosted persistence
-  → #560 guarded public GitHub-context read
-```
+## Supporting product chain
 
 The first visible guarded feature chain remains:
 
@@ -192,51 +155,55 @@ The first visible guarded feature chain remains:
   → #403 attributable response thread
 ```
 
-Use #403 as the first complete GitHub-first feature cycle after #490 and the bounded #492 context slice pass their gates.
+Advance #403 after #490 and the bounded #492 context read pass their gates. Broader autonomy work continues from reliable measured foundations.
 
-## Work-selection rule
+## Work selection
 
-Prefer, in order:
+Use this value order when choosing among eligible lanes; it guides priority while allowing valuable bounded new work:
 
 1. reproduce or repair the exact #490 failure;
-2. review and integrate active work that removes a real blocker;
-3. keep GitHub instructions, queue, issues, PRs, and evidence accurate;
-4. advance the smallest non-overlapping #492 contract or read-only integration slice;
-5. advance the #149/#273/#403 feature chain without claiming sustained reliability already exists;
-6. continue broader autonomy work only from reliable measured foundations.
+2. integrate active work that removes a demonstrated blocker;
+3. keep GitHub instructions, queue, issues, pull requests, and evidence accurate;
+4. advance a bounded non-overlapping #492 or guarded-read slice;
+5. advance the #149/#273/#403 feature chain without claiming sustained reliability;
+6. continue broader autonomy work from measured foundations.
 
-When another worker owns the active Stensibly reproduction, use GitHub-only review, repair, implementation, or backlog work instead of creating overlapping mutations.
+Before committing to a lane, inspect dependencies, useful continuations, and overlap. Start new bounded work when it advances W01 and leaves a recoverable exact handoff.
 
 ## Failure handling
 
 When a step fails:
 
 - identify the exact failing stage and responsible surface where possible;
-- preserve bounded evidence and ambiguity identity;
-- do not blindly replay a possible successful mutation;
-- repair and redeploy when fix-forward is safe;
-- use rollback only when the deployed state is materially worse or cannot be repaired safely in place;
-- resume the failing segment and then repeat the complete journey;
-- leave GitHub with the current fact, evidence, and one exact next action.
+- preserve bounded evidence, operation identity, and ambiguity identity;
+- reconcile a possible successful mutation before retrying;
+- repair and deploy when fix-forward is safe;
+- roll back after a demonstrated regression or unsafe partial state;
+- resume the failing segment and then repeat the whole lifecycle;
+- leave GitHub with the current fact, evidence, and one executable next action.
 
-A failed dogfood attempt is useful product evidence. It is not a reason to retreat into indefinite disablement or documentation-only work.
+A failed dogfood attempt is product evidence and should produce a sharper test, diagnostic, or repair.
 
 ## Immediate next actions
 
-- Complete the active fresh-conversation #490 reproduction and record the first exact failure or full successful lifecycle.
-- Absorb #912 or equivalent admission controls into #909, replay the repaired source fence onto current `main`, and integrate the hosted GitHub-context persistence boundary.
-- Exercise an authenticated hosted `get_commit_combined_status` call through the guarded public path, preserve its attributable receipt, and use the read between #490 lifecycle segments.
-- Recover the source-only checkpoint chronology and holder-authority repair from #875 into parent #659; retire the inert self-registering carrier instead of retrying it.
+- Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between Stensibly mutation segments, after completion, and after reconnect.
+- Restack and integrate #560 on the merged hosted GitHub-context boundary, then exercise one authorised hosted read.
+- Mount the repaired native step/log reads through #697 to complete the ten-tool guarded path and preserve one authenticated hosted receipt.
+- Complete the live #591/#744 signed-observation receipt and conflict evidence.
+- Apply the accepted checkpoint chronology and holder-authority repair directly to #659.
 
-## Retrospective
+## Retrospective questions
 
 After #490 passes, record:
 
 - which layer caused each lost, rejected, or ambiguous call;
 - whether GitHub remained usable throughout degradation;
 - whether read-after-write reconciliation prevented duplicate effects;
-- which instructions caused workers to ship versus stall;
+- which instructions accelerated delivery or caused stalls;
 - whether self-review preserved quality while reducing operator interruption;
 - defects found only through sustained same-conversation use;
-- duplicated or abandoned work;
-- the next accepted, rejected, or no-change operating-instruction proposal under #293.
+- duplicated, abandoned, or successfully recovered work;
+- the next accepted, rejected, or no-change proposal under #293.
+
+— Cinder · W01 revision 7 reconciliation  
+  Intention: keep one concise verified campaign record with exact lanes and clearing conditions
