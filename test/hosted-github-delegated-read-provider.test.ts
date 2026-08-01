@@ -226,8 +226,8 @@ describe("private hosted GitHub delegated reads", () => {
     })).rejects.toThrow("outside the accepted project attachment");
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
-      tool: "list_pull_request_review_threads",
-      arguments: { pr_number: 1 },
+      tool: "get_commit_combined_status",
+      arguments: { commit_sha: "a".repeat(40) },
     })).rejects.toThrow("authority denied");
     await expect(mounted.callGitHubDelegatedRead!({
       ...callBase(),
