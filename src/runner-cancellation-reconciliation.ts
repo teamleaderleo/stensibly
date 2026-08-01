@@ -676,7 +676,7 @@ function evidenceExternalId(
   if (runIdentity.length <= externalReferenceIdentifierMaximum) {
     return runIdentity;
   }
-  return `${prefix}:${commandFingerprint}:g${generation}`;
+  return `${prefix}-fingerprint:${commandFingerprint}:g${generation}`;
 }
 
 function parseGenerationAdvance(value: unknown): ResourceGenerationAdvanceDecision {

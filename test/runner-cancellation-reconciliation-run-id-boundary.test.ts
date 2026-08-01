@@ -138,7 +138,9 @@ describe("runner cancellation reconciliation run identity boundary", () => {
 
     const runBasedExternalId = `remote-settlement:${runId}:g1`;
     expect(runBasedExternalId.length).toBeGreaterThan(160);
-    const externalId = `remote-settlement:${original.commandFingerprint}:g1`;
+    const collidingLegacyExternalId = `remote-settlement:${original.commandFingerprint}:g1`;
+    expect(collidingLegacyExternalId.length).toBeLessThanOrEqual(160);
+    const externalId = `remote-settlement-fingerprint:${original.commandFingerprint}:g1`;
     expect(externalId.length).toBeLessThanOrEqual(160);
     const evidence: RunnerCancellationReconciliationEvidenceV1 = {
       version: 1,
@@ -168,6 +170,14 @@ describe("runner cancellation reconciliation run identity boundary", () => {
       },
       publicationFenceFingerprint: null,
     };
+
+    expect(() => reconcileRunnerCancellationSettlementV1(original, {
+...evidence,
+reference: {
+  ...evidence.reference,
+  externalId: collidingLegacyExternalId,
+},
+    })).toThrow("Runner cancellation reconciliation reference does not match evidence kind");
 
     const result = reconcileRunnerCancellationSettlementV1(original, evidence);
     expect(result).toMatchObject({
