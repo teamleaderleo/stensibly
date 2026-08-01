@@ -1,12 +1,9 @@
-# Triggered after workflow registration.
 name: Cicada 901 hosted context integrity
 
 on:
-  push:
-    branches:
-      - cicada/901-hosted-context-composition
-    paths:
-      - .github/workflows/cicada-901-hosted-context-composition.yml
+  pull_request:
+    types:
+      - synchronize
 
 permissions:
   contents: write
@@ -38,7 +35,7 @@ jobs:
           schema_marker = '''
 
   actors: defineTable({
-          '''
+'''
           table = '''
 
   githubProjectContexts: defineTable({
@@ -96,7 +93,7 @@ jobs:
     ]),
 
   actors: defineTable({
-          '''
+'''
           if schema.count(schema_marker) != 1:
               raise SystemExit("Convex schema insertion marker changed")
           schema_path.write_text(schema.replace(schema_marker, table, 1))
