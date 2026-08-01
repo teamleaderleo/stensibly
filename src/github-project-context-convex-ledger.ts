@@ -59,6 +59,7 @@ const outcomes = [
   "instruction_rebound",
   "synchronization_updated",
 ] as const;
+const maximumObservationFutureSkewMs = 5 * 60_000;
 const recoveryGuidance: GitHubProjectContextProjection["recovery"]["guidance"] = [
   {
     code: "use_normal_chat",
@@ -391,7 +392,8 @@ function validateStoredRecord(raw: StoredRecord): AdmittedRecord {
       !== raw.projectAttachmentSnapshotSha256
     || instructionSet.id !== raw.instructionSetId
     || instructionSet.sha256 !== raw.instructionSetSha256
-    || subject.observedAt > raw.acceptedAt
+    || Date.parse(subject.observedAt)
+      > Date.parse(raw.acceptedAt) + maximumObservationFutureSkewMs
   ) {
     throw new GitHubProjectContextStorageError();
   }
