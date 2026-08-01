@@ -54,6 +54,10 @@ export function fingerprintCanonicalRequest(value: unknown): string {
   return `sha256:${sha256Hex(canonicalJsonString(value))}`;
 }
 
+export function fingerprintExactText(value: string): string {
+  return `sha256:${sha256Hex(value)}`;
+}
+
 export function canonicalJsonString(value: unknown): string {
   return JSON.stringify(canonicalJson(value));
 }
