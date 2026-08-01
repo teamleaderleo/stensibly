@@ -6,9 +6,11 @@ import {
 } from "./github-capability-curation.js";
 import { GitHubCapabilityCatalogueService } from "./github-capability-service.js";
 import {
+  hostedGitHubDelegatedReadJobDetailTools,
   hostedGitHubDelegatedReadTools,
   type HostedGitHubDelegatedReadProvider,
   type HostedGitHubDelegatedReadTool,
+  type HostedGitHubDelegatedReadToolDeclaration,
 } from "./hosted-github-delegated-read-provider.js";
 import type { WorkLedger } from "./ledger.js";
 import type { McpRequestContext } from "./mcp-context.js";
@@ -122,10 +124,13 @@ export function registerGitHubCapabilityTools(
       ...HostedGitHubDelegatedReadTool[],
     ],
   );
+  const jobDetailEnabled = delegatedToolSet.has("fetch_workflow_job_logs");
   server.registerTool(
     "github_call_tool",
     {
-      description: "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.",
+      description: jobDetailEnabled
+        ? "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, exact-run job metadata, bounded workflow-job steps, and bounded workflow-job text logs. Artifacts and writes remain unavailable."
+        : "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
@@ -148,6 +153,9 @@ export function registerGitHubCapabilityTools(
           }).strict(),
           z.object({
             run_id: z.number().int().min(1),
+          }).strict(),
+          z.object({
+            job_id: z.number().int().min(1),
           }).strict(),
         ]),
         catalogueFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -232,36 +240,47 @@ function enabledDelegatedToolNames(
     PropertyDescriptor
   >;
   const keys = Reflect.ownKeys(descriptors);
+  for (const expected of [
+    hostedGitHubDelegatedReadTools,
+    hostedGitHubDelegatedReadJobDetailTools,
+  ] as const) {
+    if (isExactToolDeclaration(descriptors, keys, expected)) return expected;
+  }
+  throw new Error("Hosted GitHub delegated tool declaration is invalid");
+}
+
+function isExactToolDeclaration(
+  descriptors: Record<PropertyKey, PropertyDescriptor>,
+  keys: readonly PropertyKey[],
+  expected: HostedGitHubDelegatedReadToolDeclaration,
+): boolean {
   const lengthDescriptor = descriptors.length;
   if (
     keys.some((key) => typeof key !== "string")
-    || keys.length !== hostedGitHubDelegatedReadTools.length + 1
+    || keys.length !== expected.length + 1
     || !lengthDescriptor
     || !("value" in lengthDescriptor)
     || lengthDescriptor.enumerable
-    || lengthDescriptor.value !== hostedGitHubDelegatedReadTools.length
+    || lengthDescriptor.value !== expected.length
   ) {
-    throw new Error("Hosted GitHub delegated tool declaration is invalid");
+    return false;
   }
-  for (let index = 0; index < hostedGitHubDelegatedReadTools.length; index += 1) {
+  for (let index = 0; index < expected.length; index += 1) {
     const item = descriptors[String(index)];
     if (
       !item
       || !item.enumerable
       || !("value" in item)
-      || item.value !== hostedGitHubDelegatedReadTools[index]
+      || item.value !== expected[index]
     ) {
-      throw new Error("Hosted GitHub delegated tool declaration is invalid");
+      return false;
     }
   }
   const allowedKeys = new Set([
     "length",
-    ...hostedGitHubDelegatedReadTools.map((_, index) => String(index)),
+    ...expected.map((_, index) => String(index)),
   ]);
-  if (keys.some((key) => !allowedKeys.has(key as string))) {
-    throw new Error("Hosted GitHub delegated tool declaration is invalid");
-  }
-  return hostedGitHubDelegatedReadTools;
+  return !keys.some((key) => !allowedKeys.has(key as string));
 }
 
 function delegatedPrincipal(
