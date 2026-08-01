@@ -4,10 +4,7 @@ on:
   pull_request:
     branches:
       - lumen/783-final-test-repair
-    types:
-      - opened
-      - synchronize
-      - reopened
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -36,7 +33,14 @@ jobs:
           old = '''  return receipt;
           }
           '''
-          new = '''  return deepFreeze(receipt);
+          new = '''  return deepFreeze({
+            ...receipt,
+            commandIds: [...receipt.commandIds],
+            jobs: receipt.jobs.map((job) => ({
+              ...job,
+              requestedLabels: [...job.requestedLabels],
+            })),
+          });
           }
 
           function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
@@ -132,7 +136,6 @@ jobs:
             test/github-actions-ci-receipt-compatibility.test.ts \
             test/ci-queue-receipt-cancelled-before-start.test.ts
 
-          rm -f .lumen-783-final-test-trigger
           git rm .github/workflows/lumen-783-final-test-repair.yml
           git add src/github-actions-ci-receipt.ts src/github-actions-ci-receipt-core.ts
           git diff --cached --check
