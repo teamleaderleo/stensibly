@@ -10,6 +10,7 @@ import type { WorkLedger } from "../src/ledger.ts";
 import { getMcpCapabilityPolicy } from "../src/mcp-capability-policy.ts";
 import { MCP_TOOL_NAMES } from "../src/mcp-diagnostics.ts";
 import { createMcpServer } from "../src/mcp.ts";
+import type { TokenPrincipal } from "../src/token-contracts.ts";
 
 const project = "scrapbook";
 const externalId = "github:teamleaderleo/stensibly#403";
@@ -18,7 +19,7 @@ describe("GitHub project context MCP on current hosted boundary", () => {
   test("registers one project-scoped read and serves the backend-neutral ledger projection", async () => {
     const calls: GetGitHubProjectContextInput[] = [];
     const ledger = fakeLedger(calls);
-    const server = createMcpServer(ledger);
+    const server = createMcpServer(ledger, { principal: readPrincipal() });
     const client = new Client(
       { name: "github-project-context-current-main", version: "0.0.1" },
       { capabilities: {} },
@@ -86,6 +87,15 @@ function fakeLedger(calls: GetGitHubProjectContextInput[]) {
     },
   };
   return contextLedger as unknown as WorkLedger & GitHubProjectContextLedger;
+}
+
+function readPrincipal(): TokenPrincipal {
+  return {
+    tokenId: "github-project-context-reader",
+    name: "GitHub project context reader",
+    scopes: ["read"],
+    projects: [project],
+  };
 }
 
 function projection(): GitHubProjectContextProjection {
