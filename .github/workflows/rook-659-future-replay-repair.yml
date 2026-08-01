@@ -92,7 +92,88 @@ jobs:
 '''
           if boundary.count(old_boundary) != 1:
               raise SystemExit('checkpoint authority regression marker changed')
-          boundary_path.write_text(boundary.replace(old_boundary, new_boundary, 1))
+          boundary = boundary.replace(old_boundary, new_boundary, 1)
+          old_digest = '''      serializedState: "{}",
+      stateDigest: `sha256:${"0".repeat(64)}`,
+      runtimeManifest: {},
+'''
+          new_digest = '''      serializedState: "{}",
+      runtimeManifest: {},
+'''
+          if boundary.count(old_digest) != 1:
+              raise SystemExit('hostile checkpoint state digest marker changed')
+          boundary = boundary.replace(old_digest, new_digest, 1)
+          old_accessor = '''    Object.defineProperty(record, "stateDigest", {
+      enumerable: true,
+      get() {
+'''
+          new_accessor = '''    Object.defineProperty(record, "stateDigest", {
+      enumerable: true,
+      configurable: true,
+      get() {
+'''
+          if boundary.count(old_accessor) != 1:
+              raise SystemExit('hostile checkpoint accessor marker changed')
+          boundary_path.write_text(boundary.replace(old_accessor, new_accessor, 1))
+
+          main_test_path = Path('test/openai-agents-runner-adapter.test.ts')
+          main_test = main_test_path.read_text()
+          old_resume = '''function resumeCommand(
+  checkpointRef: RunnerExternalReferenceV1,
+  leaseGeneration = 1,
+): RunnerResumeCommandV1 {
+'''
+          new_resume = '''function resumeCommand(
+  checkpointRef: RunnerExternalReferenceV1,
+  leaseGeneration = 1,
+  holderId = "runner-actor",
+): RunnerResumeCommandV1 {
+'''
+          if main_test.count(old_resume) != 1:
+              raise SystemExit('resume command helper changed')
+          main_test = main_test.replace(old_resume, new_resume, 1)
+          old_base_call = '''      "2026-07-31T00:10:00.000Z",
+      leaseGeneration,
+    ),
+'''
+          new_base_call = '''      "2026-07-31T00:10:00.000Z",
+      leaseGeneration,
+      holderId,
+    ),
+'''
+          if main_test.count(old_base_call) != 1:
+              raise SystemExit('resume command base call changed')
+          main_test = main_test.replace(old_base_call, new_base_call, 1)
+          old_base = '''function commandBase(
+  commandId: string,
+  issuedAt: string,
+  leaseGeneration: number,
+) {
+'''
+          new_base = '''function commandBase(
+  commandId: string,
+  issuedAt: string,
+  leaseGeneration: number,
+  holderId = "runner-actor",
+) {
+'''
+          if main_test.count(old_base) != 1:
+              raise SystemExit('command base helper changed')
+          main_test = main_test.replace(old_base, new_base, 1)
+          old_holder = '''      holderId: leaseGeneration === 1 ? "runner-actor" : "competing-actor",
+'''
+          new_holder = '''      holderId,
+'''
+          if main_test.count(old_holder) != 1:
+              raise SystemExit('command authority holder derivation changed')
+          main_test = main_test.replace(old_holder, new_holder, 1)
+          old_lease_case = '''      candidate.adapter.resume(resumeCommand(checkpoint, 2)),
+'''
+          new_lease_case = '''      candidate.adapter.resume(resumeCommand(checkpoint, 2, "runner-actor")),
+'''
+          if main_test.count(old_lease_case) != 1:
+              raise SystemExit('competing lease case changed')
+          main_test_path.write_text(main_test.replace(old_lease_case, new_lease_case, 1))
           PY
           git show 6d5606e3b50973c8eb7be0319f4d2e95535cd441:test/openai-agents-runner-adapter-future-replay.test.ts \
             > test/openai-agents-runner-adapter-future-replay.test.ts
@@ -110,11 +191,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'Rook'
+          git config user.name 'Cicada'
           git config user.email 'actions@users.noreply.github.com'
           git rm .github/workflows/rook-659-future-replay-repair.yml
           git add \
             src/runner-adapters/openai-agents.ts \
+            test/openai-agents-runner-adapter.test.ts \
             test/openai-agents-runner-adapter-boundaries.test.ts \
             test/openai-agents-runner-adapter-future-replay.test.ts
           git diff --cached --check
