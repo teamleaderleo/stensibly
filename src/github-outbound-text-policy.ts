@@ -253,7 +253,7 @@ export function parseGitHubOutboundTextReceipt(
     );
   }
 
-  const destination = parseDestination(
+  const destination = parseReceiptDestination(
     record.destination,
     "GitHub outbound receipt destination",
   );
@@ -426,7 +426,7 @@ function parseInput(input: unknown): ParsedInput {
   return {
     workspace: boundedSlug(record.workspace, "GitHub outbound workspace", 80),
     project: boundedSlug(record.project, "GitHub outbound project", 80),
-    destination: parseDestination(
+    destination: parseInputDestination(
       record.destination,
       "GitHub outbound destination",
     ),
@@ -514,21 +514,30 @@ function parseExternalAuthority(input: unknown): GitHubExternalContactAuthority 
     ["fingerprint", "generation", "repositories"],
     "GitHub external contact authority",
   );
-  return {
-    fingerprint: sha256(
-      record.fingerprint,
-      "GitHub external contact authority fingerprint",
-    ),
-    generation: positiveInteger(
-      record.generation,
-      "GitHub external contact authority generation",
-    ),
-    repositories: canonicalStringArray(
-      record.repositories,
-      "Authorized external repositories",
-      parseRepositoryFullName,
-    ),
-  };
+  const generation = positiveInteger(
+    record.generation,
+    "GitHub external contact authority generation",
+  );
+  const repositories = canonicalStringArray(
+    record.repositories,
+    "Authorized external repositories",
+    parseRepositoryFullName,
+  );
+  const fingerprint = sha256(
+    record.fingerprint,
+    "GitHub external contact authority fingerprint",
+  );
+  const expectedFingerprint = fingerprintCanonicalRequest({
+    policy: "github-external-contact-authority/v1",
+    generation,
+    repositories,
+  });
+  if (fingerprint !== expectedFingerprint) {
+    throw new Error(
+      "GitHub external contact authority fingerprint does not match its contents",
+    );
+  }
+  return { fingerprint, generation, repositories };
 }
 
 function scanField(
@@ -677,7 +686,24 @@ function observation(
   };
 }
 
-function parseDestination(
+function parseInputDestination(
+  input: unknown,
+  label: string,
+): GitHubOutboundRepository & { repositoryFullName: string } {
+  const record = requireRecord(input, label);
+  rejectUnknownKeys(record, ["owner", "repository"], label);
+  if (Object.keys(record).length !== 2) {
+    throw new Error(`${label} fields are invalid`);
+  }
+  const owner = parseOwner(record.owner);
+  const repository = parseRepository(record.repository);
+  if (record.owner !== owner || record.repository !== repository) {
+    throw new Error(`${label} identity is not canonical`);
+  }
+  return { owner, repository, repositoryFullName: `${owner}/${repository}` };
+}
+
+function parseReceiptDestination(
   input: unknown,
   label: string,
 ): GitHubOutboundRepository & { repositoryFullName: string } {
@@ -687,16 +713,16 @@ function parseDestination(
     ["owner", "repository", "repositoryFullName"],
     label,
   );
+  if (Object.keys(record).length !== 3) {
+    throw new Error(`${label} fields are invalid`);
+  }
   const owner = parseOwner(record.owner);
   const repository = parseRepository(record.repository);
   const repositoryFullName = `${owner}/${repository}`;
   if (record.owner !== owner || record.repository !== repository) {
     throw new Error(`${label} identity is not canonical`);
   }
-  if (
-    Object.hasOwn(record, "repositoryFullName") &&
-    record.repositoryFullName !== repositoryFullName
-  ) {
+  if (record.repositoryFullName !== repositoryFullName) {
     throw new Error(`${label} full name is not canonical`);
   }
   return { owner, repository, repositoryFullName };
