@@ -1,3 +1,4 @@
+# Triggered after workflow registration.
 name: Cicada 891 next-evidence repair
 
 on:
