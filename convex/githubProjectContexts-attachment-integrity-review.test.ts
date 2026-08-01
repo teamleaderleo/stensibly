@@ -6,7 +6,7 @@ import {
   canonicalGitHubIssueContextJson,
   canonicalRepositoryInstructionSetJson,
 } from "../src/github-project-context-admission";
-import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint";
+import { fingerprintExactText } from "../src/idempotency-request-fingerprint";
 import { buildGitHubIssueContext } from "../src/github-issue-context";
 import schema from "./schema";
 import { modules } from "./test.setup";
@@ -46,7 +46,9 @@ test("rejects repository authority from a hash-inconsistent attachment row", asy
       contentSha256: `sha256:${"d".repeat(64)}`,
     },
   };
-  const attachmentSnapshotSha256 = fingerprintCanonicalRequest(attachmentBase);
+  const attachmentSnapshotSha256 = fingerprintExactText(
+    JSON.stringify(attachmentBase),
+  );
 
   await t.run(async (ctx: any) => {
     const now = Date.now();
