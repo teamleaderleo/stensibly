@@ -643,7 +643,7 @@ function deriveCertainty(input: ExecutionCertaintyInput): ExecutionCertaintyProj
       remoteResultReceived: true,
       reconciliationRequired: "none",
       replayAuthorization: "not_authorized",
-      nextEvidence: "remote_result",
+      nextEvidence: "none",
     };
   }
   if (evidence.dispatchState === "not_started") {
@@ -735,6 +735,7 @@ function boundedIdentifier(
     value.length < 1 ||
     value.length > maximum ||
     value !== value.trim() ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value) ||
     !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(value) ||
     realisticCredentialPattern.test(value)
   ) {
