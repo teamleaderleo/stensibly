@@ -49,7 +49,18 @@ export class ConvexGitHubProviderReceiptStore
       receiptJson: canonicalGitHubProviderReceiptJson(admitted),
     }));
     const result = admitReservation(raw);
-    if (result.receipt.project !== admitted.project) {
+    if (
+      result.receipt.project !== admitted.project
+      || result.receipt.idempotencyKey !== admitted.idempotencyKey
+      || (
+        result.outcome !== "conflict"
+        && !sameReplayIdentity(result.receipt, admitted)
+      )
+      || (
+        result.outcome === "reserved"
+        && !sameReservationIdentity(result.receipt, admitted)
+      )
+    ) {
       throw new GitHubProviderReceiptStorageError();
     }
     return Object.freeze(result);
@@ -67,9 +78,8 @@ export class ConvexGitHubProviderReceiptStore
     }));
     const stored = parseStoredReceipt(raw);
     if (
-      stored.project !== admitted.project
-      || stored.id !== admitted.id
-      || stored.idempotencyKey !== admitted.idempotencyKey
+      canonicalGitHubProviderReceiptJson(stored)
+      !== canonicalGitHubProviderReceiptJson(admitted)
     ) {
       throw new GitHubProviderReceiptStorageError();
     }
@@ -130,20 +140,19 @@ export class GitHubProviderReceiptStorageError extends Error {
 }
 
 function admitReservation(value: unknown): GitHubProviderReceiptReservation {
-  if (!isRecord(value) || !hasExactKeys(value, reservationKeys)) {
-    throw new GitHubProviderReceiptStorageError();
-  }
+  const record = exactDataRecord(value, reservationKeys);
+  const outcome = record.outcome;
   if (
-    typeof value.outcome !== "string"
+    typeof outcome !== "string"
     || !reservationOutcomes.includes(
-      value.outcome as typeof reservationOutcomes[number],
+      outcome as typeof reservationOutcomes[number],
     )
   ) {
     throw new GitHubProviderReceiptStorageError();
   }
   return {
-    outcome: value.outcome as GitHubProviderReceiptReservation["outcome"],
-    receipt: parseStoredReceipt(value.receiptJson),
+    outcome: outcome as GitHubProviderReceiptReservation["outcome"],
+    receipt: parseStoredReceipt(record.receiptJson),
   };
 }
 
@@ -158,9 +167,84 @@ function parseStoredReceipt(value: unknown): GitHubProviderReceipt {
   }
 }
 
+function sameReplayIdentity(
+  current: GitHubProviderReceipt,
+  candidate: GitHubProviderReceipt,
+): boolean {
+  return current.version === candidate.version
+    && current.project === candidate.project
+    && current.provider === candidate.provider
+    && current.repositoryFullName === candidate.repositoryFullName
+    && current.operation === candidate.operation
+    && current.target === candidate.target
+    && current.actorId === candidate.actorId
+    && current.clientId === candidate.clientId
+    && current.connectionId === candidate.connectionId
+    && current.installationId === candidate.installationId
+    && current.bindingId === candidate.bindingId
+    && current.attachmentId === candidate.attachmentId
+    && current.attachmentSnapshotSha256
+      === candidate.attachmentSnapshotSha256
+    && current.capabilityGrantId === candidate.capabilityGrantId
+    && current.approvalId === candidate.approvalId
+    && current.idempotencyKey === candidate.idempotencyKey
+    && current.parametersSha256 === candidate.parametersSha256;
+}
+
+function sameReservationIdentity(
+  current: GitHubProviderReceipt,
+  candidate: GitHubProviderReceipt,
+): boolean {
+  return current.id === candidate.id
+    && current.createdAt === candidate.createdAt
+    && sameReplayIdentity(current, candidate);
+}
+
+function exactDataRecord(
+  value: unknown,
+  expectedKeys: readonly string[],
+): Record<string, unknown> {
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    throw new GitHubProviderReceiptStorageError();
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.getOwnPropertySymbols(descriptors).length !== 0) {
+    throw new GitHubProviderReceiptStorageError();
+  }
+  const actualKeys = Object.keys(descriptors).sort();
+  const canonicalKeys = [...expectedKeys].sort();
+  if (
+    actualKeys.length !== canonicalKeys.length
+    || actualKeys.some((key, index) => key !== canonicalKeys[index])
+  ) {
+    throw new GitHubProviderReceiptStorageError();
+  }
+  const result: Record<string, unknown> = {};
+  for (const key of canonicalKeys) {
+    const descriptor = descriptors[key];
+    if (
+      !descriptor
+      || !("value" in descriptor)
+      || descriptor.enumerable !== true
+    ) {
+      throw new GitHubProviderReceiptStorageError();
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
 function exactSlug(value: string, label: string): string {
-  const result = exactText(value, label, 80).toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-_]*$/.test(result)) {
+  const result = exactText(value, label, 80);
+  if (
+    result !== result.toLowerCase()
+    || !/^[a-z0-9][a-z0-9-_]*$/.test(result)
+  ) {
     throw new RangeError(`${label} must be a lowercase slug`);
   }
   return result;
@@ -180,18 +264,4 @@ function exactText(value: string, label: string, maximum: number): string {
 
 function required(value: string, label: string): string {
   return exactText(value, label, 1_000);
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length
-    && actual.every((key, index) => key === expected[index]);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
