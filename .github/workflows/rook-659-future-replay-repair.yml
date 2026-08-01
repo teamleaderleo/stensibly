@@ -1,3 +1,4 @@
+# Triggered after workflow registration.
 name: Rook 659 future replay repair
 
 on:
