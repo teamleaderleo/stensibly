@@ -668,7 +668,7 @@ function snapshotValue(
   state.active.add(value);
   try {
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const symbols = Object.getOwnPropertySymbols(value);
+    const symbols = Object.getOwnPropertySymbols(descriptors);
     if (symbols.length !== 0) {
       throw new RangeError("GitHub provider receipt contains symbol fields");
     }
