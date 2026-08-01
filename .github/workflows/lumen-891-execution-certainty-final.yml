@@ -1,0 +1,90 @@
+name: Lumen 891 execution certainty finalizer
+
+on:
+  push:
+    branches:
+      - lumen/891-execution-certainty-final
+    paths:
+      - .github/workflows/lumen-891-execution-certainty-final.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-891-execution-certainty-final
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/891-execution-certainty-final
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Repair execution-certainty admission and projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/execution-certainty.ts")
+          source = source_path.read_text()
+
+          old_projection = '      nextEvidence: "remote_result",\n'
+          new_projection = '      nextEvidence: "none",\n'
+          if source.count(old_projection) != 1:
+              raise SystemExit("received-result projection changed")
+          source = source.replace(old_projection, new_projection, 1)
+
+          old_identifier = '''    value !== value.trim() ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(value) ||
+    realisticCredentialPattern.test(value)
+'''
+          new_identifier = '''    value !== value.trim() ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:\\/\\//.test(value) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(value) ||
+    realisticCredentialPattern.test(value)
+'''
+          if source.count(old_identifier) != 1:
+              raise SystemExit("bounded identifier admission changed")
+          source = source.replace(old_identifier, new_identifier, 1)
+          source_path.write_text(source)
+
+          test_path = Path("test/execution-certainty.test.ts")
+          test = test_path.read_text()
+          old_test = '        nextEvidence: "remote_result",\n'
+          new_test = '        nextEvidence: "none",\n'
+          if test.count(old_test) != 1:
+              raise SystemExit("received-result expectation changed")
+          test_path.write_text(test.replace(old_test, new_test, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/execution-certainty.test.ts \
+            test/execution-certainty-final-review.test.ts \
+            test/execution-certainty-url-retention-review.test.ts
+      - name: Publish clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Lumen'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/lumen-891-execution-certainty-final.yml
+          git add \
+            src/execution-certainty.ts \
+            test/execution-certainty.test.ts \
+            test/execution-certainty-url-retention-review.test.ts
+          git diff --cached --check
+          git commit -m 'Close execution evidence and exclude retained URLs'
+          git push \
+            --force-with-lease=refs/heads/lumen/891-execution-certainty-final:${SOURCE_HEAD} \
+            origin HEAD:lumen/891-execution-certainty-final
