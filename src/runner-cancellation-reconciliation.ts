@@ -91,6 +91,14 @@ const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/u;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const realisticCredentialPattern = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
+const evidenceExternalIdPrefixes: Readonly<
+  Record<RunnerCancellationReconciliationKindV1, string>
+> = Object.freeze({
+  provider_settled: "remote-settlement",
+  provider_still_running: "runtime-still-running",
+  provider_unknown: "runtime-unknown",
+  publication_fence: "publication-fence",
+});
 
 const originalResultKeys = [
   "version",
@@ -464,9 +472,12 @@ function parseOriginalCancellation(
         "Runner cancellation observation reference does not match run generation",
       );
     }
-    if (reference.createdAt > observation.observedAt) {
+    if (
+      reference.createdAt < identity.requestedAt
+      || reference.createdAt > observation.observedAt
+    ) {
       throw new RangeError(
-        "Runner cancellation observation reference postdates its observation",
+        "Runner cancellation observation reference is outside request and observation bounds",
       );
     }
   }
@@ -655,14 +666,7 @@ function evidenceExternalId(
   runId: string,
   generation: number,
 ): string {
-  const prefix = kind === "provider_settled"
-    ? "remote-settlement"
-    : kind === "provider_still_running"
-      ? "runtime-still-running"
-      : kind === "provider_unknown"
-        ? "runtime-unknown"
-        : "publication-fence";
-  return `${prefix}:${runId}:g${generation}`;
+  return `${evidenceExternalIdPrefixes[kind]}:${runId}:g${generation}`;
 }
 
 function parseGenerationAdvance(value: unknown): ResourceGenerationAdvanceDecision {
