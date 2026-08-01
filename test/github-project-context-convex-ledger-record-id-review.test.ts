@@ -11,8 +11,9 @@ import {
   GitHubProjectContextStorageError,
 } from "../src/github-project-context-convex-ledger.ts";
 import { buildGitHubIssueContext } from "../src/github-issue-context.ts";
+import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint.ts";
 
-class ForgedRecordIdClient implements ConvexCaller {
+class AcceptanceResultClient implements ConvexCaller {
   constructor(readonly mutationResult: unknown) {}
 
   async mutation(
@@ -32,41 +33,8 @@ class ForgedRecordIdClient implements ConvexCaller {
 
 test("rejects a backend acceptance with an unbound durable record ID", async () => {
   const subject = fixture();
-  const client = new ForgedRecordIdClient({
-    replayed: false,
-    record: {
-      id: "github_context_forged",
-      project: "stensibly",
-      externalId: subject.snapshot.reference.externalId,
-      repositoryFullName: subject.snapshot.reference.repositoryFullName,
-      sourceRevision: subject.snapshot.sourceRevision,
-      snapshotSha256: subject.snapshot.snapshotSha256,
-      contentSha256: subject.snapshot.contentSha256,
-      providerUpdatedAt: subject.snapshot.updatedAt,
-      snapshotJson: canonicalGitHubIssueContextJson(subject.snapshot),
-      projectAttachmentId: subject.instructionSet.projectAttachmentId,
-      projectAttachmentSnapshotSha256:
-        subject.instructionSet.projectAttachmentSnapshotSha256,
-      instructionSetId: subject.instructionSet.id,
-      instructionSetSha256: subject.instructionSet.sha256,
-      instructionSetJson: canonicalRepositoryInstructionSetJson(
-        subject.instructionSet,
-      ),
-      syncStatus: subject.syncStatus,
-      syncCursor: subject.syncCursor,
-      degradedReasonCode: subject.degradedReasonCode,
-      observationRef: subject.observationRef,
-      observedAt: subject.observedAt,
-      acceptedBy: subject.acceptedBy,
-      acceptedAt: "2026-07-31T16:10:01.000Z",
-      isCurrent: true,
-      outcome: "initial",
-    },
-  });
-  const service = new ConvexGitHubProjectContextService({
-    client,
-    serviceSecret: "service-secret",
-    workspace: "default",
+  const service = serviceFor(subject, {
+    id: "github_context_forged",
   });
 
   await expect(service.acceptGitHubIssueContext({
@@ -74,6 +42,70 @@ test("rejects a backend acceptance with an unbound durable record ID", async () 
     ...subject,
   })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
 });
+
+test("rejects durable acceptance metadata dated far in the future", async () => {
+  const subject = fixture();
+  const service = serviceFor(subject, {
+    acceptedAt: "2099-01-01T00:00:00.000Z",
+  });
+
+  await expect(service.acceptGitHubIssueContext({
+    project: "stensibly",
+    ...subject,
+  })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+});
+
+function serviceFor(
+  subject: ReturnType<typeof fixture>,
+  overrides: Partial<ReturnType<typeof storedRecord>>,
+): ConvexGitHubProjectContextService {
+  const client = new AcceptanceResultClient({
+    replayed: false,
+    record: { ...storedRecord(subject), ...overrides },
+  });
+  return new ConvexGitHubProjectContextService({
+    client,
+    serviceSecret: "service-secret",
+    workspace: "default",
+  });
+}
+
+function storedRecord(subject: ReturnType<typeof fixture>) {
+  const digest = fingerprintCanonicalRequest({
+    version: 1,
+    workspace: "default",
+    project: "stensibly",
+    observationRef: subject.observationRef,
+  });
+  return {
+    id: `github_context_${digest.slice("sha256:".length)}`,
+    project: "stensibly",
+    externalId: subject.snapshot.reference.externalId,
+    repositoryFullName: subject.snapshot.reference.repositoryFullName,
+    sourceRevision: subject.snapshot.sourceRevision,
+    snapshotSha256: subject.snapshot.snapshotSha256,
+    contentSha256: subject.snapshot.contentSha256,
+    providerUpdatedAt: subject.snapshot.updatedAt,
+    snapshotJson: canonicalGitHubIssueContextJson(subject.snapshot),
+    projectAttachmentId: subject.instructionSet.projectAttachmentId,
+    projectAttachmentSnapshotSha256:
+      subject.instructionSet.projectAttachmentSnapshotSha256,
+    instructionSetId: subject.instructionSet.id,
+    instructionSetSha256: subject.instructionSet.sha256,
+    instructionSetJson: canonicalRepositoryInstructionSetJson(
+      subject.instructionSet,
+    ),
+    syncStatus: subject.syncStatus,
+    syncCursor: subject.syncCursor,
+    degradedReasonCode: subject.degradedReasonCode,
+    observationRef: subject.observationRef,
+    observedAt: subject.observedAt,
+    acceptedBy: subject.acceptedBy,
+    acceptedAt: "2026-07-31T16:10:01.000Z",
+    isCurrent: true,
+    outcome: "initial" as const,
+  };
+}
 
 function fixture() {
   const snapshot = buildGitHubIssueContext({
