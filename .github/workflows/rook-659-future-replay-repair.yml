@@ -1,5 +1,5 @@
 # Triggered after workflow registration.
-name: Rook 659 future replay repair
+name: Rook 659 checkpoint integrity repair
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           ref: rook/659-future-replay-repair
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
-      - name: Fence replay receipt chronology
+      - name: Fence checkpoint chronology and authority
         shell: bash
         run: |
           set -euo pipefail
@@ -35,16 +35,64 @@ jobs:
 
           source_path = Path('src/runner-adapters/openai-agents.ts')
           source = source_path.read_text()
-          old = '      || (input.replayed === false && record.createdAt !== append.proposedCreatedAt)\n'
-          new = '''      || (
+          old_chronology = '      || (input.replayed === false && record.createdAt !== append.proposedCreatedAt)\n'
+          new_chronology = '''      || (
         input.replayed
           ? record.createdAt > append.proposedCreatedAt
           : record.createdAt !== append.proposedCreatedAt
       )
 '''
-          if source.count(old) != 1:
+          if source.count(old_chronology) != 1:
               raise SystemExit('checkpoint replay chronology predicate changed')
-          source_path.write_text(source.replace(old, new, 1))
+          source = source.replace(old_chronology, new_chronology, 1)
+
+          old_order = '''    assertControlAuthorityActive(input, clock.baseMilliseconds);
+    const checkpoint = this.#latestCheckpoints.get(controlKey(input));
+    if (!checkpoint) {
+      throw new RangeError(
+        "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
+      );
+    }
+    this.#assertControlBinding(input);
+    return checkpoint;
+'''
+          new_order = '''    assertControlAuthorityActive(input, clock.baseMilliseconds);
+    this.#assertControlBinding(input);
+    const checkpoint = this.#latestCheckpoints.get(controlKey(input));
+    if (!checkpoint) {
+      throw new RangeError(
+        "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
+      );
+    }
+    return checkpoint;
+'''
+          if source.count(old_order) != 1:
+              raise SystemExit('checkpoint authority ordering changed')
+          source_path.write_text(source.replace(old_order, new_order, 1))
+
+          boundary_path = Path('test/openai-agents-runner-adapter-boundaries.test.ts')
+          boundary = boundary_path.read_text()
+          old_boundary = '''    expect(candidateFactory.prepareCalls).toBe(1);
+    expect(store.checkpointWrites).toBe(2);
+  });
+'''
+          new_boundary = '''    expect(candidateFactory.prepareCalls).toBe(1);
+    expect(store.checkpointWrites).toBe(2);
+
+    await expect(
+      (candidate.adapter.requestCheckpoint as any)({
+        ...checkpointCommand(),
+        authority: {
+          ...controlAuthority(),
+          holderId: "competing-boundary-actor",
+        },
+      }),
+    ).rejects.toThrow("authority holder is stale");
+  });
+'''
+          if boundary.count(old_boundary) != 1:
+              raise SystemExit('checkpoint authority regression marker changed')
+          boundary_path.write_text(boundary.replace(old_boundary, new_boundary, 1))
           PY
           git show 6d5606e3b50973c8eb7be0319f4d2e95535cd441:test/openai-agents-runner-adapter-future-replay.test.ts \
             > test/openai-agents-runner-adapter-future-replay.test.ts
@@ -67,9 +115,10 @@ jobs:
           git rm .github/workflows/rook-659-future-replay-repair.yml
           git add \
             src/runner-adapters/openai-agents.ts \
+            test/openai-agents-runner-adapter-boundaries.test.ts \
             test/openai-agents-runner-adapter-future-replay.test.ts
           git diff --cached --check
-          git commit -m 'Reject future-dated checkpoint replay receipts'
+          git commit -m 'Bind checkpoint chronology and authority'
           git push \
             --force-with-lease=refs/heads/rook/659-future-replay-repair:${SOURCE_HEAD} \
             origin HEAD:rook/659-future-replay-repair
