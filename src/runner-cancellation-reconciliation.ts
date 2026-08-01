@@ -742,7 +742,10 @@ function copyJsonData(
     if (Object.getPrototypeOf(value) !== Array.prototype) {
       throw new RangeError(`${label} contains an invalid array`);
     }
-    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value) as Record<
+      string,
+      PropertyDescriptor
+    >;
     const lengthDescriptor = descriptors.length;
     if (
       !lengthDescriptor
