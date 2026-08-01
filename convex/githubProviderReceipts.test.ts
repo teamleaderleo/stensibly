@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 describe("hosted GitHub provider receipts", () => {
-  test("reserves once, projects interrupted replay, and conflicts altered reuse", async () => {
+  test("reserves once, preserves original identity on retry, and conflicts drift", async () => {
     const t = convexTest(schema, modules);
     await seedProject(t, "stensibly");
     const input = receipt();
@@ -37,9 +37,19 @@ describe("hosted GitHub provider receipts", () => {
     expect(first.outcome).toBe("reserved");
     expect(parseGitHubProviderReceiptJson(first.receiptJson)).toEqual(input);
 
-    const replay = await t.mutation(reserveRef, reserveArgs(input)) as any;
+    const retryCandidate = receipt({
+      id: "ghop_retry_candidate",
+      createdAt: "2026-08-02T00:01:00.000Z",
+      updatedAt: "2026-08-02T00:01:00.000Z",
+    });
+    const replay = await t.mutation(
+      reserveRef,
+      reserveArgs(retryCandidate),
+    ) as any;
     expect(replay.outcome).toBe("replay");
     expect(parseGitHubProviderReceiptJson(replay.receiptJson)).toMatchObject({
+      id: input.id,
+      createdAt: input.createdAt,
       state: "pending_reconciliation",
       error: {
         code: "provider_dispatch_in_progress_or_interrupted",
@@ -48,11 +58,17 @@ describe("hosted GitHub provider receipts", () => {
       recovery: { nextAction: "reconcile_exact_operation" },
     });
 
-    const stableReplay = await t.mutation(reserveRef, reserveArgs(input)) as any;
+    const stableReplay = await t.mutation(
+      reserveRef,
+      reserveArgs(retryCandidate),
+    ) as any;
     expect(stableReplay).toEqual(replay);
 
     const conflict = await t.mutation(reserveRef, reserveArgs(receipt({
-      parametersSha256: `sha256:${"c".repeat(64)}`,
+      id: "ghop_conflict_candidate",
+      createdAt: "2026-08-02T00:02:00.000Z",
+      updatedAt: "2026-08-02T00:02:00.000Z",
+      target: "teamleaderleo/stensibly#929:comment:new",
     }))) as any;
     expect(conflict.outcome).toBe("conflict");
     expect(conflict.receiptJson).toBe(replay.receiptJson);
@@ -96,10 +112,16 @@ describe("hosted GitHub provider receipts", () => {
       "GITHUB_PROVIDER_RECEIPT_NOT_RESERVED",
     );
     await t.mutation(reserveRef, reserveArgs(input));
-    await expect(t.mutation(updateRef, updateArgs({
+    await expect(t.mutation(updateRef, updateArgs(receipt({
       ...terminal,
       id: "ghop_other",
-    }))).rejects.toThrow(
+    })))).rejects.toThrow(
+      "GITHUB_PROVIDER_RECEIPT_UPDATE_IDENTITY_MISMATCH",
+    );
+    await expect(t.mutation(updateRef, updateArgs(receipt({
+      ...terminal,
+      connectionId: "ghconn_other",
+    })))).rejects.toThrow(
       "GITHUB_PROVIDER_RECEIPT_UPDATE_IDENTITY_MISMATCH",
     );
     const updatedJson = await t.mutation(updateRef, updateArgs(terminal));
@@ -159,11 +181,11 @@ describe("hosted GitHub provider receipts", () => {
     const input = receipt({ idempotencyKey: "corruption-1" });
     await t.mutation(reserveRef, reserveArgs(input));
     await t.run(async (ctx: any) => {
+      const boundProjectId = await projectId(ctx, "stensibly");
       const row = await ctx.db
         .query("githubProviderReceipts")
         .withIndex("by_project_external", (q: any) =>
-          q.eq("projectId", await projectId(ctx, "stensibly"))
-            .eq("externalId", input.id)
+          q.eq("projectId", boundProjectId).eq("externalId", input.id)
         )
         .unique();
       await ctx.db.patch(row._id, {
