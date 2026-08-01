@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import type { GitHubProviderReceipt } from "../src/github-provider-contracts.ts";
 import {
   admitGitHubProviderReceipt,
   canonicalGitHubProviderReceiptJson,
@@ -38,6 +37,7 @@ describe("GitHub provider receipt admission", () => {
   test("does not dispatch through a hostile get trap", () => {
     let reads = 0;
     const source = receipt();
+    const expected = admitGitHubProviderReceipt(source);
     const hostile = new Proxy(source, {
       get() {
         reads += 1;
@@ -45,7 +45,7 @@ describe("GitHub provider receipt admission", () => {
       },
     });
 
-    expect(admitGitHubProviderReceipt(hostile)).toEqual(source);
+    expect(admitGitHubProviderReceipt(hostile)).toEqual(expected);
     expect(reads).toBe(0);
   });
 
@@ -101,7 +101,7 @@ describe("GitHub provider receipt admission", () => {
     }))).toThrow("credential-shaped text");
 
     const canonical = canonicalGitHubProviderReceiptJson(
-      receipt() as GitHubProviderReceipt,
+      admitGitHubProviderReceipt(receipt()),
     );
     const parsed = JSON.parse(canonical) as Record<string, unknown>;
     const reordered = JSON.stringify({ target: parsed.target, ...parsed });
