@@ -6,7 +6,7 @@ import {
   canonicalGitHubIssueContextJson,
   canonicalRepositoryInstructionSetJson,
 } from "../src/github-project-context-admission";
-import { fingerprintCanonicalRequest } from "../src/idempotency-request-fingerprint";
+import { fingerprintExactText } from "../src/idempotency-request-fingerprint";
 import { buildGitHubIssueContext } from "../src/github-issue-context";
 import schema from "./schema";
 import { modules } from "./test.setup";
@@ -224,12 +224,12 @@ function input(overrides: {
   };
 }
 
-function attachmentSnapshotSha256For(repository: string): string {
-  return fingerprintCanonicalRequest({
-    format: "stensibly.project-attachment",
-    schemaVersion: 1,
+function attachmentBaseFor(repository: string) {
+  return {
+    format: "stensibly.project-attachment" as const,
+    schemaVersion: 1 as const,
     contract: {
-      version: 1,
+      version: 1 as const,
       project: "stensibly",
       repositories: [repository],
       runnerProfiles: [],
@@ -250,7 +250,11 @@ function attachmentSnapshotSha256For(repository: string): string {
       path: "STENSIBLY.md",
       contentSha256: `sha256:${"d".repeat(64)}`,
     },
-  });
+  };
+}
+
+function attachmentSnapshotSha256For(repository: string): string {
+  return fingerprintExactText(JSON.stringify(attachmentBaseFor(repository)));
 }
 
 function queryArgs(overrides: Record<string, unknown>) {
@@ -283,33 +287,10 @@ async function seedProject(
       createdAt: now,
       updatedAt: now,
     });
-    const attachmentBase = {
-      format: "stensibly.project-attachment" as const,
-      schemaVersion: 1 as const,
-      contract: {
-        version: 1 as const,
-        project: "stensibly",
-        repositories: [repository],
-        runnerProfiles: [],
-        concurrency: { project: 1, global: 1 },
-        autonomousActions: [],
-        approvalRequired: [],
-        checks: [],
-        tags: [],
-        relatedProjects: [],
-      },
-      context: {
-        goal: "Test accepted GitHub context",
-        boundaries: "No external effects",
-        evidenceAndHandoff: "Retain exact test evidence",
-        escalation: "Fail closed",
-      },
-      source: {
-        path: "STENSIBLY.md",
-        contentSha256: `sha256:${"d".repeat(64)}`,
-      },
-    };
-    const attachmentSnapshotSha256 = fingerprintCanonicalRequest(attachmentBase);
+    const attachmentBase = attachmentBaseFor(repository);
+    const attachmentSnapshotSha256 = fingerprintExactText(
+      JSON.stringify(attachmentBase),
+    );
     expect(attachmentSnapshotSha256).toBe(attachmentSnapshotSha256For(repository));
     await ctx.db.insert("projectAttachments", {
       workspaceId,
