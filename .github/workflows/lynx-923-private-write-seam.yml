@@ -1,0 +1,311 @@
+name: Narrow GitHub issue write packet to private composition seam
+
+on:
+  push:
+    branches:
+      - lynx/921-github-issue-write-mcp
+    paths:
+      - .github/workflows/lynx-923-private-write-seam.yml
+
+permissions:
+  contents: write
+
+jobs:
+  narrow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lynx/921-github-issue-write-mcp
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply accepted review correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout origin/main -- \
+            docs/chatgpt-app-actions.json \
+            docs/chatgpt-app-recovery.md \
+            src/github-issue-provider-mcp.ts \
+            src/mcp-capability-policy.ts \
+            src/mcp-diagnostics.ts \
+            src/mcp.ts \
+            test/chatgpt-app-actions-snapshot.test.ts \
+            test/mcp-capability-policy.test.ts
+          rm -f test/mcp-github-issue-provider-writes.test.ts
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-issue-provider-mcp.ts")
+          text = path.read_text()
+          old_import = 'import type { GitHubProviderRequestContext } from "./github-provider-contracts.js";'
+          new_import = '''import type {
+            GitHubProviderReceipt,
+            GitHubProviderRequestContext,
+          } from "./github-provider-contracts.js";'''.replace("          ", "")
+          if text.count(old_import) != 1:
+              raise SystemExit("provider contract import drifted")
+          text = text.replace(old_import, new_import, 1)
+
+          marker = '''export function withGitHubIssueProviderReadService<T extends object>(
+          '''.replace("          ", "")
+          addition = '''export interface GitHubIssueProviderWriteService {
+            createIssue(input: GitHubProviderRequestContext & {
+              title: string;
+              body?: string;
+              labels?: string[];
+              assignees?: string[];
+              idempotencyKey: string;
+            }): Promise<GitHubProviderReceipt>;
+            updateIssue(input: GitHubProviderRequestContext & {
+              issueNumber: number;
+              expectedSourceRevision: string;
+              title?: string;
+              body?: string;
+              state?: "open" | "closed";
+              stateReason?: "completed" | "not_planned" | "reopened" | null;
+              idempotencyKey: string;
+            }): Promise<GitHubProviderReceipt>;
+            addIssueComment(input: GitHubProviderRequestContext & {
+              issueNumber: number;
+              body: string;
+              idempotencyKey: string;
+            }): Promise<GitHubProviderReceipt>;
+          }
+
+          export function withGitHubIssueProviderWriteService<T extends object>(
+            target: T,
+            service: GitHubIssueProviderWriteService,
+          ): T & GitHubIssueProviderWriteService {
+            return Object.assign(target, {
+              createIssue: service.createIssue.bind(service),
+              updateIssue: service.updateIssue.bind(service),
+              addIssueComment: service.addIssueComment.bind(service),
+            });
+          }
+
+          '''.replace("          ", "")
+          if text.count(marker) != 1:
+              raise SystemExit("read composition marker drifted")
+          path.write_text(text.replace(marker, addition + marker, 1))
+
+          Path("test/mcp-github-issue-provider-write-composition.test.ts").write_text(r'''import { describe, expect, test } from "bun:test";
+          import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+          import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+          import type {
+            GitHubIssueProviderWriteService,
+          } from "../src/github-issue-provider-mcp.ts";
+          import {
+            withGitHubIssueProviderWriteService,
+          } from "../src/github-issue-provider-mcp.ts";
+          import type {
+            GitHubIssueProviderOperation,
+            GitHubProviderReceipt,
+          } from "../src/github-provider-contracts.ts";
+          import { createMcpServer } from "../src/mcp.ts";
+          import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
+          import { StensiblyStore } from "../src/store.ts";
+
+          describe("GitHub issue provider write composition", () => {
+            test("binds the typed write service onto a ledger-compatible target", async () => {
+              const calls: unknown[] = [];
+              const target = { kind: "target" };
+              const service: GitHubIssueProviderWriteService = {
+                async createIssue(input) {
+                  calls.push(input);
+                  return receipt("github_create_issue", input.idempotencyKey);
+                },
+                async updateIssue(input) {
+                  calls.push(input);
+                  return receipt("github_update_issue", input.idempotencyKey);
+                },
+                async addIssueComment(input) {
+                  calls.push(input);
+                  return receipt("github_add_issue_comment", input.idempotencyKey);
+                },
+              };
+
+              const composed = withGitHubIssueProviderWriteService(target, service);
+              expect(composed).toBe(target);
+
+              await composed.createIssue({
+                ...context(),
+                title: "Create through the provider seam",
+                idempotencyKey: "write-seam-create-1",
+              });
+              await composed.updateIssue({
+                ...context(),
+                issueNumber: 921,
+                expectedSourceRevision: "github-rest:I_issue_921:rev-1",
+                title: "Update through the provider seam",
+                idempotencyKey: "write-seam-update-1",
+              });
+              await composed.addIssueComment({
+                ...context(),
+                issueNumber: 921,
+                body: "Comment through the provider seam",
+                idempotencyKey: "write-seam-comment-1",
+              });
+
+              expect(calls).toEqual([
+                {
+                  ...context(),
+                  title: "Create through the provider seam",
+                  idempotencyKey: "write-seam-create-1",
+                },
+                {
+                  ...context(),
+                  issueNumber: 921,
+                  expectedSourceRevision: "github-rest:I_issue_921:rev-1",
+                  title: "Update through the provider seam",
+                  idempotencyKey: "write-seam-update-1",
+                },
+                {
+                  ...context(),
+                  issueNumber: 921,
+                  body: "Comment through the provider seam",
+                  idempotencyKey: "write-seam-comment-1",
+                },
+              ]);
+            });
+
+            test("keeps write actions outside the public MCP manifest until hosted execution is mounted", async () => {
+              const store = new StensiblyStore(":memory:");
+              const ledger = withGitHubIssueProviderWriteService(
+                new SqliteWorkLedger(store),
+                {
+                  async createIssue(input) {
+                    return receipt("github_create_issue", input.idempotencyKey);
+                  },
+                  async updateIssue(input) {
+                    return receipt("github_update_issue", input.idempotencyKey);
+                  },
+                  async addIssueComment(input) {
+                    return receipt("github_add_issue_comment", input.idempotencyKey);
+                  },
+                },
+              );
+              const server = createMcpServer(ledger);
+              const client = new Client(
+                { name: "github-write-composition-test", version: "0.0.1" },
+                { capabilities: {} },
+              );
+              const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+              try {
+                await server.connect(serverTransport);
+                await client.connect(clientTransport);
+                const tools = await client.listTools();
+                const names = tools.tools.map((tool) => tool.name);
+                expect(names).not.toContain("github_create_issue");
+                expect(names).not.toContain("github_update_issue");
+                expect(names).not.toContain("github_add_issue_comment");
+              } finally {
+                await client.close();
+                await server.close();
+                store.close();
+              }
+            });
+          });
+
+          function context() {
+            return {
+              project: "stensibly",
+              repository: "teamleaderleo/stensibly",
+              actorId: "actor_lynx",
+              clientId: "client_github_only",
+            };
+          }
+
+          function receipt(
+            operation: GitHubIssueProviderOperation,
+            idempotencyKey: string,
+          ): GitHubProviderReceipt {
+            return {
+              version: 1,
+              id: `ghop_${idempotencyKey}`,
+              project: "stensibly",
+              provider: "github",
+              repositoryFullName: "teamleaderleo/stensibly",
+              operation,
+              target: "teamleaderleo/stensibly#921",
+              actorId: "actor_lynx",
+              clientId: "client_github_only",
+              connectionId: "ghconn_1",
+              installationId: "installation_1",
+              bindingId: "ghbind_1",
+              attachmentId: "attachment_1",
+              attachmentSnapshotSha256: `sha256:${"a".repeat(64)}`,
+              capabilityGrantId: null,
+              approvalId: null,
+              idempotencyKey,
+              parametersSha256: `sha256:${"b".repeat(64)}`,
+              state: "succeeded",
+              attemptCount: 1,
+              createdAt: "2026-08-02T00:00:00.000Z",
+              updatedAt: "2026-08-02T00:00:01.000Z",
+              providerRequestId: "github-request-1",
+              result: null,
+              verification: {
+                state: "passed",
+                checkedAt: "2026-08-02T00:00:01.000Z",
+                sourceRevision: null,
+              },
+              error: null,
+              recovery: { nextAction: "none" },
+            };
+          }
+          '''.replace("          ", ""))
+
+          Path(".github/workflows/lynx-923-private-write-seam.yml").unlink()
+          PY
+
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/mcp-github-issue-provider-write-composition.test.ts
+          bun test test/mcp-capability-policy.test.ts
+          bun test test/chatgpt-app-actions-snapshot.test.ts
+          bun test test/mcp-diagnostics.test.ts
+
+      - name: Publish source-only correction
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected_head="${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${expected_head}"
+
+          mapfile -t changed_paths < <(
+            git status --porcelain=v1 --untracked-files=all | sed -E 's/^.. //' | sort
+          )
+          expected_paths=(
+            ".github/workflows/lynx-923-private-write-seam.yml"
+            "docs/chatgpt-app-actions.json"
+            "docs/chatgpt-app-recovery.md"
+            "src/github-issue-provider-mcp.ts"
+            "src/mcp-capability-policy.ts"
+            "src/mcp-diagnostics.ts"
+            "src/mcp.ts"
+            "test/chatgpt-app-actions-snapshot.test.ts"
+            "test/mcp-capability-policy.test.ts"
+            "test/mcp-github-issue-provider-write-composition.test.ts"
+            "test/mcp-github-issue-provider-writes.test.ts"
+          )
+          printf '%s\n' "${changed_paths[@]}" > /tmp/actual
+          printf '%s\n' "${expected_paths[@]}" | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- "${expected_paths[@]}"
+          git commit -m "Keep GitHub issue writes private until hosted execution exists"
+          generated_head="$(git rev-parse HEAD)"
+
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/lynx/921-github-issue-write-mcp" \
+            --force-with-lease="refs/heads/lynx/921-github-issue-write-mcp:${expected_head}"
+          test "$(git ls-remote origin refs/heads/lynx/921-github-issue-write-mcp | awk '{print $1}')" = "${generated_head}"
