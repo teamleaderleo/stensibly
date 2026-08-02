@@ -385,7 +385,7 @@ describe("private hosted GitHub issue writes", () => {
         fetch: (async () => {
           providerCalls += 1;
           return Response.json({ message: "must not dispatch" });
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
         now: () => fixedNow,
       },
     )).toThrow("durable provider receipt store");
@@ -405,7 +405,7 @@ describe("private hosted GitHub issue writes", () => {
       fetch: (async () => {
         providerCalls += 1;
         return Response.json({ message: "must not dispatch" });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
     await expect(adapter.addIssueLabels({
       repositoryFullName,
