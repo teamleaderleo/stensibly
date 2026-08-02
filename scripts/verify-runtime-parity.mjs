@@ -39,6 +39,35 @@ async function run(command, args) {
   }
 }
 
+async function capture(command, args) {
+  const child = spawn(command, args, {
+    cwd: repositoryRoot,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const code = await new Promise((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("exit", resolveExit);
+  });
+  if (code !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} exited with code ${code}\n${stderr}`,
+    );
+  }
+  return stdout.trim();
+}
+
 async function findWorkerdBinary() {
   const executable = process.platform === "win32" ? "workerd.exe" : "workerd";
   const candidates = [
@@ -180,6 +209,20 @@ async function main() {
     "test/runtime/run-fetch-receiver-matrix.mjs",
     "server-runtime",
   ]);
+
+  console.log("== Observation Merkle vector parity ==");
+  const bunMerkleVector = await capture("bun", [
+    "test/runtime/observation-merkle-vector.ts",
+  ]);
+  const nodeMerkleVector = await capture("node", [
+    "test/runtime/observation-merkle-vector.ts",
+  ]);
+  if (bunMerkleVector !== nodeMerkleVector) {
+    throw new Error(
+      `Observation Merkle vectors diverged across Bun and Node\nBun: ${bunMerkleVector}\nNode: ${nodeMerkleVector}`,
+    );
+  }
+  console.log(bunMerkleVector);
 
   const workerdBinary = await findWorkerdBinary();
   console.log("== workerd version ==");
