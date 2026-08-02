@@ -26,7 +26,8 @@ const profileA = "regular-agent-a";
 const profileB = "regular-agent-b";
 const profileVersion = "2026-08-02";
 const runId = "run_openai_agents_control_identity";
-const holder = "control-holder-a";
+const holderA = "control-holder-a";
+const holderB = "control-holder-b";
 const now = new Date("2026-08-02T00:30:00.000Z");
 
 class NoopStore implements OpenAIAgentsExternalStore {
@@ -105,33 +106,42 @@ function createAdapter(): OpenAIAgentsRunnerAdapter {
   });
 }
 
-async function admitProfileA(adapter: OpenAIAgentsRunnerAdapter): Promise<void> {
+async function admitProfile(
+  adapter: OpenAIAgentsRunnerAdapter,
+  profileId: string,
+  holderId: string,
+): Promise<void> {
   await adapter.inspectCapabilities(parseRunnerCapabilityProbeV1({
     version: 1,
-    probeId: "probe-control-profile-a",
+    probeId: `probe-control-${profileId}`,
     adapterId,
     adapterVersion,
-    profileId: profileA,
+    profileId,
     runId,
     runGeneration: 1,
     transport: "memory",
     transition: "new",
     clientProduct: "openai-agents-control-identity",
     clientBuild: "0.14.1",
-    modelProfile: "control-model",
-    externalSurfaceRef: `surface:${adapterId}`,
+    modelProfile: `control-model-${profileId}`,
+    externalSurfaceRef: `surface:${adapterId}:${profileId}`,
     requiredCapabilities: [{ class: "native_core", id: "shell" }],
     recoveryActions: ["resume_with_current_tools"],
     observedAt: "2026-08-02T00:00:01.000Z",
-    traceId: "trace-control-profile-a",
+    traceId: `trace-control-${profileId}`,
   }));
 
-  const observations = await collect(adapter.start(startCommand(profileA)));
+  const observations = await collect(
+    adapter.start(startCommand(profileId, holderId)),
+  );
   expect(observations[0]?.type).toBe("start_accepted");
   expect(observations.at(-1)?.type).toBe("failure_observed");
 }
 
-function startCommand(profileId: string): RunnerStartCommandV1 {
+function startCommand(
+  profileId: string,
+  holderId: string,
+): RunnerStartCommandV1 {
   return parseRunnerStartCommandV1({
     version: RUNNER_ADAPTER_V1,
     commandId: `command-control-start-${profileId}`,
@@ -143,7 +153,7 @@ function startCommand(profileId: string): RunnerStartCommandV1 {
     runId,
     runGeneration: 1,
     leaseGeneration: 1,
-    authority: authority(holder),
+    authority: authority(holderId),
     itemId: "item_openai_agents_control_identity",
     project: "scrapbook",
     executionEnvelope: compatibilityExecutionEnvelope(
@@ -178,7 +188,7 @@ function startCommand(profileId: string): RunnerStartCommandV1 {
 
 function checkpointCommand(
   profileId: string,
-  holderId = holder,
+  holderId: string,
 ): RunnerCheckpointCommandV1 {
   return {
     version: 1,
@@ -196,7 +206,7 @@ function checkpointCommand(
 
 function cancellationCommand(
   profileId: string,
-  holderId = holder,
+  holderId: string,
 ): RunnerCancellationCommandV1 {
   return {
     version: 1,
@@ -233,7 +243,7 @@ async function collect(
 describe("OpenAI Agents control identity wrapper", () => {
   test("rejects a stale holder before process-local checkpoint lookup", async () => {
     const adapter = createAdapter();
-    await admitProfileA(adapter);
+    await admitProfile(adapter, profileA, holderA);
 
     await expect(adapter.requestCheckpoint(
       checkpointCommand(profileA, "competing-holder"),
@@ -242,14 +252,34 @@ describe("OpenAI Agents control identity wrapper", () => {
 
   test("does not reuse profile A authority for profile B controls", async () => {
     const adapter = createAdapter();
-    await admitProfileA(adapter);
+    await admitProfile(adapter, profileA, holderA);
 
     await expect(adapter.requestCheckpoint(
-      checkpointCommand(profileB),
+      checkpointCommand(profileB, holderA),
     )).rejects.toThrow("authority holder is unknown to this adapter instance");
 
     await expect(adapter.requestCancellation(
-      cancellationCommand(profileB),
+      cancellationCommand(profileB, holderA),
     )).rejects.toThrow("authority holder is unknown to this adapter instance");
+  });
+
+  test("keeps profile A cancellation valid after profile B is admitted", async () => {
+    const adapter = createAdapter();
+    await admitProfile(adapter, profileA, holderA);
+    await admitProfile(adapter, profileB, holderB);
+
+    const cancellation = await adapter.requestCancellation(
+      cancellationCommand(profileA, holderA),
+    );
+    expect(cancellation).toMatchObject({
+      profileId: profileA,
+      runId,
+      runGeneration: 1,
+      leaseGeneration: 1,
+      requestAccepted: true,
+      deliveryKnown: false,
+      remoteSettlementKnown: false,
+      reference: null,
+    });
   });
 });
