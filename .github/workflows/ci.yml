@@ -1,69 +1,446 @@
-name: Apply Merkle credential privacy repair
+name: CI
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
-
-permissions:
-  contents: write
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA that this run must validate
+        required: true
+        type: string
+      validation_profile:
+        description: Validation topology for this exact revision
+        required: false
+        default: full_parallel
+        type: choice
+        options:
+          - full_parallel
+          - serial_full
+  workflow_call:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA that this reusable run must validate
+        required: true
+        type: string
+      validation_profile:
+        description: Validation topology for this reusable run
+        required: false
+        default: full_parallel
+        type: string
 
 concurrency:
-  group: lark-merkle-credential-repair-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  group: >-
+    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
+    format('pr-{0}', github.event.pull_request.number) ||
+    (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+    format('exact-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
+    format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
-  repair:
-    if: ${{ github.event.pull_request.head.ref == 'lark/955-observation-merkle-checkpoints' }}
-    runs-on: ubuntu-24.04
+  browser-evidence:
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'workflow_call') ||
+      inputs.validation_profile == 'full_parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify requested exact revision and profile
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Requested browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck frontend browser evidence
+        run: |
+          set -o pipefail
+          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+      - name: Run frontend browser evidence
+        id: browser-test
+        run: |
+          set -o pipefail
+          bun run test:browser 2>&1 | tee browser-test-output.txt
+      - name: Verify frontend browser evidence artifacts
+        id: browser-artifacts
+        if: always() && steps.browser-test.outcome != 'skipped'
+        run: |
+          set -o pipefail
+          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
+      - name: Upload verified frontend browser evidence
+        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence-${{ github.sha }}
+          path: |
+            artifacts/playwright-report
+            artifacts/playwright-results
+            browser-test-output.txt
+            browser-artifact-output.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'workflow_call') ||
+      inputs.validation_profile == 'full_parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify requested exact revision and profile
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Requested CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - name: Prepare committed Bun lockfile candidate
+        id: bun-lock
+        run: bun run lockfile:check
+      - name: Upload refreshed Bun lockfile candidate
+        if: steps.bun-lock.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-lock-candidate-${{ github.sha }}
+          path: artifacts/bun-lock-candidate
+          if-no-files-found: error
+          retention-days: 7
+      - name: Reject stale committed Bun lockfile
+        if: steps.bun-lock.outputs.changed == 'true'
+        run: |
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
+          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
+          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
+          exit 1
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Run typecheck
+        run: |
+          set -o pipefail
+          bun run typecheck 2>&1 | tee typecheck-output.txt
+      - name: Run Bun tests
+        run: |
+          set -o pipefail
+          bun run test 2>&1 | tee test-output.txt
+      - name: Run Convex tests
+        run: |
+          set -o pipefail
+          bun run test:convex 2>&1 | tee convex-test-output.txt
+      - name: Bundle Cloudflare Worker
+        run: |
+          set -o pipefail
+          bun run worker:check 2>&1 | tee worker-check-output.txt
+      - name: Upload failing diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics
+          path: |
+            typecheck-output.txt
+            test-output.txt
+            convex-test-output.txt
+            worker-check-output.txt
+          if-no-files-found: ignore
+
+  runtime-parity:
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'workflow_call') ||
+      inputs.validation_profile == 'full_parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify requested exact revision and profile
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Requested runtime parity expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Run Bun, Node, and native workerd receiver checks
+        run: |
+          set -o pipefail
+          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
+      - name: Upload runtime parity diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-parity-diagnostics
+          path: runtime-parity-output.txt
+          if-no-files-found: ignore
+
+  serial-full:
+    needs: [browser-evidence, test, runtime-parity]
+    if: >-
+      ${{ always() &&
+      ((github.event_name == 'pull_request' &&
+      needs.browser-evidence.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.runtime-parity.result == 'success') ||
+      ((github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call') &&
+      inputs.validation_profile == 'serial_full')) }}
+    runs-on: ubuntu-latest
     env:
-      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-      TARGET_BRANCH: lark/955-observation-merkle-checkpoints
+      SERIAL_VALIDATION_SHA: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.EXPECTED_HEAD }}
-          fetch-depth: 0
-      - name: Apply exact source repair
-        shell: bash
+          ref: ${{ env.SERIAL_VALIDATION_SHA }}
+          persist-credentials: false
+      - name: Verify exact serial revision
+        env:
+          VALIDATION_PROFILE: >-
+            ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+            inputs.validation_profile || 'full_parallel' }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
+            echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+      - name: Prepare committed Bun lockfile candidate
+        id: bun-lock
+        run: bun run lockfile:check
+      - name: Upload refreshed Bun lockfile candidate
+        if: steps.bun-lock.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}
+          path: artifacts/bun-lock-candidate
+          if-no-files-found: error
+          retention-days: 7
+      - name: Reject stale committed Bun lockfile
+        if: steps.bun-lock.outputs.changed == 'true'
+        run: |
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${SERIAL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
+          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
+          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
+          exit 1
+      - name: Install committed dependencies once
+        run: bun install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+      - name: Run serial full validation
+        id: serial-validation
+        run: |
+          set +e
+          status=0
+          run_gate() {
+            local label="$1"
+            local output="$2"
+            local -a pipeline_status
+            shift 2
+            echo "::group::${label}"
+            set -o pipefail
+            "$@" 2>&1 | tee "${output}"
+            pipeline_status=("${PIPESTATUS[@]}")
+            set +o pipefail
+            echo "::endgroup::"
+            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
+              status=1
+            fi
+          }
+          run_gate typecheck typecheck-output.txt bun run typecheck
+          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
+          run_gate bun-tests test-output.txt bun run test
+          run_gate browser-tests browser-test-output.txt bun run test:browser
+          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
+          run_gate convex-tests convex-test-output.txt bun run test:convex
+          run_gate worker-check worker-check-output.txt bun run worker:check
+          run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
+          exit "${status}"
+      - name: Upload verified frontend browser evidence
+        if: steps.serial-validation.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
+          path: |
+            artifacts/playwright-report
+            artifacts/playwright-results
+            browser-test-output.txt
+            browser-artifact-output.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload serial full diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}
+          path: |
+            typecheck-output.txt
+            browser-typecheck-output.txt
+            test-output.txt
+            convex-test-output.txt
+            worker-check-output.txt
+            runtime-parity-output.txt
+          if-no-files-found: ignore
 
-          path = Path("src/github-observation-merkle-checkpoint.ts")
-          source = path.read_text()
-          old_constants = '''const unsafeIdentityPattern =
-            /[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]/u;
-          const maximumLeaves = 4_096;'''
-          new_constants = '''const unsafeIdentityPattern =
-            /[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]/u;
-          const realisticCredentialPattern =
-            /(?:^|[\\s:./=,;'"()[\\]{}@#_-])(?:Bearer\\s+[A-Za-z0-9._~+/-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:env|secret):\\/\\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,})(?=$|[\\s:./=,;'"()[\\]{}@#_-])/imu;
-          const maximumLeaves = 4_096;'''
-          old_guard = '''    || Buffer.byteLength(value, "utf8") > maximumBytes
-              || unsafeIdentityPattern.test(value)
-            ) {'''
-          new_guard = '''    || Buffer.byteLength(value, "utf8") > maximumBytes
-              || unsafeIdentityPattern.test(value)
-              || realisticCredentialPattern.test(value)
-            ) {'''
-          if source.count(old_constants) != 1:
-              raise SystemExit("credential constant insertion point drifted")
-          if source.count(old_guard) != 1:
-              raise SystemExit("bounded identity guard insertion point drifted")
-          path.write_text(
-              source.replace(old_constants, new_constants).replace(old_guard, new_guard)
-          )
-          PY
-      - name: Restore canonical CI and publish source-only repair
-        shell: bash
+  validation-receipt:
+    name: exact-ref-validation-receipt
+    needs: [browser-evidence, test, runtime-parity, serial-full]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REVISION: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
+      VALIDATION_PROFILE: >-
+        ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.validation_profile || 'full_parallel' }}
+      BROWSER_RESULT: ${{ needs.browser-evidence.result }}
+      TEST_RESULT: ${{ needs.test.result }}
+      RUNTIME_RESULT: ${{ needs.runtime-parity.result }}
+      SERIAL_RESULT: ${{ needs.serial-full.result }}
+      EVENT_REVISION: ${{ github.sha }}
+      WORKFLOW_REVISION: ${{ github.workflow_sha }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Build exact-ref validation receipt
         run: |
           set -euo pipefail
-          git fetch origin main "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
-          test "$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")" = "${EXPECTED_HEAD}"
-          git checkout origin/main -- .github/workflows/ci.yml
-          rm -f .github/workflows/lark-merkle-identity-fix.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/github-observation-merkle-checkpoint.ts .github/workflows/ci.yml .github/workflows/lark-merkle-identity-fix.yml
-          git commit -m "Reject credential-shaped Merkle identities"
-          git push origin "HEAD:refs/heads/${TARGET_BRANCH}" --force-with-lease="refs/heads/${TARGET_BRANCH}:${EXPECTED_HEAD}"
+          input_valid=true
+          if [[ ! "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            input_valid=false
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            input_valid=false
+          fi
+
+          overall="success"
+          for result in "${BROWSER_RESULT}" "${TEST_RESULT}" "${RUNTIME_RESULT}" "${SERIAL_RESULT}"; do
+            if [[ "${result}" == "cancelled" ]]; then
+              overall="cancelled"
+            fi
+          done
+          if [[ "${input_valid}" != "true" ]]; then
+            overall="rejected"
+          elif [[ "${VALIDATION_PROFILE}" == "serial_full" ]]; then
+            if [[ "${SERIAL_RESULT}" != "success" ]]; then
+              [[ "${overall}" == "cancelled" ]] || overall="failure"
+            fi
+          else
+            if [[ "${BROWSER_RESULT}" != "success" || "${TEST_RESULT}" != "success" || "${RUNTIME_RESULT}" != "success" ]]; then
+              [[ "${overall}" == "cancelled" ]] || overall="failure"
+            fi
+            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" && "${SERIAL_RESULT}" != "success" ]]; then
+              [[ "${overall}" == "cancelled" ]] || overall="failure"
+            fi
+          fi
+
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          jq -n \
+            --arg schemaVersion "stensibly-ci-exact-ref-receipt/1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg eventName "${GITHUB_EVENT_NAME}" \
+            --arg sourceRevision "${SOURCE_REVISION}" \
+            --arg eventRevision "${EVENT_REVISION}" \
+            --arg workflowRevision "${WORKFLOW_REVISION}" \
+            --arg workflowRef "${WORKFLOW_REF}" \
+            --arg validationProfile "${VALIDATION_PROFILE}" \
+            --arg status "${overall}" \
+            --arg browserEvidence "${BROWSER_RESULT}" \
+            --arg repositoryTests "${TEST_RESULT}" \
+            --arg runtimeParity "${RUNTIME_RESULT}" \
+            --arg serialFull "${SERIAL_RESULT}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg runUrl "${RUN_URL}" \
+            --arg completedAt "${completed_at}" \
+            --argjson inputValid "${input_valid}" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              eventName: $eventName,
+              sourceRevision: $sourceRevision,
+              eventRevision: $eventRevision,
+              workflowRevision: $workflowRevision,
+              workflowRef: $workflowRef,
+              validationProfile: $validationProfile,
+              inputValid: $inputValid,
+              status: $status,
+              jobs: {
+                browserEvidence: $browserEvidence,
+                repositoryTests: $repositoryTests,
+                runtimeParity: $runtimeParity,
+                serialFull: $serialFull
+              },
+              run: {
+                id: $runId,
+                attempt: $runAttempt,
+                url: $runUrl
+              },
+              completedAt: $completedAt
+            }' > exact-ref-validation-receipt.json
+          sha256sum exact-ref-validation-receipt.json \
+            > exact-ref-validation-receipt.sha256
+      - name: Upload exact-ref validation receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-ref-validation-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            exact-ref-validation-receipt.json
+            exact-ref-validation-receipt.sha256
+          if-no-files-found: error
+          retention-days: 30
