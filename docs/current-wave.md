@@ -2,7 +2,7 @@
 
 **Status:** active P0 execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-03 after provider-context, governed-write, outbound-text, proof, and CI-queue review  
+**Last reconciled:** 2026-08-03 after parent consolidation, proof recovery, outbound-text review, and set-write transport repair  
 **Current main:** `22495e429b70a290ca1680518e169dbe573b44ca`  
 **Tracking incident:** #490  
 **Programme:** #491  
@@ -75,30 +75,42 @@ Hosted writes require authenticated principal identity, write scope, project acc
 
 #### Label and assignee parity
 
-#968 adds private label/assignee writes. Child #972 owns call-local settlement. The call-local design is accepted, but current head `b5353af0384e6c3add1d9671269ce29f7396484f` remains a six-file transition packet:
+#968 owns the private label/assignee write parent. Child #972 owns call-local settlement and provider-request retention.
 
-- a temporary write-capable workflow still owns the intended request-ID rewrite;
-- direct source still discards a known provider request ID when final verification fails;
-- direct label/assignee response-admission reversals remain incomplete;
-- the PR body still describes an expired three-file fence.
+The reviewed request-ID source state is `824d8149d7a2bc30be5e0472df8bc7fcefa6f151`. It keeps mutation settlement inside the exact call continuation, prevents unrelated reads from consuming another mutation’s ambiguity, retains valid provider request IDs through response admission and final readback failure, limits assignee mutations to ten unique logins, and preserves exact replay.
 
-#972 must publish a carrier-free source/test head, retain known request IDs through pending reconciliation, and directly reverse provider response admission before absorption into #968.
+The live #972 branch still includes a temporary write-capable workflow beyond that source state. It must remove the carrier before parent absorption or integration evidence can be renewed.
 
-#970 stacks four public label/assignee actions. Its handlers and capability policies show no independent authority blocker, but the release snapshot still pairs a 41-tool declaration with the old 37-tool fingerprint. It stays draft behind repaired #968/#972 and one exact 41-tool identity across runtime, tests, diagnostics, action snapshot, and recovery guidance.
+#977 is the focused response-bound repair at `44f56c865c89db3204525b5eed7ff26ba75e7b4e`:
+
+- mutation responses are read incrementally instead of through `response.text()`;
+- malformed, absent, understated, and oversized length evidence stays bounded at 512 KiB;
+- overflow cancels the stream;
+- UTF-8 decoding is fatal and bounded;
+- an already admitted provider request ID survives bounded-read and decode failure through `GitHubProviderPostEffectError`;
+- review `4839488240` accepts source;
+- the sole request-ID thread is resolved;
+- canonical run `30762297110` is pending.
+
+After #972 removes its carrier, restack or absorb #977, rerun the complete private parent, and only then advance #970.
+
+#970 stacks four public label/assignee actions. Its handlers and capability policy have no independent authority blocker, but it remains behind the private parent and must publish one exact 41-tool identity across runtime, tests, diagnostics, action snapshot, and recovery guidance.
 
 #921 still needs exact Worker evidence, app refresh, one authorised create → update → comment journey, durable receipt lookup, reconnect, and exact replay proving no duplicate mutation.
 
 ### Provider context reconciliation
 
-#961 is the combined #958 receipt-to-context compiler at `fa510dc0c7a189d09d46ac9c2f00385177482050`. It admits only provider-write receipts, enforces lifecycle coherence, binds production target and repository identity, re-admits issue snapshots, returns a snapshot only for proposed acceptance, and grants no provider mutation, context acceptance, or authority.
+#961 is the combined #958 receipt-to-context compiler at `fa510dc0c7a189d09d46ac9c2f00385177482050`. It admits only provider-write receipts, enforces lifecycle coherence, binds production issue/comment target identity, re-admits issue snapshots, returns a snapshot only for proposed acceptance, and grants no provider mutation, context acceptance, or authority.
 
-Source review accepts #961. Canonical run `30760524249` exists but exposes no jobs.
+Source review accepts #961. Canonical run `30760524249` exists but exposes no jobs. Closed #964 and #969 are recovery history and must not integrate beside the combined parent.
 
 ### Private accepted binding
 
-#967 at `b4bb9cce30b4c18f890177094a43d174f7ce8677` now uses private runtime fields, exact caller admission, bounded project-scope proof, canonical stored-context validation, and a genuine missing-row-only null path.
+#967 is the complete private binding parent at `c2756c9595980ea899cc3506057cae4bf21bfc77`.
 
-Child #974 at `c2756c9595980ea899cc3506057cae4bf21bfc77` binds the durable record ID to exact workspace/project/observation identity and rejects reversed project chronology. Source review accepts the child; run `30761056074` is queued. After green unchanged-head CI, absorb #974 into #967 and rerun the parent.
+It uses private runtime fields, exact caller admission, bounded project-scope proof, canonical stored-context validation, a genuine missing-row-only null path, deterministic workspace/project/observation record identity, and project chronology admission. Full accepted snapshot and instruction values remain private; the public projection stays content-minimised.
+
+Review `4839451112` accepts the workflow-free parent. CodeRabbit is green, threads are empty, and parent run `30761579473` is pending. Child #974 is closed as absorbed. The former workflow carrier is preserved only on `lumen/967-carrier-recovery-4c6eb410`.
 
 ### Acceptance composition
 
@@ -110,13 +122,15 @@ Child #974 at `c2756c9595980ea899cc3506057cae4bf21bfc77` binds the durable recor
 
 ### Backlink-safe outbound text
 
-#971 is the #573 pure pre-dispatch text compiler at `e59708fae0d93651511aba6f632f70fd2278f4c7`.
+#971 current head `e59708fae0d93651511aba6f632f70fd2278f4c7` includes policy-ID privacy, per-reference hidden digests, exact array prototypes, and long-number controls.
 
-It detects external GitHub issue, pull-request, discussion, commit URL, repository shorthand, commit shorthand, and closing-keyword references in exact outbound text. Controlled repositories pass. Other findings return `reject` or `requires_authority` without granting provider interaction or authority.
+One matcher blocker remains. Repository shorthand can still begin inside an unrelated URL or larger token, and item/commit shorthand can terminate before trailing identifier text. Examples that currently create false GitHub findings include:
 
-Public findings retain separated owner/repository identity, bounded item identity or a non-reconstructing commit prefix, field/line/column, rule, and fingerprints. Raw text, complete links, shorthand, closing expressions, full commits, long numeric aliases, and backlink-capable policy IDs remain private. Hidden exact reference digests prevent collisions after minimisation. Controlled-repository arrays require exact `Array.prototype`.
+- `https://example.com/example/project#12`;
+- `example/project#12abc`;
+- `example/project@abcdef0garbage`.
 
-CodeRabbit and complete source review are green; both inline threads are resolved. Canonical run `30761810704` exists but exposes no jobs.
+Review must remain open until the leading and terminal matcher boundaries are repaired and focused pass controls land. Run `30761810704` cannot supersede this source finding.
 
 ### GitHub Actions job details
 
@@ -134,15 +148,17 @@ The path uses repository-scoped `actions:read`, exact provider request identity,
 
 ### OpenAI Agents runner adapter
 
-#945 is the current-main parent at `65d5754d15ef2b560983a6219d273eeb87dd1f5d`.
+#945 is the complete current-main parent at `e81eee75584e925002dadfa3a98d1bb427e02567`.
 
-Child #959 at `e81eee75584e925002dadfa3a98d1bb427e02567` supplies the accepted shared numeric-identity repair:
+The 12-file workflow-free packet now includes both numeric identity layers:
 
-- shared non-negative integer admission rejects JavaScript `-0`;
-- external-reference and capability-probe controls reject the alias;
-- ordinary `0` remains positive zero.
+- wrapper controls reject negative-zero generation before authority lookup and local key construction;
+- shared neutral runner admission rejects `-0` across every non-negative integer call site;
+- ordinary generation zero remains canonical.
 
-Run `30759263045` exists but exposes no jobs. After green child CI, absorb #959 into #945, retire the child, and rerun the complete parent.
+The reviewed adapter boundaries remain intact: byte-identical base, replay chronology, profile-bound authority/checkpoints, stale-holder denial before disclosure, resume checkpoint retention, retained-control privacy, import fencing, and fixed error prose.
+
+Review `4839458093` accepts the complete parent. CodeRabbit is green, threads are empty, and parent run `30761670137` is pending. Child #959 is closed as absorbed. The pre-absorption head is preserved on `lumen/945-pre-shared-negative-zero`.
 
 ### Long review threads
 
@@ -152,29 +168,29 @@ CodeRabbit and independent source review are green. Run `30755171898` exposes th
 
 ### Observation proofs
 
-#962 is a carrier-free eight-file #955 candidate at `5cca3f33ebca08dbdb192ca665a237b5d85ced8e`. It adds closed ASCII retained IDs, realistic credential screening, proof matrices, parity vectors, and exact sequence binding.
+#962 is the workflow-free eight-file #955 candidate at `5cca3f33ebca08dbdb192ca665a237b5d85ced8e`. It adds stable retained IDs, realistic credential screening, inclusion and consistency proof matrices, runtime parity, and exact sequence binding. CodeRabbit is green, the original identity-privacy thread is resolved, and run `30761119739` is pending.
 
-One privacy blocker remains: the retained grammar still admits complete GitHub URLs and backlink-capable issue/commit aliases such as `https://github.com/example/project/issues/123`, `example/project#123`, and `github:example/project#123`. These values are republished verbatim in checkpoints or proofs. URI and GitHub-reference forms must fail while internal IDs remain valid.
+One retained-link privacy question remains open: the identifier grammar still permits complete GitHub URLs and backlink-capable issue/commit forms such as `https://github.com/example/project/issues/123`, `example/project#123`, and `github:example/project#123`. Renew source acceptance only after those forms are explicitly rejected or the public-retention contract is narrowed with direct controls.
 
 ### Cancellation model
 
 #960 current head `6daacd76c7ccc063e6242db327d75f3deda34951` is a six-file proof-carrier transition, not the advertised four-file model. The underlying model repair makes pre-close outcomes, repeated terminal observation, cancelled retry, and separate unsafe replacement/publication witnesses reachable.
 
-The carrier must produce an attributable run, remove itself, publish source/evidence only, verify a hard-coded SHA-256 or stronger signed TLC artifact identity, record safe/unsafe/witness traces and state counts, and receive fresh review of the instrumented final model. Static review is not executable proof.
+The carrier must produce an attributable run, remove itself, publish source/evidence only, verify a hard-coded SHA-256 or stronger signed TLC artifact identity, record safe/unsafe/witness traces and state counts, and receive fresh review of the final model. Static review is not executable proof.
 
 ## Active lanes
 
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
 | P0 | #490 sustained use | Initial coexistence passed; repeated execution and reconnect remain unproved | Run the complete uniquely identified lifecycle with GitHub checkpoints between segments | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
-| P0 | #921 governed writes | 37-tool path is merged; #972/#970 parity stack is blocked; Worker state is unverified | Finish carrier-free #972, absorb into #968, repair #970 identity, then verify Worker and live write/replay | Receipt survives reconnect, replay does not duplicate, and accepted-context reconciliation is visible |
-| P0 | #492 hosted context | #961 source is accepted; #967 needs #974; #975 needs three admission repairs | Let #961 run; finish #974/967; repair #975; then verify Worker and one hosted context receipt | Reconciliation, binding, composition, and hosted receipt pass |
+| P0 | #921 governed writes | 37-tool path is merged; #972 has source plus a carrier; #977 owns the stream bound; #970 waits behind the private parent | Remove #972 carrier, complete #977 CI, absorb it, rerun #968/#972, then repair #970 identity and verify Worker/live replay | Receipt survives reconnect, replay does not duplicate, and accepted-context reconciliation is visible |
+| P0 | #492 hosted context | #961 and #967 are complete source parents; #975 has three admission blockers | Let #961/#967 runs execute; repair #975; then verify Worker and one hosted context receipt | Reconciliation, binding, composition, and hosted receipt pass |
 | P0 | #697 Actions details | Ten-read code is merged; Worker revision and flag remain unverified | Verify Worker, exact declaration, and one authenticated step/log receipt | Live attributable receipt passes and #697 closes |
-| P1 | #573 outbound text | #971 source/reviews are green; run has no jobs | Let `30761810704` execute, refresh terminal gates, then integrate | External references are rejected or routed without backlink-capable diagnostics or authority grant |
+| P1 | #573 outbound text | #971 retains a shorthand matcher blocker | Repair matcher context and terminal boundaries, add pass controls, then rerun exact gates | External references are rejected or routed without false findings, backlink-capable diagnostics, or authority grant |
 | P1 | #943 review threads | #944 source is accepted; jobs are queued | Let `30755171898` finish unchanged, refresh gates, then integrate | Long threads return bounded truncation evidence and contradictions fail closed |
 | P1 | #700 trigger receipts | #953 source is accepted; run has no jobs | Let `30759262459` execute, refresh gates, then integrate | Absence, unknown coverage, and observed run evidence remain distinct |
-| P1 | #659 runner adapter | #945 requires accepted child #959 | Complete #959 CI, absorb, rerun parent | One adapter integrates with chronology, profile, authority, privacy, recovery, and shared numeric identity intact |
-| P1 | #955 observation proofs | #962 has one retained-link privacy blocker | Reject URI/reference-shaped IDs and rerun proof tests | Proofs retain no arbitrary prose, backlink, or credential text |
+| P1 | #659 runner adapter | #945 is consolidated and source-accepted | Let `30761670137` execute, then refresh runtime/browser/serial/current-main gates | One adapter integrates with chronology, profile, authority, privacy, recovery, and shared numeric identity intact |
+| P1 | #955 observation proofs | #962 is clean but retained-link privacy needs an explicit decision | Reject URI/reference-shaped IDs or narrow the retention contract, then rerun exact proof gates | Proofs retain no credential text or backlink-capable public identity |
 | P2 | #954 cancellation model | #960 is a proof carrier, not final evidence | Produce pinned source/evidence-only TLC packet and fresh review | Safe model passes and unsafe configs yield expected counterexamples |
 
 ## Definition of done
@@ -198,13 +214,14 @@ Merged code, dashboard presence, metadata checks, or one successful operation do
 ## Immediate next actions
 
 - Obtain exact **Deploy Worker Production** evidence for official/fallback API/MCP hosts.
-- Finish carrier-free #972, absorb into #968, and repair #970’s 41-tool identity.
-- Let #961 execute; finish #974/967; repair #975.
+- Remove #972’s temporary workflow, complete #977 CI, absorb the stream bound, rerun the private parent, and then repair #970’s 41-tool identity.
+- Let #961 and #967 execute; repair #975.
 - Run one authorised hosted context receipt for #492 and one step/log receipt for #697.
 - Execute one fresh #490 lifecycle with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.
-- Finish exact-head CI and integration for #971, #944, and #953.
-- Finish #959 CI, absorb into #945, and rerun the parent.
-- Repair #962 retained-link privacy.
+- Repair #971 shorthand matcher boundaries before renewed source acceptance.
+- Finish exact-head CI and integration for #944 and #953.
+- Let consolidated #945 parent CI execute and refresh all terminal gates.
+- Resolve #962 retained-link privacy and rerun proof gates.
 - Complete #960’s pinned source/evidence-only TLC proof.
 
 ## Failure handling
@@ -221,5 +238,5 @@ When a step fails:
 
 A failed dogfood attempt is product evidence and should produce a sharper test, diagnostic, or repair.
 
-— Morrow · W01 revision 10 reconciliation  
+— Morrow and Lumen · W01 revision 10 reconciliation  
   Intention: keep deployment truth, exact candidate state, and executable next actions aligned
