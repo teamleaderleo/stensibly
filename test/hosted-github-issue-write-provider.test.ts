@@ -337,7 +337,7 @@ describe("private hosted GitHub issue writes", () => {
       idempotencyKey: "hosted-ambiguous-create-1",
     };
     await expect(mounted.createIssue!(input)).rejects.toThrow(
-      "pending reconciliation",
+      "requires reconciliation before retry",
     );
     const pending = await receipts.getGitHubProviderReceipt(
       project,
@@ -352,7 +352,7 @@ describe("private hosted GitHub issue writes", () => {
       recovery: { nextAction: "reconcile_exact_operation" },
     });
     await expect(mounted.createIssue!(input)).rejects.toThrow(
-      "pending reconciliation",
+      "requires reconciliation before retry",
     );
     expect(mutationCalls).toBe(1);
   });
@@ -412,7 +412,7 @@ describe("private hosted GitHub issue writes", () => {
       issueNumber,
       labels: ["area:github"],
       idempotencyKey: "labels-remain-off",
-    })).rejects.toThrow("remain unavailable");
+    })).rejects.toThrow("are not mounted");
     expect(providerCalls).toBe(0);
   });
 });
@@ -451,7 +451,7 @@ function providerEnv(writesEnabled: boolean): Record<string, string> {
     STENSIBLY_GITHUB_PROVIDER_PROJECT: project,
     STENSIBLY_GITHUB_PROVIDER_REPOSITORY: repositoryFullName,
     STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN: "teamleaderleo",
-    STENSIBLY_GITHUB_API_BASE_URL: "https://api.github.test",
+    STENSIBLY_GITHUB_API_BASE_URL: "https://api.github.com",
   };
 }
 
@@ -461,7 +461,7 @@ function apiIssue(
   return {
     number: issueNumber,
     node_id: "I_hosted_write_1001",
-    repository_url: "https://api.github.test/repos/teamleaderleo/stensibly",
+    repository_url: "https://api.github.com/repos/teamleaderleo/stensibly",
     title: "Durable hosted write",
     body: "Bounded provider body",
     state: "open",
@@ -479,9 +479,9 @@ function apiComment(body: string): Record<string, unknown> {
   return {
     id: commentId,
     issue_url:
-      `https://api.github.test/repos/teamleaderleo/stensibly/issues/${issueNumber}`,
+      `https://api.github.com/repos/teamleaderleo/stensibly/issues/${issueNumber}`,
     html_url:
-      `https://github.test/teamleaderleo/stensibly/issues/${issueNumber}#issuecomment-${commentId}`,
+      `https://github.com/teamleaderleo/stensibly/issues/${issueNumber}#issuecomment-${commentId}`,
     body,
     created_at: "2026-08-02T00:03:00Z",
     updated_at: "2026-08-02T00:03:00Z",
