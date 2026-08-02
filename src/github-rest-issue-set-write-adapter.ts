@@ -26,6 +26,7 @@ export interface GitHubRestIssueSetWriteAdapterOptions
 
 const githubApiVersion = "2022-11-28";
 const maximumResponseBytes = 512 * 1024;
+const maximumAssigneesPerMutation = 10;
 
 /**
  * Extends the first typed issue writes with exact label and assignee
@@ -135,11 +136,7 @@ export class GitHubRestIssueSetWriteAdapter
     input: Parameters<GitHubIssueProviderAdapter["addIssueAssignees"]>[0],
   ) {
     const assignees = canonicalLogins(input.assignees);
-    if (assignees.length === 0) {
-      throw new RangeError(
-        "GitHub issue assignee mutation requires at least one assignee",
-      );
-    }
+    requireAssigneeMutationCount(assignees);
     return await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
@@ -166,11 +163,7 @@ export class GitHubRestIssueSetWriteAdapter
     input: Parameters<GitHubIssueProviderAdapter["removeIssueAssignees"]>[0],
   ) {
     const assignees = canonicalLogins(input.assignees);
-    if (assignees.length === 0) {
-      throw new RangeError(
-        "GitHub issue assignee mutation requires at least one assignee",
-      );
-    }
+    requireAssigneeMutationCount(assignees);
     return await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
@@ -306,6 +299,17 @@ function issueUrl(
   issueNumber: number,
 ): URL {
   return new URL(`${issueCollectionUrl(apiBaseUrl, repositoryFullName)}/${issueNumber}`);
+}
+
+function requireAssigneeMutationCount(assignees: string[]): void {
+  if (
+    assignees.length === 0
+    || assignees.length > maximumAssigneesPerMutation
+  ) {
+    throw new RangeError(
+      "GitHub issue assignee mutation requires 1 to 10 unique assignees",
+    );
+  }
 }
 
 function admitLabelResponse(value: unknown, operation: string): string[] {
