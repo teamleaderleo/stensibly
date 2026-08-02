@@ -62,8 +62,8 @@ const initialWriteOperations = new Set<GitHubIssueProviderOperation>([
 
 /**
  * Mounts the production read provider when the complete GitHub App
- * configuration exists. A separate exact flag mounts the initial write service
- * only when the ledger also exposes the durable hosted receipt contract.
+ * configuration exists. A separate exact flag mounts an independent write
+ * service only when the ledger also exposes the durable hosted receipt contract.
  */
 export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   ledger: T,
@@ -101,28 +101,32 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
   };
-  const adapter = config.issueWritesEnabled
-    ? new GitHubRestIssueWriteAdapter(adapterOptions)
-    : new GitHubRestIssueProviderAdapter(adapterOptions);
-  const receipts = config.issueWritesEnabled
-    ? durableReceiptStore(ledger)
-    : new ReadOnlyGitHubProviderReceiptStore();
-  const service = new GitHubIssueProviderService({
+  const authority = new HostedGitHubAuthority(config);
+  const readService = new GitHubIssueProviderService({
     projects,
     bindings,
-    authority: new HostedGitHubAuthority(config),
-    adapter,
-    receipts,
+    authority,
+    adapter: new GitHubRestIssueProviderAdapter(adapterOptions),
+    receipts: new ReadOnlyGitHubProviderReceiptStore(),
     now: () => new Date(now()).toISOString(),
   });
   const mountedReads = withGitHubIssueProviderReadService(
     ledger,
-    canonicalHostedReadService(service),
+    canonicalHostedReadService(readService),
   );
   if (!config.issueWritesEnabled) return mountedReads;
+
+  const writeService = new GitHubIssueProviderService({
+    projects,
+    bindings,
+    authority,
+    adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
+    receipts: durableReceiptStore(ledger),
+    now: () => new Date(now()).toISOString(),
+  });
   return withGitHubIssueProviderWriteService(
     mountedReads,
-    canonicalHostedWriteService(service),
+    canonicalHostedWriteService(writeService),
   );
 }
 
