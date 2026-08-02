@@ -99,6 +99,7 @@ export function compileGitHubProviderContextReconciliationV1(
   }
 
   const receipt = admitGitHubProviderReceipt(input.receipt);
+  validateReceiptStateSemantics(receipt);
   const currentAcceptedIssueExternalId = nullableExternalId(
     input.currentAcceptedIssueExternalId,
   );
@@ -123,14 +124,22 @@ export function compileGitHubProviderContextReconciliationV1(
   });
 
   const issueResult = isIssueResult(receipt.result) ? receipt.result : null;
-  const providerIssueExternalId = issueResult?.reference.externalId ?? null;
-  const providerSourceRevision = issueResult?.sourceRevision ?? null;
   const decision = decideReconciliation(
     receipt,
     issueResult,
     currentAcceptedIssueExternalId,
     currentAcceptedSourceRevision,
   );
+  const retainsProviderIssueIdentity =
+    decision.outcome === "already_current"
+    || decision.outcome === "propose_context_acceptance"
+    || decision.outcome === "identity_conflict";
+  const providerIssueExternalId = retainsProviderIssueIdentity
+    ? issueResult?.reference.externalId ?? null
+    : null;
+  const providerSourceRevision = retainsProviderIssueIdentity
+    ? issueResult?.sourceRevision ?? null
+    : null;
 
   const proposal = {
     version: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
@@ -158,6 +167,70 @@ export function compileGitHubProviderContextReconciliationV1(
     ...proposal,
     proposalFingerprint: fingerprintCanonicalRequest(proposal),
   });
+}
+
+function validateReceiptStateSemantics(receipt: GitHubProviderReceipt): void {
+  if (receipt.state === "reserved") {
+    if (
+      receipt.result !== null
+      || receipt.verification.state !== "not_run"
+      || receipt.verification.checkedAt !== null
+      || receipt.verification.sourceRevision !== null
+    ) {
+      throw new RangeError(
+        "Reserved GitHub provider receipt must not contain result evidence",
+      );
+    }
+    return;
+  }
+  if (receipt.state === "pending_reconciliation") {
+    if (
+      receipt.result !== null
+      || receipt.verification.state !== "failed"
+      || receipt.verification.sourceRevision !== null
+    ) {
+      throw new RangeError(
+        "Pending GitHub provider receipt has contradictory result evidence",
+      );
+    }
+    return;
+  }
+  if (receipt.state === "rejected") {
+    if (
+      receipt.result !== null
+      || receipt.verification.state !== "not_run"
+      || receipt.verification.checkedAt !== null
+      || receipt.verification.sourceRevision !== null
+    ) {
+      throw new RangeError(
+        "Rejected GitHub provider receipt must not contain result evidence",
+      );
+    }
+    return;
+  }
+  if (receipt.state === "stale") {
+    if (
+      receipt.operation !== "github_update_issue"
+      || !isIssueResult(receipt.result)
+      || receipt.verification.state !== "failed"
+      || receipt.verification.sourceRevision !== receipt.result.sourceRevision
+    ) {
+      throw new RangeError(
+        "Stale GitHub provider receipt lacks exact current-issue readback evidence",
+      );
+    }
+    return;
+  }
+  if (receipt.result === null || receipt.verification.state !== "passed") {
+    throw new RangeError(
+      "Settled GitHub provider receipt lacks verified provider readback",
+    );
+  }
+  if (receipt.verification.sourceRevision !== receipt.result.sourceRevision) {
+    throw new RangeError(
+      "GitHub provider verification source revision does not match provider readback",
+    );
+  }
 }
 
 function decideReconciliation(
