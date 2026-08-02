@@ -402,22 +402,57 @@ async function boundedResponseText(
   operation: string,
 ): Promise<string> {
   const contentLength = response.headers.get("content-length");
-  if (contentLength && /^\d+$/.test(contentLength)) {
+  if (contentLength !== null) {
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(contentLength)) {
+      throw ambiguousTransportError(operation);
+    }
     const length = Number(contentLength);
     if (!Number.isSafeInteger(length) || length > maximumResponseBytes) {
       throw ambiguousTransportError(operation);
     }
   }
-  let text: string;
+
+  const body = response.body;
+  if (body === null) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
   try {
-    text = await response.text();
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      const chunk = next.value;
+      if (!(chunk instanceof Uint8Array)) {
+        throw ambiguousTransportError(operation);
+      }
+      byteLength += chunk.byteLength;
+      if (byteLength > maximumResponseBytes) {
+        throw ambiguousTransportError(operation);
+      }
+      chunks.push(chunk);
+    }
+  } catch {
+    try {
+      await reader.cancel();
+    } catch {
+      // The fixed transport error below remains the public boundary.
+    }
+    throw ambiguousTransportError(operation);
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw ambiguousTransportError(operation);
   }
-  if (Buffer.byteLength(text, "utf8") > maximumResponseBytes) {
-    throw ambiguousTransportError(operation);
-  }
-  return text;
 }
 
 function admittedRequestId(value: string | null): string | null {
