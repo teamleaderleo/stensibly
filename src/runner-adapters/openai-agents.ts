@@ -8,6 +8,7 @@ import {
   type OpenAIAgentsRunnerAdapterOptions,
 } from "./openai-agents-base.js";
 import {
+  RUNNER_ADAPTER_V1,
   parseRunnerResumeCommandV1,
   parseRunnerStartCommandV1,
   type RunnerAdapterDescriptorV1,
@@ -19,6 +20,10 @@ import {
   type RunnerResumeCommandV1,
   type RunnerStartCommandV1,
 } from "../runner-adapter-v1.js";
+import {
+  admitOpenAIAgentsClockBaseV1,
+  openAIAgentsObservationTimeV1,
+} from "./openai-agents-runtime-safety.js";
 
 export {
   OPENAI_AGENTS_PACKAGE_VERSION,
@@ -42,8 +47,14 @@ export type {
   OpenAIAgentsRuntimeFactoryInput,
 } from "./openai-agents-base.js";
 
+const invocationEpoch = "1970-01-01T00:00:00.000Z";
 const exactTimestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/;
+const unsafeTextPattern =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
+const credentialShapedTextPattern =
+  /(?:^|[\s:./=,;'"()\[\]{}@#-])(?:Bearer\s+|gh[pousr]_|github_pat_|sk-[A-Za-z0-9]|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
 const maximumSnapshotDepth = 32;
 const maximumSnapshotNodes = 20_000;
 const maximumSnapshotArrayLength = 4_096;
@@ -108,6 +119,7 @@ class ReplayChronologyStore implements OpenAIAgentsExternalStore {
 
 export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
   readonly #descriptor: RunnerAdapterDescriptorV1;
+  readonly #now: () => Date;
   readonly #authorityHolders = new Map<string, string>();
   readonly #latestCheckpoints = new Map<string, RunnerExternalReferenceV1>();
 
@@ -117,6 +129,7 @@ export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
       externalStore: new ReplayChronologyStore(options.externalStore),
     });
     this.#descriptor = super.describe();
+    this.#now = options.now ?? (() => new Date());
   }
 
   override async *start(
@@ -148,7 +161,9 @@ export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
   override async requestCheckpoint(
     value: RunnerCheckpointCommandV1,
   ): Promise<RunnerExternalReferenceV1> {
-    const identity = admitControlIdentity(value);
+    const identity = admitControlIdentity(value, false);
+    const clock = admitOpenAIAgentsClockBaseV1(this.#now, invocationEpoch);
+    assertControlAuthorityActive(identity.input, clock.baseMilliseconds);
     this.#assertControlBinding(identity);
     const checkpoint = this.#latestCheckpoints.get(controlKey(identity));
     if (!checkpoint) {
@@ -156,22 +171,32 @@ export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
         "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
       );
     }
-
-    // Preserve the base command parser, clock, and expiry checks. The returned
-    // base-cache value is deliberately ignored because that legacy cache is not
-    // profile-bound; the wrapper returns the exact profile-bound observation.
-    await super.requestCheckpoint(identity.input as RunnerCheckpointCommandV1);
     return checkpoint;
   }
 
   override async requestCancellation(
     value: RunnerCancellationCommandV1,
   ): Promise<RunnerCancellationObservationV1> {
-    const identity = admitControlIdentity(value);
+    const identity = admitControlIdentity(value, true);
+    const command = identity.input as RunnerCancellationCommandV1;
+    const clock = admitOpenAIAgentsClockBaseV1(this.#now, invocationEpoch);
+    assertControlAuthorityActive(command, clock.baseMilliseconds);
     this.#assertControlBinding(identity);
-    return super.requestCancellation(
-      identity.input as RunnerCancellationCommandV1,
-    );
+    return Object.freeze({
+      version: RUNNER_ADAPTER_V1,
+      commandId: command.commandId,
+      adapterId: this.#descriptor.adapterId,
+      adapterVersion: this.#descriptor.adapterVersion,
+      profileId: command.profileId,
+      runId: command.runId,
+      runGeneration: command.runGeneration,
+      leaseGeneration: command.leaseGeneration,
+      observedAt: openAIAgentsObservationTimeV1(clock, 1),
+      requestAccepted: this.#descriptor.cancellationMode !== "unsupported",
+      deliveryKnown: false,
+      remoteSettlementKnown: false,
+      reference: null,
+    });
   }
 
   #admitAuthority(command: RunnerStartCommandV1 | RunnerResumeCommandV1): void {
@@ -230,38 +255,209 @@ export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
   }
 }
 
-function admitControlIdentity(value: unknown): ControlIdentity {
-  const input = snapshotJsonData(
-    value,
-    "OpenAI Agents control command",
-  ) as Record<string, unknown>;
-  const authority = input.authority as Record<string, unknown> | undefined;
-  if (
-    !authority
-    || typeof input.adapterId !== "string"
-    || typeof input.adapterVersion !== "string"
-    || typeof input.profileId !== "string"
-    || typeof input.runId !== "string"
-    || !Number.isSafeInteger(input.runGeneration)
-    || !Number.isSafeInteger(input.leaseGeneration)
-    || typeof authority.holderId !== "string"
-    || typeof authority.resource !== "string"
-    || !Number.isSafeInteger(authority.generation)
-  ) {
+function admitControlIdentity(
+  value: unknown,
+  cancellation: false,
+): ControlIdentity & { input: RunnerCheckpointCommandV1 };
+function admitControlIdentity(
+  value: unknown,
+  cancellation: true,
+): ControlIdentity & { input: RunnerCancellationCommandV1 };
+function admitControlIdentity(
+  value: unknown,
+  cancellation: boolean,
+): ControlIdentity {
+  try {
+    const input = snapshotJsonData(
+      value,
+      "OpenAI Agents control command",
+    ) as Record<string, unknown>;
+    requireExactKeys(
+      input,
+      cancellation
+        ? [
+          "version",
+          "commandId",
+          "adapterId",
+          "adapterVersion",
+          "profileId",
+          "runId",
+          "runGeneration",
+          "leaseGeneration",
+          "authority",
+          "requestedAt",
+          "reason",
+        ]
+        : [
+          "version",
+          "commandId",
+          "adapterId",
+          "adapterVersion",
+          "profileId",
+          "runId",
+          "runGeneration",
+          "leaseGeneration",
+          "authority",
+          "requestedAt",
+        ],
+    );
+    if (input.version !== RUNNER_ADAPTER_V1) throw new RangeError();
+    const runId = canonicalIdentifier(input.runId, "control run ID");
+    const runGeneration = canonicalInteger(input.runGeneration, 0);
+    const leaseGeneration = canonicalInteger(input.leaseGeneration, 1);
+    const authorityInput = input.authority as Record<string, unknown>;
+    requireExactKeys(authorityInput, [
+      "resource",
+      "holderId",
+      "generation",
+      "expiresAt",
+    ]);
+    const authority = Object.freeze({
+      resource: canonicalBoundedText(
+        authorityInput.resource,
+        320,
+        "control authority resource",
+      ) as `run:${string}`,
+      holderId: canonicalIdentifier(
+        authorityInput.holderId,
+        "control authority holder",
+      ),
+      generation: canonicalInteger(authorityInput.generation, 1),
+      expiresAt: canonicalTimestamp(
+        authorityInput.expiresAt,
+        "control authority expiry",
+      ),
+    });
+    if (
+      authority.resource !== `run:${runId}`
+      || authority.generation !== leaseGeneration
+    ) {
+      throw new RangeError();
+    }
+    const base = {
+      version: RUNNER_ADAPTER_V1,
+      commandId: canonicalIdentifier(input.commandId, "control command ID"),
+      adapterId: canonicalIdentifier(input.adapterId, "control adapter ID"),
+      adapterVersion: canonicalBoundedText(
+        input.adapterVersion,
+        160,
+        "control adapter version",
+      ),
+      profileId: canonicalIdentifier(input.profileId, "control profile ID"),
+      runId,
+      runGeneration,
+      leaseGeneration,
+      authority,
+      requestedAt: canonicalTimestamp(input.requestedAt, "control request time"),
+    };
+    const command = cancellation
+      ? Object.freeze({
+        ...base,
+        reason: canonicalBoundedText(
+          input.reason,
+          2_000,
+          "cancellation reason",
+        ),
+      }) as RunnerCancellationCommandV1
+      : Object.freeze(base) as RunnerCheckpointCommandV1;
+    return {
+      input: command,
+      adapterId: command.adapterId,
+      adapterVersion: command.adapterVersion,
+      profileId: command.profileId,
+      runId: command.runId,
+      runGeneration: command.runGeneration,
+      leaseGeneration: command.leaseGeneration,
+      holderId: command.authority.holderId,
+      authorityResource: command.authority.resource,
+      authorityGeneration: command.authority.generation,
+    };
+  } catch {
     throw new RangeError("OpenAI Agents control command is invalid");
   }
-  return {
-    input: input as unknown as ControlCommand,
-    adapterId: input.adapterId,
-    adapterVersion: input.adapterVersion,
-    profileId: input.profileId,
-    runId: input.runId,
-    runGeneration: input.runGeneration as number,
-    leaseGeneration: input.leaseGeneration as number,
-    holderId: authority.holderId,
-    authorityResource: authority.resource,
-    authorityGeneration: authority.generation as number,
-  };
+}
+
+function assertControlAuthorityActive(
+  input: ControlCommand,
+  currentTime: number,
+): void {
+  const requestedAt = Date.parse(input.requestedAt);
+  const expiresAt = Date.parse(input.authority.expiresAt);
+  if (!Number.isFinite(requestedAt) || !Number.isFinite(expiresAt)) {
+    throw new RangeError("OpenAI Agents control command time is invalid");
+  }
+  if (currentTime < requestedAt) {
+    throw new RangeError(
+      "OpenAI Agents control command cannot execute before its request time",
+    );
+  }
+  if (currentTime >= expiresAt) {
+    throw new RangeError(
+      "OpenAI Agents control command authority expired before execution",
+    );
+  }
+}
+
+function requireExactKeys(
+  input: Record<string, unknown>,
+  fields: readonly string[],
+): void {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new RangeError();
+  }
+  const keys = Object.keys(input);
+  if (
+    keys.length !== fields.length
+    || fields.some((field) => !Object.prototype.hasOwnProperty.call(input, field))
+  ) {
+    throw new RangeError();
+  }
+}
+
+function canonicalInteger(value: unknown, minimum: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < minimum) {
+    throw new RangeError();
+  }
+  return value as number;
+}
+
+function canonicalIdentifier(value: unknown, label: string): string {
+  const output = canonicalBoundedText(value, 160, label);
+  if (!identifierPattern.test(output)) {
+    throw new RangeError(`${label} has an invalid format`);
+  }
+  return output;
+}
+
+function canonicalBoundedText(
+  value: unknown,
+  maximum: number,
+  label: string,
+): string {
+  if (typeof value !== "string") {
+    throw new RangeError(`${label} must be text`);
+  }
+  const output = value.trim();
+  if (
+    output.length === 0
+    || output.length > maximum
+    || unsafeTextPattern.test(output)
+    || credentialShapedTextPattern.test(output)
+  ) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return output;
+}
+
+function canonicalTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !exactTimestampPattern.test(value)) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  const time = Date.parse(value);
+  if (!Number.isFinite(time) || new Date(time).toISOString() !== value) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return value;
 }
 
 function controlKey(input: {
