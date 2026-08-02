@@ -187,6 +187,15 @@ function assertSettledIssueReadback(
   receipt: GitHubProviderReceipt,
   snapshot: GitHubIssueContext,
 ): void {
+  const expectedTarget = receipt.operation === "github_create_issue"
+    ? `${receipt.repositoryFullName}#new`
+    : `${receipt.repositoryFullName}#${snapshot.reference.number}`;
+  if (receipt.target !== expectedTarget) {
+    throw new Error(
+      "Settled GitHub issue receipt target does not bind the provider result",
+    );
+  }
+
   const expectedVerification = receipt.state === "stale" ? "failed" : "passed";
   if (
     receipt.verification.state !== expectedVerification
