@@ -257,10 +257,51 @@ describe("OpenAI Agents control identity wrapper", () => {
     await expect(adapter.requestCheckpoint(
       checkpointCommand(profileB, holderA),
     )).rejects.toThrow("authority holder is unknown to this adapter instance");
-
     await expect(adapter.requestCancellation(
       cancellationCommand(profileB, holderA),
     )).rejects.toThrow("authority holder is unknown to this adapter instance");
+  });
+
+  test("rejects padded control identity and authority aliases", async () => {
+    const adapter = createAdapter();
+    await admitProfile(adapter, profileA, holderA);
+
+    const checkpoint = checkpointCommand(profileA, holderA);
+    const paddedCheckpointAliases: unknown[] = [
+      { ...checkpoint, commandId: ` ${checkpoint.commandId}` },
+      { ...checkpoint, profileId: `${checkpoint.profileId} ` },
+      {
+        ...checkpoint,
+        authority: {
+          ...checkpoint.authority,
+          holderId: ` ${checkpoint.authority.holderId}`,
+        },
+      },
+      {
+        ...checkpoint,
+        authority: {
+          ...checkpoint.authority,
+          resource: `${checkpoint.authority.resource} `,
+        },
+      },
+    ];
+    for (const alias of paddedCheckpointAliases) {
+      await expect(adapter.requestCheckpoint(
+        alias as RunnerCheckpointCommandV1,
+      )).rejects.toThrow("control command is invalid");
+    }
+
+    const cancellation = cancellationCommand(profileA, holderA);
+    const paddedCancellationAliases: unknown[] = [
+      { ...cancellation, runId: ` ${cancellation.runId}` },
+      { ...cancellation, adapterId: `${cancellation.adapterId} ` },
+      { ...cancellation, adapterVersion: ` ${cancellation.adapterVersion}` },
+    ];
+    for (const alias of paddedCancellationAliases) {
+      await expect(adapter.requestCancellation(
+        alias as RunnerCancellationCommandV1,
+      )).rejects.toThrow("control command is invalid");
+    }
   });
 
   test("keeps profile A cancellation valid after profile B is admitted", async () => {
