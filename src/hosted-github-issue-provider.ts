@@ -4,7 +4,9 @@ import {
 import { GitHubIssueProviderService } from "./github-issue-provider-service.js";
 import {
   withGitHubIssueProviderReadService,
+  withGitHubIssueProviderWriteService,
   type GitHubIssueProviderReadService,
+  type GitHubIssueProviderWriteService,
 } from "./github-issue-provider-mcp.js";
 import type {
   GitHubIssueProviderOperation,
@@ -23,6 +25,7 @@ import {
   stableJson,
 } from "./github-provider-validation.js";
 import { GitHubRestIssueProviderAdapter } from "./github-rest-issue-adapter.js";
+import { GitHubRestIssueWriteAdapter } from "./github-rest-issue-write-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   projectAttachmentLedger,
@@ -43,6 +46,7 @@ interface HostedGitHubIssueProviderConfig {
   privateKeyPem: string;
   apiBaseUrl: string;
   credentialRef: string;
+  issueWritesEnabled: boolean;
 }
 
 const readOperations = new Set<GitHubIssueProviderOperation>([
@@ -50,16 +54,24 @@ const readOperations = new Set<GitHubIssueProviderOperation>([
   "github_search_issues",
   "github_get_issue",
 ]);
+const initialWriteOperations = new Set<GitHubIssueProviderOperation>([
+  "github_create_issue",
+  "github_update_issue",
+  "github_add_issue_comment",
+]);
 
 /**
- * Mounts the production read provider only when the full GitHub App configuration exists.
- * The accepted project attachment remains the authoritative repository declaration.
+ * Mounts the production read provider when the complete GitHub App
+ * configuration exists. A separate exact flag mounts an independent write
+ * service only when the ledger also exposes the durable hosted receipt contract.
  */
 export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   ledger: T,
   env: Record<string, string | undefined>,
   overrides: HostedGitHubIssueProviderOverrides = {},
-): T & Partial<GitHubIssueProviderReadService> {
+): T
+  & Partial<GitHubIssueProviderReadService>
+  & Partial<GitHubIssueProviderWriteService> {
   const config = hostedGitHubIssueProviderConfig(env);
   if (!config) return ledger;
   const projects = projectAttachmentLedger(ledger);
@@ -84,20 +96,38 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
     now,
   });
-  const adapter = new GitHubRestIssueProviderAdapter({
+  const adapterOptions = {
     tokenProvider: tokens,
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
-  });
-  const service = canonicalHostedReadService(new GitHubIssueProviderService({
+  };
+  const authority = new HostedGitHubAuthority(config);
+  const readService = new GitHubIssueProviderService({
     projects,
     bindings,
-    authority: new HostedGitHubReadAuthority(config),
-    adapter,
+    authority,
+    adapter: new GitHubRestIssueProviderAdapter(adapterOptions),
     receipts: new ReadOnlyGitHubProviderReceiptStore(),
     now: () => new Date(now()).toISOString(),
-  }));
-  return withGitHubIssueProviderReadService(ledger, service);
+  });
+  const mountedReads = withGitHubIssueProviderReadService(
+    ledger,
+    canonicalHostedReadService(readService),
+  );
+  if (!config.issueWritesEnabled) return mountedReads;
+
+  const writeService = new GitHubIssueProviderService({
+    projects,
+    bindings,
+    authority,
+    adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
+    receipts: durableReceiptStore(ledger),
+    now: () => new Date(now()).toISOString(),
+  });
+  return withGitHubIssueProviderWriteService(
+    mountedReads,
+    canonicalHostedWriteService(writeService),
+  );
 }
 
 export function hostedGitHubIssueProviderConfigured(
@@ -109,6 +139,10 @@ export function hostedGitHubIssueProviderConfigured(
 function hostedGitHubIssueProviderConfig(
   env: Record<string, string | undefined>,
 ): HostedGitHubIssueProviderConfig | null {
+  const issueWritesEnabled = optionalBooleanEnv(
+    env,
+    "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED",
+  );
   const keys = [
     "STENSIBLY_GITHUB_APP_ID",
     "STENSIBLY_GITHUB_APP_PRIVATE_KEY",
@@ -118,7 +152,8 @@ function hostedGitHubIssueProviderConfig(
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
     "STENSIBLY_GITHUB_API_BASE_URL",
   ] as const;
-  const configured = keys.some((key) => Boolean(trimmed(env[key])));
+  const configured = issueWritesEnabled
+    || keys.some((key) => Boolean(trimmed(env[key])));
   if (!configured) return null;
 
   const appId = requiredEnv(env, "STENSIBLY_GITHUB_APP_ID");
@@ -151,6 +186,7 @@ function hostedGitHubIssueProviderConfig(
     privateKeyPem,
     apiBaseUrl,
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
+    issueWritesEnabled,
   };
 }
 
@@ -215,7 +251,7 @@ class AcceptedAttachmentGitHubBindingStore implements GitHubProviderBindingStore
   }
 }
 
-class HostedGitHubReadAuthority implements GitHubProviderAuthority {
+class HostedGitHubAuthority implements GitHubProviderAuthority {
   readonly #config: HostedGitHubIssueProviderConfig;
 
   constructor(config: HostedGitHubIssueProviderConfig) {
@@ -241,13 +277,19 @@ class HostedGitHubReadAuthority implements GitHubProviderAuthority {
         reason: "GitHub operation is outside the configured hosted provider binding",
       };
     }
-    if (!readOperations.has(input.operation)) {
-      return {
-        allowed: false,
-        reason: "Hosted GitHub provider currently authorizes typed issue reads only",
-      };
+    if (readOperations.has(input.operation)) return { allowed: true };
+    if (
+      this.#config.issueWritesEnabled
+      && initialWriteOperations.has(input.operation)
+    ) {
+      return { allowed: true };
     }
-    return { allowed: true };
+    return {
+      allowed: false,
+      reason: this.#config.issueWritesEnabled
+        ? "Hosted GitHub label and assignee writes remain unavailable"
+        : "Hosted GitHub provider currently authorizes typed issue reads only",
+    };
   }
 }
 
@@ -276,6 +318,41 @@ class ReadOnlyGitHubProviderReceiptStore implements GitHubProviderReceiptStore {
   }
 }
 
+function durableReceiptStore(value: unknown): GitHubProviderReceiptStore {
+  const reserve = captureMethod(value, "reserveGitHubProviderReceipt");
+  const update = captureMethod(value, "updateGitHubProviderReceipt");
+  const get = captureMethod(value, "getGitHubProviderReceipt");
+  if (!reserve || !update || !get) {
+    throw new Error(
+      "Hosted GitHub issue writes require the durable provider receipt store",
+    );
+  }
+  return Object.freeze({
+    reserveGitHubProviderReceipt: reserve as GitHubProviderReceiptStore["reserveGitHubProviderReceipt"],
+    updateGitHubProviderReceipt: update as GitHubProviderReceiptStore["updateGitHubProviderReceipt"],
+    getGitHubProviderReceipt: get as GitHubProviderReceiptStore["getGitHubProviderReceipt"],
+  });
+}
+
+function captureMethod(
+  value: unknown,
+  name: string,
+): ((...args: unknown[]) => unknown) | null {
+  if (!value || typeof value !== "object") return null;
+  let current: object | null = value;
+  while (current && current !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, name);
+    if (descriptor) {
+      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
+        return null;
+      }
+      return (...args: unknown[]) => Reflect.apply(descriptor.value, value, args);
+    }
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+  return null;
+}
+
 function canonicalHostedReadService(
   service: GitHubIssueProviderReadService,
 ): GitHubIssueProviderReadService {
@@ -286,11 +363,31 @@ function canonicalHostedReadService(
   };
 }
 
+function canonicalHostedWriteService(
+  service: GitHubIssueProviderWriteService,
+): GitHubIssueProviderWriteService {
+  return {
+    createIssue: (input) => service.createIssue(canonicalRequest(input)),
+    updateIssue: (input) => service.updateIssue(canonicalRequest(input)),
+    addIssueComment: (input) => service.addIssueComment(canonicalRequest(input)),
+  };
+}
+
 function canonicalRequest<T extends GitHubProviderRequestContext>(input: T): T {
   return {
     ...input,
     repository: normalizeGitHubRepository(input.repository).toLowerCase(),
   };
+}
+
+function optionalBooleanEnv(
+  env: Record<string, string | undefined>,
+  key: string,
+): boolean {
+  const value = env[key];
+  if (value === undefined || value === "" || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error(`${key} must be exact true or false`);
 }
 
 function hostedProjectSlug(value: string): string {
