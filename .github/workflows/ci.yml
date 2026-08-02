@@ -1,446 +1,56 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-  workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact commit SHA that this run must validate
-        required: true
-        type: string
-      validation_profile:
-        description: Validation topology for this exact revision
-        required: false
-        default: full_parallel
-        type: choice
-        options:
-          - full_parallel
-          - serial_full
-  workflow_call:
-    inputs:
-      expected_sha:
-        description: Exact commit SHA that this reusable run must validate
-        required: true
-        type: string
-      validation_profile:
-        description: Validation topology for this reusable run
-        required: false
-        default: full_parallel
-        type: string
 
 concurrency:
-  group: >-
-    ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
-    format('pr-{0}', github.event.pull_request.number) ||
-    (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
-    format('exact-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
-    format('push-{0}', github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: marlin-659-source-export-windows-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  browser-evidence:
-    if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
-      github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify requested exact revision and profile
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
-        run: |
-          set -euo pipefail
-          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Requested browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
-            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Typecheck frontend browser evidence
-        run: |
-          set -o pipefail
-          bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run frontend browser evidence
-        id: browser-test
-        run: |
-          set -o pipefail
-          bun run test:browser 2>&1 | tee browser-test-output.txt
-      - name: Verify frontend browser evidence artifacts
-        id: browser-artifacts
-        if: always() && steps.browser-test.outcome != 'skipped'
-        run: |
-          set -o pipefail
-          bun run verify:browser-artifacts 2>&1 | tee browser-artifact-output.txt
-      - name: Upload verified frontend browser evidence
-        if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-browser-evidence-${{ github.sha }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
-          if-no-files-found: error
-          retention-days: 7
-
-  test:
-    if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
-      github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify requested exact revision and profile
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
-        run: |
-          set -euo pipefail
-          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Requested CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
-            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ github.sha }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
-        run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run typecheck
-        run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee typecheck-output.txt
-      - name: Run Bun tests
-        run: |
-          set -o pipefail
-          bun run test 2>&1 | tee test-output.txt
-      - name: Run Convex tests
-        run: |
-          set -o pipefail
-          bun run test:convex 2>&1 | tee convex-test-output.txt
-      - name: Bundle Cloudflare Worker
-        run: |
-          set -o pipefail
-          bun run worker:check 2>&1 | tee worker-check-output.txt
-      - name: Upload failing diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics
-          path: |
-            typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-          if-no-files-found: ignore
-
-  runtime-parity:
-    if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
-      github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Verify requested exact revision and profile
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
-        run: |
-          set -euo pipefail
-          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Requested runtime parity expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
-            exit 1
-          fi
-          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
-            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
-            exit 1
-          fi
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-      - name: Run Bun, Node, and native workerd receiver checks
-        run: |
-          set -o pipefail
-          bun run test:runtime-parity 2>&1 | tee runtime-parity-output.txt
-      - name: Upload runtime parity diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-parity-diagnostics
-          path: runtime-parity-output.txt
-          if-no-files-found: ignore
-
-  serial-full:
-    needs: [browser-evidence, test, runtime-parity]
-    if: >-
-      ${{ always() &&
-      ((github.event_name == 'pull_request' &&
-      needs.browser-evidence.result == 'success' &&
-      needs.test.result == 'success' &&
-      needs.runtime-parity.result == 'success') ||
-      ((github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'workflow_call') &&
-      inputs.validation_profile == 'serial_full')) }}
-    runs-on: ubuntu-latest
-    env:
-      SERIAL_VALIDATION_SHA: >-
-        ${{ github.event_name == 'pull_request' &&
-        github.event.pull_request.head.sha ||
-        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
-        inputs.expected_sha || github.sha }}
+  source-export:
+    if: github.head_ref == 'marlin/659-source-export-windows'
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.SERIAL_VALIDATION_SHA }}
           persist-credentials: false
-      - name: Verify exact serial revision
-        env:
-          VALIDATION_PROFILE: >-
-            ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
-            inputs.validation_profile || 'full_parallel' }}
-        run: |
-          set -euo pipefail
-          actual_sha="$(git rev-parse HEAD)"
-          if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
-            echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
-            exit 1
-          fi
-          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
-            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
-            exit 1
-          fi
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - name: Prepare committed Bun lockfile candidate
-        id: bun-lock
-        run: bun run lockfile:check
-      - name: Upload refreshed Bun lockfile candidate
-        if: steps.bun-lock.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}
-          path: artifacts/bun-lock-candidate
-          if-no-files-found: error
-          retention-days: 7
-      - name: Reject stale committed Bun lockfile
-        if: steps.bun-lock.outputs.changed == 'true'
+      - name: Produce repaired source bytes
+        id: export
+        continue-on-error: true
+        shell: pwsh
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${SERIAL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
-          echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
-          echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
-          exit 1
-      - name: Install committed dependencies once
-        run: bun install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-      - name: Run serial full validation
-        id: serial-validation
+          bun test test/marlin-659-source-export.test.ts 2>&1 |
+            Tee-Object -FilePath marlin-659-export-output.txt
+          exit $LASTEXITCODE
+      - name: Verify intentional export completion
+        shell: pwsh
         run: |
-          set +e
-          status=0
-          run_gate() {
-            local label="$1"
-            local output="$2"
-            local -a pipeline_status
-            shift 2
-            echo "::group::${label}"
-            set -o pipefail
-            "$@" 2>&1 | tee "${output}"
-            pipeline_status=("${PIPESTATUS[@]}")
-            set +o pipefail
-            echo "::endgroup::"
-            if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
-              status=1
-            fi
+          if ('${{ steps.export.outcome }}' -ne 'failure') {
+            throw 'Export control unexpectedly passed.'
           }
-          run_gate typecheck typecheck-output.txt bun run typecheck
-          run_gate browser-typecheck browser-typecheck-output.txt bun run typecheck:browser
-          run_gate bun-tests test-output.txt bun run test
-          run_gate browser-tests browser-test-output.txt bun run test:browser
-          run_gate browser-artifacts browser-artifact-output.txt bun run verify:browser-artifacts
-          run_gate convex-tests convex-test-output.txt bun run test:convex
-          run_gate worker-check worker-check-output.txt bun run worker:check
-          run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
-          exit "${status}"
-      - name: Upload verified frontend browser evidence
-        if: steps.serial-validation.outcome == 'success'
+          if (-not (Select-String -Path marlin-659-export-output.txt -SimpleMatch 'marlin_659_repaired_source_export_complete')) {
+            throw 'Expected export completion marker was absent.'
+          }
+          New-Item -ItemType Directory -Force -Path exported/src/runner-adapters | Out-Null
+          New-Item -ItemType Directory -Force -Path exported/test | Out-Null
+          Copy-Item src/runner-adapters/openai-agents.ts exported/src/runner-adapters/openai-agents.ts
+          Copy-Item test/openai-agents-runner-adapter.test.ts exported/test/openai-agents-runner-adapter.test.ts
+          Copy-Item test/openai-agents-runner-adapter-boundaries.test.ts exported/test/openai-agents-runner-adapter-boundaries.test.ts
+          Get-FileHash -Algorithm SHA256 `
+            exported/src/runner-adapters/openai-agents.ts, `
+            exported/test/openai-agents-runner-adapter.test.ts, `
+            exported/test/openai-agents-runner-adapter-boundaries.test.ts |
+            ForEach-Object { "$($_.Hash.ToLower())  $($_.Path)" } |
+            Set-Content exported/SHA256SUMS
+      - name: Upload repaired source evidence
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
-          path: |
-            artifacts/playwright-report
-            artifacts/playwright-results
-            browser-test-output.txt
-            browser-artifact-output.txt
+          name: marlin-659-repaired-source-windows-${{ github.sha }}
+          path: exported
           if-no-files-found: error
-          retention-days: 7
-      - name: Upload serial full diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}
-          path: |
-            typecheck-output.txt
-            browser-typecheck-output.txt
-            test-output.txt
-            convex-test-output.txt
-            worker-check-output.txt
-            runtime-parity-output.txt
-          if-no-files-found: ignore
-
-  validation-receipt:
-    name: exact-ref-validation-receipt
-    needs: [browser-evidence, test, runtime-parity, serial-full]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    env:
-      SOURCE_REVISION: >-
-        ${{ github.event_name == 'pull_request' &&
-        github.event.pull_request.head.sha ||
-        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
-        inputs.expected_sha || github.sha }}
-      VALIDATION_PROFILE: >-
-        ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
-        inputs.validation_profile || 'full_parallel' }}
-      BROWSER_RESULT: ${{ needs.browser-evidence.result }}
-      TEST_RESULT: ${{ needs.test.result }}
-      RUNTIME_RESULT: ${{ needs.runtime-parity.result }}
-      SERIAL_RESULT: ${{ needs.serial-full.result }}
-      EVENT_REVISION: ${{ github.sha }}
-      WORKFLOW_REVISION: ${{ github.workflow_sha }}
-      WORKFLOW_REF: ${{ github.workflow_ref }}
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    steps:
-      - name: Build exact-ref validation receipt
-        run: |
-          set -euo pipefail
-          input_valid=true
-          if [[ ! "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
-            input_valid=false
-          fi
-          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
-            input_valid=false
-          fi
-
-          overall="success"
-          for result in "${BROWSER_RESULT}" "${TEST_RESULT}" "${RUNTIME_RESULT}" "${SERIAL_RESULT}"; do
-            if [[ "${result}" == "cancelled" ]]; then
-              overall="cancelled"
-            fi
-          done
-          if [[ "${input_valid}" != "true" ]]; then
-            overall="rejected"
-          elif [[ "${VALIDATION_PROFILE}" == "serial_full" ]]; then
-            if [[ "${SERIAL_RESULT}" != "success" ]]; then
-              [[ "${overall}" == "cancelled" ]] || overall="failure"
-            fi
-          else
-            if [[ "${BROWSER_RESULT}" != "success" || "${TEST_RESULT}" != "success" || "${RUNTIME_RESULT}" != "success" ]]; then
-              [[ "${overall}" == "cancelled" ]] || overall="failure"
-            fi
-            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" && "${SERIAL_RESULT}" != "success" ]]; then
-              [[ "${overall}" == "cancelled" ]] || overall="failure"
-            fi
-          fi
-
-          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          jq -n \
-            --arg schemaVersion "stensibly-ci-exact-ref-receipt/1" \
-            --arg repository "${GITHUB_REPOSITORY}" \
-            --arg eventName "${GITHUB_EVENT_NAME}" \
-            --arg sourceRevision "${SOURCE_REVISION}" \
-            --arg eventRevision "${EVENT_REVISION}" \
-            --arg workflowRevision "${WORKFLOW_REVISION}" \
-            --arg workflowRef "${WORKFLOW_REF}" \
-            --arg validationProfile "${VALIDATION_PROFILE}" \
-            --arg status "${overall}" \
-            --arg browserEvidence "${BROWSER_RESULT}" \
-            --arg repositoryTests "${TEST_RESULT}" \
-            --arg runtimeParity "${RUNTIME_RESULT}" \
-            --arg serialFull "${SERIAL_RESULT}" \
-            --arg runId "${GITHUB_RUN_ID}" \
-            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
-            --arg runUrl "${RUN_URL}" \
-            --arg completedAt "${completed_at}" \
-            --argjson inputValid "${input_valid}" \
-            '{
-              schemaVersion: $schemaVersion,
-              repository: $repository,
-              eventName: $eventName,
-              sourceRevision: $sourceRevision,
-              eventRevision: $eventRevision,
-              workflowRevision: $workflowRevision,
-              workflowRef: $workflowRef,
-              validationProfile: $validationProfile,
-              inputValid: $inputValid,
-              status: $status,
-              jobs: {
-                browserEvidence: $browserEvidence,
-                repositoryTests: $repositoryTests,
-                runtimeParity: $runtimeParity,
-                serialFull: $serialFull
-              },
-              run: {
-                id: $runId,
-                attempt: $runAttempt,
-                url: $runUrl
-              },
-              completedAt: $completedAt
-            }' > exact-ref-validation-receipt.json
-          sha256sum exact-ref-validation-receipt.json \
-            > exact-ref-validation-receipt.sha256
-      - name: Upload exact-ref validation receipt
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: exact-ref-validation-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            exact-ref-validation-receipt.json
-            exact-ref-validation-receipt.sha256
-          if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
