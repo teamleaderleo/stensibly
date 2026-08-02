@@ -183,7 +183,8 @@ function assertReceiptLifecycleCoherence(
         || receipt.verification.state !== "failed"
         || receipt.verification.checkedAt === null
         || receipt.verification.sourceRevision === null
-        || receipt.error?.code !== "stale_provider_version"
+        || receipt.error === null
+        || receipt.error.code !== "stale_provider_version"
         || receipt.error.retry !== "do_not_retry"
         || receipt.recovery.nextAction
           !== "refresh_and_retry_with_new_version"
