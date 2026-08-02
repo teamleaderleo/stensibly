@@ -34,13 +34,17 @@ export function withGitHubIssueProviderSetWriteService<T extends object>(
   return Object.assign(target, {
     addIssueLabels: service.addIssueLabels.bind(service),
     removeIssueLabel: service.removeIssueLabel.bind(service),
-    addIssueAssignees(input: Parameters<GitHubIssueProviderSetWriteService["addIssueAssignees"]>[0]) {
+    async addIssueAssignees(
+      input: Parameters<GitHubIssueProviderSetWriteService["addIssueAssignees"]>[0],
+    ) {
       const assignees = admittedAssigneeMutation(input.assignees);
-      return service.addIssueAssignees({ ...input, assignees });
+      return await service.addIssueAssignees({ ...input, assignees });
     },
-    removeIssueAssignees(input: Parameters<GitHubIssueProviderSetWriteService["removeIssueAssignees"]>[0]) {
+    async removeIssueAssignees(
+      input: Parameters<GitHubIssueProviderSetWriteService["removeIssueAssignees"]>[0],
+    ) {
       const assignees = admittedAssigneeMutation(input.assignees);
-      return service.removeIssueAssignees({ ...input, assignees });
+      return await service.removeIssueAssignees({ ...input, assignees });
     },
   });
 }
