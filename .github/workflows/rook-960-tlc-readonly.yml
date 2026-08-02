@@ -1,0 +1,200 @@
+name: Rook 960 TLC proof evidence
+
+on:
+  pull_request:
+    paths:
+      - formal/CancellationSettlement*.tla
+      - formal/CancellationSettlement*.cfg
+      - .github/workflows/rook-960-tlc-readonly.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rook-960-tlc-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source revision
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "${SOURCE_SHA}" = "${{ github.event.pull_request.head.sha }}"
+
+      - name: Fetch and verify stable TLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
+            -o /tmp/tla2tools-v1.7.4.jar
+          echo "bee4a54f3ee3d4afc347c3240ec2d9e93b075104  /tmp/tla2tools-v1.7.4.jar" \
+            | sha1sum --check --strict
+          sha256sum /tmp/tla2tools-v1.7.4.jar > /tmp/tla2tools-v1.7.4.sha256
+          java -version 2> /tmp/java-version.txt
+          unzip -p /tmp/tla2tools-v1.7.4.jar META-INF/MANIFEST.MF \
+            > /tmp/tla2tools-manifest.txt
+
+      - name: Parse the base and witness modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp /tmp/tla2tools-v1.7.4.jar tla2sany.SANY \
+            formal/CancellationSettlement.tla \
+            formal/CancellationSettlementWitnesses.tla \
+            > /tmp/sany.log 2>&1
+
+      - name: Model-check the safe specification
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
+            -workers 1 \
+            -coverage 1 \
+            -config formal/CancellationSettlement.cfg \
+            formal/CancellationSettlement.tla \
+            > /tmp/safe.log 2>&1
+          grep -F "Model checking completed" /tmp/safe.log
+
+      - name: Prove unsafe controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_counterexample() {
+            local config="$1"
+            local invariant="$2"
+            local output="$3"
+            set +e
+            java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
+              -workers 1 \
+              -config "${config}" \
+              formal/CancellationSettlement.tla \
+              > "${output}" 2>&1
+            local status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected ${invariant} counterexample but TLC succeeded." >&2
+              exit 1
+            fi
+            grep -F "${invariant}" "${output}"
+          }
+          run_counterexample \
+            formal/CancellationSettlementUnsafeFence.cfg \
+            ReplacementRequiresFenceOrSettlement \
+            /tmp/unsafe-fence.log
+          run_counterexample \
+            formal/CancellationSettlementUnsafe.cfg \
+            StaleGenerationCannotPublish \
+            /tmp/unsafe-stale.log
+
+      - name: Prove requested schedules are reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_witness() {
+            local config="$1"
+            local invariant="$2"
+            local output="$3"
+            set +e
+            java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
+              -workers 1 \
+              -config "${config}" \
+              formal/CancellationSettlementWitnesses.tla \
+              > "${output}" 2>&1
+            local status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected ${invariant} reachability witness but TLC succeeded." >&2
+              exit 1
+            fi
+            grep -F "${invariant}" "${output}"
+          }
+          run_witness \
+            formal/CancellationSettlementPreCloseSuccess.cfg \
+            PreCloseSuccessFailureWitnessAbsent \
+            /tmp/witness-preclose-success.log
+          run_witness \
+            formal/CancellationSettlementPreCloseFailure.cfg \
+            PreCloseFailureReconciliationWitnessAbsent \
+            /tmp/witness-preclose-failure.log
+          run_witness \
+            formal/CancellationSettlementRepeatedClose.cfg \
+            RepeatedCloseWitnessAbsent \
+            /tmp/witness-repeated-close.log
+          run_witness \
+            formal/CancellationSettlementCancelledRetry.cfg \
+            CancelledRetryWitnessAbsent \
+            /tmp/witness-cancelled-retry.log
+
+      - name: Build exact proof artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="artifacts/cancellation-settlement-tlc"
+          mkdir -p "${evidence}"
+          cp /tmp/sany.log "${evidence}/sany.log"
+          cp /tmp/safe.log "${evidence}/safe.log"
+          cp /tmp/unsafe-fence.log "${evidence}/unsafe-fence.log"
+          cp /tmp/unsafe-stale.log "${evidence}/unsafe-stale.log"
+          cp /tmp/witness-preclose-success.log \
+            "${evidence}/witness-preclose-success.log"
+          cp /tmp/witness-preclose-failure.log \
+            "${evidence}/witness-preclose-failure.log"
+          cp /tmp/witness-repeated-close.log \
+            "${evidence}/witness-repeated-close.log"
+          cp /tmp/witness-cancelled-retry.log \
+            "${evidence}/witness-cancelled-retry.log"
+          cp /tmp/java-version.txt "${evidence}/java-version.txt"
+          cp /tmp/tla2tools-manifest.txt "${evidence}/tla2tools-manifest.txt"
+          cp /tmp/tla2tools-v1.7.4.sha256 "${evidence}/tla2tools.sha256"
+          cp formal/CancellationSettlement*.tla "${evidence}/"
+          cp formal/CancellationSettlement*.cfg "${evidence}/"
+          (
+            cd "${evidence}"
+            sha256sum -- * > SHA256SUMS
+          )
+          jq -n \
+            --arg schemaVersion "stensibly-cancellation-settlement-tlc/1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg sourceRevision "${SOURCE_SHA}" \
+            --arg workflowRevision "${GITHUB_WORKFLOW_SHA}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg tlcVersion "v1.7.4" \
+            --arg tlcSha1 "bee4a54f3ee3d4afc347c3240ec2d9e93b075104" \
+            --arg status "success" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              sourceRevision: $sourceRevision,
+              workflowRevision: $workflowRevision,
+              run: { id: $runId, attempt: $runAttempt },
+              tlc: { version: $tlcVersion, publishedSha1: $tlcSha1 },
+              workers: 1,
+              safeModel: $status,
+              unsafeControls: $status,
+              reachabilityWitnesses: $status
+            }' > "${evidence}/receipt.json"
+          sha256sum "${evidence}/receipt.json" \
+            > "${evidence}/receipt.sha256"
+
+      - name: Upload exact proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cancellation-settlement-tlc-${{ env.SOURCE_SHA }}
+          path: artifacts/cancellation-settlement-tlc
+          if-no-files-found: error
+          retention-days: 14
