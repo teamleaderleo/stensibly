@@ -162,6 +162,31 @@ describe("GitHub provider context reconciliation", () => {
     expect(reserved.proposalFingerprint).not.toBe(pending.proposalFingerprint);
   });
 
+  test("rejects contradictory receipt state and result evidence", () => {
+    expect(() => compileGitHubProviderContextReconciliationV1(input(receipt({
+      state: "reserved",
+    })))).toThrow("must not contain result evidence");
+
+    expect(() => compileGitHubProviderContextReconciliationV1(input(receipt({
+      state: "stale",
+      operation: "github_create_issue",
+      target: "teamleaderleo/stensibly#new",
+      verification: {
+        state: "failed",
+        checkedAt: "2026-08-02T17:01:00.000Z",
+        sourceRevision: issue.sourceRevision,
+      },
+    })))).toThrow("lacks exact current-issue readback evidence");
+
+    expect(() => compileGitHubProviderContextReconciliationV1(input(receipt({
+      verification: {
+        state: "failed",
+        checkedAt: "2026-08-02T17:01:00.000Z",
+        sourceRevision: issue.sourceRevision,
+      },
+    })))).toThrow("lacks verified provider readback");
+  });
+
   test("treats comments and rejected writes as no issue-context effect", () => {
     const comment: GitHubIssueComment = {
       id: "5159544403",
@@ -202,8 +227,10 @@ describe("GitHub provider context reconciliation", () => {
     ));
 
     expect(commentProposal.outcome).toBe("no_issue_context_effect");
+    expect(commentProposal.providerIssueExternalId).toBeNull();
     expect(commentProposal.issue).toBeNull();
     expect(rejectedProposal.outcome).toBe("no_issue_context_effect");
+    expect(rejectedProposal.providerIssueExternalId).toBeNull();
   });
 
   test("fails closed on accepted/provider issue identity conflict", () => {
@@ -232,12 +259,12 @@ describe("GitHub provider context reconciliation", () => {
         checkedAt: "2026-08-02T17:01:00.000Z",
         sourceRevision: "github-rest:other",
       },
-    })))).toThrow("does not match the issue snapshot");
+    })))).toThrow("does not match provider readback");
 
     expect(() => compileGitHubProviderContextReconciliationV1(input(receipt({
       result: null,
       verification: { state: "not_run", checkedAt: null, sourceRevision: null },
-    })))).toThrow("requires an admitted provider issue snapshot");
+    })))).toThrow("lacks verified provider readback");
   });
 
   test("rejects hostile descriptors without invoking getters", () => {
