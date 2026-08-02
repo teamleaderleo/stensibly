@@ -34,7 +34,10 @@ VARIABLES
   fenceActive,
   replacementAdmitted,
   staleEffectAccepted,
-  newWorkCount
+  newWorkCount,
+  closeCount,
+  lastObservedResult,
+  repeatedResultMismatch
 
 vars == <<
   phase,
@@ -48,7 +51,10 @@ vars == <<
   fenceActive,
   replacementAdmitted,
   staleEffectAccepted,
-  newWorkCount
+  newWorkCount,
+  closeCount,
+  lastObservedResult,
+  repeatedResultMismatch
 >>
 
 Init ==
@@ -64,14 +70,19 @@ Init ==
   /\ replacementAdmitted = FALSE
   /\ staleEffectAccepted = FALSE
   /\ newWorkCount = 0
+  /\ closeCount = [w \in Waiters |-> 0]
+  /\ lastObservedResult = [w \in Waiters |-> "none"]
+  /\ repeatedResultMismatch = FALSE
 
 BeginClose(w) ==
   /\ phase = "open"
   /\ waiterState[w] = "idle"
+  /\ closeCount[w] = 0
   /\ phase' = "closing"
   /\ authorityCount' = 1
   /\ acceptingNewWork' = FALSE
   /\ waiterState' = [waiterState EXCEPT ![w] = "waiting"]
+  /\ closeCount' = [closeCount EXCEPT ![w] = 1]
   /\ UNCHANGED <<
        childState,
        visibleSuccesses,
@@ -80,13 +91,17 @@ BeginClose(w) ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 JoinClose(w) ==
   /\ phase \in {"closing", "reconciliation_required"}
   /\ waiterState[w] = "idle"
+  /\ closeCount[w] = 0
   /\ waiterState' = [waiterState EXCEPT ![w] = "waiting"]
+  /\ closeCount' = [closeCount EXCEPT ![w] = 1]
   /\ UNCHANGED <<
        phase,
        authorityCount,
@@ -98,7 +113,9 @@ JoinClose(w) ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 CancelWait(w) ==
@@ -115,11 +132,14 @@ CancelWait(w) ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 SettleChildSuccess(c) ==
-  /\ phase \in {"closing", "reconciliation_required"}
+  /\ phase \in {"open", "closing", "reconciliation_required"}
   /\ childState[c] = "pending"
   /\ childState' = [childState EXCEPT ![c] = "success"]
   /\ visibleSuccesses' = visibleSuccesses \cup {c}
@@ -133,11 +153,14 @@ SettleChildSuccess(c) ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 SettleChildFailure(c) ==
-  /\ phase \in {"closing", "reconciliation_required"}
+  /\ phase \in {"open", "closing", "reconciliation_required"}
   /\ childState[c] = "pending"
   /\ childState' = [childState EXCEPT ![c] = "failure"]
   /\ UNCHANGED <<
@@ -151,7 +174,10 @@ SettleChildFailure(c) ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 MarkReconciliation ==
@@ -170,7 +196,10 @@ MarkReconciliation ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 FinishSuccess ==
@@ -183,6 +212,10 @@ FinishSuccess ==
        IF waiterState[w] = "waiting"
        THEN "observed_success"
        ELSE waiterState[w]]
+  /\ lastObservedResult' = [w \in Waiters |->
+       IF waiterState[w] = "waiting"
+       THEN "success"
+       ELSE lastObservedResult[w]]
   /\ UNCHANGED <<
        authorityCount,
        acceptingNewWork,
@@ -191,7 +224,9 @@ FinishSuccess ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       repeatedResultMismatch
      >>
 
 FinishFailure ==
@@ -205,6 +240,10 @@ FinishFailure ==
        IF waiterState[w] = "waiting"
        THEN "observed_failure"
        ELSE waiterState[w]]
+  /\ lastObservedResult' = [w \in Waiters |->
+       IF waiterState[w] = "waiting"
+       THEN "failure"
+       ELSE lastObservedResult[w]]
   /\ UNCHANGED <<
        authorityCount,
        acceptingNewWork,
@@ -213,7 +252,9 @@ FinishFailure ==
        fenceActive,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       repeatedResultMismatch
      >>
 
 FencePriorGeneration ==
@@ -231,7 +272,10 @@ FencePriorGeneration ==
        terminalResult,
        replacementAdmitted,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 AdmitReplacement ==
@@ -249,7 +293,10 @@ AdmitReplacement ==
        oldCanPublish,
        fenceActive,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 UnsafeAdmitReplacement ==
@@ -267,7 +314,10 @@ UnsafeAdmitReplacement ==
        oldCanPublish,
        fenceActive,
        staleEffectAccepted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 PriorGenerationPublishes ==
@@ -284,16 +334,34 @@ PriorGenerationPublishes ==
        oldCanPublish,
        fenceActive,
        replacementAdmitted,
-       newWorkCount
+       newWorkCount,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 ObserveTerminal(w) ==
   /\ phase \in TerminalPhases
-  /\ waiterState[w] \in {"idle", "waiting", "cancelled"}
-  /\ waiterState' = [waiterState EXCEPT
-       ![w] = IF terminalResult = "success"
-              THEN "observed_success"
-              ELSE "observed_failure"]
+  /\ closeCount[w] < 2
+  /\ waiterState[w] \in {
+       "idle",
+       "cancelled",
+       "observed_success",
+       "observed_failure"
+     }
+  /\ LET returned ==
+       IF terminalResult = "success" THEN "success" ELSE "failure"
+     IN
+       /\ waiterState' = [waiterState EXCEPT
+            ![w] = IF returned = "success"
+                   THEN "observed_success"
+                   ELSE "observed_failure"]
+       /\ closeCount' = [closeCount EXCEPT ![w] = @ + 1]
+       /\ lastObservedResult' = [lastObservedResult EXCEPT ![w] = returned]
+       /\ repeatedResultMismatch' =
+            repeatedResultMismatch
+              \/ (lastObservedResult[w] # "none"
+                  /\ lastObservedResult[w] # returned)
   /\ UNCHANGED <<
        phase,
        authorityCount,
@@ -323,7 +391,10 @@ AdmitNewWork ==
        oldCanPublish,
        fenceActive,
        replacementAdmitted,
-       staleEffectAccepted
+       staleEffectAccepted,
+       closeCount,
+       lastObservedResult,
+       repeatedResultMismatch
      >>
 
 SafeNext ==
@@ -372,6 +443,9 @@ TypeOK ==
   /\ replacementAdmitted \in BOOLEAN
   /\ staleEffectAccepted \in BOOLEAN
   /\ newWorkCount \in 0..1
+  /\ closeCount \in [Waiters -> 0..2]
+  /\ lastObservedResult \in [Waiters -> TerminalResults]
+  /\ repeatedResultMismatch \in BOOLEAN
 
 NoDuplicateAuthority == authorityCount <= 1
 
@@ -403,6 +477,10 @@ TerminalWaitersAgree ==
   \A w \in Waiters :
     /\ (waiterState[w] = "observed_success" => terminalResult = "success")
     /\ (waiterState[w] = "observed_failure" => terminalResult = "failure")
+    /\ (lastObservedResult[w] # "none"
+        => lastObservedResult[w] = terminalResult)
+
+RepeatedCloseReturnsTerminalResult == ~repeatedResultMismatch
 
 ReconciliationHasFailure ==
   phase = "reconciliation_required"
