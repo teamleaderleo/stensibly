@@ -304,28 +304,42 @@ describe("OpenAI Agents control identity wrapper", () => {
     }
   });
 
-  test("admits benign sk-review identities and rejects realistic keys", async () => {
+  test("admits benign token-like identities and rejects realistic keys", async () => {
+    for (const benignHolder of [
+      "runner-sk-review",
+      "runner-ghp_review",
+      "runner-github_pat_review",
+      "runner-stn.tok_review",
+      "runner-xoxb-review",
+    ]) {
+      const adapter = createAdapter();
+      await admitProfile(adapter, profileA, benignHolder);
+      const benign = {
+        ...cancellationCommand(profileA, benignHolder),
+        commandId: `command-${benignHolder}`,
+      };
+      await expect(adapter.requestCancellation(benign)).resolves.toMatchObject({
+        commandId: `command-${benignHolder}`,
+        profileId: profileA,
+        runId,
+        requestAccepted: true,
+      });
+    }
+
     const adapter = createAdapter();
-    const benignHolder = "runner-sk-review";
-    await admitProfile(adapter, profileA, benignHolder);
-
-    const benign = {
-      ...cancellationCommand(profileA, benignHolder),
-      commandId: "command-sk-review",
-    };
-    await expect(adapter.requestCancellation(benign)).resolves.toMatchObject({
-      commandId: "command-sk-review",
-      profileId: profileA,
-      runId,
-      requestAccepted: true,
-    });
-
-    const credentialShaped = {
-      ...benign,
-      commandId: `command-sk-${"a".repeat(20)}`,
-    };
-    await expect(adapter.requestCancellation(credentialShaped))
-      .rejects.toThrow("control command is invalid");
+    await admitProfile(adapter, profileA, holderA);
+    const base = cancellationCommand(profileA, holderA);
+    for (const commandId of [
+      `command-sk-${"a".repeat(20)}`,
+      `command-ghp_${"a".repeat(20)}`,
+      `command-github_pat_${"a".repeat(20)}`,
+      `command-stn.tok_${"a".repeat(20)}`,
+      `command-xoxb-${"a".repeat(16)}`,
+      "command-env://github/token",
+    ]) {
+      await expect(adapter.requestCancellation({ ...base, commandId }))
+        .rejects.toThrow("control command is invalid");
+    }
   });
 
   test("keeps profile A cancellation valid after profile B is admitted", async () => {
