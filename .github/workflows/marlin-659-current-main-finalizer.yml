@@ -1,8 +1,9 @@
 name: Marlin 659 current-main replay finalizer
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - marlin/659-current-main-replay
 
 permissions:
   contents: write
@@ -13,7 +14,6 @@ concurrency:
 
 jobs:
   finalize:
-    if: github.head_ref == 'marlin/659-current-main-replay'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
