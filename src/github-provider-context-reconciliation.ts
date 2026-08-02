@@ -70,6 +70,10 @@ const issueResultOperations = new Set<GitHubIssueProviderOperation>([
   "github_add_issue_assignees",
   "github_remove_issue_assignees",
 ]);
+const receiptProducingOperations = new Set<GitHubIssueProviderOperation>([
+  ...issueResultOperations,
+  "github_add_issue_comment",
+]);
 const sourceRevisionPattern = /^[A-Za-z0-9._:/@#-]+$/u;
 
 export function compileGitHubProviderContextReconciliation(
@@ -127,6 +131,10 @@ interface Decision {
 function assertReceiptLifecycleCoherence(
   receipt: GitHubProviderReceipt,
 ): void {
+  if (!receiptProducingOperations.has(receipt.operation)) {
+    throw new Error("GitHub operation does not produce a provider write receipt");
+  }
+
   switch (receipt.state) {
     case "reserved":
       if (
@@ -182,7 +190,7 @@ function assertReceiptLifecycleCoherence(
         || receipt.result === null
         || receipt.verification.state !== "failed"
         || receipt.verification.checkedAt === null
-        || receipt.verification.sourceRevision === null
+        || receipt.verification.sourceRevision !== receipt.result.sourceRevision
         || receipt.error === null
         || receipt.error.code !== "stale_provider_version"
         || receipt.error.retry !== "do_not_retry"
@@ -198,7 +206,7 @@ function assertReceiptLifecycleCoherence(
         receipt.result === null
         || receipt.verification.state !== "passed"
         || receipt.verification.checkedAt === null
-        || receipt.verification.sourceRevision === null
+        || receipt.verification.sourceRevision !== receipt.result.sourceRevision
         || receipt.error !== null
         || receipt.recovery.nextAction !== "none"
       ) {
@@ -236,13 +244,26 @@ function decide(
       "none",
     );
   }
-  if (!issueResultOperations.has(receipt.operation)) {
+  if (receipt.operation === "github_add_issue_comment") {
+    if (receipt.result === null || !("issueNumber" in receipt.result)) {
+      throw new Error("Settled GitHub comment receipt requires an admitted comment result");
+    }
+    const expectedTarget =
+      `${receipt.repositoryFullName}#${receipt.result.issueNumber}:comment:new`;
+    if (receipt.target !== expectedTarget) {
+      throw new Error(
+        "Settled GitHub comment receipt target does not bind the provider result",
+      );
+    }
     return decision(
       null,
       null,
       "no_issue_context_effect",
       "none",
     );
+  }
+  if (!issueResultOperations.has(receipt.operation)) {
+    throw new Error("GitHub operation does not produce reconcilable issue context");
   }
   if (receipt.result === null || !("reference" in receipt.result)) {
     throw new Error("Settled GitHub issue receipt requires an admitted issue result");
