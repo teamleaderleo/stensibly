@@ -536,7 +536,7 @@ function denseDataArray(
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       throw new TypeError(`${label} must contain only dense data entries`);
     }
-    entries.push(descriptor.value;
+    entries.push(descriptor.value);
   }
   return entries;
 }
