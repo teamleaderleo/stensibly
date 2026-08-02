@@ -7,6 +7,7 @@ import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import type {
   GitHubInstallationTokenProvider,
 } from "./github-app-installation-token.js";
+import { GitHubProviderPostEffectError } from "./github-provider-post-effect-error.js";
 import {
   boundedText,
   canonicalLogins,
@@ -224,7 +225,7 @@ export class GitHubRestIssueSetWriteAdapter
     try {
       issue = await this.#reads.getIssue({ repositoryFullName, issueNumber });
     } catch {
-      throw ambiguousVerificationError();
+      throw new GitHubProviderPostEffectError(response.requestId);
     }
     return { issue, providerRequestId: response.requestId };
   }
@@ -484,12 +485,6 @@ function ambiguousTransportError(operation: string): Error {
 function ambiguousMutationResult(operation: string): Error {
   return new Error(
     `GitHub ${operation} succeeded without an admissible exact response; reconcile before retry`,
-  );
-}
-
-function ambiguousVerificationError(): Error {
-  return new Error(
-    "GitHub issue readback could not confirm the mutation; reconcile before retry",
   );
 }
 
