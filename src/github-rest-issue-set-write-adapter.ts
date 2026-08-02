@@ -9,6 +9,10 @@ import type {
 } from "./github-app-installation-token.js";
 import { GitHubProviderPostEffectError } from "./github-provider-post-effect-error.js";
 import {
+  discardGitHubProviderResponse,
+  readBoundedGitHubProviderResponseText,
+} from "./github-provider-bounded-response.js";
+import {
   boundedText,
   canonicalLogins,
   canonicalStringList,
@@ -217,7 +221,7 @@ export class GitHubRestIssueSetWriteAdapter
       ...(input.body ? { body: input.body } : {}),
       operation: input.operation,
     });
-    admitMutationResponse(input.operation, () =>
+    admitMutationResponse(input.operation, response.requestId, () =>
       input.admitResponse(response.value, repositoryFullName, issueNumber)
     );
 
@@ -258,13 +262,17 @@ export class GitHubRestIssueSetWriteAdapter
       throw ambiguousTransportError(input.operation);
     }
 
-    const text = await boundedResponseText(response, input.operation);
+    const requestId = admittedRequestId(
+      response.headers.get("x-github-request-id"),
+    );
     if (!response.ok) {
+      await discardGitHubProviderResponse(response);
       if (
         response.status >= 500
         || response.status === 408
         || response.status === 429
       ) {
+        if (requestId) throw new GitHubProviderPostEffectError(requestId);
         throw ambiguousTransportError(input.operation);
       }
       throw new GitHubProviderRejectedError(
@@ -273,15 +281,24 @@ export class GitHubRestIssueSetWriteAdapter
       );
     }
 
+    let text: string;
+    try {
+      text = await readBoundedGitHubProviderResponseText(
+        response,
+        maximumResponseBytes,
+      );
+    } catch {
+      if (requestId) throw new GitHubProviderPostEffectError(requestId);
+      throw ambiguousTransportError(input.operation);
+    }
+
     let value: unknown;
     try {
       value = JSON.parse(text);
     } catch {
+      if (requestId) throw new GitHubProviderPostEffectError(requestId);
       throw ambiguousMutationResult(input.operation);
     }
-    const requestId = admittedRequestId(
-      response.headers.get("x-github-request-id"),
-    );
     if (!requestId) throw ambiguousMutationResult(input.operation);
     return { requestId, value };
   }
@@ -391,11 +408,15 @@ function assertIssueRepository(
   }
 }
 
-function admitMutationResponse(operation: string, admit: () => void): void {
+function admitMutationResponse(
+  _operation: string,
+  providerRequestId: string,
+  admit: () => void,
+): void {
   try {
     admit();
   } catch {
-    throw ambiguousMutationResult(operation);
+    throw new GitHubProviderPostEffectError(providerRequestId);
   }
 }
 
@@ -411,29 +432,6 @@ function boundedResponseTextValue(
   } catch {
     throw ambiguousMutationResult(operation);
   }
-}
-
-async function boundedResponseText(
-  response: Response,
-  operation: string,
-): Promise<string> {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength && /^\d+$/.test(contentLength)) {
-    const length = Number(contentLength);
-    if (!Number.isSafeInteger(length) || length > maximumResponseBytes) {
-      throw ambiguousTransportError(operation);
-    }
-  }
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    throw ambiguousTransportError(operation);
-  }
-  if (Buffer.byteLength(text, "utf8") > maximumResponseBytes) {
-    throw ambiguousTransportError(operation);
-  }
-  return text;
 }
 
 function admittedRequestId(value: string | null): string | null {
