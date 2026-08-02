@@ -1,0 +1,262 @@
+import type {
+  GitHubIssueProviderOperation,
+  GitHubProviderReceipt,
+} from "./github-provider-contracts.js";
+import {
+  parseGitHubIssueExternalId,
+  type GitHubIssueContext,
+} from "./github-issue-context.js";
+import { admitGitHubProviderReceipt } from "./github-provider-receipt-admission.js";
+import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+
+export const GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1 = 1 as const;
+
+export type GitHubProviderContextReconciliationOutcome =
+  | "await_provider_result"
+  | "pending_provider_reconciliation"
+  | "no_issue_context_effect"
+  | "already_current"
+  | "propose_context_acceptance"
+  | "identity_conflict";
+
+export type GitHubProviderContextReconciliationNextAction =
+  | "await_provider_result"
+  | "reconcile_provider_operation"
+  | "none"
+  | "submit_context_acceptance"
+  | "inspect_issue_identity_conflict";
+
+export interface CurrentGitHubIssueContextIdentityV1 {
+  externalId: string;
+  sourceRevision: string;
+}
+
+export interface GitHubProviderContextReconciliationInputV1 {
+  schemaVersion: typeof GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1;
+  receipt: GitHubProviderReceipt;
+  current: CurrentGitHubIssueContextIdentityV1 | null;
+}
+
+export interface GitHubProviderContextReconciliationProposalV1 {
+  schemaVersion: typeof GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1;
+  project: string;
+  repositoryFullName: string;
+  receiptId: string;
+  operation: GitHubIssueProviderOperation;
+  externalId: string | null;
+  currentSourceRevision: string | null;
+  providerSourceRevision: string | null;
+  outcome: GitHubProviderContextReconciliationOutcome;
+  nextAction: GitHubProviderContextReconciliationNextAction;
+  providerSnapshot: Readonly<GitHubIssueContext> | null;
+  inputFingerprint: string;
+  proposalFingerprint: string;
+  authorizesProviderMutation: false;
+  authorizesContextAcceptance: false;
+  authorizesAuthority: false;
+}
+
+const inputKeys = ["schemaVersion", "receipt", "current"] as const;
+const currentKeys = ["externalId", "sourceRevision"] as const;
+const issueResultOperations = new Set<GitHubIssueProviderOperation>([
+  "github_create_issue",
+  "github_update_issue",
+  "github_add_issue_labels",
+  "github_remove_issue_label",
+  "github_add_issue_assignees",
+  "github_remove_issue_assignees",
+]);
+const sourceRevisionPattern = /^[A-Za-z0-9._:/@#-]+$/u;
+
+export function compileGitHubProviderContextReconciliation(
+  value: unknown,
+): GitHubProviderContextReconciliationProposalV1 {
+  const input = exactRecord(value, inputKeys, "GitHub provider context reconciliation input");
+  if (input.schemaVersion !== GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1) {
+    throw new RangeError("GitHub provider context reconciliation schemaVersion must equal 1");
+  }
+  const receipt = admitGitHubProviderReceipt(input.receipt as GitHubProviderReceipt);
+  const current = input.current === null ? null : admitCurrentIdentity(input.current);
+  const inputFingerprint = fingerprintCanonicalRequest({
+    schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
+    receipt,
+    current,
+  });
+
+  const decision = decide(receipt, current);
+  const body = {
+    schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
+    project: receipt.project,
+    repositoryFullName: receipt.repositoryFullName,
+    receiptId: receipt.id,
+    operation: receipt.operation,
+    externalId: decision.externalId,
+    currentSourceRevision: current?.sourceRevision ?? null,
+    providerSourceRevision: decision.providerSourceRevision,
+    outcome: decision.outcome,
+    nextAction: decision.nextAction,
+    providerSnapshot: decision.providerSnapshot,
+    inputFingerprint,
+    authorizesProviderMutation: false as const,
+    authorizesContextAcceptance: false as const,
+    authorizesAuthority: false as const,
+  };
+  return deepFreeze({
+    ...body,
+    proposalFingerprint: fingerprintCanonicalRequest(body),
+  });
+}
+
+interface Decision {
+  externalId: string | null;
+  providerSourceRevision: string | null;
+  outcome: GitHubProviderContextReconciliationOutcome;
+  nextAction: GitHubProviderContextReconciliationNextAction;
+  providerSnapshot: GitHubIssueContext | null;
+}
+
+function decide(
+  receipt: GitHubProviderReceipt,
+  current: CurrentGitHubIssueContextIdentityV1 | null,
+): Decision {
+  if (receipt.state === "reserved") {
+    return decision(
+      null,
+      null,
+      "await_provider_result",
+      "await_provider_result",
+    );
+  }
+  if (receipt.state === "pending_reconciliation") {
+    return decision(
+      null,
+      null,
+      "pending_provider_reconciliation",
+      "reconcile_provider_operation",
+    );
+  }
+  if (receipt.state === "rejected") {
+    return decision(
+      null,
+      null,
+      "no_issue_context_effect",
+      "none",
+    );
+  }
+  if (!issueResultOperations.has(receipt.operation)) {
+    return decision(
+      null,
+      null,
+      "no_issue_context_effect",
+      "none",
+    );
+  }
+  if (receipt.result === null || !("reference" in receipt.result)) {
+    throw new Error("Settled GitHub issue receipt requires an admitted issue result");
+  }
+
+  const snapshot = receipt.result;
+  const externalId = snapshot.reference.externalId;
+  if (current !== null && current.externalId !== externalId) {
+    return decision(
+      externalId,
+      snapshot.sourceRevision,
+      "identity_conflict",
+      "inspect_issue_identity_conflict",
+    );
+  }
+  if (current?.sourceRevision === snapshot.sourceRevision) {
+    return decision(
+      externalId,
+      snapshot.sourceRevision,
+      "already_current",
+      "none",
+    );
+  }
+  return decision(
+    externalId,
+    snapshot.sourceRevision,
+    "propose_context_acceptance",
+    "submit_context_acceptance",
+    snapshot,
+  );
+}
+
+function decision(
+  externalId: string | null,
+  providerSourceRevision: string | null,
+  outcome: GitHubProviderContextReconciliationOutcome,
+  nextAction: GitHubProviderContextReconciliationNextAction,
+  providerSnapshot: GitHubIssueContext | null = null,
+): Decision {
+  return {
+    externalId,
+    providerSourceRevision,
+    outcome,
+    nextAction,
+    providerSnapshot,
+  };
+}
+
+function admitCurrentIdentity(value: unknown): CurrentGitHubIssueContextIdentityV1 {
+  const current = exactRecord(value, currentKeys, "Current GitHub issue context identity");
+  if (typeof current.externalId !== "string") {
+    throw new RangeError("Current GitHub issue external ID is invalid");
+  }
+  const externalId = parseGitHubIssueExternalId(current.externalId).externalId;
+  if (externalId !== current.externalId) {
+    throw new RangeError("Current GitHub issue external ID must be canonical");
+  }
+  if (
+    typeof current.sourceRevision !== "string"
+    || current.sourceRevision.length === 0
+    || current.sourceRevision.length > 512
+    || !sourceRevisionPattern.test(current.sourceRevision)
+  ) {
+    throw new RangeError("Current GitHub issue source revision is invalid");
+  }
+  return Object.freeze({
+    externalId,
+    sourceRevision: current.sourceRevision,
+  });
+}
+
+function exactRecord<const K extends readonly string[]>(
+  value: unknown,
+  keys: K,
+  label: string,
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must use a plain prototype`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (ownKeys.some((key) => typeof key !== "string" || !keys.includes(key))) {
+    throw new TypeError(`${label} contains unknown fields`);
+  }
+  if (ownKeys.length !== keys.length) {
+    throw new TypeError(`${label} is missing required fields`);
+  }
+  const output = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} fields must be enumerable data properties`);
+    }
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(nested, seen);
+  }
+  return Object.freeze(value);
+}
