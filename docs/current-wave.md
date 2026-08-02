@@ -84,14 +84,14 @@ Hosted issue-context persistence landed through #908. #933 exposed project-scope
 
 #492 still needs exact Worker revision evidence, one authorised hosted context receipt, and use of that context during the sustained #490 lifecycle and reconnect sequence.
 
-#958 now owns the pure outbound-receipt-to-context reconciliation compiler. Parent #961 is the active four-file candidate. Its current source re-admits both the provider receipt and embedded issue snapshot, retains actor/attachment/verification identity, returns the provider snapshot only for a proposed acceptance, and grants no provider mutation, context acceptance, or authority.
+#958 now owns the pure outbound-receipt-to-context reconciliation compiler. Parent #961 is the active integration candidate. Its current source re-admits both the provider receipt and embedded issue snapshot, retains actor/attachment/verification identity, returns the provider snapshot only for a proposed acceptance, and grants no provider mutation, context acceptance, or authority.
 
-Two source repairs remain before #961 can enter canonical integration:
+Two accepted stacked source children own the remaining repairs:
 
-- accepted child #964 supplies the production target grammar for create, update, label, and assignee mutations;
-- #961 must reject contradictory receipt state/result combinations before outcome classification, including reserved/pending/rejected receipts with results and impossible stale operations.
+- #964 at `246885da7c4074a2f57a8f25ae2d8e313e7ce8df` supplies the production target grammar for create, update, label, and assignee mutations; canonical run `30759628827` remains pending;
+- #969 at `7e91793445c17cd1eb7993bc45fe8022f3e9c698` admits only write-produced receipts, rejects contradictory state/result lifecycles, binds settled comment target/source identity, and limits stale readback to guarded issue updates; canonical run `30760288404` remains pending.
 
-Closed duplicate #963 contributed review findings only and must not be integrated beside #961.
+After unchanged-head CI succeeds, absorb #964 and then #969 into #961, retire both children, and rerun the complete parent on one exact current-main head. Closed duplicate #963 contributed review findings only and must not be integrated beside this stack.
 
 ### GitHub Actions job details
 
@@ -181,7 +181,7 @@ Merged code, dashboard deployment presence, metadata checks, or one successful o
 | --- | --- | --- | --- | --- |
 | P0 | #490 sustained-use incident | Repository paths are stronger; repeated execution and reconnect remain unproved | Run the complete uniquely identified lifecycle in one fresh authenticated conversation, checkpointing GitHub between segments | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
 | P0 | #921 governed GitHub writes | Repository implementation is merged; Worker revision and write flag remain unverified | Verify Worker revision/declaration, perform authorised create/update/comment, look up the receipt, reconnect, then replay the same identities | Receipt survives reconnect, exact replay does not duplicate, and accepted-context reconciliation is visible |
-| P0 | #492 hosted GitHub context | Persistence/public action are merged; #961 reconciliation compiler remains under repair | Finish #961 target/state semantics, then verify Worker revision and one authorised hosted context receipt | Compiler integrates and hosted receipt plus repeated lifecycle use pass |
+| P0 | #492 hosted GitHub context | Persistence/public action are merged; #961 has accepted stacked repairs #964 and #969 pending CI/absorption | Complete both child runs, absorb #964 then #969 into #961, rerun the parent, then verify Worker revision and one authorised hosted context receipt | Compiler integrates and hosted receipt plus repeated lifecycle use pass |
 | P0 | #697 Actions step/log mounting | Opt-in ten-read code is merged; Worker revision and flag remain unverified | Verify Worker revision/flag, then record one authenticated hosted step/log receipt and exact discovery declaration | Live attributable receipt passes and #697 closes |
 | P1 | #943 review-thread truncation | #944 source review is complete; exact-head jobs are queued | Let run `30755171898` finish unchanged, refresh gates, then squash-integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
 | P1 | #700 trigger receipts | #953 source is accepted; exact-head run exists without jobs | Let run `30759262459` execute, then refresh exact-head gates and integrate | Trigger absence, unknown coverage, and observed-run evidence remain distinct |
@@ -207,7 +207,7 @@ Before committing to a lane, inspect dependencies, useful continuations, and ove
 
 - Obtain exact **Deploy Worker Production** evidence for the official/fallback API/MCP hosts, including deployed revision and enabled feature set.
 - After Worker proof, run one authorised #921 create/update/comment and receipt replay/reconnect journey.
-- Finish #961 by absorbing #964’s target grammar and adding the exact receipt state/result semantic gate.
+- Complete #964 and #969 CI, absorb them into #961 in order, retire the children, and rerun the complete parent.
 - Record one authorised hosted `get_github_project_context` receipt for #492 and one authenticated step/log receipt for #697.
 - Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.
 - Finish unchanged exact-head CI and integration for #944 and #953.
