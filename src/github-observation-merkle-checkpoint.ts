@@ -121,8 +121,11 @@ const consistencyProofKeys = [
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const timestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
+const stableIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/u;
 const unsafeIdentityPattern =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const realisticCredentialPattern =
+  /(?:^|[\s:./=,;'"()[\]{}@#_-])(?:Bearer\s+[A-Za-z0-9._~+/-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})(?=$|[\s:./=,;'"()[\]{}@#_-])/imu;
 const maximumLeaves = 4_096;
 const maximumAuditPath = 64;
 const leafDomain = "stensibly.github-observation-merkle.leaf/v1";
@@ -195,12 +198,18 @@ export function verifyGitHubObservationInclusionProofV1(
 ): boolean {
   const checkpoint = admitCheckpoint(checkpointValue);
   const proof = admitInclusionProof(proofValue);
+  const expectedSequence = checkpoint.firstSequence === null
+    ? null
+    : checkpoint.firstSequence + proof.leafIndex;
   if (
     checkpoint.treeSize === 0
     || proof.ledgerId !== checkpoint.ledgerId
     || proof.checkpointFingerprint !== checkpoint.checkpointFingerprint
     || proof.treeSize !== checkpoint.treeSize
     || proof.leafIndex >= checkpoint.treeSize
+    || expectedSequence === null
+    || !Number.isSafeInteger(expectedSequence)
+    || proof.sequence !== expectedSequence
   ) {
     return false;
   }
@@ -750,7 +759,9 @@ function boundedIdentity(value: unknown, label: string, maximumBytes: number): s
     typeof value !== "string"
     || value.length === 0
     || Buffer.byteLength(value, "utf8") > maximumBytes
+    || !stableIdentityPattern.test(value)
     || unsafeIdentityPattern.test(value)
+    || realisticCredentialPattern.test(value)
   ) {
     throw new RangeError(`${label} is invalid`);
   }
