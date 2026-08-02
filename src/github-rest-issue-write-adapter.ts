@@ -10,6 +10,7 @@ import type {
 } from "./github-app-installation-token.js";
 import {
   canonicalBody,
+  canonicalLogins,
   normalizeGitHubRepository,
   sha256,
   stableJson,
@@ -27,19 +28,38 @@ interface ProviderResponse<T> {
   requestId?: string;
 }
 
+interface GitHubApiIssue {
+  number?: unknown;
+  node_id?: unknown;
+  repository_url?: unknown;
+  title?: unknown;
+  body?: unknown;
+  state?: unknown;
+  state_reason?: unknown;
+  labels?: unknown;
+  assignees?: unknown;
+  milestone?: unknown;
+  created_at?: unknown;
+  updated_at?: unknown;
+  pull_request?: unknown;
+}
+
 const githubApiVersion = "2022-11-28";
 const maximumResponseBytes = 512 * 1024;
 
 /**
  * Adds the first bounded issue mutations to the existing strict read adapter.
- * Every mutation uses an exact issues:write installation token and leaves final
- * effect certainty to the service's independent readback plus durable receipt.
+ * Every mutation uses an exact issues:write installation token. A successful
+ * mutation marks its next verification read so any later uncertainty remains
+ * pending reconciliation instead of being misreported as a clean rejection.
  */
 export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
   readonly #reads: GitHubRestIssueProviderAdapter;
   readonly #tokens: GitHubInstallationTokenProvider;
   readonly #apiBaseUrl: string;
   readonly #fetch: typeof fetch;
+  readonly #pendingIssueReadbacks = new Map<string, number>();
+  readonly #pendingCommentReadbacks = new Map<string, number>();
 
   constructor(options: GitHubRestIssueWriteAdapterOptions) {
     this.#reads = new GitHubRestIssueProviderAdapter(options);
@@ -50,16 +70,41 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
-  listIssues(input: Parameters<GitHubIssueProviderAdapter["listIssues"]>[0]): Promise<GitHubIssueProviderPage> {
+  listIssues(
+    input: Parameters<GitHubIssueProviderAdapter["listIssues"]>[0],
+  ): Promise<GitHubIssueProviderPage> {
     return this.#reads.listIssues(input);
   }
 
-  searchIssues(input: Parameters<GitHubIssueProviderAdapter["searchIssues"]>[0]): Promise<GitHubIssueProviderPage> {
+  searchIssues(
+    input: Parameters<GitHubIssueProviderAdapter["searchIssues"]>[0],
+  ): Promise<GitHubIssueProviderPage> {
     return this.#reads.searchIssues(input);
   }
 
-  getIssue(input: Parameters<GitHubIssueProviderAdapter["getIssue"]>[0]): Promise<GitHubIssueContextInput> {
-    return this.#reads.getIssue(input);
+  async getIssue(
+    input: Parameters<GitHubIssueProviderAdapter["getIssue"]>[0],
+  ): Promise<GitHubIssueContextInput> {
+    const repositoryFullName = normalizeGitHubRepository(
+      input.repositoryFullName,
+    ).toLowerCase();
+    const issueNumber = positiveInputInteger(
+      input.issueNumber,
+      "GitHub issue number",
+    );
+    const postMutation = consumePending(
+      this.#pendingIssueReadbacks,
+      issueReadbackKey(repositoryFullName, issueNumber),
+    );
+    try {
+      return await this.#reads.getIssue({
+        repositoryFullName,
+        issueNumber,
+      });
+    } catch (error) {
+      if (postMutation) throw ambiguousVerificationError("issue");
+      throw error;
+    }
   }
 
   async createIssue(
@@ -68,10 +113,9 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     const repositoryFullName = normalizeGitHubRepository(
       input.repositoryFullName,
     ).toLowerCase();
-    const url = issueCollectionUrl(this.#apiBaseUrl, repositoryFullName);
     const response = await this.#requestJson<Record<string, unknown>>({
       repositoryFullName,
-      url,
+      url: issueCollectionUrl(this.#apiBaseUrl, repositoryFullName),
       method: "POST",
       body: {
         title: input.title,
@@ -82,18 +126,18 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
       operation: "create issue",
       permission: "write",
     });
-    const issueNumber = positiveInteger(
-      response.value.number,
-      "Created GitHub issue number",
+    const providerRequestId = mutationRequestId(
+      response.requestId,
+      "create issue",
     );
-    const issue = await this.#reads.getIssue({
-      repositoryFullName,
-      issueNumber,
-    });
-    return {
-      issue,
-      ...(response.requestId ? { providerRequestId: response.requestId } : {}),
-    };
+    const issue = admitMutationResult("create issue", () =>
+      mapIssue(repositoryFullName, response.value, this.#apiBaseUrl)
+    );
+    markPending(
+      this.#pendingIssueReadbacks,
+      issueReadbackKey(repositoryFullName, issue.number),
+    );
+    return { issue, providerRequestId };
   }
 
   async updateIssue(
@@ -102,7 +146,7 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     const repositoryFullName = normalizeGitHubRepository(
       input.repositoryFullName,
     ).toLowerCase();
-    const issueNumber = positiveInteger(
+    const issueNumber = positiveInputInteger(
       input.issueNumber,
       "GitHub issue number",
     );
@@ -121,21 +165,21 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
       operation: "update issue",
       permission: "write",
     });
-    const returnedNumber = positiveInteger(
-      response.value.number,
-      "Updated GitHub issue number",
+    const providerRequestId = mutationRequestId(
+      response.requestId,
+      "update issue",
     );
-    if (returnedNumber !== issueNumber) {
-      throw invalidResponse("GitHub update response targeted another issue");
+    const issue = admitMutationResult("update issue", () =>
+      mapIssue(repositoryFullName, response.value, this.#apiBaseUrl)
+    );
+    if (issue.number !== issueNumber) {
+      throw ambiguousMutationResult("update issue");
     }
-    const issue = await this.#reads.getIssue({
-      repositoryFullName,
-      issueNumber,
-    });
-    return {
-      issue,
-      ...(response.requestId ? { providerRequestId: response.requestId } : {}),
-    };
+    markPending(
+      this.#pendingIssueReadbacks,
+      issueReadbackKey(repositoryFullName, issueNumber),
+    );
+    return { issue, providerRequestId };
   }
 
   async addIssueComment(
@@ -144,7 +188,7 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     const repositoryFullName = normalizeGitHubRepository(
       input.repositoryFullName,
     ).toLowerCase();
-    const issueNumber = positiveInteger(
+    const issueNumber = positiveInputInteger(
       input.issueNumber,
       "GitHub issue number",
     );
@@ -160,15 +204,23 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
       operation: "add issue comment",
       permission: "write",
     });
-    return {
-      comment: mapComment(
+    const providerRequestId = mutationRequestId(
+      response.requestId,
+      "add issue comment",
+    );
+    const comment = admitMutationResult("add issue comment", () =>
+      mapComment(
         response.value,
         repositoryFullName,
         issueNumber,
         this.#apiBaseUrl,
-      ),
-      ...(response.requestId ? { providerRequestId: response.requestId } : {}),
-    };
+      )
+    );
+    markPending(
+      this.#pendingCommentReadbacks,
+      commentReadbackKey(repositoryFullName, issueNumber, comment.id),
+    );
+    return { comment, providerRequestId };
   }
 
   async getIssueComment(
@@ -177,7 +229,7 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     const repositoryFullName = normalizeGitHubRepository(
       input.repositoryFullName,
     ).toLowerCase();
-    const issueNumber = positiveInteger(
+    const issueNumber = positiveInputInteger(
       input.issueNumber,
       "GitHub issue number",
     );
@@ -185,27 +237,36 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
       input.commentId,
       "GitHub issue comment ID",
     );
-    const response = await this.#requestJson<Record<string, unknown>>({
-      repositoryFullName,
-      url: issueCommentUrl(
-        this.#apiBaseUrl,
-        repositoryFullName,
-        commentId,
-      ),
-      method: "GET",
-      operation: "get issue comment",
-      permission: "read",
-    });
-    const comment = mapComment(
-      response.value,
-      repositoryFullName,
-      issueNumber,
-      this.#apiBaseUrl,
+    const postMutation = consumePending(
+      this.#pendingCommentReadbacks,
+      commentReadbackKey(repositoryFullName, issueNumber, commentId),
     );
-    if (comment.id !== commentId) {
-      throw invalidResponse("GitHub comment response identity changed");
+    try {
+      const response = await this.#requestJson<Record<string, unknown>>({
+        repositoryFullName,
+        url: issueCommentUrl(
+          this.#apiBaseUrl,
+          repositoryFullName,
+          commentId,
+        ),
+        method: "GET",
+        operation: "get issue comment",
+        permission: "read",
+      });
+      const comment = mapComment(
+        response.value,
+        repositoryFullName,
+        issueNumber,
+        this.#apiBaseUrl,
+      );
+      if (comment.id !== commentId) {
+        throw invalidResponse("GitHub comment response identity changed");
+      }
+      return comment;
+    } catch (error) {
+      if (postMutation) throw ambiguousVerificationError("issue comment");
+      throw error;
     }
-    return comment;
   }
 
   addIssueLabels: GitHubIssueProviderAdapter["addIssueLabels"] = async () => {
@@ -266,17 +327,87 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     try {
       value = JSON.parse(text);
     } catch {
+      if (input.method !== "GET") {
+        throw ambiguousMutationResult(input.operation);
+      }
       throw invalidResponse(`GitHub ${input.operation} response was not valid JSON`);
     }
     if (!isRecord(value)) {
+      if (input.method !== "GET") {
+        throw ambiguousMutationResult(input.operation);
+      }
       throw invalidResponse(`GitHub ${input.operation} response was malformed`);
     }
-    const requestId = response.headers.get("x-github-request-id")?.trim();
+    const requestId = admittedRequestId(
+      response.headers.get("x-github-request-id"),
+    );
     return {
       value: value as T,
       ...(requestId ? { requestId } : {}),
     };
   }
+}
+
+function mapIssue(
+  repositoryFullName: string,
+  value: Record<string, unknown>,
+  apiBaseUrl: string,
+): GitHubIssueContextInput {
+  if (value.pull_request !== undefined) {
+    throw invalidResponse("GitHub issue mutation returned a pull request");
+  }
+  assertIssueRepository(value.repository_url, repositoryFullName, apiBaseUrl);
+  const [owner, repository] = repositoryParts(repositoryFullName);
+  const number = positiveResponseInteger(
+    value.number,
+    "GitHub issue number",
+  );
+  const providerNodeId = optionalString(
+    value.node_id,
+    "GitHub issue node ID",
+    256,
+  );
+  const title = requiredString(value.title, "GitHub issue title", 256);
+  const body = value.body === null || value.body === undefined
+    ? null
+    : requiredString(value.body, "GitHub issue body", 128 * 1024);
+  const state = exactState(value.state);
+  const stateReason = exactStateReason(value.state_reason);
+  const labels = githubLabels(value.labels);
+  const assignees = githubAssignees(value.assignees);
+  const milestone = githubMilestone(value.milestone);
+  const createdAt = timestamp(value.created_at, "GitHub issue created time");
+  const updatedAt = timestamp(value.updated_at, "GitHub issue updated time");
+  const sourceRevision = sha256(stableJson({
+    nodeId: providerNodeId,
+    number,
+    title,
+    body,
+    state,
+    stateReason,
+    labels,
+    assignees,
+    milestone,
+    createdAt,
+    updatedAt,
+  }));
+  return {
+    owner,
+    repository,
+    number,
+    title,
+    body,
+    state,
+    stateReason,
+    labels,
+    assignees,
+    milestone,
+    relationships: [],
+    createdAt,
+    updatedAt,
+    providerNodeId,
+    sourceRevision,
+  };
 }
 
 function mapComment(
@@ -298,6 +429,7 @@ function mapComment(
     repositoryFullName,
     issueNumber,
     id,
+    apiBaseUrl,
   );
   const createdAt = timestamp(
     value.created_at,
@@ -359,6 +491,27 @@ function issueCommentUrl(
   );
 }
 
+function assertIssueRepository(
+  value: unknown,
+  repositoryFullName: string,
+  apiBaseUrl: string,
+): void {
+  const url = exactUrl(value, "GitHub issue repository URL");
+  const base = new URL(apiBaseUrl);
+  const [owner, repository] = repositoryParts(repositoryFullName);
+  const expectedPath = `${base.pathname.replace(/\/$/, "")}/repos/${owner}/${repository}`;
+  if (
+    url.origin !== base.origin
+    || url.pathname.toLowerCase() !== expectedPath.toLowerCase()
+    || url.search
+    || url.hash
+  ) {
+    throw invalidResponse(
+      "GitHub issue response did not match the accepted repository",
+    );
+  }
+}
+
 function assertCommentIssueUrl(
   value: unknown,
   repositoryFullName: string,
@@ -384,11 +537,13 @@ function canonicalCommentUrl(
   repositoryFullName: string,
   issueNumber: number,
   commentId: string,
+  apiBaseUrl: string,
 ): string {
   const url = exactUrl(value, "GitHub issue comment canonical URL");
   const [owner, repository] = repositoryParts(repositoryFullName);
   if (
-    url.pathname.toLowerCase()
+    url.origin !== expectedWebOrigin(apiBaseUrl)
+    || url.pathname.toLowerCase()
       !== `/${owner}/${repository}/issues/${issueNumber}`.toLowerCase()
     || url.search
     || url.hash !== `#issuecomment-${commentId}`
@@ -396,6 +551,16 @@ function canonicalCommentUrl(
     throw invalidResponse("GitHub issue comment canonical URL was invalid");
   }
   return url.toString();
+}
+
+function expectedWebOrigin(apiBaseUrl: string): string {
+  const api = new URL(apiBaseUrl);
+  if (api.hostname === "api.github.com") return "https://github.com";
+  if (api.hostname.startsWith("api.")) {
+    const hostname = api.hostname.slice("api.".length);
+    return `${api.protocol}//${hostname}${api.port ? `:${api.port}` : ""}`;
+  }
+  return api.origin;
 }
 
 async function boundedResponseText(
@@ -419,6 +584,57 @@ async function boundedResponseText(
     throw ambiguousTransportError(operation);
   }
   return text;
+}
+
+function admittedRequestId(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(normalized)
+    ? normalized
+    : null;
+}
+
+function mutationRequestId(
+  value: string | undefined,
+  operation: string,
+): string {
+  if (!value) throw ambiguousMutationResult(operation);
+  return value;
+}
+
+function admitMutationResult<T>(operation: string, admit: () => T): T {
+  try {
+    return admit();
+  } catch {
+    throw ambiguousMutationResult(operation);
+  }
+}
+
+function markPending(store: Map<string, number>, key: string): void {
+  store.set(key, (store.get(key) ?? 0) + 1);
+}
+
+function consumePending(store: Map<string, number>, key: string): boolean {
+  const count = store.get(key) ?? 0;
+  if (count === 0) return false;
+  if (count === 1) store.delete(key);
+  else store.set(key, count - 1);
+  return true;
+}
+
+function issueReadbackKey(
+  repositoryFullName: string,
+  issueNumber: number,
+): string {
+  return `${repositoryFullName}#${issueNumber}`;
+}
+
+function commentReadbackKey(
+  repositoryFullName: string,
+  issueNumber: number,
+  commentId: string,
+): string {
+  return `${repositoryFullName}#${issueNumber}:comment:${commentId}`;
 }
 
 function exactUrl(value: unknown, label: string): URL {
@@ -462,7 +678,14 @@ function repositoryParts(repositoryFullName: string): [string, string] {
   return [owner, repository];
 }
 
-function positiveInteger(value: unknown, label: string): number {
+function positiveInputInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return value;
+}
+
+function positiveResponseInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw invalidResponse(`${label} was invalid`);
   }
@@ -488,6 +711,75 @@ function requiredString(value: unknown, label: string, maximum: number): string 
   return normalized;
 }
 
+function optionalString(
+  value: unknown,
+  label: string,
+  maximum: number,
+): string | null {
+  if (value === null || value === undefined) return null;
+  return requiredString(value, label, maximum);
+}
+
+function githubLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const labels = value.map((entry) => {
+    if (typeof entry === "string") {
+      return requiredString(entry, "GitHub label", 100);
+    }
+    if (isRecord(entry)) {
+      return requiredString(entry.name, "GitHub label", 100);
+    }
+    throw invalidResponse("GitHub issue label was malformed");
+  });
+  return [...new Set(labels)].sort(codeUnitCompare);
+}
+
+function githubAssignees(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const assignees = value.map((entry) => {
+    if (!isRecord(entry)) {
+      throw invalidResponse("GitHub issue assignee was malformed");
+    }
+    return requiredString(entry.login, "GitHub assignee", 39).toLowerCase();
+  });
+  return canonicalLogins([...new Set(assignees)]);
+}
+
+function githubMilestone(
+  value: unknown,
+): GitHubIssueContextInput["milestone"] {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) {
+    throw invalidResponse("GitHub issue milestone was malformed");
+  }
+  return {
+    number: positiveResponseInteger(
+      value.number,
+      "GitHub milestone number",
+    ),
+    title: requiredString(
+      value.title,
+      "GitHub milestone title",
+      256,
+    ),
+  };
+}
+
+function exactState(value: unknown): "open" | "closed" {
+  if (value === "open" || value === "closed") return value;
+  throw invalidResponse("GitHub issue state was invalid");
+}
+
+function exactStateReason(
+  value: unknown,
+): "completed" | "not_planned" | "reopened" | null {
+  if (value === null || value === undefined) return null;
+  if (value === "completed" || value === "not_planned" || value === "reopened") {
+    return value;
+  }
+  throw invalidResponse("GitHub issue state reason was invalid");
+}
+
 function timestamp(value: unknown, label: string): string {
   if (typeof value !== "string") throw invalidResponse(`${label} was absent`);
   const parsed = new Date(value);
@@ -511,6 +803,22 @@ function unsupportedWrite(): GitHubProviderRejectedError {
 
 function ambiguousTransportError(operation: string): Error {
   return new Error(`GitHub ${operation} outcome requires reconciliation`);
+}
+
+function ambiguousMutationResult(operation: string): Error {
+  return new Error(
+    `GitHub ${operation} succeeded without an admissible exact response; reconcile before retry`,
+  );
+}
+
+function ambiguousVerificationError(target: string): Error {
+  return new Error(
+    `GitHub ${target} readback could not confirm the mutation; reconcile before retry`,
+  );
+}
+
+function codeUnitCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
