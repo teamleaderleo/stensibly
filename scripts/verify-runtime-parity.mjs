@@ -68,6 +68,32 @@ async function capture(command, args) {
   return stdout.trim();
 }
 
+async function verifyObservationMerkleParity() {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "stensibly-merkle-parity-"),
+  );
+  const bundle = join(temporaryDirectory, "observation-merkle-vector.mjs");
+  try {
+    await run("bun", [
+      "build",
+      "test/runtime/observation-merkle-vector.ts",
+      "--target=node",
+      "--format=esm",
+      `--outfile=${bundle}`,
+    ]);
+    const bunVector = await capture("bun", [bundle]);
+    const nodeVector = await capture("node", [bundle]);
+    if (bunVector !== nodeVector) {
+      throw new Error(
+        `Observation Merkle vectors diverged across Bun and Node\nBun: ${bunVector}\nNode: ${nodeVector}`,
+      );
+    }
+    console.log(bunVector);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 async function findWorkerdBinary() {
   const executable = process.platform === "win32" ? "workerd.exe" : "workerd";
   const candidates = [
@@ -211,18 +237,7 @@ async function main() {
   ]);
 
   console.log("== Observation Merkle vector parity ==");
-  const bunMerkleVector = await capture("bun", [
-    "test/runtime/observation-merkle-vector.ts",
-  ]);
-  const nodeMerkleVector = await capture("node", [
-    "test/runtime/observation-merkle-vector.ts",
-  ]);
-  if (bunMerkleVector !== nodeMerkleVector) {
-    throw new Error(
-      `Observation Merkle vectors diverged across Bun and Node\nBun: ${bunMerkleVector}\nNode: ${nodeMerkleVector}`,
-    );
-  }
-  console.log(bunMerkleVector);
+  await verifyObservationMerkleParity();
 
   const workerdBinary = await findWorkerdBinary();
   console.log("== workerd version ==");
