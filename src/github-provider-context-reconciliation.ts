@@ -43,6 +43,10 @@ export interface GitHubProviderContextReconciliationProposalV1 {
   repositoryFullName: string;
   receiptId: string;
   operation: GitHubIssueProviderOperation;
+  actorId: string;
+  attachmentId: string;
+  attachmentSnapshotSha256: string;
+  verificationCheckedAt: string | null;
   externalId: string | null;
   currentSourceRevision: string | null;
   providerSourceRevision: string | null;
@@ -90,6 +94,10 @@ export function compileGitHubProviderContextReconciliation(
     repositoryFullName: receipt.repositoryFullName,
     receiptId: receipt.id,
     operation: receipt.operation,
+    actorId: receipt.actorId,
+    attachmentId: receipt.attachmentId,
+    attachmentSnapshotSha256: receipt.attachmentSnapshotSha256,
+    verificationCheckedAt: receipt.verification.checkedAt,
     externalId: decision.externalId,
     currentSourceRevision: current?.sourceRevision ?? null,
     providerSourceRevision: decision.providerSourceRevision,
