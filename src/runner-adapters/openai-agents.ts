@@ -4,8 +4,14 @@ import {
   type OpenAIAgentsCheckpointAppendReceiptV1,
   type OpenAIAgentsCheckpointAppendV1,
   type OpenAIAgentsCheckpointRecordV1,
+  type OpenAIAgentsCompletion,
+  type OpenAIAgentsCompletionInput,
   type OpenAIAgentsExternalStore,
+  type OpenAIAgentsResumePreparationInput,
   type OpenAIAgentsRunnerAdapterOptions,
+  type OpenAIAgentsRuntime,
+  type OpenAIAgentsRuntimeFactory,
+  type OpenAIAgentsRuntimeFactoryInput,
 } from "./openai-agents-base.js";
 import {
   RUNNER_ADAPTER_V1,
@@ -117,6 +123,38 @@ class ReplayChronologyStore implements OpenAIAgentsExternalStore {
   }
 }
 
+class ProfileBoundRuntimeFactory implements OpenAIAgentsRuntimeFactory {
+  readonly #inner: OpenAIAgentsRuntimeFactory;
+  readonly #onResumePrepared: (command: RunnerResumeCommandV1) => void;
+
+  constructor(
+    inner: OpenAIAgentsRuntimeFactory,
+    onResumePrepared: (command: RunnerResumeCommandV1) => void,
+  ) {
+    this.#inner = inner;
+    this.#onResumePrepared = onResumePrepared;
+  }
+
+  create(
+    input: OpenAIAgentsRuntimeFactoryInput,
+  ): Promise<OpenAIAgentsRuntime> | OpenAIAgentsRuntime {
+    return this.#inner.create(input);
+  }
+
+  prepareResumeState(
+    input: OpenAIAgentsResumePreparationInput,
+  ): Promise<void> | void {
+    this.#onResumePrepared(input.command);
+    return this.#inner.prepareResumeState(input);
+  }
+
+  summarizeCompletion(
+    input: OpenAIAgentsCompletionInput,
+  ): Promise<OpenAIAgentsCompletion> | OpenAIAgentsCompletion {
+    return this.#inner.summarizeCompletion(input);
+  }
+}
+
 export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
   readonly #descriptor: RunnerAdapterDescriptorV1;
   readonly #now: () => Date;
@@ -124,12 +162,19 @@ export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
   readonly #latestCheckpoints = new Map<string, RunnerExternalReferenceV1>();
 
   constructor(options: OpenAIAgentsRunnerAdapterOptions) {
+    let onResumePrepared = (_command: RunnerResumeCommandV1): void => {};
+    const runtimeFactory = new ProfileBoundRuntimeFactory(
+      options.runtimeFactory,
+      (command) => onResumePrepared(command),
+    );
     super({
       ...options,
+      runtimeFactory,
       externalStore: new ReplayChronologyStore(options.externalStore),
     });
     this.#descriptor = super.describe();
     this.#now = options.now ?? (() => new Date());
+    onResumePrepared = (command) => this.#admitResumedCheckpoint(command);
   }
 
   override async *start(
@@ -204,6 +249,15 @@ export class OpenAIAgentsRunnerAdapter extends BaseOpenAIAgentsRunnerAdapter {
       this.#authorityHolders,
       controlKey(command),
       command.authority.holderId,
+    );
+  }
+
+  #admitResumedCheckpoint(command: RunnerResumeCommandV1): void {
+    if (command.checkpointRef === null) return;
+    setBoundedStringMap(
+      this.#latestCheckpoints,
+      controlKey(command),
+      command.checkpointRef,
     );
   }
 
