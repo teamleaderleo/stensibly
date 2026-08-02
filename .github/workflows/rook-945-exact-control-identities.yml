@@ -1,0 +1,184 @@
+name: Rook 945 exact control identity repair
+
+on:
+  push:
+    branches:
+      - rook/659-current-main-adapter-repair
+    paths:
+      - .github/workflows/rook-945-exact-control-identities.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-945-exact-control-identities
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: rook/659-current-main-adapter-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Apply exact-byte identity repair and controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/runner-adapters/openai-agents.ts")
+          source = source_path.read_text()
+          old = '''function canonicalBoundedText(
+            value: unknown,
+            maximum: number,
+            label: string,
+          ): string {
+            if (typeof value !== "string") {
+              throw new RangeError(`${label} must be text`);
+            }
+            const output = value.trim();
+            if (
+              output.length === 0
+              || output.length > maximum
+              || unsafeTextPattern.test(output)
+              || credentialShapedTextPattern.test(output)
+            ) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return output;
+          }'''
+          new = '''function canonicalBoundedText(
+            value: unknown,
+            maximum: number,
+            label: string,
+          ): string {
+            if (typeof value !== "string") {
+              throw new RangeError(`${label} must be text`);
+            }
+            if (
+              value !== value.trim()
+              || value.length === 0
+              || value.length > maximum
+              || unsafeTextPattern.test(value)
+              || credentialShapedTextPattern.test(value)
+            ) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return value;
+          }'''
+          if source.count(old) != 1:
+            raise SystemExit("canonical bounded text marker changed")
+          source_path.write_text(source.replace(old, new, 1))
+
+          test_path = Path("test/openai-agents-runner-adapter-control-identity.test.ts")
+          tests = test_path.read_text()
+          closing = '''  });
+});'''
+          if not tests.endswith(closing):
+            raise SystemExit("control identity suite closing marker changed")
+          addition = r'''
+
+  test("rejects whitespace-padded control identities as altered bytes", async () => {
+    const adapter = createAdapter();
+    await admitProfile(adapter, profileA, holderA);
+
+    const checkpoint = checkpointCommand(profileA, holderA);
+    const checkpointCases: unknown[] = [
+      { ...checkpoint, profileId: ` ${checkpoint.profileId}` },
+      { ...checkpoint, runId: `${checkpoint.runId} ` },
+      {
+        ...checkpoint,
+        authority: {
+          ...checkpoint.authority,
+          holderId: ` ${checkpoint.authority.holderId}`,
+        },
+      },
+      {
+        ...checkpoint,
+        authority: {
+          ...checkpoint.authority,
+          resource: `${checkpoint.authority.resource} `,
+        },
+      },
+    ];
+    const requestCheckpoint = adapter.requestCheckpoint.bind(adapter) as (
+      value: unknown,
+    ) => Promise<unknown>;
+    for (const hostile of checkpointCases) {
+      await expect(requestCheckpoint(hostile)).rejects.toThrow(
+        "OpenAI Agents control command is invalid",
+      );
+    }
+
+    const cancellation = cancellationCommand(profileA, holderA);
+    const cancellationCases: unknown[] = [
+      { ...cancellation, profileId: ` ${cancellation.profileId}` },
+      { ...cancellation, runId: `${cancellation.runId} ` },
+      {
+        ...cancellation,
+        authority: {
+          ...cancellation.authority,
+          holderId: ` ${cancellation.authority.holderId}`,
+        },
+      },
+      {
+        ...cancellation,
+        authority: {
+          ...cancellation.authority,
+          resource: `${cancellation.authority.resource} `,
+        },
+      },
+    ];
+    const requestCancellation = adapter.requestCancellation.bind(adapter) as (
+      value: unknown,
+    ) => Promise<unknown>;
+    for (const hostile of cancellationCases) {
+      await expect(requestCancellation(hostile)).rejects.toThrow(
+        "OpenAI Agents control command is invalid",
+      );
+    }
+'''
+          test_path.write_text(tests[:-len(closing)] + addition + "\n" + closing)
+          PY
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/openai-agents-runner-adapter.test.ts \
+            test/openai-agents-runner-adapter-review-repairs.test.ts \
+            test/openai-agents-runner-adapter-boundaries.test.ts \
+            test/openai-agents-runner-adapter-future-replay.test.ts \
+            test/openai-agents-runner-adapter-control-identity.test.ts \
+            test/openai-agents-runner-adapter-resume-cache.test.ts \
+            test/openai-agents-runner-adapter-import-boundary.test.ts
+
+      - name: Publish source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/rook-945-exact-control-identities.yml
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/runner-adapters/openai-agents.ts \
+            test/openai-agents-runner-adapter-control-identity.test.ts \
+            .github/workflows/rook-945-exact-control-identities.yml
+          git diff --cached --check
+          git commit -m "Require exact OpenAI Agents control identities"
+          git push --force-with-lease=refs/heads/rook/659-current-main-adapter-repair:$GITHUB_SHA \
+            origin HEAD:refs/heads/rook/659-current-main-adapter-repair
