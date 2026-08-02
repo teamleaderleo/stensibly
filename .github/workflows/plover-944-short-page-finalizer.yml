@@ -1,0 +1,129 @@
+name: Plover 944 valid short-page finalizer
+
+on:
+  push:
+    branches:
+      - lumen/943-review-comment-truncation-control
+    paths:
+      - .github/workflows/plover-944-short-page-finalizer.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plover-944-valid-short-page
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/943-review-comment-truncation-control
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Admit bounded short provider pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/github-rest-pull-request-review-thread-adapter.ts')
+          source = source_path.read_text()
+          invalid_full_page = '''    || (commentsHasNextPage && commentNodes.length !== commentPageSize)\n'''
+          if source.count(invalid_full_page) != 1:
+              raise SystemExit('short-page production predicate changed')
+          source_path.write_text(source.replace(invalid_full_page, '', 1))
+
+          test_path = Path('test/github-rest-pull-request-review-thread-comment-truncation.test.ts')
+          tests = test_path.read_text()
+          old = '''  test("rejects a short page that claims more comments remain", async () => {
+    const adapter = adapterFor(
+      new RecordingTokenProvider(),
+      commentsConnection({
+        totalCount: 21,
+        hasNextPage: true,
+        endCursor: "comment-cursor-19",
+        nodeCount: 19,
+      }),
+    );
+
+    await expect(call(adapter)).rejects.toMatchObject({
+      code: "github_delegated_provider_invalid_response",
+    } satisfies Partial<GitHubProviderRejectedError>);
+  });
+'''
+          new = '''  test("accepts a bounded short page when more comments remain", async () => {
+    const adapter = adapterFor(
+      new RecordingTokenProvider(),
+      commentsConnection({
+        totalCount: 21,
+        hasNextPage: true,
+        endCursor: "comment-cursor-19",
+        nodeCount: 19,
+      }),
+    );
+
+    const receipt = await call(adapter);
+    expect(receipt.result).toMatchObject({
+      commentCount: 19,
+      threads: [{
+        commentsTotalCount: 21,
+        commentsTruncated: true,
+      }],
+    });
+    const result = receipt.result as {
+      threads: Array<{ comments: unknown[] }>;
+    };
+    expect(result.threads[0]?.comments).toHaveLength(19);
+  });
+
+  test("rejects a provider total smaller than retained nodes", async () => {
+    const adapter = adapterFor(
+      new RecordingTokenProvider(),
+      commentsConnection({
+        totalCount: 18,
+        hasNextPage: false,
+        endCursor: "comment-cursor-19",
+        nodeCount: 19,
+      }),
+    );
+
+    await expect(call(adapter)).rejects.toMatchObject({
+      code: "github_delegated_provider_invalid_response",
+    } satisfies Partial<GitHubProviderRejectedError>);
+  });
+'''
+          if tests.count(old) != 1:
+              raise SystemExit('short-page reversing control changed')
+          test_path.write_text(tests.replace(old, new, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify bounded pagination repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/github-rest-pull-request-review-thread-comment-truncation.test.ts \
+            test/github-review-thread-truncation-projection.test.ts \
+            test/github-rest-pull-request-review-thread-adapter.test.ts
+      - name: Publish workflow-free source candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Plover'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/plover-944-short-page-finalizer.yml
+          git add \
+            src/github-rest-pull-request-review-thread-adapter.ts \
+            test/github-rest-pull-request-review-thread-comment-truncation.test.ts
+          git diff --cached --check
+          git commit -m 'Accept bounded short review-comment pages'
+          git push \
+            --force-with-lease=refs/heads/lumen/943-review-comment-truncation-control:${SOURCE_HEAD} \
+            origin HEAD:lumen/943-review-comment-truncation-control
