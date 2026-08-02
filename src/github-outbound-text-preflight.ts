@@ -332,7 +332,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
   const directReferencePattern =
     /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[/?#)\]}>.,;:'"\s])/giu;
   const repositoryShorthandPattern =
-    /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]{0,9})(?=$|[^0-9])/gu;
+    /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]*)(?=$|[^0-9])/gu;
   const commitShorthandPattern =
     /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?=$|[^0-9a-f])/giu;
 
