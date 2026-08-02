@@ -469,7 +469,11 @@ function requireExactKeys(
 }
 
 function canonicalInteger(value: unknown, minimum: number): number {
-  if (!Number.isSafeInteger(value) || (value as number) < minimum) {
+  if (
+    !Number.isSafeInteger(value)
+    || Object.is(value, -0)
+    || (value as number) < minimum
+  ) {
     throw new RangeError();
   }
   return value as number;
