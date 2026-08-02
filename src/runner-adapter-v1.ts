@@ -1418,7 +1418,11 @@ function positiveInteger(value: unknown, label: string): number {
 }
 
 function nonNegativeInteger(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+  if (
+    !Number.isSafeInteger(value)
+    || Object.is(value, -0)
+    || (value as number) < 0
+  ) {
     throw new RangeError(`${label} must be a non-negative safe integer`);
   }
   return value as number;
