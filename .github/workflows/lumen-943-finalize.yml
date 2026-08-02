@@ -29,7 +29,7 @@ jobs:
       - name: Verify exact carrier lease
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "dfbbc92fae56b3efbc7ee17ce1cd66d3e18d4af4"
+          test "$(git rev-parse HEAD^)" = "c494ad4a5485fc40b290a11cf7c81dea39d69717"
           test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/lumen-943-finalize.yml"
       - uses: oven-sh/setup-bun@v2
       - name: Apply bounded comment truncation repair
@@ -41,53 +41,19 @@ jobs:
           path = Path("src/github-rest-pull-request-review-thread-adapter.ts")
           source = path.read_text()
 
-          replacements = [
-              (
-                  "const maximumComments = 400;",
-                  "const maximumComments = maximumThreads * commentPageSize;",
-              ),
-              (
-          '''  const commentsTotal = nonNegativeProviderInteger(
-            commentsConnection.totalCount,
-            "GitHub review-thread comment count",
-          );
-          if (commentsTotal > commentPageSize) {
-            throw rejected(
-              "github_delegated_provider_result_too_large",
-              `GitHub delegated review-thread comments exceed ${commentPageSize} entries per thread`,
-            );
-          }
-          const commentsPageInfo = providerRecord(
-            commentsConnection.pageInfo,
-            ["hasNextPage", "endCursor"],
-            ["hasNextPage", "endCursor"],
-            "GitHub review-thread comment page info",
-          );
-          if (
-            booleanValue(
-              commentsPageInfo.hasNextPage,
-              "GitHub review-thread comment next-page flag",
-            )
-          ) {
-            throw rejected(
-              "github_delegated_provider_result_too_large",
-              "GitHub delegated nested review-thread comment pagination is unsupported",
-            );
-          }
-          nullableCursor(commentsPageInfo.endCursor);
-          const commentNodes = denseArray(
-            commentsConnection.nodes,
-            "GitHub review-thread comment nodes",
-            commentPageSize,
-          );
-          if (commentNodes.length !== commentsTotal) {
-            throw rejected(
-              "github_delegated_provider_invalid_response",
-              "GitHub review-thread comment count did not match its nodes",
-            );
-          }
-          ''',
-          '''  const commentsTotalCount = nonNegativeProviderInteger(
+          old_cap = "const maximumComments = 400;"
+          new_cap = "const maximumComments = maximumThreads * commentPageSize;"
+          if source.count(old_cap) != 1:
+              raise SystemExit("maximum comment cap marker was not unique")
+          source = source.replace(old_cap, new_cap)
+
+          start_marker = "  const commentsTotal = nonNegativeProviderInteger(\n"
+          end_marker = "  const comments = commentNodes.map((comment) =>\n"
+          start = source.find(start_marker)
+          end = source.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit("comment pagination block markers were absent")
+          new_block = '''  const commentsTotalCount = nonNegativeProviderInteger(
             commentsConnection.totalCount,
             "GitHub review-thread comment count",
           );
@@ -119,24 +85,19 @@ jobs:
               "GitHub review-thread comment pagination was inconsistent",
             );
           }
-          ''',
-              ),
-              (
-          '''    resolvedByLogin,
-            comments: Object.freeze(comments),
-          ''',
-          '''    resolvedByLogin,
-            commentsTotalCount,
-            commentsTruncated,
-            comments: Object.freeze(comments),
-          ''',
-              ),
-          ]
+          '''
+          source = source[:start] + new_block + source[end:]
 
-          for old, new in replacements:
-              if source.count(old) != 1:
-                  raise SystemExit(f"expected exactly one source match, found {source.count(old)}")
-              source = source.replace(old, new)
+          old_result = "    resolvedByLogin,\n    comments: Object.freeze(comments),\n"
+          new_result = (
+              "    resolvedByLogin,\n"
+              "    commentsTotalCount,\n"
+              "    commentsTruncated,\n"
+              "    comments: Object.freeze(comments),\n"
+          )
+          if source.count(old_result) != 1:
+              raise SystemExit("review-thread result marker was not unique")
+          source = source.replace(old_result, new_result)
 
           path.write_text(source)
           PY
