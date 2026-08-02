@@ -59,9 +59,13 @@ export interface ConvexGitHubProjectContextBindingReaderOptions {
   now?: () => number;
 }
 
+const listProjectsRef = makeFunctionReference<"query">("projects:list");
 const getCurrentRef = makeFunctionReference<"query">(
   "githubProjectContexts:getCurrent",
 );
+const requestKeys = ["project", "externalId"] as const;
+const projectRecordKeys = ["id", "slug", "name", "createdAt", "updatedAt"] as const;
+const maximumProjects = 1_000;
 
 type StoredRecord = {
   id: string;
@@ -83,27 +87,32 @@ type StoredRecord = {
 
 export class ConvexGitHubProjectContextBindingReader
   implements HostedGitHubIssueContextBindingReader {
-  readonly client: ConvexCaller;
-  readonly serviceSecret: string;
-  readonly workspace: string;
-  readonly now: () => number;
+  readonly #client: ConvexCaller;
+  readonly #serviceSecret: string;
+  readonly #workspace: string;
+  readonly #now: () => number;
 
   constructor(options: ConvexGitHubProjectContextBindingReaderOptions) {
-    this.client = options.client;
-    this.serviceSecret = required(options.serviceSecret, "Convex service secret");
-    this.workspace = exactWorkspace(options.workspace ?? "default");
-    this.now = options.now ?? Date.now;
+    this.#client = options.client;
+    this.#serviceSecret = required(options.serviceSecret, "Convex service secret");
+    this.#workspace = exactWorkspace(options.workspace ?? "default");
+    this.#now = options.now ?? Date.now;
   }
 
   async getCurrentGitHubIssueContextBinding(
     input: GetHostedGitHubIssueContextBindingInput,
   ): Promise<HostedGitHubIssueContextBindingV1 | null> {
-    const project = exactProject(input.project);
-    const externalId = exactIssueExternalId(input.externalId);
+    const { project, externalId } = admitBindingRequest(input);
     try {
-      const raw = await this.client.query(getCurrentRef, {
-        serviceSecret: this.serviceSecret,
-        workspace: this.workspace,
+      const projects = await this.#client.query(listProjectsRef, {
+        serviceSecret: this.#serviceSecret,
+        workspace: this.#workspace,
+      });
+      assertKnownProject(projects, project);
+
+      const raw = await this.#client.query(getCurrentRef, {
+        serviceSecret: this.#serviceSecret,
+        workspace: this.#workspace,
         project,
         externalId,
       });
@@ -117,17 +126,20 @@ export class ConvexGitHubProjectContextBindingReader
         record: detached,
         project,
         externalId,
-        serviceSecret: this.serviceSecret,
-        workspace: this.workspace,
-        now: this.now,
+        serviceSecret: this.#serviceSecret,
+        workspace: this.#workspace,
+        now: this.#now,
       });
       const record = detached as unknown as StoredRecord;
+      if (record.isCurrent !== true || record.outcome === "stale") {
+        throw new GitHubProjectContextStorageError();
+      }
       const snapshot = admitSnapshotJson(record.snapshotJson);
       const instructionSet = admitInstructionJson(record.instructionSetJson);
 
       return deepFreeze({
         version: HOSTED_GITHUB_ISSUE_CONTEXT_BINDING_V1,
-        workspace: this.workspace,
+        workspace: this.#workspace,
         recordId: record.id,
         project,
         externalId,
@@ -150,6 +162,67 @@ export class ConvexGitHubProjectContextBindingReader
       if (error instanceof GitHubProjectContextStorageError) throw error;
       throw new GitHubProjectContextStorageError();
     }
+  }
+}
+
+function admitBindingRequest(
+  value: unknown,
+): GetHostedGitHubIssueContextBindingInput {
+  try {
+    const input = exactDataRecord(value, requestKeys);
+    return Object.freeze({
+      project: exactProject(input.project),
+      externalId: exactIssueExternalId(input.externalId),
+    });
+  } catch {
+    throw new RangeError("GitHub project context binding request is invalid");
+  }
+}
+
+function assertKnownProject(value: unknown, requestedProject: string): void {
+  let snapshot: unknown;
+  try {
+    snapshot = snapshotBoundedJson(value, "Hosted GitHub project scope");
+  } catch {
+    throw new GitHubProjectContextStorageError();
+  }
+  if (!Array.isArray(snapshot) || snapshot.length > maximumProjects) {
+    throw new GitHubProjectContextStorageError();
+  }
+
+  const ids = new Set<string>();
+  const slugs = new Set<string>();
+  let matches = 0;
+  for (const entry of snapshot) {
+    const project = exactStoredProject(entry);
+    if (ids.has(project.id) || slugs.has(project.slug)) {
+      throw new GitHubProjectContextStorageError();
+    }
+    ids.add(project.id);
+    slugs.add(project.slug);
+    if (project.slug === requestedProject) matches += 1;
+  }
+  if (matches !== 1) throw new GitHubProjectContextStorageError();
+}
+
+function exactStoredProject(value: unknown): {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  try {
+    const project = exactDataRecord(value, projectRecordKeys);
+    return {
+      id: boundedStoredText(project.id, 160),
+      slug: exactProject(project.slug),
+      name: boundedStoredText(project.name, 2_000),
+      createdAt: storedTimestamp(project.createdAt),
+      updatedAt: storedTimestamp(project.updatedAt),
+    };
+  } catch {
+    throw new GitHubProjectContextStorageError();
   }
 }
 
@@ -252,6 +325,38 @@ function admitInstructionJson(value: unknown): AcceptedRepositoryInstructionSet 
   }
 }
 
+function exactDataRecord<const K extends readonly string[]>(
+  value: unknown,
+  keys: K,
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError();
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError();
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (
+    ownKeys.length !== keys.length
+    || ownKeys.some((key) =>
+      typeof key !== "string" || !(keys as readonly string[]).includes(key)
+    )
+  ) {
+    throw new TypeError();
+  }
+  const output = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError();
+    }
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
 function exactWorkspace(value: string): string {
   if (value !== value.trim() || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)) {
     throw new RangeError(
@@ -261,8 +366,12 @@ function exactWorkspace(value: string): string {
   return value;
 }
 
-function exactProject(value: string): string {
-  if (value !== value.trim() || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)) {
+function exactProject(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value !== value.trim()
+    || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)
+  ) {
     throw new RangeError("GitHub project context project is invalid");
   }
   return value;
@@ -277,6 +386,31 @@ function exactIssueExternalId(value: unknown): string {
     throw new RangeError("GitHub issue external ID must be canonical");
   }
   return externalId;
+}
+
+function boundedStoredText(value: unknown, maximum: number): string {
+  if (
+    typeof value !== "string"
+    || value.length < 1
+    || value.length > maximum
+  ) {
+    throw new GitHubProjectContextStorageError();
+  }
+  return value;
+}
+
+function storedTimestamp(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
+  ) {
+    throw new GitHubProjectContextStorageError();
+  }
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+    throw new GitHubProjectContextStorageError();
+  }
+  return value;
 }
 
 function required(value: string, label: string): string {
