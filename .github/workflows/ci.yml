@@ -19,13 +19,24 @@ on:
         options:
           - full_parallel
           - serial_full
+  workflow_call:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA that this reusable run must validate
+        required: true
+        type: string
+      validation_profile:
+        description: Validation topology for this reusable run
+        required: false
+        default: full_parallel
+        type: string
 
 concurrency:
   group: >-
     ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
     format('pr-{0}', github.event.pull_request.number) ||
-    github.event_name == 'workflow_dispatch' &&
-    format('dispatch-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
+    (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+    format('exact-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
     format('push-{0}', github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -34,18 +45,26 @@ permissions:
 
 jobs:
   browser-evidence:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'workflow_call') ||
+      inputs.validation_profile == 'full_parallel' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
+      - name: Verify requested exact revision and profile
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
         run: |
           set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Requested browser evidence expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
             exit 1
           fi
       - uses: oven-sh/setup-bun@v2
@@ -82,18 +101,26 @@ jobs:
           retention-days: 7
 
   test:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'workflow_call') ||
+      inputs.validation_profile == 'full_parallel' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
+      - name: Verify requested exact revision and profile
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
         run: |
           set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Requested CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
             exit 1
           fi
       - uses: oven-sh/setup-bun@v2
@@ -146,18 +173,26 @@ jobs:
           if-no-files-found: ignore
 
   runtime-parity:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel' }}
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'workflow_call') ||
+      inputs.validation_profile == 'full_parallel' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Verify manually dispatched revision
-        if: github.event_name == 'workflow_dispatch'
+      - name: Verify requested exact revision and profile
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
         run: |
           set -euo pipefail
-          if [[ -z "${EXPECTED_SHA}" || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
-            echo "Dispatched CI expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ || "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]]; then
+            echo "Requested runtime parity expected ${EXPECTED_SHA:-missing} but received ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
             exit 1
           fi
       - uses: oven-sh/setup-bun@v2
@@ -186,24 +221,35 @@ jobs:
       needs.browser-evidence.result == 'success' &&
       needs.test.result == 'success' &&
       needs.runtime-parity.result == 'success') ||
-      (github.event_name == 'workflow_dispatch' &&
+      ((github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call') &&
       inputs.validation_profile == 'serial_full')) }}
     runs-on: ubuntu-latest
     env:
       SERIAL_VALIDATION_SHA: >-
         ${{ github.event_name == 'pull_request' &&
-        github.event.pull_request.head.sha || inputs.expected_sha }}
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.SERIAL_VALIDATION_SHA }}
           persist-credentials: false
       - name: Verify exact serial revision
+        env:
+          VALIDATION_PROFILE: >-
+            ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+            inputs.validation_profile || 'full_parallel' }}
         run: |
           set -euo pipefail
           actual_sha="$(git rev-parse HEAD)"
           if [[ -z "${SERIAL_VALIDATION_SHA}" || ! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SERIAL_VALIDATION_SHA}" ]]; then
             echo "Serial CI expected ${SERIAL_VALIDATION_SHA:-missing} but checked out ${actual_sha}." >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
             exit 1
           fi
       - uses: oven-sh/setup-bun@v2
@@ -286,3 +332,115 @@ jobs:
             worker-check-output.txt
             runtime-parity-output.txt
           if-no-files-found: ignore
+
+  validation-receipt:
+    name: exact-ref-validation-receipt
+    needs: [browser-evidence, test, runtime-parity, serial-full]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REVISION: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
+      VALIDATION_PROFILE: >-
+        ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.validation_profile || 'full_parallel' }}
+      BROWSER_RESULT: ${{ needs.browser-evidence.result }}
+      TEST_RESULT: ${{ needs.test.result }}
+      RUNTIME_RESULT: ${{ needs.runtime-parity.result }}
+      SERIAL_RESULT: ${{ needs.serial-full.result }}
+      EVENT_REVISION: ${{ github.sha }}
+      WORKFLOW_REVISION: ${{ github.workflow_sha }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Build exact-ref validation receipt
+        run: |
+          set -euo pipefail
+          input_valid=true
+          if [[ ! "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            input_valid=false
+          fi
+          if [[ "${VALIDATION_PROFILE}" != "full_parallel" && "${VALIDATION_PROFILE}" != "serial_full" ]]; then
+            input_valid=false
+          fi
+
+          overall="success"
+          for result in "${BROWSER_RESULT}" "${TEST_RESULT}" "${RUNTIME_RESULT}" "${SERIAL_RESULT}"; do
+            if [[ "${result}" == "cancelled" ]]; then
+              overall="cancelled"
+            fi
+          done
+          if [[ "${input_valid}" != "true" ]]; then
+            overall="rejected"
+          elif [[ "${VALIDATION_PROFILE}" == "serial_full" ]]; then
+            if [[ "${SERIAL_RESULT}" != "success" ]]; then
+              [[ "${overall}" == "cancelled" ]] || overall="failure"
+            fi
+          else
+            if [[ "${BROWSER_RESULT}" != "success" || "${TEST_RESULT}" != "success" || "${RUNTIME_RESULT}" != "success" ]]; then
+              [[ "${overall}" == "cancelled" ]] || overall="failure"
+            fi
+            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" && "${SERIAL_RESULT}" != "success" ]]; then
+              [[ "${overall}" == "cancelled" ]] || overall="failure"
+            fi
+          fi
+
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          jq -n \
+            --arg schemaVersion "stensibly-ci-exact-ref-receipt/1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg eventName "${GITHUB_EVENT_NAME}" \
+            --arg sourceRevision "${SOURCE_REVISION}" \
+            --arg eventRevision "${EVENT_REVISION}" \
+            --arg workflowRevision "${WORKFLOW_REVISION}" \
+            --arg workflowRef "${WORKFLOW_REF}" \
+            --arg validationProfile "${VALIDATION_PROFILE}" \
+            --arg status "${overall}" \
+            --arg browserEvidence "${BROWSER_RESULT}" \
+            --arg repositoryTests "${TEST_RESULT}" \
+            --arg runtimeParity "${RUNTIME_RESULT}" \
+            --arg serialFull "${SERIAL_RESULT}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg runUrl "${RUN_URL}" \
+            --arg completedAt "${completed_at}" \
+            --argjson inputValid "${input_valid}" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              eventName: $eventName,
+              sourceRevision: $sourceRevision,
+              eventRevision: $eventRevision,
+              workflowRevision: $workflowRevision,
+              workflowRef: $workflowRef,
+              validationProfile: $validationProfile,
+              inputValid: $inputValid,
+              status: $status,
+              jobs: {
+                browserEvidence: $browserEvidence,
+                repositoryTests: $repositoryTests,
+                runtimeParity: $runtimeParity,
+                serialFull: $serialFull
+              },
+              run: {
+                id: $runId,
+                attempt: $runAttempt,
+                url: $runUrl
+              },
+              completedAt: $completedAt
+            }' > exact-ref-validation-receipt.json
+          sha256sum exact-ref-validation-receipt.json \
+            > exact-ref-validation-receipt.sha256
+      - name: Upload exact-ref validation receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-ref-validation-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            exact-ref-validation-receipt.json
+            exact-ref-validation-receipt.sha256
+          if-no-files-found: error
+          retention-days: 30
