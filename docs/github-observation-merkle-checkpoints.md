@@ -17,7 +17,7 @@ observationId
 semanticFingerprint
 ```
 
-Sequences must be positive, contiguous, and ordered inside one checkpoint. Observation IDs are stable content-minimised identities. Semantic fingerprints are lowercase `sha256:` digests produced by the reviewed observation compiler. Raw webhook payloads, issue or comment bodies, patches, logs, credentials, and provider prose never enter this contract.
+Sequences must be positive, contiguous, and ordered inside one checkpoint. Observation IDs are stable content-minimised identities. Ledger, compiler, and observation identities use a closed printable ASCII grammar beginning with an alphanumeric character and continuing only with alphanumerics plus `._:/@#-`. Realistic credential families and control or bidi text are rejected with non-echoing diagnostics. Semantic fingerprints are lowercase `sha256:` digests produced by the reviewed observation compiler. Raw webhook payloads, issue or comment bodies, patches, logs, credentials, and provider prose never enter this contract.
 
 ## Canonical hashing
 
@@ -73,23 +73,25 @@ A checkpoint records:
 - tree size;
 - first and last accepted sequence;
 - root digest;
-- trusted creation time;
+- canonical producer-supplied checkpoint time;
 - a deterministic checkpoint fingerprint over every preceding field.
+
+`createdAt` is ordered and fingerprinted metadata supplied by the checkpoint producer. This pure module has no trusted clock and does not prove that the timestamp is honest. A later persistence or signing boundary must establish any stronger clock claim explicitly.
 
 The checkpoint contains no leaves. A producer may persist or publish checkpoints separately from private observation rows.
 
 ## Inclusion proof
 
-An inclusion proof contains the exact content-minimised leaf identity, tree position, checkpoint identity, leaf digest, and a bottom-up sibling path. Verification re-hashes the leaf, reconstructs the root, and requires the exact checkpoint fingerprint.
+An inclusion proof contains the exact content-minimised leaf identity, tree position, checkpoint identity, leaf digest, and a bottom-up sibling path. Verification re-hashes the leaf, requires `sequence === checkpoint.firstSequence + leafIndex`, reconstructs the root, and requires the exact checkpoint fingerprint.
 
-A valid proof means only that the named leaf was committed at that index in that checkpoint.
+A valid proof means only that the named leaf was committed at that exact index and sequence in that checkpoint.
 
 ## Consistency proof
 
 A consistency proof uses the standard prefix-tree audit-path construction: it reconstructs both the earlier root and the later root from a logarithmic sibling path. Verification additionally requires:
 
 - identical ledger, compiler, and algorithm identity;
-- nondecreasing checkpoint creation time;
+- nondecreasing producer-supplied checkpoint time;
 - nonshrinking tree size;
 - the same first sequence for nonempty histories;
 - exact older and newer checkpoint fingerprints.
