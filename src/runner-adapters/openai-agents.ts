@@ -367,7 +367,7 @@ function admitControlIdentity(
       "expiresAt",
     ]);
     const authority = Object.freeze({
-      resource: canonicalBoundedText(
+      resource: exactBoundedText(
         authorityInput.resource,
         320,
         "control authority resource",
@@ -392,7 +392,7 @@ function admitControlIdentity(
       version: RUNNER_ADAPTER_V1,
       commandId: canonicalIdentifier(input.commandId, "control command ID"),
       adapterId: canonicalIdentifier(input.adapterId, "control adapter ID"),
-      adapterVersion: canonicalBoundedText(
+      adapterVersion: exactBoundedText(
         input.adapterVersion,
         160,
         "control adapter version",
@@ -476,11 +476,22 @@ function canonicalInteger(value: unknown, minimum: number): number {
 }
 
 function canonicalIdentifier(value: unknown, label: string): string {
-  const output = canonicalBoundedText(value, 160, label);
+  const output = exactBoundedText(value, 160, label);
   if (!identifierPattern.test(output)) {
     throw new RangeError(`${label} has an invalid format`);
   }
   return output;
+}
+
+function exactBoundedText(
+  value: unknown,
+  maximum: number,
+  label: string,
+): string {
+  if (typeof value !== "string" || value !== value.trim()) {
+    throw new RangeError(`${label} must be exact text`);
+  }
+  return validateBoundedText(value, maximum, label);
 }
 
 function canonicalBoundedText(
@@ -491,7 +502,14 @@ function canonicalBoundedText(
   if (typeof value !== "string") {
     throw new RangeError(`${label} must be text`);
   }
-  const output = value.trim();
+  return validateBoundedText(value.trim(), maximum, label);
+}
+
+function validateBoundedText(
+  output: string,
+  maximum: number,
+  label: string,
+): string {
   if (
     output.length === 0
     || output.length > maximum
