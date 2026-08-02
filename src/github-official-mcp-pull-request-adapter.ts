@@ -8,6 +8,7 @@ import {
   GitHubOfficialMcpRemoteError,
   type GitHubOfficialMcpRemoteCallInput,
   type GitHubOfficialMcpRemoteCallResult,
+  type GitHubOfficialMcpRemoteErrorCode,
 } from "./github-official-mcp-remote-transport.js";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import {
@@ -139,7 +140,7 @@ export class GitHubOfficialMcpPullRequestAdapter
     const admitted = this.#admitPullRequestCall(envelope);
     const mapping = exactPullRequestMapping(admitted);
 
-    let called: GitHubOfficialMcpRemoteCallResult;
+    let called: unknown;
     try {
       called = await this.#transport.callMappedRead({
         mapping,
@@ -147,7 +148,7 @@ export class GitHubOfficialMcpPullRequestAdapter
       });
     } catch (error) {
       if (error instanceof GitHubOfficialMcpRemoteError) {
-        throw rejected(error.code, error.message);
+        throw rejected(error.code, officialRemoteErrorMessage(error.code));
       }
       throw rejected(
         "github_official_mcp_transport_failed",
@@ -155,8 +156,14 @@ export class GitHubOfficialMcpPullRequestAdapter
       );
     }
 
+    const calledEnvelope = exactProviderRecord(
+      called,
+      ["result"],
+      ["result"],
+      "Official GitHub MCP transport result",
+    );
     const detached = snapshotJsonData(
-      called.result,
+      calledEnvelope.result,
       "Official GitHub MCP pull request result",
     );
     let serialized: string;
@@ -670,7 +677,12 @@ function optionalNonNegativeProviderInteger(
   label: string,
 ): number {
   if (value === undefined) return 0;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+  if (
+    typeof value !== "number"
+    || !Number.isSafeInteger(value)
+    || Object.is(value, -0)
+    || value < 0
+  ) {
     throw providerInvalid(`${label} was invalid`);
   }
   return value;
@@ -907,6 +919,23 @@ function consumeSnapshotBytes(
       "github_delegated_provider_result_too_large",
       `${label} exceeded its bounded UTF-8 budget`,
     );
+  }
+}
+
+function officialRemoteErrorMessage(
+  code: GitHubOfficialMcpRemoteErrorCode,
+): string {
+  switch (code) {
+    case "github_official_mcp_mapping_rejected":
+      return "Official GitHub MCP read mapping was stale or unsupported";
+    case "github_official_mcp_credential_unavailable":
+      return "Official GitHub MCP credential was unavailable";
+    case "github_official_mcp_transport_failed":
+      return "Official GitHub MCP read failed before a verified result was available";
+    case "github_official_mcp_invalid_result":
+      return "Official GitHub MCP returned an invalid result";
+    case "github_official_mcp_close_failed":
+      return "Official GitHub MCP session could not be closed";
   }
 }
 
