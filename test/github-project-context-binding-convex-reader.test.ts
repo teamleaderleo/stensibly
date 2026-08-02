@@ -5,10 +5,12 @@ import {
   buildAcceptedRepositoryInstructionSet,
   canonicalGitHubIssueContextJson,
   canonicalRepositoryInstructionSetJson,
+  type GitHubIssueContextAcceptanceOutcome,
 } from "../src/github-project-context-admission.ts";
 import {
   ConvexGitHubProjectContextBindingReader,
   HOSTED_GITHUB_ISSUE_CONTEXT_BINDING_V1,
+  type GetHostedGitHubIssueContextBindingInput,
 } from "../src/github-project-context-binding-convex-reader.ts";
 import {
   ConvexGitHubProjectContextService,
@@ -21,12 +23,14 @@ class FakeClient implements ConvexCaller {
   readonly queries: Array<{ name: string; args: Record<string, unknown> }> = [];
   readonly mutations: Array<{ name: string; args: Record<string, unknown> }> = [];
   queryResults: unknown[] = [];
+  queryError: unknown = null;
 
   async query(
     reference: FunctionReference<"query">,
     args: Record<string, unknown>,
   ): Promise<unknown> {
     this.queries.push({ name: String(reference), args });
+    if (this.queryError !== null) throw this.queryError;
     return this.queryResults.shift();
   }
 
@@ -44,7 +48,7 @@ describe("private hosted GitHub project-context binding reader", () => {
     const client = new FakeClient();
     const subject = fixture(965);
     const record = storedRecord(subject);
-    client.queryResults = [record];
+    client.queryResults = [projectRows(), record];
     const reader = bindingReader(client);
 
     const binding = await reader.getCurrentGitHubIssueContextBinding({
@@ -52,8 +56,12 @@ describe("private hosted GitHub project-context binding reader", () => {
       externalId: record.externalId,
     });
 
-    expect(client.queries).toHaveLength(1);
+    expect(client.queries).toHaveLength(2);
     expect(client.queries[0]?.args).toEqual({
+      serviceSecret: "service-secret",
+      workspace: "default",
+    });
+    expect(client.queries[1]?.args).toEqual({
       serviceSecret: "service-secret",
       workspace: "default",
       project: "stensibly",
@@ -98,14 +106,32 @@ describe("private hosted GitHub project-context binding reader", () => {
     expect(Object.isFrozen(binding?.synchronization)).toBe(true);
   });
 
-  test("returns null only when the hosted current row is absent", async () => {
+  test("returns null only for an absent row inside one known project", async () => {
     const client = new FakeClient();
-    client.queryResults = [null];
+    client.queryResults = [projectRows(), null];
 
     await expect(bindingReader(client).getCurrentGitHubIssueContextBinding({
       project: "stensibly",
       externalId: "github:teamleaderleo/stensibly#965",
     })).resolves.toBeNull();
+    expect(client.queries).toHaveLength(2);
+  });
+
+  test("distinguishes missing workspace and project scope from a missing row", async () => {
+    const cases = [
+      [] as unknown[],
+      projectRows("other"),
+    ];
+
+    for (const projects of cases) {
+      const client = new FakeClient();
+      client.queryResults = [projects];
+      await expect(bindingReader(client).getCurrentGitHubIssueContextBinding({
+        project: "stensibly",
+        externalId: "github:teamleaderleo/stensibly#965",
+      })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+      expect(client.queries).toHaveLength(1);
+    }
   });
 
   test("fails closed on project, issue, or current-row substitution", async () => {
@@ -119,11 +145,35 @@ describe("private hosted GitHub project-context binding reader", () => {
 
     for (const row of cases) {
       const client = new FakeClient();
-      client.queryResults = [row];
+      client.queryResults = [projectRows(), row];
       await expect(bindingReader(client).getCurrentGitHubIssueContextBinding({
         project: "stensibly",
         externalId: requested.snapshot.reference.externalId,
       })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+    }
+  });
+
+  test("rejects stale/current corruption while preserving allowed current outcomes", async () => {
+    const subject = fixture(965);
+    const staleClient = new FakeClient();
+    staleClient.queryResults = [
+      projectRows(),
+      storedRecord(subject, "stale"),
+    ];
+    await expect(bindingReader(staleClient).getCurrentGitHubIssueContextBinding({
+      project: "stensibly",
+      externalId: subject.snapshot.reference.externalId,
+    })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+
+    for (const outcome of ["initial", "updated"] as const) {
+      const client = new FakeClient();
+      client.queryResults = [projectRows(), storedRecord(subject, outcome)];
+      const binding = await bindingReader(client).getCurrentGitHubIssueContextBinding({
+        project: "stensibly",
+        externalId: subject.snapshot.reference.externalId,
+      });
+      expect(binding?.synchronization.outcome).toBe(outcome);
+      expect(binding?.synchronization.isCurrent).toBe(true);
     }
   });
 
@@ -144,7 +194,7 @@ describe("private hosted GitHub project-context binding reader", () => {
 
     for (const row of forgedRows) {
       const client = new FakeClient();
-      client.queryResults = [row];
+      client.queryResults = [projectRows(), row];
       await expect(bindingReader(client).getCurrentGitHubIssueContextBinding({
         project: "stensibly",
         externalId: subject.snapshot.reference.externalId,
@@ -152,27 +202,160 @@ describe("private hosted GitHub project-context binding reader", () => {
     }
   });
 
-  test("rejects hostile backend accessors without invoking them", async () => {
-    const subject = fixture(965);
-    const hostile: Record<string, unknown> = {
-      ...storedRecord(subject),
-    };
-    let reads = 0;
-    Object.defineProperty(hostile, "instructionSetJson", {
+  test("rejects hostile project-scope and binding accessors without invoking them", async () => {
+    let scopeReads = 0;
+    const hostileScope: unknown[] = [];
+    Object.defineProperty(hostileScope, "0", {
       enumerable: true,
       get() {
-        reads += 1;
+        scopeReads += 1;
+        throw new Error("service-secret");
+      },
+    });
+    Object.defineProperty(hostileScope, "length", { value: 1 });
+    const scopeClient = new FakeClient();
+    scopeClient.queryResults = [hostileScope];
+    await expect(bindingReader(scopeClient).getCurrentGitHubIssueContextBinding({
+      project: "stensibly",
+      externalId: "github:teamleaderleo/stensibly#965",
+    })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+    expect(scopeReads).toBe(0);
+    expect(scopeClient.queries).toHaveLength(1);
+
+    const subject = fixture(965);
+    const hostileBinding: Record<string, unknown> = {
+      ...storedRecord(subject),
+    };
+    let bindingReads = 0;
+    Object.defineProperty(hostileBinding, "instructionSetJson", {
+      enumerable: true,
+      get() {
+        bindingReads += 1;
         throw new Error("private backend text");
       },
     });
-    const client = new FakeClient();
-    client.queryResults = [hostile];
+    const bindingClient = new FakeClient();
+    bindingClient.queryResults = [projectRows(), hostileBinding];
 
-    await expect(bindingReader(client).getCurrentGitHubIssueContextBinding({
+    await expect(bindingReader(bindingClient).getCurrentGitHubIssueContextBinding({
       project: "stensibly",
       externalId: subject.snapshot.reference.externalId,
     })).rejects.toBeInstanceOf(GitHubProjectContextStorageError);
+    expect(bindingReads).toBe(0);
+  });
+
+  test("keeps injected dependencies and the service secret runtime-private", async () => {
+    const client = new FakeClient();
+    client.queryResults = [projectRows(), null];
+    const reader = bindingReader(client);
+
+    expect("serviceSecret" in reader).toBe(false);
+    expect("client" in reader).toBe(false);
+    expect("workspace" in reader).toBe(false);
+    expect("now" in reader).toBe(false);
+    expect(Reflect.ownKeys(reader)).toEqual([]);
+    expect(JSON.stringify(reader)).toBe("{}");
+    expect(JSON.stringify(reader)).not.toContain("service-secret");
+
+    await reader.getCurrentGitHubIssueContextBinding({
+      project: "stensibly",
+      externalId: "github:teamleaderleo/stensibly#965",
+    });
+    expect(client.queries).toHaveLength(2);
+    for (const query of client.queries) {
+      expect(query.args.serviceSecret).toBe("service-secret");
+      expect(JSON.stringify(query.args)).toContain("service-secret");
+    }
+  });
+
+  test("maps hosted errors without echoing the private service credential", async () => {
+    const client = new FakeClient();
+    client.queryError = new Error("backend exposed service-secret");
+    let thrown: unknown;
+
+    try {
+      await bindingReader(client).getCurrentGitHubIssueContextBinding({
+        project: "stensibly",
+        externalId: "github:teamleaderleo/stensibly#965",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(GitHubProjectContextStorageError);
+    expect((thrown as Error).message).not.toContain("service-secret");
+  });
+
+  test("admits caller identity through exact data descriptors before hosted access", async () => {
+    const client = new FakeClient();
+    const reader = bindingReader(client);
+    let reads = 0;
+    const hostile = Object.create(null) as Record<PropertyKey, unknown>;
+    Object.defineProperty(hostile, "project", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        throw new Error("caller secret");
+      },
+    });
+    Object.defineProperty(hostile, "externalId", {
+      enumerable: true,
+      value: "github:teamleaderleo/stensibly#965",
+    });
+
+    await expect(reader.getCurrentGitHubIssueContextBinding(
+      hostile as unknown as GetHostedGitHubIssueContextBindingInput,
+    )).rejects.toThrow("GitHub project context binding request is invalid");
     expect(reads).toBe(0);
+    expect(client.queries).toHaveLength(0);
+
+    const decorated = {
+      project: "stensibly",
+      externalId: "github:teamleaderleo/stensibly#965",
+      extra: "unsupported",
+    } as unknown as GetHostedGitHubIssueContextBindingInput;
+    await expect(reader.getCurrentGitHubIssueContextBinding(decorated))
+      .rejects.toThrow("GitHub project context binding request is invalid");
+    expect(client.queries).toHaveLength(0);
+
+    const symbolDecorated = {
+      project: "stensibly",
+      externalId: "github:teamleaderleo/stensibly#965",
+      [Symbol("hidden")]: "unsupported",
+    } as unknown as GetHostedGitHubIssueContextBindingInput;
+    await expect(reader.getCurrentGitHubIssueContextBinding(symbolDecorated))
+      .rejects.toThrow("GitHub project context binding request is invalid");
+    expect(client.queries).toHaveLength(0);
+  });
+
+  test("uses one fixed non-echoing diagnostic for malformed requested identity", async () => {
+    const client = new FakeClient();
+    const reader = bindingReader(client);
+
+    for (const input of [
+      {
+        project: "Stensibly",
+        externalId: "github:teamleaderleo/stensibly#965",
+      },
+      {
+        project: "stensibly",
+        externalId: "github:TeamLeaderLeo/stensibly#965",
+      },
+    ]) {
+      let thrown: unknown;
+      try {
+        await reader.getCurrentGitHubIssueContextBinding(input);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as Error).message).toBe(
+        "GitHub project context binding request is invalid",
+      );
+      expect((thrown as Error).message).not.toContain(input.project);
+      expect((thrown as Error).message).not.toContain(input.externalId);
+    }
+    expect(client.queries).toHaveLength(0);
   });
 
   test("keeps the existing public projection content-minimised", async () => {
@@ -200,21 +383,6 @@ describe("private hosted GitHub project-context binding reader", () => {
       sourcePaths: ["AGENTS.md"],
     });
   });
-
-  test("validates requested identity before making a hosted call", async () => {
-    const client = new FakeClient();
-    const reader = bindingReader(client);
-
-    await expect(reader.getCurrentGitHubIssueContextBinding({
-      project: "Stensibly",
-      externalId: "github:teamleaderleo/stensibly#965",
-    })).rejects.toThrow("project is invalid");
-    await expect(reader.getCurrentGitHubIssueContextBinding({
-      project: "stensibly",
-      externalId: "github:TeamLeaderLeo/stensibly#965",
-    })).rejects.toThrow("must be canonical");
-    expect(client.queries).toHaveLength(0);
-  });
 });
 
 function bindingReader(client: FakeClient) {
@@ -224,6 +392,17 @@ function bindingReader(client: FakeClient) {
     workspace: "default",
     now: () => Date.parse("2026-08-02T17:45:00.000Z"),
   });
+}
+
+function projectRows(...slugs: string[]) {
+  const values = slugs.length === 0 ? ["stensibly"] : slugs;
+  return values.map((slug) => ({
+    id: `project_${slug}`,
+    slug,
+    name: slug === "stensibly" ? "Stensibly" : "Other",
+    createdAt: "2026-08-02T17:00:00.000Z",
+    updatedAt: "2026-08-02T17:30:00.000Z",
+  }));
 }
 
 function fixture(number: number) {
@@ -265,7 +444,10 @@ function fixture(number: number) {
   };
 }
 
-function storedRecord(subject: ReturnType<typeof fixture>) {
+function storedRecord(
+  subject: ReturnType<typeof fixture>,
+  outcome: GitHubIssueContextAcceptanceOutcome = "initial",
+) {
   return {
     id: deterministicRecordId(
       "default",
@@ -296,7 +478,7 @@ function storedRecord(subject: ReturnType<typeof fixture>) {
     acceptedBy: subject.acceptedBy,
     acceptedAt: "2026-08-02T17:40:01.000Z",
     isCurrent: true,
-    outcome: "initial" as const,
+    outcome,
   };
 }
 
