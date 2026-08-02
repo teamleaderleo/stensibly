@@ -9,6 +9,10 @@ import type {
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import type { McpRequestContext } from "./mcp-context.js";
+import {
+  principalCanAccessProject,
+  principalHasScope,
+} from "./token-contracts.js";
 
 export interface GitHubIssueProviderReadService {
   listIssues(input: GitHubProviderRequestContext & {
@@ -51,6 +55,13 @@ export interface GitHubIssueProviderWriteService {
     body: string;
     idempotencyKey: string;
   }): Promise<GitHubProviderReceipt>;
+}
+
+export interface GitHubProviderReceiptLookupService {
+  getGitHubProviderReceipt(
+    project: string,
+    idempotencyKey: string,
+  ): Promise<GitHubProviderReceipt | null>;
 }
 
 export function withGitHubIssueProviderWriteService<T extends object>(
@@ -97,8 +108,8 @@ export function registerGitHubIssueProviderTools(
       },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asToolResult(() => service(ledger).listIssues({
-      ...providerContext(context, input.project, input.repository),
+    async (input) => asToolResult(() => readService(ledger).listIssues({
+      ...providerContext(context, input.project, input.repository, "read"),
       state: input.state,
       ...(input.labels ? { labels: input.labels } : {}),
       ...(input.assignees ? { assignees: input.assignees } : {}),
@@ -129,8 +140,8 @@ export function registerGitHubIssueProviderTools(
       },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asToolResult(() => service(ledger).searchIssues({
-      ...providerContext(context, input.project, input.repository),
+    async (input) => asToolResult(() => readService(ledger).searchIssues({
+      ...providerContext(context, input.project, input.repository, "read"),
       query: input.query,
       state: input.state,
       ...(input.cursor ? { cursor: input.cursor } : {}),
@@ -149,20 +160,181 @@ export function registerGitHubIssueProviderTools(
       },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asToolResult(() => service(ledger).getIssue({
-      ...providerContext(context, input.project, input.repository),
+    async (input) => asToolResult(() => readService(ledger).getIssue({
+      ...providerContext(context, input.project, input.repository, "read"),
       issueNumber: input.issueNumber,
     })),
   );
+
+  server.registerTool(
+    "github_create_issue",
+    {
+      description: "Create one GitHub issue in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key. Initial labels and assignees remain unavailable in this public packet.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        title: z.string().trim().min(1).max(256),
+        body: z.string().max(128 * 1024).optional(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() => writeService(ledger).createIssue({
+      ...providerContext(context, input.project, input.repository, "write"),
+      title: input.title,
+      ...(input.body === undefined ? {} : { body: input.body }),
+      labels: [],
+      assignees: [],
+      idempotencyKey: input.idempotencyKey,
+    })),
+  );
+
+  server.registerTool(
+    "github_update_issue",
+    {
+      description: "Update the title, body, or state of one exact GitHub issue using the last provider source revision as an optimistic-concurrency fence. Requires write scope and an explicit idempotency key.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        issueNumber: z.number().int().min(1),
+        expectedSourceRevision: sourceRevisionSchema(),
+        title: z.string().trim().min(1).max(256).optional(),
+        body: z.string().max(128 * 1024).optional(),
+        state: z.enum(["open", "closed"]).optional(),
+        stateReason: z
+          .enum(["completed", "not_planned", "reopened"])
+          .nullable()
+          .optional(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() => writeService(ledger).updateIssue({
+      ...providerContext(context, input.project, input.repository, "write"),
+      issueNumber: input.issueNumber,
+      expectedSourceRevision: input.expectedSourceRevision,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.body === undefined ? {} : { body: input.body }),
+      ...(input.state === undefined ? {} : { state: input.state }),
+      ...(input.stateReason === undefined
+        ? {}
+        : { stateReason: input.stateReason }),
+      idempotencyKey: input.idempotencyKey,
+    })),
+  );
+
+  server.registerTool(
+    "github_add_issue_comment",
+    {
+      description: "Add one bounded comment to an exact GitHub issue. Requires write scope and an explicit idempotency key; the returned durable receipt omits the comment body.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        issueNumber: z.number().int().min(1),
+        body: z.string().min(1).max(64 * 1024),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() => writeService(ledger).addIssueComment({
+      ...providerContext(context, input.project, input.repository, "write"),
+      issueNumber: input.issueNumber,
+      body: input.body,
+      idempotencyKey: input.idempotencyKey,
+    })),
+  );
+
+  server.registerTool(
+    "get_github_provider_receipt",
+    {
+      description: "Reconcile one GitHub provider operation by project, repository, and idempotency key. Returns a bounded durable receipt only when it belongs to the authenticated actor and client; foreign or absent receipts return null.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asToolResult(async () => {
+      const identity = providerContext(
+        context,
+        input.project,
+        input.repository,
+        "read",
+      );
+      const receipt = await receiptLookupService(ledger).getGitHubProviderReceipt(
+        input.project,
+        input.idempotencyKey,
+      );
+      if (
+        !receipt
+        || receipt.repositoryFullName !== input.repository.toLowerCase()
+        || receipt.actorId !== identity.actorId
+        || receipt.clientId !== identity.clientId
+      ) {
+        return null;
+      }
+      return receipt;
+    }),
+  );
 }
 
-function service(ledger: WorkLedger): GitHubIssueProviderReadService {
+function readService(ledger: WorkLedger): GitHubIssueProviderReadService {
   if (!hasReadService(ledger)) {
     throw new Error(
       "GitHub issue provider reads are unavailable because this backend has no mounted provider service",
     );
   }
   return ledger;
+}
+
+function writeService(ledger: WorkLedger): GitHubIssueProviderWriteService {
+  const createIssue = capturedMethod(ledger, "createIssue");
+  const updateIssue = capturedMethod(ledger, "updateIssue");
+  const addIssueComment = capturedMethod(ledger, "addIssueComment");
+  if (!createIssue || !updateIssue || !addIssueComment) {
+    throw new Error(
+      "GitHub issue provider writes are unavailable because this backend has no enabled provider write service",
+    );
+  }
+  return Object.freeze({
+    createIssue: createIssue as GitHubIssueProviderWriteService["createIssue"],
+    updateIssue: updateIssue as GitHubIssueProviderWriteService["updateIssue"],
+    addIssueComment:
+      addIssueComment as GitHubIssueProviderWriteService["addIssueComment"],
+  });
+}
+
+function receiptLookupService(
+  ledger: WorkLedger,
+): GitHubProviderReceiptLookupService {
+  const get = capturedMethod(ledger, "getGitHubProviderReceipt");
+  if (!get) {
+    throw new Error("GitHub provider receipts are unavailable on this backend");
+  }
+  return Object.freeze({
+    getGitHubProviderReceipt:
+      get as GitHubProviderReceiptLookupService["getGitHubProviderReceipt"],
+  });
+}
+
+function capturedMethod(
+  value: unknown,
+  name: string,
+): ((...args: unknown[]) => unknown) | null {
+  if (!value || typeof value !== "object") return null;
+  let current: object | null = value;
+  while (current && current !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, name);
+    if (descriptor) {
+      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
+        return null;
+      }
+      return (...args: unknown[]) => Reflect.apply(descriptor.value, value, args);
+    }
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+  return null;
 }
 
 function hasReadService(value: unknown): value is WorkLedger & GitHubIssueProviderReadService {
@@ -177,11 +349,22 @@ function providerContext(
   context: McpRequestContext,
   project: string,
   repository: string,
+  requiredScope: "read" | "write",
 ): GitHubProviderRequestContext {
   const principal = context.principal;
   if (!principal) {
     throw new Error(
-      "GitHub issue provider reads require an authenticated remote MCP principal",
+      "GitHub issue provider operations require an authenticated remote MCP principal",
+    );
+  }
+  if (!principalHasScope(principal, requiredScope)) {
+    throw new Error(
+      `GitHub issue provider operations require ${requiredScope} scope`,
+    );
+  }
+  if (!principalCanAccessProject(principal, project)) {
+    throw new Error(
+      "GitHub issue provider operation is outside this principal's project scope",
     );
   }
   const tokenIdentity = `api-token:${principal.tokenId}`;
@@ -212,4 +395,12 @@ function repositorySchema() {
       /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
       "Use a GitHub owner/repository identifier",
     );
+}
+
+function idempotencyKeySchema() {
+  return z.string().trim().min(1).max(240);
+}
+
+function sourceRevisionSchema() {
+  return z.string().regex(/^sha256:[a-f0-9]{64}$/);
 }
