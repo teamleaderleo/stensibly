@@ -102,7 +102,7 @@ Canonical CI can validate one exact source revision through `full_parallel` or `
 
 Parent #659 remains a stale historical candidate. PR #945 is now the sole executable current-main integration lane.
 
-Its source-only head `55deb1b0c691d01d7a76bf7e25e81efb3f37fb5b` preserves the reviewed #659 implementation byte-for-byte as `openai-agents-base.ts` and adds one bounded public wrapper plus focused controls. The nine-file candidate:
+Its repaired source-only head `cfca054ef211da375a41c988f147f45e709d0663` preserves the reviewed #659 implementation byte-for-byte as `openai-agents-base.ts` and adds one bounded public wrapper plus focused controls. The nine-file candidate:
 
 - rejects future-dated replay records while preserving exact equality for fresh append receipts;
 - binds checkpoint and cancellation controls to exact adapter, version, profile, run, and generation identity;
@@ -111,7 +111,7 @@ Its source-only head `55deb1b0c691d01d7a76bf7e25e81efb3f37fb5b` preserves the re
 - admits benign short token-like prose while rejecting realistic and embedded credential families;
 - preserves admitted resume checkpoints and guards repository imports of the reviewed base.
 
-Exact-head review found one test-construction blocker: `test/openai-agents-runner-adapter-resume-cache.test.ts` supplies prose in the neutral closed resume-reason field, so it fails before exercising the cache. Repair child #951 at `b567f4a56435612d33e326310bd8ec78f30ff446` changes only that value to `continuation`; CodeRabbit is green, review threads are empty, and canonical run `30756463449` has jobs queued. Parent run `30755997904` is not integration evidence once the repair is absorbed. After #951 lands, #945 needs a fresh unchanged exact-head comparison, CodeRabbit/thread refresh, full canonical CI, runtime parity, browser evidence, and exact-revision serial validation.
+Test-only repair #951 merged into #945 as `cfca054ef211da375a41c988f147f45e709d0663`, replacing the invalid prose resume reason with the neutral closed value `continuation`. The repaired branch is 20 commits ahead and zero behind current `main`; CodeRabbit is green, review threads are empty, and exact-head static review accepts the source pending execution. Canonical run `30756723240` is the current evidence path and remains pending runner allocation. Runs on predecessor head `55deb1b0c691d01d7a76bf7e25e81efb3f37fb5b`, including `30755997904`, are expired.
 
 Incomplete reconstruction PRs #942, #947, and #949 are closed and contributed no candidate bytes. Do not revive or integrate both architectures.
 
@@ -165,7 +165,7 @@ Merged code, dashboard deployment presence, metadata checks, or one successful o
 | P0 | #697 Actions step/log mounting | Opt-in ten-read code is merged; Worker revision and flag remain unverified | Verify Worker revision and flag, then record one authenticated hosted step/log receipt and exact discovery declaration | Live attributable receipt passes and #697 closes |
 | P1 | #943 review-thread truncation | #944 is a workflow-free three-file current-main candidate with content review complete; canonical CI is pending | Let run `30755171898` finish unchanged, refresh exact-head gates, then squash-integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
 | P1 | #591 / #744 signed observations | Operational lane owns signed receipt and replay/conflict evidence | Complete exact live receipt, replay, and conflict proof without overlapping provider-write or secret work | Signed observation lifecycle has attributable live evidence and deterministic conflict handling |
-| P1 | #659 runner adapter | #945 is the sole current-main candidate, but its resume-cache control is blocked on test-only repair #951 | Absorb #951, register fresh exact-head CI, refresh source/review gates, then squash-integrate and retire historical parents | One adapter integrates with chronology, profile, authority, privacy, and recovery controls intact |
+| P1 | #659 runner adapter | #945 is repaired on exact head `cfca054e…`; source review is accepted and fresh canonical CI is pending | Let run `30756723240` finish unchanged, refresh exact-head gates, then squash-integrate and retire historical parents | One adapter integrates with chronology, profile, authority, privacy, and recovery controls intact |
 
 ## Work selection
 
@@ -188,7 +188,7 @@ Before committing to a lane, inspect dependencies, useful continuations, and ove
 - Record one authorised hosted `get_github_project_context` receipt for #492 and one authenticated step/log receipt for #697.
 - Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.
 - Finish unchanged exact-head CI and integration for #944.
-- Absorb #951 into #945, register fresh exact-head CI, refresh all gates, then integrate and retire the historical #659/#763/#875 lanes.
+- Finish canonical run `30756723240` on repaired #945 head `cfca054e…`, refresh all gates, then integrate and retire the historical #659/#763/#875 lanes.
 - Complete the live #591/#744 signed-observation receipt and conflict evidence.
 
 ## Failure handling
