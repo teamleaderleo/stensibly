@@ -40,6 +40,7 @@ describe("canonical CI scheduling", () => {
     expect(triggers).toContain("push:\n    branches:\n      - main");
     expect(triggers).toContain("pull_request:");
     expect(triggers).toContain("workflow_dispatch:");
+    expect(triggers).toContain("workflow_call:");
   });
 
   test("cancels only superseded pull-request runs", () => {
@@ -55,10 +56,11 @@ describe("canonical CI scheduling", () => {
     expect(concurrency).not.toContain("cancel-in-progress: true");
   });
 
-  test("isolates exact dispatch revisions and validation profiles", () => {
+  test("isolates exact requested revisions and validation profiles", () => {
     expect(concurrency).toContain("github.event_name == 'workflow_dispatch'");
+    expect(concurrency).toContain("github.event_name == 'workflow_call'");
     expect(concurrency).toContain(
-      "format('dispatch-{0}-{1}', inputs.expected_sha, inputs.validation_profile)",
+      "format('exact-{0}-{1}', inputs.expected_sha, inputs.validation_profile)",
     );
     expect(concurrency).toContain("format('push-{0}', github.sha)");
     expect(concurrency).not.toContain("github.ref");
@@ -66,18 +68,17 @@ describe("canonical CI scheduling", () => {
     expect(concurrency).not.toContain("github.run_id");
   });
 
-  test("keeps the existing parallel topology as the default dispatch profile", () => {
+  test("keeps the existing parallel topology as the default exact-ref profile", () => {
     expect(triggers).toContain("validation_profile:");
     expect(triggers).toContain("default: full_parallel");
     expect(triggers).toContain("type: choice");
     expect(triggers).toContain("- full_parallel");
     expect(triggers).toContain("- serial_full");
-    expect(testJob).toContain(
-      "github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel'",
-    );
-    expect(runtimeParityJob).toContain(
-      "github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel'",
-    );
+    for (const job of [testJob, runtimeParityJob]) {
+      expect(job).toContain("github.event_name != 'workflow_dispatch' &&");
+      expect(job).toContain("github.event_name != 'workflow_call'");
+      expect(job).toContain("inputs.validation_profile == 'full_parallel'");
+    }
   });
 
   test("uses one canonical gate contract for both full profiles", () => {
@@ -100,9 +101,8 @@ describe("canonical CI scheduling", () => {
     expect(serialFullJob).toContain("needs.browser-evidence.result == 'success'");
     expect(serialFullJob).toContain("needs.test.result == 'success'");
     expect(serialFullJob).toContain("needs.runtime-parity.result == 'success'");
-    expect(serialFullJob).toContain(
-      "github.event_name == 'workflow_dispatch' &&",
-    );
+    expect(serialFullJob).toContain("github.event_name == 'workflow_dispatch' ||");
+    expect(serialFullJob).toContain("github.event_name == 'workflow_call'");
     expect(serialFullJob).toContain("inputs.validation_profile == 'serial_full'");
     expect(serialFullJob?.match(/actions\/checkout@v6/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/oven-sh\/setup-bun@v2/gu)).toHaveLength(1);
