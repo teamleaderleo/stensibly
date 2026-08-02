@@ -279,7 +279,7 @@ function resumeCommand(
       containsCredentials: false,
     }),
     checkpointRef,
-    reason: "continue the exact resume-cache run",
+    reason: "continuation",
   });
 }
 
