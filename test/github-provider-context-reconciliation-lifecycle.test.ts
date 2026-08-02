@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { GitHubProviderReceipt } from "../src/github-provider-contracts.ts";
+import type {
+  GitHubIssueComment,
+  GitHubProviderReceipt,
+} from "../src/github-provider-contracts.ts";
 import type { GitHubIssueContext } from "../src/github-issue-context.ts";
 import {
   GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
@@ -160,6 +163,45 @@ describe("GitHub provider context reconciliation receipt lifecycle", () => {
     }
   });
 
+  test("binds settled comment target and verification before no-op", () => {
+    const result = commentResult();
+    const valid = receipt({
+      operation: "github_add_issue_comment",
+      target: `${repositoryFullName}#958:comment:new`,
+      result,
+      verification: {
+        state: "passed",
+        checkedAt: "2026-08-02T18:00:00.000Z",
+        sourceRevision: result.sourceRevision,
+      },
+    });
+
+    expect(compile(valid)).toMatchObject({
+      operation: "github_add_issue_comment",
+      outcome: "no_issue_context_effect",
+      providerSnapshot: null,
+    });
+
+    expect(() => compile({
+      ...valid,
+      target: `${repositoryFullName}#959:comment:new`,
+    })).toThrow("comment receipt target does not bind");
+    expect(() => compile({
+      ...valid,
+      verification: {
+        ...valid.verification,
+        sourceRevision: "github-rest:IC_other:revision",
+      },
+    })).toThrow("Settled GitHub provider receipt lifecycle is inconsistent");
+  });
+
+  test("rejects read-only operations masquerading as write receipts", () => {
+    expect(() => compile(receipt({
+      operation: "github_get_issue",
+      target: `${repositoryFullName}#958`,
+    }))).toThrow("does not produce a provider write receipt");
+  });
+
   test("admits stale readback only for guarded issue updates", () => {
     const staleUpdate = receipt({
       operation: "github_update_issue",
@@ -272,6 +314,24 @@ function issueResult(): GitHubIssueContext {
     contentSha256: hash("c"),
     snapshotSha256: hash("d"),
     containsIssueBody: false,
+  };
+}
+
+function commentResult(): GitHubIssueComment {
+  return {
+    id: "123456958",
+    issueNumber: 958,
+    canonicalUrl:
+      `https://github.com/${repositoryFullName}/issues/958#issuecomment-123456958`,
+    createdAt: "2026-08-02T17:59:58.000Z",
+    updatedAt: "2026-08-02T18:00:00.000Z",
+    sourceRevision:
+      "github-rest:IC_123456958:2026-08-02T18:00:00.000Z",
+    bodyRevision: {
+      byteLength: 24,
+      sha256: hash("e"),
+    },
+    containsBody: false,
   };
 }
 
