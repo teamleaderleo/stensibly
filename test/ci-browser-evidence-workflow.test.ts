@@ -51,11 +51,11 @@ describe("CI browser evidence profile", () => {
       .toBe(CI_BROWSER_EVIDENCE_COMMAND_IDS_V1);
   });
 
-  test("runs the adjunct job for pull requests, pushes, and full_parallel dispatches", () => {
+  test("runs the adjunct job for ordinary events and full_parallel exact-ref requests", () => {
     expect(browserJob).toBeDefined();
-    expect(browserJob).toContain(
-      "github.event_name != 'workflow_dispatch' || inputs.validation_profile == 'full_parallel'",
-    );
+    expect(browserJob).toContain("github.event_name != 'workflow_dispatch' &&");
+    expect(browserJob).toContain("github.event_name != 'workflow_call'");
+    expect(browserJob).toContain("inputs.validation_profile == 'full_parallel'");
     expect(browserJob).toContain('"${GITHUB_SHA}" != "${EXPECTED_SHA}"');
     expect(browserJob).toContain("bunx playwright install --with-deps chromium");
     expect(browserJob).toContain("frontend-browser-evidence-${{ github.sha }}");
@@ -74,9 +74,8 @@ describe("CI browser evidence profile", () => {
     expect(serialJob).toContain("needs.browser-evidence.result == 'success'");
     expect(serialJob).toContain("needs.test.result == 'success'");
     expect(serialJob).toContain("needs.runtime-parity.result == 'success'");
-    expect(serialJob).toContain(
-      "github.event_name == 'workflow_dispatch' &&",
-    );
+    expect(serialJob).toContain("github.event_name == 'workflow_dispatch' ||");
+    expect(serialJob).toContain("github.event_name == 'workflow_call'");
     expect(serialJob).toContain("inputs.validation_profile == 'serial_full'");
     expect(serialJob).toContain("github.event.pull_request.head.sha");
     expect(serialJob).toContain("SERIAL_VALIDATION_SHA:");
