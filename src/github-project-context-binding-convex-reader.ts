@@ -15,6 +15,7 @@ import {
   GitHubProjectContextStorageError,
 } from "./github-project-context-convex-ledger.js";
 import { snapshotBoundedJson } from "./github-repository-observation-admission.js";
+import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 import { parseStrictJson } from "./strict-json.js";
 
 export const HOSTED_GITHUB_ISSUE_CONTEXT_BINDING_V1 = 1 as const;
@@ -131,7 +132,15 @@ export class ConvexGitHubProjectContextBindingReader
         now: this.#now,
       });
       const record = detached as unknown as StoredRecord;
-      if (record.isCurrent !== true || record.outcome === "stale") {
+      if (
+        record.id !== deterministicRecordId(
+          this.#workspace,
+          project,
+          record.observationRef,
+        )
+        || record.isCurrent !== true
+        || record.outcome === "stale"
+      ) {
         throw new GitHubProjectContextStorageError();
       }
       const snapshot = admitSnapshotJson(record.snapshotJson);
@@ -214,12 +223,17 @@ function exactStoredProject(value: unknown): {
 } {
   try {
     const project = exactDataRecord(value, projectRecordKeys);
+    const createdAt = storedTimestamp(project.createdAt);
+    const updatedAt = storedTimestamp(project.updatedAt);
+    if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+      throw new GitHubProjectContextStorageError();
+    }
     return {
       id: boundedStoredText(project.id, 160),
       slug: exactProject(project.slug),
       name: boundedStoredText(project.name, 2_000),
-      createdAt: storedTimestamp(project.createdAt),
-      updatedAt: storedTimestamp(project.updatedAt),
+      createdAt,
+      updatedAt,
     };
   } catch {
     throw new GitHubProjectContextStorageError();
@@ -355,6 +369,20 @@ function exactDataRecord<const K extends readonly string[]>(
     output[key] = descriptor.value;
   }
   return output;
+}
+
+function deterministicRecordId(
+  workspace: string,
+  project: string,
+  observationRef: string,
+): string {
+  const digest = fingerprintCanonicalRequest({
+    version: 1,
+    workspace,
+    project,
+    observationRef,
+  });
+  return `github_context_${digest.slice("sha256:".length)}`;
 }
 
 function exactWorkspace(value: string): string {
