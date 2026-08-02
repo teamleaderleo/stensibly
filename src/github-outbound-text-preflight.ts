@@ -120,7 +120,7 @@ const allowedDispositions =
     "reject",
     "require_authority",
   ]);
-const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/u;
+const policyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const unsafeTextPattern =
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const credentialShapedIdentityPattern =
@@ -256,7 +256,7 @@ function admitPolicy(value: unknown): Readonly<{
   if (input.version !== GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1) {
     throw new RangeError("GitHub outbound text policy version must equal 1");
   }
-  const policyId = canonicalIdentity(
+  const policyId = canonicalPolicyId(
     input.policyId,
     "GitHub outbound text policy ID",
     160,
@@ -496,7 +496,7 @@ function exactOutboundText(value: unknown): string {
   return value;
 }
 
-function canonicalIdentity(
+function canonicalPolicyId(
   value: unknown,
   label: string,
   maximumBytes: number,
@@ -506,7 +506,7 @@ function canonicalIdentity(
     || value.length === 0
     || value !== value.trim()
     || Buffer.byteLength(value, "utf8") > maximumBytes
-    || !identifierPattern.test(value)
+    || !policyIdPattern.test(value)
     || credentialShapedIdentityPattern.test(value)
   ) {
     throw new RangeError(`${label} is invalid`);
