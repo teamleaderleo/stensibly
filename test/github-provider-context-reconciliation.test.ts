@@ -195,7 +195,7 @@ describe("GitHub provider context reconciliation", () => {
     expect(second.inputFingerprint).toBe(first.inputFingerprint);
     expect(second.proposalFingerprint).toBe(first.proposalFingerprint);
 
-    receipt.result!.labels.push("caller-mutated");
+    (receipt.result as GitHubIssueContext).labels.push("caller-mutated");
     current.sourceRevision = "caller-mutated";
 
     expect(first.currentSourceRevision).toBe(
