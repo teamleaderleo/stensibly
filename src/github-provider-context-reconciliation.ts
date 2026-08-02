@@ -235,7 +235,11 @@ function exactRecord<const K extends readonly string[]>(
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) => typeof key !== "string" || !keys.includes(key))) {
+  if (
+    ownKeys.some((key) =>
+      typeof key !== "string" || !(keys as readonly string[]).includes(key)
+    )
+  ) {
     throw new TypeError(`${label} contains unknown fields`);
   }
   if (ownKeys.length !== keys.length) {
