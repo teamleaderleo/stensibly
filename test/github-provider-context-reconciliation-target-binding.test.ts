@@ -9,7 +9,7 @@ import {
 const repositoryFullName = "teamleaderleo/stensibly";
 
 describe("GitHub provider context reconciliation target binding", () => {
-  test("accepts coherent create and update targets", () => {
+  test("accepts coherent create, update, label, and assignee targets", () => {
     const created = compile(receipt({
       operation: "github_create_issue",
       target: `${repositoryFullName}#new`,
@@ -20,11 +20,21 @@ describe("GitHub provider context reconciliation target binding", () => {
       target: `${repositoryFullName}#958`,
       resultNumber: 958,
     }));
+    const labeled = compile(receipt({
+      operation: "github_add_issue_labels",
+      target: `${repositoryFullName}#958:labels`,
+      resultNumber: 958,
+    }));
+    const assigned = compile(receipt({
+      operation: "github_remove_issue_assignees",
+      target: `${repositoryFullName}#958:assignees`,
+      resultNumber: 958,
+    }));
 
-    expect(created.outcome).toBe("propose_context_acceptance");
-    expect(created.externalId).toBe(`github:${repositoryFullName}#958`);
-    expect(updated.outcome).toBe("propose_context_acceptance");
-    expect(updated.externalId).toBe(`github:${repositoryFullName}#958`);
+    for (const proposal of [created, updated, labeled, assigned]) {
+      expect(proposal.outcome).toBe("propose_context_acceptance");
+      expect(proposal.externalId).toBe(`github:${repositoryFullName}#958`);
+    }
   });
 
   test("rejects a create receipt that does not retain the new-issue target", () => {
@@ -36,15 +46,43 @@ describe("GitHub provider context reconciliation target binding", () => {
   });
 
   test("rejects same-repository issue substitution for update and set mutation", () => {
-    for (const operation of [
-      "github_update_issue",
-      "github_add_issue_labels",
-      "github_remove_issue_assignees",
-    ] as const) {
+    const cases = [
+      {
+        operation: "github_update_issue" as const,
+        target: `${repositoryFullName}#958`,
+      },
+      {
+        operation: "github_add_issue_labels" as const,
+        target: `${repositoryFullName}#958:labels`,
+      },
+      {
+        operation: "github_remove_issue_assignees" as const,
+        target: `${repositoryFullName}#958:assignees`,
+      },
+    ];
+    for (const { operation, target } of cases) {
       expect(() => compile(receipt({
         operation,
-        target: `${repositoryFullName}#958`,
+        target,
         resultNumber: 959,
+      }))).toThrow("target does not bind the provider result");
+    }
+  });
+
+  test("rejects a coherent issue number with the wrong mutation suffix", () => {
+    for (const input of [
+      {
+        operation: "github_add_issue_labels" as const,
+        target: `${repositoryFullName}#958`,
+      },
+      {
+        operation: "github_remove_issue_assignees" as const,
+        target: `${repositoryFullName}#958:labels`,
+      },
+    ]) {
+      expect(() => compile(receipt({
+        ...input,
+        resultNumber: 958,
       }))).toThrow("target does not bind the provider result");
     }
   });

@@ -195,9 +195,11 @@ function assertSettledIssueReadback(
   receipt: GitHubProviderReceipt,
   snapshot: GitHubIssueContext,
 ): void {
-  const expectedTarget = receipt.operation === "github_create_issue"
-    ? `${receipt.repositoryFullName}#new`
-    : `${receipt.repositoryFullName}#${snapshot.reference.number}`;
+  const expectedTarget = expectedIssueTarget(
+    receipt.operation,
+    receipt.repositoryFullName,
+    snapshot.reference.number,
+  );
   if (receipt.target !== expectedTarget) {
     throw new Error(
       "Settled GitHub issue receipt target does not bind the provider result",
@@ -213,6 +215,29 @@ function assertSettledIssueReadback(
     throw new Error(
       "Settled GitHub issue receipt verification does not bind the provider result",
     );
+  }
+}
+
+function expectedIssueTarget(
+  operation: GitHubIssueProviderOperation,
+  repositoryFullName: string,
+  issueNumber: number,
+): string {
+  switch (operation) {
+    case "github_create_issue":
+      return `${repositoryFullName}#new`;
+    case "github_update_issue":
+      return `${repositoryFullName}#${issueNumber}`;
+    case "github_add_issue_labels":
+    case "github_remove_issue_label":
+      return `${repositoryFullName}#${issueNumber}:labels`;
+    case "github_add_issue_assignees":
+    case "github_remove_issue_assignees":
+      return `${repositoryFullName}#${issueNumber}:assignees`;
+    default:
+      throw new Error(
+        "GitHub operation does not produce reconcilable issue context",
+      );
   }
 }
 
