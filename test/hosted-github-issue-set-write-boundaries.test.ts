@@ -129,7 +129,6 @@ describe("private hosted GitHub issue set-write boundaries", () => {
       state: "pending_reconciliation",
       operation: "github_add_issue_labels",
       target: `${repositoryFullName}#${issueNumber}:labels`,
-      providerRequestId: "WRITE:LABELS:SECOND-READ",
       result: null,
       verification: {
         state: "failed",
