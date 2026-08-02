@@ -29,7 +29,7 @@ export async function readBoundedGitHubProviderResponseText(
   let declaredLength: number | null = null;
   if (declaredHeader !== null) {
     if (!/^\d+$/.test(declaredHeader)) {
-      await discardResponse(response);
+      await discardGitHubProviderResponse(response);
       throw new GitHubProviderResponseReadError();
     }
     declaredLength = Number(declaredHeader);
@@ -37,7 +37,7 @@ export async function readBoundedGitHubProviderResponseText(
       !Number.isSafeInteger(declaredLength)
       || declaredLength > maximumBytes
     ) {
-      await discardResponse(response);
+      await discardGitHubProviderResponse(response);
       throw new GitHubProviderResponseReadError();
     }
   }
@@ -105,11 +105,13 @@ export async function readBoundedGitHubProviderResponseText(
   }
 }
 
-async function discardResponse(response: Response): Promise<void> {
+export async function discardGitHubProviderResponse(
+  response: Response,
+): Promise<void> {
   try {
     await response.body?.cancel();
   } catch {
-    // The fixed caller-owned error remains authoritative.
+    // The caller-owned status/error remains authoritative.
   }
 }
 
