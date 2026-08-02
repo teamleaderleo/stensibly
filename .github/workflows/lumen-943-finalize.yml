@@ -1,0 +1,160 @@
+name: Lumen 943 finalize
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - .github/workflows/lumen-943-finalize.yml
+      - test/github-rest-pull-request-review-thread-comment-truncation.test.ts
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-943-finalize-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: >-
+      github.repository == 'teamleaderleo/stensibly' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'lumen/943-review-comment-truncation-control'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/943-review-comment-truncation-control
+          fetch-depth: 2
+      - name: Verify exact carrier lease
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "dfbbc92fae56b3efbc7ee17ce1cd66d3e18d4af4"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/lumen-943-finalize.yml"
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply bounded comment truncation repair
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-rest-pull-request-review-thread-adapter.ts")
+          source = path.read_text()
+
+          replacements = [
+              (
+                  "const maximumComments = 400;",
+                  "const maximumComments = maximumThreads * commentPageSize;",
+              ),
+              (
+          '''  const commentsTotal = nonNegativeProviderInteger(
+            commentsConnection.totalCount,
+            "GitHub review-thread comment count",
+          );
+          if (commentsTotal > commentPageSize) {
+            throw rejected(
+              "github_delegated_provider_result_too_large",
+              `GitHub delegated review-thread comments exceed ${commentPageSize} entries per thread`,
+            );
+          }
+          const commentsPageInfo = providerRecord(
+            commentsConnection.pageInfo,
+            ["hasNextPage", "endCursor"],
+            ["hasNextPage", "endCursor"],
+            "GitHub review-thread comment page info",
+          );
+          if (
+            booleanValue(
+              commentsPageInfo.hasNextPage,
+              "GitHub review-thread comment next-page flag",
+            )
+          ) {
+            throw rejected(
+              "github_delegated_provider_result_too_large",
+              "GitHub delegated nested review-thread comment pagination is unsupported",
+            );
+          }
+          nullableCursor(commentsPageInfo.endCursor);
+          const commentNodes = denseArray(
+            commentsConnection.nodes,
+            "GitHub review-thread comment nodes",
+            commentPageSize,
+          );
+          if (commentNodes.length !== commentsTotal) {
+            throw rejected(
+              "github_delegated_provider_invalid_response",
+              "GitHub review-thread comment count did not match its nodes",
+            );
+          }
+          ''',
+          '''  const commentsTotalCount = nonNegativeProviderInteger(
+            commentsConnection.totalCount,
+            "GitHub review-thread comment count",
+          );
+          const commentsPageInfo = providerRecord(
+            commentsConnection.pageInfo,
+            ["hasNextPage", "endCursor"],
+            ["hasNextPage", "endCursor"],
+            "GitHub review-thread comment page info",
+          );
+          const commentsHasNextPage = booleanValue(
+            commentsPageInfo.hasNextPage,
+            "GitHub review-thread comment next-page flag",
+          );
+          const commentsEndCursor = nullableCursor(commentsPageInfo.endCursor);
+          const commentNodes = denseArray(
+            commentsConnection.nodes,
+            "GitHub review-thread comment nodes",
+            commentPageSize,
+          );
+          const commentsTruncated = commentsTotalCount > commentNodes.length;
+          if (
+            commentsTruncated !== commentsHasNextPage
+            || (commentsHasNextPage && commentsEndCursor === null)
+            || (commentsHasNextPage && commentNodes.length !== commentPageSize)
+            || (!commentsHasNextPage && commentNodes.length !== commentsTotalCount)
+          ) {
+            throw rejected(
+              "github_delegated_provider_invalid_response",
+              "GitHub review-thread comment pagination was inconsistent",
+            );
+          }
+          ''',
+              ),
+              (
+          '''    resolvedByLogin,
+            comments: Object.freeze(comments),
+          ''',
+          '''    resolvedByLogin,
+            commentsTotalCount,
+            commentsTruncated,
+            comments: Object.freeze(comments),
+          ''',
+              ),
+          ]
+
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f"expected exactly one source match, found {source.count(old)}")
+              source = source.replace(old, new)
+
+          path.write_text(source)
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun test ./test/github-rest-pull-request-review-thread-comment-truncation.test.ts
+      - name: Publish clean source and test head
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-943-finalize.yml
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/github-rest-pull-request-review-thread-adapter.ts \
+            test/github-rest-pull-request-review-thread-comment-truncation.test.ts \
+            .github/workflows/lumen-943-finalize.yml
+          git commit -m "Return bounded truncated review comments"
+          git push origin HEAD:lumen/943-review-comment-truncation-control
