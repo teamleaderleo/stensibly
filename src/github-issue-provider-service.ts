@@ -188,10 +188,10 @@ export class GitHubIssueProviderService {
           created.issue.number,
           "Created GitHub issue number",
         );
-        const readback = await this.#adapter.getIssue({
-          repositoryFullName: scope.repositoryFullName,
-          issueNumber: number,
-        });
+        const readback = await this.#readIssueAfterMutation(
+          scope.repositoryFullName,
+          number,
+        );
         const result = buildScopedGitHubIssueContext(
           readback,
           scope.repositoryFullName,
@@ -274,10 +274,10 @@ export class GitHubIssueProviderService {
           expectedSourceRevision,
           idempotencyKey: key,
         });
-        const readback = await this.#adapter.getIssue({
-          repositoryFullName: scope.repositoryFullName,
+        const readback = await this.#readIssueAfterMutation(
+          scope.repositoryFullName,
           issueNumber,
-        });
+        );
         const result = buildScopedGitHubIssueContext(
           readback,
           scope.repositoryFullName,
@@ -319,11 +319,11 @@ export class GitHubIssueProviderService {
           body,
           idempotencyKey: key,
         });
-        const readback = await this.#adapter.getIssueComment({
-          repositoryFullName: scope.repositoryFullName,
+        const readback = await this.#readCommentAfterMutation(
+          scope.repositoryFullName,
           issueNumber,
-          commentId: created.comment.id,
-        });
+          created.comment.id,
+        );
         if (canonicalBody(readback.body) !== canonicalBody(body)) {
           throw new Error(
             "GitHub issue comment readback did not match the requested body",
@@ -485,10 +485,10 @@ export class GitHubIssueProviderService {
         );
         const expected = input.expected(before, input.values);
         const mutated = await input.mutate(scope, issueNumber, input.values, key);
-        const readback = await this.#adapter.getIssue({
-          repositoryFullName: scope.repositoryFullName,
+        const readback = await this.#readIssueAfterMutation(
+          scope.repositoryFullName,
           issueNumber,
-        });
+        );
         const result = buildScopedGitHubIssueContext(
           readback,
           scope.repositoryFullName,
@@ -507,6 +507,40 @@ export class GitHubIssueProviderService {
         };
       },
     });
+  }
+
+  async #readIssueAfterMutation(
+    repositoryFullName: string,
+    issueNumber: number,
+  ): Promise<GitHubIssueContextInput> {
+    try {
+      return await this.#adapter.getIssue({
+        repositoryFullName,
+        issueNumber,
+      });
+    } catch {
+      throw new Error(
+        "GitHub issue readback could not confirm the mutation; reconcile before retry",
+      );
+    }
+  }
+
+  async #readCommentAfterMutation(
+    repositoryFullName: string,
+    issueNumber: number,
+    commentId: string,
+  ) {
+    try {
+      return await this.#adapter.getIssueComment({
+        repositoryFullName,
+        issueNumber,
+        commentId,
+      });
+    } catch {
+      throw new Error(
+        "GitHub issue comment readback could not confirm the mutation; reconcile before retry",
+      );
+    }
   }
 
   async #executeWrite(input: {
