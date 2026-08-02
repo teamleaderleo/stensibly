@@ -1,3 +1,4 @@
+import { sha256 } from "./canonical-json.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
@@ -22,6 +23,7 @@ export type GitHubOutboundTextPreflightDecision =
 export type GitHubOutboundReferenceKind =
   | "issue"
   | "pull_request"
+  | "issue_or_pull_request"
   | "discussion"
   | "commit";
 
@@ -59,8 +61,7 @@ export interface GitHubOutboundTextFindingV1 {
   externalOwner: string;
   externalRepository: string;
   itemNumber: number | null;
-  commitPrefixStart: string | null;
-  commitPrefixEnd: string | null;
+  commitPrefix: string | null;
   rule: GitHubOutboundReferenceRule;
   authorityRequired: boolean;
   findingFingerprint: string;
@@ -124,14 +125,15 @@ const unsafeTextPattern =
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const credentialShapedIdentityPattern =
   /(?:Bearer\s+|gh[pousr]_|github_pat_|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
-const directReferencePattern =
-  /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[/?#)\]}>.,;:'"\s])/giu;
-const repositoryShorthandPattern =
-  /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]{0,9})(?=$|[^0-9])/gu;
-const commitShorthandPattern =
-  /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?=$|[^0-9a-f])/giu;
+const directReferencePatternSource =
+  String.raw`https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[/?#)\]}>.,;:'"\s])`;
+const repositoryShorthandPatternSource =
+  String.raw`(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]{0,9})(?=$|[^0-9])`;
+const commitShorthandPatternSource =
+  String.raw`(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?=$|[^0-9a-f])`;
 const closingKeywordBeforeReferencePattern =
   /(?:^|[^A-Za-z])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
+const exactCommitIdentityPattern = /^[0-9a-f]{7,64}$/iu;
 const maximumTextBytes = 128 * 1024;
 const maximumControlledRepositories = 32;
 const maximumFindings = 100;
@@ -168,7 +170,7 @@ export function compileGitHubOutboundTextPreflightV1(
   }
   const field = outboundField(input.field);
   const text = exactOutboundText(input.text);
-  const textSha256 = fingerprintCanonicalRequest({ text });
+  const textSha256 = sha256(text);
   const textByteLength = Buffer.byteLength(text, "utf8");
   const textCharacterCount = [...text].length;
   const inputFingerprint = fingerprintCanonicalRequest({
@@ -201,8 +203,6 @@ export function compileGitHubOutboundTextPreflightV1(
       closingKeywordBeforeReferencePattern.test(prefix)
         ? "external_closing_reference"
         : "external_reference";
-    const commitPrefixStart = reference.commitIdentity?.slice(0, 4) ?? null;
-    const commitPrefixEnd = reference.commitIdentity?.slice(-4) ?? null;
     const body = {
       version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
       field,
@@ -213,8 +213,7 @@ export function compileGitHubOutboundTextPreflightV1(
       externalOwner,
       externalRepository,
       itemNumber: reference.itemNumber,
-      commitPrefixStart,
-      commitPrefixEnd,
+      commitPrefix: reference.commitIdentity?.slice(0, 4) ?? null,
       rule,
       authorityRequired:
         policy.externalReferenceDisposition === "require_authority",
@@ -326,8 +325,19 @@ function canonicalRepositoryList(value: unknown): readonly string[] {
 function detectReferences(text: string): readonly DetectedReference[] {
   const references: DetectedReference[] = [];
   const occupied: Array<readonly [number, number]> = [];
+  const directReferencePattern = new RegExp(
+    directReferencePatternSource,
+    "giu",
+  );
+  const repositoryShorthandPattern = new RegExp(
+    repositoryShorthandPatternSource,
+    "gu",
+  );
+  const commitShorthandPattern = new RegExp(
+    commitShorthandPatternSource,
+    "giu",
+  );
 
-  directReferencePattern.lastIndex = 0;
   for (const match of text.matchAll(directReferencePattern)) {
     const start = match.index;
     const end = start + match[0].length;
@@ -336,6 +346,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
     const pathKind = match[3]!.toLowerCase();
     if (pathKind === "commit") {
       const commitIdentity = match[4]!.toLowerCase();
+      if (!exactCommitIdentityPattern.test(commitIdentity)) continue;
       references.push({
         start,
         end,
@@ -366,7 +377,6 @@ function detectReferences(text: string): readonly DetectedReference[] {
     occupied.push([start, end]);
   }
 
-  repositoryShorthandPattern.lastIndex = 0;
   for (const match of text.matchAll(repositoryShorthandPattern)) {
     const leadingLength = match[0].length
       - `${match[1]}/${match[2]}#${match[3]}`.length;
@@ -380,7 +390,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
       start,
       end,
       source: "repository_shorthand",
-      referenceKind: "issue",
+      referenceKind: "issue_or_pull_request",
       repositoryFullName,
       itemNumber,
       commitIdentity: null,
@@ -388,7 +398,6 @@ function detectReferences(text: string): readonly DetectedReference[] {
     occupied.push([start, end]);
   }
 
-  commitShorthandPattern.lastIndex = 0;
   for (const match of text.matchAll(commitShorthandPattern)) {
     const leadingLength = match[0].length
       - `${match[1]}/${match[2]}@${match[3]}`.length;
