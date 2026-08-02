@@ -1,0 +1,546 @@
+name: Rook 972 provider request retention
+
+on:
+  push:
+    branches:
+      - juniper/968-call-local-readback
+    paths:
+      - .github/workflows/rook-972-provider-request-retention.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-972-provider-request-retention
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: juniper/968-call-local-readback
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Preserve known provider request identity through verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-issue-provider-service.ts")
+          text = path.read_text()
+
+          interface_anchor = '''interface ResolvedScope {
+            project: string;
+            repositoryFullName: string;
+            attachment: ProjectAttachmentRecord;
+            binding: GitHubProjectRepositoryBinding;
+            connection: GitHubProviderConnection;
+            authority: GitHubProviderAuthorityDecision;
+          }
+
+          export class GitHubIssueProviderService {'''
+          interface_replacement = '''interface ResolvedScope {
+            project: string;
+            repositoryFullName: string;
+            attachment: ProjectAttachmentRecord;
+            binding: GitHubProjectRepositoryBinding;
+            connection: GitHubProviderConnection;
+            authority: GitHubProviderAuthorityDecision;
+          }
+
+          class GitHubPostMutationVerificationError extends Error {
+            readonly providerRequestId: string | null;
+
+            constructor(providerRequestId: string | null) {
+              super(
+                "GitHub post-mutation verification could not confirm the provider effect; reconcile before retry",
+              );
+              this.name = "GitHubPostMutationVerificationError";
+              this.providerRequestId = providerRequestId;
+            }
+          }
+
+          export class GitHubIssueProviderService {'''
+          if text.count(interface_anchor) != 1:
+            raise SystemExit("post-mutation error insertion anchor changed")
+          text = text.replace(interface_anchor, interface_replacement, 1)
+
+          create_before = '''        const number = positiveInteger(
+                  created.issue.number,
+                  "Created GitHub issue number",
+                );
+                const readback = await this.#readIssueAfterMutation(
+                  scope.repositoryFullName,
+                  number,
+                );
+                const result = buildScopedGitHubIssueContext(
+                  readback,
+                  scope.repositoryFullName,
+                );
+                verifyIssueFields(readback, { title, body, labels, assignees });
+                return {
+                  result,
+                  providerRequestId: created.providerRequestId ?? null,
+                };'''
+          create_after = '''        const providerRequestId = created.providerRequestId ?? null;
+                return await this.#completeMutation(
+                  providerRequestId,
+                  async () => {
+                    const number = positiveInteger(
+                      created.issue.number,
+                      "Created GitHub issue number",
+                    );
+                    const readback = await this.#readIssueAfterMutation(
+                      scope.repositoryFullName,
+                      number,
+                    );
+                    const result = buildScopedGitHubIssueContext(
+                      readback,
+                      scope.repositoryFullName,
+                    );
+                    verifyIssueFields(readback, { title, body, labels, assignees });
+                    return result;
+                  },
+                );'''
+          if text.count(create_before) != 1:
+            raise SystemExit("create verification anchor changed")
+          text = text.replace(create_before, create_after, 1)
+
+          update_before = '''        const readback = await this.#readIssueAfterMutation(
+                  scope.repositoryFullName,
+                  issueNumber,
+                );
+                const result = buildScopedGitHubIssueContext(
+                  readback,
+                  scope.repositoryFullName,
+                );
+                verifyIssueFields(readback, {
+                  ...(title === undefined ? {} : { title }),
+                  ...(body === undefined ? {} : { body }),
+                  ...(input.state === undefined ? {} : { state: input.state }),
+                  ...(input.stateReason === undefined
+                    ? {}
+                    : { stateReason: input.stateReason }),
+                });
+                return {
+                  result,
+                  providerRequestId: updated.providerRequestId ?? null,
+                };'''
+          update_after = '''        const providerRequestId = updated.providerRequestId ?? null;
+                return await this.#completeMutation(
+                  providerRequestId,
+                  async () => {
+                    const readback = await this.#readIssueAfterMutation(
+                      scope.repositoryFullName,
+                      issueNumber,
+                    );
+                    const result = buildScopedGitHubIssueContext(
+                      readback,
+                      scope.repositoryFullName,
+                    );
+                    verifyIssueFields(readback, {
+                      ...(title === undefined ? {} : { title }),
+                      ...(body === undefined ? {} : { body }),
+                      ...(input.state === undefined ? {} : { state: input.state }),
+                      ...(input.stateReason === undefined
+                        ? {}
+                        : { stateReason: input.stateReason }),
+                    });
+                    return result;
+                  },
+                );'''
+          if text.count(update_before) != 1:
+            raise SystemExit("update verification anchor changed")
+          text = text.replace(update_before, update_after, 1)
+
+          comment_before = '''        const readback = await this.#readCommentAfterMutation(
+                  scope.repositoryFullName,
+                  issueNumber,
+                  created.comment.id,
+                );
+                if (canonicalBody(readback.body) !== canonicalBody(body)) {
+                  throw new Error(
+                    "GitHub issue comment readback did not match the requested body",
+                  );
+                }
+                return {
+                  result: buildScopedGitHubIssueComment(
+                    readback,
+                    scope.repositoryFullName,
+                    issueNumber,
+                  ),
+                  providerRequestId: created.providerRequestId ?? null,
+                };'''
+          comment_after = '''        const providerRequestId = created.providerRequestId ?? null;
+                return await this.#completeMutation(
+                  providerRequestId,
+                  async () => {
+                    const readback = await this.#readCommentAfterMutation(
+                      scope.repositoryFullName,
+                      issueNumber,
+                      created.comment.id,
+                    );
+                    if (canonicalBody(readback.body) !== canonicalBody(body)) {
+                      throw new Error(
+                        "GitHub issue comment readback did not match the requested body",
+                      );
+                    }
+                    return buildScopedGitHubIssueComment(
+                      readback,
+                      scope.repositoryFullName,
+                      issueNumber,
+                    );
+                  },
+                );'''
+          if text.count(comment_before) != 1:
+            raise SystemExit("comment verification anchor changed")
+          text = text.replace(comment_before, comment_after, 1)
+
+          set_before = '''        const readback = await this.#readIssueAfterMutation(
+                  scope.repositoryFullName,
+                  issueNumber,
+                );
+                const result = buildScopedGitHubIssueContext(
+                  readback,
+                  scope.repositoryFullName,
+                );
+                const actual = input.field === "labels"
+                  ? canonicalStringList(readback.labels ?? [], 100, 100)
+                  : canonicalLogins(readback.assignees ?? []);
+                if (stableJson(actual) !== stableJson(expected)) {
+                  throw new Error(
+                    `GitHub issue ${input.field} readback did not match the requested mutation`,
+                  );
+                }
+                return {
+                  result,
+                  providerRequestId: mutated.providerRequestId ?? null,
+                };'''
+          set_after = '''        const providerRequestId = mutated.providerRequestId ?? null;
+                return await this.#completeMutation(
+                  providerRequestId,
+                  async () => {
+                    const readback = await this.#readIssueAfterMutation(
+                      scope.repositoryFullName,
+                      issueNumber,
+                    );
+                    const result = buildScopedGitHubIssueContext(
+                      readback,
+                      scope.repositoryFullName,
+                    );
+                    const actual = input.field === "labels"
+                      ? canonicalStringList(readback.labels ?? [], 100, 100)
+                      : canonicalLogins(readback.assignees ?? []);
+                    if (stableJson(actual) !== stableJson(expected)) {
+                      throw new Error(
+                        `GitHub issue ${input.field} readback did not match the requested mutation`,
+                      );
+                    }
+                    return result;
+                  },
+                );'''
+          if text.count(set_before) != 1:
+            raise SystemExit("set verification anchor changed")
+          text = text.replace(set_before, set_after, 1)
+
+          helper_anchor = '''  async #readIssueAfterMutation(
+            repositoryFullName: string,
+            issueNumber: number,
+          ): Promise<GitHubIssueContextInput> {'''
+          helper_replacement = '''  async #completeMutation<T extends GitHubIssueContext | GitHubIssueComment>(
+            providerRequestId: string | null,
+            verify: () => Promise<T>,
+          ): Promise<{ result: T; providerRequestId: string | null }> {
+            try {
+              return {
+                result: await verify(),
+                providerRequestId,
+              };
+            } catch {
+              throw new GitHubPostMutationVerificationError(providerRequestId);
+            }
+          }
+
+          async #readIssueAfterMutation(
+            repositoryFullName: string,
+            issueNumber: number,
+          ): Promise<GitHubIssueContextInput> {'''
+          if text.count(helper_anchor) != 1:
+            raise SystemExit("completion helper anchor changed")
+          text = text.replace(helper_anchor, helper_replacement, 1)
+
+          pending_anchor = '''      const message = error instanceof Error ? error.message : String(error);
+              const checkedAt = this.#now();
+              const pending = await this.#receipts.updateGitHubProviderReceipt({
+                ...reserved,
+                state: "pending_reconciliation",'''
+          pending_replacement = '''      const message = error instanceof Error ? error.message : String(error);
+              const providerRequestId = error instanceof GitHubPostMutationVerificationError
+                ? error.providerRequestId
+                : null;
+              const checkedAt = this.#now();
+              const pending = await this.#receipts.updateGitHubProviderReceipt({
+                ...reserved,
+                state: "pending_reconciliation",
+                providerRequestId,'''
+          if text.count(pending_anchor) != 1:
+            raise SystemExit("pending receipt anchor changed")
+          text = text.replace(pending_anchor, pending_replacement, 1)
+
+          path.write_text(text)
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/github-issue-provider-call-local-readback.test.ts")
+          text = path.read_text()
+          class_anchor = '''class OutcomeAdapter implements GitHubIssueProviderAdapter {'''
+          new_class = r'''class RequestIdentityAdapter implements GitHubIssueProviderAdapter {
+            current = issue();
+            issueMutationReturned = false;
+            commentMutationReturned = false;
+            mutationCalls = 0;
+
+            async listIssues(): Promise<GitHubIssueProviderPage> {
+              return { issues: [], nextCursor: null };
+            }
+
+            async searchIssues(): Promise<GitHubIssueProviderPage> {
+              return { issues: [], nextCursor: null };
+            }
+
+            async getIssue(): Promise<GitHubIssueContextInput> {
+              if (this.issueMutationReturned) {
+                throw new Error("synthetic final issue read failure");
+              }
+              return structuredClone(this.current);
+            }
+
+            async createIssue() {
+              this.mutationCalls += 1;
+              this.issueMutationReturned = true;
+              return {
+                issue: structuredClone(this.current),
+                providerRequestId: "request-create-known",
+              };
+            }
+
+            async updateIssue(input: Parameters<GitHubIssueProviderAdapter["updateIssue"]>[0]) {
+              this.mutationCalls += 1;
+              this.current = issue({
+                ...this.current,
+                title: input.title ?? this.current.title,
+                sourceRevision: "github-rev-update-known",
+              });
+              this.issueMutationReturned = true;
+              return {
+                issue: structuredClone(this.current),
+                providerRequestId: "request-update-known",
+              };
+            }
+
+            async addIssueComment(input: Parameters<GitHubIssueProviderAdapter["addIssueComment"]>[0]) {
+              this.mutationCalls += 1;
+              this.commentMutationReturned = true;
+              return {
+                comment: comment(input.body),
+                providerRequestId: "request-comment-known",
+              };
+            }
+
+            async getIssueComment(): Promise<GitHubIssueCommentInput> {
+              if (this.commentMutationReturned) {
+                throw new Error("synthetic final comment read failure");
+              }
+              return comment("unused");
+            }
+
+            async addIssueLabels(input: Parameters<GitHubIssueProviderAdapter["addIssueLabels"]>[0]) {
+              this.mutationCalls += 1;
+              this.current = issue({
+                labels: [...new Set([...(this.current.labels ?? []), ...input.labels])],
+                sourceRevision: "github-rev-label-known",
+              });
+              this.issueMutationReturned = true;
+              return {
+                issue: structuredClone(this.current),
+                providerRequestId: "request-label-known",
+              };
+            }
+
+            async removeIssueLabel() {
+              throw new Error("remove label is outside this control");
+            }
+
+            async addIssueAssignees() {
+              throw new Error("add assignees is outside this control");
+            }
+
+            async removeIssueAssignees() {
+              throw new Error("remove assignees is outside this control");
+            }
+          }
+
+          class OutcomeAdapter implements GitHubIssueProviderAdapter {'''
+          if text.count(class_anchor) != 1:
+            raise SystemExit("request identity adapter anchor changed")
+          text = text.replace(class_anchor, new_class, 1)
+
+          test_anchor = '''  test("keeps a provider denial before effect as rejected", async () => {'''
+          new_test = r'''  test("retains a known provider request ID on every final verification failure", async () => {
+            const cases: Array<{
+              name: string;
+              expectedRequestId: string;
+              invoke: (
+                service: GitHubIssueProviderService,
+                idempotencyKey: string,
+              ) => Promise<unknown>;
+            }> = [
+              {
+                name: "create",
+                expectedRequestId: "request-create-known",
+                invoke: (service, idempotencyKey) => service.createIssue({
+                  ...context,
+                  title: "Created issue",
+                  idempotencyKey,
+                }),
+              },
+              {
+                name: "update",
+                expectedRequestId: "request-update-known",
+                invoke: (service, idempotencyKey) => service.updateIssue({
+                  ...context,
+                  issueNumber,
+                  expectedSourceRevision: "github-rev-before",
+                  title: "Updated issue",
+                  idempotencyKey,
+                }),
+              },
+              {
+                name: "comment",
+                expectedRequestId: "request-comment-known",
+                invoke: (service, idempotencyKey) => service.addIssueComment({
+                  ...context,
+                  issueNumber,
+                  body: "Known request comment",
+                  idempotencyKey,
+                }),
+              },
+              {
+                name: "labels",
+                expectedRequestId: "request-label-known",
+                invoke: (service, idempotencyKey) => service.addIssueLabels({
+                  ...context,
+                  issueNumber,
+                  labels: ["area:github"],
+                  idempotencyKey,
+                }),
+              },
+            ];
+
+            for (const control of cases) {
+              const adapter = new RequestIdentityAdapter();
+              const service = setup(adapter);
+              const idempotencyKey = `known-provider-request-${control.name}`;
+              let firstError: unknown;
+              try {
+                await control.invoke(service, idempotencyKey);
+              } catch (error) {
+                firstError = error;
+              }
+              expect(firstError).toBeInstanceOf(
+                GitHubProviderPendingReconciliationError,
+              );
+              expect(
+                (firstError as GitHubProviderPendingReconciliationError)
+                  .receipt.providerRequestId,
+              ).toBe(control.expectedRequestId);
+
+              let replayError: unknown;
+              try {
+                await control.invoke(service, idempotencyKey);
+              } catch (error) {
+                replayError = error;
+              }
+              expect(replayError).toBeInstanceOf(
+                GitHubProviderPendingReconciliationError,
+              );
+              expect(
+                (replayError as GitHubProviderPendingReconciliationError)
+                  .receipt.providerRequestId,
+              ).toBe(control.expectedRequestId);
+              expect(adapter.mutationCalls).toBe(1);
+            }
+          });
+
+          test("keeps a provider denial before effect as rejected", async () => {'''
+          if text.count(test_anchor) != 1:
+            raise SystemExit("provider request test anchor changed")
+          text = text.replace(test_anchor, new_test, 1)
+
+          helper_anchor = '''function issue(
+            overrides: Partial<GitHubIssueContextInput> = {},
+          ): GitHubIssueContextInput {'''
+          helper_replacement = r'''function comment(body: string): GitHubIssueCommentInput {
+            return {
+              id: "123456789",
+              issueNumber,
+              body,
+              canonicalUrl:
+                `https://github.com/${repositoryFullName}/issues/${issueNumber}#issuecomment-123456789`,
+              createdAt: fixedNow,
+              updatedAt: fixedNow,
+              sourceRevision: `github-comment-${body.length}`,
+            };
+          }
+
+          function issue(
+            overrides: Partial<GitHubIssueContextInput> = {},
+          ): GitHubIssueContextInput {'''
+          if text.count(helper_anchor) != 1:
+            raise SystemExit("comment helper anchor changed")
+          path.write_text(text.replace(helper_anchor, helper_replacement, 1))
+          PY
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-issue-provider-call-local-readback.test.ts \
+            test/github-rest-issue-set-write-assignee-limit.test.ts \
+            test/github-issue-provider-service.test.ts \
+            test/hosted-github-issue-provider.test.ts
+
+      - name: Publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/heads/juniper/968-call-local-readback:refs/remotes/origin/juniper/968-call-local-readback"
+          test "$(git rev-parse refs/remotes/origin/juniper/968-call-local-readback)" = "$GITHUB_SHA"
+          rm .github/workflows/rook-972-provider-request-retention.yml
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-issue-provider-service.ts \
+            test/github-issue-provider-call-local-readback.test.ts \
+            .github/workflows/rook-972-provider-request-retention.yml
+          git diff --cached --check
+          git commit -m "Retain known GitHub provider request identity"
+          git push --force-with-lease=refs/heads/juniper/968-call-local-readback:$GITHUB_SHA \
+            origin HEAD:refs/heads/juniper/968-call-local-readback
