@@ -97,7 +97,7 @@ export class GitHubRestIssueSetWriteAdapter
     if (labels.length === 0) {
       throw new RangeError("GitHub issue label mutation requires at least one label");
     }
-    const result = await this.#mutateIssueSet({
+    return await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
       urlSuffix: "labels",
@@ -107,11 +107,10 @@ export class GitHubRestIssueSetWriteAdapter
       admitResponse: (value) => {
         const actual = admitLabelResponse(value, "add issue labels");
         if (!labels.every((label) => actual.includes(label))) {
-          throw ambiguousMutationResult("add issue labels");
+          throw new Error("GitHub label response omitted a requested label");
         }
       },
     });
-    return result;
   }
 
   async removeIssueLabel(
@@ -127,7 +126,7 @@ export class GitHubRestIssueSetWriteAdapter
       admitResponse: (value) => {
         const actual = admitLabelResponse(value, "remove issue label");
         if (actual.includes(label)) {
-          throw ambiguousMutationResult("remove issue label");
+          throw new Error("GitHub label response retained the removed label");
         }
       },
     });
@@ -154,7 +153,7 @@ export class GitHubRestIssueSetWriteAdapter
           "add issue assignees",
         );
         if (!assignees.every((login) => actual.includes(login))) {
-          throw ambiguousMutationResult("add issue assignees");
+          throw new Error("GitHub assignee response omitted a requested login");
         }
       },
     });
@@ -181,7 +180,7 @@ export class GitHubRestIssueSetWriteAdapter
           "remove issue assignees",
         );
         if (assignees.some((login) => actual.includes(login))) {
-          throw ambiguousMutationResult("remove issue assignees");
+          throw new Error("GitHub assignee response retained a removed login");
         }
       },
     });
@@ -217,9 +216,11 @@ export class GitHubRestIssueSetWriteAdapter
       ...(input.body ? { body: input.body } : {}),
       operation: input.operation,
     });
-    admitMutationResponse(input.operation, () =>
-      input.admitResponse(response.value, repositoryFullName, issueNumber)
-    );
+    try {
+      input.admitResponse(response.value, repositoryFullName, issueNumber);
+    } catch {
+      throw new GitHubProviderPostEffectError(response.requestId);
+    }
 
     let issue: GitHubIssueContextInput;
     try {
@@ -258,13 +259,16 @@ export class GitHubRestIssueSetWriteAdapter
       throw ambiguousTransportError(input.operation);
     }
 
-    const text = await boundedResponseText(response, input.operation);
+    const requestId = admittedRequestId(
+      response.headers.get("x-github-request-id"),
+    );
     if (!response.ok) {
       if (
         response.status >= 500
         || response.status === 408
         || response.status === 429
       ) {
+        if (requestId) throw new GitHubProviderPostEffectError(requestId);
         throw ambiguousTransportError(input.operation);
       }
       throw new GitHubProviderRejectedError(
@@ -272,17 +276,20 @@ export class GitHubRestIssueSetWriteAdapter
         `GitHub rejected ${input.operation}`,
       );
     }
+    if (!requestId) throw ambiguousMutationResult(input.operation);
 
+    let text: string;
+    try {
+      text = await boundedResponseText(response, input.operation);
+    } catch {
+      throw new GitHubProviderPostEffectError(requestId);
+    }
     let value: unknown;
     try {
       value = JSON.parse(text);
     } catch {
-      throw ambiguousMutationResult(input.operation);
+      throw new GitHubProviderPostEffectError(requestId);
     }
-    const requestId = admittedRequestId(
-      response.headers.get("x-github-request-id"),
-    );
-    if (!requestId) throw ambiguousMutationResult(input.operation);
     return { requestId, value };
   }
 }
@@ -315,16 +322,16 @@ function requireAssigneeMutationCount(assignees: string[]): void {
 
 function admitLabelResponse(value: unknown, operation: string): string[] {
   if (!Array.isArray(value) || value.length > 100) {
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   const labels = value.map((entry) => {
     if (typeof entry === "string") {
-      return boundedResponseTextValue(entry, "GitHub label", 100, operation);
+      return boundedText(entry, "GitHub label", 100);
     }
     if (isRecord(entry)) {
-      return boundedResponseTextValue(entry.name, "GitHub label", 100, operation);
+      return boundedText(entry.name, "GitHub label", 100);
     }
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   });
   return canonicalStringList(labels, 100, 100);
 }
@@ -337,10 +344,10 @@ function admitAssigneeIssueResponse(
   operation: string,
 ): string[] {
   if (!isRecord(value) || value.pull_request !== undefined) {
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   if (value.number !== issueNumber) {
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   assertIssueRepository(
     value.repository_url,
@@ -349,16 +356,13 @@ function admitAssigneeIssueResponse(
     operation,
   );
   if (!Array.isArray(value.assignees) || value.assignees.length > 100) {
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   const assignees = value.assignees.map((entry) => {
-    if (!isRecord(entry)) throw ambiguousMutationResult(operation);
-    return boundedResponseTextValue(
-      entry.login,
-      "GitHub assignee",
-      39,
-      operation,
-    ).toLowerCase();
+    if (!isRecord(entry)) {
+      throw new RangeError(`GitHub ${operation} response was invalid`);
+    }
+    return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();
   });
   return canonicalLogins(assignees);
 }
@@ -369,12 +373,14 @@ function assertIssueRepository(
   apiBaseUrl: string,
   operation: string,
 ): void {
-  if (typeof value !== "string") throw ambiguousMutationResult(operation);
+  if (typeof value !== "string") {
+    throw new RangeError(`GitHub ${operation} response was invalid`);
+  }
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   const base = new URL(apiBaseUrl);
   const [owner, repository] = repositoryParts(repositoryFullName);
@@ -387,29 +393,7 @@ function assertIssueRepository(
     || url.search
     || url.hash
   ) {
-    throw ambiguousMutationResult(operation);
-  }
-}
-
-function admitMutationResponse(operation: string, admit: () => void): void {
-  try {
-    admit();
-  } catch {
-    throw ambiguousMutationResult(operation);
-  }
-}
-
-function boundedResponseTextValue(
-  value: unknown,
-  label: string,
-  maximum: number,
-  operation: string,
-): string {
-  if (typeof value !== "string") throw ambiguousMutationResult(operation);
-  try {
-    return boundedText(value, label, maximum);
-  } catch {
-    throw ambiguousMutationResult(operation);
+    throw new RangeError(`GitHub ${operation} response was invalid`);
   }
 }
 
