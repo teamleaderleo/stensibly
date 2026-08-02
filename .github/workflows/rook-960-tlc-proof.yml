@@ -1,0 +1,507 @@
+name: Rook 960 pinned TLC proof
+
+on:
+  push:
+    branches:
+      - junco/954-cancellation-settlement-model
+    paths:
+      - .github/workflows/rook-960-tlc-proof.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-960-pinned-tlc-proof
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: junco/954-cancellation-settlement-model
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Add bounded reachability history
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("formal/CancellationSettlement.tla")
+          text = path.read_text()
+
+          replacements = [
+            (
+              '''  repeatedResultMismatch
+
+          vars == <<''',
+              '''  repeatedResultMismatch,
+            preCloseSuccessSeen,
+            preCloseFailureSeen,
+            repeatedCloseSeen,
+            cancelledRetrySeen
+
+          vars == <<''',
+              "variable declarations",
+            ),
+            (
+              '''  repeatedResultMismatch
+          >>
+
+          Init ==''',
+              '''  repeatedResultMismatch,
+            preCloseSuccessSeen,
+            preCloseFailureSeen,
+            repeatedCloseSeen,
+            cancelledRetrySeen
+          >>
+
+          Init ==''',
+              "variable tuple",
+            ),
+            (
+              '''  /\\ repeatedResultMismatch = FALSE
+
+          BeginClose(w) ==''',
+              '''  /\\ repeatedResultMismatch = FALSE
+            /\\ preCloseSuccessSeen = FALSE
+            /\\ preCloseFailureSeen = FALSE
+            /\\ repeatedCloseSeen = FALSE
+            /\\ cancelledRetrySeen = FALSE
+
+          BeginClose(w) ==''',
+              "history initialization",
+            ),
+          ]
+          for before, after, label in replacements:
+            if text.count(before) != 1:
+              raise SystemExit(f"{label} anchor changed")
+            text = text.replace(before, after, 1)
+
+          unchanged_before = '''       repeatedResultMismatch
+               >>'''
+          unchanged_after = '''       repeatedResultMismatch,
+                 preCloseSuccessSeen,
+                 preCloseFailureSeen,
+                 repeatedCloseSeen,
+                 cancelledRetrySeen
+               >>'''
+          count = text.count(unchanged_before)
+          if count < 10:
+            raise SystemExit(f"unexpected unchanged history anchor count: {count}")
+          text = text.replace(unchanged_before, unchanged_after)
+
+          success_before = '''  /\\ visibleSuccesses' = visibleSuccesses \\cup {c}
+            /\\ UNCHANGED <<
+                 phase,
+                 authorityCount,
+                 acceptingNewWork,
+                 waiterState,
+                 terminalResult,
+                 oldCanPublish,
+                 fenceActive,
+                 replacementAdmitted,
+                 staleEffectAccepted,
+                 newWorkCount,
+                 closeCount,
+                 lastObservedResult,
+                 repeatedResultMismatch,
+                 preCloseSuccessSeen,
+                 preCloseFailureSeen,
+                 repeatedCloseSeen,
+                 cancelledRetrySeen
+               >>'''
+          success_after = '''  /\\ visibleSuccesses' = visibleSuccesses \\cup {c}
+            /\\ preCloseSuccessSeen' = preCloseSuccessSeen \\/ phase = "open"
+            /\\ UNCHANGED <<
+                 phase,
+                 authorityCount,
+                 acceptingNewWork,
+                 waiterState,
+                 terminalResult,
+                 oldCanPublish,
+                 fenceActive,
+                 replacementAdmitted,
+                 staleEffectAccepted,
+                 newWorkCount,
+                 closeCount,
+                 lastObservedResult,
+                 repeatedResultMismatch,
+                 preCloseFailureSeen,
+                 repeatedCloseSeen,
+                 cancelledRetrySeen
+               >>'''
+          if text.count(success_before) != 1:
+            raise SystemExit("pre-close success action anchor changed")
+          text = text.replace(success_before, success_after, 1)
+
+          failure_before = '''  /\\ childState' = [childState EXCEPT ![c] = "failure"]
+            /\\ UNCHANGED <<
+                 phase,
+                 authorityCount,
+                 acceptingNewWork,
+                 waiterState,
+                 visibleSuccesses,
+                 terminalResult,
+                 oldCanPublish,
+                 fenceActive,
+                 replacementAdmitted,
+                 staleEffectAccepted,
+                 newWorkCount,
+                 closeCount,
+                 lastObservedResult,
+                 repeatedResultMismatch,
+                 preCloseSuccessSeen,
+                 preCloseFailureSeen,
+                 repeatedCloseSeen,
+                 cancelledRetrySeen
+               >>'''
+          failure_after = '''  /\\ childState' = [childState EXCEPT ![c] = "failure"]
+            /\\ preCloseFailureSeen' = preCloseFailureSeen \\/ phase = "open"
+            /\\ UNCHANGED <<
+                 phase,
+                 authorityCount,
+                 acceptingNewWork,
+                 waiterState,
+                 visibleSuccesses,
+                 terminalResult,
+                 oldCanPublish,
+                 fenceActive,
+                 replacementAdmitted,
+                 staleEffectAccepted,
+                 newWorkCount,
+                 closeCount,
+                 lastObservedResult,
+                 repeatedResultMismatch,
+                 preCloseSuccessSeen,
+                 repeatedCloseSeen,
+                 cancelledRetrySeen
+               >>'''
+          if text.count(failure_before) != 1:
+            raise SystemExit("pre-close failure action anchor changed")
+          text = text.replace(failure_before, failure_after, 1)
+
+          observe_before = '''       /\\ repeatedResultMismatch' =
+                    repeatedResultMismatch
+                      \\/ (lastObservedResult[w] # "none"
+                          /\\ lastObservedResult[w] # returned)
+            /\\ UNCHANGED <<
+                 phase,
+                 authorityCount,
+                 acceptingNewWork,
+                 childState,
+                 visibleSuccesses,
+                 terminalResult,
+                 oldCanPublish,
+                 fenceActive,
+                 replacementAdmitted,
+                 staleEffectAccepted,
+                 newWorkCount
+               >>'''
+          observe_after = '''       /\\ repeatedResultMismatch' =
+                    repeatedResultMismatch
+                      \\/ (lastObservedResult[w] # "none"
+                          /\\ lastObservedResult[w] # returned)
+               /\\ repeatedCloseSeen' = repeatedCloseSeen \\/ closeCount[w] = 1
+               /\\ cancelledRetrySeen' =
+                    cancelledRetrySeen \\/ waiterState[w] = "cancelled"
+            /\\ UNCHANGED <<
+                 phase,
+                 authorityCount,
+                 acceptingNewWork,
+                 childState,
+                 visibleSuccesses,
+                 terminalResult,
+                 oldCanPublish,
+                 fenceActive,
+                 replacementAdmitted,
+                 staleEffectAccepted,
+                 newWorkCount,
+                 preCloseSuccessSeen,
+                 preCloseFailureSeen
+               >>'''
+          if text.count(observe_before) != 1:
+            raise SystemExit("terminal observation anchor changed")
+          text = text.replace(observe_before, observe_after, 1)
+
+          type_before = '''  /\\ repeatedResultMismatch \\in BOOLEAN
+
+          NoDuplicateAuthority'''
+          type_after = '''  /\\ repeatedResultMismatch \\in BOOLEAN
+            /\\ preCloseSuccessSeen \\in BOOLEAN
+            /\\ preCloseFailureSeen \\in BOOLEAN
+            /\\ repeatedCloseSeen \\in BOOLEAN
+            /\\ cancelledRetrySeen \\in BOOLEAN
+
+          NoDuplicateAuthority'''
+          if text.count(type_before) != 1:
+            raise SystemExit("history type anchor changed")
+          text = text.replace(type_before, type_after, 1)
+
+          witness_before = '''RepeatedCloseReturnsTerminalResult == ~repeatedResultMismatch
+
+          ReconciliationHasFailure =='''
+          witness_after = '''RepeatedCloseReturnsTerminalResult == ~repeatedResultMismatch
+
+          PreCloseSuccessFailureWitnessAbsent ==
+            ~(phase = "settled_failure"
+              /\\ preCloseSuccessSeen
+              /\\ visibleSuccesses # {})
+
+          PreCloseFailureReconciliationWitnessAbsent ==
+            ~(phase = "reconciliation_required" /\\ preCloseFailureSeen)
+
+          RepeatedCloseWitnessAbsent == ~repeatedCloseSeen
+
+          CancelledRetryWitnessAbsent == ~cancelledRetrySeen
+
+          ReconciliationHasFailure =='''
+          if text.count(witness_before) != 1:
+            raise SystemExit("witness operator anchor changed")
+          text = text.replace(witness_before, witness_after, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Fetch and verify stable TLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
+            -o /tmp/tla2tools-v1.7.4.jar
+          echo "bee4a54f3ee3d4afc347c3240ec2d9e93b075104  /tmp/tla2tools-v1.7.4.jar" \
+            | sha1sum --check --strict
+          sha256sum /tmp/tla2tools-v1.7.4.jar > /tmp/tla2tools-v1.7.4.sha256
+          java -version 2> /tmp/java-version.txt
+          unzip -p /tmp/tla2tools-v1.7.4.jar META-INF/MANIFEST.MF \
+            > /tmp/tla2tools-manifest.txt
+
+      - name: Parse and model-check safe specification
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp /tmp/tla2tools-v1.7.4.jar tla2sany.SANY \
+            formal/CancellationSettlement.tla \
+            > /tmp/sany.log 2>&1
+          java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
+            -workers 1 \
+            -coverage 1 \
+            -config formal/CancellationSettlement.cfg \
+            formal/CancellationSettlement.tla \
+            > /tmp/safe.log 2>&1
+          grep -F "Model checking completed" /tmp/safe.log
+
+      - name: Prove unsafe counterexamples
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_expected_failure() {
+            local config="$1"
+            local invariant="$2"
+            local output="$3"
+            set +e
+            java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
+              -workers 1 \
+              -config "${config}" \
+              formal/CancellationSettlement.tla \
+              > "${output}" 2>&1
+            local status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected ${invariant} counterexample but TLC succeeded." >&2
+              exit 1
+            fi
+            grep -F "${invariant}" "${output}"
+          }
+          run_expected_failure \
+            formal/CancellationSettlementUnsafeFence.cfg \
+            ReplacementRequiresFenceOrSettlement \
+            /tmp/unsafe-fence.log
+          run_expected_failure \
+            formal/CancellationSettlementUnsafe.cfg \
+            StaleGenerationCannotPublish \
+            /tmp/unsafe-stale.log
+
+      - name: Prove repaired schedules are reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          make_witness_config() {
+            local invariant="$1"
+            local output="$2"
+            cat > "${output}" <<CFG
+          SPECIFICATION Spec
+
+          CONSTANTS
+            Waiters = {w1, w2}
+            Children = {c1, c2, c3}
+
+          INVARIANTS
+            TypeOK
+            ${invariant}
+
+          CHECK_DEADLOCK FALSE
+          CFG
+          }
+          run_witness() {
+            local invariant="$1"
+            local config="/tmp/${invariant}.cfg"
+            local output="/tmp/${invariant}.log"
+            make_witness_config "${invariant}" "${config}"
+            set +e
+            java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
+              -workers 1 \
+              -config "${config}" \
+              formal/CancellationSettlement.tla \
+              > "${output}" 2>&1
+            local status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected reachability witness ${invariant} but TLC succeeded." >&2
+              exit 1
+            fi
+            grep -F "${invariant}" "${output}"
+          }
+          run_witness PreCloseSuccessFailureWitnessAbsent
+          run_witness PreCloseFailureReconciliationWitnessAbsent
+          run_witness RepeatedCloseWitnessAbsent
+          run_witness CancelledRetryWitnessAbsent
+
+      - name: Build exact proof receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="formal/evidence/cancellation-settlement-v1.7.4"
+          mkdir -p "${evidence}"
+          cp /tmp/sany.log "${evidence}/sany.log"
+          cp /tmp/safe.log "${evidence}/safe.log"
+          cp /tmp/unsafe-fence.log "${evidence}/unsafe-fence.log"
+          cp /tmp/unsafe-stale.log "${evidence}/unsafe-stale.log"
+          for name in \
+            PreCloseSuccessFailureWitnessAbsent \
+            PreCloseFailureReconciliationWitnessAbsent \
+            RepeatedCloseWitnessAbsent \
+            CancelledRetryWitnessAbsent
+          do
+            cp "/tmp/${name}.log" "${evidence}/${name}.log"
+          done
+          cp /tmp/java-version.txt "${evidence}/java-version.txt"
+          cp /tmp/tla2tools-manifest.txt "${evidence}/tla2tools-manifest.txt"
+          cp /tmp/tla2tools-v1.7.4.sha256 "${evidence}/tla2tools.sha256"
+          sha256sum \
+            formal/CancellationSettlement.tla \
+            formal/CancellationSettlement.cfg \
+            formal/CancellationSettlementUnsafe.cfg \
+            formal/CancellationSettlementUnsafeFence.cfg \
+            "${evidence}"/*.log \
+            > "${evidence}/SHA256SUMS"
+
+          safe_summary="$(grep -E 'states generated|distinct states found|Model checking completed' "${evidence}/safe.log" | tail -8)"
+          cat > "${evidence}/README.md" <<EOF
+          # Cancellation settlement TLC receipt
+
+          - TLA+ tools release: stable `v1.7.4` (`5a47802`)
+          - official published SHA-1: `bee4a54f3ee3d4afc347c3240ec2d9e93b075104`
+          - downloaded jar SHA-256: `$(cut -d' ' -f1 /tmp/tla2tools-v1.7.4.sha256)`
+          - exact source trigger: `${GITHUB_SHA}`
+          - Java identity: see `java-version.txt`
+          - model/config/log identities: see `SHA256SUMS`
+          - TLC workers: `1`
+
+          ## Safe result
+
+          ```text
+          ${safe_summary}
+          ```
+
+          The safe configuration completed without invariant violation. Its action coverage is retained in `safe.log`.
+
+          ## Unsafe controls
+
+          - `unsafe-fence.log` reaches `ReplacementRequiresFenceOrSettlement` after replacement admission before fencing or settlement.
+          - `unsafe-stale.log` reaches `StaleGenerationCannotPublish` after the unfenced prior generation publishes under an admitted replacement.
+
+          ## Reachability controls
+
+          The four intentionally failing witness runs retain traces for:
+
+          - pre-close success surviving aggregate terminal failure;
+          - pre-close failure reaching reconciliation while work remains pending;
+          - the same waiter reading the terminal result twice;
+          - a waiter cancelling its first wait and retrying after settlement.
+
+          These traces establish state-space reachability only. Product implementation tests remain authoritative.
+          EOF
+
+          cat > formal/README.md <<'EOF'
+          # Formal models
+
+          This directory contains small executable models for coordination invariants that are difficult to cover completely with example-based tests.
+
+          The models do not define product behavior by themselves. Source contracts, implementation tests, and runtime evidence remain authoritative. A useful counterexample should become a focused implementation regression or a documented no-change decision.
+
+          ## Cancellation settlement
+
+          `CancellationSettlement.tla` models the first settlement slice from #574 and #954:
+
+          - one authoritative close operation;
+          - two callers that may wait, cancel, retry, and read the same terminal result twice;
+          - three owned children that may settle before or during close;
+          - explicit reconciliation after partial failure;
+          - preserved successful child identities under aggregate failure;
+          - fencing of a prior generation;
+          - admission of one replacement generation;
+          - attempted late publication by the prior generation.
+
+          Stable TLC `v1.7.4` is recorded under `formal/evidence/cancellation-settlement-v1.7.4/` with the exact jar checksum, Java identity, model/config hashes, safe state-space result, unsafe counterexamples, and reachability witness traces.
+
+          The safe command is:
+
+          ```text
+          java -cp tla2tools.jar tlc2.TLC -workers 1 -coverage 1 \
+            -config formal/CancellationSettlement.cfg \
+            formal/CancellationSettlement.tla
+          ```
+
+          The two unsafe configs separate replacement-before-fence from stale prior-generation publication:
+
+          ```text
+          java -cp tla2tools.jar tlc2.TLC -workers 1 \
+            -config formal/CancellationSettlementUnsafeFence.cfg \
+            formal/CancellationSettlement.tla
+
+          java -cp tla2tools.jar tlc2.TLC -workers 1 \
+            -config formal/CancellationSettlementUnsafe.cfg \
+            formal/CancellationSettlement.tla
+          ```
+          EOF
+
+      - name: Publish proof-only source head
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/rook-960-tlc-proof.yml
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            formal/CancellationSettlement.tla \
+            formal/CancellationSettlement.cfg \
+            formal/CancellationSettlementUnsafe.cfg \
+            formal/CancellationSettlementUnsafeFence.cfg \
+            formal/README.md \
+            formal/evidence/cancellation-settlement-v1.7.4 \
+            .github/workflows/rook-960-tlc-proof.yml
+          git diff --cached --check
+          git commit -m "Execute cancellation settlement model with pinned TLC"
+          git push --force-with-lease=refs/heads/junco/954-cancellation-settlement-model:$GITHUB_SHA \
+            origin HEAD:refs/heads/junco/954-cancellation-settlement-model
