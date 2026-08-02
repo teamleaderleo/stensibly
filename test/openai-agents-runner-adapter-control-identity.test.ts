@@ -304,31 +304,30 @@ describe("OpenAI Agents control identity wrapper", () => {
     }
   });
 
-  test("admits benign token-like identities and rejects realistic keys", async () => {
-    for (const benignHolder of [
-      "runner-sk-review",
-      "runner-ghp_review",
-      "runner-github_pat_review",
-      "runner-stn.tok_review",
-      "runner-xoxb-review",
+  test("admits benign control prose and rejects realistic keys", async () => {
+    const adapter = createAdapter();
+    await admitProfile(adapter, profileA, holderA);
+    const base = cancellationCommand(profileA, holderA);
+
+    for (const commandId of [
+      "command-sk-review",
+      "command-ghp_review",
+      "command-github_pat_review",
+      "command-stn.tok_review",
+      "command-xoxb-review",
     ]) {
-      const adapter = createAdapter();
-      await admitProfile(adapter, profileA, benignHolder);
-      const benign = {
-        ...cancellationCommand(profileA, benignHolder),
-        commandId: `command-${benignHolder}`,
-      };
-      await expect(adapter.requestCancellation(benign)).resolves.toMatchObject({
-        commandId: `command-${benignHolder}`,
+      await expect(adapter.requestCancellation({
+        ...base,
+        commandId,
+        reason: `Review benign identity ${commandId}.`,
+      })).resolves.toMatchObject({
+        commandId,
         profileId: profileA,
         runId,
         requestAccepted: true,
       });
     }
 
-    const adapter = createAdapter();
-    await admitProfile(adapter, profileA, holderA);
-    const base = cancellationCommand(profileA, holderA);
     for (const commandId of [
       `command-sk-${"a".repeat(20)}`,
       `command-ghp_${"a".repeat(20)}`,
