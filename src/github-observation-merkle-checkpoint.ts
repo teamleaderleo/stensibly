@@ -358,6 +358,9 @@ function admitCheckpoint(value: unknown): GitHubObservationMerkleCheckpointV1 {
     rootDigest: digest(input.rootDigest, "Observation checkpoint root digest"),
     createdAt: canonicalTimestamp(input.createdAt, "Observation checkpoint creation time"),
   };
+  if (treeSize === 0 && data.rootDigest !== hashEmpty(data.ledgerId)) {
+    throw new RangeError("Observation empty checkpoint root did not match its ledger");
+  }
   const checkpointFingerprint = digest(
     input.checkpointFingerprint,
     "Observation checkpoint fingerprint",
