@@ -1,0 +1,131 @@
+name: Rook 967 deterministic private binding identity
+
+on:
+  push:
+    branches:
+      - lynx/965-private-context-binding-reader
+    paths:
+      - .github/workflows/rook-967-deterministic-record-id.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-967-deterministic-private-binding-identity
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: lynx/965-private-context-binding-reader
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Bind private record ID to canonical observation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-project-context-binding-convex-reader.ts")
+          source = source_path.read_text()
+          import_anchor = '''import { parseStrictJson } from "./strict-json.js";'''
+          import_replacement = '''import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+          import { parseStrictJson } from "./strict-json.js";'''
+          if source.count(import_anchor) != 1:
+            raise SystemExit("fingerprint import anchor changed")
+          source = source.replace(import_anchor, import_replacement, 1)
+
+          record_anchor = '''      const record = detached as unknown as StoredRecord;
+                if (record.isCurrent !== true || record.outcome === "stale") {
+                  throw new GitHubProjectContextStorageError();
+                }
+                const snapshot = admitSnapshotJson(record.snapshotJson);'''
+          record_replacement = '''      const record = detached as unknown as StoredRecord;
+                if (
+                  record.isCurrent !== true
+                  || record.outcome === "stale"
+                  || record.id !== deterministicRecordId(
+                    this.#workspace,
+                    project,
+                    record.observationRef,
+                  )
+                ) {
+                  throw new GitHubProjectContextStorageError();
+                }
+                const snapshot = admitSnapshotJson(record.snapshotJson);'''
+          if source.count(record_anchor) != 1:
+            raise SystemExit("record identity anchor changed")
+          source = source.replace(record_anchor, record_replacement, 1)
+
+          helper_anchor = '''function exactWorkspace(value: string): string {'''
+          helper_replacement = '''function deterministicRecordId(
+            workspace: string,
+            project: string,
+            observationRef: string,
+          ): string {
+            const digest = fingerprintCanonicalRequest({
+              version: 1,
+              workspace,
+              project,
+              observationRef,
+            });
+            return `github_context_${digest.slice("sha256:".length)}`;
+          }
+
+          function exactWorkspace(value: string): string {'''
+          if source.count(helper_anchor) != 1:
+            raise SystemExit("deterministic ID helper anchor changed")
+          source_path.write_text(source.replace(helper_anchor, helper_replacement, 1))
+
+          test_path = Path("test/github-project-context-binding-convex-reader.test.ts")
+          tests = test_path.read_text()
+          forged_anchor = '''    const forgedRows = [
+              { ...storedRecord(subject), instructionSetId: "instructions_forged" },'''
+          forged_replacement = '''    const forgedRows = [
+              { ...storedRecord(subject), id: "github_context_forged" },
+              { ...storedRecord(subject), instructionSetId: "instructions_forged" },'''
+          if tests.count(forged_anchor) != 1:
+            raise SystemExit("forged row table anchor changed")
+          test_path.write_text(tests.replace(forged_anchor, forged_replacement, 1))
+          PY
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-project-context-binding-convex-reader.test.ts \
+            test/github-project-context-convex-ledger-record-id-review.test.ts \
+            test/github-project-context-convex-ledger.test.ts
+
+      - name: Publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/heads/lynx/965-private-context-binding-reader:refs/remotes/origin/lynx/965-private-context-binding-reader"
+          test "$(git rev-parse refs/remotes/origin/lynx/965-private-context-binding-reader)" = "$GITHUB_SHA"
+          rm .github/workflows/rook-967-deterministic-record-id.yml
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-project-context-binding-convex-reader.ts \
+            test/github-project-context-binding-convex-reader.test.ts \
+            .github/workflows/rook-967-deterministic-record-id.yml
+          git diff --cached --check
+          git commit -m "Bind private context record identity"
+          git push --force-with-lease=refs/heads/lynx/965-private-context-binding-reader:$GITHUB_SHA \
+            origin HEAD:refs/heads/lynx/965-private-context-binding-reader
