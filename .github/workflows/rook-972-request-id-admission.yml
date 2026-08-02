@@ -1,0 +1,183 @@
+name: Rook 972 provider request ID admission
+
+on:
+  push:
+    branches:
+      - juniper/968-call-local-readback
+    paths:
+      - .github/workflows/rook-972-request-id-admission.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-972-provider-request-id-admission
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: juniper/968-call-local-readback
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Admit post-effect provider request identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/github-provider-post-effect-error.ts <<'EOF'
+          const providerRequestIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+          const credentialShapedRequestIdPattern =
+            /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
+
+          export class GitHubProviderPostEffectError extends Error {
+            readonly providerRequestId: string | null;
+
+            constructor(providerRequestId: unknown) {
+              super(
+                "GitHub provider effect requires reconciliation after verification failed",
+              );
+              this.name = "GitHubProviderPostEffectError";
+              this.providerRequestId = admittedProviderRequestId(providerRequestId);
+            }
+          }
+
+          function admittedProviderRequestId(value: unknown): string | null {
+            return typeof value === "string"
+                && providerRequestIdPattern.test(value)
+                && !credentialShapedRequestIdPattern.test(value)
+              ? value
+              : null;
+          }
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/github-issue-provider-request-id-retention.test.ts")
+          text = path.read_text()
+
+          constructor_before = '''class RequestIdAdapter implements GitHubIssueProviderAdapter {
+            readonly mode: Mode;
+            mutationCalls = 0;
+            effectReturned = false;
+            current = issue();
+
+            constructor(mode: Mode) {
+              this.mode = mode;
+            }'''
+          constructor_after = '''class RequestIdAdapter implements GitHubIssueProviderAdapter {
+            readonly mode: Mode;
+            readonly requestIdOverride: unknown | undefined;
+            mutationCalls = 0;
+            effectReturned = false;
+            current = issue();
+
+            constructor(mode: Mode, requestIdOverride?: unknown) {
+              this.mode = mode;
+              this.requestIdOverride = requestIdOverride;
+            }'''
+          if text.count(constructor_before) != 1:
+            raise SystemExit("request adapter constructor anchor changed")
+          text = text.replace(constructor_before, constructor_after, 1)
+
+          replacements = [
+            ('providerRequestId: "REQ-CREATE",', 'providerRequestId: this.#requestId("REQ-CREATE"),'),
+            ('providerRequestId: "REQ-UPDATE",', 'providerRequestId: this.#requestId("REQ-UPDATE"),'),
+            ('providerRequestId: "REQ-COMMENT",', 'providerRequestId: this.#requestId("REQ-COMMENT"),'),
+            ('providerRequestId: "REQ-SET",', 'providerRequestId: this.#requestId("REQ-SET"),'),
+          ]
+          for before, after in replacements:
+            if text.count(before) != 1:
+              raise SystemExit(f"request ID anchor changed: {before}")
+            text = text.replace(before, after, 1)
+
+          method_anchor = '''  #beginEffect(expected: Mode): void {
+            this.mutationCalls += 1;'''
+          method_replacement = '''  #requestId(fallback: string): string {
+            return (this.requestIdOverride ?? fallback) as string;
+          }
+
+          #beginEffect(expected: Mode): void {
+            this.mutationCalls += 1;'''
+          if text.count(method_anchor) != 1:
+            raise SystemExit("request ID helper anchor changed")
+          text = text.replace(method_anchor, method_replacement, 1)
+
+          test_anchor = '''  test("keeps request identity null when no admissible provider response existed", async () => {'''
+          test_replacement = r'''  test("drops hostile custom-adapter request identities before persistence", async () => {
+            const hostileValues: unknown[] = [
+              `github_pat_${"a".repeat(24)}`,
+              `sk-proj-${"b".repeat(24)}`,
+              "request\nwith-control",
+              "r".repeat(129),
+              42,
+            ];
+
+            for (const hostile of hostileValues) {
+              const adapter = new RequestIdAdapter("update", hostile);
+              const service = setup(adapter);
+              const idempotencyKey = `drop-hostile-request-${typeof hostile}-${String(hostile).length}`;
+              const execute = () => service.updateIssue({
+                ...context,
+                issueNumber,
+                expectedSourceRevision: "rev-before",
+                title: "Updated",
+                idempotencyKey,
+              });
+
+              const first = await pendingError(execute());
+              expect(first.receipt.providerRequestId).toBeNull();
+              expect(JSON.stringify(first.receipt)).not.toContain(String(hostile));
+
+              const replay = await pendingError(execute());
+              expect(replay.receipt).toEqual(first.receipt);
+              expect(adapter.mutationCalls).toBe(1);
+            }
+          });
+
+          test("keeps request identity null when no admissible provider response existed", async () => {'''
+          if text.count(test_anchor) != 1:
+            raise SystemExit("hostile request ID test anchor changed")
+          path.write_text(text.replace(test_anchor, test_replacement, 1))
+          PY
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-issue-provider-request-id-retention.test.ts \
+            test/github-rest-issue-set-write-request-id.test.ts \
+            test/github-issue-provider-call-local-readback.test.ts \
+            test/github-rest-issue-set-write-assignee-limit.test.ts
+
+      - name: Publish source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/heads/juniper/968-call-local-readback:refs/remotes/origin/juniper/968-call-local-readback"
+          test "$(git rev-parse refs/remotes/origin/juniper/968-call-local-readback)" = "$GITHUB_SHA"
+          rm .github/workflows/rook-972-request-id-admission.yml
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-provider-post-effect-error.ts \
+            test/github-issue-provider-request-id-retention.test.ts \
+            .github/workflows/rook-972-request-id-admission.yml
+          git diff --cached --check
+          git commit -m "Admit post-effect provider request identities"
+          git push --force-with-lease=refs/heads/juniper/968-call-local-readback:$GITHUB_SHA \
+            origin HEAD:refs/heads/juniper/968-call-local-readback
