@@ -6,7 +6,7 @@ The models do not define product behavior by themselves. Source contracts, imple
 
 ## Cancellation settlement
 
-`cancellation-settlement.tla` models the first settlement slice from #574 and #954:
+`CancellationSettlement.tla` models the first settlement slice from #574 and #954:
 
 - one authoritative close operation;
 - two callers that may wait, cancel their wait, or rejoin;
@@ -20,16 +20,16 @@ Run the safe model with TLC:
 
 ```text
 java -cp tla2tools.jar tlc2.TLC \
-  -config formal/cancellation-settlement.cfg \
-  formal/cancellation-settlement.tla
+  -config formal/CancellationSettlement.cfg \
+  formal/CancellationSettlement.tla
 ```
 
-The safe configuration checks the type and lifecycle invariants. The intentionally weakened configuration permits a replacement generation before the prior generation is settled or fenced; TLC should produce a counterexample to `ReplacementRequiresFenceOrSettlement`:
+The safe configuration checks the type and lifecycle invariants. The intentionally weakened configuration permits a replacement generation before the prior generation is settled or fenced; TLC should produce a counterexample to `ReplacementRequiresFenceOrSettlement` or `StaleGenerationCannotPublish`:
 
 ```text
 java -cp tla2tools.jar tlc2.TLC \
-  -config formal/cancellation-settlement-unsafe.cfg \
-  formal/cancellation-settlement.tla
+  -config formal/CancellationSettlementUnsafe.cfg \
+  formal/CancellationSettlement.tla
 ```
 
-No CI hook or toolchain dependency is added in the first slice. Pinning and automating TLC belongs in a separate reviewed change after the model and counterexample are accepted.
+The repository does not yet pin or execute TLC. Until a reviewed toolchain is added, these commands are the required manual proof and the pull request must report whether they were actually run. Pinning and automating TLC belongs in a separate reviewed change after the model and counterexample are accepted.
