@@ -1,0 +1,202 @@
+name: Marlin 659 current-main replay finalizer
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: marlin-659-current-main-replay
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.head_ref == 'marlin/659-current-main-replay'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: marlin/659-current-main-replay
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply accepted checkpoint repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'SOURCE_HEAD=%s\n' "$source_head" >> "$GITHUB_ENV"
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/runner-adapters/openai-agents.ts')
+          source = source_path.read_text()
+          old_chronology = '      || (input.replayed === false && record.createdAt !== append.proposedCreatedAt)\n'
+          new_chronology = '''      || (
+        input.replayed
+          ? record.createdAt > append.proposedCreatedAt
+          : record.createdAt !== append.proposedCreatedAt
+      )
+'''
+          if source.count(old_chronology) != 1:
+              raise SystemExit('checkpoint replay chronology predicate changed')
+          source = source.replace(old_chronology, new_chronology, 1)
+
+          old_order = '''    assertControlAuthorityActive(input, clock.baseMilliseconds);
+    const checkpoint = this.#latestCheckpoints.get(controlKey(input));
+    if (!checkpoint) {
+      throw new RangeError(
+        "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
+      );
+    }
+    this.#assertControlBinding(input);
+    return checkpoint;
+'''
+          new_order = '''    assertControlAuthorityActive(input, clock.baseMilliseconds);
+    this.#assertControlBinding(input);
+    const checkpoint = this.#latestCheckpoints.get(controlKey(input));
+    if (!checkpoint) {
+      throw new RangeError(
+        "OpenAI Agents latest checkpoint reference is unknown to this adapter instance",
+      );
+    }
+    return checkpoint;
+'''
+          if source.count(old_order) != 1:
+              raise SystemExit('checkpoint authority ordering changed')
+          source_path.write_text(source.replace(old_order, new_order, 1))
+
+          boundary_path = Path('test/openai-agents-runner-adapter-boundaries.test.ts')
+          boundary = boundary_path.read_text()
+          old_boundary = '''    expect(candidateFactory.prepareCalls).toBe(1);
+    expect(store.checkpointWrites).toBe(2);
+  });
+'''
+          new_boundary = '''    expect(candidateFactory.prepareCalls).toBe(1);
+    expect(store.checkpointWrites).toBe(2);
+
+    await expect(
+      (candidate.adapter.requestCheckpoint as any)({
+        ...checkpointCommand(),
+        authority: {
+          ...controlAuthority(),
+          holderId: "competing-boundary-actor",
+        },
+      }),
+    ).rejects.toThrow("authority holder is stale");
+  });
+'''
+          if boundary.count(old_boundary) != 1:
+              raise SystemExit('checkpoint authority regression marker changed')
+          boundary = boundary.replace(old_boundary, new_boundary, 1)
+          old_digest = '''      serializedState: "{}",
+      stateDigest: `sha256:${"0".repeat(64)}`,
+      runtimeManifest: {},
+'''
+          new_digest = '''      serializedState: "{}",
+      runtimeManifest: {},
+'''
+          if boundary.count(old_digest) != 1:
+              raise SystemExit('hostile checkpoint state digest marker changed')
+          boundary = boundary.replace(old_digest, new_digest, 1)
+          old_accessor = '''    Object.defineProperty(record, "stateDigest", {
+      enumerable: true,
+      get() {
+'''
+          new_accessor = '''    Object.defineProperty(record, "stateDigest", {
+      enumerable: true,
+      configurable: true,
+      get() {
+'''
+          if boundary.count(old_accessor) != 1:
+              raise SystemExit('hostile checkpoint accessor marker changed')
+          boundary_path.write_text(boundary.replace(old_accessor, new_accessor, 1))
+
+          main_test_path = Path('test/openai-agents-runner-adapter.test.ts')
+          main_test = main_test_path.read_text()
+          old_resume = '''function resumeCommand(
+  checkpointRef: RunnerExternalReferenceV1,
+  leaseGeneration = 1,
+): RunnerResumeCommandV1 {
+'''
+          new_resume = '''function resumeCommand(
+  checkpointRef: RunnerExternalReferenceV1,
+  leaseGeneration = 1,
+  holderId = "runner-actor",
+): RunnerResumeCommandV1 {
+'''
+          if main_test.count(old_resume) != 1:
+              raise SystemExit('resume command helper changed')
+          main_test = main_test.replace(old_resume, new_resume, 1)
+          old_base_call = '''      "2026-07-31T00:10:00.000Z",
+      leaseGeneration,
+    ),
+'''
+          new_base_call = '''      "2026-07-31T00:10:00.000Z",
+      leaseGeneration,
+      holderId,
+    ),
+'''
+          if main_test.count(old_base_call) != 1:
+              raise SystemExit('resume command base call changed')
+          main_test = main_test.replace(old_base_call, new_base_call, 1)
+          old_base = '''function commandBase(
+  commandId: string,
+  issuedAt: string,
+  leaseGeneration: number,
+) {
+'''
+          new_base = '''function commandBase(
+  commandId: string,
+  issuedAt: string,
+  leaseGeneration: number,
+  holderId = "runner-actor",
+) {
+'''
+          if main_test.count(old_base) != 1:
+              raise SystemExit('command base helper changed')
+          main_test = main_test.replace(old_base, new_base, 1)
+          old_holder = '''      holderId: leaseGeneration === 1 ? "runner-actor" : "competing-actor",
+'''
+          new_holder = '''      holderId,
+'''
+          if main_test.count(old_holder) != 1:
+              raise SystemExit('command authority holder derivation changed')
+          main_test = main_test.replace(old_holder, new_holder, 1)
+          old_lease_case = '''      candidate.adapter.resume(resumeCommand(checkpoint, 2)),
+'''
+          new_lease_case = '''      candidate.adapter.resume(resumeCommand(checkpoint, 2, "runner-actor")),
+'''
+          if main_test.count(old_lease_case) != 1:
+              raise SystemExit('competing lease case changed')
+          main_test_path.write_text(main_test.replace(old_lease_case, new_lease_case, 1))
+          PY
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify focused repair
+        run: |
+          bun run typecheck
+          bun test \
+            test/openai-agents-runner-adapter.test.ts \
+            test/openai-agents-runner-adapter-review-repairs.test.ts \
+            test/openai-agents-runner-adapter-boundaries.test.ts \
+            test/openai-agents-runner-adapter-future-replay.test.ts
+      - name: Publish workflow-free candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Marlin'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/marlin-659-current-main-finalizer.yml
+          git add \
+            src/runner-adapters/openai-agents.ts \
+            test/openai-agents-runner-adapter.test.ts \
+            test/openai-agents-runner-adapter-review-repairs.test.ts \
+            test/openai-agents-runner-adapter-boundaries.test.ts \
+            test/openai-agents-runner-adapter-future-replay.test.ts
+          git diff --cached --check
+          git commit -m 'Bind OpenAI Agents checkpoint chronology and authority'
+          git push \
+            --force-with-lease=refs/heads/marlin/659-current-main-replay:${SOURCE_HEAD} \
+            origin HEAD:marlin/659-current-main-replay
