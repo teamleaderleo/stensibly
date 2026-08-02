@@ -51,10 +51,15 @@ describe("GitHub provider context reconciliation", () => {
     expect(proposal.providerSnapshot).toBeNull();
   });
 
-  test("proposes stale readback as the current provider observation", () => {
-    const receipt = issueReceipt({
+  test("proposes stale and reconciled provider readback", () => {
+    const stale = issueReceipt({
       operation: "github_update_issue",
       state: "stale",
+      verification: {
+        state: "failed",
+        checkedAt: "2026-08-02T17:27:00.000Z",
+        sourceRevision,
+      },
       error: {
         code: "stale_provider_version",
         message: "GitHub issue source revision changed before the guarded update",
@@ -62,15 +67,55 @@ describe("GitHub provider context reconciliation", () => {
       },
       recovery: { nextAction: "refresh_and_retry_with_new_version" },
     });
-    const proposal = compile(receipt, {
+    const staleProposal = compile(stale, {
       externalId,
       sourceRevision: "github-rest:I_kwDOReconcile:previous",
     });
 
-    expect(proposal.outcome).toBe("propose_context_acceptance");
-    expect(proposal.operation).toBe("github_update_issue");
-    expect(proposal.providerSourceRevision).toBe(sourceRevision);
-    expect(proposal.providerSnapshot).toEqual(issueResult());
+    expect(staleProposal.outcome).toBe("propose_context_acceptance");
+    expect(staleProposal.operation).toBe("github_update_issue");
+    expect(staleProposal.providerSourceRevision).toBe(sourceRevision);
+    expect(staleProposal.providerSnapshot).toEqual(issueResult());
+
+    const reconciledProposal = compile(issueReceipt({ state: "reconciled" }), {
+      externalId,
+      sourceRevision: "github-rest:I_kwDOReconcile:previous",
+    });
+    expect(reconciledProposal.outcome).toBe("propose_context_acceptance");
+    expect(reconciledProposal.providerSourceRevision).toBe(sourceRevision);
+  });
+
+  test("requires settled receipt verification to bind the provider snapshot", () => {
+    const invalidReceipts = [
+      issueReceipt({
+        verification: {
+          state: "failed",
+          checkedAt: "2026-08-02T17:27:00.000Z",
+          sourceRevision,
+        },
+      }),
+      issueReceipt({
+        verification: {
+          state: "passed",
+          checkedAt: "2026-08-02T17:27:00.000Z",
+          sourceRevision: "github-rest:I_kwDOReconcile:different",
+        },
+      }),
+      issueReceipt({
+        state: "stale",
+        verification: {
+          state: "passed",
+          checkedAt: "2026-08-02T17:27:00.000Z",
+          sourceRevision,
+        },
+      }),
+    ];
+
+    for (const receipt of invalidReceipts) {
+      expect(() => compile(receipt)).toThrow(
+        "verification does not bind the provider result",
+      );
+    }
   });
 
   test("keeps reserved and ambiguous operations visibly unsettled", () => {
