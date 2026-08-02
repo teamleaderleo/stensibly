@@ -93,6 +93,7 @@ interface DetectedReference {
   repositoryFullName: string;
   itemNumber: number | null;
   commitIdentity: string | null;
+  referenceIdentity: string;
 }
 
 const inputKeys = [
@@ -212,9 +213,18 @@ export function compileGitHubOutboundTextPreflightV1(
       authorityRequired:
         policy.externalReferenceDisposition === "require_authority",
     };
+    const referenceDigest = fingerprintCanonicalRequest({
+      version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
+      repositoryFullName: reference.repositoryFullName,
+      referenceKind: reference.referenceKind,
+      referenceIdentity: reference.referenceIdentity,
+    });
     return deepFreeze({
       ...body,
-      findingFingerprint: fingerprintCanonicalRequest(body),
+      findingFingerprint: fingerprintCanonicalRequest({
+        ...body,
+        referenceDigest,
+      }),
     });
   });
 
@@ -343,10 +353,12 @@ function detectReferences(text: string): readonly DetectedReference[] {
         repositoryFullName,
         itemNumber: null,
         commitIdentity,
+        referenceIdentity: commitIdentity,
       });
       occupied.push([start, end]);
       continue;
     }
+    const itemIdentity = match[4]!;
     references.push({
       start,
       end,
@@ -357,8 +369,9 @@ function detectReferences(text: string): readonly DetectedReference[] {
         ? "pull_request"
         : "discussion",
       repositoryFullName,
-      itemNumber: providerItemNumber(match[4]),
+      itemNumber: providerItemNumber(itemIdentity),
       commitIdentity: null,
+      referenceIdentity: itemIdentity,
     });
     occupied.push([start, end]);
   }
@@ -371,14 +384,16 @@ function detectReferences(text: string): readonly DetectedReference[] {
     if (overlaps(occupied, start, end)) continue;
     const repositoryFullName = detectedRepository(match[1], match[2]);
     if (!repositoryFullName) continue;
+    const itemIdentity = match[3]!;
     references.push({
       start,
       end,
       source: "repository_shorthand",
       referenceKind: "issue_or_pull_request",
       repositoryFullName,
-      itemNumber: providerItemNumber(match[3]),
+      itemNumber: providerItemNumber(itemIdentity),
       commitIdentity: null,
+      referenceIdentity: itemIdentity,
     });
     occupied.push([start, end]);
   }
@@ -391,6 +406,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
     if (overlaps(occupied, start, end)) continue;
     const repositoryFullName = detectedRepository(match[1], match[2]);
     if (!repositoryFullName) continue;
+    const commitIdentity = match[3]!.toLowerCase();
     references.push({
       start,
       end,
@@ -398,7 +414,8 @@ function detectReferences(text: string): readonly DetectedReference[] {
       referenceKind: "commit",
       repositoryFullName,
       itemNumber: null,
-      commitIdentity: match[3]!.toLowerCase(),
+      commitIdentity,
+      referenceIdentity: commitIdentity,
     });
     occupied.push([start, end]);
   }
@@ -519,7 +536,13 @@ function denseDataArray(
   label: string,
   maximum: number,
 ): unknown[] {
-  if (!Array.isArray(value) || value.length > maximum) {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array`);
+  }
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new TypeError(`${label} must use Array.prototype`);
+  }
+  if (value.length > maximum) {
     throw new RangeError(`${label} accepts at most ${maximum} entries`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
