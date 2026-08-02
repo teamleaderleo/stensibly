@@ -22,6 +22,7 @@ import {
   type GitHubProviderReceiptLookupInput,
   type GitHubProviderRequestContext,
 } from "./github-provider-contracts.js";
+import { GitHubProviderPostEffectError } from "./github-provider-post-effect-error.js";
 import {
   boundedBody,
   boundedLimit,
@@ -184,23 +185,23 @@ export class GitHubIssueProviderService {
           assignees,
           idempotencyKey: key,
         });
-        const number = positiveInteger(
-          created.issue.number,
-          "Created GitHub issue number",
-        );
-        const readback = await this.#adapter.getIssue({
-          repositoryFullName: scope.repositoryFullName,
-          issueNumber: number,
+        const providerRequestId = created.providerRequestId ?? null;
+        return await this.#afterProviderEffect(providerRequestId, async () => {
+          const number = positiveInteger(
+            created.issue.number,
+            "Created GitHub issue number",
+          );
+          const readback = await this.#adapter.getIssue({
+            repositoryFullName: scope.repositoryFullName,
+            issueNumber: number,
+          });
+          const result = buildScopedGitHubIssueContext(
+            readback,
+            scope.repositoryFullName,
+          );
+          verifyIssueFields(readback, { title, body, labels, assignees });
+          return { result, providerRequestId };
         });
-        const result = buildScopedGitHubIssueContext(
-          readback,
-          scope.repositoryFullName,
-        );
-        verifyIssueFields(readback, { title, body, labels, assignees });
-        return {
-          result,
-          providerRequestId: created.providerRequestId ?? null,
-        };
       },
     });
   }
@@ -274,26 +275,26 @@ export class GitHubIssueProviderService {
           expectedSourceRevision,
           idempotencyKey: key,
         });
-        const readback = await this.#adapter.getIssue({
-          repositoryFullName: scope.repositoryFullName,
-          issueNumber,
+        const providerRequestId = updated.providerRequestId ?? null;
+        return await this.#afterProviderEffect(providerRequestId, async () => {
+          const readback = await this.#adapter.getIssue({
+            repositoryFullName: scope.repositoryFullName,
+            issueNumber,
+          });
+          const result = buildScopedGitHubIssueContext(
+            readback,
+            scope.repositoryFullName,
+          );
+          verifyIssueFields(readback, {
+            ...(title === undefined ? {} : { title }),
+            ...(body === undefined ? {} : { body }),
+            ...(input.state === undefined ? {} : { state: input.state }),
+            ...(input.stateReason === undefined
+              ? {}
+              : { stateReason: input.stateReason }),
+          });
+          return { result, providerRequestId };
         });
-        const result = buildScopedGitHubIssueContext(
-          readback,
-          scope.repositoryFullName,
-        );
-        verifyIssueFields(readback, {
-          ...(title === undefined ? {} : { title }),
-          ...(body === undefined ? {} : { body }),
-          ...(input.state === undefined ? {} : { state: input.state }),
-          ...(input.stateReason === undefined
-            ? {}
-            : { stateReason: input.stateReason }),
-        });
-        return {
-          result,
-          providerRequestId: updated.providerRequestId ?? null,
-        };
       },
     });
   }
@@ -319,24 +320,27 @@ export class GitHubIssueProviderService {
           body,
           idempotencyKey: key,
         });
-        const readback = await this.#adapter.getIssueComment({
-          repositoryFullName: scope.repositoryFullName,
-          issueNumber,
-          commentId: created.comment.id,
-        });
-        if (canonicalBody(readback.body) !== canonicalBody(body)) {
-          throw new Error(
-            "GitHub issue comment readback did not match the requested body",
-          );
-        }
-        return {
-          result: buildScopedGitHubIssueComment(
-            readback,
-            scope.repositoryFullName,
+        const providerRequestId = created.providerRequestId ?? null;
+        return await this.#afterProviderEffect(providerRequestId, async () => {
+          const readback = await this.#adapter.getIssueComment({
+            repositoryFullName: scope.repositoryFullName,
             issueNumber,
-          ),
-          providerRequestId: created.providerRequestId ?? null,
-        };
+            commentId: created.comment.id,
+          });
+          if (canonicalBody(readback.body) !== canonicalBody(body)) {
+            throw new Error(
+              "GitHub issue comment readback did not match the requested body",
+            );
+          }
+          return {
+            result: buildScopedGitHubIssueComment(
+              readback,
+              scope.repositoryFullName,
+              issueNumber,
+            ),
+            providerRequestId,
+          };
+        });
       },
     });
   }
@@ -485,28 +489,40 @@ export class GitHubIssueProviderService {
         );
         const expected = input.expected(before, input.values);
         const mutated = await input.mutate(scope, issueNumber, input.values, key);
-        const readback = await this.#adapter.getIssue({
-          repositoryFullName: scope.repositoryFullName,
-          issueNumber,
-        });
-        const result = buildScopedGitHubIssueContext(
-          readback,
-          scope.repositoryFullName,
-        );
-        const actual = input.field === "labels"
-          ? canonicalStringList(readback.labels ?? [], 100, 100)
-          : canonicalLogins(readback.assignees ?? []);
-        if (stableJson(actual) !== stableJson(expected)) {
-          throw new Error(
-            `GitHub issue ${input.field} readback did not match the requested mutation`,
+        const providerRequestId = mutated.providerRequestId ?? null;
+        return await this.#afterProviderEffect(providerRequestId, async () => {
+          const readback = await this.#adapter.getIssue({
+            repositoryFullName: scope.repositoryFullName,
+            issueNumber,
+          });
+          const result = buildScopedGitHubIssueContext(
+            readback,
+            scope.repositoryFullName,
           );
-        }
-        return {
-          result,
-          providerRequestId: mutated.providerRequestId ?? null,
-        };
+          const actual = input.field === "labels"
+            ? canonicalStringList(readback.labels ?? [], 100, 100)
+            : canonicalLogins(readback.assignees ?? []);
+          if (stableJson(actual) !== stableJson(expected)) {
+            throw new Error(
+              `GitHub issue ${input.field} readback did not match the requested mutation`,
+            );
+          }
+          return { result, providerRequestId };
+        });
       },
     });
+  }
+
+  async #afterProviderEffect<T>(
+    providerRequestId: string | null,
+    verify: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await verify();
+    } catch (error) {
+      if (error instanceof GitHubProviderPostEffectError) throw error;
+      throw new GitHubProviderPostEffectError(providerRequestId);
+    }
   }
 
   async #executeWrite(input: {
@@ -648,12 +664,20 @@ export class GitHubIssueProviderService {
           },
         });
       }
-      const message = error instanceof Error ? error.message : String(error);
+      const postEffect = error instanceof GitHubProviderPostEffectError
+        ? error
+        : null;
+      const message = postEffect
+        ? postEffect.message
+        : error instanceof Error
+        ? error.message
+        : String(error);
       const checkedAt = this.#now();
       const pending = await this.#receipts.updateGitHubProviderReceipt({
         ...reserved,
         state: "pending_reconciliation",
         updatedAt: checkedAt,
+        providerRequestId: postEffect?.providerRequestId ?? null,
         verification: {
           state: "failed",
           checkedAt,

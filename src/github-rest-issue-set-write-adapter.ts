@@ -7,12 +7,16 @@ import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import type {
   GitHubInstallationTokenProvider,
 } from "./github-app-installation-token.js";
+import { GitHubProviderPostEffectError } from "./github-provider-post-effect-error.js";
 import {
   boundedText,
   canonicalLogins,
   canonicalStringList,
   normalizeGitHubRepository,
 } from "./github-provider-validation.js";
+import {
+  GitHubRestIssueProviderAdapter,
+} from "./github-rest-issue-adapter.js";
 import {
   GitHubRestIssueWriteAdapter,
   type GitHubRestIssueWriteAdapterOptions,
@@ -23,73 +27,68 @@ export interface GitHubRestIssueSetWriteAdapterOptions
 
 const githubApiVersion = "2022-11-28";
 const maximumResponseBytes = 512 * 1024;
+const maximumAssigneesPerMutation = 10;
 
 /**
- * Extends the verified create/update/comment adapter with the four exact
- * label and assignee mutations. Mutation responses are admitted first, then
- * one independent issue read is required before returning. The service still
- * performs its own resulting-set readback; a failure there remains ambiguous.
+ * Extends the first typed issue writes with exact label and assignee
+ * mutations. Mutation adapters are ephemeral and read adapters never execute
+ * mutations, so process-local verification markers cannot cross operations.
+ * The provider service owns final post-effect ambiguity classification.
  */
 export class GitHubRestIssueSetWriteAdapter
   implements GitHubIssueProviderAdapter
 {
-  readonly #base: GitHubRestIssueWriteAdapter;
+  readonly #writeOptions: GitHubRestIssueWriteAdapterOptions;
+  readonly #reads: GitHubRestIssueProviderAdapter;
+  readonly #commentReads: GitHubRestIssueWriteAdapter;
   readonly #tokens: GitHubInstallationTokenProvider;
   readonly #apiBaseUrl: string;
   readonly #fetch: typeof fetch;
-  readonly #pendingIssueReadbacks = new Map<string, number>();
 
   constructor(options: GitHubRestIssueSetWriteAdapterOptions) {
-    this.#base = new GitHubRestIssueWriteAdapter(options);
     this.#tokens = options.tokenProvider;
     this.#apiBaseUrl = normalizedApiBaseUrl(
       options.apiBaseUrl ?? "https://api.github.com",
     );
     this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#writeOptions = Object.freeze({
+      tokenProvider: options.tokenProvider,
+      apiBaseUrl: this.#apiBaseUrl,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+    });
+    this.#reads = new GitHubRestIssueProviderAdapter(this.#writeOptions);
+    this.#commentReads = new GitHubRestIssueWriteAdapter(this.#writeOptions);
   }
 
   listIssues(
     input: Parameters<GitHubIssueProviderAdapter["listIssues"]>[0],
   ): Promise<GitHubIssueProviderPage> {
-    return this.#base.listIssues(input);
+    return this.#reads.listIssues(input);
   }
 
   searchIssues(
     input: Parameters<GitHubIssueProviderAdapter["searchIssues"]>[0],
   ): Promise<GitHubIssueProviderPage> {
-    return this.#base.searchIssues(input);
+    return this.#reads.searchIssues(input);
   }
 
-  async getIssue(
+  getIssue(
     input: Parameters<GitHubIssueProviderAdapter["getIssue"]>[0],
   ): Promise<GitHubIssueContextInput> {
-    const repositoryFullName = normalizeGitHubRepository(
-      input.repositoryFullName,
-    ).toLowerCase();
-    const issueNumber = positiveInteger(input.issueNumber, "GitHub issue number");
-    const postMutation = consumePending(
-      this.#pendingIssueReadbacks,
-      issueReadbackKey(repositoryFullName, issueNumber),
-    );
-    try {
-      return await this.#base.getIssue({ repositoryFullName, issueNumber });
-    } catch (error) {
-      if (postMutation) throw ambiguousVerificationError();
-      throw error;
-    }
+    return this.#reads.getIssue(input);
   }
 
   createIssue: GitHubIssueProviderAdapter["createIssue"] = (input) =>
-    this.#base.createIssue(input);
+    this.#mutationAdapter().createIssue(input);
 
   updateIssue: GitHubIssueProviderAdapter["updateIssue"] = (input) =>
-    this.#base.updateIssue(input);
+    this.#mutationAdapter().updateIssue(input);
 
   addIssueComment: GitHubIssueProviderAdapter["addIssueComment"] = (input) =>
-    this.#base.addIssueComment(input);
+    this.#mutationAdapter().addIssueComment(input);
 
   getIssueComment: GitHubIssueProviderAdapter["getIssueComment"] = (input) =>
-    this.#base.getIssueComment(input);
+    this.#commentReads.getIssueComment(input);
 
   async addIssueLabels(
     input: Parameters<GitHubIssueProviderAdapter["addIssueLabels"]>[0],
@@ -98,15 +97,21 @@ export class GitHubRestIssueSetWriteAdapter
     if (labels.length === 0) {
       throw new RangeError("GitHub issue label mutation requires at least one label");
     }
-    return await this.#mutateIssueSet({
+    const result = await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
       urlSuffix: "labels",
       method: "POST",
       body: { labels },
       operation: "add issue labels",
-      expectedShape: "array",
+      admitResponse: (value) => {
+        const actual = admitLabelResponse(value, "add issue labels");
+        if (!labels.every((label) => actual.includes(label))) {
+          throw ambiguousMutationResult("add issue labels");
+        }
+      },
     });
+    return result;
   }
 
   async removeIssueLabel(
@@ -119,7 +124,12 @@ export class GitHubRestIssueSetWriteAdapter
       urlSuffix: `labels/${encodeURIComponent(label)}`,
       method: "DELETE",
       operation: "remove issue label",
-      expectedShape: "array",
+      admitResponse: (value) => {
+        const actual = admitLabelResponse(value, "remove issue label");
+        if (actual.includes(label)) {
+          throw ambiguousMutationResult("remove issue label");
+        }
+      },
     });
   }
 
@@ -127,11 +137,7 @@ export class GitHubRestIssueSetWriteAdapter
     input: Parameters<GitHubIssueProviderAdapter["addIssueAssignees"]>[0],
   ) {
     const assignees = canonicalLogins(input.assignees);
-    if (assignees.length === 0) {
-      throw new RangeError(
-        "GitHub issue assignee mutation requires at least one assignee",
-      );
-    }
+    requireAssigneeMutationCount(assignees);
     return await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
@@ -139,7 +145,18 @@ export class GitHubRestIssueSetWriteAdapter
       method: "POST",
       body: { assignees },
       operation: "add issue assignees",
-      expectedShape: "record",
+      admitResponse: (value, repositoryFullName, issueNumber) => {
+        const actual = admitAssigneeIssueResponse(
+          value,
+          repositoryFullName,
+          issueNumber,
+          this.#apiBaseUrl,
+          "add issue assignees",
+        );
+        if (!assignees.every((login) => actual.includes(login))) {
+          throw ambiguousMutationResult("add issue assignees");
+        }
+      },
     });
   }
 
@@ -147,11 +164,7 @@ export class GitHubRestIssueSetWriteAdapter
     input: Parameters<GitHubIssueProviderAdapter["removeIssueAssignees"]>[0],
   ) {
     const assignees = canonicalLogins(input.assignees);
-    if (assignees.length === 0) {
-      throw new RangeError(
-        "GitHub issue assignee mutation requires at least one assignee",
-      );
-    }
+    requireAssigneeMutationCount(assignees);
     return await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
@@ -159,8 +172,23 @@ export class GitHubRestIssueSetWriteAdapter
       method: "DELETE",
       body: { assignees },
       operation: "remove issue assignees",
-      expectedShape: "record",
+      admitResponse: (value, repositoryFullName, issueNumber) => {
+        const actual = admitAssigneeIssueResponse(
+          value,
+          repositoryFullName,
+          issueNumber,
+          this.#apiBaseUrl,
+          "remove issue assignees",
+        );
+        if (assignees.some((login) => actual.includes(login))) {
+          throw ambiguousMutationResult("remove issue assignees");
+        }
+      },
     });
+  }
+
+  #mutationAdapter(): GitHubRestIssueWriteAdapter {
+    return new GitHubRestIssueWriteAdapter(this.#writeOptions);
   }
 
   async #mutateIssueSet(input: {
@@ -170,7 +198,11 @@ export class GitHubRestIssueSetWriteAdapter
     method: "POST" | "DELETE";
     body?: Record<string, unknown>;
     operation: string;
-    expectedShape: "array" | "record";
+    admitResponse: (
+      value: unknown,
+      repositoryFullName: string,
+      issueNumber: number,
+    ) => void;
   }): Promise<{ issue: GitHubIssueContextInput; providerRequestId: string }> {
     const repositoryFullName = normalizeGitHubRepository(
       input.repositoryFullName,
@@ -184,19 +216,17 @@ export class GitHubRestIssueSetWriteAdapter
       method: input.method,
       ...(input.body ? { body: input.body } : {}),
       operation: input.operation,
-      expectedShape: input.expectedShape,
     });
+    admitMutationResponse(input.operation, () =>
+      input.admitResponse(response.value, repositoryFullName, issueNumber)
+    );
 
     let issue: GitHubIssueContextInput;
     try {
-      issue = await this.#base.getIssue({ repositoryFullName, issueNumber });
+      issue = await this.#reads.getIssue({ repositoryFullName, issueNumber });
     } catch {
-      throw ambiguousVerificationError();
+      throw new GitHubProviderPostEffectError(response.requestId);
     }
-    markPending(
-      this.#pendingIssueReadbacks,
-      issueReadbackKey(repositoryFullName, issueNumber),
-    );
     return { issue, providerRequestId: response.requestId };
   }
 
@@ -206,8 +236,7 @@ export class GitHubRestIssueSetWriteAdapter
     method: "POST" | "DELETE";
     body?: Record<string, unknown>;
     operation: string;
-    expectedShape: "array" | "record";
-  }): Promise<{ requestId: string }> {
+  }): Promise<{ requestId: string; value: unknown }> {
     const credential = await this.#tokens.getInstallationToken({
       repositoryFullName: input.repositoryFullName,
       issues: "write",
@@ -250,17 +279,11 @@ export class GitHubRestIssueSetWriteAdapter
     } catch {
       throw ambiguousMutationResult(input.operation);
     }
-    if (
-      (input.expectedShape === "array" && !Array.isArray(value))
-      || (input.expectedShape === "record" && !isRecord(value))
-    ) {
-      throw ambiguousMutationResult(input.operation);
-    }
     const requestId = admittedRequestId(
       response.headers.get("x-github-request-id"),
     );
     if (!requestId) throw ambiguousMutationResult(input.operation);
-    return { requestId };
+    return { requestId, value };
   }
 }
 
@@ -277,6 +300,117 @@ function issueUrl(
   issueNumber: number,
 ): URL {
   return new URL(`${issueCollectionUrl(apiBaseUrl, repositoryFullName)}/${issueNumber}`);
+}
+
+function requireAssigneeMutationCount(assignees: string[]): void {
+  if (
+    assignees.length === 0
+    || assignees.length > maximumAssigneesPerMutation
+  ) {
+    throw new RangeError(
+      "GitHub issue assignee mutation requires 1 to 10 unique assignees",
+    );
+  }
+}
+
+function admitLabelResponse(value: unknown, operation: string): string[] {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw ambiguousMutationResult(operation);
+  }
+  const labels = value.map((entry) => {
+    if (typeof entry === "string") {
+      return boundedResponseTextValue(entry, "GitHub label", 100, operation);
+    }
+    if (isRecord(entry)) {
+      return boundedResponseTextValue(entry.name, "GitHub label", 100, operation);
+    }
+    throw ambiguousMutationResult(operation);
+  });
+  return canonicalStringList(labels, 100, 100);
+}
+
+function admitAssigneeIssueResponse(
+  value: unknown,
+  repositoryFullName: string,
+  issueNumber: number,
+  apiBaseUrl: string,
+  operation: string,
+): string[] {
+  if (!isRecord(value) || value.pull_request !== undefined) {
+    throw ambiguousMutationResult(operation);
+  }
+  if (value.number !== issueNumber) {
+    throw ambiguousMutationResult(operation);
+  }
+  assertIssueRepository(
+    value.repository_url,
+    repositoryFullName,
+    apiBaseUrl,
+    operation,
+  );
+  if (!Array.isArray(value.assignees) || value.assignees.length > 100) {
+    throw ambiguousMutationResult(operation);
+  }
+  const assignees = value.assignees.map((entry) => {
+    if (!isRecord(entry)) throw ambiguousMutationResult(operation);
+    return boundedResponseTextValue(
+      entry.login,
+      "GitHub assignee",
+      39,
+      operation,
+    ).toLowerCase();
+  });
+  return canonicalLogins(assignees);
+}
+
+function assertIssueRepository(
+  value: unknown,
+  repositoryFullName: string,
+  apiBaseUrl: string,
+  operation: string,
+): void {
+  if (typeof value !== "string") throw ambiguousMutationResult(operation);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw ambiguousMutationResult(operation);
+  }
+  const base = new URL(apiBaseUrl);
+  const [owner, repository] = repositoryParts(repositoryFullName);
+  const expectedPath = `${base.pathname.replace(/\/$/, "")}/repos/${owner}/${repository}`;
+  if (
+    url.origin !== base.origin
+    || url.pathname.toLowerCase() !== expectedPath.toLowerCase()
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+  ) {
+    throw ambiguousMutationResult(operation);
+  }
+}
+
+function admitMutationResponse(operation: string, admit: () => void): void {
+  try {
+    admit();
+  } catch {
+    throw ambiguousMutationResult(operation);
+  }
+}
+
+function boundedResponseTextValue(
+  value: unknown,
+  label: string,
+  maximum: number,
+  operation: string,
+): string {
+  if (typeof value !== "string") throw ambiguousMutationResult(operation);
+  try {
+    return boundedText(value, label, maximum);
+  } catch {
+    throw ambiguousMutationResult(operation);
+  }
 }
 
 async function boundedResponseText(
@@ -344,25 +478,6 @@ function positiveInteger(value: number, label: string): number {
   return value;
 }
 
-function markPending(store: Map<string, number>, key: string): void {
-  store.set(key, (store.get(key) ?? 0) + 1);
-}
-
-function consumePending(store: Map<string, number>, key: string): boolean {
-  const count = store.get(key) ?? 0;
-  if (count === 0) return false;
-  if (count === 1) store.delete(key);
-  else store.set(key, count - 1);
-  return true;
-}
-
-function issueReadbackKey(
-  repositoryFullName: string,
-  issueNumber: number,
-): string {
-  return `${repositoryFullName}#${issueNumber}`;
-}
-
 function ambiguousTransportError(operation: string): Error {
   return new Error(`GitHub ${operation} outcome requires reconciliation`);
 }
@@ -370,12 +485,6 @@ function ambiguousTransportError(operation: string): Error {
 function ambiguousMutationResult(operation: string): Error {
   return new Error(
     `GitHub ${operation} succeeded without an admissible exact response; reconcile before retry`,
-  );
-}
-
-function ambiguousVerificationError(): Error {
-  return new Error(
-    "GitHub issue readback could not confirm the mutation; reconcile before retry",
   );
 }
 
