@@ -2,7 +2,7 @@
 
 **Status:** active P0 execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-03 after governed-write integration, exact-ref and trigger receipts, and active repair review convergence  
+**Last reconciled:** 2026-08-03 after provider-reconciliation convergence and private binding repair review  
 **Current main:** `22495e429b70a290ca1680518e169dbe573b44ca`  
 **Tracking incident:** #490  
 **Programme:** #491  
@@ -84,14 +84,13 @@ Hosted issue-context persistence landed through #908. #933 exposed project-scope
 
 #492 still needs exact Worker revision evidence, one authorised hosted context receipt, and use of that context during the sustained #490 lifecycle and reconnect sequence.
 
-#958 now owns the pure outbound-receipt-to-context reconciliation compiler. Parent #961 is the active integration candidate. Its current source re-admits both the provider receipt and embedded issue snapshot, retains actor/attachment/verification identity, returns the provider snapshot only for a proposed acceptance, and grants no provider mutation, context acceptance, or authority.
+#958 owns the pure outbound-receipt-to-context reconciliation compiler. PR #961 is now the sole combined integration candidate at `fa510dc0c7a189d09d46ac9c2f00385177482050`. It admits only provider-write receipts, enforces exact lifecycle coherence, binds production issue/comment target grammar, re-admits accepted issue snapshots, retains actor/attachment/verification identity, returns the provider snapshot only for a proposed acceptance, and grants no provider mutation, context acceptance, or authority.
 
-Two accepted stacked source children own the remaining repairs:
+Complete exact-head source review accepts #961. Canonical run `30760524249` exists but currently exposes no jobs. Closed children #964 and #969 are unmerged recovery history; do not integrate them beside the combined parent.
 
-- #964 at `246885da7c4074a2f57a8f25ae2d8e313e7ce8df` supplies the production target grammar for create, update, label, and assignee mutations; canonical run `30759628827` remains pending;
-- #969 at `7e91793445c17cd1eb7993bc45fe8022f3e9c698` admits only write-produced receipts, rejects contradictory state/result lifecycles, binds settled comment target/source identity, and limits stale readback to guarded issue updates; canonical run `30760288404` remains pending.
+#965 owns the private accepted-binding read needed before outbound reconciliation. Parent #967 is the two-file private reader at `b4bb9cce30b4c18f890177094a43d174f7ce8677`. It establishes exact project scope, keeps credentials runtime-private, admits caller/backend data through descriptor-safe boundaries, reuses the canonical stored-context validator, and keeps the public projection content-minimised.
 
-After unchanged-head CI succeeds, absorb #964 and then #969 into #961, retire both children, and rerun the complete parent on one exact current-main head. Closed duplicate #963 contributed review findings only and must not be integrated beside this stack.
+Focused child #974 at `c2756c9595980ea899cc3506057cae4bf21bfc77` binds the durable record ID to workspace/project/observation identity and rejects reversed project-scope chronology. Source review accepts the child; canonical run `30761056074` is queued. After unchanged-head CI succeeds, absorb #974 into #967, retire the child, and rerun the complete parent.
 
 ### GitHub Actions job details
 
@@ -139,7 +138,7 @@ CodeRabbit and content review are green. Canonical run `30755171898` now exposes
 
 ### Observation integrity and cancellation exploration
 
-#955 explores append-only observation Merkle checkpoints. PR #962 is the active pure implementation, but exact-head review found that its retained `ledgerId`, `compilerId`, and especially `observationId` admission accepts arbitrary printable prose and credential-shaped text that can be republished in inclusion proofs. The candidate must adopt a closed identifier grammar and realistic credential-family rejection before canonical acceptance.
+#955 explores append-only observation Merkle checkpoints. PR #962 is an active transition carrier rather than an integrable source candidate: its current head changes canonical CI, carries two write-capable temporary workflows, and still lacks the retained-identity privacy repair. The last source-only head adds proof matrices but still accepts arbitrary printable and credential-shaped `ledgerId`, `compilerId`, and `observationId` values that can be republished in proofs. Recover the source-only tree, add a closed identifier grammar plus credential-family controls, and remove every temporary workflow before renewed acceptance.
 
 #954 explores cancellation settlement and generation fencing. PR #960 passed static model review: the safe and intentionally unsafe transition systems are coherent on inspection. It remains draft until an independent pinned official `tla2tools.jar` run records version/checksum, a clean safe state space, and the expected unsafe counterexample. Static review is not executable proof.
 
@@ -181,12 +180,12 @@ Merged code, dashboard deployment presence, metadata checks, or one successful o
 | --- | --- | --- | --- | --- |
 | P0 | #490 sustained-use incident | Repository paths are stronger; repeated execution and reconnect remain unproved | Run the complete uniquely identified lifecycle in one fresh authenticated conversation, checkpointing GitHub between segments | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
 | P0 | #921 governed GitHub writes | Repository implementation is merged; Worker revision and write flag remain unverified | Verify Worker revision/declaration, perform authorised create/update/comment, look up the receipt, reconnect, then replay the same identities | Receipt survives reconnect, exact replay does not duplicate, and accepted-context reconciliation is visible |
-| P0 | #492 hosted GitHub context | Persistence/public action are merged; #961 has accepted stacked repairs #964 and #969 pending CI/absorption | Complete both child runs, absorb #964 then #969 into #961, rerun the parent, then verify Worker revision and one authorised hosted context receipt | Compiler integrates and hosted receipt plus repeated lifecycle use pass |
+| P0 | #492 hosted GitHub context | Persistence/public action are merged; #961 is combined and source-accepted, while #967 requires accepted identity child #974 | Complete #974 CI, absorb it into #967 and rerun the parent; let #961 run execute; then verify Worker revision and one authorised hosted context receipt | Compiler and private binding reader integrate, then hosted receipt plus repeated lifecycle use pass |
 | P0 | #697 Actions step/log mounting | Opt-in ten-read code is merged; Worker revision and flag remain unverified | Verify Worker revision/flag, then record one authenticated hosted step/log receipt and exact discovery declaration | Live attributable receipt passes and #697 closes |
 | P1 | #943 review-thread truncation | #944 source review is complete; exact-head jobs are queued | Let run `30755171898` finish unchanged, refresh gates, then squash-integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
 | P1 | #700 trigger receipts | #953 source is accepted; exact-head run exists without jobs | Let run `30759262459` execute, then refresh exact-head gates and integrate | Trigger absence, unknown coverage, and observed-run evidence remain distinct |
 | P1 | #659 runner adapter | #945 requires accepted shared child #959 before final parent proof | Complete #959 CI, absorb it into #945, retire the child, and rerun the full parent | One adapter integrates with chronology, profile, authority, privacy, recovery, and shared numeric identity intact |
-| P1 | #591 / #744 signed observations | Operational lane owns live signed receipt and replay/conflict evidence; #962 is an exploratory integrity child | Repair #962 retained identity privacy separately from the live receipt lane | Live signed lifecycle passes; experimental proofs retain no arbitrary prose or credential text |
+| P1 | #591 / #744 signed observations | Operational lane owns live signed receipt and replay/conflict evidence; #962 is a non-integrable transition carrier | Recover #962 source-only work and repair retained identity privacy separately from the live receipt lane | Live signed lifecycle passes; experimental proofs retain no arbitrary prose or credential text |
 | P2 | #954 cancellation model | #960 is statically coherent but unexecuted | Run pinned official TLC safe/unsafe configurations and record proof artifacts | Safe model has no invariant violation and unsafe model yields the expected counterexample |
 
 ## Work selection
@@ -207,12 +206,13 @@ Before committing to a lane, inspect dependencies, useful continuations, and ove
 
 - Obtain exact **Deploy Worker Production** evidence for the official/fallback API/MCP hosts, including deployed revision and enabled feature set.
 - After Worker proof, run one authorised #921 create/update/comment and receipt replay/reconnect journey.
-- Complete #964 and #969 CI, absorb them into #961 in order, retire the children, and rerun the complete parent.
+- Let #961 exact-head canonical CI execute and refresh its terminal gates.
+- Complete #974 CI, absorb it into #967, retire the child, and rerun the complete private-binding parent.
 - Record one authorised hosted `get_github_project_context` receipt for #492 and one authenticated step/log receipt for #697.
 - Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.
 - Finish unchanged exact-head CI and integration for #944 and #953.
 - Finish #959 CI, absorb it into #945, rerun the complete parent, then retire historical runner lanes.
-- Repair #962 retained identity privacy before any proof publication claim.
+- Recover #962 source-only work, repair retained identity privacy, and remove every temporary workflow before renewed proof claims.
 - Run the pinned #960 safe/unsafe TLC proof before integration.
 
 ## Failure handling
@@ -229,5 +229,5 @@ When a step fails:
 
 A failed dogfood attempt is product evidence and should produce a sharper test, diagnostic, or repair.
 
-— Morrow · W01 revision 10 reconciliation  
+— Morrow and Lumen · W01 revision 10 reconciliation  
   Intention: keep deployment truth, exact candidate state, and executable next actions aligned
