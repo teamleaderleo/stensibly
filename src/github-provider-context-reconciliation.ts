@@ -80,6 +80,7 @@ export function compileGitHubProviderContextReconciliation(
     throw new RangeError("GitHub provider context reconciliation schemaVersion must equal 1");
   }
   const receipt = admitGitHubProviderReceipt(input.receipt as GitHubProviderReceipt);
+  assertReceiptLifecycleCoherence(receipt);
   const current = input.current === null ? null : admitCurrentIdentity(input.current);
   const inputFingerprint = fingerprintCanonicalRequest({
     schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
@@ -121,6 +122,89 @@ interface Decision {
   outcome: GitHubProviderContextReconciliationOutcome;
   nextAction: GitHubProviderContextReconciliationNextAction;
   providerSnapshot: GitHubIssueContext | null;
+}
+
+function assertReceiptLifecycleCoherence(
+  receipt: GitHubProviderReceipt,
+): void {
+  switch (receipt.state) {
+    case "reserved":
+      if (
+        receipt.result !== null
+        || receipt.verification.state !== "not_run"
+        || receipt.verification.checkedAt !== null
+        || receipt.verification.sourceRevision !== null
+        || receipt.error !== null
+        || receipt.recovery.nextAction !== "none"
+      ) {
+        throw new Error("Reserved GitHub provider receipt lifecycle is inconsistent");
+      }
+      return;
+    case "pending_reconciliation": {
+      const verificationIsInterrupted =
+        receipt.verification.state === "not_run"
+        && receipt.verification.checkedAt === null
+        && receipt.verification.sourceRevision === null;
+      const verificationIsAmbiguous =
+        receipt.verification.state === "failed"
+        && receipt.verification.checkedAt !== null
+        && receipt.verification.sourceRevision === null;
+      if (
+        receipt.result !== null
+        || (!verificationIsInterrupted && !verificationIsAmbiguous)
+        || receipt.error === null
+        || receipt.error.retry !== "reconcile_before_retry"
+        || receipt.recovery.nextAction !== "reconcile_exact_operation"
+      ) {
+        throw new Error(
+          "Pending GitHub provider receipt lifecycle is inconsistent",
+        );
+      }
+      return;
+    }
+    case "rejected":
+      if (
+        receipt.result !== null
+        || receipt.verification.state !== "not_run"
+        || receipt.verification.checkedAt !== null
+        || receipt.verification.sourceRevision !== null
+        || receipt.error === null
+        || receipt.error.retry !== "do_not_retry"
+        || receipt.recovery.nextAction
+          !== "inspect_authority_or_provider_rejection"
+      ) {
+        throw new Error("Rejected GitHub provider receipt lifecycle is inconsistent");
+      }
+      return;
+    case "stale":
+      if (
+        receipt.operation !== "github_update_issue"
+        || receipt.result === null
+        || receipt.verification.state !== "failed"
+        || receipt.verification.checkedAt === null
+        || receipt.verification.sourceRevision === null
+        || receipt.error?.code !== "stale_provider_version"
+        || receipt.error.retry !== "do_not_retry"
+        || receipt.recovery.nextAction
+          !== "refresh_and_retry_with_new_version"
+      ) {
+        throw new Error("Stale GitHub provider receipt lifecycle is inconsistent");
+      }
+      return;
+    case "succeeded":
+    case "reconciled":
+      if (
+        receipt.result === null
+        || receipt.verification.state !== "passed"
+        || receipt.verification.checkedAt === null
+        || receipt.verification.sourceRevision === null
+        || receipt.error !== null
+        || receipt.recovery.nextAction !== "none"
+      ) {
+        throw new Error("Settled GitHub provider receipt lifecycle is inconsistent");
+      }
+      return;
+  }
 }
 
 function decide(
