@@ -156,6 +156,7 @@ function decide(
   }
 
   const snapshot = receipt.result;
+  assertSettledIssueReadback(receipt, snapshot);
   const externalId = snapshot.reference.externalId;
   if (current !== null && current.externalId !== externalId) {
     return decision(
@@ -180,6 +181,22 @@ function decide(
     "submit_context_acceptance",
     snapshot,
   );
+}
+
+function assertSettledIssueReadback(
+  receipt: GitHubProviderReceipt,
+  snapshot: GitHubIssueContext,
+): void {
+  const expectedVerification = receipt.state === "stale" ? "failed" : "passed";
+  if (
+    receipt.verification.state !== expectedVerification
+    || receipt.verification.checkedAt === null
+    || receipt.verification.sourceRevision !== snapshot.sourceRevision
+  ) {
+    throw new Error(
+      "Settled GitHub issue receipt verification does not bind the provider result",
+    );
+  }
 }
 
 function decision(
