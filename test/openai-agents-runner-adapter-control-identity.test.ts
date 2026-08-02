@@ -331,6 +331,7 @@ describe("OpenAI Agents control identity wrapper", () => {
     for (const commandId of [
       `command-sk-${"a".repeat(20)}`,
       `command-ghp_${"a".repeat(20)}`,
+      `command-prefixghp_${"a".repeat(20)}`,
       `command-github_pat_${"a".repeat(20)}`,
       `command-stn.tok_${"a".repeat(20)}`,
       `command-xoxb-${"a".repeat(16)}`,
