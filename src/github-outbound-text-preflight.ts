@@ -125,12 +125,6 @@ const unsafeTextPattern =
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const credentialShapedIdentityPattern =
   /(?:Bearer\s+|gh[pousr]_|github_pat_|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
-const directReferencePatternSource =
-  String.raw`https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[/?#)\]}>.,;:'"\s])`;
-const repositoryShorthandPatternSource =
-  String.raw`(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]{0,9})(?=$|[^0-9])`;
-const commitShorthandPatternSource =
-  String.raw`(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?=$|[^0-9a-f])`;
 const closingKeywordBeforeReferencePattern =
   /(?:^|[^A-Za-z])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
 const exactCommitIdentityPattern = /^[0-9a-f]{7,64}$/iu;
@@ -194,7 +188,7 @@ export function compileGitHubOutboundTextPreflightV1(
   }
 
   const findings = detected.map((reference) => {
-    const position = sourcePosition(lineStarts, reference.start);
+    const position = sourcePosition(text, lineStarts, reference.start);
     const [externalOwner, externalRepository] =
       reference.repositoryFullName.split("/") as [string, string];
     const lineStart = lineStarts[position.line - 1] ?? 0;
@@ -325,18 +319,12 @@ function canonicalRepositoryList(value: unknown): readonly string[] {
 function detectReferences(text: string): readonly DetectedReference[] {
   const references: DetectedReference[] = [];
   const occupied: Array<readonly [number, number]> = [];
-  const directReferencePattern = new RegExp(
-    directReferencePatternSource,
-    "giu",
-  );
-  const repositoryShorthandPattern = new RegExp(
-    repositoryShorthandPatternSource,
-    "gu",
-  );
-  const commitShorthandPattern = new RegExp(
-    commitShorthandPatternSource,
-    "giu",
-  );
+  const directReferencePattern =
+    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[/?#)\]}>.,;:'"\s])/giu;
+  const repositoryShorthandPattern =
+    /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]{0,9})(?=$|[^0-9])/gu;
+  const commitShorthandPattern =
+    /(?:^|[^A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?=$|[^0-9a-f])/giu;
 
   for (const match of text.matchAll(directReferencePattern)) {
     const start = match.index;
@@ -359,8 +347,6 @@ function detectReferences(text: string): readonly DetectedReference[] {
       occupied.push([start, end]);
       continue;
     }
-    const itemNumber = providerItemNumber(match[4]);
-    if (itemNumber === null) continue;
     references.push({
       start,
       end,
@@ -371,7 +357,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
         ? "pull_request"
         : "discussion",
       repositoryFullName,
-      itemNumber,
+      itemNumber: providerItemNumber(match[4]),
       commitIdentity: null,
     });
     occupied.push([start, end]);
@@ -384,15 +370,14 @@ function detectReferences(text: string): readonly DetectedReference[] {
     const end = match.index + match[0].length;
     if (overlaps(occupied, start, end)) continue;
     const repositoryFullName = detectedRepository(match[1], match[2]);
-    const itemNumber = providerItemNumber(match[3]);
-    if (!repositoryFullName || itemNumber === null) continue;
+    if (!repositoryFullName) continue;
     references.push({
       start,
       end,
       source: "repository_shorthand",
       referenceKind: "issue_or_pull_request",
       repositoryFullName,
-      itemNumber,
+      itemNumber: providerItemNumber(match[3]),
       commitIdentity: null,
     });
     occupied.push([start, end]);
@@ -463,6 +448,7 @@ function buildLineStarts(text: string): readonly number[] {
 }
 
 function sourcePosition(
+  text: string,
   lineStarts: readonly number[],
   index: number,
 ): Readonly<{ line: number; column: number }> {
@@ -474,9 +460,10 @@ function sourcePosition(
     else high = middle - 1;
   }
   const lineIndex = Math.max(0, high);
+  const lineStart = lineStarts[lineIndex]!;
   return Object.freeze({
     line: lineIndex + 1,
-    column: index - lineStarts[lineIndex]! + 1,
+    column: [...text.slice(lineStart, index)].length + 1,
   });
 }
 
@@ -549,7 +536,7 @@ function denseDataArray(
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       throw new TypeError(`${label} must contain only dense data entries`);
     }
-    entries.push(descriptor.value);
+    entries.push(descriptor.value;
   }
   return entries;
 }
