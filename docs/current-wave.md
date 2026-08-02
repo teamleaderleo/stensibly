@@ -2,7 +2,7 @@
 
 **Status:** active P0 execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-02 after dashboard verification, Worker-evidence correction, and exact-ref CI receipts  
+**Last reconciled:** 2026-08-02 after dashboard verification, Worker-evidence correction, exact-ref CI receipts, and repair-lane convergence  
 **Current main:** `22495e429b70a290ca1680518e169dbe573b44ca`  
 **Tracking incident:** #490  
 **Programme:** #491  
@@ -100,20 +100,28 @@ Canonical CI can validate one exact source revision through `full_parallel` or `
 
 ### OpenAI Agents runner adapter
 
-Parent #659 is a stale historical candidate. No current convergence PR is accepted for integration yet.
+Parent #659 remains a stale historical candidate. PR #945 is now the sole executable current-main integration lane.
 
-- PR #945 is a wrapper/base architecture. Its observed head `d5350de4eea2768a08efec5919bca20d4743aaff` still trims authority-bearing identity strings before validation, aliases altered bytes to exact identities, and lacks the required padded-identity reversing controls.
-- PR #942 is the smaller direct architecture. Its observed head `cc3984ee404bf581c3806f6202b5b2445ddfd5c2` still contains a diagnostic source-export helper and has not published the complete chronology, profile-bound control-key, and holder-before-cache repairs.
-- PR #947 is a temporary read-only reconstruction carrier for #942 and is not an integration candidate.
-- PR #941 is closed.
+Its frozen source-only head `55deb1b0c691d01d7a76bf7e25e81efb3f37fb5b` preserves the reviewed #659 implementation byte-for-byte as `openai-agents-base.ts` and adds one bounded public wrapper plus focused controls. The nine-file candidate:
 
-Converge on one workflow-free implementation. Preserve uniquely useful controls, reject trimmed authority/effect identity aliases, bind control/cache identity to the exact profile and run generations, remove diagnostic exporters, and run focused plus canonical exact-ref proof before choosing an integration candidate.
+- rejects future-dated replay records while preserving exact equality for fresh append receipts;
+- binds checkpoint and cancellation controls to exact adapter, version, profile, run, and generation identity;
+- validates active holder authority before process-local checkpoint disclosure;
+- rejects padded authority/effect identity aliases;
+- admits benign short token-like prose while rejecting realistic and embedded credential families;
+- preserves admitted resume checkpoints and guards repository imports of the reviewed base.
+
+CodeRabbit is green, review threads are empty, and the branch is nine additive files and zero commits behind current `main`. Canonical run `30754505908` remains pending runner allocation; no test result is accepted until that unchanged exact head completes.
+
+Incomplete reconstruction PRs #942, #947, and #949 are closed and contributed no candidate bytes. Do not revive or integrate both architectures.
 
 ### Long review-thread comments
 
 Issue #943 tracks a demonstrated native GitHub review-thread defect: one thread with more than 20 comments currently fails the complete read.
 
-Draft PR #944 carries five focused controls and a temporary exact-parent finalizer. The intended clean two-file candidate retains the first 20 comments, exposes `commentsTotalCount` and `commentsTruncated`, raises the aggregate retained-entry ceiling to 2,000, and rejects inconsistent provider pagination evidence. The finalizer must disappear before candidate review.
+PR #944 is a workflow-free exact three-file candidate at `1b7e9b00fdb2dfc2154fed855b042c636df0e74f`. It retains the admitted first 20 comments, exposes exact per-thread `commentsTotalCount` and `commentsTruncated`, raises the aggregate retained-entry ceiling to 2,000, rejects contradictory pagination evidence, and proves the additive evidence survives hosted and public projections.
+
+CodeRabbit is green, review threads are empty, the complete Tier 2 content review found no blocker, and the branch is one commit ahead and zero behind current `main`. Canonical run `30753923991` remains pending runner allocation; no integration claim is accepted before that unchanged run passes.
 
 ## Temporary degraded mode
 
@@ -155,9 +163,9 @@ Merged code, dashboard deployment presence, metadata checks, or one successful o
 | P0 | #921 governed GitHub writes | Repository implementation is merged; Worker revision and write flag remain unverified | Verify the official/fallback Worker revision and 37-tool declaration, refresh the app, perform authorised create/update/comment, look up the receipt, reconnect, then replay the same identities | Receipt survives reconnect, exact replay does not duplicate, and accepted-context reconciliation is visible |
 | P0 | #492 hosted GitHub context | Persistence and public action are merged; Worker presence remains unverified | Verify Worker revision, record one authorised `get_github_project_context` receipt, and use it during the sustained lifecycle | Hosted receipt and repeated lifecycle use pass |
 | P0 | #697 Actions step/log mounting | Opt-in ten-read code is merged; Worker revision and flag remain unverified | Verify Worker revision and flag, then record one authenticated hosted step/log receipt and exact discovery declaration | Live attributable receipt passes and #697 closes |
-| P1 | #943 review-thread truncation | #944 has focused controls and an exact-parent transition carrier; clean source head is unpublished | Publish the workflow-free two-file candidate, run focused and canonical exact-head gates, complete Tier 2 review, and integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
+| P1 | #943 review-thread truncation | #944 is a workflow-free three-file current-main candidate with content review complete; canonical CI is pending | Let run `30753923991` finish unchanged, refresh exact-head gates, then squash-integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
 | P1 | #591 / #744 signed observations | Operational lane owns signed receipt and replay/conflict evidence | Complete exact live receipt, replay, and conflict proof without overlapping provider-write or secret work | Signed observation lifecycle has attributable live evidence and deterministic conflict handling |
-| P1 | #659 runner adapter | #942 and #945 remain competing incomplete architectures | Publish one clean direct candidate with exact control identity, absorb unique controls, run focused/canonical proof, and retire duplicates | One adapter integrates and stale/duplicate candidates close |
+| P1 | #659 runner adapter | #945 is the sole workflow-free current-main candidate; source review is complete and canonical CI is pending | Let run `30754505908` finish unchanged, refresh exact-head gates, then squash-integrate and retire historical parents | One adapter integrates with chronology, profile, authority, privacy, and recovery controls intact |
 
 ## Work selection
 
@@ -179,8 +187,8 @@ Before committing to a lane, inspect dependencies, useful continuations, and ove
 - After Worker proof, run one authorised #921 create/update/comment and receipt replay/reconnect journey.
 - Record one authorised hosted `get_github_project_context` receipt for #492 and one authenticated step/log receipt for #697.
 - Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.
-- Publish and review #944's clean two-file long-thread repair.
-- Converge #942/#945 into one workflow-free runner adapter candidate and retire the duplicate.
+- Finish unchanged exact-head CI and integration for #944.
+- Finish unchanged exact-head CI and integration for #945, then retire the historical #659/#763/#875 lanes.
 - Complete the live #591/#744 signed-observation receipt and conflict evidence.
 
 ## Failure handling
