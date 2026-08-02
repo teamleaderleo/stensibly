@@ -111,7 +111,7 @@ Its frozen source-only head `55deb1b0c691d01d7a76bf7e25e81efb3f37fb5b` preserves
 - admits benign short token-like prose while rejecting realistic and embedded credential families;
 - preserves admitted resume checkpoints and guards repository imports of the reviewed base.
 
-CodeRabbit is green, review threads are empty, and the branch is nine additive files and zero commits behind current `main`. Canonical run `30754505908` remains pending runner allocation; no test result is accepted until that unchanged exact head completes.
+CodeRabbit is green, review threads are empty, and the branch is nine additive files and zero commits behind current `main`. Canonical run `30755997904` remains pending runner allocation after an exact-head close/reopen wake; predecessor run `30754505908` was cancelled without jobs. No test result is accepted until the unchanged exact head completes.
 
 Incomplete reconstruction PRs #942, #947, and #949 are closed and contributed no candidate bytes. Do not revive or integrate both architectures.
 
@@ -119,9 +119,9 @@ Incomplete reconstruction PRs #942, #947, and #949 are closed and contributed no
 
 Issue #943 tracks a demonstrated native GitHub review-thread defect: one thread with more than 20 comments currently fails the complete read.
 
-PR #944 is a workflow-free exact three-file candidate at `1b7e9b00fdb2dfc2154fed855b042c636df0e74f`. It retains the admitted first 20 comments, exposes exact per-thread `commentsTotalCount` and `commentsTruncated`, raises the aggregate retained-entry ceiling to 2,000, rejects contradictory pagination evidence, and proves the additive evidence survives hosted and public projections.
+PR #944 is a workflow-free exact three-file candidate at `184d3b4cdd34673016162313ad2caf6032b4b515`. It retains the admitted first 20 comments, exposes exact per-thread `commentsTotalCount` and `commentsTruncated`, raises the aggregate retained-entry ceiling to 2,000, rejects contradictory pagination evidence, and proves the additive evidence survives hosted and public projections.
 
-CodeRabbit is green, review threads are empty, the complete Tier 2 content review found no blocker, and the branch is one commit ahead and zero behind current `main`. Canonical run `30753923991` remains pending runner allocation; no integration claim is accepted before that unchanged run passes.
+CodeRabbit is green, review threads are empty, the complete Tier 2 content and provider-contract reviews found no blocker, and the effective branch diff is three files and zero commits behind current `main`. Canonical run `30755171898` remains pending runner allocation; no integration claim is accepted before that unchanged run passes.
 
 ## Temporary degraded mode
 
@@ -163,9 +163,9 @@ Merged code, dashboard deployment presence, metadata checks, or one successful o
 | P0 | #921 governed GitHub writes | Repository implementation is merged; Worker revision and write flag remain unverified | Verify the official/fallback Worker revision and 37-tool declaration, refresh the app, perform authorised create/update/comment, look up the receipt, reconnect, then replay the same identities | Receipt survives reconnect, exact replay does not duplicate, and accepted-context reconciliation is visible |
 | P0 | #492 hosted GitHub context | Persistence and public action are merged; Worker presence remains unverified | Verify Worker revision, record one authorised `get_github_project_context` receipt, and use it during the sustained lifecycle | Hosted receipt and repeated lifecycle use pass |
 | P0 | #697 Actions step/log mounting | Opt-in ten-read code is merged; Worker revision and flag remain unverified | Verify Worker revision and flag, then record one authenticated hosted step/log receipt and exact discovery declaration | Live attributable receipt passes and #697 closes |
-| P1 | #943 review-thread truncation | #944 is a workflow-free three-file current-main candidate with content review complete; canonical CI is pending | Let run `30753923991` finish unchanged, refresh exact-head gates, then squash-integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
+| P1 | #943 review-thread truncation | #944 is a workflow-free three-file current-main candidate with content review complete; canonical CI is pending | Let run `30755171898` finish unchanged, refresh exact-head gates, then squash-integrate | Long threads return bounded truncation evidence and contradictory pagination fails closed |
 | P1 | #591 / #744 signed observations | Operational lane owns signed receipt and replay/conflict evidence | Complete exact live receipt, replay, and conflict proof without overlapping provider-write or secret work | Signed observation lifecycle has attributable live evidence and deterministic conflict handling |
-| P1 | #659 runner adapter | #945 is the sole workflow-free current-main candidate; source review is complete and canonical CI is pending | Let run `30754505908` finish unchanged, refresh exact-head gates, then squash-integrate and retire historical parents | One adapter integrates with chronology, profile, authority, privacy, and recovery controls intact |
+| P1 | #659 runner adapter | #945 is the sole workflow-free current-main candidate; source review is complete and canonical CI is pending | Let run `30755997904` finish unchanged, refresh exact-head gates, then squash-integrate and retire historical parents | One adapter integrates with chronology, profile, authority, privacy, and recovery controls intact |
 
 ## Work selection
 
