@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import {
   InMemoryGitHubProviderReceiptStore,
-  type GitHubProviderReceipt,
   type GitHubProviderReceiptStore,
 } from "../src/github-issue-provider.ts";
 import {
@@ -227,7 +226,7 @@ describe("private hosted GitHub issue writes", () => {
     const sourceRevision = (
       created.result as { sourceRevision: string }
     ).sourceRevision;
-    const updated = await remounted.updateIssue!({
+    const updated = await mounted.updateIssue!({
       ...context,
       issueNumber,
       expectedSourceRevision: sourceRevision,
@@ -241,7 +240,7 @@ describe("private hosted GitHub issue writes", () => {
       result: { title: "Durable hosted write updated" },
     });
 
-    const commented = await remounted.addIssueComment!({
+    const commented = await mounted.addIssueComment!({
       ...context,
       issueNumber,
       body: "Verified comment body",
@@ -286,6 +285,76 @@ describe("private hosted GitHub issue writes", () => {
     expect(retained).not.toContain("installation-write-token-secret");
     expect(retained).not.toContain("Bounded provider body");
     expect(retained).not.toContain("Verified comment body");
+  });
+
+  test("keeps an accepted mutation pending when verification fails and never redispatches it", async () => {
+    const receipts = new InMemoryGitHubProviderReceiptStore();
+    let mutationCalls = 0;
+    const fetcher = async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/app/installations/98765/access_tokens")) {
+        const body = JSON.parse(String(init?.body)) as {
+          permissions: { issues: "read" | "write" };
+        };
+        return Response.json({
+          token: `installation-${body.permissions.issues}-token`,
+          expires_at: "2026-08-02T01:00:00Z",
+          permissions: {
+            issues: body.permissions.issues,
+            metadata: "read",
+          },
+          repository_selection: "selected",
+          repositories: [{ full_name: repositoryFullName }],
+        }, { status: 201 });
+      }
+      if (method === "POST" && url.endsWith("/issues")) {
+        mutationCalls += 1;
+        return Response.json(apiIssue(), {
+          status: 201,
+          headers: { "x-github-request-id": "WRITE:AMBIGUOUS" },
+        });
+      }
+      if (method === "GET" && url.endsWith(`/issues/${issueNumber}`)) {
+        return Response.json({ message: "verification unavailable" }, { status: 503 });
+      }
+      return Response.json({ message: "unexpected request" }, { status: 500 });
+    };
+    const mounted = mountHostedGitHubIssueProviderFromEnv(
+      ledgerWithReceipts(receipts),
+      providerEnv(true),
+      { fetch: fetcher as typeof fetch, now: () => fixedNow },
+    );
+    const input = {
+      project,
+      repository: repositoryFullName,
+      actorId: "api-token:ambiguous-write",
+      clientId: "mcp:api-token:ambiguous-write",
+      title: "Accepted but not verified",
+      idempotencyKey: "hosted-ambiguous-create-1",
+    };
+    await expect(mounted.createIssue!(input)).rejects.toThrow(
+      "pending reconciliation",
+    );
+    const pending = await receipts.getGitHubProviderReceipt(
+      project,
+      input.idempotencyKey,
+    );
+    expect(pending).toMatchObject({
+      state: "pending_reconciliation",
+      error: {
+        code: "ambiguous_provider_outcome",
+        retry: "reconcile_before_retry",
+      },
+      recovery: { nextAction: "reconcile_exact_operation" },
+    });
+    await expect(mounted.createIssue!(input)).rejects.toThrow(
+      "pending reconciliation",
+    );
+    expect(mutationCalls).toBe(1);
   });
 
   test("keeps writes absent by default and rejects malformed enablement", () => {
