@@ -304,6 +304,30 @@ describe("OpenAI Agents control identity wrapper", () => {
     }
   });
 
+  test("admits benign sk-review identities and rejects realistic keys", async () => {
+    const adapter = createAdapter();
+    const benignHolder = "runner-sk-review";
+    await admitProfile(adapter, profileA, benignHolder);
+
+    const benign = {
+      ...cancellationCommand(profileA, benignHolder),
+      commandId: "command-sk-review",
+    };
+    await expect(adapter.requestCancellation(benign)).resolves.toMatchObject({
+      commandId: "command-sk-review",
+      profileId: profileA,
+      runId,
+      requestAccepted: true,
+    });
+
+    const credentialShaped = {
+      ...benign,
+      commandId: `command-sk-${"a".repeat(20)}`,
+    };
+    await expect(adapter.requestCancellation(credentialShaped))
+      .rejects.toThrow("control command is invalid");
+  });
+
   test("keeps profile A cancellation valid after profile B is admitted", async () => {
     const adapter = createAdapter();
     await admitProfile(adapter, profileA, holderA);
