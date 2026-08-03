@@ -127,7 +127,7 @@ const unsafeTextPattern =
 const credentialShapedIdentityPattern =
   /(?:Bearer\s+|gh[pousr]_|github_pat_|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
 const closingKeywordBeforeReferencePattern =
-  /(?:^|[^A-Za-z])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
+  /(?:^|[^\p{L}\p{N}\p{M}_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
 const exactCommitIdentityPattern = /^[0-9a-f]{7,64}$/iu;
 const maximumTextBytes = 128 * 1024;
 const maximumControlledRepositories = 32;
