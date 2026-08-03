@@ -286,7 +286,7 @@ function adapterFor(response: Response): GitHubRestIssueWriteAdapter {
         };
       },
     },
-    fetch: (async () => response) as typeof fetch,
+    fetch: (async () => response) as unknown as typeof fetch,
     providerResponseDeadlineMs: 25,
   });
 }
