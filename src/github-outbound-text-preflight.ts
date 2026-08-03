@@ -129,6 +129,7 @@ const realisticCredentialPattern =
 const closingKeywordBeforeReferencePattern =
   /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
 const commitReferenceIdentityPattern = /^[0-9a-f]{7,}$/iu;
+const percentEncodedPathContinuationPattern = /^%[0-9a-f]{2}/iu;
 const maximumTextBytes = 128 * 1024;
 const maximumControlledRepositories = 32;
 const maximumFindings = 100;
@@ -345,6 +346,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
   for (const match of text.matchAll(directItemReferencePattern)) {
     const start = match.index;
     const end = start + match[0].length;
+    assertNoPercentEncodedPathContinuation(text, end);
     const repositoryFullName = detectedRepository(match[1], match[2]);
     if (!repositoryFullName) continue;
     const itemIdentity = match[4]!;
@@ -369,6 +371,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
   for (const match of text.matchAll(directCommitReferencePattern)) {
     const start = match.index;
     const end = start + match[0].length;
+    assertNoPercentEncodedPathContinuation(text, end);
     const repositoryFullName = detectedRepository(match[1], match[2]);
     if (!repositoryFullName) continue;
     const commitIdentity = match[3]!.toLowerCase();
@@ -434,6 +437,14 @@ function detectReferences(text: string): readonly DetectedReference[] {
   return Object.freeze(references.sort((left, right) =>
     left.start - right.start || left.end - right.end
   ));
+}
+
+function assertNoPercentEncodedPathContinuation(text: string, end: number): void {
+  if (percentEncodedPathContinuationPattern.test(text.slice(end, end + 3))) {
+    throw new RangeError(
+      "GitHub outbound direct reference contains percent-encoded path continuation",
+    );
+  }
 }
 
 function detectedRepository(
