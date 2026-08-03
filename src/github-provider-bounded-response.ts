@@ -9,7 +9,9 @@ export const maximumGitHubProviderResponseChunks = 4_096;
 export const defaultGitHubProviderResponseDeadlineMs = 30_000;
 export const maximumGitHubProviderResponseDeadlineMs = 120_000;
 
-const maximumFacadeTextBytes = 64 * 1024 * 1024;
+const maximumIssueCollectionFacadeTextBytes = 24 * 1024 * 1024;
+const maximumSingleIssueFacadeTextBytes = 512 * 1024;
+const maximumSingleCommentFacadeTextBytes = 256 * 1024;
 const maximumLinkHeaderBytes = 16 * 1024;
 const unsafeHeaderTextPattern = /[\u0000-\u001f\u007f]/u;
 
@@ -74,6 +76,7 @@ export function withGitHubProviderResponseDeadline(
   const deadlineMs = admitGitHubProviderResponseDeadlineMs(value);
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const context = createDeadline(deadlineMs, init?.signal ?? null);
+    const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(input);
     try {
       const providerCall = Promise.resolve(fetchImplementation(input, {
         ...init,
@@ -95,7 +98,10 @@ export function withGitHubProviderResponseDeadline(
         throw new GitHubProviderResponseReadError();
       }
       responseDeadlines.set(response, context);
-      return admitGitHubProviderResponseFacade(response);
+      return admitGitHubProviderResponseFacade(
+        response,
+        facadeTextMaximumBytes,
+      );
     } catch (error) {
       finishDeadline(context);
       throw error;
@@ -262,7 +268,10 @@ export function discardGitHubProviderResponse(response: Response): void {
   cancelBody(body);
 }
 
-function admitGitHubProviderResponseFacade(response: Response): Response {
+function admitGitHubProviderResponseFacade(
+  response: Response,
+  facadeTextMaximumBytes: number,
+): Response {
   let headers: Headers;
   let requestId: string | null;
   try {
@@ -288,7 +297,13 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
       maximumLinkHeaderBytes,
     );
   } catch {
-    return metadataFailureResponse(response, requestId, null, null);
+    return metadataFailureResponse(
+      response,
+      requestId,
+      null,
+      null,
+      facadeTextMaximumBytes,
+    );
   }
 
   let body: ReadableStream<Uint8Array> | null;
@@ -300,6 +315,7 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
       requestId,
       contentLength,
       link,
+      facadeTextMaximumBytes,
       null,
     );
   }
@@ -324,6 +340,7 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
       requestId,
       contentLength,
       link,
+      facadeTextMaximumBytes,
       body,
     );
   }
@@ -336,6 +353,7 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
     ok,
     status,
     body,
+    facadeTextMaximumBytes,
   );
 }
 
@@ -344,6 +362,7 @@ function metadataFailureResponse(
   requestId: string | null,
   contentLength: string | null,
   link: string | null,
+  facadeTextMaximumBytes: number,
   bodyValue?: ReadableStream<Uint8Array> | null,
 ): Response {
   let body = bodyValue;
@@ -363,6 +382,7 @@ function metadataFailureResponse(
     false,
     503,
     null,
+    facadeTextMaximumBytes,
   );
 }
 
@@ -374,6 +394,7 @@ function responseFacade(
   ok: boolean,
   status: number,
   body: ReadableStream<Uint8Array> | null,
+  facadeTextMaximumBytes: number,
 ): Response {
   const headers = readOnlyResponseHeaders(requestId, contentLength, link);
   let consumed = false;
@@ -388,7 +409,7 @@ function responseFacade(
       consumed = true;
       return await readBoundedGitHubProviderResponseText(
         facade,
-        maximumFacadeTextBytes,
+        facadeTextMaximumBytes,
       );
     },
   }) as unknown as Response;
@@ -483,6 +504,37 @@ function boundedOptionalHeader(
     throw new GitHubProviderResponseReadError();
   }
   return value;
+}
+
+function maximumFacadeTextBytesForRequest(
+  input: RequestInfo | URL,
+): number {
+  let urlText: string | null = null;
+  if (typeof input === "string") {
+    urlText = input;
+  } else if (input instanceof URL) {
+    urlText = input.toString();
+  } else if (typeof Request !== "undefined" && input instanceof Request) {
+    urlText = input.url;
+  }
+  if (urlText === null) return maximumSingleIssueFacadeTextBytes;
+
+  let pathname: string;
+  try {
+    pathname = new URL(urlText).pathname.replace(/\/+$/u, "");
+  } catch {
+    return maximumSingleIssueFacadeTextBytes;
+  }
+  if (
+    /\/search\/issues$/u.test(pathname)
+    || /\/repos\/[^/]+\/[^/]+\/issues$/u.test(pathname)
+  ) {
+    return maximumIssueCollectionFacadeTextBytes;
+  }
+  if (/\/issues\/comments\/[1-9][0-9]*$/u.test(pathname)) {
+    return maximumSingleCommentFacadeTextBytes;
+  }
+  return maximumSingleIssueFacadeTextBytes;
 }
 
 function failResponseRead(
