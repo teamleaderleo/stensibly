@@ -12,9 +12,9 @@ export const maximumGitHubProviderResponseDeadlineMs = 120_000;
 interface GitHubProviderResponseDeadline {
   readonly controller: AbortController;
   readonly deadline: Promise<never>;
-  readonly deadlineAt: number;
   readonly timer: ReturnType<typeof setTimeout>;
   readonly removeExternalAbort: () => void;
+  expired: boolean;
   finished: boolean;
 }
 
@@ -52,11 +52,20 @@ export function withGitHubProviderResponseDeadline(
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const context = createDeadline(deadlineMs, init?.signal ?? null);
     try {
+      const providerCall = Promise.resolve(fetchImplementation(input, {
+        ...init,
+        signal: context.controller.signal,
+      }));
+      void providerCall.then(
+        (lateResponse) => {
+          if (context.expired || context.finished) {
+            discardGitHubProviderResponse(lateResponse);
+          }
+        },
+        () => undefined,
+      );
       const response = await Promise.race([
-        fetchImplementation(input, {
-          ...init,
-          signal: context.controller.signal,
-        }),
+        providerCall,
         context.deadline,
       ]);
       responseDeadlines.set(response, context);
@@ -208,8 +217,16 @@ function createDeadline(
   const deadline = new Promise<never>((_resolve, reject) => {
     rejectDeadline = reject;
   });
-  const deadlineAt = Date.now() + deadlineMs;
-  const timer = setTimeout(() => {
+  const context = {
+    controller,
+    deadline,
+    timer: undefined as unknown as ReturnType<typeof setTimeout>,
+    removeExternalAbort: () => {},
+    expired: false,
+    finished: false,
+  } satisfies GitHubProviderResponseDeadline;
+  context.timer = setTimeout(() => {
+    context.expired = true;
     try {
       controller.abort();
     } catch {
@@ -218,7 +235,6 @@ function createDeadline(
     rejectDeadline(new GitHubProviderResponseReadError());
   }, deadlineMs);
 
-  let removeExternalAbort = () => {};
   if (externalSignal) {
     const forwardAbort = () => {
       try {
@@ -231,19 +247,12 @@ function createDeadline(
       forwardAbort();
     } else {
       externalSignal.addEventListener("abort", forwardAbort, { once: true });
-      removeExternalAbort = () =>
+      context.removeExternalAbort = () =>
         externalSignal.removeEventListener("abort", forwardAbort);
     }
   }
 
-  return {
-    controller,
-    deadline,
-    deadlineAt,
-    timer,
-    removeExternalAbort,
-    finished: false,
-  };
+  return context;
 }
 
 function finishResponseDeadline(
