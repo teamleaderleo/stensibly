@@ -213,6 +213,41 @@ export default defineSchema({
     .index("by_project_idempotency", ["projectId", "idempotencyKey"])
     .index("by_project_external", ["projectId", "externalId"]),
 
+  githubRepositoryWriteReceipts: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    idempotencyKey: v.string(),
+    repositoryFullName: v.string(),
+    targetRef: v.string(),
+    state: v.union(
+      v.literal("reserved"),
+      v.literal("rejected"),
+      v.literal("pending_reconciliation"),
+      v.literal("verified_pending_release"),
+      v.literal("succeeded"),
+    ),
+    receiptJson: v.string(),
+    receiptSha256: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_idempotency", ["projectId", "idempotencyKey"])
+    .index("by_project_external", ["projectId", "externalId"]),
+
+  githubRepositoryWriteLanes: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    repositoryFullName: v.string(),
+    targetRef: v.string(),
+    ownerReceiptExternalId: v.string(),
+    expectedParentSha: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_ref", ["projectId", "repositoryFullName", "targetRef"])
+    .index("by_project_owner", ["projectId", "ownerReceiptExternalId"]),
+
   actors: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
