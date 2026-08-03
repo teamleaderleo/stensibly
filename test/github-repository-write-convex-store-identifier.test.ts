@@ -41,6 +41,30 @@ describe("Convex repository-write lookup identifier admission", () => {
     expect(client.queries).toEqual([]);
   });
 
+  test("admits a canonical key and sends it unchanged", async () => {
+    const client = new FakeClient();
+    const store = new ConvexGitHubRepositoryWriteStore({
+      client,
+      serviceSecret: "service-secret",
+      workspace: "default",
+    });
+    const idempotencyKey = "repository-write_lookup:canonical-1";
+
+    await expect(store.getRepositoryWriteReceipt(
+      "stensibly",
+      idempotencyKey,
+    )).resolves.toBeNull();
+    expect(client.queries).toEqual([{
+      name: "githubRepositoryWrites:get",
+      args: {
+        project: "stensibly",
+        idempotencyKey,
+        serviceSecret: "service-secret",
+        workspace: "default",
+      },
+    }]);
+  });
+
   test("uses a fixed non-echoing client error", async () => {
     const client = new FakeClient();
     const store = new ConvexGitHubRepositoryWriteStore({
