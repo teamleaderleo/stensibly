@@ -57,21 +57,24 @@ export interface ConvexGitHubRepositoryWriteStoreOptions {
 export class ConvexGitHubRepositoryWriteStore
   implements GitHubRepositoryWriteStore
 {
-  readonly client: ConvexCaller;
-  readonly serviceSecret: string;
-  readonly workspace: string;
+  readonly #client: ConvexCaller;
+  readonly #serviceSecret: string;
+  readonly #workspace: string;
 
   constructor(options: ConvexGitHubRepositoryWriteStoreOptions) {
-    this.client = options.client;
-    this.serviceSecret = required(options.serviceSecret, "Convex service secret");
-    this.workspace = exactSlug(options.workspace ?? "default", "Workspace");
+    this.#client = options.client;
+    this.#serviceSecret = required(
+      options.serviceSecret,
+      "Convex service secret",
+    );
+    this.#workspace = exactSlug(options.workspace ?? "default", "Workspace");
   }
 
   async reserveRepositoryWrite(
     receiptInput: GitHubRepositoryWriteReceipt,
   ): Promise<GitHubRepositoryWriteReservation> {
     const requested = storedReceipt(receiptInput);
-    const raw = await this.client.mutation(reserveRef, this.args({
+    const raw = await this.#client.mutation(reserveRef, this.args({
       project: requested.project,
       receiptJson: canonicalReceiptJson(requested),
     }));
@@ -173,7 +176,7 @@ export class ConvexGitHubRepositoryWriteStore
   ): Promise<GitHubRepositoryWriteReceipt | null> {
     const exactProject = exactSlug(project, "Project");
     const exactKey = exactText(idempotencyKey, "Idempotency key", 240);
-    const raw = await this.client.query(getRef, this.args({
+    const raw = await this.#client.query(getRef, this.args({
       project: exactProject,
       idempotencyKey: exactKey,
     }));
@@ -198,7 +201,7 @@ export class ConvexGitHubRepositoryWriteStore
     if (!sameReservationIdentity(current, next)) {
       throw new GitHubRepositoryWriteStorageError();
     }
-    const raw = await this.client.mutation(transitionRef, this.args({
+    const raw = await this.#client.mutation(transitionRef, this.args({
       project: current.project,
       action,
       currentReceiptJson: canonicalReceiptJson(current),
@@ -214,8 +217,8 @@ export class ConvexGitHubRepositoryWriteStore
   private args(input: Record<string, unknown>): Record<string, unknown> {
     return {
       ...input,
-      serviceSecret: this.serviceSecret,
-      workspace: this.workspace,
+      serviceSecret: this.#serviceSecret,
+      workspace: this.#workspace,
     };
   }
 }
