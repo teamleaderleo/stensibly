@@ -29,6 +29,8 @@ describe("GitHub outbound closing-keyword Unicode boundaries", () => {
       "9Closes example/project#12",
       "_Fixes example/project#12",
       "\u0301Fixes example/project#12",
+      "‿Fixes example/project#12",
+      "⁀Resolves example/project#12",
     ]) {
       const result = compile(text);
       expect(result).toMatchObject({
