@@ -4,6 +4,7 @@ import {
   admitGitHubRepositoryFullName,
   admitGitHubRepositoryPath,
   admitGitObjectId,
+  sameGitObjectFormat,
 } from "./github-repository-write-admission.js";
 
 export const repositoryWriteOperations = [
@@ -216,6 +217,17 @@ export async function verifyRepositoryWriteResult(input: {
     throw pending(
       "provider_commit_identity_missing",
       "Provider write evidence omitted the commit identity",
+      prepared,
+      providerResult,
+    );
+  }
+  if (!sameGitObjectFormat(
+    prepared.expectedParentSha,
+    providerResult.commitSha,
+  )) {
+    throw pending(
+      "provider_write_evidence_invalid",
+      "Provider write evidence is invalid",
       prepared,
       providerResult,
     );
