@@ -541,7 +541,18 @@ function maximumFacadeTextBytesForRequest(
   ) {
     return maximumIssueCollectionFacadeTextBytes;
   }
-  if (/\/issues\/comments\/[1-9][0-9]*$/u.test(pathname)) {
+  if (
+    (
+      effectiveMethod === "GET"
+      && /\/issues\/comments\/[1-9][0-9]*$/u.test(pathname)
+    )
+    || (
+      effectiveMethod === "POST"
+      && /\/repos\/[^/]+\/[^/]+\/issues\/[1-9][0-9]*\/comments$/u.test(
+        pathname,
+      )
+    )
+  ) {
     return maximumSingleCommentFacadeTextBytes;
   }
   return maximumSingleIssueFacadeTextBytes;
