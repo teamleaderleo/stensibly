@@ -264,6 +264,7 @@ export class GitHubRestIssueSetWriteAdapter
       response.headers.get("x-github-request-id"),
     );
     if (!response.ok) {
+      bestEffortCancelBody(response.body);
       if (
         response.status >= 500
         || response.status === 408
@@ -277,7 +278,10 @@ export class GitHubRestIssueSetWriteAdapter
         `GitHub rejected ${input.operation}`,
       );
     }
-    if (!requestId) throw ambiguousMutationResult(input.operation);
+    if (!requestId) {
+      bestEffortCancelBody(response.body);
+      throw ambiguousMutationResult(input.operation);
+    }
 
     let text: string;
     try {
