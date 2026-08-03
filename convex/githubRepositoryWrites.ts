@@ -121,10 +121,11 @@ export const reserve = mutation({
       if (ownerRows.length === 0) {
         throw new Error("GITHUB_REPOSITORY_WRITE_LANE_OWNER_MISSING");
       }
-      if (ownerRows.length !== 1) {
+      const [ownerRow] = ownerRows;
+      if (ownerRows.length !== 1 || !ownerRow) {
         throw new Error("GITHUB_REPOSITORY_WRITE_LANE_INVALID");
       }
-      const owner = admitStoredReceipt(ownerRows[0], scope);
+      const owner = admitStoredReceipt(ownerRow, scope);
       admitStoredLane(laneRow, scope, owner);
       if (!blocksLane(owner)) {
         throw new Error("GITHUB_REPOSITORY_WRITE_TERMINAL_LANE_RETAINED");
@@ -477,10 +478,10 @@ async function assertStoredLaneCoherence(
   if (ownerLanes.length === 0) {
     throw new Error("GITHUB_REPOSITORY_WRITE_LANE_MISSING");
   }
-  if (ownerLanes.length !== 1) {
+  const [lane] = ownerLanes;
+  if (ownerLanes.length !== 1 || !lane) {
     throw new Error("GITHUB_REPOSITORY_WRITE_LANE_INVALID");
   }
-  const lane = ownerLanes[0];
   const refLanes = await ctx.db
     .query("githubRepositoryWriteLanes")
     .withIndex("by_project_ref", (q) =>
@@ -489,10 +490,11 @@ async function assertStoredLaneCoherence(
         .eq("targetRef", receipt.targetRef)
     )
     .collect();
-  if (refLanes.length === 0) {
+  const [refLane] = refLanes;
+  if (!refLane) {
     throw new Error("GITHUB_REPOSITORY_WRITE_LANE_MISSING");
   }
-  if (refLanes.length !== 1 || refLanes[0]._id !== lane._id) {
+  if (refLanes.length !== 1 || refLane._id !== lane._id) {
     throw new Error("GITHUB_REPOSITORY_WRITE_LANE_INVALID");
   }
   admitStoredLane(lane, scope, receipt);
