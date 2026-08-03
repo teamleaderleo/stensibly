@@ -353,9 +353,7 @@ function responseFacade(
   status: number,
   body: ReadableStream<Uint8Array> | null,
 ): Response {
-  const headers = new Headers();
-  if (requestId !== null) headers.set("x-github-request-id", requestId);
-  if (contentLength !== null) headers.set("content-length", contentLength);
+  const headers = readOnlyResponseHeaders(requestId, contentLength);
   const facade = Object.freeze({
     headers,
     ok,
@@ -364,6 +362,20 @@ function responseFacade(
   }) as unknown as Response;
   transferResponseDeadline(original, facade);
   return facade;
+}
+
+function readOnlyResponseHeaders(
+  requestId: string | null,
+  contentLength: string | null,
+): Headers {
+  return Object.freeze({
+    get(name: string) {
+      const normalized = typeof name === "string" ? name.toLowerCase() : "";
+      if (normalized === "x-github-request-id") return requestId;
+      if (normalized === "content-length") return contentLength;
+      return null;
+    },
+  }) as unknown as Headers;
 }
 
 function transferResponseDeadline(original: Response, facade: Response): void {
