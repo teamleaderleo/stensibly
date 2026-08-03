@@ -12,24 +12,21 @@ export interface GitHubRestIssueWriteAdapterOptions
 }
 
 /**
- * Public issue-write adapter with one optional total provider-response
- * deadline. The settled provider implementation remains in the private base
- * module.
+ * Public issue-write adapter with one total provider-response deadline. The
+ * settled provider implementation remains in the private base module.
  */
 export class GitHubRestIssueWriteAdapter
   extends GitHubRestIssueWriteAdapterBase
 {
   constructor(options: GitHubRestIssueWriteAdapterOptions) {
     const { providerResponseDeadlineMs, ...baseOptions } = options;
-    const wrappedFetch = providerResponseDeadlineMs === undefined
-      ? baseOptions.fetch
-      : withGitHubProviderResponseDeadline(
-        baseOptions.fetch ?? globalThis.fetch,
-        providerResponseDeadlineMs,
-      );
+    const wrappedFetch = withGitHubProviderResponseDeadline(
+      baseOptions.fetch ?? globalThis.fetch,
+      providerResponseDeadlineMs,
+    );
     super({
       ...baseOptions,
-      ...(wrappedFetch ? { fetch: wrappedFetch } : {}),
+      fetch: wrappedFetch,
     });
   }
 }
