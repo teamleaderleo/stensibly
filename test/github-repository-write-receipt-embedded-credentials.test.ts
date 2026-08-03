@@ -58,7 +58,7 @@ describe("repository write receipt embedded credential admission", () => {
       {
         secret: "secret://github/app-private-key",
         build: () => receipt({
-          path: "docs/xsecret://github/app-private-key.md",
+          actorId: "actorxsecret://github/app-private-key",
         }),
       },
       {
