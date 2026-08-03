@@ -2,12 +2,12 @@
 
 **Status:** active P0 execution focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-03 after current-main receipt privacy, context re-admission, write transport, outbound-route, Merkle-identity, and formal-model review  
+**Last reconciled:** 2026-08-03 after receipt-privacy job allocation, context-parent convergence, total response-deadline controls, instruction-resolution chronology review, and outbound/Merkle normalization review  
 **Current main:** `854b528bdb8380071244dfba799ff91d5d1403e0`  
 **Tracking incident:** #490  
 **Programme:** #491  
 **Canonical queue:** #301  
-**GitHub context integration:** #492  
+**Hosted GitHub context:** #492  
 **Governed GitHub writes:** #921  
 **Wave:** `W01`  
 **Wave revision:** `15`  
@@ -41,9 +41,9 @@ GitHub repository and issue reads
 
 One successful login, discovery call, read, or write is useful evidence. W01 completes only after repeated same-conversation execution and reconnect recovery pass.
 
-## Verified repository reality
+## Merged repository foundations
 
-These foundations are merged on current `main`:
+These outcomes are on current `main`:
 
 | Outcome | Integration |
 | --- | --- |
@@ -84,116 +84,118 @@ These gates cannot be completed in a GitHub-only session.
 
 ### Provider-receipt credential admission — #983
 
-Current exact head: `27a4f81af8ba2b7f80fd06c475c748ce677f0161`.
+Exact head: `27a4f81af8ba2b7f80fd06c475c748ce677f0161`.
 
 The three-file current-main candidate screens the complete admitted canonical receipt for realistic GitHub, OpenAI, Stensibly, Slack-at-16, Bearer-at-12, credential-reference, JWT, authorization-header, and private-key families. Benign short aliases remain accepted.
 
-Source review is complete and #997 is absorbed and closed. Canonical run `30800434660` remains pending with no jobs exposed. Integration requires one unchanged-head canonical execution plus final ancestry, mergeability, thread, and terminal review gates.
+Source review is complete and #997 is absorbed and closed. Canonical run `30800434660` has allocated three jobs—test, runtime parity, and browser evidence—but all remain queued. Integration still requires unchanged-head completion, exact-ref receipt, empty threads, current-main ancestry, clean mergeability, and terminal review.
 
-### Provider-context reconciliation and instruction observation — #961, #998, #1008
+### Provider-context reconciliation and instruction-observation request — #961
 
-Current #961 head: `10b755d275ba57fd91bb425c3a48bf4a3ecadf42`.
+Exact head: `0475dcbbde43c0cfe26e4cd7696a009a39e51e75`.
 
-The parent lifecycle, operation-target, issue-number, snapshot, fingerprint, already-current, and zero-authority semantics remain accepted. Its latest source commit repairs embedded credentials only in producer-side `current.sourceRevision`.
+The 13-file current-main parent now includes:
 
-The public structural observation compiler remains blocked:
+- complete receipt lifecycle and operation-target classification;
+- issue-number and provider-snapshot binding;
+- already-current, identity-conflict, and acceptance-proposal semantics;
+- authority-free repository-instruction observation requests;
+- realistic retained-identity screening for workspace, project, repository, receipt, actor, attachment, current/provider revisions, and external issue identity;
+- external-ID privacy and repository equality on snapshot-free identity-conflict evidence.
 
-- #998 at `2ee75f3b8a666691649491a56b8e55d6ddbd6bfb` pins refingerprinted receipt, actor, attachment, current-revision, and workspace identities;
-- #1008 at `1d9e5a2326b58546893290665675dbb713251fdb` extends the matrix to project, canonical repository, and provider-source revision;
-- proposal fingerprints prove byte integrity, not privacy or producer authenticity.
+#998, #1008, and #1015 are absorbed and closed. Receipt-wide privacy remains sequenced behind #983 because this branch imports current-main receipt admission. Every predecessor review and run is expired; renew the complete parent after #983 integrates or its exact policy is replayed.
 
-Required order:
+### Instruction-observation resolution — #1013 and #1023
 
-1. integrate or replay #983;
-2. apply the same realistic anywhere-in-text policy to workspace/project slugs, repository components, and every free proposal identity;
-3. absorb #998 and #1008 into #961 and close both children without merge;
-4. rerun the complete current-main parent.
+Current #1013 head: `96592903ad3589680e063c4f9c466cdd76399c05` on repaired #961.
+
+The pure resolution compiler binds one instruction-observation request to an accepted project attachment generation and a canonical instruction-source set without provider read/write or persistence authority.
+
+Open source repairs:
+
+1. retain attachment acceptance time and require
+   `attachment.acceptedAt <= request.providerObservedAt <= observation.observedAt`;
+2. reapply actionable chronology before attachment access:
+   create implies no previous revision, and a non-null previous revision must differ from provider readback;
+3. retain the exact request fingerprint in resolution identity;
+4. bind the accepted request to canonical #961 output rather than treating a self-fingerprint as producer authenticity.
+
+#1023 at `ba1e91a5bb756d83acccfe91182b2c94f98edf71` pins the first chronology item, including equality boundaries. Absorb it after source repair; do not integrate independently.
 
 ### Context-acceptance composition — #975 and #999
 
-#975 remains stacked behind the unfinished #961 privacy parent.
+Keep #975 behind final #961 and #1013 convergence.
 
-#999 pins two chronology rules before nullable binding access:
+#999 pins:
 
-- `github_create_issue` implies `currentSourceRevision === null`;
-- actionable current revision must be null or differ from provider readback; equality belongs only to `already_current`.
+- create proposals cannot carry a prior accepted revision;
+- actionable current revision must differ from provider readback; equality belongs only to `already_current`.
 
-Repair and restack #975 only after final #961 convergence. Absorb #999 and close it without independent integration.
+Repair/restack only after the request and resolution layers are final.
 
-### Private label and assignee writes — #972
+### Private label and assignee writes — #972, #1012, #1017, #1019
 
-Current exact head: `34e7c1490627a571bdf3ce0b02ac37984e7ee8f0`.
+Current private consolidation #972: `052b4ff9d1ca506d852a4a3101b41d93208979b0`.
 
-The parent now contains call-local settlement, hostile request-ID rejection, exact replay/no-redispatch, assignee count limits, and bounded label/assignee response streaming with:
+It contains call-local settlement, request-ID retention/privacy, exact replay/no-redispatch, assignee limits, and bounded label/assignee response handling.
 
-- 512 KiB delivered-byte ceiling;
-- 4,096-chunk work ceiling including zero-byte chunks;
-- immediate chunk detachment;
-- fatal UTF-8 decode;
-- non-awaited best-effort cancellation;
-- admitted provider request identity through post-effect ambiguity.
+Shared seven-mutation response reader #1012: `e27cf115698c7dede6ad3b6eebdbe1bfbffc1b79`.
 
-Two blockers remain:
+The eight-file child applies one byte/work/copy/UTF-8/status/URL/request-ID contract to create, update, comment, label, and assignee writes. It bounds decoded bodies at 512 KiB and stream work at 4,096 chunks, detaches delivered bytes, disposes rejected provider prose, and preserves admitted request identity through post-effect ambiguity.
 
-1. label/assignee status and missing-request-ID early exits do not initiate body cancellation;
-2. create, update, and comment still delegate to the old `GitHubRestIssueWriteAdapter`, which uses `response.text()` before status/request-ID admission and lacks the new byte, chunk, ownership, cancellation, and request-attribution contract.
+One total response-lifetime blocker remains:
 
-One shared bounded provider-response reader must cover all seven mutations while keeping read-only GET errors distinct. Do not absorb #972 into #968 or advance #970 until that complete source/test packet passes unchanged-head gates.
+- #1017 at `0bc4767545546ba947c1076799aaf165aa4fc2ff` pins a successful response whose first body read never settles;
+- #1019 at `be61a2bdf2566082d570760ae170d116995c0467` pins response acquisition when fetch ignores `AbortSignal` and never returns headers.
+
+The final source must use one validated total deadline beginning before fetch and continuing through complete body consumption. Expiry before response remains unattributed ambiguity; expiry after an admitted request ID preserves that ID. Abort/cancel is best-effort and never awaited. Absorb both children into #1012, then absorb #1012 into #972 and rerun the complete private parent.
 
 ### Public label and assignee actions — #970
 
-#970 remains the typed 41-tool public stack behind the private parent.
+The nine-file 41-tool public layer is source-accepted on its current private-parent restack. It includes exact add/remove actions, destructive annotations, authenticated principal/write/project checks, receipt re-admission, capability and ambiguity registration, and reconciled fingerprint `sha256:b96543225bc17a1ffc6d85c62a4f8637b25cf8c89a19b7f11155f83a85e0ac76`.
 
-Keep it blocked until:
+Do not integrate or publish the 41-tool release until #1012/#1017/#1019 converge into #972, #972 is absorbed into #968, and the complete private/public stack passes unchanged-head gates.
 
-- #972 and #968 converge on one complete seven-mutation private boundary;
-- the exact 41-tool fingerprint is reconciled across runtime, tests, diagnostics, action snapshot, and recovery guidance;
-- current-main canonical execution and terminal review pass.
-
-### Outbound preflight boundary consolidation — #987 and #1005
+### Outbound preflight boundary consolidation — #987, #1005, #1018
 
 Current #987 head: `6689ca35f4078b769b235fe3e80ce2851bb8bc9c`.
 
-The parent has absorbed #1002's immediate post-identity `%HH` guard and retains its Unicode, byte-exact, credential-shaped repository, and hidden-fingerprint repairs.
+The parent contains the Unicode, byte-exact, hidden-identity, credential-shaped repository, long-reference, and immediate post-identity `%HH` repairs.
 
-#1005 at `2b6679ead505a1d53903edb34dc4641f2a9bd116` pins the remaining complete URL boundary:
+#1005 at `2b6679ead505a1d53903edb34dc4641f2a9bd116` pins complete route/authority handling:
 
 - percent escapes in owner, repository, route kind, and final item/commit identity;
 - normalized default ports and trailing-dot GitHub hosts;
 - fixed authority rejection for userinfo and non-default ports;
-- preserved canonical query/fragment behavior.
+- canonical query/fragment behavior.
 
-The parent must identify candidate GitHub HTTP(S) URLs before specialized extraction, normalize host/default port, reject invalid authority and encoded identity-bearing path bytes, then emit one exact bounded route identity. Absorb #1005 and close it without independent integration.
+#1018 at `4d5588f3815db5cd3ad7a85e917cd2fb4ca3f727` extends the matrix to WHATWG-normalized routes. It still needs percent-encoded dot-segment cases and tab/LF/CR normalization outside hostname text.
+
+The final parent must scan candidate special URLs before regex extraction, parse and normalize once, then emit one exact bounded route or one fixed non-echoing rejection. Absorb both children; neither integrates independently.
 
 ### Observation Merkle checkpoints — #1000 and #1010
 
 Current #1000 head: `5b2b24200be17a9011fd35670946998d1d7fae2a`.
 
-The proof mathematics remain accepted. The parent now rejects URI-scheme identities, canonical GitHub shorthand/external-ID aliases, and realistic embedded credential families while preserving internal namespaces.
+The proof mathematics remain accepted. The parent rejects URI-scheme identities, canonical GitHub shorthand/external-ID aliases, and realistic embedded credential families while preserving internal namespaces.
 
-#1010 at `6435576592bc19a373604aacae27f8bd9ca4fb97` pins the residual schemeless public-route class:
+#1010 at `6435576592bc19a373604aacae27f8bd9ca4fb97` pins the residual schemeless issue, pull-request, discussion, and commit routes in ledger, compiler, and observation identities.
 
-- `github.com/owner/repository/issues/number`;
-- `www.github.com/owner/repository/pull/number`;
-- GitHub discussion and commit routes;
-- all three public proof identity positions.
-
-Add one narrow case-insensitive schemeless GitHub host-route matcher, absorb #1010, and renew the complete nine-file parent. Do not broaden rejection to arbitrary internal strings containing `github.com`.
+Add one narrow case-insensitive schemeless GitHub host-route matcher, absorb #1010, and renew the complete parent. Do not broaden rejection to arbitrary internal strings containing `github.com`.
 
 ### Cancellation settlement model — #1009
 
-Current exact head: `8ef89c9591973c6feafa04785df5e31814bb1bd9`.
+Exact head: `8ef89c9591973c6feafa04785df5e31814bb1bd9`.
 
-The clean formal-only current-main replay is statically accepted. It repairs the prior malformed stale-publication assignment and models:
+The clean formal-only current-main replay is statically accepted. It repairs the prior malformed stale-publication assignment and models one authoritative close, child settlement before/during close, preserved successes after aggregate failure, reconciliation, generation fencing, repeated terminal close, and cancelled-wait retry after settlement.
 
-- one authoritative close;
-- child settlement before and during close;
-- visible successful outputs after aggregate failure;
-- reconciliation after partial failure;
-- prior-generation fencing and unsafe replacement controls;
-- repeated terminal close and cancelled-wait retry after settlement.
+Integration requires fresh pinned official TLC execution with recorded artifact checksum/version, Java identity, model/config hashes, safe state-space completion, two expected unsafe invariant counterexamples, four witness traces, and mapping to #574 implementation tests or explicit no-change decisions.
 
-Integration requires fresh exact-head execution with a pinned official TLC distribution, recorded checksum/version and Java identity, safe state-space completion, both expected unsafe invariant counterexamples, all four witness traces, and mapping to #574 implementation tests or explicit no-change decisions. Ordinary repository CI is not the formal proof.
+#1014's same-caller active-rejoin witness is a valid optional lifecycle expansion, not a blocker on #954's eight agreed invariants. Reframe separately before altering the model.
+
+### Human-readable development log — #994
+
+The merged-capability narrative is accepted. Its active-draft section is stale and must be reconciled from this wave record before integration. Do not keep closed repair children as current product lanes.
 
 ## P0 execution gates
 
@@ -203,11 +205,11 @@ Initial coexistence passed; repeated execution and reconnect remain unproved. Ru
 
 ### #921 governed writes
 
-The 37-tool create/update/comment path is merged. Complete the seven-mutation private transport boundary, then the 41-tool public stack. Independently verify Worker revision, app refresh, one authorized create → update → comment journey, durable receipt lookup, reconnect, and exact replay with no duplicate mutation.
+The 37-tool create/update/comment path is merged. Complete the total seven-mutation response deadline, then the 41-tool public stack. Independently verify Worker revision, app refresh, one authorized create → update → comment journey, durable receipt lookup, reconnect, and exact replay with no duplicate mutation.
 
 ### #492 hosted context
 
-Integrate #983, converge #961 with #998/#1008, then repair/restack #975 with #999. Verify one authenticated hosted reconciliation and accepted-context receipt against the exact private binding reader merged in #967.
+Complete #983, renew #961, repair #1013 with #1023 and its remaining origin/fingerprint/chronology gates, then repair/restack #975. Verify one authenticated hosted reconciliation and accepted-context receipt against the exact private binding reader merged in #967.
 
 ### #697 Actions job details
 
@@ -218,12 +220,12 @@ The bounded step/log code is merged. Verify exact Worker revision and feature fl
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
 | P0 | #490 sustained use | Initial coexistence passed; repeated lifecycle and reconnect remain unproved | Execute the complete uniquely identified lifecycle with GitHub checkpoints | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
-| P0 | #921 governed writes | #972 protects set writes but not the create/update/comment transport; #970 waits | Materialize one shared bounded response reader across all seven mutations, then reconcile the 41-tool release | Durable receipt survives reconnect and exact replay performs no duplicate mutation |
-| P0 | #492 hosted context | #983 source is accepted but lacks CI; #961 re-admission remains incomplete; #975 waits | Complete #983 → absorb #998/#1008 into #961 → repair/restack #975 with #999 | Receipt, exact binding, composition, persistence, and readback agree |
+| P0 | #921 governed writes | #1012 closes byte/work/identity bounds; #1017/#1019 expose total lifetime gaps | Add one pre-fetch-through-body deadline, absorb both controls, then rerun #972/#968/#970 | Durable receipt survives reconnect and exact replay performs no duplicate mutation |
+| P0 | #492 hosted context | #983 jobs are queued; #961 converged; #1013 has four explicit source repairs | Complete #983, renew #961, repair #1013/#1023, then restack #975 | Receipt, exact request, attachment generation, instruction observation, composition, persistence, and readback agree |
 | P0 | #697 Actions details | Implementation merged; Worker/flag/authenticated receipt remain unverified | Verify deployment identity and one authenticated step/log receipt | Live attributable receipt passes |
-| P1 | #573 outbound text | #987 absorbed the suffix guard; #1005 exposes complete route/authority gaps | Build the complete URL parser/guard and absorb #1005 | No valid GitHub route can fail open or produce a truncated identity |
+| P1 | #573 outbound text | #987 absorbed suffix guard; #1005/#1018 expose complete parser normalization | Build one parsed special-URL route boundary and absorb both children | No GitHub-targeting normalized route can fail open or truncate identity |
 | P1 | #955 observation proofs | #1000 absorbed first privacy repair; #1010 exposes schemeless routes | Add narrow host-route rejection and absorb #1010 | Current-main packet passes privacy, runtime parity, and executable proof gates |
-| P2 | #954 cancellation model | #1009 is a clean static candidate | Run pinned safe/unsafe/witness TLC proof | Safe model passes and required unsafe/witness traces are recorded |
+| P2 | #954 cancellation model | #1009 is statically accepted | Run pinned safe/unsafe/witness TLC proof | Safe model passes and required unsafe/witness traces are recorded |
 
 ## Definition of done
 
@@ -235,7 +237,7 @@ W01 completes when fresh authenticated conversations repeatedly prove:
 4. create/claim/event/artifact/read/complete/reread succeeds;
 5. every mutation returns success, actionable failure, or explicit ambiguity with deterministic reconciliation;
 6. governed GitHub writes return durable actor/client-bound receipts;
-7. provider readback reconciles through one exact private binding without implicit authority;
+7. provider readback reconciles through one exact private binding and accepted instruction generation without implicit authority;
 8. GitHub and Stensibly remain usable together;
 9. reconnect restores authorized functionality and receipt lookup;
 10. diagnostics identify the rejecting, lost, timed-out, or ambiguous layer without secrets;
@@ -245,13 +247,14 @@ Merged code, dashboard presence, metadata checks, or one successful operation do
 
 ## Immediate next actions
 
-- Obtain unchanged-head canonical execution for source-accepted #983, then integrate or replay it.
-- Absorb #998 and #1008 into #961 after #983 and renew the complete parent.
-- Repair/restack #975 after final #961 and absorb #999.
-- Build one shared seven-mutation provider-response reader for #972; keep #970 blocked.
-- Repair #987's complete URL route/authority boundary and absorb #1005.
-- Repair #1000's schemeless GitHub route privacy and absorb #1010.
-- Execute pinned TLC proof for #1009.
+- Let unchanged-head #983 jobs execute; integrate only after all canonical gates pass.
+- Renew #961 after #983 lands or its exact policy is replayed.
+- Repair #1013's four explicit request/attachment chronology and identity gates; absorb #1023.
+- Add one total response deadline to #1012; absorb #1017 and #1019; rerun #972/#968/#970.
+- Complete #1018's normalization matrix, repair #987, and absorb #1005/#1018.
+- Repair #1000's schemeless GitHub-route privacy and absorb #1010.
+- Run pinned TLC proof for #1009.
+- Reconcile #994's active-draft section from this record.
 - Independently complete Worker, authenticated receipt, reconnect, and no-duplicate live gates.
 
 ## Boundary
