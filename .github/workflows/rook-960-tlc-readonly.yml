@@ -53,9 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           java -cp /tmp/tla2tools-v1.7.4.jar tla2sany.SANY \
-            formal/CancellationSettlement.tla \
             formal/CancellationSettlementWitnesses.tla \
-            > /tmp/sany.log 2>&1
+            2>&1 | tee /tmp/sany.log
 
       - name: Model-check the safe specification
         shell: bash
