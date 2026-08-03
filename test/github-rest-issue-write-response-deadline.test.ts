@@ -19,7 +19,7 @@ describe("GitHub issue-write response acquisition deadline", () => {
       (async () => {
         fetchCalls += 1;
         return await new Promise<Response>(() => undefined);
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     );
 
     const settled = await settleWithin(createIssue(adapter), watchdogMs);
@@ -37,7 +37,7 @@ describe("GitHub issue-write response acquisition deadline", () => {
       (async () => {
         fetchCalls += 1;
         return await new Promise<Response>(() => undefined);
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     );
 
     const settled = await settleWithin(addLabels(adapter), watchdogMs);
@@ -55,7 +55,7 @@ describe("GitHub issue-write response acquisition deadline", () => {
       ((_: RequestInfo | URL, init?: RequestInit) => {
         observedSignal = init?.signal ?? null;
         return new Promise<Response>(() => undefined);
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     );
 
     const settled = await settleWithin(createIssue(adapter), watchdogMs);
@@ -73,7 +73,7 @@ describe("GitHub issue-write response acquisition deadline", () => {
       ((_: RequestInfo | URL, init?: RequestInit) => {
         observedSignal = init?.signal ?? null;
         return new Promise<Response>(() => undefined);
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     );
 
     const settled = await settleWithin(addLabels(adapter), watchdogMs);
@@ -105,7 +105,7 @@ describe("GitHub issue-write response acquisition deadline", () => {
     const adapter = writeAdapterWithDeadline(
       (() => new Promise<Response>((resolve) => {
         resolveFetch = resolve;
-      })) as typeof fetch,
+      })) as unknown as typeof fetch,
     );
 
     const settled = await settleWithin(createIssue(adapter), watchdogMs);
