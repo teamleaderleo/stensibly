@@ -164,7 +164,7 @@ function injectedResponse(input: InjectedReaderInput): Response {
 function adapterFor(response: Response): GitHubRestIssueSetWriteAdapter {
   return new GitHubRestIssueSetWriteAdapter({
     tokenProvider: tokenProvider(),
-    fetch: (async () => response) as typeof fetch,
+    fetch: (async () => response) as unknown as typeof fetch,
   });
 }
 
