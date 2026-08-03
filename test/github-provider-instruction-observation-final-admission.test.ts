@@ -36,6 +36,10 @@ describe("GitHub instruction-observation final proposal admission", () => {
     const snapshot = forged.providerSnapshot!;
     let nestedReads = 0;
     const hostileSnapshot = new Proxy(snapshot, {
+      getPrototypeOf(target) {
+        nestedReads += 1;
+        return Reflect.getPrototypeOf(target);
+      },
       ownKeys(target) {
         nestedReads += 1;
         return Reflect.ownKeys(target);
