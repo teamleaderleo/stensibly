@@ -19,6 +19,15 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const observedAt = "2026-08-03T08:30:00.000Z";
 const currentRevision = "github-rest:I_embedded_privacy_958:previous";
 
+type ProposalField =
+  | "project"
+  | "repositoryFullName"
+  | "receiptId"
+  | "actorId"
+  | "attachmentId"
+  | "currentSourceRevision"
+  | "providerSourceRevision";
+
 describe("GitHub provider retained-identity embedded credential privacy", () => {
   test("rejects realistic credential families embedded in current source revision", () => {
     const hostile = [
@@ -43,7 +52,7 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
   test("rejects refingerprinted embedded credential identities", () => {
     const original = actionableProposal(currentRevision);
     const variants: Array<{
-      field: "receiptId" | "actorId" | "attachmentId" | "currentSourceRevision";
+      field: ProposalField;
       value: string;
       message: string;
     }> = [
@@ -84,18 +93,68 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
     }
   });
 
-  test("rejects embedded credential families in workspace identity", () => {
+  test("rejects embedded credential families in workspace and project slugs", () => {
+    const original = actionableProposal(currentRevision);
     const workspaces = [
       `workspacexghp_${"a".repeat(20)}`,
       `workspacexxoxb-${"a".repeat(16)}`,
     ];
     for (const workspace of workspaces) {
       expectFixedRejection(
-        () => compileObservation(actionableProposal(currentRevision), workspace),
+        () => compileObservation(original, workspace),
         "GitHub provider instruction observation workspace is invalid",
         workspace,
       );
     }
+
+    const projects = [
+      `projectxgithub_pat_${"a".repeat(20)}`,
+      `projectxxoxb-${"a".repeat(16)}`,
+    ];
+    for (const project of projects) {
+      const forged = refingerprinted(original, "project", project);
+      expectFixedRejection(
+        () => compileObservation(forged),
+        "GitHub reconciliation project is invalid",
+        project,
+      );
+    }
+  });
+
+  test("rejects an embedded credential canonical repository on a non-actionable proposal", () => {
+    const hostileRepository =
+      `teamleaderleo/projectxgithub_pat_${"a".repeat(20)}`;
+    const proposal = refingerprintedWith(actionableProposal(currentRevision), {
+      repositoryFullName: hostileRepository,
+      outcome: "await_provider_result",
+      nextAction: "await_provider_result",
+      providerSnapshot: null,
+      externalId: null,
+      providerSourceRevision: null,
+      verificationCheckedAt: null,
+    });
+
+    expectFixedRejection(
+      () => compileObservation(proposal),
+      "GitHub repository identity is invalid",
+      hostileRepository,
+    );
+  });
+
+  test("rejects an embedded credential provider revision on identity-conflict evidence", () => {
+    const hostileRevision = `providerxsk-proj-${"a".repeat(20)}`;
+    const proposal = refingerprintedWith(actionableProposal(currentRevision), {
+      outcome: "identity_conflict",
+      nextAction: "inspect_issue_identity_conflict",
+      providerSnapshot: null,
+      providerSourceRevision: hostileRevision,
+    });
+
+    expectFixedRejection(
+      () => compileObservation(proposal),
+      "GitHub context source revision is invalid",
+      hostileRevision,
+    );
   });
 
   test("preserves benign short token-like aliases below realistic thresholds", () => {
@@ -125,6 +184,35 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
         nextAction: "load_attachment_and_observe_repository_instructions",
       });
     }
+
+    const nonActionable = refingerprintedWith(proposal, {
+      project: "projectxghp_review",
+      repositoryFullName: "teamleaderleo/projectxghp_review",
+      outcome: "await_provider_result",
+      nextAction: "await_provider_result",
+      providerSnapshot: null,
+      externalId: null,
+      providerSourceRevision: null,
+      verificationCheckedAt: null,
+    });
+    expect(compileObservation(nonActionable)).toMatchObject({
+      project: "projectxghp_review",
+      repositoryFullName: "teamleaderleo/projectxghp_review",
+      outcome: "proposal_not_actionable",
+      nextAction: "none",
+    });
+
+    const conflict = refingerprintedWith(proposal, {
+      outcome: "identity_conflict",
+      nextAction: "inspect_issue_identity_conflict",
+      providerSnapshot: null,
+      providerSourceRevision: "providerxghp_review",
+    });
+    expect(compileObservation(conflict)).toMatchObject({
+      providerSourceRevision: "providerxghp_review",
+      outcome: "proposal_not_actionable",
+      nextAction: "none",
+    });
   });
 });
 
@@ -155,12 +243,19 @@ function compileObservation(
 
 function refingerprinted(
   proposal: GitHubProviderContextReconciliationProposalV1,
-  field: "receiptId" | "actorId" | "attachmentId" | "currentSourceRevision",
+  field: ProposalField,
   value: string,
+): GitHubProviderContextReconciliationProposalV1 {
+  return refingerprintedWith(proposal, { [field]: value });
+}
+
+function refingerprintedWith(
+  proposal: GitHubProviderContextReconciliationProposalV1,
+  changes: Partial<GitHubProviderContextReconciliationProposalV1>,
 ): GitHubProviderContextReconciliationProposalV1 {
   const body = structuredClone(proposal) as unknown as Record<string, unknown>;
   delete body.proposalFingerprint;
-  body[field] = value;
+  Object.assign(body, changes);
   return {
     ...body,
     proposalFingerprint: fingerprintCanonicalRequest(body),
