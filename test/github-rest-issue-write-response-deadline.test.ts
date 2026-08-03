@@ -84,36 +84,58 @@ describe("GitHub issue-write response acquisition deadline", () => {
     );
     expect(observedSignal).not.toBeNull();
   });
+
+  test("disposes a response body that arrives after the acquisition deadline", async () => {
+    let resolveFetch!: (response: Response) => void;
+    let cancelCalled = false;
+    const lateResponse = {
+      ok: true,
+      status: 201,
+      headers: new Headers({
+        "content-type": "application/json",
+        "x-github-request-id": "REQ-LATE-RESPONSE",
+      }),
+      body: {
+        cancel() {
+          cancelCalled = true;
+          return new Promise<void>(() => undefined);
+        },
+      },
+    } as unknown as Response;
+    const adapter = writeAdapterWithDeadline(
+      (() => new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      })) as typeof fetch,
+    );
+
+    const settled = await settleWithin(createIssue(adapter), watchdogMs);
+    expectUnattributedAmbiguity(
+      settled,
+      "GitHub create issue outcome requires reconciliation",
+    );
+
+    resolveFetch(lateResponse);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelCalled).toBe(true);
+  });
 });
 
 function writeAdapterWithDeadline(fetcher: typeof fetch): GitHubRestIssueWriteAdapter {
-  type DeadlineOptions = ConstructorParameters<
-    typeof GitHubRestIssueWriteAdapter
-  >[0] & {
-    providerResponseDeadlineMs: number;
-  };
-  const options: DeadlineOptions = {
+  return new GitHubRestIssueWriteAdapter({
     tokenProvider: tokenProvider(),
     fetch: fetcher,
     providerResponseDeadlineMs: deadlineMs,
-  };
-  return new GitHubRestIssueWriteAdapter(options);
+  });
 }
 
 function setWriteAdapterWithDeadline(
   fetcher: typeof fetch,
 ): GitHubRestIssueSetWriteAdapter {
-  type DeadlineOptions = ConstructorParameters<
-    typeof GitHubRestIssueSetWriteAdapter
-  >[0] & {
-    providerResponseDeadlineMs: number;
-  };
-  const options: DeadlineOptions = {
+  return new GitHubRestIssueSetWriteAdapter({
     tokenProvider: tokenProvider(),
     fetch: fetcher,
     providerResponseDeadlineMs: deadlineMs,
-  };
-  return new GitHubRestIssueSetWriteAdapter(options);
+  });
 }
 
 function createIssue(adapter: GitHubRestIssueWriteAdapter) {
