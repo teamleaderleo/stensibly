@@ -437,6 +437,9 @@ function canonicalRepository(value: unknown): string {
   if (repository !== value) {
     throw new RangeError("GitHub repository identity must be canonical lowercase");
   }
+  if (credentialPattern.test(repository)) {
+    throw new RangeError("GitHub repository identity is invalid");
+  }
   return repository;
 }
 
