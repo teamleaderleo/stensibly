@@ -142,6 +142,29 @@ describe("hostile GitHub provider response metadata", () => {
     expect(cancelled).toBe(true);
   });
 
+  test("preserves request identity for incoherent or non-HTTP status metadata", async () => {
+    for (const [ok, status] of [
+      [true, 503],
+      [false, 201],
+      [false, 99],
+      [false, 600],
+    ] as const) {
+      let cancelled = false;
+      const requestId = `REQ-HOSTILE-PAIR-${ok}-${status}`;
+      const response = {
+        headers: new Headers({ "x-github-request-id": requestId }),
+        ok,
+        status,
+        body: cancellableBody(() => {
+          cancelled = true;
+        }),
+      } as unknown as Response;
+
+      await expectAttributedAdapterFailure(response, requestId);
+      expect(cancelled).toBe(true);
+    }
+  });
+
   test("uses fixed unattributed ambiguity when headers getter fails before request identity", async () => {
     let cancelled = false;
     const response = {
