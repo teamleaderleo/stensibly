@@ -13,6 +13,7 @@ import schema from "./schema";
 import { modules } from "./test.setup";
 
 const serviceSecret = "repository-write-external-corruption-secret";
+const conflict = "GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT";
 const reserveRef = makeFunctionReference<"mutation">(
   "githubRepositoryWrites:reserve",
 );
@@ -26,45 +27,50 @@ beforeEach(() => {
 });
 
 describe("hosted repository-write external ID corruption admission", () => {
-  test("rejects replay and lookup when a stored external ID is no longer unique", async () => {
+  test("rejects both receipt lookups, replay, and blocked-owner resolution", async () => {
     const t = convexTest(schema, modules);
     await seedProject(t);
     const active = receipt();
     await t.mutation(reserveRef, reserveArgs(active));
-    await insertDuplicateTerminalReceipt(t, active);
+    const [terminal] = await insertDuplicateTerminalReceipts(t, active, 1);
+    if (!terminal) throw new Error("expected terminal duplicate");
 
     await expect(t.mutation(reserveRef, reserveArgs(active))).rejects.toThrow(
-      "GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT",
+      conflict,
     );
-    await expect(t.query(getRef, scoped({
-      project: active.project,
-      idempotencyKey: active.idempotencyKey,
-    }))).rejects.toThrow("GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT");
+    for (const idempotencyKey of [
+      active.idempotencyKey,
+      terminal.idempotencyKey,
+    ]) {
+      await expect(t.query(getRef, scoped({
+        project: active.project,
+        idempotencyKey,
+      }))).rejects.toThrow(conflict);
+    }
+
+    const blocked = receipt({
+      id: "ghrw_external_corruption_blocked",
+      idempotencyKey: "external-corruption-blocked",
+      requestSha256: hash("f"),
+      createdAt: "2026-08-03T18:00:03.000Z",
+      updatedAt: "2026-08-03T18:00:03.000Z",
+    });
+    await expect(t.mutation(reserveRef, reserveArgs(blocked))).rejects.toThrow(
+      conflict,
+    );
   });
 
-  test("rejects transition when the owner external ID resolves to multiple receipts", async () => {
+  test("rejects transition without mutating the active receipt or lane", async () => {
     const t = convexTest(schema, modules);
     await seedProject(t);
     const active = receipt();
     await t.mutation(reserveRef, reserveArgs(active));
-    await insertDuplicateTerminalReceipt(t, active);
+    await insertDuplicateTerminalReceipts(t, active, 1);
 
-    const dispatched = receipt({ dispatchCount: 1 });
-    const pending = receipt({
-      state: "pending_reconciliation",
-      dispatchCount: 1,
-      updatedAt: "2026-08-03T18:00:01.000Z",
-      error: {
-        code: "repository_write_provider_outcome_ambiguous",
-        retry: "reconcile_before_retry",
-      },
-    });
-    await expect(t.mutation(transitionRef, scoped({
-      project: active.project,
-      action: "hold_for_reconciliation",
-      currentReceiptJson: canonicalGitHubRepositoryWriteReceiptJson(dispatched),
-      nextReceiptJson: canonicalGitHubRepositoryWriteReceiptJson(pending),
-    }))).rejects.toThrow("GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT");
+    await expect(t.mutation(
+      transitionRef,
+      transitionArgs(active),
+    )).rejects.toThrow(conflict);
 
     const rows = await t.run(async (ctx: any) => {
       const projectId = await boundProjectId(ctx);
@@ -90,6 +96,26 @@ describe("hosted repository-write external ID corruption admission", () => {
       dispatchCount: 0,
     });
     expect(rows.lane.ownerReceiptExternalId).toBe(active.id);
+  });
+
+  test("fails closed with more than two duplicate external owners", async () => {
+    const t = convexTest(schema, modules);
+    await seedProject(t);
+    const active = receipt();
+    await t.mutation(reserveRef, reserveArgs(active));
+    await insertDuplicateTerminalReceipts(t, active, 3);
+
+    await expect(t.mutation(reserveRef, reserveArgs(active))).rejects.toThrow(
+      conflict,
+    );
+    await expect(t.query(getRef, scoped({
+      project: active.project,
+      idempotencyKey: active.idempotencyKey,
+    }))).rejects.toThrow(conflict);
+    await expect(t.mutation(
+      transitionRef,
+      transitionArgs(active),
+    )).rejects.toThrow(conflict);
   });
 });
 
@@ -122,18 +148,25 @@ function receipt(
 
 function duplicateTerminalReceipt(
   active: GitHubRepositoryWriteReceipt,
+  index: number,
 ): GitHubRepositoryWriteReceipt {
+  const suffix = index + 1;
+  const requestCharacter = (index + 4).toString(16);
+  const payloadCharacter = (index + 8).toString(16);
+  const timestamp = new Date(
+    Date.parse("2026-08-03T18:00:02.000Z") + index * 1_000,
+  ).toISOString();
   return receipt({
     id: active.id,
-    idempotencyKey: "external-corruption-terminal",
-    targetRef: "feature/external-corruption-terminal",
-    path: "docs/external-corruption-terminal.md",
-    requestSha256: hash("d"),
-    payloadSha256: hash("e"),
+    idempotencyKey: `external-corruption-terminal-${suffix}`,
+    targetRef: `feature/external-corruption-terminal-${suffix}`,
+    path: `docs/external-corruption-terminal-${suffix}.md`,
+    requestSha256: hash(requestCharacter),
+    payloadSha256: hash(payloadCharacter),
     state: "rejected",
     dispatchCount: 0,
-    createdAt: "2026-08-03T18:00:02.000Z",
-    updatedAt: "2026-08-03T18:00:02.000Z",
+    createdAt: timestamp,
+    updatedAt: timestamp,
     error: {
       code: "repository_write_pre_dispatch_rejected",
       retry: "do_not_retry",
@@ -141,30 +174,56 @@ function duplicateTerminalReceipt(
   });
 }
 
-async function insertDuplicateTerminalReceipt(
+async function insertDuplicateTerminalReceipts(
   t: ReturnType<typeof convexTest>,
   active: GitHubRepositoryWriteReceipt,
-): Promise<void> {
-  const duplicate = duplicateTerminalReceipt(active);
+  count: number,
+): Promise<GitHubRepositoryWriteReceipt[]> {
+  const duplicates = Array.from(
+    { length: count },
+    (_, index) => duplicateTerminalReceipt(active, index),
+  );
   await t.run(async (ctx: any) => {
     const workspace = await ctx.db
       .query("workspaces")
       .withIndex("by_slug", (q: any) => q.eq("slug", "default"))
       .unique();
     const projectId = await boundProjectId(ctx);
-    await ctx.db.insert("githubRepositoryWriteReceipts", {
-      workspaceId: workspace._id,
-      projectId,
-      externalId: duplicate.id,
-      idempotencyKey: duplicate.idempotencyKey,
-      repositoryFullName: duplicate.repositoryFullName,
-      targetRef: duplicate.targetRef,
-      state: duplicate.state,
-      receiptJson: canonicalGitHubRepositoryWriteReceiptJson(duplicate),
-      receiptSha256: fingerprintGitHubRepositoryWriteReceipt(duplicate),
-      createdAt: Date.parse(duplicate.createdAt),
-      updatedAt: Date.parse(duplicate.updatedAt),
-    });
+    for (const duplicate of duplicates) {
+      await ctx.db.insert("githubRepositoryWriteReceipts", {
+        workspaceId: workspace._id,
+        projectId,
+        externalId: duplicate.id,
+        idempotencyKey: duplicate.idempotencyKey,
+        repositoryFullName: duplicate.repositoryFullName,
+        targetRef: duplicate.targetRef,
+        state: duplicate.state,
+        receiptJson: canonicalGitHubRepositoryWriteReceiptJson(duplicate),
+        receiptSha256: fingerprintGitHubRepositoryWriteReceipt(duplicate),
+        createdAt: Date.parse(duplicate.createdAt),
+        updatedAt: Date.parse(duplicate.updatedAt),
+      });
+    }
+  });
+  return duplicates;
+}
+
+function transitionArgs(active: GitHubRepositoryWriteReceipt) {
+  const dispatched = receipt({ dispatchCount: 1 });
+  const pending = receipt({
+    state: "pending_reconciliation",
+    dispatchCount: 1,
+    updatedAt: "2026-08-03T18:00:01.000Z",
+    error: {
+      code: "repository_write_provider_outcome_ambiguous",
+      retry: "reconcile_before_retry",
+    },
+  });
+  return scoped({
+    project: active.project,
+    action: "hold_for_reconciliation",
+    currentReceiptJson: canonicalGitHubRepositoryWriteReceiptJson(dispatched),
+    nextReceiptJson: canonicalGitHubRepositoryWriteReceiptJson(pending),
   });
 }
 
