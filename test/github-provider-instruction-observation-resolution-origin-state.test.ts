@@ -66,14 +66,63 @@ describe("GitHub instruction resolution stateless origin admission", () => {
     });
   });
 
-  test("snapshots nested request evidence once before origin and base admission", () => {
+  test("does not let registry pressure alter proposal-less resolution", () => {
+    const attachment = attachmentRecord();
+    const proposal = reconciliationProposal(attachment);
+    const canonical = compileRequestBase(requestInput(proposal));
+
+    compileGitHubProviderInstructionObservationRequestV1(
+      requestInput(proposal),
+    );
+    expect(proposalLessDisposition(canonical, attachment)).toBe("rejected");
+
+    for (let index = 0; index < 257; index += 1) {
+      compileGitHubProviderInstructionObservationRequestV1({
+        schemaVersion: GITHUB_PROVIDER_INSTRUCTION_OBSERVATION_REQUEST_V1,
+        workspace: `workspace_${index}`,
+        proposal,
+      });
+    }
+
+    expect(proposalLessDisposition(canonical, attachment)).toBe("rejected");
+  });
+
+  test("a rejected mismatch cannot change a later valid resolution", () => {
+    const attachment = attachmentRecord();
+    const proposal = reconciliationProposal(attachment);
+    const otherProposal = reconciliationProposal(
+      attachment,
+      "other",
+      "actor_other",
+    );
+    const canonical = compileRequestBase(requestInput(proposal));
+
+    expect(() => resolve({
+      proposal: otherProposal,
+      request: canonical,
+      attachment,
+      observation: observation(attachment),
+    })).toThrow(requestOriginDiagnostic);
+
+    expect(resolve({
+      proposal,
+      request: canonical,
+      attachment,
+      observation: observation(attachment),
+    })).toMatchObject({
+      outcome: "ready_for_context_acceptance_binding",
+      requestFingerprint: canonical.requestFingerprint,
+    });
+  });
+
+  test("snapshots nested request evidence exactly once", () => {
     const attachment = attachmentRecord();
     const proposal = reconciliationProposal(attachment);
     const canonical = compileRequestBase(requestInput(proposal));
     const later = refingerprintedRequest(canonical, {
       providerObservedAt: "2026-08-03T09:32:00.000Z",
     });
-    const alternating = alternatingRequest(canonical, later);
+    const alternating = alternatingRecord(canonical, later);
 
     const result = resolve({
       proposal,
@@ -88,7 +137,85 @@ describe("GitHub instruction resolution stateless origin admission", () => {
       requestFingerprint: canonical.requestFingerprint,
       instructionObservedAt,
     });
-    expect(alternating.snapshots()).toBeGreaterThanOrEqual(2);
+    expectSingleSnapshot(alternating, canonical);
+  });
+
+  test("snapshots accepted attachment evidence exactly once", () => {
+    const attachment = attachmentRecord();
+    const proposal = reconciliationProposal(attachment);
+    const canonical = compileRequestBase(requestInput(proposal));
+    const later = {
+      ...structuredClone(attachment),
+      acceptedAt: "2026-08-03T09:32:00.000Z",
+    };
+    const alternating = alternatingRecord(attachment, later);
+
+    const result = resolve({
+      proposal,
+      request: canonical,
+      attachment: alternating.value,
+      observation: observation(attachment),
+    });
+
+    expect(result).toMatchObject({
+      outcome: "ready_for_context_acceptance_binding",
+      nextAction: "compose_context_acceptance",
+      requestFingerprint: canonical.requestFingerprint,
+      instructionObservedAt,
+    });
+    expectSingleSnapshot(alternating, attachment);
+  });
+
+  test("snapshots instruction observation evidence exactly once", () => {
+    const attachment = attachmentRecord();
+    const proposal = reconciliationProposal(attachment);
+    const canonical = compileRequestBase(requestInput(proposal));
+    const canonicalObservation = observation(attachment);
+    const later = {
+      ...structuredClone(canonicalObservation),
+      observedAt: "2026-08-03T08:59:00.000Z",
+    };
+    const alternating = alternatingRecord(canonicalObservation, later);
+
+    const result = resolve({
+      proposal,
+      request: canonical,
+      attachment,
+      observation: alternating.value,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "ready_for_context_acceptance_binding",
+      nextAction: "compose_context_acceptance",
+      requestFingerprint: canonical.requestFingerprint,
+      instructionObservedAt,
+    });
+    expectSingleSnapshot(alternating, canonicalObservation);
+  });
+
+  test("snapshots reconciliation proposal evidence exactly once", () => {
+    const attachment = attachmentRecord();
+    const proposal = reconciliationProposal(attachment);
+    const later = reconciliationProposal(
+      attachment,
+      "later",
+      "actor_later",
+    );
+    const canonical = compileRequestBase(requestInput(proposal));
+    const alternating = alternatingRecord(proposal, later);
+
+    const result = resolve({
+      proposal: alternating.value,
+      request: canonical,
+      attachment,
+      observation: observation(attachment),
+    });
+
+    expect(result).toMatchObject({
+      outcome: "ready_for_context_acceptance_binding",
+      requestFingerprint: canonical.requestFingerprint,
+    });
+    expectSingleSnapshot(alternating, proposal);
   });
 });
 
@@ -102,6 +229,24 @@ function resolve(input: {
     schemaVersion: GITHUB_PROVIDER_INSTRUCTION_OBSERVATION_RESOLUTION_V1,
     ...input,
   });
+}
+
+function proposalLessDisposition(
+  request: GitHubProviderInstructionObservationRequestV1,
+  attachment: ProjectAttachmentRecord,
+): "rejected" | "resolved" {
+  try {
+    resolve({
+      request,
+      attachment,
+      observation: observation(attachment),
+    });
+    return "resolved";
+  } catch (error) {
+    expect(error).toBeInstanceOf(RangeError);
+    expect((error as Error).message).toBe(requestOriginDiagnostic);
+    return "rejected";
+  }
 }
 
 function requestInput(
@@ -127,14 +272,14 @@ function refingerprintedRequest(
   } as unknown as GitHubProviderInstructionObservationRequestV1;
 }
 
-function alternatingRequest(
-  first: GitHubProviderInstructionObservationRequestV1,
-  later: GitHubProviderInstructionObservationRequestV1,
-) {
+function alternatingRecord<T extends object>(first: T, later: T) {
   let active: object = first;
   let snapshotCount = 0;
+  let prototypeReadCount = 0;
+  let descriptorReadCount = 0;
   const value = new Proxy({}, {
     getPrototypeOf() {
+      prototypeReadCount += 1;
       return Object.prototype;
     },
     ownKeys() {
@@ -143,6 +288,7 @@ function alternatingRequest(
       return Reflect.ownKeys(active);
     },
     getOwnPropertyDescriptor(_target, key) {
+      descriptorReadCount += 1;
       const descriptor = Object.getOwnPropertyDescriptor(active, key);
       if (!descriptor) return undefined;
       return {
@@ -152,17 +298,33 @@ function alternatingRequest(
         configurable: true,
       };
     },
-  }) as unknown as GitHubProviderInstructionObservationRequestV1;
-  return { value, snapshots: () => snapshotCount };
+  }) as unknown as T;
+  return {
+    value,
+    snapshots: () => snapshotCount,
+    prototypeReads: () => prototypeReadCount,
+    descriptorReads: () => descriptorReadCount,
+  };
+}
+
+function expectSingleSnapshot<T extends object>(
+  alternating: ReturnType<typeof alternatingRecord<T>>,
+  canonical: T,
+): void {
+  expect(alternating.snapshots()).toBe(1);
+  expect(alternating.prototypeReads()).toBe(1);
+  expect(alternating.descriptorReads()).toBe(Reflect.ownKeys(canonical).length);
 }
 
 function reconciliationProposal(
   attachment: ProjectAttachmentRecord,
+  suffix = "origin_state",
+  actorId = "actor_lark",
 ): GitHubProviderContextReconciliationProposalV1 {
   const snapshot = issueSnapshot();
   return compileGitHubProviderContextReconciliation({
     schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
-    receipt: receipt(attachment, snapshot),
+    receipt: receipt(attachment, snapshot, suffix, actorId),
     current: null,
   });
 }
@@ -170,31 +332,33 @@ function reconciliationProposal(
 function receipt(
   attachment: ProjectAttachmentRecord,
   snapshot: GitHubIssueContext,
+  suffix: string,
+  actorId: string,
 ): GitHubProviderReceipt {
   return {
     version: 1,
-    id: "ghop_origin_state",
+    id: `ghop_${suffix}`,
     project,
     provider: "github",
     repositoryFullName,
     operation: "github_create_issue",
     target: `${repositoryFullName}#new`,
-    actorId: "actor_lark",
+    actorId,
     clientId: "client_github_only",
-    connectionId: "ghconn_origin_state",
-    installationId: "installation_origin_state",
-    bindingId: "ghbind_origin_state",
+    connectionId: `ghconn_${suffix}`,
+    installationId: `installation_${suffix}`,
+    bindingId: `ghbind_${suffix}`,
     attachmentId: attachment.id,
     attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
     capabilityGrantId: null,
     approvalId: null,
-    idempotencyKey: "instruction-origin-state",
+    idempotencyKey: `instruction-${suffix}`,
     parametersSha256: hash("a"),
     state: "succeeded",
     attemptCount: 1,
     createdAt: "2026-08-03T09:29:55.000Z",
     updatedAt: providerObservedAt,
-    providerRequestId: "request-origin-state-provider",
+    providerRequestId: `request-${suffix}-provider`,
     result: snapshot,
     verification: {
       state: "passed",
