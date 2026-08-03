@@ -437,7 +437,7 @@ describe("native GitHub repository file write adapter", () => {
       idempotencyKey: "fixed-error",
     });
     await expect(action).rejects.toThrow(
-      "GitHub repository write response file effect was invalid",
+      "GitHub could not create repository file (HTTP 503)",
     );
     try {
       await action;
