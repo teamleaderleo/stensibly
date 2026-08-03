@@ -50,10 +50,11 @@ jobs:
 
       - name: Parse the base and witness modules
         shell: bash
+        working-directory: formal
         run: |
           set -euo pipefail
           java -cp /tmp/tla2tools-v1.7.4.jar tla2sany.SANY \
-            formal/CancellationSettlementWitnesses.tla \
+            CancellationSettlementWitnesses.tla \
             2>&1 | tee /tmp/sany.log
 
       - name: Model-check the safe specification
@@ -101,6 +102,7 @@ jobs:
 
       - name: Prove requested schedules are reachable
         shell: bash
+        working-directory: formal
         run: |
           set -euo pipefail
           run_witness() {
@@ -111,7 +113,7 @@ jobs:
             java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
               -workers 1 \
               -config "${config}" \
-              formal/CancellationSettlementWitnesses.tla \
+              CancellationSettlementWitnesses.tla \
               > "${output}" 2>&1
             local status=$?
             set -e
@@ -122,19 +124,19 @@ jobs:
             grep -F "${invariant}" "${output}"
           }
           run_witness \
-            formal/CancellationSettlementPreCloseSuccess.cfg \
+            CancellationSettlementPreCloseSuccess.cfg \
             PreCloseSuccessFailureWitnessAbsent \
             /tmp/witness-preclose-success.log
           run_witness \
-            formal/CancellationSettlementPreCloseFailure.cfg \
+            CancellationSettlementPreCloseFailure.cfg \
             PreCloseFailureReconciliationWitnessAbsent \
             /tmp/witness-preclose-failure.log
           run_witness \
-            formal/CancellationSettlementRepeatedClose.cfg \
+            CancellationSettlementRepeatedClose.cfg \
             RepeatedCloseWitnessAbsent \
             /tmp/witness-repeated-close.log
           run_witness \
-            formal/CancellationSettlementCancelledRetry.cfg \
+            CancellationSettlementCancelledRetry.cfg \
             CancelledRetryWitnessAbsent \
             /tmp/witness-cancelled-retry.log
 
