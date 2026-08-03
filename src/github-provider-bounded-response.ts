@@ -427,14 +427,14 @@ function createDeadline(
   const deadline = new Promise<never>((_resolve, reject) => {
     rejectDeadline = reject;
   });
-  const context = {
+  const context: GitHubProviderResponseDeadline = {
     controller,
     deadline,
     timer: undefined as unknown as ReturnType<typeof setTimeout>,
     removeExternalAbort: () => {},
     expired: false,
     finished: false,
-  } satisfies GitHubProviderResponseDeadline;
+  };
   context.timer = setTimeout(() => {
     context.expired = true;
     try {
