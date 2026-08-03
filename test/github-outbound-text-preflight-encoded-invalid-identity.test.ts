@@ -35,7 +35,7 @@ describe("GitHub outbound encoded invalid direct-route identities", () => {
     const result = compile(
       "https://github.com./teamleaderleo/stensibly/issues/12%2Ftail",
     );
-    expect(result.decision).toBe("allow");
+    expect(result.decision).toBe("pass");
     expect(result.findings).toHaveLength(0);
   });
 });
