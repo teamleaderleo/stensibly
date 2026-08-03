@@ -1,0 +1,63 @@
+name: Plover canonical repository write receipt JSON finalizer
+
+on:
+  push:
+    branches:
+      - plover/1030-canonical-receipt-json-controls
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plover-1038-canonical-json
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: plover/1030-canonical-receipt-json-controls
+      - uses: oven-sh/setup-bun@v2
+      - name: Verify exact transition head
+        env:
+          EXPECTED_PARENT: c2fdd6faaf1fb5d86e3d076aea83bf45a34edcb6
+          EXPECTED_CARRIER: .github/workflows/plover-1038-canonical-json-finalizer.yml
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only "$EXPECTED_PARENT" HEAD)" = "$EXPECTED_CARRIER"
+      - name: Apply exact canonical parser repair
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('src/github-repository-write-receipt-admission.ts')
+          text = source.read_text()
+          old = '''  return admitGitHubRepositoryWriteReceipt(parsed);\n}'''
+          new = '''  const receipt = admitGitHubRepositoryWriteReceipt(parsed);\n  if (stableJson(receipt) !== value) {\n    throw new Error(\n      "GitHub repository write receipt JSON must be canonical",\n    );\n  }\n  return receipt;\n}'''
+          if text.count(old) != 1:
+              raise SystemExit('expected parser return marker not found exactly once')
+          source.write_text(text.replace(old, new))
+          PY
+      - name: Verify focused repair
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun test test/github-repository-write-receipt-admission.test.ts test/github-repository-write-receipt-canonical-json.test.ts
+          bun run typecheck
+      - name: Publish source-only head
+        env:
+          BRANCH: plover/1030-canonical-receipt-json-controls
+        run: |
+          set -euo pipefail
+          rm .github/workflows/plover-1038-canonical-json-finalizer.yml
+          test "$(git diff --name-only 3bce9c5a4752671405378f66ba2ee70ab87c271b | sort)" = $'src/github-repository-write-receipt-admission.ts\ntest/github-repository-write-receipt-canonical-json.test.ts'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/github-repository-write-receipt-admission.ts test/github-repository-write-receipt-canonical-json.test.ts .github/workflows/plover-1038-canonical-json-finalizer.yml
+          git commit -m "Require canonical repository write receipt JSON"
+          git push origin "HEAD:${BRANCH}" --force-with-lease
