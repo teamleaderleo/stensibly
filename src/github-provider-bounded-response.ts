@@ -9,6 +9,10 @@ export const maximumGitHubProviderResponseChunks = 4_096;
 export const defaultGitHubProviderResponseDeadlineMs = 30_000;
 export const maximumGitHubProviderResponseDeadlineMs = 120_000;
 
+const maximumFacadeTextBytes = 64 * 1024 * 1024;
+const maximumLinkHeaderBytes = 16 * 1024;
+const unsafeHeaderTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+
 interface GitHubProviderResponseDeadline {
   readonly controller: AbortController;
   readonly deadline: Promise<never>;
@@ -273,20 +277,31 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
   }
 
   let contentLength: string | null;
+  let link: string | null;
   try {
     contentLength = headers.get("content-length");
     if (contentLength !== null && typeof contentLength !== "string") {
       throw new TypeError("invalid content-length metadata");
     }
+    link = boundedOptionalHeader(
+      headers.get("link"),
+      maximumLinkHeaderBytes,
+    );
   } catch {
-    return metadataFailureResponse(response, requestId, null);
+    return metadataFailureResponse(response, requestId, null, null);
   }
 
   let body: ReadableStream<Uint8Array> | null;
   try {
     body = response.body;
   } catch {
-    return metadataFailureResponse(response, requestId, contentLength, null);
+    return metadataFailureResponse(
+      response,
+      requestId,
+      contentLength,
+      link,
+      null,
+    );
   }
 
   let ok: boolean;
@@ -308,6 +323,7 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
       response,
       requestId,
       contentLength,
+      link,
       body,
     );
   }
@@ -316,6 +332,7 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
     response,
     requestId,
     contentLength,
+    link,
     ok,
     status,
     body,
@@ -326,6 +343,7 @@ function metadataFailureResponse(
   response: Response,
   requestId: string | null,
   contentLength: string | null,
+  link: string | null,
   bodyValue?: ReadableStream<Uint8Array> | null,
 ): Response {
   let body = bodyValue;
@@ -340,6 +358,7 @@ function metadataFailureResponse(
     response,
     requestId,
     contentLength,
+    link,
     false,
     503,
     body,
@@ -350,16 +369,27 @@ function responseFacade(
   original: Response,
   requestId: string | null,
   contentLength: string | null,
+  link: string | null,
   ok: boolean,
   status: number,
   body: ReadableStream<Uint8Array> | null,
 ): Response {
-  const headers = readOnlyResponseHeaders(requestId, contentLength);
-  const facade = Object.freeze({
+  const headers = readOnlyResponseHeaders(requestId, contentLength, link);
+  let consumed = false;
+  let facade: Response;
+  facade = Object.freeze({
     headers,
     ok,
     status,
     body,
+    async text(): Promise<string> {
+      if (consumed) throw new GitHubProviderResponseReadError();
+      consumed = true;
+      return await readBoundedGitHubProviderResponseText(
+        facade,
+        maximumFacadeTextBytes,
+      );
+    },
   }) as unknown as Response;
   transferResponseDeadline(original, facade);
   return facade;
@@ -368,12 +398,14 @@ function responseFacade(
 function readOnlyResponseHeaders(
   requestId: string | null,
   contentLength: string | null,
+  link: string | null,
 ): Headers {
   return Object.freeze({
     get(name: string) {
       const normalized = typeof name === "string" ? name.toLowerCase() : "";
       if (normalized === "x-github-request-id") return requestId;
       if (normalized === "content-length") return contentLength;
+      if (normalized === "link") return link;
       return null;
     },
   }) as unknown as Headers;
@@ -390,23 +422,66 @@ function admitReadResult(value: unknown): AdmittedReadResult {
   if (value === null || typeof value !== "object") {
     throw new GitHubProviderResponseReadError();
   }
-  let done: unknown;
+  let prototype: object | null;
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
   try {
-    done = (value as { done?: unknown }).done;
+    prototype = Object.getPrototypeOf(value) as object | null;
+    descriptors = Object.getOwnPropertyDescriptors(value) as Record<
+      PropertyKey,
+      PropertyDescriptor
+    >;
   } catch {
     throw new GitHubProviderResponseReadError();
   }
-  if (typeof done !== "boolean") {
+  if (prototype !== Object.prototype && prototype !== null) {
     throw new GitHubProviderResponseReadError();
   }
-  if (done) return Object.freeze({ done: true, value: undefined });
-  let chunk: unknown;
-  try {
-    chunk = (value as { value?: unknown }).value;
-  } catch {
+  const keys = Reflect.ownKeys(descriptors);
+  if (
+    keys.some((key) =>
+      typeof key !== "string" || (key !== "done" && key !== "value")
+    )
+  ) {
     throw new GitHubProviderResponseReadError();
   }
-  return Object.freeze({ done: false, value: chunk });
+  const doneDescriptor = descriptors.done;
+  if (
+    !doneDescriptor
+    || !("value" in doneDescriptor)
+    || doneDescriptor.enumerable !== true
+    || typeof doneDescriptor.value !== "boolean"
+  ) {
+    throw new GitHubProviderResponseReadError();
+  }
+  const valueDescriptor = descriptors.value;
+  if (valueDescriptor && (
+    !("value" in valueDescriptor)
+    || valueDescriptor.enumerable !== true
+  )) {
+    throw new GitHubProviderResponseReadError();
+  }
+  if (doneDescriptor.value) {
+    return Object.freeze({ done: true, value: undefined });
+  }
+  if (!valueDescriptor || !("value" in valueDescriptor)) {
+    throw new GitHubProviderResponseReadError();
+  }
+  return Object.freeze({ done: false, value: valueDescriptor.value });
+}
+
+function boundedOptionalHeader(
+  value: unknown,
+  maximumBytes: number,
+): string | null {
+  if (value === null) return null;
+  if (
+    typeof value !== "string"
+    || Buffer.byteLength(value, "utf8") > maximumBytes
+    || unsafeHeaderTextPattern.test(value)
+  ) {
+    throw new GitHubProviderResponseReadError();
+  }
+  return value;
 }
 
 function failResponseRead(
