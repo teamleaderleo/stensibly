@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { sha256 } from "../src/canonical-json.ts";
+import { sha256, stableJson } from "../src/canonical-json.ts";
 import {
   compileGitHubObservationMerkleCheckpointV1,
+  createGitHubObservationInclusionProofV1,
   GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
+  verifyGitHubObservationInclusionProofV1,
 } from "../src/github-observation-merkle-checkpoint.ts";
 
 const safeLedgerId = "workspace/oauth-dogfood/github-observations";
 const safeCompilerId = "github-observation-merkle/v1";
 const safeObservationId = "github:issues:delivery-1";
 const semanticFingerprint = sha256("retained-reference-privacy-observation");
+const leafDomain = "stensibly.github-observation-merkle.leaf/v1";
 
 const backlinkCapableIdentities = [
   "https://github.com/example/project/issues/123",
@@ -63,6 +66,44 @@ describe("GitHub observation Merkle retained reference privacy", () => {
     }
   });
 
+  test("rejects self-consistent forged inclusion proofs during verifier admission", () => {
+    const leaf = {
+      sequence: 1,
+      observationId: safeObservationId,
+      semanticFingerprint,
+    };
+    const checkpoint = compileGitHubObservationMerkleCheckpointV1({
+      version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
+      ledgerId: safeLedgerId,
+      compilerId: safeCompilerId,
+      createdAt: "2026-08-03T08:45:00Z",
+      leaves: [leaf],
+    });
+    const proof = createGitHubObservationInclusionProofV1({
+      checkpoint,
+      leaves: [leaf],
+      leafIndex: 0,
+    });
+
+    for (const identity of [
+      backlinkCapableIdentities[1],
+      embeddedCredentialIdentities[0],
+    ]) {
+      const forged = forgeSelfConsistentObservationIdentity(
+        checkpoint,
+        proof,
+        identity,
+      );
+      expectRejectedWithoutEcho(
+        () => verifyGitHubObservationInclusionProofV1(
+          forged.checkpoint,
+          forged.proof,
+        ),
+        identity,
+      );
+    }
+  });
+
   test("preserves representative internal identities and benign short aliases", () => {
     const checkpoint = compile({
       ledgerId: safeLedgerId,
@@ -96,6 +137,46 @@ function compile(input: {
       semanticFingerprint,
     }],
   });
+}
+
+function forgeSelfConsistentObservationIdentity(
+  checkpoint: ReturnType<typeof compileGitHubObservationMerkleCheckpointV1>,
+  proof: ReturnType<typeof createGitHubObservationInclusionProofV1>,
+  observationId: string,
+) {
+  const leafDigest = sha256(stableJson({
+    domain: leafDomain,
+    ledgerId: checkpoint.ledgerId,
+    sequence: proof.sequence,
+    observationId,
+    semanticFingerprint: proof.semanticFingerprint,
+  }));
+  const {
+    checkpointFingerprint: _checkpointFingerprint,
+    ...checkpointFields
+  } = checkpoint;
+  const checkpointData = {
+    ...checkpointFields,
+    rootDigest: leafDigest,
+  };
+  const forgedCheckpoint = {
+    ...checkpointData,
+    checkpointFingerprint: sha256(stableJson(checkpointData)),
+  };
+  const { proofFingerprint: _proofFingerprint, ...proofFields } = proof;
+  const proofData = {
+    ...proofFields,
+    checkpointFingerprint: forgedCheckpoint.checkpointFingerprint,
+    observationId,
+    leafDigest,
+  };
+  return {
+    checkpoint: forgedCheckpoint,
+    proof: {
+      ...proofData,
+      proofFingerprint: sha256(stableJson(proofData)),
+    },
+  };
 }
 
 function expectRejectedWithoutEcho(
