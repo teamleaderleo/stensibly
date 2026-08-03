@@ -87,7 +87,7 @@ describe("GitHub set-write streamed response ownership", () => {
           });
         }
         return Response.json({ message: "unexpected request" }, { status: 500 });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const result = await addLabels(adapter);
@@ -129,7 +129,7 @@ describe("GitHub set-write streamed response ownership", () => {
         return Response.json(issuePayload(), {
           headers: { "x-github-request-id": "REQ-TINY-VIEW-READBACK" },
         });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const result = await addLabels(adapter);
@@ -165,7 +165,7 @@ function adapterForMutation(response: Response): GitHubRestIssueSetWriteAdapter 
       }
       used = true;
       return response;
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   });
 }
 
