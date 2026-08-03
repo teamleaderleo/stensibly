@@ -7,6 +7,10 @@ import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import type {
   GitHubInstallationTokenProvider,
 } from "./github-app-installation-token.js";
+import {
+  discardGitHubProviderResponse,
+  readBoundedGitHubProviderResponseText,
+} from "./github-provider-bounded-response.js";
 import { GitHubProviderPostEffectError } from "./github-provider-post-effect-error.js";
 import {
   boundedText,
@@ -97,7 +101,7 @@ export class GitHubRestIssueSetWriteAdapter
     if (labels.length === 0) {
       throw new RangeError("GitHub issue label mutation requires at least one label");
     }
-    const result = await this.#mutateIssueSet({
+    return await this.#mutateIssueSet({
       repositoryFullName: input.repositoryFullName,
       issueNumber: input.issueNumber,
       urlSuffix: "labels",
@@ -111,7 +115,6 @@ export class GitHubRestIssueSetWriteAdapter
         }
       },
     });
-    return result;
   }
 
   async removeIssueLabel(
@@ -217,7 +220,7 @@ export class GitHubRestIssueSetWriteAdapter
       ...(input.body ? { body: input.body } : {}),
       operation: input.operation,
     });
-    admitMutationResponse(input.operation, () =>
+    admitMutationResponse(input.operation, response.requestId, () =>
       input.admitResponse(response.value, repositoryFullName, issueNumber)
     );
 
@@ -258,13 +261,17 @@ export class GitHubRestIssueSetWriteAdapter
       throw ambiguousTransportError(input.operation);
     }
 
-    const text = await boundedResponseText(response, input.operation);
+    const requestId = admittedRequestId(
+      response.headers.get("x-github-request-id"),
+    );
     if (!response.ok) {
+      discardGitHubProviderResponse(response);
       if (
         response.status >= 500
         || response.status === 408
         || response.status === 429
       ) {
+        if (requestId) throw new GitHubProviderPostEffectError(requestId);
         throw ambiguousTransportError(input.operation);
       }
       throw new GitHubProviderRejectedError(
@@ -272,17 +279,27 @@ export class GitHubRestIssueSetWriteAdapter
         `GitHub rejected ${input.operation}`,
       );
     }
+    if (!requestId) {
+      discardGitHubProviderResponse(response);
+      throw ambiguousMutationResult(input.operation);
+    }
+
+    let text: string;
+    try {
+      text = await readBoundedGitHubProviderResponseText(
+        response,
+        maximumResponseBytes,
+      );
+    } catch {
+      throw new GitHubProviderPostEffectError(requestId);
+    }
 
     let value: unknown;
     try {
       value = JSON.parse(text);
     } catch {
-      throw ambiguousMutationResult(input.operation);
+      throw new GitHubProviderPostEffectError(requestId);
     }
-    const requestId = admittedRequestId(
-      response.headers.get("x-github-request-id"),
-    );
-    if (!requestId) throw ambiguousMutationResult(input.operation);
     return { requestId, value };
   }
 }
@@ -380,7 +397,8 @@ function assertIssueRepository(
   const [owner, repository] = repositoryParts(repositoryFullName);
   const expectedPath = `${base.pathname.replace(/\/$/, "")}/repos/${owner}/${repository}`;
   if (
-    url.origin !== base.origin
+    url.protocol !== "https:"
+    || url.origin !== base.origin
     || url.pathname.toLowerCase() !== expectedPath.toLowerCase()
     || url.username
     || url.password
@@ -391,11 +409,15 @@ function assertIssueRepository(
   }
 }
 
-function admitMutationResponse(operation: string, admit: () => void): void {
+function admitMutationResponse(
+  operation: string,
+  requestId: string,
+  admit: () => void,
+): void {
   try {
     admit();
   } catch {
-    throw ambiguousMutationResult(operation);
+    throw new GitHubProviderPostEffectError(requestId);
   }
 }
 
@@ -411,29 +433,6 @@ function boundedResponseTextValue(
   } catch {
     throw ambiguousMutationResult(operation);
   }
-}
-
-async function boundedResponseText(
-  response: Response,
-  operation: string,
-): Promise<string> {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength && /^\d+$/.test(contentLength)) {
-    const length = Number(contentLength);
-    if (!Number.isSafeInteger(length) || length > maximumResponseBytes) {
-      throw ambiguousTransportError(operation);
-    }
-  }
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    throw ambiguousTransportError(operation);
-  }
-  if (Buffer.byteLength(text, "utf8") > maximumResponseBytes) {
-    throw ambiguousTransportError(operation);
-  }
-  return text;
 }
 
 function admittedRequestId(value: string | null): string | null {
