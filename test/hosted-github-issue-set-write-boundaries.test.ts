@@ -157,7 +157,7 @@ describe("private hosted GitHub issue set-write boundaries", () => {
         fetch: (async () => {
           fetchCalls += 1;
           throw new Error("provider call is outside flag-off composition");
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
         now: () => fixedNow,
       },
     );
