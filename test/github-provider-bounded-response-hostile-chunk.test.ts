@@ -4,7 +4,7 @@ import {
 } from "../src/github-provider-bounded-response.ts";
 
 class HostileChunk extends Uint8Array {
-  override slice(): Uint8Array {
+  override slice(): Uint8Array<ArrayBuffer> {
     throw new Error("virtual slice must not execute");
   }
 }
