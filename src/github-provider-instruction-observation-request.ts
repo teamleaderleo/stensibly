@@ -350,6 +350,10 @@ function assertProposalSemanticCoherence(
         || proposal.repositoryFullName !== snapshot.reference.repositoryFullName
         || proposal.providerSourceRevision !== snapshot.sourceRevision
         || proposal.verificationCheckedAt === null
+        || (
+          proposal.currentSourceRevision !== null
+          && proposal.currentSourceRevision === proposal.providerSourceRevision
+        )
       ) invalid();
       return;
     case "identity_conflict":
