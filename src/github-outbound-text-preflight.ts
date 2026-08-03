@@ -32,6 +32,13 @@ interface ParsedDirectReference {
   referenceIdentity: string;
 }
 
+interface ParsedRoutePrefix {
+  repositoryFullName: string;
+  containsEncodedPath: boolean;
+  hasContinuation: boolean;
+  identityIsValid: boolean;
+}
+
 const closingKeywordBeforeReferencePattern =
   /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
 const candidateSchemePattern = /https?:/giu;
@@ -128,15 +135,12 @@ function detectNormalizedDirectReferences(
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
     if (!isGitHubHostname(parsed.hostname)) continue;
 
-    const raw = rawCanonicalUrlPattern.exec(candidate);
-    const encodedRouteRepository = raw === null
-      ? null
-      : parseEncodedRouteRepository(parsed.pathname);
+    const routePrefix = parseRoutePrefix(parsed.pathname);
     if (
-      encodedRouteRepository !== null
-      && !controlled.has(encodedRouteRepository)
+      routePrefix !== null
+      && !controlled.has(routePrefix.repositoryFullName)
     ) {
-      assertRepositoryIdentityIsPublic(encodedRouteRepository);
+      assertRepositoryIdentityIsPublic(routePrefix.repositoryFullName);
       if (
         parsed.username.length > 0
         || parsed.password.length > 0
@@ -146,11 +150,19 @@ function detectNormalizedDirectReferences(
           "GitHub outbound direct reference URL authority is invalid",
         );
       }
-      throw new RangeError(
-        "GitHub outbound direct reference contains percent-encoded path continuation",
-      );
+      if (routePrefix.containsEncodedPath) {
+        throw new RangeError(
+          "GitHub outbound direct reference contains percent-encoded path continuation",
+        );
+      }
+      if (routePrefix.identityIsValid && routePrefix.hasContinuation) {
+        throw new RangeError(
+          "GitHub outbound direct reference URL spelling is invalid",
+        );
+      }
     }
 
+    const raw = rawCanonicalUrlPattern.exec(candidate);
     const route = parseNormalizedRoute(parsed.pathname);
     if (route === null || controlled.has(route.repositoryFullName)) continue;
 
@@ -210,26 +222,20 @@ function detectNormalizedDirectReferences(
   return Object.freeze(references);
 }
 
-function parseEncodedRouteRepository(pathname: string): string | null {
+function parseRoutePrefix(pathname: string): ParsedRoutePrefix | null {
   const rawSegments = pathname.split("/").slice(1);
-  if (
-    rawSegments.length !== 4
-    || !rawSegments.some((segment) => encodedBytePattern.test(segment))
-  ) return null;
+  if (rawSegments.length < 4) return null;
 
-  let segments: string[];
+  let owner: string;
+  let repository: string;
+  let kind: string;
   try {
-    segments = rawSegments.map((segment) => decodeURIComponent(segment));
+    owner = decodeURIComponent(rawSegments[0]!);
+    repository = decodeURIComponent(rawSegments[1]!);
+    kind = decodeURIComponent(rawSegments[2]!).toLowerCase();
   } catch {
     return null;
   }
-  const [owner, repository, kindValue] = segments as [
-    string,
-    string,
-    string,
-    string,
-  ];
-  const kind = kindValue.toLowerCase();
   if (
     kind !== "commit"
     && kind !== "issues"
@@ -237,13 +243,32 @@ function parseEncodedRouteRepository(pathname: string): string | null {
     && kind !== "discussions"
   ) return null;
 
+  let repositoryFullName: string;
   try {
-    return normalizeGitHubRepository(
+    repositoryFullName = normalizeGitHubRepository(
       `${owner.toLowerCase()}/${repository.toLowerCase()}`,
     );
   } catch {
     return null;
   }
+
+  let identity: string | null;
+  try {
+    identity = decodeURIComponent(rawSegments[3]!);
+  } catch {
+    identity = null;
+  }
+  const identityIsValid = kind === "commit"
+    ? identity !== null && commitIdentityPattern.test(identity)
+    : identity !== null && providerItemNumber(identity) !== null;
+  return Object.freeze({
+    repositoryFullName,
+    containsEncodedPath: rawSegments.some((segment) =>
+      encodedBytePattern.test(segment)
+    ),
+    hasContinuation: rawSegments.length > 4,
+    identityIsValid,
+  });
 }
 
 function parseNormalizedRoute(pathname: string): Readonly<{
