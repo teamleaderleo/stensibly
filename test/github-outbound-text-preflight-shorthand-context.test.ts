@@ -72,6 +72,25 @@ describe("GitHub outbound shorthand context", () => {
     });
   });
 
+  test("detects shorthand after colon, comma, and semicolon delimiters", () => {
+    const result = compile(
+      "Refs:example/project#12,example/project#13;example/project@abcdef0",
+    );
+
+    expect(result.decision).toBe("reject");
+    expect(result.findings).toHaveLength(3);
+    expect(result.findings.map((finding) => finding.source)).toEqual([
+      "repository_shorthand",
+      "repository_shorthand",
+      "commit_shorthand",
+    ]);
+    expect(result.findings.map((finding) => finding.itemNumber)).toEqual([
+      12,
+      13,
+      null,
+    ]);
+  });
+
   test("preserves direct GitHub URL and closing-keyword detection", () => {
     const direct = compile(
       "See https://github.com/example/project/issues/12.",
