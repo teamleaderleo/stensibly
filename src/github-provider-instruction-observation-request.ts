@@ -31,35 +31,38 @@ const retainedProposalIdentityFields = [
   ["externalId", "GitHub issue external ID"],
 ] as const;
 
+type DataRecord = Record<PropertyKey, unknown>;
+
 /**
  * Applies final producer-independent admission before delegating to the
- * reviewed request compiler. The preflight reads only own data descriptors and
- * never touches nested provider snapshots.
+ * reviewed request compiler. The top-level input and proposal are detached
+ * exactly once, and the base compiler receives only those detached values.
  */
 export function compileGitHubProviderInstructionObservationRequestV1(
   value: unknown,
 ): ReturnType<typeof compileBase> {
-  const workspace = dataProperty(value, "workspace");
+  const input = snapshotDataRecord(
+    value,
+    "GitHub provider instruction observation request input",
+  );
+  const proposal = snapshotDataRecord(
+    input.proposal,
+    "GitHub provider context reconciliation proposal",
+  );
+  input.proposal = proposal;
+
   rejectCredentialIdentity(
-    workspace,
+    input.workspace,
     "GitHub provider instruction observation workspace",
   );
-
-  const proposal = dataProperty(value, "proposal");
   for (const [field, label] of retainedProposalIdentityFields) {
-    rejectCredentialIdentity(dataProperty(proposal, field), label);
+    rejectCredentialIdentity(proposal[field], label);
   }
 
-  const operation = dataProperty(proposal, "operation");
-  const outcome = dataProperty(proposal, "outcome");
-  const currentSourceRevision = dataProperty(
-    proposal,
-    "currentSourceRevision",
-  );
-  const providerSourceRevision = dataProperty(
-    proposal,
-    "providerSourceRevision",
-  );
+  const operation = proposal.operation;
+  const outcome = proposal.outcome;
+  const currentSourceRevision = proposal.currentSourceRevision;
+  const providerSourceRevision = proposal.providerSourceRevision;
 
   if (
     operation === "github_create_issue"
@@ -79,7 +82,7 @@ export function compileGitHubProviderInstructionObservationRequestV1(
     );
   }
 
-  const externalId = dataProperty(proposal, "externalId");
+  const externalId = proposal.externalId;
   if (typeof externalId === "string") {
     let parsed: ReturnType<typeof parseGitHubIssueExternalId> | null = null;
     try {
@@ -96,7 +99,7 @@ export function compileGitHubProviderInstructionObservationRequestV1(
     }
   }
 
-  return compileBase(value);
+  return compileBase(input);
 }
 
 function rejectCredentialIdentity(value: unknown, label: string): void {
@@ -108,8 +111,22 @@ function rejectCredentialIdentity(value: unknown, label: string): void {
   }
 }
 
-function dataProperty(value: unknown, key: string): unknown {
-  if (value === null || typeof value !== "object") return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+function snapshotDataRecord(value: unknown, label: string): DataRecord {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must use a plain prototype`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const output = Object.create(null) as DataRecord;
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[key as keyof typeof descriptors];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} fields must be enumerable data properties`);
+    }
+    output[key] = descriptor.value;
+  }
+  return output;
 }
