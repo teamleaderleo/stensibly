@@ -1,0 +1,69 @@
+name: Plover repository write transition source finalizer
+
+on:
+  push:
+    branches:
+      - plover/1032-transition-source-controls
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plover-1036-transition-source
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: plover/1032-transition-source-controls
+      - uses: oven-sh/setup-bun@v2
+      - name: Verify exact transition head
+        env:
+          EXPECTED_PARENT: 4c58473468e5ab7bf7436afd2089dc23065f305f
+          EXPECTED_CARRIER: .github/workflows/plover-1036-transition-source-finalizer.yml
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only "$EXPECTED_PARENT" HEAD)" = "$EXPECTED_CARRIER"
+      - name: Apply action-specific transition source guards
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('convex/githubRepositoryWrites.ts')
+          text = source.read_text()
+          old = '''  if (!sameReservationIdentity(current, proposed)) {\n    throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_IDENTITY_MISMATCH");\n  }\n  if (action === "reject_and_release") {'''
+          new = '''  if (!sameReservationIdentity(current, proposed)) {\n    throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_IDENTITY_MISMATCH");\n  }\n  assertTransitionSource(action, current);\n  if (action === "reject_and_release") {'''
+          if text.count(old) != 1:
+              raise SystemExit('expected transition marker not found exactly once')
+          text = text.replace(old, new)
+
+          marker = '''function validCurrentTransitionView(\n  stored: GitHubRepositoryWriteReceipt,'''
+          helper = '''function assertTransitionSource(\n  action: TransitionAction,\n  current: GitHubRepositoryWriteReceipt,\n): void {\n  const dispatchedUnverified = current.dispatchCount === 1\n    && current.verified === null\n    && (\n      current.state === "reserved"\n      || current.state === "pending_reconciliation"\n    );\n  if (action === "reject_and_release") {\n    if (current.state !== "reserved" || current.dispatchCount !== 0) {\n      throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n    }\n    return;\n  }\n  if (\n    action === "hold_for_reconciliation"\n    || action === "record_verified"\n    || action === "hold_verified_for_reconciliation"\n  ) {\n    if (!dispatchedUnverified) {\n      throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n    }\n    return;\n  }\n  if (\n    current.state !== "verified_pending_release"\n    || current.dispatchCount !== 1\n    || current.verified === null\n  ) {\n    throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n  }\n}\n\nfunction validCurrentTransitionView(\n  stored: GitHubRepositoryWriteReceipt,'''
+          if text.count(marker) != 1:
+              raise SystemExit('expected helper insertion marker not found exactly once')
+          source.write_text(text.replace(marker, helper))
+          PY
+      - name: Verify focused repair
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun test convex/githubRepositoryWrites.test.ts convex/githubRepositoryWrites.identity.test.ts convex/githubRepositoryWrites.transition-source.test.ts
+          bun run typecheck
+      - name: Publish source-and-control head
+        env:
+          BRANCH: plover/1032-transition-source-controls
+        run: |
+          set -euo pipefail
+          rm .github/workflows/plover-1036-transition-source-finalizer.yml
+          test "$(git diff --name-only f3add0803e9cf349918011e88cbafedd18bef709 | sort)" = $'convex/githubRepositoryWrites.transition-source.test.ts\nconvex/githubRepositoryWrites.ts'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add convex/githubRepositoryWrites.ts convex/githubRepositoryWrites.transition-source.test.ts .github/workflows/plover-1036-transition-source-finalizer.yml
+          git commit -m "Guard repository write transition source states"
+          git push origin "HEAD:${BRANCH}" --force-with-lease
