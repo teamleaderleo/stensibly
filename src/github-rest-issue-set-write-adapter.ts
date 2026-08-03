@@ -7,6 +7,10 @@ import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import type {
   GitHubInstallationTokenProvider,
 } from "./github-app-installation-token.js";
+import {
+  discardGitHubProviderResponse,
+  readBoundedGitHubProviderResponseText,
+} from "./github-provider-bounded-response.js";
 import { GitHubProviderPostEffectError } from "./github-provider-post-effect-error.js";
 import {
   boundedText,
@@ -27,15 +31,8 @@ export interface GitHubRestIssueSetWriteAdapterOptions
 
 const githubApiVersion = "2022-11-28";
 const maximumResponseBytes = 512 * 1024;
-const maximumResponseChunks = 4_096;
 const maximumAssigneesPerMutation = 10;
 
-/**
- * Extends the first typed issue writes with exact label and assignee
- * mutations. Mutation adapters are ephemeral and read adapters never execute
- * mutations, so process-local verification markers cannot cross operations.
- * The provider service owns final post-effect ambiguity classification.
- */
 export class GitHubRestIssueSetWriteAdapter
   implements GitHubIssueProviderAdapter
 {
@@ -108,7 +105,7 @@ export class GitHubRestIssueSetWriteAdapter
       admitResponse: (value) => {
         const actual = admitLabelResponse(value, "add issue labels");
         if (!labels.every((label) => actual.includes(label))) {
-          throw new Error("GitHub label response omitted a requested label");
+          throw new RangeError("GitHub add issue labels response was invalid");
         }
       },
     });
@@ -127,7 +124,7 @@ export class GitHubRestIssueSetWriteAdapter
       admitResponse: (value) => {
         const actual = admitLabelResponse(value, "remove issue label");
         if (actual.includes(label)) {
-          throw new Error("GitHub label response retained the removed label");
+          throw new RangeError("GitHub remove issue label response was invalid");
         }
       },
     });
@@ -154,7 +151,7 @@ export class GitHubRestIssueSetWriteAdapter
           "add issue assignees",
         );
         if (!assignees.every((login) => actual.includes(login))) {
-          throw new Error("GitHub assignee response omitted a requested login");
+          throw new RangeError("GitHub add issue assignees response was invalid");
         }
       },
     });
@@ -181,7 +178,7 @@ export class GitHubRestIssueSetWriteAdapter
           "remove issue assignees",
         );
         if (assignees.some((login) => actual.includes(login))) {
-          throw new Error("GitHub assignee response retained a removed login");
+          throw new RangeError("GitHub remove issue assignees response was invalid");
         }
       },
     });
@@ -264,7 +261,7 @@ export class GitHubRestIssueSetWriteAdapter
       response.headers.get("x-github-request-id"),
     );
     if (!response.ok) {
-      bestEffortCancelBody(response.body);
+      discardGitHubProviderResponse(response);
       if (
         response.status >= 500
         || response.status === 408
@@ -279,16 +276,20 @@ export class GitHubRestIssueSetWriteAdapter
       );
     }
     if (!requestId) {
-      bestEffortCancelBody(response.body);
+      discardGitHubProviderResponse(response);
       throw ambiguousMutationResult(input.operation);
     }
 
     let text: string;
     try {
-      text = await boundedResponseText(response, input.operation);
+      text = await readBoundedGitHubProviderResponseText(
+        response,
+        maximumResponseBytes,
+      );
     } catch {
       throw new GitHubProviderPostEffectError(requestId);
     }
+
     let value: unknown;
     try {
       value = JSON.parse(text);
@@ -333,7 +334,7 @@ function admitLabelResponse(value: unknown, operation: string): string[] {
     if (typeof entry === "string") {
       return boundedText(entry, "GitHub label", 100);
     }
-    if (isRecord(entry) && typeof entry.name === "string") {
+    if (isRecord(entry)) {
       return boundedText(entry.name, "GitHub label", 100);
     }
     throw new RangeError(`GitHub ${operation} response was invalid`);
@@ -364,7 +365,7 @@ function admitAssigneeIssueResponse(
     throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   const assignees = value.assignees.map((entry) => {
-    if (!isRecord(entry) || typeof entry.login !== "string") {
+    if (!isRecord(entry)) {
       throw new RangeError(`GitHub ${operation} response was invalid`);
     }
     return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();
@@ -391,7 +392,8 @@ function assertIssueRepository(
   const [owner, repository] = repositoryParts(repositoryFullName);
   const expectedPath = `${base.pathname.replace(/\/$/, "")}/repos/${owner}/${repository}`;
   if (
-    url.origin !== base.origin
+    url.protocol !== "https:"
+    || url.origin !== base.origin
     || url.pathname.toLowerCase() !== expectedPath.toLowerCase()
     || url.username
     || url.password
@@ -402,96 +404,8 @@ function assertIssueRepository(
   }
 }
 
-async function boundedResponseText(
-  response: Response,
-  operation: string,
-): Promise<string> {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength !== null) {
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(contentLength)) {
-      bestEffortCancelBody(response.body);
-      throw ambiguousTransportError(operation);
-    }
-    const length = Number(contentLength);
-    if (!Number.isSafeInteger(length) || length > maximumResponseBytes) {
-      bestEffortCancelBody(response.body);
-      throw ambiguousTransportError(operation);
-    }
-  }
-
-  const body = response.body;
-  if (body === null) return "";
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  let chunkCount = 0;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      chunkCount += 1;
-      if (chunkCount > maximumResponseChunks) {
-        throw ambiguousTransportError(operation);
-      }
-      const chunk = next.value;
-      if (!(chunk instanceof Uint8Array)) {
-        throw ambiguousTransportError(operation);
-      }
-      const nextByteLength = byteLength + chunk.byteLength;
-      if (
-        !Number.isSafeInteger(nextByteLength)
-        || nextByteLength > maximumResponseBytes
-      ) {
-        throw ambiguousTransportError(operation);
-      }
-      chunks.push(new Uint8Array(chunk));
-      byteLength = nextByteLength;
-    }
-  } catch {
-    bestEffortCancelReader(reader);
-    throw ambiguousTransportError(operation);
-  } finally {
-    reader.releaseLock();
-  }
-
-  const bytes = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw ambiguousTransportError(operation);
-  }
-}
-
-function bestEffortCancelBody(body: ReadableStream<Uint8Array> | null): void {
-  if (body === null) return;
-  try {
-    void Promise.resolve(body.cancel()).catch(() => {});
-  } catch {
-    // Fixed ambiguity is returned by the caller.
-  }
-}
-
-function bestEffortCancelReader(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-): void {
-  try {
-    void Promise.resolve(reader.cancel()).catch(() => {});
-  } catch {
-    // Fixed ambiguity is returned by the caller.
-  }
-}
-
-function admittedRequestId(value: string | null): string | null {
-  if (!value) return null;
-  const normalized = value.trim();
-  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(normalized)
-    ? normalized
-    : null;
+function admittedRequestId(value: unknown): string | null {
+  return new GitHubProviderPostEffectError(value).providerRequestId;
 }
 
 function normalizedApiBaseUrl(value: string): string {

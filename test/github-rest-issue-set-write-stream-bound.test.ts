@@ -130,7 +130,7 @@ function adapterFor(response: Response): GitHubRestIssueSetWriteAdapter {
       }
       used = true;
       return response;
-    }) as unknown as typeof fetch,
+    }) as typeof fetch,
   });
 }
 

@@ -102,6 +102,40 @@ describe("GitHub set-write streamed response ownership", () => {
     expect(calls).toBe(2);
     expect(pull).toBe(2);
   });
+
+  test("retains only tiny view bytes from a large backing buffer", async () => {
+    const json = new TextEncoder().encode('[{"name":"area:github"}]');
+    const backing = new Uint8Array(8 * 1024 * 1024);
+    backing.set(json, 1024);
+    const view = new Uint8Array(backing.buffer, 1024, json.byteLength);
+    const mutation = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(view);
+        controller.close();
+      },
+    }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "x-github-request-id": "REQ-TINY-VIEW",
+      },
+    });
+
+    const adapter = new GitHubRestIssueSetWriteAdapter({
+      tokenProvider: tokenProvider(),
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (method === "POST") return mutation;
+        return Response.json(issuePayload(), {
+          headers: { "x-github-request-id": "REQ-TINY-VIEW-READBACK" },
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await addLabels(adapter);
+    expect(result.providerRequestId).toBe("REQ-TINY-VIEW");
+    expect(result.issue.labels).toEqual(["area:github"]);
+  });
 });
 
 async function expectPostEffect(
@@ -131,7 +165,7 @@ function adapterForMutation(response: Response): GitHubRestIssueSetWriteAdapter 
       }
       used = true;
       return response;
-    }) as unknown as typeof fetch,
+    }) as typeof fetch,
   });
 }
 
