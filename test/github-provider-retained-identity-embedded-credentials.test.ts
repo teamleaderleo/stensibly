@@ -26,7 +26,7 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
       `revisionxghp_${"a".repeat(20)}`,
       `revisionxsk-proj-${"a".repeat(20)}`,
       `revisionxstn.tok_${"a".repeat(20)}`,
-      `revisionxxoxb-${"a".repeat(20)}`,
+      `revisionxxoxb-${"a".repeat(16)}`,
       "revisionxsecret://github/source-revision",
       `revisionxeyJ${"a".repeat(8)}.eyJ${"b".repeat(8)}.${"c".repeat(8)}`,
     ];
@@ -58,6 +58,11 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
         message: "GitHub reconciliation actor ID is invalid",
       },
       {
+        field: "actorId",
+        value: `actorxxoxb-${"a".repeat(16)}`,
+        message: "GitHub reconciliation actor ID is invalid",
+      },
+      {
         field: "attachmentId",
         value: `attachmentxsk-proj-${"a".repeat(20)}`,
         message: "GitHub reconciliation attachment ID is invalid",
@@ -79,13 +84,18 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
     }
   });
 
-  test("rejects an embedded credential family in workspace identity", () => {
-    const workspace = `workspacexghp_${"a".repeat(20)}`;
-    expectFixedRejection(
-      () => compileObservation(actionableProposal(currentRevision), workspace),
-      "GitHub provider instruction observation workspace is invalid",
-      workspace,
-    );
+  test("rejects embedded credential families in workspace identity", () => {
+    const workspaces = [
+      `workspacexghp_${"a".repeat(20)}`,
+      `workspacexxoxb-${"a".repeat(16)}`,
+    ];
+    for (const workspace of workspaces) {
+      expectFixedRejection(
+        () => compileObservation(actionableProposal(currentRevision), workspace),
+        "GitHub provider instruction observation workspace is invalid",
+        workspace,
+      );
+    }
   });
 
   test("preserves benign short token-like aliases below realistic thresholds", () => {
@@ -93,17 +103,28 @@ describe("GitHub provider retained-identity embedded credential privacy", () => 
     expect(proposal.outcome).toBe("propose_context_acceptance");
     expect(proposal.currentSourceRevision).toBe("revisionxghp_review");
 
-    const actor = "actorxghp_review";
-    const request = compileObservation(
-      refingerprinted(proposal, "actorId", actor),
-      "workspacexghp_review",
-    );
-    expect(request).toMatchObject({
-      actorId: actor,
-      workspace: "workspacexghp_review",
-      outcome: "ready_for_repository_instruction_observation",
-      nextAction: "load_attachment_and_observe_repository_instructions",
-    });
+    const aliases = [
+      {
+        actorId: "actorxghp_review",
+        workspace: "workspacexghp_review",
+      },
+      {
+        actorId: "actorxxoxb-review",
+        workspace: "workspacexoxb-review",
+      },
+    ];
+    for (const alias of aliases) {
+      const request = compileObservation(
+        refingerprinted(proposal, "actorId", alias.actorId),
+        alias.workspace,
+      );
+      expect(request).toMatchObject({
+        actorId: alias.actorId,
+        workspace: alias.workspace,
+        outcome: "ready_for_repository_instruction_observation",
+        nextAction: "load_attachment_and_observe_repository_instructions",
+      });
+    }
   });
 });
 
