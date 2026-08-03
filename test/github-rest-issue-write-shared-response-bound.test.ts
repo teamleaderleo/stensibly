@@ -66,20 +66,22 @@ describe("shared GitHub issue-write response admission", () => {
   });
 
   test("disposes deterministic provider rejection bodies without reading provider prose", async () => {
-    let pulled = false;
+    let readerRequested = false;
     let cancelled = false;
-    const response = new Response(new ReadableStream<Uint8Array>({
-      pull(controller) {
-        pulled = true;
-        controller.enqueue(new TextEncoder().encode("secret provider rejection detail"));
-      },
-      cancel() {
-        cancelled = true;
-      },
-    }), {
+    const response = {
+      ok: false,
       status: 422,
-      headers: { "x-github-request-id": "REQ-REJECTED" },
-    });
+      headers: new Headers({ "x-github-request-id": "REQ-REJECTED" }),
+      body: {
+        getReader() {
+          readerRequested = true;
+          throw new Error("rejected provider prose should not be read");
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+    } as unknown as Response;
 
     try {
       await createIssue(adapterFor(response));
@@ -87,9 +89,9 @@ describe("shared GitHub issue-write response admission", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(GitHubProviderRejectedError);
       expect((error as Error).message).toBe("GitHub rejected create issue");
-      expect((error as Error).message).not.toContain("secret provider rejection detail");
+      expect((error as Error).message).not.toContain("provider prose");
     }
-    expect(pulled).toBe(false);
+    expect(readerRequested).toBe(false);
     expect(cancelled).toBe(true);
   });
 
