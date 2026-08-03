@@ -30,12 +30,14 @@ type Mode = "create" | "update" | "comment" | "set" | "transport";
 
 class RequestIdAdapter implements GitHubIssueProviderAdapter {
   readonly mode: Mode;
+  readonly requestIdOverride: unknown | undefined;
   mutationCalls = 0;
   effectReturned = false;
   current = issue();
 
-  constructor(mode: Mode) {
+  constructor(mode: Mode, requestIdOverride?: unknown) {
     this.mode = mode;
+    this.requestIdOverride = requestIdOverride;
   }
 
   async listIssues(): Promise<GitHubIssueProviderPage> {
@@ -58,7 +60,7 @@ class RequestIdAdapter implements GitHubIssueProviderAdapter {
     this.current = issue({ title: "Created", sourceRevision: "rev-create" });
     return {
       issue: structuredClone(this.current),
-      providerRequestId: "REQ-CREATE",
+      providerRequestId: this.#requestId("REQ-CREATE"),
     };
   }
 
@@ -67,7 +69,7 @@ class RequestIdAdapter implements GitHubIssueProviderAdapter {
     this.current = issue({ title: "Updated", sourceRevision: "rev-update" });
     return {
       issue: structuredClone(this.current),
-      providerRequestId: "REQ-UPDATE",
+      providerRequestId: this.#requestId("REQ-UPDATE"),
     };
   }
 
@@ -77,7 +79,7 @@ class RequestIdAdapter implements GitHubIssueProviderAdapter {
     this.#beginEffect("comment");
     return {
       comment: comment(input.body),
-      providerRequestId: "REQ-COMMENT",
+      providerRequestId: this.#requestId("REQ-COMMENT"),
     };
   }
 
@@ -95,20 +97,24 @@ class RequestIdAdapter implements GitHubIssueProviderAdapter {
     });
     return {
       issue: structuredClone(this.current),
-      providerRequestId: "REQ-SET",
+      providerRequestId: this.#requestId("REQ-SET"),
     };
   }
 
-  async removeIssueLabel() {
+  async removeIssueLabel(): Promise<never> {
     throw new Error("remove label is outside this control");
   }
 
-  async addIssueAssignees() {
+  async addIssueAssignees(): Promise<never> {
     throw new Error("add assignees is outside this control");
   }
 
-  async removeIssueAssignees() {
+  async removeIssueAssignees(): Promise<never> {
     throw new Error("remove assignees is outside this control");
+  }
+
+  #requestId(fallback: string): string {
+    return (this.requestIdOverride ?? fallback) as string;
   }
 
   #beginEffect(expected: Mode): void {
@@ -201,6 +207,35 @@ describe("GitHub provider request ID retention", () => {
       const replay = await pendingError(
         candidate.execute(service, candidate.idempotencyKey),
       );
+      expect(replay.receipt).toEqual(first.receipt);
+      expect(adapter.mutationCalls).toBe(1);
+    }
+  });
+
+  test("drops hostile custom-adapter request identities before persistence", async () => {
+    const hostileValues: unknown[] = [
+      `github_pat_${"a".repeat(24)}`,
+      `sk-proj-${"b".repeat(24)}`,
+      "request\nwith-control",
+      "r".repeat(129),
+      42,
+    ];
+
+    for (const [index, hostile] of hostileValues.entries()) {
+      const adapter = new RequestIdAdapter("update", hostile);
+      const service = setup(adapter);
+      const idempotencyKey = `drop-hostile-request-${index}`;
+      const execute = () => service.updateIssue({
+        ...context,
+        issueNumber,
+        expectedSourceRevision: "rev-before",
+        title: "Updated",
+        idempotencyKey,
+      });
+      const first = await pendingError(execute());
+      expect(first.receipt.providerRequestId).toBeNull();
+      expect(JSON.stringify(first.receipt)).not.toContain(String(hostile));
+      const replay = await pendingError(execute());
       expect(replay.receipt).toEqual(first.receipt);
       expect(adapter.mutationCalls).toBe(1);
     }
