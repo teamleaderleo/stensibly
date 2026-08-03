@@ -150,7 +150,7 @@ export function positiveInteger(value: unknown, label: string): number {
 }
 
 export function boundedText(
-  value: string,
+  value: unknown,
   label: string,
   maximum: number,
 ): string {
