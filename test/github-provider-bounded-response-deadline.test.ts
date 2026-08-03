@@ -74,7 +74,8 @@ describe("bounded GitHub provider response read deadline", () => {
     const outcome = await withinWitnessWindow(adapter.createIssue({
       repositoryFullName,
       title: "Bound stalled provider response reads",
-      body: null,
+      labels: [],
+      assignees: [],
       idempotencyKey: "create-response-read-deadline",
     }));
 
