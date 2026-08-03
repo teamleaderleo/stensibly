@@ -95,7 +95,7 @@ describe("GitHub observation Merkle schemeless subroute privacy", () => {
 
       expectFixedRejection(
         () => verifyGitHubObservationInclusionProofV1(checkpoint, proof),
-        "Observation ID is invalid",
+        "Observation inclusion proof ID is invalid",
         route,
       );
     }
