@@ -111,12 +111,37 @@ describe("bounded GitHub review-thread comment truncation", () => {
     } satisfies Partial<GitHubProviderRejectedError>);
   });
 
-  test("rejects a short page that claims more comments remain", async () => {
+  test("retains a valid short page when more comments remain", async () => {
     const adapter = adapterFor(
       new RecordingTokenProvider(),
       commentsConnection({
         totalCount: 21,
         hasNextPage: true,
+        endCursor: "comment-cursor-19",
+        nodeCount: 19,
+      }),
+    );
+
+    const receipt = await call(adapter);
+    expect(receipt.result).toMatchObject({
+      commentCount: 19,
+      threads: [{
+        commentsTotalCount: 21,
+        commentsTruncated: true,
+      }],
+    });
+    const result = receipt.result as {
+      threads: Array<{ comments: unknown[] }>;
+    };
+    expect(result.threads[0]?.comments).toHaveLength(19);
+  });
+
+  test("rejects retained comments larger than the exact provider total", async () => {
+    const adapter = adapterFor(
+      new RecordingTokenProvider(),
+      commentsConnection({
+        totalCount: 18,
+        hasNextPage: false,
         endCursor: "comment-cursor-19",
         nodeCount: 19,
       }),
