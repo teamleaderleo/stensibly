@@ -22,22 +22,43 @@ function compile(text: string) {
 }
 
 describe("GitHub outbound Unicode symbol and connector boundaries", () => {
-  test("detects direct GitHub URLs terminated by an emoji symbol", () => {
-    const result = compile(
+  test("detects direct GitHub URLs terminated by punctuation and symbols", () => {
+    for (const text of [
       "See https://github.com/example/project/issues/12👍 for context.",
-    );
+      "See https://github.com/example/project/issues/12. Then continue.",
+      "See https://github.com/example/project/issues/12。然后继续。",
+    ]) {
+      const result = compile(text);
+      expect(result).toMatchObject({
+        decision: "reject",
+        findings: [{
+          source: "direct_url",
+          referenceKind: "issue",
+          externalOwner: "example",
+          externalRepository: "project",
+          itemNumber: 12,
+          rule: "external_reference",
+        }],
+      });
+      expect(result.findings).toHaveLength(1);
+    }
+  });
 
-    expect(result).toMatchObject({
-      decision: "reject",
-      findings: [{
+  test("detects direct GitHub URLs with query and fragment suffixes", () => {
+    for (const text of [
+      "https://github.com/example/project/issues/12?notification_referrer_id=1",
+      "https://github.com/example/project/issues/12#issuecomment-123",
+      "https://github.com/example/project/commit/abcdef0?diff=split",
+    ]) {
+      const result = compile(text);
+      expect(result.decision).toBe("reject");
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0]).toMatchObject({
         source: "direct_url",
-        referenceKind: "issue",
         externalOwner: "example",
         externalRepository: "project",
-        itemNumber: 12,
-        rule: "external_reference",
-      }],
-    });
+      });
+    }
   });
 
   test("ignores shorthand embedded through Unicode connector punctuation", () => {
