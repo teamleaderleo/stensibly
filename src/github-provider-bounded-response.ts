@@ -76,7 +76,10 @@ export function withGitHubProviderResponseDeadline(
   const deadlineMs = admitGitHubProviderResponseDeadlineMs(value);
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const context = createDeadline(deadlineMs, init?.signal ?? null);
-    const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(input);
+    const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
+      input,
+      init,
+    );
     try {
       const providerCall = Promise.resolve(fetchImplementation(input, {
         ...init,
@@ -508,17 +511,21 @@ function boundedOptionalHeader(
 
 function maximumFacadeTextBytesForRequest(
   input: RequestInfo | URL,
+  init?: RequestInit,
 ): number {
   let urlText: string | null = null;
+  let requestMethod: string | undefined;
   if (typeof input === "string") {
     urlText = input;
   } else if (input instanceof URL) {
     urlText = input.toString();
   } else if (typeof Request !== "undefined" && input instanceof Request) {
     urlText = input.url;
+    requestMethod = input.method;
   }
   if (urlText === null) return maximumSingleIssueFacadeTextBytes;
 
+  const effectiveMethod = (init?.method ?? requestMethod ?? "GET").toUpperCase();
   let pathname: string;
   try {
     pathname = new URL(urlText).pathname.replace(/\/+$/u, "");
@@ -526,8 +533,11 @@ function maximumFacadeTextBytesForRequest(
     return maximumSingleIssueFacadeTextBytes;
   }
   if (
-    /\/search\/issues$/u.test(pathname)
-    || /\/repos\/[^/]+\/[^/]+\/issues$/u.test(pathname)
+    effectiveMethod === "GET"
+    && (
+      /\/search\/issues$/u.test(pathname)
+      || /\/repos\/[^/]+\/[^/]+\/issues$/u.test(pathname)
+    )
   ) {
     return maximumIssueCollectionFacadeTextBytes;
   }
