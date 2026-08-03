@@ -1,6 +1,9 @@
 import { makeFunctionReference } from "convex/server";
 import type { ConvexCaller } from "./convex-ledger.js";
 import {
+  admitGitHubRepositoryWriteIdentifier,
+} from "./github-repository-write-identifier-admission.js";
+import {
   admitGitHubRepositoryWriteReceipt,
   canonicalGitHubRepositoryWriteReceiptJson,
   parseGitHubRepositoryWriteReceiptJson,
@@ -172,7 +175,7 @@ export class ConvexGitHubRepositoryWriteStore
     idempotencyKey: string,
   ): Promise<GitHubRepositoryWriteReceipt | null> {
     const exactProject = exactSlug(project, "Project");
-    const exactKey = exactText(idempotencyKey, "Idempotency key", 240);
+    const exactKey = storedIdentifier(idempotencyKey);
     const raw = await this.client.query(getRef, this.args({
       project: exactProject,
       idempotencyKey: exactKey,
@@ -248,6 +251,14 @@ export class GitHubRepositoryWriteStorageError extends Error {
   constructor() {
     super("GitHub repository write storage failed");
     this.name = "GitHubRepositoryWriteStorageError";
+  }
+}
+
+function storedIdentifier(value: unknown): string {
+  try {
+    return admitGitHubRepositoryWriteIdentifier(value);
+  } catch {
+    throw new GitHubRepositoryWriteStorageError();
   }
 }
 
