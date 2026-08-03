@@ -1,3 +1,12 @@
+import type {
+  GitHubProviderContextReconciliationProposalV1,
+} from "./github-provider-context-reconciliation.js";
+import {
+  GITHUB_PROVIDER_INSTRUCTION_OBSERVATION_REQUEST_V1,
+  compileGitHubProviderInstructionObservationRequestV1,
+  findCanonicalGitHubProviderInstructionObservationRequestV1,
+  type GitHubProviderInstructionObservationRequestV1,
+} from "./github-provider-instruction-observation-request.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 import {
   GITHUB_PROVIDER_INSTRUCTION_OBSERVATION_RESOLUTION_V1 as BASE_SCHEMA_VERSION,
@@ -17,7 +26,9 @@ export type GitHubProviderInstructionObservationResolutionOutcome = BaseOutcome;
 export type GitHubProviderInstructionObservationResolutionNextAction =
   BaseNextAction;
 export interface GitHubProviderInstructionObservationResolutionInputV1
-  extends BaseResolutionInput {}
+  extends BaseResolutionInput {
+  proposal?: GitHubProviderContextReconciliationProposalV1;
+}
 export interface GitHubProviderInstructionObservationResolutionV1
   extends BaseResolution {
   requestFingerprint: string;
@@ -31,24 +42,36 @@ interface ChronologyEvidence {
 
 type DataRecord = Record<string, unknown>;
 
+const requestOriginDiagnostic =
+  "GitHub provider instruction observation request does not match reconciliation proposal";
+
 /**
- * Adds request-evidence retention and the remaining local chronology guards to
- * the reviewed resolver. Canonical reconciliation-proposal origin remains a
- * separate input-contract repair.
+ * Adds canonical producer-origin verification, request-evidence retention, and
+ * local chronology guards to the reviewed resolver implementation.
  */
 export function resolveGitHubProviderInstructionObservationV1(
   value: unknown,
 ): GitHubProviderInstructionObservationResolutionV1 {
-  const input = dataRecord(value);
+  const input = resolutionInputRecord(value);
   const request = input === null ? null : dataRecord(input.request);
 
-  if (request !== null && actionableRequestChronologyIsInvalid(request)) {
-    throw new RangeError(
-      "GitHub provider instruction observation request chronology is invalid",
-    );
+  if (input !== null && request !== null) {
+    requireCanonicalRequestOrigin(input, request);
+    if (actionableRequestChronologyIsInvalid(request)) {
+      throw new RangeError(
+        "GitHub provider instruction observation request chronology is invalid",
+      );
+    }
   }
 
-  const base = resolveBase(value);
+  const base = resolveBase(input === null
+    ? value
+    : {
+      schemaVersion: input.schemaVersion,
+      request: input.request,
+      attachment: input.attachment,
+      observation: input.observation,
+    });
   const requestFingerprint = request?.requestFingerprint;
   if (typeof requestFingerprint !== "string") {
     throw new RangeError(
@@ -79,6 +102,48 @@ export function resolveGitHubProviderInstructionObservationV1(
     ...withoutResolutionFingerprint(base),
     requestFingerprint,
   });
+}
+
+function requireCanonicalRequestOrigin(
+  input: DataRecord,
+  request: DataRecord,
+): void {
+  const workspace = request.workspace;
+  const proposalFingerprint = request.proposalFingerprint;
+  const requestFingerprint = request.requestFingerprint;
+  if (
+    typeof workspace !== "string"
+    || typeof proposalFingerprint !== "string"
+    || typeof requestFingerprint !== "string"
+  ) {
+    return;
+  }
+
+  let canonical: GitHubProviderInstructionObservationRequestV1 | null;
+  if (Object.prototype.hasOwnProperty.call(input, "proposal")) {
+    try {
+      canonical = compileGitHubProviderInstructionObservationRequestV1({
+        schemaVersion: GITHUB_PROVIDER_INSTRUCTION_OBSERVATION_REQUEST_V1,
+        workspace,
+        proposal: input.proposal as GitHubProviderContextReconciliationProposalV1,
+      });
+    } catch {
+      throw new RangeError(requestOriginDiagnostic);
+    }
+  } else {
+    canonical = findCanonicalGitHubProviderInstructionObservationRequestV1(
+      workspace,
+      proposalFingerprint,
+    );
+  }
+
+  if (
+    canonical === null
+    || canonical.proposalFingerprint !== proposalFingerprint
+    || canonical.requestFingerprint !== requestFingerprint
+  ) {
+    throw new RangeError(requestOriginDiagnostic);
+  }
 }
 
 function actionableRequestChronologyIsInvalid(request: DataRecord): boolean {
@@ -152,6 +217,22 @@ function finalize(
     ...body,
     resolutionFingerprint: fingerprintCanonicalRequest(body),
   });
+}
+
+function resolutionInputRecord(value: unknown): DataRecord | null {
+  const input = dataRecord(value);
+  if (input === null) return null;
+  const keys = Object.keys(input);
+  const required = ["schemaVersion", "request", "attachment", "observation"];
+  if (
+    required.some((key) => !Object.prototype.hasOwnProperty.call(input, key))
+    || keys.some((key) => !required.includes(key) && key !== "proposal")
+    || keys.length < required.length
+    || keys.length > required.length + 1
+  ) {
+    return null;
+  }
+  return input;
 }
 
 function dataRecord(value: unknown): DataRecord | null {
