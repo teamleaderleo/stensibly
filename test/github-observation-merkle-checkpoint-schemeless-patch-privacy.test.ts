@@ -18,14 +18,16 @@ const safeLedgerId = "workspace/oauth-dogfood/github-observations";
 const safeCompilerId = "github:observation-checkpoint:v1";
 const safeObservationId = "github:issues:delivery-1";
 
-const patchRoutes = [
+const commitViewRoutes = [
   `github.com/example/project/commit/${"a".repeat(40)}.patch`,
   `www.github.com/example/project/commit/${"b".repeat(64)}.patch`,
+  `github.com/example/project/commit/${"c".repeat(64)}.diff`,
+  `www.github.com/example/project/commit/${"d".repeat(40)}.diff`,
 ] as const;
 
-describe("GitHub observation Merkle schemeless patch-route privacy", () => {
-  test("rejects commit patch routes in every compiled retained identity", () => {
-    for (const route of patchRoutes) {
+describe("GitHub observation Merkle schemeless commit-view privacy", () => {
+  test("rejects commit patch and diff routes in every compiled retained identity", () => {
+    for (const route of commitViewRoutes) {
       expectFixedRejection(
         () => compilePublic({ ledgerId: route }),
         "Observation ledger ID is invalid",
@@ -44,8 +46,8 @@ describe("GitHub observation Merkle schemeless patch-route privacy", () => {
     }
   });
 
-  test("rejects self-consistent inclusion evidence carrying a patch route", () => {
-    for (const observationId of patchRoutes) {
+  test("rejects self-consistent inclusion evidence carrying a commit view", () => {
+    for (const observationId of commitViewRoutes) {
       const unsafeLeaves = leaves(observationId);
       const checkpoint = compileBase({
         version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
@@ -68,8 +70,8 @@ describe("GitHub observation Merkle schemeless patch-route privacy", () => {
     }
   });
 
-  test("rejects self-consistent consistency evidence carrying a patch route", () => {
-    for (const identity of patchRoutes) {
+  test("rejects self-consistent consistency evidence carrying a commit view", () => {
+    for (const identity of commitViewRoutes) {
       const history = [
         leaf(1, safeObservationId),
         leaf(2, "github:issues:delivery-2"),
@@ -105,13 +107,13 @@ describe("GitHub observation Merkle schemeless patch-route privacy", () => {
   test("preserves internal dotted namespaces that are not public GitHub routes", () => {
     const checkpoint = compilePublic({
       ledgerId: "internal/github.com/project/commit/archive.patch",
-      compilerId: "compiler.github.com/project/patch/v1",
+      compilerId: "compiler.github.com/project/diff/v1",
       observationId: "delivery/github.com/project/commit/patch/internal",
     });
 
     expect(checkpoint).toMatchObject({
       ledgerId: "internal/github.com/project/commit/archive.patch",
-      compilerId: "compiler.github.com/project/patch/v1",
+      compilerId: "compiler.github.com/project/diff/v1",
       treeSize: 1,
     });
   });
