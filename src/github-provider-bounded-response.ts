@@ -11,7 +11,7 @@ export const maximumGitHubProviderResponseDeadlineMs = 120_000;
 
 const maximumFacadeTextBytes = 64 * 1024 * 1024;
 const maximumLinkHeaderBytes = 16 * 1024;
-const unsafeHeaderTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+const unsafeHeaderTextPattern = /[\u0000-\u001f\u007f]/u;
 
 interface GitHubProviderResponseDeadline {
   readonly controller: AbortController;
@@ -354,6 +354,7 @@ function metadataFailureResponse(
       body = null;
     }
   }
+  cancelBody(body);
   return responseFacade(
     response,
     requestId,
@@ -361,7 +362,7 @@ function metadataFailureResponse(
     link,
     false,
     503,
-    body,
+    null,
   );
 }
 
