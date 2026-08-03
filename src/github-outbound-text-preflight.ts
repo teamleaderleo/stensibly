@@ -127,11 +127,34 @@ function detectNormalizedDirectReferences(
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
     if (!isGitHubHostname(parsed.hostname)) continue;
+
+    const raw = rawCanonicalUrlPattern.exec(candidate);
+    const encodedRouteRepository = raw === null
+      ? null
+      : parseEncodedRouteRepository(parsed.pathname);
+    if (
+      encodedRouteRepository !== null
+      && !controlled.has(encodedRouteRepository)
+    ) {
+      assertRepositoryIdentityIsPublic(encodedRouteRepository);
+      if (
+        parsed.username.length > 0
+        || parsed.password.length > 0
+        || parsed.port.length > 0
+      ) {
+        throw new RangeError(
+          "GitHub outbound direct reference URL authority is invalid",
+        );
+      }
+      throw new RangeError(
+        "GitHub outbound direct reference contains percent-encoded path continuation",
+      );
+    }
+
     const route = parseNormalizedRoute(parsed.pathname);
     if (route === null || controlled.has(route.repositoryFullName)) continue;
 
     assertRepositoryIdentityIsPublic(route.repositoryFullName);
-    const raw = rawCanonicalUrlPattern.exec(candidate);
     if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.port.length > 0) {
       throw new RangeError(
         "GitHub outbound direct reference URL authority is invalid",
@@ -185,6 +208,42 @@ function detectNormalizedDirectReferences(
     }
   }
   return Object.freeze(references);
+}
+
+function parseEncodedRouteRepository(pathname: string): string | null {
+  const rawSegments = pathname.split("/").slice(1);
+  if (
+    rawSegments.length !== 4
+    || !rawSegments.some((segment) => encodedBytePattern.test(segment))
+  ) return null;
+
+  let segments: string[];
+  try {
+    segments = rawSegments.map((segment) => decodeURIComponent(segment));
+  } catch {
+    return null;
+  }
+  const [owner, repository, kindValue] = segments as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  const kind = kindValue.toLowerCase();
+  if (
+    kind !== "commit"
+    && kind !== "issues"
+    && kind !== "pull"
+    && kind !== "discussions"
+  ) return null;
+
+  try {
+    return normalizeGitHubRepository(
+      `${owner.toLowerCase()}/${repository.toLowerCase()}`,
+    );
+  } catch {
+    return null;
+  }
 }
 
 function parseNormalizedRoute(pathname: string): Readonly<{
