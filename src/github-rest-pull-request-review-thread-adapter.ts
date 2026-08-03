@@ -667,7 +667,6 @@ function reviewThread(
   if (
     commentsTruncated !== commentsHasNextPage
     || (commentsHasNextPage && commentsEndCursor === null)
-    || (commentsHasNextPage && commentNodes.length !== commentPageSize)
     || (!commentsHasNextPage && commentNodes.length !== commentsTotalCount)
   ) {
     throw rejected(
