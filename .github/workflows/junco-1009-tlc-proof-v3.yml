@@ -41,16 +41,6 @@ jobs:
           java -version 2> /tmp/java-version.txt
           unzip -p /tmp/tla2tools.jar META-INF/MANIFEST.MF > /tmp/tla2tools-manifest.txt
 
-      - name: Parse exact modules
-        shell: bash
-        working-directory: formal
-        run: |
-          set -euo pipefail
-          java -cp /tmp/tla2tools.jar tla2sany.SANY \
-            CancellationSettlementWitnesses.tla \
-            CancellationSettlementActiveRejoinWitnesses.tla \
-            2>&1 | tee /tmp/sany.log
-
       - name: Run fail-closed proof suite
         id: proof
         shell: bash
@@ -58,72 +48,139 @@ jobs:
           set -uo pipefail
           failed=0
 
-          success() {
-            local cfg="$1" module="$2" out="$3"
+          output() {
+            printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"
+          }
+
+          not_run() {
+            local name="$1"
+            output "${name}_status" "not_run"
+            output "${name}_exit" "null"
+            output "${name}_summary" "not_run"
+          }
+
+          safe_run() {
+            local name="$1" cfg="$2" module="$3" out="$4"
             set +e
             java -cp /tmp/tla2tools.jar tlc2.TLC -workers 1 -coverage 1 \
               -config "$cfg" "$module" > "$out" 2>&1
-            local status=$?
+            local exit_code=$?
             set -e
-            if [[ $status -ne 0 ]] || ! grep -F \
-              "Model checking completed. No error has been found." "$out" >/dev/null
+            local summary
+            summary="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' "$out" | tail -1 || true)"
+            local status="passed"
+            if [[ $exit_code -ne 0 ]] \
+              || ! grep -F "Model checking completed. No error has been found." "$out" >/dev/null \
+              || [[ -z "$summary" ]]
             then
+              status="failed"
+              failed=$((failed + 1))
               cat "$out" >&2
-              failed=1
             fi
+            output "${name}_status" "$status"
+            output "${name}_exit" "$exit_code"
+            output "${name}_summary" "${summary:-not_run}"
           }
 
-          violation() {
-            local cfg="$1" invariant="$2" module="$3" out="$4"
+          violation_run() {
+            local name="$1" cfg="$2" invariant="$3" module="$4" out="$5"
             set +e
             java -cp /tmp/tla2tools.jar tlc2.TLC -workers 1 \
               -config "$cfg" "$module" > "$out" 2>&1
-            local status=$?
+            local exit_code=$?
             set -e
-            if [[ $status -eq 0 ]] || ! grep -F \
-              "Invariant ${invariant} is violated" "$out" >/dev/null
+            local status="passed"
+            if [[ $exit_code -eq 0 ]] \
+              || ! grep -F "Invariant ${invariant} is violated" "$out" >/dev/null
             then
+              status="failed"
+              failed=$((failed + 1))
               cat "$out" >&2
-              failed=1
             fi
+            output "${name}_status" "$status"
+            output "${name}_exit" "$exit_code"
+            output "${name}_summary" "$invariant"
           }
 
-          success formal/CancellationSettlement.cfg \
-            formal/CancellationSettlement.tla /tmp/safe-core.log
-          success formal/CancellationSettlementActive.cfg \
-            formal/CancellationSettlementActive.tla /tmp/safe-active.log
+          set +e
+          java -cp /tmp/tla2tools.jar tla2sany.SANY \
+            formal/CancellationSettlementWitnesses.tla \
+            formal/CancellationSettlementActiveRejoinWitnesses.tla \
+            > /tmp/sany.log 2>&1
+          parse_exit=$?
+          set -e
+          if [[ $parse_exit -eq 0 ]]; then
+            parse_status="passed"
+          else
+            parse_status="failed"
+            failed=$((failed + 1))
+            cat /tmp/sany.log >&2
+          fi
+          output parse_status "$parse_status"
+          output parse_exit "$parse_exit"
+          output parse_summary "SANY exact module parse"
 
-          violation formal/CancellationSettlementUnsafeFence.cfg \
-            ReplacementRequiresFenceOrSettlement \
-            formal/CancellationSettlement.tla /tmp/unsafe-fence.log
-          violation formal/CancellationSettlementUnsafe.cfg \
-            StaleGenerationCannotPublish \
-            formal/CancellationSettlement.tla /tmp/unsafe-stale.log
+          if [[ "$parse_status" = "passed" ]]; then
+            safe_run core_safe \
+              formal/CancellationSettlement.cfg \
+              formal/CancellationSettlement.tla /tmp/safe-core.log
+            safe_run active_safe \
+              formal/CancellationSettlementActive.cfg \
+              formal/CancellationSettlementActive.tla /tmp/safe-active.log
 
-          pushd formal >/dev/null
-          violation CancellationSettlementPreCloseSuccess.cfg \
-            PreCloseSuccessFailureWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-preclose-success.log
-          violation CancellationSettlementPreCloseFailure.cfg \
-            PreCloseFailureReconciliationWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-preclose-failure.log
-          violation CancellationSettlementRepeatedClose.cfg \
-            RepeatedCloseWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-repeated-close.log
-          violation CancellationSettlementCancelledRetry.cfg \
-            CancelledRetryWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-cancelled-retry.log
-          violation CancellationSettlementActiveRejoin.cfg \
-            ActiveRejoinWitnessAbsent \
-            CancellationSettlementActiveRejoinWitnesses.tla \
-            /tmp/witness-active-rejoin-terminal.log
-          popd >/dev/null
+            violation_run unsafe_fence \
+              formal/CancellationSettlementUnsafeFence.cfg \
+              ReplacementRequiresFenceOrSettlement \
+              formal/CancellationSettlement.tla /tmp/unsafe-fence.log
+            violation_run unsafe_stale \
+              formal/CancellationSettlementUnsafe.cfg \
+              StaleGenerationCannotPublish \
+              formal/CancellationSettlement.tla /tmp/unsafe-stale.log
 
-          core="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' /tmp/safe-core.log | tail -1 || true)"
-          active="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' /tmp/safe-active.log | tail -1 || true)"
-          echo "core=$core" >> "$GITHUB_OUTPUT"
-          echo "active=$active" >> "$GITHUB_OUTPUT"
-          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+            pushd formal >/dev/null
+            violation_run witness_preclose_success \
+              CancellationSettlementPreCloseSuccess.cfg \
+              PreCloseSuccessFailureWitnessAbsent \
+              CancellationSettlementWitnesses.tla \
+              /tmp/witness-preclose-success.log
+            violation_run witness_preclose_failure \
+              CancellationSettlementPreCloseFailure.cfg \
+              PreCloseFailureReconciliationWitnessAbsent \
+              CancellationSettlementWitnesses.tla \
+              /tmp/witness-preclose-failure.log
+            violation_run witness_repeated_close \
+              CancellationSettlementRepeatedClose.cfg \
+              RepeatedCloseWitnessAbsent \
+              CancellationSettlementWitnesses.tla \
+              /tmp/witness-repeated-close.log
+            violation_run witness_cancelled_retry \
+              CancellationSettlementCancelledRetry.cfg \
+              CancelledRetryWitnessAbsent \
+              CancellationSettlementWitnesses.tla \
+              /tmp/witness-cancelled-retry.log
+            violation_run witness_active_rejoin \
+              CancellationSettlementActiveRejoin.cfg \
+              ActiveRejoinWitnessAbsent \
+              CancellationSettlementActiveRejoinWitnesses.tla \
+              /tmp/witness-active-rejoin-terminal.log
+            popd >/dev/null
+          else
+            for name in \
+              core_safe active_safe unsafe_fence unsafe_stale \
+              witness_preclose_success witness_preclose_failure \
+              witness_repeated_close witness_cancelled_retry \
+              witness_active_rejoin
+            do
+              not_run "$name"
+            done
+          fi
+
+          output failure_count "$failed"
+          if [[ $failed -eq 0 ]]; then
+            output suite_status "passed"
+          else
+            output suite_status "failed"
+          fi
           test "$failed" -eq 0
 
       - name: Build exact receipt
@@ -138,6 +195,14 @@ jobs:
           done
           cp formal/CancellationSettlement*.tla "$out/"
           cp formal/CancellationSettlement*.cfg "$out/"
+
+          failure_count='${{ steps.proof.outputs.failure_count }}'
+          if [[ "$failure_count" =~ ^[0-9]+$ ]]; then
+            failure_json="$failure_count"
+          else
+            failure_json="null"
+          fi
+
           jq -n \
             --arg schemaVersion "stensibly-cancellation-settlement-tlc/3" \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -145,17 +210,52 @@ jobs:
             --arg proofRevision "$PROOF_SHA" \
             --arg runId "$GITHUB_RUN_ID" \
             --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg core "${{ steps.proof.outputs.core || 'not_run' }}" \
-            --arg active "${{ steps.proof.outputs.active || 'not_run' }}" \
-            --arg failed "${{ steps.proof.outputs.failed || 'not_run' }}" \
-            '{schemaVersion:$schemaVersion,repository:$repository,
+            --arg suiteStatus "${{ steps.proof.outputs.suite_status || 'not_run' }}" \
+            --arg parseStatus "${{ steps.proof.outputs.parse_status || 'not_run' }}" \
+            --arg parseExit "${{ steps.proof.outputs.parse_exit || 'null' }}" \
+            --arg coreStatus "${{ steps.proof.outputs.core_safe_status || 'not_run' }}" \
+            --arg coreExit "${{ steps.proof.outputs.core_safe_exit || 'null' }}" \
+            --arg coreSummary "${{ steps.proof.outputs.core_safe_summary || 'not_run' }}" \
+            --arg activeStatus "${{ steps.proof.outputs.active_safe_status || 'not_run' }}" \
+            --arg activeExit "${{ steps.proof.outputs.active_safe_exit || 'null' }}" \
+            --arg activeSummary "${{ steps.proof.outputs.active_safe_summary || 'not_run' }}" \
+            --arg unsafeFenceStatus "${{ steps.proof.outputs.unsafe_fence_status || 'not_run' }}" \
+            --arg unsafeFenceExit "${{ steps.proof.outputs.unsafe_fence_exit || 'null' }}" \
+            --arg unsafeStaleStatus "${{ steps.proof.outputs.unsafe_stale_status || 'not_run' }}" \
+            --arg unsafeStaleExit "${{ steps.proof.outputs.unsafe_stale_exit || 'null' }}" \
+            --arg precloseSuccessStatus "${{ steps.proof.outputs.witness_preclose_success_status || 'not_run' }}" \
+            --arg precloseSuccessExit "${{ steps.proof.outputs.witness_preclose_success_exit || 'null' }}" \
+            --arg precloseFailureStatus "${{ steps.proof.outputs.witness_preclose_failure_status || 'not_run' }}" \
+            --arg precloseFailureExit "${{ steps.proof.outputs.witness_preclose_failure_exit || 'null' }}" \
+            --arg repeatedCloseStatus "${{ steps.proof.outputs.witness_repeated_close_status || 'not_run' }}" \
+            --arg repeatedCloseExit "${{ steps.proof.outputs.witness_repeated_close_exit || 'null' }}" \
+            --arg cancelledRetryStatus "${{ steps.proof.outputs.witness_cancelled_retry_status || 'not_run' }}" \
+            --arg cancelledRetryExit "${{ steps.proof.outputs.witness_cancelled_retry_exit || 'null' }}" \
+            --arg activeRejoinStatus "${{ steps.proof.outputs.witness_active_rejoin_status || 'not_run' }}" \
+            --arg activeRejoinExit "${{ steps.proof.outputs.witness_active_rejoin_exit || 'null' }}" \
+            --argjson suiteFailureCount "$failure_json" \
+            'def exitValue($v): if ($v | test("^[0-9]+$")) then ($v | tonumber) else null end;
+             {schemaVersion:$schemaVersion,repository:$repository,
               sourceRevision:$sourceRevision,proofRevision:$proofRevision,
               run:{id:$runId,attempt:$runAttempt},
               tlc:{release:"v1.7.4",publishedSha1:"bee4a54f3ee3d4afc347c3240ec2d9e93b075104"},
-              coreSafeStateSummary:$core,activeSafeStateSummary:$active,
-              suiteFailureCount:$failed,
-              checks:{cancelledWaiterHasRetryCapacity:true,
-                activeRejoinReachesTerminal:true},
+              suiteStatus:$suiteStatus,
+              suitePassed:($suiteStatus == "passed"),
+              suiteFailureCount:$suiteFailureCount,
+              obligations:{
+                parse:{status:$parseStatus,exitCode:exitValue($parseExit),expected:"SANY exact module parse"},
+                coreSafe:{status:$coreStatus,exitCode:exitValue($coreExit),stateSummary:$coreSummary,expected:"no invariant violation"},
+                activeSafe:{status:$activeStatus,exitCode:exitValue($activeExit),stateSummary:$activeSummary,expected:"no invariant violation"},
+                unsafeFence:{status:$unsafeFenceStatus,exitCode:exitValue($unsafeFenceExit),expected:"ReplacementRequiresFenceOrSettlement violation"},
+                unsafeStale:{status:$unsafeStaleStatus,exitCode:exitValue($unsafeStaleExit),expected:"StaleGenerationCannotPublish violation"},
+                preCloseSuccess:{status:$precloseSuccessStatus,exitCode:exitValue($precloseSuccessExit),expected:"PreCloseSuccessFailureWitnessAbsent violation"},
+                preCloseFailure:{status:$precloseFailureStatus,exitCode:exitValue($precloseFailureExit),expected:"PreCloseFailureReconciliationWitnessAbsent violation"},
+                repeatedClose:{status:$repeatedCloseStatus,exitCode:exitValue($repeatedCloseExit),expected:"RepeatedCloseWitnessAbsent violation"},
+                cancelledRetry:{status:$cancelledRetryStatus,exitCode:exitValue($cancelledRetryExit),expected:"CancelledRetryWitnessAbsent violation"},
+                activeRejoin:{status:$activeRejoinStatus,exitCode:exitValue($activeRejoinExit),expected:"ActiveRejoinWitnessAbsent violation"}},
+              checks:{
+                cancelledWaiterHasRetryCapacity:($cancelledRetryStatus == "passed"),
+                activeRejoinReachesTerminal:($activeRejoinStatus == "passed")},
               authorizesMerge:false,authorizesMutation:false}' \
             > "$out/receipt.json"
           (cd "$out" && sha256sum -- * > SHA256SUMS)
