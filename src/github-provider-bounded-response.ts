@@ -6,23 +6,48 @@ export class GitHubProviderResponseReadError extends Error {
 }
 
 export const maximumGitHubProviderResponseChunks = 4_096;
+export const defaultGitHubProviderResponseReadTimeoutMs = 30_000;
+export const maximumGitHubProviderResponseReadTimeoutMs = 120_000;
+
+export function admitGitHubProviderResponseReadTimeoutMs(
+  value: unknown,
+): number {
+  const timeout = value === undefined
+    ? defaultGitHubProviderResponseReadTimeoutMs
+    : value;
+  if (
+    typeof timeout !== "number"
+    || !Number.isSafeInteger(timeout)
+    || timeout < 1
+    || timeout > maximumGitHubProviderResponseReadTimeoutMs
+  ) {
+    throw new RangeError("GitHub provider response read timeout is invalid");
+  }
+  return timeout;
+}
 
 /**
- * Reads one provider response body under independent byte and work bounds.
+ * Reads one provider response body under independent byte, work, and total
+ * time bounds.
  *
  * Content-Length is an early encoded-size signal only. Fetch may expose
  * decoded bytes, so the declared length is not compared with decoded stream
  * length. Every delivered chunk is detached immediately, including tiny
- * views over large provider-owned buffers. Failure-path cancellation is
- * best-effort and never awaited.
+ * views over large provider-owned buffers. The deadline covers the complete
+ * body-consumption interval and is never renewed per chunk. Failure-path
+ * cancellation is best-effort and never awaited.
  */
 export async function readBoundedGitHubProviderResponseText(
   response: Response,
   maximumBytes: number,
+  responseReadTimeoutMs: number = defaultGitHubProviderResponseReadTimeoutMs,
 ): Promise<string> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
     throw new RangeError("GitHub provider response byte limit is invalid");
   }
+  const timeoutMs = admitGitHubProviderResponseReadTimeoutMs(
+    responseReadTimeoutMs,
+  );
 
   const declared = response.headers.get("content-length");
   if (declared !== null) {
@@ -47,6 +72,14 @@ export async function readBoundedGitHubProviderResponseText(
     throw new GitHubProviderResponseReadError();
   }
 
+  let deadlineHandle: ReturnType<typeof setTimeout> | null = null;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    deadlineHandle = setTimeout(
+      () => reject(new GitHubProviderResponseReadError()),
+      timeoutMs,
+    );
+  });
+
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
   let totalChunks = 0;
@@ -55,7 +88,7 @@ export async function readBoundedGitHubProviderResponseText(
     while (true) {
       let next: ReadableStreamReadResult<Uint8Array>;
       try {
-        next = await reader.read();
+        next = await Promise.race([reader.read(), deadline]);
       } catch {
         failed = true;
         cancelReader(reader);
@@ -93,6 +126,7 @@ export async function readBoundedGitHubProviderResponseText(
       chunks.push(detached);
     }
   } finally {
+    if (deadlineHandle !== null) clearTimeout(deadlineHandle);
     try {
       reader.releaseLock();
     } catch {
