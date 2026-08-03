@@ -20,6 +20,7 @@ export type {
   GitHubObservationMerkleLeafInputV1,
 } from "./github-observation-merkle-checkpoint-base.js";
 
+const maximumLeaves = 4_096;
 const schemelessGitHubRoutePattern =
   /^(?:www\.)?github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]{1,100}\/(?:(?:issues|pull|discussions)\/[1-9][0-9]*|commit\/[0-9a-f]{7,40})$/iu;
 
@@ -120,7 +121,11 @@ function preflightLeaves(value: unknown): void {
   if (!Array.isArray(value)) return;
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const length = descriptors.length?.value;
-  if (!Number.isSafeInteger(length) || length < 0) return;
+  if (
+    !Number.isSafeInteger(length)
+    || length < 0
+    || length > maximumLeaves
+  ) return;
   for (let index = 0; index < length; index += 1) {
     const descriptor = descriptors[String(index)];
     if (!descriptor || !("value" in descriptor)) continue;
