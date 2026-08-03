@@ -155,7 +155,7 @@ function adapterFor(
   return new GitHubRestIssueWriteAdapter({
     tokenProvider: tokenProvider(),
     apiBaseUrl,
-    fetch: (async () => response) as typeof fetch,
+    fetch: (async () => response) as unknown as typeof fetch,
   });
 }
 
