@@ -9,6 +9,8 @@ export const maximumGitHubProviderResponseChunks = 4_096;
 export const defaultGitHubProviderResponseReadTimeoutMs = 30_000;
 export const maximumGitHubProviderResponseReadTimeoutMs = 120_000;
 
+const responseReadTimeouts = new WeakMap<Response, number>();
+
 export function admitGitHubProviderResponseReadTimeoutMs(
   value: unknown,
 ): number {
@@ -26,6 +28,18 @@ export function admitGitHubProviderResponseReadTimeoutMs(
   return timeout;
 }
 
+export function withGitHubProviderResponseReadTimeout(
+  fetchImplementation: typeof fetch,
+  value: unknown,
+): typeof fetch {
+  const timeoutMs = admitGitHubProviderResponseReadTimeoutMs(value);
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = await fetchImplementation(input, init);
+    responseReadTimeouts.set(response, timeoutMs);
+    return response;
+  }) as typeof fetch;
+}
+
 /**
  * Reads one provider response body under independent byte, work, and total
  * time bounds.
@@ -40,13 +54,13 @@ export function admitGitHubProviderResponseReadTimeoutMs(
 export async function readBoundedGitHubProviderResponseText(
   response: Response,
   maximumBytes: number,
-  responseReadTimeoutMs: number = defaultGitHubProviderResponseReadTimeoutMs,
+  responseReadTimeoutMs?: number,
 ): Promise<string> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
     throw new RangeError("GitHub provider response byte limit is invalid");
   }
   const timeoutMs = admitGitHubProviderResponseReadTimeoutMs(
-    responseReadTimeoutMs,
+    responseReadTimeoutMs ?? responseReadTimeouts.get(response),
   );
 
   const declared = response.headers.get("content-length");
