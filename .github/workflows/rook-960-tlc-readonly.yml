@@ -87,9 +87,14 @@ jobs:
             set -e
             if [[ "${status}" -eq 0 ]]; then
               echo "Expected ${invariant} counterexample but TLC succeeded." >&2
+              cat "${output}" >&2
               exit 1
             fi
-            grep -F "${invariant}" "${output}"
+            if ! grep -F "${invariant}" "${output}"; then
+              echo "TLC failed without the expected ${invariant} counterexample." >&2
+              cat "${output}" >&2
+              exit 1
+            fi
           }
           run_counterexample \
             formal/CancellationSettlementUnsafeFence.cfg \
@@ -119,9 +124,14 @@ jobs:
             set -e
             if [[ "${status}" -eq 0 ]]; then
               echo "Expected ${invariant} reachability witness but TLC succeeded." >&2
+              cat "${output}" >&2
               exit 1
             fi
-            grep -F "${invariant}" "${output}"
+            if ! grep -F "${invariant}" "${output}"; then
+              echo "TLC failed without the expected ${invariant} witness." >&2
+              cat "${output}" >&2
+              exit 1
+            fi
           }
           run_witness \
             CancellationSettlementPreCloseSuccess.cfg \
