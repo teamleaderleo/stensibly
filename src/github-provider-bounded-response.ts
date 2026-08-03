@@ -19,6 +19,7 @@ interface GitHubProviderResponseDeadline {
 }
 
 const responseDeadlines = new WeakMap<Response, GitHubProviderResponseDeadline>();
+const wrappedFetchDeadlines = new WeakMap<typeof fetch, number>();
 
 export function admitGitHubProviderResponseDeadlineMs(
   value: unknown,
@@ -43,13 +44,20 @@ export function admitGitHubProviderResponseDeadlineMs(
  * so a hostile or injected fetch cannot defeat settlement by ignoring abort.
  * A successful Response retains the same deadline context for bounded body
  * consumption; no second or per-chunk timer is created.
+ *
+ * A composed adapter that forwards an already wrapped fetch without an
+ * explicit override preserves the existing deadline instead of nesting or
+ * replacing it with the production default.
  */
 export function withGitHubProviderResponseDeadline(
   fetchImplementation: typeof fetch,
-  value: unknown,
+  value?: unknown,
 ): typeof fetch {
+  if (value === undefined && wrappedFetchDeadlines.has(fetchImplementation)) {
+    return fetchImplementation;
+  }
   const deadlineMs = admitGitHubProviderResponseDeadlineMs(value);
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const context = createDeadline(deadlineMs, init?.signal ?? null);
     try {
       const providerCall = Promise.resolve(fetchImplementation(input, {
@@ -75,6 +83,8 @@ export function withGitHubProviderResponseDeadline(
       throw error;
     }
   }) as typeof fetch;
+  wrappedFetchDeadlines.set(wrapped, deadlineMs);
+  return wrapped;
 }
 
 /**
