@@ -1,5 +1,5 @@
 import {
-  withGitHubProviderResponseReadTimeout,
+  withGitHubProviderResponseDeadline,
 } from "./github-provider-bounded-response.js";
 import {
   GitHubRestIssueWriteAdapter as GitHubRestIssueWriteAdapterBase,
@@ -8,23 +8,24 @@ import {
 
 export interface GitHubRestIssueWriteAdapterOptions
   extends GitHubRestIssueWriteAdapterBaseOptions {
-  responseReadTimeoutMs?: number;
+  providerResponseDeadlineMs?: number;
 }
 
 /**
- * Public issue-write adapter with one optional bounded response-body deadline.
- * The settled provider implementation remains in the private base module.
+ * Public issue-write adapter with one optional total provider-response
+ * deadline. The settled provider implementation remains in the private base
+ * module.
  */
 export class GitHubRestIssueWriteAdapter
   extends GitHubRestIssueWriteAdapterBase
 {
   constructor(options: GitHubRestIssueWriteAdapterOptions) {
-    const { responseReadTimeoutMs, ...baseOptions } = options;
-    const wrappedFetch = responseReadTimeoutMs === undefined
+    const { providerResponseDeadlineMs, ...baseOptions } = options;
+    const wrappedFetch = providerResponseDeadlineMs === undefined
       ? baseOptions.fetch
-      : withGitHubProviderResponseReadTimeout(
+      : withGitHubProviderResponseDeadline(
         baseOptions.fetch ?? globalThis.fetch,
-        responseReadTimeoutMs,
+        providerResponseDeadlineMs,
       );
     super({
       ...baseOptions,
