@@ -135,6 +135,7 @@ function detectNormalizedDirectReferences(
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
     if (!isGitHubHostname(parsed.hostname)) continue;
 
+    const raw = rawCanonicalUrlPattern.exec(candidate);
     const routePrefix = parseRoutePrefix(parsed.pathname);
     if (
       routePrefix !== null
@@ -156,13 +157,18 @@ function detectNormalizedDirectReferences(
         );
       }
       if (routePrefix.identityIsValid && routePrefix.hasContinuation) {
+        const baseOwnsCanonicalLiteralContinuation =
+          raw !== null
+          && raw[3] === undefined
+          && !raw[2]!.endsWith(".")
+          && raw[4] === parsed.pathname;
+        if (baseOwnsCanonicalLiteralContinuation) continue;
         throw new RangeError(
           "GitHub outbound direct reference URL spelling is invalid",
         );
       }
     }
 
-    const raw = rawCanonicalUrlPattern.exec(candidate);
     const route = parseNormalizedRoute(parsed.pathname);
     if (route === null || controlled.has(route.repositoryFullName)) continue;
 
