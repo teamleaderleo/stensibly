@@ -289,6 +289,10 @@ function requireWriteStatus(
   response: Response,
   operation: "create_file" | "update_file" | "delete_file",
 ): void {
+  if (!response.ok) {
+    requireOk(response, repositoryWriteOperationLabel(operation));
+    return;
+  }
   const expected = operation === "create_file" ? 201 : 200;
   if (response.status === expected) return;
   discardResponse(response);
