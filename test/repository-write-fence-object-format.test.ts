@@ -3,33 +3,70 @@ import {
   prepareRepositoryWrite,
   RepositoryWriteFenceError,
   verifyRepositoryWriteResult,
-  type RepositoryWriteRefReader,
+  type RepositoryWriteAuthority,
+  type RepositoryWriteIntent,
 } from "../src/repository-write-fence.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
+const targetRef = "feature/object-format-coherence";
 const parent40 = "a".repeat(40);
+const parent64 = "a".repeat(64);
+const commit40 = "b".repeat(40);
 const commit64 = "b".repeat(64);
-const parent64 = "c".repeat(64);
-const coherentCommit64 = "d".repeat(64);
+
+function prepared(expectedParentSha: string) {
+  const intent: RepositoryWriteIntent = {
+    version: 1,
+    repositoryFullName,
+    path: "docs/object-format.md",
+    operation: "update_file",
+    targetRef,
+    expectedParentSha,
+  };
+  const authority: RepositoryWriteAuthority = {
+    version: 1,
+    repositoryFullName,
+    targetRef,
+    defaultBranch: "main",
+    authorityId: "grant_object_format_coherence",
+    authorityGeneration: 1,
+    defaultBranchApprovalId: null,
+  };
+  return prepareRepositoryWrite(intent, authority);
+}
+
+async function fenceError(
+  promise: Promise<unknown>,
+): Promise<RepositoryWriteFenceError> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toBeInstanceOf(RepositoryWriteFenceError);
+    return error as RepositoryWriteFenceError;
+  }
+  throw new Error("expected repository-write fence error");
+}
 
 describe("repository write fence object-format coherence", () => {
-  test("rejects a SHA-256 commit over a SHA-1 parent before provider-state reads", async () => {
+  test.each([
+    [parent40, commit64],
+    [parent64, commit40],
+  ])("rejects a %s-byte parent with a %s-byte provider commit before canonical reads", async (
+    expectedParentSha,
+    commitSha,
+  ) => {
     let reads = 0;
-    const error = await captureFenceError(verifyRepositoryWriteResult({
-      prepared: prepared(parent40),
-      providerResult: {
-        commitSha: commit64,
-        parentSha: parent40,
-        targetRef: "topic/object-format",
-      },
+    const error = await fenceError(verifyRepositoryWriteResult({
+      prepared: prepared(expectedParentSha),
+      providerResult: { commitSha },
       refs: {
         async getRefHead() {
           reads += 1;
-          return commit64;
+          return commitSha;
         },
         async getCommitParents() {
           reads += 1;
-          return [parent40];
+          return [expectedParentSha];
         },
       },
     }));
@@ -39,74 +76,42 @@ describe("repository write fence object-format coherence", () => {
       disposition: "pending_reconciliation",
       retry: "reconcile_before_retry",
     });
+    expect(error.evidence.expectedParentSha).toBe(expectedParentSha);
+    expect(error.evidence.returnedCommitSha).toBe(commitSha);
     expect(reads).toBe(0);
   });
 
-  test("preserves one coherent SHA-256 repository format", async () => {
-    const reads: string[] = [];
-    const refs: RepositoryWriteRefReader = {
-      async getRefHead(input) {
-        reads.push(`ref:${input.repositoryFullName}:${input.targetRef}`);
-        return coherentCommit64;
-      },
-      async getCommitParents(input) {
-        reads.push(`commit:${input.repositoryFullName}:${input.commitSha}`);
-        return [parent64];
-      },
-    };
-
-    await expect(verifyRepositoryWriteResult({
-      prepared: prepared(parent64),
+  test.each([
+    [parent40, commit40],
+    [parent64, commit64],
+  ])("preserves coherent repository object formats", async (
+    expectedParentSha,
+    commitSha,
+  ) => {
+    const result = await verifyRepositoryWriteResult({
+      prepared: prepared(expectedParentSha),
       providerResult: {
-        commitSha: coherentCommit64,
-        parentSha: parent64,
-        targetRef: "topic/object-format",
+        commitSha,
+        parentSha: expectedParentSha,
+        targetRef,
       },
-      refs,
-      now: () => "2026-08-03T20:55:00.000Z",
-    })).resolves.toMatchObject({
+      refs: {
+        async getRefHead() {
+          return commitSha;
+        },
+        async getCommitParents() {
+          return [expectedParentSha];
+        },
+      },
+      now: () => "2026-08-04T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
       state: "verified",
-      expectedParentSha: parent64,
-      commitSha: coherentCommit64,
-      nextExpectedParentSha: coherentCommit64,
-      targetRef: "topic/object-format",
-      verifiedAt: "2026-08-03T20:55:00.000Z",
+      expectedParentSha,
+      commitSha,
+      nextExpectedParentSha: commitSha,
       authorizesRetry: false,
     });
-    expect(reads).toEqual([
-      `ref:${repositoryFullName}:topic/object-format`,
-      `commit:${repositoryFullName}:${coherentCommit64}`,
-    ]);
   });
 });
-
-function prepared(expectedParentSha: string) {
-  return prepareRepositoryWrite({
-    version: 1,
-    repositoryFullName,
-    path: "docs/object-format.txt",
-    operation: "create_file",
-    targetRef: "topic/object-format",
-    expectedParentSha,
-  }, {
-    version: 1,
-    repositoryFullName,
-    targetRef: "topic/object-format",
-    defaultBranch: "main",
-    authorityId: "authority_object_format",
-    authorityGeneration: 1,
-    defaultBranchApprovalId: null,
-  });
-}
-
-async function captureFenceError(
-  operation: Promise<unknown>,
-): Promise<RepositoryWriteFenceError> {
-  try {
-    await operation;
-  } catch (error) {
-    expect(error).toBeInstanceOf(RepositoryWriteFenceError);
-    return error as RepositoryWriteFenceError;
-  }
-  throw new Error("Expected repository write fence rejection");
-}
