@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FunctionReference } from "convex/server";
+import { getFunctionName, type FunctionReference } from "convex/server";
 import type { ConvexCaller } from "../src/convex-ledger.ts";
 import {
   ConvexGitHubRepositoryWriteStore,
@@ -25,7 +25,7 @@ class FakeClient implements ConvexCaller {
     reference: FunctionReference<"mutation">,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    this.mutations.push({ name: String(reference), args });
+    this.mutations.push({ name: getFunctionName(reference), args });
     if (this.echoNextReceipt && typeof args.nextReceiptJson === "string") {
       return args.nextReceiptJson;
     }
@@ -36,7 +36,7 @@ class FakeClient implements ConvexCaller {
     reference: FunctionReference<"query">,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    this.queries.push({ name: String(reference), args });
+    this.queries.push({ name: getFunctionName(reference), args });
     return this.queryResult;
   }
 }
