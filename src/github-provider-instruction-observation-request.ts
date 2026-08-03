@@ -239,7 +239,10 @@ function admitProposal(
   );
   const attachmentSnapshotSha256 = exactHash(proposal.attachmentSnapshotSha256);
   const verificationCheckedAt = nullableTimestamp(proposal.verificationCheckedAt);
-  const externalId = nullableExternalId(proposal.externalId);
+  const externalId = nullableExternalId(
+    proposal.externalId,
+    repositoryFullName,
+  );
   const currentSourceRevision = nullableSourceRevision(proposal.currentSourceRevision);
   const providerSourceRevision = nullableSourceRevision(proposal.providerSourceRevision);
   if (!proposalOutcomes.has(String(proposal.outcome))) {
@@ -443,19 +446,36 @@ function canonicalRepository(value: unknown): string {
   return repository;
 }
 
-function exactExternalId(value: unknown): string {
+function exactExternalId(
+  value: unknown,
+  repositoryFullName: string,
+): string {
   if (typeof value !== "string" || value !== value.trim()) {
     throw new RangeError("GitHub issue external ID is invalid");
   }
-  const externalId = parseGitHubIssueExternalId(value).externalId;
+  const parsed = parseGitHubIssueExternalId(value);
+  const externalId = parsed.externalId;
   if (externalId !== value) {
     throw new RangeError("GitHub issue external ID must be canonical");
+  }
+  if (credentialPattern.test(externalId)) {
+    throw new RangeError("GitHub issue external ID is invalid");
+  }
+  if (parsed.repositoryFullName !== repositoryFullName) {
+    throw new RangeError(
+      "GitHub reconciliation proposal external ID is outside the bound repository",
+    );
   }
   return externalId;
 }
 
-function nullableExternalId(value: unknown): string | null {
-  return value === null ? null : exactExternalId(value);
+function nullableExternalId(
+  value: unknown,
+  repositoryFullName: string,
+): string | null {
+  return value === null
+    ? null
+    : exactExternalId(value, repositoryFullName);
 }
 
 function exactHash(value: unknown): string {
