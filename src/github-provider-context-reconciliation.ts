@@ -78,6 +78,11 @@ const receiptProducingOperations = new Set<GitHubIssueProviderOperation>([
 const sourceRevisionPattern = /^[A-Za-z0-9._:/@#-]+$/u;
 const credentialPattern =
   /(?:^|[._:/-])(?:(?:env|secret):\/\/|bearer(?:[._:/-]|$)|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-|eyJ[A-Za-z0-9_-]{8,}\.)/iu;
+const maximumProviderItemNumber = 2_147_483_647;
+
+interface AdmittedReceiptTarget {
+  issueNumber: number | null;
+}
 
 export function compileGitHubProviderContextReconciliation(
   value: unknown,
@@ -88,6 +93,7 @@ export function compileGitHubProviderContextReconciliation(
   }
   const receipt = admitGitHubProviderReceipt(input.receipt as GitHubProviderReceipt);
   assertReceiptLifecycleCoherence(receipt);
+  const target = admitReceiptTarget(receipt);
   const current = input.current === null ? null : admitCurrentIdentity(input.current);
   const inputFingerprint = fingerprintCanonicalRequest({
     schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
@@ -95,7 +101,7 @@ export function compileGitHubProviderContextReconciliation(
     current,
   });
 
-  const decision = decide(receipt, current);
+  const decision = decide(receipt, current, target);
   const body = {
     schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
     project: receipt.project,
@@ -134,6 +140,7 @@ interface Decision {
 function decide(
   receipt: GitHubProviderReceipt,
   current: CurrentGitHubIssueContextIdentityV1 | null,
+  target: AdmittedReceiptTarget,
 ): Decision {
   if (receipt.state === "reserved") {
     return decision(
@@ -163,9 +170,7 @@ function decide(
     if (receipt.result === null || !("issueNumber" in receipt.result)) {
       throw new Error("Settled GitHub comment receipt requires an admitted comment result");
     }
-    const expectedTarget =
-      `${receipt.repositoryFullName}#${receipt.result.issueNumber}:comment:new`;
-    if (receipt.target !== expectedTarget) {
+    if (target.issueNumber !== receipt.result.issueNumber) {
       throw new Error(
         "Settled GitHub comment receipt target does not bind the provider result",
       );
@@ -185,7 +190,7 @@ function decide(
   }
 
   const snapshot = admitGitHubIssueContextSnapshot(receipt.result);
-  assertSettledIssueReadback(receipt, snapshot);
+  assertSettledIssueReadback(receipt, snapshot, target);
   const externalId = snapshot.reference.externalId;
   if (current !== null && current.externalId !== externalId) {
     return decision(
@@ -301,21 +306,72 @@ function assertReceiptLifecycleCoherence(receipt: GitHubProviderReceipt): void {
   }
 }
 
+function admitReceiptTarget(
+  receipt: GitHubProviderReceipt,
+): AdmittedReceiptTarget {
+  const repositoryPrefix = `${receipt.repositoryFullName}#`;
+  if (receipt.operation === "github_create_issue") {
+    if (receipt.target !== `${repositoryPrefix}new`) {
+      throw new Error("GitHub provider receipt target is invalid for its operation");
+    }
+    return { issueNumber: null };
+  }
+
+  let suffix: string;
+  switch (receipt.operation) {
+    case "github_update_issue":
+      suffix = "";
+      break;
+    case "github_add_issue_labels":
+    case "github_remove_issue_label":
+      suffix = ":labels";
+      break;
+    case "github_add_issue_assignees":
+    case "github_remove_issue_assignees":
+      suffix = ":assignees";
+      break;
+    case "github_add_issue_comment":
+      suffix = ":comment:new";
+      break;
+    default:
+      throw new Error("GitHub operation does not produce a provider write receipt");
+  }
+
+  if (!receipt.target.startsWith(repositoryPrefix) || !receipt.target.endsWith(suffix)) {
+    throw new Error("GitHub provider receipt target is invalid for its operation");
+  }
+  const numberEnd = suffix.length === 0
+    ? receipt.target.length
+    : receipt.target.length - suffix.length;
+  const numberText = receipt.target.slice(repositoryPrefix.length, numberEnd);
+  if (!/^[1-9][0-9]*$/u.test(numberText)) {
+    throw new Error("GitHub provider receipt target is invalid for its operation");
+  }
+  const issueNumber = Number(numberText);
+  if (
+    !Number.isSafeInteger(issueNumber)
+    || issueNumber > maximumProviderItemNumber
+    || receipt.target !== `${repositoryPrefix}${issueNumber}${suffix}`
+  ) {
+    throw new Error("GitHub provider receipt target is invalid for its operation");
+  }
+  return { issueNumber };
+}
+
 function assertSettledIssueReadback(
   receipt: GitHubProviderReceipt,
   snapshot: GitHubIssueContext,
+  target: AdmittedReceiptTarget,
 ): void {
   if (snapshot.reference.repositoryFullName !== receipt.repositoryFullName) {
     throw new Error(
       "Settled GitHub issue receipt repository does not bind the provider result",
     );
   }
-  const expectedTarget = expectedIssueTarget(
-    receipt.operation,
-    receipt.repositoryFullName,
-    snapshot.reference.number,
-  );
-  if (receipt.target !== expectedTarget) {
+  if (
+    receipt.operation !== "github_create_issue"
+    && target.issueNumber !== snapshot.reference.number
+  ) {
     throw new Error(
       "Settled GitHub issue receipt target does not bind the provider result",
     );
@@ -330,29 +386,6 @@ function assertSettledIssueReadback(
     throw new Error(
       "Settled GitHub issue receipt verification does not bind the provider result",
     );
-  }
-}
-
-function expectedIssueTarget(
-  operation: GitHubIssueProviderOperation,
-  repositoryFullName: string,
-  issueNumber: number,
-): string {
-  switch (operation) {
-    case "github_create_issue":
-      return `${repositoryFullName}#new`;
-    case "github_update_issue":
-      return `${repositoryFullName}#${issueNumber}`;
-    case "github_add_issue_labels":
-    case "github_remove_issue_label":
-      return `${repositoryFullName}#${issueNumber}:labels`;
-    case "github_add_issue_assignees":
-    case "github_remove_issue_assignees":
-      return `${repositoryFullName}#${issueNumber}:assignees`;
-    default:
-      throw new Error(
-        "GitHub operation does not produce reconcilable issue context",
-      );
   }
 }
 
