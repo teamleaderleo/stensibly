@@ -24,7 +24,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Verify exact transition head
         env:
-          EXPECTED_PARENT: 4c58473468e5ab7bf7436afd2089dc23065f305f
+          EXPECTED_PARENT: a1dc809ec4b0e4efdedbc1325fede64cdc1c1691
           EXPECTED_CARRIER: .github/workflows/plover-1036-transition-source-finalizer.yml
         run: |
           set -euo pipefail
@@ -44,7 +44,7 @@ jobs:
           text = text.replace(old, new)
 
           marker = '''function validCurrentTransitionView(\n  stored: GitHubRepositoryWriteReceipt,'''
-          helper = '''function assertTransitionSource(\n  action: TransitionAction,\n  current: GitHubRepositoryWriteReceipt,\n): void {\n  const dispatchedUnverified = current.dispatchCount === 1\n    && current.verified === null\n    && (\n      current.state === "reserved"\n      || current.state === "pending_reconciliation"\n    );\n  if (action === "reject_and_release") {\n    if (current.state !== "reserved" || current.dispatchCount !== 0) {\n      throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n    }\n    return;\n  }\n  if (\n    action === "hold_for_reconciliation"\n    || action === "record_verified"\n    || action === "hold_verified_for_reconciliation"\n  ) {\n    if (!dispatchedUnverified) {\n      throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n    }\n    return;\n  }\n  if (\n    current.state !== "verified_pending_release"\n    || current.dispatchCount !== 1\n    || current.verified === null\n  ) {\n    throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n  }\n}\n\nfunction validCurrentTransitionView(\n  stored: GitHubRepositoryWriteReceipt,'''
+          helper = '''function assertTransitionSource(\n  action: TransitionAction,\n  current: GitHubRepositoryWriteReceipt,\n): void {\n  const dispatchedUnverified = current.dispatchCount === 1\n    && current.verified === null\n    && (\n      current.state === "reserved"\n      || current.state === "pending_reconciliation"\n    );\n  if (action === "reject_and_release") {\n    if (current.state !== "reserved" || current.dispatchCount !== 0) {\n      throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n    }\n    return;\n  }\n  if (\n    action === "hold_for_reconciliation"\n    || action === "record_verified"\n    || action === "hold_verified_for_reconciliation"\n  ) {\n    if (!dispatchedUnverified) {\n      throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");\n    }\n  }\n}\n\nfunction validCurrentTransitionView(\n  stored: GitHubRepositoryWriteReceipt,'''
           if text.count(marker) != 1:
               raise SystemExit('expected helper insertion marker not found exactly once')
           source.write_text(text.replace(marker, helper))
