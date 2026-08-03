@@ -50,6 +50,27 @@ describe("GitHub instruction-observation retained slug privacy", () => {
       nextAction: "load_attachment_and_observe_repository_instructions",
     });
   });
+
+  test("snapshots the proposal exactly once before privacy and base admission", () => {
+    const canonical = proposal();
+    const hostileProject = `projectxgithub_pat_${"a".repeat(20)}`;
+    const later = refingerprintedWith(canonical, {
+      project: hostileProject,
+    });
+    const alternating = alternatingRecord(canonical, later);
+
+    expect(compile(alternating.value, "default")).toMatchObject({
+      project: canonical.project,
+      actorId: canonical.actorId,
+      proposalFingerprint: canonical.proposalFingerprint,
+      outcome: "ready_for_repository_instruction_observation",
+    });
+    expect(alternating.snapshots()).toBe(1);
+    expect(alternating.prototypeReads()).toBe(1);
+    expect(alternating.descriptorReads()).toBe(
+      Reflect.ownKeys(canonical).length,
+    );
+  });
 });
 
 function compile(
@@ -86,6 +107,41 @@ function refingerprintedWith(
     ...body,
     proposalFingerprint: fingerprintCanonicalRequest(body),
   } as unknown as GitHubProviderContextReconciliationProposalV1;
+}
+
+function alternatingRecord<T extends object>(first: T, later: T) {
+  let active: object = first;
+  let snapshotCount = 0;
+  let prototypeReadCount = 0;
+  let descriptorReadCount = 0;
+  const value = new Proxy({}, {
+    getPrototypeOf() {
+      prototypeReadCount += 1;
+      return Object.prototype;
+    },
+    ownKeys() {
+      active = snapshotCount === 0 ? first : later;
+      snapshotCount += 1;
+      return Reflect.ownKeys(active);
+    },
+    getOwnPropertyDescriptor(_target, key) {
+      descriptorReadCount += 1;
+      const descriptor = Object.getOwnPropertyDescriptor(active, key);
+      if (!descriptor) return undefined;
+      return {
+        value: descriptor.value,
+        writable: true,
+        enumerable: descriptor.enumerable,
+        configurable: true,
+      };
+    },
+  }) as unknown as T;
+  return {
+    value,
+    snapshots: () => snapshotCount,
+    prototypeReads: () => prototypeReadCount,
+    descriptorReads: () => descriptorReadCount,
+  };
 }
 
 function expectFixedRejection(
