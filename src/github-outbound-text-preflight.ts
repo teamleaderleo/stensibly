@@ -123,12 +123,12 @@ const allowedDispositions =
   ]);
 const policyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const unsafeTextPattern =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
-const credentialShapedIdentityPattern =
-  /(?:Bearer\s+|gh[pousr]_|github_pat_|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
+  /[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
+const realisticCredentialPattern =
+  /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
 const closingKeywordBeforeReferencePattern =
-  /(?:^|[^A-Za-z])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
-const exactCommitIdentityPattern = /^[0-9a-f]{7,64}$/iu;
+  /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
+const commitReferenceIdentityPattern = /^[0-9a-f]{7,}$/iu;
 const maximumTextBytes = 128 * 1024;
 const maximumControlledRepositories = 32;
 const maximumFindings = 100;
@@ -140,6 +140,10 @@ type DataRecord = Record<string, unknown>;
  * Evaluates exact outbound GitHub text without performing or authorizing a
  * provider mutation. Diagnostics deliberately separate repository identity
  * fields and never retain the source text or a complete external reference.
+ *
+ * Text is byte-exact: LF, CRLF, lone CR, trailing whitespace, and final-newline
+ * state are neither normalized nor inferred. LF alone advances the diagnostic
+ * line number; CR remains an exact character in the current line.
  */
 export function compileGitHubOutboundTextPreflightV1(
   value: unknown,
@@ -329,36 +333,22 @@ function canonicalRepositoryList(value: unknown): readonly string[] {
 function detectReferences(text: string): readonly DetectedReference[] {
   const references: DetectedReference[] = [];
   const occupied: Array<readonly [number, number]> = [];
-  const directReferencePattern =
-    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?![\p{L}\p{N}\p{M}\p{Pc}~\/?#@!$&*+=%-])/giu;
+  const directItemReferencePattern =
+    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions)\/([0-9]+)(?![\p{L}\p{N}\p{M}\p{Pc}~-])/giu;
+  const directCommitReferencePattern =
+    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/commit\/([0-9a-f]{7,})(?![\p{L}\p{N}\p{M}\p{Pc}~-])/giu;
   const repositoryShorthandPattern =
     /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}.~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]*)(?![\p{L}\p{N}\p{M}\p{Pc}~\/?#@!$&*+=%-])/gu;
   const commitShorthandPattern =
-    /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}.~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?![\p{L}\p{N}\p{M}\p{Pc}~\/?#@!$&*+=%-])/giu;
+    /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}.~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,})(?![\p{L}\p{N}\p{M}\p{Pc}~\/?#@!$&*+=%-])/giu;
 
-  for (const match of text.matchAll(directReferencePattern)) {
+  for (const match of text.matchAll(directItemReferencePattern)) {
     const start = match.index;
     const end = start + match[0].length;
     const repositoryFullName = detectedRepository(match[1], match[2]);
     if (!repositoryFullName) continue;
-    const pathKind = match[3]!.toLowerCase();
-    if (pathKind === "commit") {
-      const commitIdentity = match[4]!.toLowerCase();
-      if (!exactCommitIdentityPattern.test(commitIdentity)) continue;
-      references.push({
-        start,
-        end,
-        source: "direct_url",
-        referenceKind: "commit",
-        repositoryFullName,
-        itemNumber: null,
-        commitIdentity,
-        referenceIdentity: commitIdentity,
-      });
-      occupied.push([start, end]);
-      continue;
-    }
     const itemIdentity = match[4]!;
+    const pathKind = match[3]!.toLowerCase();
     references.push({
       start,
       end,
@@ -372,6 +362,26 @@ function detectReferences(text: string): readonly DetectedReference[] {
       itemNumber: providerItemNumber(itemIdentity),
       commitIdentity: null,
       referenceIdentity: itemIdentity,
+    });
+    occupied.push([start, end]);
+  }
+
+  for (const match of text.matchAll(directCommitReferencePattern)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const repositoryFullName = detectedRepository(match[1], match[2]);
+    if (!repositoryFullName) continue;
+    const commitIdentity = match[3]!.toLowerCase();
+    if (!commitReferenceIdentityPattern.test(commitIdentity)) continue;
+    references.push({
+      start,
+      end,
+      source: "direct_url",
+      referenceKind: "commit",
+      repositoryFullName,
+      itemNumber: null,
+      commitIdentity,
+      referenceIdentity: commitIdentity,
     });
     occupied.push([start, end]);
   }
@@ -407,6 +417,7 @@ function detectReferences(text: string): readonly DetectedReference[] {
     const repositoryFullName = detectedRepository(match[1], match[2]);
     if (!repositoryFullName) continue;
     const commitIdentity = match[3]!.toLowerCase();
+    if (!commitReferenceIdentityPattern.test(commitIdentity)) continue;
     references.push({
       start,
       end,
@@ -430,13 +441,16 @@ function detectedRepository(
   repository: string | undefined,
 ): string | null {
   if (!owner || !repository) return null;
+  let repositoryFullName: string;
   try {
-    return normalizeGitHubRepository(
+    repositoryFullName = normalizeGitHubRepository(
       `${owner.toLowerCase()}/${repository.toLowerCase()}`,
     );
   } catch {
     return null;
   }
+  assertRepositoryIdentityIsPublic(repositoryFullName);
+  return repositoryFullName;
 }
 
 function providerItemNumber(value: string | undefined): number | null {
@@ -492,7 +506,21 @@ function canonicalRepository(value: unknown, label: string): string {
   if (repository !== value) {
     throw new RangeError(`${label} must use canonical lowercase identity`);
   }
+  assertRepositoryIdentityIsPublic(repository);
   return repository;
+}
+
+function assertRepositoryIdentityIsPublic(repositoryFullName: string): void {
+  const [owner, repository] = repositoryFullName.split("/") as [string, string];
+  if (
+    realisticCredentialPattern.test(owner)
+    || realisticCredentialPattern.test(repository)
+    || realisticCredentialPattern.test(repositoryFullName)
+  ) {
+    throw new RangeError(
+      "GitHub outbound repository identity is credential-shaped",
+    );
+  }
 }
 
 function outboundField(value: unknown): GitHubOutboundTextField {
@@ -507,10 +535,25 @@ function exactOutboundText(value: unknown): string {
     typeof value !== "string"
     || Buffer.byteLength(value, "utf8") > maximumTextBytes
     || unsafeTextPattern.test(value)
+    || hasUnpairedSurrogate(value)
   ) {
     throw new RangeError("GitHub outbound text is invalid or exceeds its byte budget");
   }
   return value;
+}
+
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function canonicalPolicyId(
@@ -524,7 +567,7 @@ function canonicalPolicyId(
     || value !== value.trim()
     || Buffer.byteLength(value, "utf8") > maximumBytes
     || !policyIdPattern.test(value)
-    || credentialShapedIdentityPattern.test(value)
+    || realisticCredentialPattern.test(value)
   ) {
     throw new RangeError(`${label} is invalid`);
   }
