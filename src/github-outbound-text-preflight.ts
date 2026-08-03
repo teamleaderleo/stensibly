@@ -330,11 +330,11 @@ function detectReferences(text: string): readonly DetectedReference[] {
   const references: DetectedReference[] = [];
   const occupied: Array<readonly [number, number]> = [];
   const directReferencePattern =
-    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[/?#)\]}>.,;:'"\s])/giu;
+    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[\p{P}\p{Z}\s])/giu;
   const repositoryShorthandPattern =
-    /(?:^|[^A-Za-z0-9._~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]*)(?![A-Za-z0-9_~\/?#@!$&*+=%-])/gu;
+    /(?:^|[^\p{L}\p{N}\p{M}._~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]*)(?![\p{L}\p{N}\p{M}_~\/?#@!$&*+=%-])/gu;
   const commitShorthandPattern =
-    /(?:^|[^A-Za-z0-9._~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?![A-Za-z0-9_~\/?#@!$&*+=%-])/giu;
+    /(?:^|[^\p{L}\p{N}\p{M}._~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?![\p{L}\p{N}\p{M}_~\/?#@!$&*+=%-])/giu;
 
   for (const match of text.matchAll(directReferencePattern)) {
     const start = match.index;
