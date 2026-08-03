@@ -4,6 +4,10 @@ import {
   readBoundedGitHubProviderResponseText,
   withGitHubProviderResponseDeadline,
 } from "../src/github-provider-bounded-response.ts";
+import { GitHubProviderPostEffectError } from "../src/github-provider-post-effect-error.ts";
+import {
+  GitHubRestIssueSetWriteAdapter,
+} from "../src/github-rest-issue-set-write-adapter.ts";
 import {
   GitHubRestIssueWriteAdapter,
 } from "../src/github-rest-issue-write-adapter.ts";
@@ -70,6 +74,47 @@ describe("bounded GitHub provider readback facade", () => {
     expect(result.providerRequestId).toBe("REQ-LIST-READBACK");
   });
 
+  test("disposes unsafe Link metadata without reading provider body", async () => {
+    let bodyReads = 0;
+    let cancelled = false;
+    const rawResponse = {
+      headers: {
+        get(name: string) {
+          const normalized = name.toLowerCase();
+          if (normalized === "x-github-request-id") return "REQ-UNSAFE-LINK";
+          if (normalized === "link") {
+            return "<https://api.github.com/example>; rel=\"next\"\r\nsecret";
+          }
+          return null;
+        },
+      },
+      ok: true,
+      status: 200,
+      body: {
+        getReader() {
+          bodyReads += 1;
+          throw new Error("body must not be read");
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+    } as unknown as Response;
+    const fetcher = withGitHubProviderResponseDeadline(
+      (async () => rawResponse) as typeof fetch,
+      deadlineMs,
+    );
+
+    const response = await fetcher("https://api.github.com/example");
+
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("x-github-request-id")).toBe("REQ-UNSAFE-LINK");
+    expect(await response.text()).toBe("");
+    expect(bodyReads).toBe(0);
+    expect(cancelled).toBe(true);
+  });
+
   test("settles a legacy text read when the first body read never returns", async () => {
     let cancelled = false;
     const fetcher = withGitHubProviderResponseDeadline(
@@ -88,6 +133,92 @@ describe("bounded GitHub provider readback facade", () => {
     }
     expect(outcome.error).toBeInstanceOf(GitHubProviderResponseReadError);
     expect((outcome.error as Error).message).toBe(fixedReadError);
+    expect(cancelled).toBe(true);
+  });
+
+  test("settles create follow-up issue readback on the inherited deadline", async () => {
+    let calls = 0;
+    let cancelled = false;
+    const adapter = new GitHubRestIssueWriteAdapter({
+      tokenProvider: tokenProvider(),
+      providerResponseDeadlineMs: deadlineMs,
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        if ((init?.method ?? "GET") === "POST") {
+          return Response.json(issueResponse(7), {
+            status: 201,
+            headers: { "x-github-request-id": "REQ-CREATE-READBACK" },
+          });
+        }
+        return stalledResponse(() => {
+          cancelled = true;
+        });
+      }) as typeof fetch,
+    });
+
+    const created = await adapter.createIssue({
+      repositoryFullName,
+      title: "Bound final readback",
+      labels: [],
+      assignees: [],
+      idempotencyKey: "bound-final-readback",
+    });
+    expect(created.providerRequestId).toBe("REQ-CREATE-READBACK");
+
+    const outcome = await settleWithin(adapter.getIssue({
+      repositoryFullName,
+      issueNumber: 7,
+    }), watchdogMs);
+
+    expect(outcome.kind).toBe("error");
+    if (outcome.kind !== "error") {
+      throw new Error("Create follow-up readback did not settle");
+    }
+    expect((outcome.error as Error).message).toBe(
+      "GitHub issue readback could not confirm the mutation; reconcile before retry",
+    );
+    expect(calls).toBe(2);
+    expect(cancelled).toBe(true);
+  });
+
+  test("retains label mutation request identity when final readback stalls", async () => {
+    let calls = 0;
+    let cancelled = false;
+    const adapter = new GitHubRestIssueSetWriteAdapter({
+      tokenProvider: tokenProvider(),
+      providerResponseDeadlineMs: deadlineMs,
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        if ((init?.method ?? "GET") === "POST") {
+          return Response.json([{ name: "area:github" }], {
+            status: 200,
+            headers: { "x-github-request-id": "REQ-LABEL-READBACK" },
+          });
+        }
+        return stalledResponse(() => {
+          cancelled = true;
+        });
+      }) as typeof fetch,
+    });
+
+    const outcome = await settleWithin(adapter.addIssueLabels({
+      repositoryFullName,
+      issueNumber: 7,
+      labels: ["area:github"],
+      idempotencyKey: "label-final-readback",
+    }), watchdogMs);
+
+    expect(outcome.kind).toBe("error");
+    if (outcome.kind !== "error") {
+      throw new Error("Label final readback did not settle");
+    }
+    expect(outcome.error).toBeInstanceOf(GitHubProviderPostEffectError);
+    expect(outcome.error).toMatchObject({
+      providerRequestId: "REQ-LABEL-READBACK",
+      message:
+        "GitHub provider effect requires reconciliation after verification failed",
+    });
+    expect(calls).toBe(2);
     expect(cancelled).toBe(true);
   });
 
