@@ -33,7 +33,7 @@ describe("bounded GitHub provider readback facade", () => {
             "x-github-request-id": "REQ-BOUNDED-READBACK",
           },
         });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
       deadlineMs,
     );
 
@@ -59,7 +59,7 @@ describe("bounded GitHub provider readback facade", () => {
             '<https://api.github.com/repos/teamleaderleo/stensibly/issues?page=2>; rel="next"',
           "x-github-request-id": "REQ-LIST-READBACK",
         },
-      })) as typeof fetch,
+      })) as unknown as typeof fetch,
     });
 
     const result = await adapter.listIssues({
@@ -101,7 +101,7 @@ describe("bounded GitHub provider readback facade", () => {
       },
     } as unknown as Response;
     const fetcher = withGitHubProviderResponseDeadline(
-      (async () => rawResponse) as typeof fetch,
+      (async () => rawResponse) as unknown as typeof fetch,
       deadlineMs,
     );
 
@@ -120,7 +120,7 @@ describe("bounded GitHub provider readback facade", () => {
     const fetcher = withGitHubProviderResponseDeadline(
       (async () => stalledResponse(() => {
         cancelled = true;
-      })) as typeof fetch,
+      })) as unknown as typeof fetch,
       deadlineMs,
     );
     const response = await fetcher("https://api.github.com/example");
@@ -153,7 +153,7 @@ describe("bounded GitHub provider readback facade", () => {
         return stalledResponse(() => {
           cancelled = true;
         });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const created = await adapter.createIssue({
@@ -198,7 +198,7 @@ describe("bounded GitHub provider readback facade", () => {
         return stalledResponse(() => {
           cancelled = true;
         });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const outcome = await settleWithin(adapter.addIssueLabels({
