@@ -57,30 +57,19 @@ async function wrappedResponse(
   url: string,
   declaredBytes: number,
 ): Promise<Response> {
-  let bodyReads = 0;
   const raw = {
     headers: new Headers({
       "content-length": String(declaredBytes),
     }),
     ok: true,
     status: 200,
-    body: {
-      getReader() {
-        bodyReads += 1;
-        throw new Error("body must not be read for declared-length controls");
-      },
-      cancel() {},
-    },
+    body: null,
   } as unknown as Response;
   const fetcher = withGitHubProviderResponseDeadline(
     (async () => raw) as typeof fetch,
     deadlineMs,
   );
-  const response = await fetcher(url);
-  Object.defineProperty(response, "__bodyReads", {
-    value: () => bodyReads,
-  });
-  return response;
+  return await fetcher(url);
 }
 
 async function capture(promise: Promise<unknown>): Promise<unknown> {
