@@ -1,0 +1,113 @@
+name: Ember 980 shorthand delimiter repair
+
+on:
+  push:
+    branches:
+      - lumen/971-shorthand-context
+    paths:
+      - .github/workflows/ember-980-delimiter-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ember-980-shorthand-delimiter-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact trigger head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: lumen/971-shorthand-context
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Admit documented punctuation delimiters
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-outbound-text-preflight.ts")
+          source = source_path.read_text()
+          old = r'/(?:^|[^A-Za-z0-9._~:/?#@!$&*+,;=%-])'
+          new = r'/(?:^|[^A-Za-z0-9._~/?#@!$&*+=%-])'
+          if source.count(old) != 2:
+            raise SystemExit("shorthand leading-boundary anchor changed")
+          source_path.write_text(source.replace(old, new))
+
+          test_path = Path("test/github-outbound-text-preflight-shorthand-context.test.ts")
+          tests = test_path.read_text()
+          anchor = '''  test("preserves direct GitHub URL and closing-keyword detection", () => {'''
+          addition = '''  test("detects shorthand after colon, comma, and semicolon delimiters", () => {
+    const result = compile(
+      "Refs:example/project#12,example/project#13;example/project@abcdef0",
+    );
+
+    expect(result.decision).toBe("reject");
+    expect(result.findings).toHaveLength(3);
+    expect(result.findings.map((finding) => finding.source)).toEqual([
+      "repository_shorthand",
+      "repository_shorthand",
+      "commit_shorthand",
+    ]);
+    expect(result.findings.map((finding) => finding.itemNumber)).toEqual([
+      12,
+      13,
+      null,
+    ]);
+  });
+
+'''
+          if tests.count(anchor) != 1:
+            raise SystemExit("delimiter control anchor changed")
+          test_path.write_text(tests.replace(anchor, addition + anchor, 1))
+          PY
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused repair gates
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-outbound-text-preflight-shorthand-context.test.ts \
+            test/github-outbound-text-preflight.test.ts \
+            test/github-outbound-text-preflight-large-number.test.ts \
+            test/github-outbound-text-preflight-fingerprint.test.ts \
+            test/github-outbound-text-preflight-policy-id.test.ts
+
+      - name: Publish parent-relative source-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin morrow/573-outbound-text-preflight
+          git fetch origin "refs/heads/lumen/971-shorthand-context:refs/remotes/origin/lumen/971-shorthand-context"
+          test "$(git rev-parse refs/remotes/origin/lumen/971-shorthand-context)" = "$GITHUB_SHA"
+          rm .github/workflows/ember-980-delimiter-repair.yml
+          git reset --soft origin/morrow/573-outbound-text-preflight
+          git add -A
+          mapfile -t changed < <(git diff --cached --name-only)
+          expected=(
+            src/github-outbound-text-preflight.ts
+            test/github-outbound-text-preflight-shorthand-context.test.ts
+          )
+          printf '%s\n' "${changed[@]}" | sort > /tmp/changed
+          printf '%s\n' "${expected[@]}" | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/changed
+          git diff --cached --check
+          git config user.name "Ember"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Preserve shorthand punctuation delimiters"
+          git push --force-with-lease=refs/heads/lumen/971-shorthand-context:$GITHUB_SHA \
+            origin HEAD:refs/heads/lumen/971-shorthand-context
