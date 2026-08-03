@@ -36,4 +36,27 @@ describe("bounded GitHub provider chunk detachment", () => {
       readBoundedGitHubProviderResponseText(response, 512 * 1024),
     ).resolves.toBe('[{"name":"area:github"}]');
   });
+
+  test("cancels without awaiting when reader acquisition throws", async () => {
+    let cancelled = false;
+    const response = {
+      headers: new Headers(),
+      body: {
+        getReader() {
+          throw new Error("synthetic reader acquisition failure");
+        },
+        cancel() {
+          cancelled = true;
+          return new Promise<void>(() => {});
+        },
+      },
+    } as unknown as Response;
+
+    await expect(
+      readBoundedGitHubProviderResponseText(response, 512 * 1024),
+    ).rejects.toThrow(
+      "GitHub provider response could not be read within its bounds",
+    );
+    expect(cancelled).toBe(true);
+  });
 });
