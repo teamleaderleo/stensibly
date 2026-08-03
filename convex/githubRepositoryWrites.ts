@@ -276,6 +276,7 @@ function expectedTransition(
   if (!sameReservationIdentity(current, proposed)) {
     throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_IDENTITY_MISMATCH");
   }
+  assertTransitionSource(action, current);
   if (action === "reject_and_release") {
     return admitGitHubRepositoryWriteReceipt({
       ...current,
@@ -324,7 +325,11 @@ function expectedTransition(
       },
     });
   }
-  if (current.state !== "verified_pending_release" || current.verified === null) {
+  if (
+    current.state !== "verified_pending_release"
+    || current.dispatchCount !== 1
+    || current.verified === null
+  ) {
     throw new Error("GITHUB_REPOSITORY_WRITE_RELEASE_NOT_VERIFIED");
   }
   return admitGitHubRepositoryWriteReceipt({
@@ -333,6 +338,29 @@ function expectedTransition(
     updatedAt: proposed.updatedAt,
     error: null,
   });
+}
+
+function assertTransitionSource(
+  action: TransitionAction,
+  current: GitHubRepositoryWriteReceipt,
+): void {
+  if (action === "release_verified") return;
+
+  const preDispatchReservation =
+    current.state === "reserved"
+    && current.dispatchCount === 0
+    && current.verified === null
+    && current.error === null;
+  const dispatchedUnverified =
+    (current.state === "reserved" || current.state === "pending_reconciliation")
+    && current.dispatchCount === 1
+    && current.verified === null;
+  const valid = action === "reject_and_release"
+    ? preDispatchReservation
+    : dispatchedUnverified;
+  if (!valid) {
+    throw new Error("GITHUB_REPOSITORY_WRITE_TRANSITION_SOURCE_INVALID");
+  }
 }
 
 function validCurrentTransitionView(
