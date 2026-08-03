@@ -17,7 +17,7 @@ export function admitGitHubBranchRef(value: unknown): string {
   if (
     text === "@"
     || text === "HEAD"
-    || text.startsWith("refs/heads/")
+    || text.startsWith("refs/")
     || text.startsWith("/")
     || text.endsWith("/")
     || text.startsWith("-")
