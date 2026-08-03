@@ -14,14 +14,15 @@ export const githubInstallationPermissionNames = [
 export type GitHubInstallationPermissionName =
   typeof githubInstallationPermissionNames[number];
 
+type GitHubWriteInstallationPermissionName = "issues" | "contents";
 type GitHubReadInstallationPermissionName = Exclude<
   GitHubInstallationPermissionName,
-  "issues"
+  GitHubWriteInstallationPermissionName
 >;
 
 export type GitHubInstallationPermissionInput =
   | {
-    name: "issues";
+    name: GitHubWriteInstallationPermissionName;
     access: "read" | "write";
   }
   | {
@@ -289,7 +290,7 @@ function admitPermission(value: unknown): Readonly<GitHubInstallationPermissionI
   if (access !== "read" && access !== "write") {
     throw new RangeError("GitHub installation permission access is invalid");
   }
-  if (name !== "issues" && access !== "read") {
+  if (name !== "issues" && name !== "contents" && access !== "read") {
     throw new RangeError(
       `GitHub installation permission ${name} supports read access only`,
     );
