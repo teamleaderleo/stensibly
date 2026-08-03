@@ -43,6 +43,7 @@ export async function readBoundedGitHubProviderResponseText(
   try {
     reader = response.body.getReader();
   } catch {
+    discardGitHubProviderResponse(response);
     throw new GitHubProviderResponseReadError();
   }
 
