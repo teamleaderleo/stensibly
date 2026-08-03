@@ -4,10 +4,10 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-Current `main` defines **37** public MCP tools with manifest fingerprint:
+Current `main` defines **41** public MCP tools with manifest fingerprint:
 
 ```text
-sha256:a503c88468a85884ee10b72e0a3d6df47afa8eba95dfe599e9c1c48f59874b70
+sha256:b96543225bc17a1ffc6d85c62a4f8637b25cf8c89a19b7f11155f83a85e0ac76
 ```
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
@@ -18,7 +18,7 @@ Before a dogfood run begins:
 
 1. update `docs/chatgpt-app-actions.json` to the current server manifest;
 2. refresh, rescan, or recreate the ChatGPT app;
-3. review and enable the current actions;
+3. review and enable the current actions required for dogfood;
 4. start a new conversation using the refreshed app;
 5. treat any older visible action set as stale host state, not a supported execution mode.
 
@@ -27,9 +27,8 @@ Before a dogfood run begins:
 Keep a compact set of frequent Stensibly workflow tools and GitHub discovery tools immediately visible. Group the broader GitHub surface by workflow and retrieve it on demand.
 
 - use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
-- use `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` only with one explicit idempotency key per intended effect;
+- use `github_create_issue`, `github_update_issue`, `github_add_issue_comment`, `github_add_issue_labels`, `github_remove_issue_label`, `github_add_issue_assignees`, and `github_remove_issue_assignees` only with one explicit idempotency key per intended effect;
 - reconcile an ambiguous or lost GitHub write through `get_github_provider_receipt` before retrying the exact request;
-- initial label and assignee changes remain outside the public GitHub write surface;
 - use host-native tool search or deferred loading when the host supports it;
 - keep `github_list_toolsets`, `github_search_tools`, and `github_get_tool` as the ChatGPT-compatible discovery fallback;
 - load or return exact schemas before execution;
@@ -79,8 +78,9 @@ Recommended calls:
 4. Stensibly: `get_continuation` or `get_item`.
 5. Stensibly: create one uniquely named item with an idempotency key.
 6. Stensibly: create or comment on one dedicated dogfood GitHub issue with a separate idempotency key.
-7. Stensibly: reconcile through `get_github_provider_receipt`, `get_operation_receipt`, or a bounded read-after-write.
-8. GitHub: read #490 and the affected issue again.
+7. Stensibly: add and remove one dedicated label or assignee with separate idempotency keys.
+8. Stensibly: reconcile through `get_github_provider_receipt`, `get_operation_receipt`, or a bounded read-after-write.
+9. GitHub: read #490 and the affected issue again.
 
 Record the first transition where discovery, executable binding, network dispatch, server processing, result delivery, or another app changes.
 
