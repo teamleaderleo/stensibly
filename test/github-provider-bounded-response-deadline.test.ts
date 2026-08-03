@@ -13,10 +13,10 @@ import {
 
 const repositoryFullName = "teamleaderleo/stensibly";
 const issueNumber = 525;
-const readDeadlineMs = 20;
+const responseDeadlineMs = 20;
 const witnessWindowMs = 250;
 
-describe("bounded GitHub provider response read deadline", () => {
+describe("bounded GitHub provider response deadline", () => {
   test("cancels and rejects when the first response-body read never settles", async () => {
     const observed = stalledResponse("REQ-SHARED-DEADLINE");
 
@@ -24,13 +24,13 @@ describe("bounded GitHub provider response read deadline", () => {
       readBoundedGitHubProviderResponseText(
         observed.response,
         512 * 1024,
-        readDeadlineMs,
+        responseDeadlineMs,
       ),
     );
 
     expect(outcome.kind).toBe("rejected");
     if (outcome.kind !== "rejected") {
-      throw new Error("Bounded response reader did not enforce its read deadline");
+      throw new Error("Bounded response reader did not enforce its deadline");
     }
     expect(outcome.error).toBeInstanceOf(GitHubProviderResponseReadError);
     expect((outcome.error as Error).message).toBe(
@@ -45,14 +45,14 @@ describe("bounded GitHub provider response read deadline", () => {
     const adapter = new GitHubRestIssueSetWriteAdapter({
       tokenProvider: tokenProvider(),
       fetch: (async () => observed.response) as typeof fetch,
-      responseReadTimeoutMs: readDeadlineMs,
+      providerResponseDeadlineMs: responseDeadlineMs,
     });
 
     const outcome = await withinWitnessWindow(adapter.addIssueLabels({
       repositoryFullName,
       issueNumber,
       labels: ["area:github"],
-      idempotencyKey: "set-response-read-deadline",
+      idempotencyKey: "set-response-deadline",
     }));
 
     expectPostEffectDeadline(outcome, requestId);
@@ -65,7 +65,7 @@ describe("bounded GitHub provider response read deadline", () => {
     const adapter = new GitHubRestIssueWriteAdapter({
       tokenProvider: tokenProvider(),
       fetch: (async () => observed.response) as typeof fetch,
-      responseReadTimeoutMs: readDeadlineMs,
+      providerResponseDeadlineMs: responseDeadlineMs,
     });
 
     const outcome = await withinWitnessWindow(adapter.createIssue({
@@ -73,7 +73,7 @@ describe("bounded GitHub provider response read deadline", () => {
       title: "Bound stalled provider response reads",
       labels: [],
       assignees: [],
-      idempotencyKey: "create-response-read-deadline",
+      idempotencyKey: "create-response-deadline",
     }));
 
     expectPostEffectDeadline(outcome, requestId);
@@ -83,6 +83,7 @@ describe("bounded GitHub provider response read deadline", () => {
   test("rejects invalid adapter deadlines before token or fetch access", () => {
     const invalidValues = [
       0,
+      -0,
       -1,
       1.5,
       Number.NaN,
@@ -92,7 +93,7 @@ describe("bounded GitHub provider response read deadline", () => {
       null,
     ] as const;
 
-    for (const responseReadTimeoutMs of invalidValues) {
+    for (const providerResponseDeadlineMs of invalidValues) {
       let tokenCalls = 0;
       let fetchCalls = 0;
       const options = {
@@ -109,15 +110,15 @@ describe("bounded GitHub provider response read deadline", () => {
           fetchCalls += 1;
           return Response.json({});
         }) as typeof fetch,
-        responseReadTimeoutMs,
+        providerResponseDeadlineMs,
       };
 
       expect(() => new GitHubRestIssueWriteAdapter(
         options as ConstructorParameters<typeof GitHubRestIssueWriteAdapter>[0],
-      )).toThrow("GitHub provider response read timeout is invalid");
+      )).toThrow("GitHub provider response deadline is invalid");
       expect(() => new GitHubRestIssueSetWriteAdapter(
         options as ConstructorParameters<typeof GitHubRestIssueSetWriteAdapter>[0],
-      )).toThrow("GitHub provider response read timeout is invalid");
+      )).toThrow("GitHub provider response deadline is invalid");
       expect(tokenCalls).toBe(0);
       expect(fetchCalls).toBe(0);
     }
