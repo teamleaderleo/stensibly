@@ -112,7 +112,7 @@ const timestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const safeIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/u;
 const credentialPattern =
-  /(?:^|[._:/-])(?:(?:env|secret):\/\/|bearer(?:[._:/-]|$)|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-|eyJ[A-Za-z0-9_-]{8,}\.)/iu;
+  /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._\/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
 
 export function compileGitHubProviderInstructionObservationRequestV1(
   value: unknown,
@@ -424,6 +424,7 @@ function exactSlug(value: unknown, label: string): string {
     typeof value !== "string"
     || value !== value.trim()
     || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)
+    || credentialPattern.test(value)
   ) throw new RangeError(`${label} is invalid`);
   return value;
 }
