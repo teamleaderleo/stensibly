@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
   GitHubIssueComment,
+  GitHubIssueProviderOperation,
   GitHubProviderReceipt,
 } from "../src/github-provider-contracts.ts";
 import {
@@ -63,6 +64,97 @@ describe("GitHub provider context reconciliation lifecycle", () => {
     expect(() => compile(pendingReceipt({
       recovery: { nextAction: "none" },
     }))).toThrow("Pending GitHub provider receipt lifecycle is inconsistent");
+  });
+
+  test("admits operation targets before every unsettled outcome", () => {
+    const valid: Array<readonly [GitHubProviderReceipt, string]> = [
+      [
+        unsettledReceipt(
+          "github_create_issue",
+          `${repositoryFullName}#new`,
+          "reserved",
+        ),
+        "await_provider_result",
+      ],
+      [
+        unsettledReceipt(
+          "github_update_issue",
+          `${repositoryFullName}#958`,
+          "pending_reconciliation",
+        ),
+        "pending_provider_reconciliation",
+      ],
+      [
+        unsettledReceipt(
+          "github_add_issue_labels",
+          `${repositoryFullName}#958:labels`,
+          "rejected",
+        ),
+        "no_issue_context_effect",
+      ],
+      [
+        unsettledReceipt(
+          "github_remove_issue_assignees",
+          `${repositoryFullName}#958:assignees`,
+          "reserved",
+        ),
+        "await_provider_result",
+      ],
+      [
+        unsettledReceipt(
+          "github_add_issue_comment",
+          `${repositoryFullName}#958:comment:new`,
+          "pending_reconciliation",
+        ),
+        "pending_provider_reconciliation",
+      ],
+    ];
+    for (const [receipt, outcome] of valid) {
+      expect(compile(receipt).outcome).toBe(outcome);
+    }
+
+    const invalid = [
+      unsettledReceipt(
+        "github_create_issue",
+        `${repositoryFullName}#958`,
+        "reserved",
+      ),
+      unsettledReceipt(
+        "github_update_issue",
+        "other/repository#958",
+        "pending_reconciliation",
+      ),
+      unsettledReceipt(
+        "github_add_issue_labels",
+        `${repositoryFullName}#958`,
+        "rejected",
+      ),
+      unsettledReceipt(
+        "github_remove_issue_assignees",
+        `${repositoryFullName}#new`,
+        "reserved",
+      ),
+      unsettledReceipt(
+        "github_add_issue_comment",
+        `${repositoryFullName}#958:comment:new:extra`,
+        "pending_reconciliation",
+      ),
+      unsettledReceipt(
+        "github_update_issue",
+        `${repositoryFullName}#0`,
+        "reserved",
+      ),
+      unsettledReceipt(
+        "github_update_issue",
+        `${repositoryFullName}#0958`,
+        "rejected",
+      ),
+    ];
+    for (const receipt of invalid) {
+      expect(() => compile(receipt)).toThrow(
+        "GitHub provider receipt target is invalid for its operation",
+      );
+    }
   });
 
   test("requires reserved and rejected receipts to retain their exact recovery posture", () => {
@@ -182,6 +274,50 @@ function compile(receipt: GitHubProviderReceipt) {
     schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
     receipt,
     current: null,
+  });
+}
+
+function unsettledReceipt(
+  operation: GitHubIssueProviderOperation,
+  target: string,
+  state: "reserved" | "pending_reconciliation" | "rejected",
+): GitHubProviderReceipt {
+  if (state === "reserved") {
+    return issueReceipt({
+      operation,
+      target,
+      state,
+      providerRequestId: null,
+      result: null,
+      verification: {
+        state: "not_run",
+        checkedAt: null,
+        sourceRevision: null,
+      },
+      error: null,
+      recovery: { nextAction: "none" },
+    });
+  }
+  if (state === "pending_reconciliation") {
+    return pendingReceipt({ operation, target });
+  }
+  return issueReceipt({
+    operation,
+    target,
+    state,
+    providerRequestId: null,
+    result: null,
+    verification: {
+      state: "not_run",
+      checkedAt: null,
+      sourceRevision: null,
+    },
+    error: {
+      code: "provider_denied",
+      message: "GitHub rejected the operation",
+      retry: "do_not_retry",
+    },
+    recovery: { nextAction: "inspect_authority_or_provider_rejection" },
   });
 }
 
