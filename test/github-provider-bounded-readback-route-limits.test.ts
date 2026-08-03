@@ -66,7 +66,7 @@ async function wrappedResponse(
     body: null,
   } as unknown as Response;
   const fetcher = withGitHubProviderResponseDeadline(
-    (async () => raw) as typeof fetch,
+    (async () => raw) as unknown as typeof fetch,
     deadlineMs,
   );
   return await fetcher(url);
