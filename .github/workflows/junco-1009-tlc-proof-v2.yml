@@ -100,29 +100,28 @@ jobs:
             StaleGenerationCannotPublish \
             formal/CancellationSettlement.tla /tmp/unsafe-stale.log
 
-          (
-            cd formal
-            expect_violation CancellationSettlementPreCloseSuccess.cfg \
-              PreCloseSuccessFailureWitnessAbsent \
-              CancellationSettlementWitnesses.tla \
-              /tmp/witness-preclose-success.log
-            expect_violation CancellationSettlementPreCloseFailure.cfg \
-              PreCloseFailureReconciliationWitnessAbsent \
-              CancellationSettlementWitnesses.tla \
-              /tmp/witness-preclose-failure.log
-            expect_violation CancellationSettlementRepeatedClose.cfg \
-              RepeatedCloseWitnessAbsent \
-              CancellationSettlementWitnesses.tla \
-              /tmp/witness-repeated-close.log
-            expect_violation CancellationSettlementCancelledRetry.cfg \
-              CancelledRetryWitnessAbsent \
-              CancellationSettlementWitnesses.tla \
-              /tmp/witness-cancelled-retry.log
-            expect_violation CancellationSettlementActiveRejoin.cfg \
-              ActiveRejoinWitnessAbsent \
-              CancellationSettlementActiveRejoinWitnesses.tla \
-              /tmp/witness-active-rejoin.log
-          )
+          pushd formal >/dev/null
+          expect_violation CancellationSettlementPreCloseSuccess.cfg \
+            PreCloseSuccessFailureWitnessAbsent \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-preclose-success.log
+          expect_violation CancellationSettlementPreCloseFailure.cfg \
+            PreCloseFailureReconciliationWitnessAbsent \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-preclose-failure.log
+          expect_violation CancellationSettlementRepeatedClose.cfg \
+            RepeatedCloseWitnessAbsent \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-repeated-close.log
+          expect_violation CancellationSettlementCancelledRetry.cfg \
+            CancelledRetryWitnessAbsent \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-cancelled-retry.log
+          expect_violation CancellationSettlementActiveRejoin.cfg \
+            ActiveRejoinWitnessAbsent \
+            CancellationSettlementActiveRejoinWitnesses.tla \
+            /tmp/witness-active-rejoin.log
+          popd >/dev/null
 
           core="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' /tmp/safe-core.log | tail -1 || true)"
           active="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' /tmp/safe-active.log | tail -1 || true)"
