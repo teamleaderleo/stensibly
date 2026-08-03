@@ -67,7 +67,7 @@ describe("GitHub issue set-write assignee limit", () => {
       fetch: (async () => {
         fetchCalls += 1;
         return Response.json({ message: "must not dispatch" }, { status: 500 });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     await expect(adapter.addIssueAssignees({
