@@ -15,6 +15,8 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const issueNumber = 525;
 const readDeadlineMs = 20;
 const witnessWindowMs = 250;
+const invalidReadDeadlines = [0, -0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5];
+const invalidDeadlineError = "GitHub provider response read timeout is invalid";
 
 type DeadlineReader = (
   response: Response,
@@ -23,6 +25,78 @@ type DeadlineReader = (
 ) => Promise<string>;
 
 describe("bounded GitHub provider response read deadline", () => {
+  test("rejects invalid deadlines before response-body access", async () => {
+    const read = readBoundedGitHubProviderResponseText as unknown as DeadlineReader;
+    for (const deadlineMs of invalidReadDeadlines) {
+      let bodyReads = 0;
+      const response = {
+        headers: new Headers(),
+        get body() {
+          bodyReads += 1;
+          throw new Error("body must remain unread");
+        },
+      } as unknown as Response;
+
+      await expect(read(response, 512 * 1024, deadlineMs)).rejects.toThrow(
+        invalidDeadlineError,
+      );
+      expect(bodyReads).toBe(0);
+    }
+  });
+
+  test("rejects invalid set-write deadlines before token or provider work", async () => {
+    for (const deadlineMs of invalidReadDeadlines) {
+      const work = workCounters();
+      let thrown: unknown;
+      try {
+        const adapter = new GitHubRestIssueSetWriteAdapter({
+          tokenProvider: work.tokenProvider,
+          fetch: work.fetch,
+          responseReadTimeoutMs: deadlineMs,
+        } as unknown as ConstructorParameters<typeof GitHubRestIssueSetWriteAdapter>[0]);
+        await adapter.addIssueLabels({
+          repositoryFullName,
+          issueNumber,
+          labels: ["area:github"],
+          idempotencyKey: "invalid-set-response-read-deadline",
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as Error).message).toBe(invalidDeadlineError);
+      expect(work.tokenCalls()).toBe(0);
+      expect(work.fetchCalls()).toBe(0);
+    }
+  });
+
+  test("rejects invalid create-write deadlines before token or provider work", async () => {
+    for (const deadlineMs of invalidReadDeadlines) {
+      const work = workCounters();
+      let thrown: unknown;
+      try {
+        const adapter = new GitHubRestIssueWriteAdapter({
+          tokenProvider: work.tokenProvider,
+          fetch: work.fetch,
+          responseReadTimeoutMs: deadlineMs,
+        } as unknown as ConstructorParameters<typeof GitHubRestIssueWriteAdapter>[0]);
+        await adapter.createIssue({
+          repositoryFullName,
+          title: "Reject invalid response deadlines",
+          labels: [],
+          assignees: [],
+          idempotencyKey: "invalid-create-response-read-deadline",
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as Error).message).toBe(invalidDeadlineError);
+      expect(work.tokenCalls()).toBe(0);
+      expect(work.fetchCalls()).toBe(0);
+    }
+  });
+
   test("cancels and rejects when the first response-body read never settles", async () => {
     const observed = stalledResponse("REQ-SHARED-DEADLINE");
     const read = readBoundedGitHubProviderResponseText as unknown as DeadlineReader;
@@ -148,6 +222,31 @@ async function withinWitnessWindow<T>(promise: Promise<T>): Promise<
       setTimeout(() => resolve({ kind: "timeout", value: null, error: null }), witnessWindowMs);
     }),
   ]);
+}
+
+function workCounters() {
+  let tokenCalls = 0;
+  let fetchCalls = 0;
+  return {
+    tokenProvider: {
+      async getInstallationToken() {
+        tokenCalls += 1;
+        return {
+          token: "installation-token",
+          expiresAt: "2026-08-03T12:00:00.000Z",
+        };
+      },
+    },
+    fetch: (async () => {
+      fetchCalls += 1;
+      return Response.json({ message: "provider work should not execute" }, {
+        status: 422,
+        headers: { "x-github-request-id": "REQ-INVALID-DEADLINE" },
+      });
+    }) as typeof fetch,
+    tokenCalls: () => tokenCalls,
+    fetchCalls: () => fetchCalls,
+  };
 }
 
 function tokenProvider() {
