@@ -245,12 +245,20 @@ function admitProposal(
   );
   const currentSourceRevision = nullableSourceRevision(proposal.currentSourceRevision);
   const providerSourceRevision = nullableSourceRevision(proposal.providerSourceRevision);
-  if (!proposalOutcomes.has(String(proposal.outcome))) {
+  if (
+    typeof proposal.outcome !== "string"
+    || !proposalOutcomes.has(proposal.outcome)
+  ) {
     throw new RangeError("GitHub reconciliation proposal outcome is invalid");
   }
-  if (!proposalNextActions.has(String(proposal.nextAction))) {
+  if (
+    typeof proposal.nextAction !== "string"
+    || !proposalNextActions.has(proposal.nextAction)
+  ) {
     throw new RangeError("GitHub reconciliation proposal next action is invalid");
   }
+  const outcome = proposal.outcome as GitHubProviderContextReconciliationProposalV1["outcome"];
+  const nextAction = proposal.nextAction as GitHubProviderContextReconciliationProposalV1["nextAction"];
   const providerSnapshot = proposal.providerSnapshot === null
     ? null
     : admitGitHubIssueContextSnapshot(proposal.providerSnapshot);
@@ -276,8 +284,8 @@ function admitProposal(
     externalId,
     currentSourceRevision,
     providerSourceRevision,
-    outcome: proposal.outcome as GitHubProviderContextReconciliationProposalV1["outcome"],
-    nextAction: proposal.nextAction as GitHubProviderContextReconciliationProposalV1["nextAction"],
+    outcome,
+    nextAction,
     providerSnapshot,
     inputFingerprint,
     proposalFingerprint,
