@@ -73,28 +73,32 @@ jobs:
 
           request_path = Path("test/github-issue-provider-request-id-retention.test.ts")
           text = request_path.read_text()
-          text = text.replace(
-            '''class RequestIdAdapter implements GitHubIssueProviderAdapter {
-            readonly mode: Mode;
-            mutationCalls = 0;
-            effectReturned = false;
-            current = issue();
+          text, class_count = re.subn(
+            r'''class RequestIdAdapter implements GitHubIssueProviderAdapter \{
+  readonly mode: Mode;
+  mutationCalls = 0;
+  effectReturned = false;
+  current = issue\(\);
 
-            constructor(mode: Mode) {
-              this.mode = mode;
-            }''',
+  constructor\(mode: Mode\) \{
+    this\.mode = mode;
+  \}''',
             '''class RequestIdAdapter implements GitHubIssueProviderAdapter {
-            readonly mode: Mode;
-            readonly requestIdOverride: unknown | undefined;
-            mutationCalls = 0;
-            effectReturned = false;
-            current = issue();
+  readonly mode: Mode;
+  readonly requestIdOverride: unknown | undefined;
+  mutationCalls = 0;
+  effectReturned = false;
+  current = issue();
 
-            constructor(mode: Mode, requestIdOverride?: unknown) {
-              this.mode = mode;
-              this.requestIdOverride = requestIdOverride;
-            }''',
+  constructor(mode: Mode, requestIdOverride?: unknown) {
+    this.mode = mode;
+    this.requestIdOverride = requestIdOverride;
+  }''',
+            text,
+            count=1,
           )
+          if class_count != 1:
+            raise SystemExit("request adapter class anchor changed")
           for before, after in [
             ('providerRequestId: "REQ-CREATE",', 'providerRequestId: this.#requestId("REQ-CREATE"),'),
             ('providerRequestId: "REQ-UPDATE",', 'providerRequestId: this.#requestId("REQ-UPDATE"),'),
@@ -104,64 +108,81 @@ jobs:
             if before not in text:
               raise SystemExit(f"request ID anchor changed: {before}")
             text = text.replace(before, after, 1)
-          anchor = '''  #beginEffect(expected: Mode): void {
-            this.mutationCalls += 1;'''
-          replacement = '''  #requestId(fallback: string): string {
-            return (this.requestIdOverride ?? fallback) as string;
-          }
+          text, helper_count = re.subn(
+            r'''(?m)^  #beginEffect\(expected: Mode\): void \{
+    this\.mutationCalls \+= 1;''',
+            '''  #requestId(fallback: string): string {
+    return (this.requestIdOverride ?? fallback) as string;
+  }
 
-          #beginEffect(expected: Mode): void {
-            this.mutationCalls += 1;'''
-          if anchor not in text:
+  #beginEffect(expected: Mode): void {
+    this.mutationCalls += 1;''',
+            text,
+            count=1,
+          )
+          if helper_count != 1:
             raise SystemExit("request ID helper anchor changed")
-          text = text.replace(anchor, replacement, 1)
           test_anchor = '''  test("keeps request identity null when no admissible provider response existed", async () => {'''
           test_replacement = r'''  test("drops hostile custom-adapter request identities before persistence", async () => {
-            const hostileValues: unknown[] = [
-              `github_pat_${"a".repeat(24)}`,
-              `sk-proj-${"b".repeat(24)}`,
-              "request\nwith-control",
-              "r".repeat(129),
-              42,
-            ];
+    const hostileValues: unknown[] = [
+      `github_pat_${"a".repeat(24)}`,
+      `sk-proj-${"b".repeat(24)}`,
+      "request\nwith-control",
+      "r".repeat(129),
+      42,
+    ];
 
-            for (const [index, hostile] of hostileValues.entries()) {
-              const adapter = new RequestIdAdapter("update", hostile);
-              const service = setup(adapter);
-              const idempotencyKey = `drop-hostile-request-${index}`;
-              const execute = () => service.updateIssue({
-                ...context,
-                issueNumber,
-                expectedSourceRevision: "rev-before",
-                title: "Updated",
-                idempotencyKey,
-              });
-              const first = await pendingError(execute());
-              expect(first.receipt.providerRequestId).toBeNull();
-              expect(JSON.stringify(first.receipt)).not.toContain(String(hostile));
-              const replay = await pendingError(execute());
-              expect(replay.receipt).toEqual(first.receipt);
-              expect(adapter.mutationCalls).toBe(1);
-            }
-          });
+    for (const [index, hostile] of hostileValues.entries()) {
+      const adapter = new RequestIdAdapter("update", hostile);
+      const service = setup(adapter);
+      const idempotencyKey = `drop-hostile-request-${index}`;
+      const execute = () => service.updateIssue({
+        ...context,
+        issueNumber,
+        expectedSourceRevision: "rev-before",
+        title: "Updated",
+        idempotencyKey,
+      });
+      const first = await pendingError(execute());
+      expect(first.receipt.providerRequestId).toBeNull();
+      expect(JSON.stringify(first.receipt)).not.toContain(String(hostile));
+      const replay = await pendingError(execute());
+      expect(replay.receipt).toEqual(first.receipt);
+      expect(adapter.mutationCalls).toBe(1);
+    }
+  });
 
-          test("keeps request identity null when no admissible provider response existed", async () => {'''
+  test("keeps request identity null when no admissible provider response existed", async () => {'''
           if test_anchor not in text:
             raise SystemExit("hostile request ID test anchor changed")
           request_path.write_text(text.replace(test_anchor, test_replacement, 1))
 
           source_path = Path("src/github-rest-issue-set-write-adapter.ts")
           source = source_path.read_text()
-          source = source.replace(
-            'if (isRecord(entry)) {\n      return boundedText(entry.name, "GitHub label", 100);',
-            'if (isRecord(entry) && typeof entry.name === "string") {\n      return boundedText(entry.name, "GitHub label", 100);',
-            1,
+          source, label_count = re.subn(
+            r'''if \(isRecord\(entry\)\) \{
+      return boundedText\(entry\.name, "GitHub label", 100\);''',
+            '''if (isRecord(entry) && typeof entry.name === "string") {
+      return boundedText(entry.name, "GitHub label", 100);''',
+            source,
+            count=1,
           )
-          source = source.replace(
-            'if (!isRecord(entry)) {\n      throw new RangeError(`GitHub ${operation} response was invalid`);\n    }\n    return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();',
-            'if (!isRecord(entry) || typeof entry.login !== "string") {\n      throw new RangeError(`GitHub ${operation} response was invalid`);\n    }\n    return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();',
-            1,
+          source, login_count = re.subn(
+            r'''if \(!isRecord\(entry\)\) \{
+      throw new RangeError\(`GitHub \$\{operation\} response was invalid`\);
+    \}
+    return boundedText\(entry\.login, "GitHub assignee", 39\)\.toLowerCase\(\);''',
+            '''if (!isRecord(entry) || typeof entry.login !== "string") {
+      throw new RangeError(`GitHub ${operation} response was invalid`);
+    }
+    return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();''',
+            source,
+            count=1,
           )
+          if label_count != 1 or login_count != 1:
+            raise SystemExit(
+              f"provider response anchors changed: label={label_count} login={login_count}"
+            )
           source_path.write_text(source)
 
           throwing = re.compile(
