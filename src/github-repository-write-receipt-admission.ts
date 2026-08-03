@@ -409,7 +409,9 @@ function exactPositiveInteger(value: unknown): number {
 }
 
 function exactDispatchCount(value: unknown): 0 | 1 {
-  if (value !== 0 && value !== 1) throw invalidReceipt();
+  if (Object.is(value, -0) || (value !== 0 && value !== 1)) {
+    throw invalidReceipt();
+  }
   return value;
 }
 
