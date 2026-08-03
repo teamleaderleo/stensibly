@@ -113,7 +113,7 @@ describe("GitHub repository-write adapter fence parity", () => {
           });
         }
         return Response.json({ message: "unexpected request" }, { status: 500 });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     await expect(adapter.getCommitParents({
@@ -207,7 +207,7 @@ function adapterThatMustNotReachProvider() {
     fetch: (async () => {
       fetches += 1;
       return Response.json({ message: "must not fetch" }, { status: 500 });
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   });
   return {
     adapter,
