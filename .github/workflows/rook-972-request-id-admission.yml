@@ -61,9 +61,10 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
-          path = Path("test/github-issue-provider-request-id-retention.test.ts")
-          text = path.read_text()
+          request_path = Path("test/github-issue-provider-request-id-retention.test.ts")
+          text = request_path.read_text()
 
           constructor_before = '''class RequestIdAdapter implements GitHubIssueProviderAdapter {
             readonly mode: Mode;
@@ -122,10 +123,10 @@ jobs:
               42,
             ];
 
-            for (const hostile of hostileValues) {
+            for (const [index, hostile] of hostileValues.entries()) {
               const adapter = new RequestIdAdapter("update", hostile);
               const service = setup(adapter);
-              const idempotencyKey = `drop-hostile-request-${typeof hostile}-${String(hostile).length}`;
+              const idempotencyKey = `drop-hostile-request-${index}`;
               const execute = () => service.updateIssue({
                 ...context,
                 issueNumber,
@@ -147,7 +148,60 @@ jobs:
           test("keeps request identity null when no admissible provider response existed", async () => {'''
           if text.count(test_anchor) != 1:
             raise SystemExit("hostile request ID test anchor changed")
-          path.write_text(text.replace(test_anchor, test_replacement, 1))
+          text = text.replace(test_anchor, test_replacement, 1)
+          request_path.write_text(text)
+
+          source_path = Path("src/github-rest-issue-set-write-adapter.ts")
+          source = source_path.read_text()
+          label_before = '''    if (isRecord(entry)) {
+                return boundedText(entry.name, "GitHub label", 100);
+              }'''
+          label_after = '''    if (isRecord(entry) && typeof entry.name === "string") {
+                return boundedText(entry.name, "GitHub label", 100);
+              }'''
+          if source.count(label_before) != 1:
+            raise SystemExit("label response string anchor changed")
+          source = source.replace(label_before, label_after, 1)
+
+          login_before = '''    if (!isRecord(entry)) {
+                throw new RangeError(`GitHub ${operation} response was invalid`);
+              }
+              return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();'''
+          login_after = '''    if (!isRecord(entry) || typeof entry.login !== "string") {
+                throw new RangeError(`GitHub ${operation} response was invalid`);
+              }
+              return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();'''
+          if source.count(login_before) != 1:
+            raise SystemExit("assignee response string anchor changed")
+          source_path.write_text(source.replace(login_before, login_after, 1))
+
+          throwing_method = re.compile(
+            r'(?m)^  async (createIssue|updateIssue|addIssueComment|removeIssueLabel|addIssueAssignees|removeIssueAssignees)\(\) \{\n(    throw new Error\([^\n]+\);\n  \})'
+          )
+          for filename in [
+            "test/github-issue-provider-call-local-readback.test.ts",
+            "test/github-issue-provider-request-id-retention.test.ts",
+          ]:
+            path = Path(filename)
+            current = path.read_text()
+            current, count = throwing_method.subn(
+              lambda match: f'  async {match.group(1)}(): Promise<never> {{\n{match.group(2)}',
+              current,
+            )
+            if count == 0:
+              raise SystemExit(f"no throwing adapter methods repaired in {filename}")
+            path.write_text(current)
+
+          for filename in [
+            "test/github-rest-issue-set-write-assignee-limit.test.ts",
+            "test/hosted-github-issue-set-write-boundaries.test.ts",
+          ]:
+            path = Path(filename)
+            current = path.read_text()
+            repaired = current.replace(") as typeof fetch", ") as unknown as typeof fetch")
+            if repaired == current:
+              raise SystemExit(f"fetch cast anchor changed in {filename}")
+            path.write_text(repaired)
           PY
 
       - name: Install committed dependencies
@@ -162,7 +216,8 @@ jobs:
             test/github-issue-provider-request-id-retention.test.ts \
             test/github-rest-issue-set-write-request-id.test.ts \
             test/github-issue-provider-call-local-readback.test.ts \
-            test/github-rest-issue-set-write-assignee-limit.test.ts
+            test/github-rest-issue-set-write-assignee-limit.test.ts \
+            test/hosted-github-issue-set-write-boundaries.test.ts
 
       - name: Publish source-only repair
         shell: bash
@@ -175,7 +230,11 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add \
             src/github-provider-post-effect-error.ts \
+            src/github-rest-issue-set-write-adapter.ts \
+            test/github-issue-provider-call-local-readback.test.ts \
             test/github-issue-provider-request-id-retention.test.ts \
+            test/github-rest-issue-set-write-assignee-limit.test.ts \
+            test/hosted-github-issue-set-write-boundaries.test.ts \
             .github/workflows/rook-972-request-id-admission.yml
           git diff --cached --check
           git commit -m "Admit post-effect provider request identities"
