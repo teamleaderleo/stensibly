@@ -65,7 +65,7 @@ describe("bounded GitHub provider readback facade", () => {
     });
 
     expect(result.issues).toHaveLength(1);
-    expect(result.issues[0]?.reference.number).toBe(1);
+    expect(result.issues[0]?.number).toBe(1);
     expect(result.nextCursor).toBe("github-rest-v1:2:0");
     expect(result.providerRequestId).toBe("REQ-LIST-READBACK");
   });
