@@ -6,93 +6,121 @@ export class GitHubProviderResponseReadError extends Error {
 }
 
 export const maximumGitHubProviderResponseChunks = 4_096;
-export const defaultGitHubProviderResponseReadTimeoutMs = 30_000;
-export const maximumGitHubProviderResponseReadTimeoutMs = 120_000;
+export const defaultGitHubProviderResponseDeadlineMs = 30_000;
+export const maximumGitHubProviderResponseDeadlineMs = 120_000;
 
-const responseReadTimeouts = new WeakMap<Response, number>();
-
-export function admitGitHubProviderResponseReadTimeoutMs(
-  value: unknown,
-): number {
-  const timeout = value === undefined
-    ? defaultGitHubProviderResponseReadTimeoutMs
-    : value;
-  if (
-    typeof timeout !== "number"
-    || !Number.isSafeInteger(timeout)
-    || timeout < 1
-    || timeout > maximumGitHubProviderResponseReadTimeoutMs
-  ) {
-    throw new RangeError("GitHub provider response read timeout is invalid");
-  }
-  return timeout;
+interface GitHubProviderResponseDeadline {
+  readonly controller: AbortController;
+  readonly deadline: Promise<never>;
+  readonly deadlineAt: number;
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly removeExternalAbort: () => void;
+  finished: boolean;
 }
 
-export function withGitHubProviderResponseReadTimeout(
+const responseDeadlines = new WeakMap<Response, GitHubProviderResponseDeadline>();
+
+export function admitGitHubProviderResponseDeadlineMs(
+  value: unknown,
+): number {
+  const deadline = value === undefined
+    ? defaultGitHubProviderResponseDeadlineMs
+    : value;
+  if (
+    typeof deadline !== "number"
+    || !Number.isSafeInteger(deadline)
+    || deadline < 1
+    || deadline > maximumGitHubProviderResponseDeadlineMs
+  ) {
+    throw new RangeError("GitHub provider response deadline is invalid");
+  }
+  return deadline;
+}
+
+/**
+ * Starts one total provider-response deadline before dispatch. The returned
+ * fetch supplies an AbortSignal but also races the implementation directly,
+ * so a hostile or injected fetch cannot defeat settlement by ignoring abort.
+ * A successful Response retains the same deadline context for bounded body
+ * consumption; no second or per-chunk timer is created.
+ */
+export function withGitHubProviderResponseDeadline(
   fetchImplementation: typeof fetch,
   value: unknown,
 ): typeof fetch {
-  const timeoutMs = admitGitHubProviderResponseReadTimeoutMs(value);
+  const deadlineMs = admitGitHubProviderResponseDeadlineMs(value);
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const response = await fetchImplementation(input, init);
-    responseReadTimeouts.set(response, timeoutMs);
-    return response;
+    const context = createDeadline(deadlineMs, init?.signal ?? null);
+    try {
+      const response = await Promise.race([
+        fetchImplementation(input, {
+          ...init,
+          signal: context.controller.signal,
+        }),
+        context.deadline,
+      ]);
+      responseDeadlines.set(response, context);
+      return response;
+    } catch (error) {
+      finishDeadline(context);
+      throw error;
+    }
   }) as typeof fetch;
 }
 
 /**
  * Reads one provider response body under independent byte, work, and total
- * time bounds.
+ * lifetime bounds.
  *
  * Content-Length is an early encoded-size signal only. Fetch may expose
  * decoded bytes, so the declared length is not compared with decoded stream
  * length. Every delivered chunk is detached immediately, including tiny
- * views over large provider-owned buffers. The deadline covers the complete
- * body-consumption interval and is never renewed per chunk. Failure-path
- * cancellation is best-effort and never awaited.
+ * views over large provider-owned buffers. A direct call creates one body
+ * deadline; a wrapped provider call reuses the deadline that began before
+ * fetch. Failure-path cancellation is best-effort and never awaited.
  */
 export async function readBoundedGitHubProviderResponseText(
   response: Response,
   maximumBytes: number,
-  responseReadTimeoutMs?: number,
+  providerResponseDeadlineMs?: number,
 ): Promise<string> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
     throw new RangeError("GitHub provider response byte limit is invalid");
   }
-  const timeoutMs = admitGitHubProviderResponseReadTimeoutMs(
-    responseReadTimeoutMs ?? responseReadTimeouts.get(response),
+  const inherited = responseDeadlines.get(response);
+  const context = inherited ?? createDeadline(
+    admitGitHubProviderResponseDeadlineMs(providerResponseDeadlineMs),
+    null,
   );
 
   const declared = response.headers.get("content-length");
   if (declared !== null) {
     if (!/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
       discardGitHubProviderResponse(response);
+      finishDeadline(context);
       throw new GitHubProviderResponseReadError();
     }
     const declaredBytes = Number(declared);
     if (!Number.isSafeInteger(declaredBytes) || declaredBytes > maximumBytes) {
       discardGitHubProviderResponse(response);
+      finishDeadline(context);
       throw new GitHubProviderResponseReadError();
     }
   }
 
-  if (response.body === null) return "";
+  if (response.body === null) {
+    finishResponseDeadline(response, context);
+    return "";
+  }
 
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
     reader = response.body.getReader();
   } catch {
     discardGitHubProviderResponse(response);
+    finishDeadline(context);
     throw new GitHubProviderResponseReadError();
   }
-
-  let deadlineHandle: ReturnType<typeof setTimeout> | null = null;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    deadlineHandle = setTimeout(
-      () => reject(new GitHubProviderResponseReadError()),
-      timeoutMs,
-    );
-  });
 
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
@@ -102,7 +130,7 @@ export async function readBoundedGitHubProviderResponseText(
     while (true) {
       let next: ReadableStreamReadResult<Uint8Array>;
       try {
-        next = await Promise.race([reader.read(), deadline]);
+        next = await Promise.race([reader.read(), context.deadline]);
       } catch {
         failed = true;
         cancelReader(reader);
@@ -140,7 +168,7 @@ export async function readBoundedGitHubProviderResponseText(
       chunks.push(detached);
     }
   } finally {
-    if (deadlineHandle !== null) clearTimeout(deadlineHandle);
+    finishResponseDeadline(response, context);
     try {
       reader.releaseLock();
     } catch {
@@ -162,11 +190,75 @@ export async function readBoundedGitHubProviderResponseText(
 }
 
 export function discardGitHubProviderResponse(response: Response): void {
+  const context = responseDeadlines.get(response);
+  if (context) finishResponseDeadline(response, context);
   try {
     suppressCancellation(response.body?.cancel());
   } catch {
     // The caller-owned status/error remains authoritative.
   }
+}
+
+function createDeadline(
+  deadlineMs: number,
+  externalSignal: AbortSignal | null,
+): GitHubProviderResponseDeadline {
+  const controller = new AbortController();
+  let rejectDeadline: (error: GitHubProviderResponseReadError) => void = () => {};
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  const deadlineAt = Date.now() + deadlineMs;
+  const timer = setTimeout(() => {
+    try {
+      controller.abort();
+    } catch {
+      // Direct Promise settlement remains authoritative.
+    }
+    rejectDeadline(new GitHubProviderResponseReadError());
+  }, deadlineMs);
+
+  let removeExternalAbort = () => {};
+  if (externalSignal) {
+    const forwardAbort = () => {
+      try {
+        controller.abort();
+      } catch {
+        // The provider call owns final error classification.
+      }
+    };
+    if (externalSignal.aborted) {
+      forwardAbort();
+    } else {
+      externalSignal.addEventListener("abort", forwardAbort, { once: true });
+      removeExternalAbort = () =>
+        externalSignal.removeEventListener("abort", forwardAbort);
+    }
+  }
+
+  return {
+    controller,
+    deadline,
+    deadlineAt,
+    timer,
+    removeExternalAbort,
+    finished: false,
+  };
+}
+
+function finishResponseDeadline(
+  response: Response,
+  context: GitHubProviderResponseDeadline,
+): void {
+  responseDeadlines.delete(response);
+  finishDeadline(context);
+}
+
+function finishDeadline(context: GitHubProviderResponseDeadline): void {
+  if (context.finished) return;
+  context.finished = true;
+  clearTimeout(context.timer);
+  context.removeExternalAbort();
 }
 
 function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
