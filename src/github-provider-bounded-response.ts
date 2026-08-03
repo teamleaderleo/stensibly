@@ -297,8 +297,9 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
     if (
       typeof ok !== "boolean"
       || !Number.isSafeInteger(status)
-      || status < 0
-      || status > 999
+      || status < 100
+      || status > 599
+      || ok !== (status >= 200 && status <= 299)
     ) {
       throw new TypeError("invalid response status metadata");
     }
