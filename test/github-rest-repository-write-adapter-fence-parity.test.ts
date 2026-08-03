@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   GitHubRestRepositoryWriteAdapter,
@@ -7,6 +8,8 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const sha40 = "a".repeat(40);
 const parent64 = "b".repeat(64);
 const commit64 = "c".repeat(64);
+const createContent = "bounded content";
+const blob64 = gitBlobSha256(createContent);
 
 describe("GitHub repository-write adapter fence parity", () => {
   test("rejects non-canonical repository aliases before token access", async () => {
@@ -64,7 +67,7 @@ describe("GitHub repository-write adapter fence parity", () => {
         expectedParentSha: sha40,
         payload: {
           operation: "create_file",
-          content: "bounded content",
+          content: createContent,
           message: "Create bounded file",
         },
         idempotencyKey: "fence-path-parity",
@@ -74,7 +77,7 @@ describe("GitHub repository-write adapter fence parity", () => {
     }
   });
 
-  test("admits exact 64-hex commit identities for canonical reads and writes", async () => {
+  test("admits one coherent 64-hex object format for canonical reads and writes", async () => {
     const requests: Array<{ method: string; url: string }> = [];
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: {
@@ -92,20 +95,20 @@ describe("GitHub repository-write adapter fence parity", () => {
         if (method === "GET" && url.endsWith(`/git/commits/${commit64}`)) {
           return Response.json({
             sha: commit64,
-            parents: [{ sha: parent64 }],
+            url: commitUrl(commit64),
+            parents: [{ sha: parent64, url: commitUrl(parent64) }],
           });
         }
         if (method === "PUT" && url.endsWith("/contents/docs/review.md")) {
           return Response.json({
-            content: {
-              path: "docs/review.md",
-              type: "file",
-            },
+            content: contentObject64(),
             commit: {
               sha: commit64,
-              parents: [{ sha: parent64 }],
+              url: commitUrl(commit64),
+              parents: [{ sha: parent64, url: commitUrl(parent64) }],
             },
           }, {
+            status: 201,
             headers: { "x-github-request-id": "REQ-SHA256-WRITE" },
           });
         }
@@ -126,7 +129,7 @@ describe("GitHub repository-write adapter fence parity", () => {
       expectedParentSha: parent64,
       payload: {
         operation: "create_file",
-        content: "bounded content",
+        content: createContent,
         message: "Create bounded file",
       },
       idempotencyKey: "sha256-write-parity",
@@ -140,7 +143,7 @@ describe("GitHub repository-write adapter fence parity", () => {
     expect(requests).toEqual([
       {
         method: "GET",
-        url: `https://api.github.com/repos/teamleaderleo/stensibly/git/commits/${commit64}`,
+        url: commitUrl(commit64),
       },
       {
         method: "PUT",
@@ -149,6 +152,44 @@ describe("GitHub repository-write adapter fence parity", () => {
     ]);
   });
 });
+
+function contentObject64() {
+  const contentUrl =
+    "https://api.github.com/repos/teamleaderleo/stensibly/contents/docs/review.md";
+  const gitUrl =
+    `https://api.github.com/repos/${repositoryFullName}/git/blobs/${blob64}`;
+  const htmlUrl =
+    `https://github.com/${repositoryFullName}/blob/${commit64}/docs/review.md`;
+  return {
+    name: "review.md",
+    path: "docs/review.md",
+    sha: blob64,
+    size: Buffer.byteLength(createContent, "utf8"),
+    url: contentUrl,
+    html_url: htmlUrl,
+    git_url: gitUrl,
+    download_url:
+      `https://raw.githubusercontent.com/${repositoryFullName}/${commit64}/docs/review.md`,
+    type: "file",
+    _links: {
+      self: contentUrl,
+      git: gitUrl,
+      html: htmlUrl,
+    },
+  };
+}
+
+function commitUrl(sha: string): string {
+  return `https://api.github.com/repos/${repositoryFullName}/git/commits/${sha}`;
+}
+
+function gitBlobSha256(content: string): string {
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha256")
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
+}
 
 function adapterThatMustNotReachProvider() {
   let tokens = 0;
