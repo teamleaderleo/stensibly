@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/junco-1009-tlc-proof-v3.yml
+      - test/cancellation-settlement-tlc-receipt-contract.test.ts
 
 permissions:
   contents: read
@@ -19,6 +20,7 @@ jobs:
     env:
       SOURCE_SHA: 3ecc731caa1a1c513cdb7991c31d34ae09436ea7
       PROOF_SHA: ${{ github.event.pull_request.head.sha }}
+      TLC_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
     steps:
       - name: Check out exact source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -28,103 +30,249 @@ jobs:
           persist-credentials: false
 
       - name: Install pinned TLC
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          curl -L --fail --retry 3 \
-            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
-            -o /tmp/tla2tools.jar
-          echo "bee4a54f3ee3d4afc347c3240ec2d9e93b075104  /tmp/tla2tools.jar" \
-            | sha1sum --check --strict
-          sha256sum /tmp/tla2tools.jar > /tmp/tla2tools.sha256
-          java -version 2> /tmp/java-version.txt
-          unzip -p /tmp/tla2tools.jar META-INF/MANIFEST.MF > /tmp/tla2tools-manifest.txt
-
-      - name: Parse exact modules
-        shell: bash
-        working-directory: formal
-        run: |
-          set -euo pipefail
-          java -cp /tmp/tla2tools.jar tla2sany.SANY \
-            CancellationSettlementWitnesses.tla \
-            CancellationSettlementActiveRejoinWitnesses.tla \
-            2>&1 | tee /tmp/sany.log
-
-      - name: Run fail-closed proof suite
-        id: proof
+        id: install
+        continue-on-error: true
         shell: bash
         run: |
           set -uo pipefail
+          set +e
+          (
+            set -euo pipefail
+            test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+            curl -L --fail --retry 3 \
+              https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
+              -o /tmp/tla2tools.jar
+            echo "$TLC_SHA256  /tmp/tla2tools.jar" \
+              | sha256sum --check --strict
+            echo "bee4a54f3ee3d4afc347c3240ec2d9e93b075104  /tmp/tla2tools.jar" \
+              | sha1sum --check --strict
+            printf '%s  %s\n' "$TLC_SHA256" /tmp/tla2tools.jar \
+              > /tmp/tla2tools.sha256
+            java -version 2> /tmp/java-version.txt
+            unzip -p /tmp/tla2tools.jar META-INF/MANIFEST.MF \
+              > /tmp/tla2tools-manifest.txt
+          )
+          command_exit=$?
+          if [[ "$command_exit" -eq 0 ]]; then
+            status=passed
+          else
+            status=failed
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "exit=$command_exit" >> "$GITHUB_OUTPUT"
+          exit "$command_exit"
+
+      - name: Parse exact modules
+        id: parse
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: formal
+        run: |
+          set -uo pipefail
+          if [[ "${{ steps.install.outputs.status || 'not_run' }}" != "passed" ]]; then
+            echo "status=not_run" >> "$GITHUB_OUTPUT"
+            echo "exit=null" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          (
+            set -euo pipefail
+            java -cp /tmp/tla2tools.jar tla2sany.SANY \
+              CancellationSettlementWitnesses.tla \
+              CancellationSettlementActiveRejoinWitnesses.tla \
+              2>&1 | tee /tmp/sany.log
+          )
+          command_exit=$?
+          if [[ "$command_exit" -eq 0 ]]; then
+            status=passed
+          else
+            status=failed
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "exit=$command_exit" >> "$GITHUB_OUTPUT"
+          exit "$command_exit"
+
+      - name: Run fail-closed proof suite
+        id: proof
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # coreSafeModel: passed | failed | not_run
+          # activeSafeModel: passed | failed | not_run
+          # unsafeFence: passed | failed | not_run
+          # unsafeStale: passed | failed | not_run
+          # preCloseSuccess: passed | failed | not_run
+          # preCloseFailure: passed | failed | not_run
+          # repeatedClose: passed | failed | not_run
+          # cancelledRetry: passed | failed | not_run
+          # activeRejoin: passed | failed | not_run
+
+          keys=(
+            coreSafeModel
+            activeSafeModel
+            unsafeFence
+            unsafeStale
+            preCloseSuccess
+            preCloseFailure
+            repeatedClose
+            cancelledRetry
+            activeRejoin
+          )
+          declare -A statuses exits
+          for key in "${keys[@]}"; do
+            statuses["$key"]=not_run
+            exits["$key"]=null
+          done
+
+          emit_outputs() {
+            local key status_var exit_var
+            for key in "${keys[@]}"; do
+              echo "${key}Status=${statuses[$key]}" >> "$GITHUB_OUTPUT"
+              echo "${key}Exit=${exits[$key]}" >> "$GITHUB_OUTPUT"
+            done
+          }
+
+          if [[ "${{ steps.install.outputs.status || 'not_run' }}" != "passed" \
+            || "${{ steps.parse.outputs.status || 'not_run' }}" != "passed" ]]; then
+            echo "status=not_run" >> "$GITHUB_OUTPUT"
+            echo "exit=null" >> "$GITHUB_OUTPUT"
+            echo "failed=null" >> "$GITHUB_OUTPUT"
+            echo "core=not_run" >> "$GITHUB_OUTPUT"
+            echo "active=not_run" >> "$GITHUB_OUTPUT"
+            emit_outputs
+            exit 0
+          fi
+
           failed=0
 
-          success() {
-            local cfg="$1" module="$2" out="$3"
+          run_success() {
+            local key="$1" cfg="$2" module="$3" out="$4"
             set +e
             java -cp /tmp/tla2tools.jar tlc2.TLC -workers 1 -coverage 1 \
               -config "$cfg" "$module" > "$out" 2>&1
-            local status=$?
+            local command_exit=$?
             set -e
-            if [[ $status -ne 0 ]] || ! grep -F \
+            exits["$key"]=$command_exit
+            if [[ "$command_exit" -eq 0 ]] && grep -F \
               "Model checking completed. No error has been found." "$out" >/dev/null
             then
+              statuses["$key"]=passed
+            else
+              statuses["$key"]=failed
+              failed=$((failed + 1))
               cat "$out" >&2
-              failed=1
             fi
           }
 
-          violation() {
-            local cfg="$1" invariant="$2" module="$3" out="$4"
+          run_violation() {
+            local key="$1" cfg="$2" invariant="$3" module="$4" out="$5"
             set +e
             java -cp /tmp/tla2tools.jar tlc2.TLC -workers 1 \
               -config "$cfg" "$module" > "$out" 2>&1
-            local status=$?
+            local command_exit=$?
             set -e
-            if [[ $status -eq 0 ]] || ! grep -F \
+            exits["$key"]=$command_exit
+            if [[ "$command_exit" -ne 0 ]] && grep -F \
               "Invariant ${invariant} is violated" "$out" >/dev/null
             then
+              statuses["$key"]=passed
+            else
+              statuses["$key"]=failed
+              failed=$((failed + 1))
               cat "$out" >&2
-              failed=1
             fi
           }
 
-          success formal/CancellationSettlement.cfg \
-            formal/CancellationSettlement.tla /tmp/safe-core.log
-          success formal/CancellationSettlementActive.cfg \
-            formal/CancellationSettlementActive.tla /tmp/safe-active.log
+          run_success coreSafeModel \
+            formal/CancellationSettlement.cfg \
+            formal/CancellationSettlement.tla \
+            /tmp/safe-core.log
+          run_success activeSafeModel \
+            formal/CancellationSettlementActive.cfg \
+            formal/CancellationSettlementActive.tla \
+            /tmp/safe-active.log
 
-          violation formal/CancellationSettlementUnsafeFence.cfg \
+          run_violation unsafeFence \
+            formal/CancellationSettlementUnsafeFence.cfg \
             ReplacementRequiresFenceOrSettlement \
-            formal/CancellationSettlement.tla /tmp/unsafe-fence.log
-          violation formal/CancellationSettlementUnsafe.cfg \
+            formal/CancellationSettlement.tla \
+            /tmp/unsafe-fence.log
+          run_violation unsafeStale \
+            formal/CancellationSettlementUnsafe.cfg \
             StaleGenerationCannotPublish \
-            formal/CancellationSettlement.tla /tmp/unsafe-stale.log
+            formal/CancellationSettlement.tla \
+            /tmp/unsafe-stale.log
 
           pushd formal >/dev/null
-          violation CancellationSettlementPreCloseSuccess.cfg \
+          run_violation preCloseSuccess \
+            CancellationSettlementPreCloseSuccess.cfg \
             PreCloseSuccessFailureWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-preclose-success.log
-          violation CancellationSettlementPreCloseFailure.cfg \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-preclose-success.log
+          run_violation preCloseFailure \
+            CancellationSettlementPreCloseFailure.cfg \
             PreCloseFailureReconciliationWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-preclose-failure.log
-          violation CancellationSettlementRepeatedClose.cfg \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-preclose-failure.log
+          run_violation repeatedClose \
+            CancellationSettlementRepeatedClose.cfg \
             RepeatedCloseWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-repeated-close.log
-          violation CancellationSettlementCancelledRetry.cfg \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-repeated-close.log
+          run_violation cancelledRetry \
+            CancellationSettlementCancelledRetry.cfg \
             CancelledRetryWitnessAbsent \
-            CancellationSettlementWitnesses.tla /tmp/witness-cancelled-retry.log
-          violation CancellationSettlementActiveRejoin.cfg \
+            CancellationSettlementWitnesses.tla \
+            /tmp/witness-cancelled-retry.log
+          run_violation activeRejoin \
+            CancellationSettlementActiveRejoin.cfg \
             ActiveRejoinWitnessAbsent \
             CancellationSettlementActiveRejoinWitnesses.tla \
             /tmp/witness-active-rejoin-terminal.log
           popd >/dev/null
 
-          core="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' /tmp/safe-core.log | tail -1 || true)"
-          active="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' /tmp/safe-active.log | tail -1 || true)"
+          core="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' \
+            /tmp/safe-core.log | tail -1 || true)"
+          active="$(grep -E '[0-9]+ states generated, [0-9]+ distinct states found' \
+            /tmp/safe-active.log | tail -1 || true)"
+
+          if ! test -n "$core"; then
+            if [[ "${statuses[coreSafeModel]}" == "passed" ]]; then
+              failed=$((failed + 1))
+            fi
+            statuses[coreSafeModel]=failed
+          fi
+          if ! test -n "$active"; then
+            if [[ "${statuses[activeSafeModel]}" == "passed" ]]; then
+              failed=$((failed + 1))
+            fi
+            statuses[activeSafeModel]=failed
+          fi
+
+          all_obligations_passed=true
+          for key in "${keys[@]}"; do
+            if [[ "${statuses[$key]}" != "passed" ]]; then
+              all_obligations_passed=false
+            fi
+          done
+          proof_status="failed"
+          proof_exit=1
+          if [[ "$failed" -eq 0 && "$all_obligations_passed" == "true" ]]; then
+            proof_status="passed"
+            proof_exit=0
+          fi
+
+          echo "status=$proof_status" >> "$GITHUB_OUTPUT"
+          echo "exit=$proof_exit" >> "$GITHUB_OUTPUT"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
           echo "core=$core" >> "$GITHUB_OUTPUT"
           echo "active=$active" >> "$GITHUB_OUTPUT"
-          echo "failed=$failed" >> "$GITHUB_OUTPUT"
-          test "$failed" -eq 0
+          emit_outputs
+          exit "$proof_exit"
 
       - name: Build exact receipt
         if: always()
@@ -133,31 +281,125 @@ jobs:
           set -euo pipefail
           out=artifacts/cancellation-settlement-tlc
           mkdir -p "$out"
-          for file in /tmp/*.log /tmp/java-version.txt /tmp/tla2tools-manifest.txt /tmp/tla2tools.sha256; do
+          for file in \
+            /tmp/*.log \
+            /tmp/java-version.txt \
+            /tmp/tla2tools-manifest.txt \
+            /tmp/tla2tools.sha256
+          do
             [[ -f "$file" ]] && cp "$file" "$out/"
           done
           cp formal/CancellationSettlement*.tla "$out/"
           cp formal/CancellationSettlement*.cfg "$out/"
+
           jq -n \
-            --arg schemaVersion "stensibly-cancellation-settlement-tlc/3" \
+            --arg schemaVersion "stensibly-cancellation-settlement-tlc/4" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sourceRevision "$SOURCE_SHA" \
             --arg proofRevision "$PROOF_SHA" \
             --arg runId "$GITHUB_RUN_ID" \
             --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg installStatus "${{ steps.install.outputs.status || 'not_run' }}" \
+            --argjson installExit "${{ steps.install.outputs.exit || 'null' }}" \
+            --arg parseStatus "${{ steps.parse.outputs.status || 'not_run' }}" \
+            --argjson parseExit "${{ steps.parse.outputs.exit || 'null' }}" \
+            --arg proofStatus "${{ steps.proof.outputs.status || 'not_run' }}" \
+            --argjson proofExit "${{ steps.proof.outputs.exit || 'null' }}" \
             --arg core "${{ steps.proof.outputs.core || 'not_run' }}" \
             --arg active "${{ steps.proof.outputs.active || 'not_run' }}" \
-            --arg failed "${{ steps.proof.outputs.failed || 'not_run' }}" \
-            '{schemaVersion:$schemaVersion,repository:$repository,
-              sourceRevision:$sourceRevision,proofRevision:$proofRevision,
-              run:{id:$runId,attempt:$runAttempt},
-              tlc:{release:"v1.7.4",publishedSha1:"bee4a54f3ee3d4afc347c3240ec2d9e93b075104"},
-              coreSafeStateSummary:$core,activeSafeStateSummary:$active,
-              suiteFailureCount:$failed,
-              checks:{cancelledWaiterHasRetryCapacity:true,
-                activeRejoinReachesTerminal:true},
-              authorizesMerge:false,authorizesMutation:false}' \
-            > "$out/receipt.json"
+            --argjson failed "${{ steps.proof.outputs.failed || 'null' }}" \
+            --arg coreSafeModelStatus "${{ steps.proof.outputs.coreSafeModelStatus || 'not_run' }}" \
+            --argjson coreSafeModelExit "${{ steps.proof.outputs.coreSafeModelExit || 'null' }}" \
+            --arg activeSafeModelStatus "${{ steps.proof.outputs.activeSafeModelStatus || 'not_run' }}" \
+            --argjson activeSafeModelExit "${{ steps.proof.outputs.activeSafeModelExit || 'null' }}" \
+            --arg unsafeFenceStatus "${{ steps.proof.outputs.unsafeFenceStatus || 'not_run' }}" \
+            --argjson unsafeFenceExit "${{ steps.proof.outputs.unsafeFenceExit || 'null' }}" \
+            --arg unsafeStaleStatus "${{ steps.proof.outputs.unsafeStaleStatus || 'not_run' }}" \
+            --argjson unsafeStaleExit "${{ steps.proof.outputs.unsafeStaleExit || 'null' }}" \
+            --arg preCloseSuccessStatus "${{ steps.proof.outputs.preCloseSuccessStatus || 'not_run' }}" \
+            --argjson preCloseSuccessExit "${{ steps.proof.outputs.preCloseSuccessExit || 'null' }}" \
+            --arg preCloseFailureStatus "${{ steps.proof.outputs.preCloseFailureStatus || 'not_run' }}" \
+            --argjson preCloseFailureExit "${{ steps.proof.outputs.preCloseFailureExit || 'null' }}" \
+            --arg repeatedCloseStatus "${{ steps.proof.outputs.repeatedCloseStatus || 'not_run' }}" \
+            --argjson repeatedCloseExit "${{ steps.proof.outputs.repeatedCloseExit || 'null' }}" \
+            --arg cancelledRetryStatus "${{ steps.proof.outputs.cancelledRetryStatus || 'not_run' }}" \
+            --argjson cancelledRetryExit "${{ steps.proof.outputs.cancelledRetryExit || 'null' }}" \
+            --arg activeRejoinStatus "${{ steps.proof.outputs.activeRejoinStatus || 'not_run' }}" \
+            --argjson activeRejoinExit "${{ steps.proof.outputs.activeRejoinExit || 'null' }}" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              sourceRevision: $sourceRevision,
+              proofRevision: $proofRevision,
+              run: {id: $runId, attempt: $runAttempt},
+              tlc: {
+                release: "v1.7.4",
+                publishedSha1: "bee4a54f3ee3d4afc347c3240ec2d9e93b075104",
+                expectedSha256: "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+              },
+              stages: {
+                install: {status: $installStatus, exitStatus: $installExit},
+                parse: {status: $parseStatus, exitStatus: $parseExit},
+                proof: {status: $proofStatus, exitStatus: $proofExit}
+              },
+              proofStatus: $proofStatus,
+              coreSafeStateSummary: $core,
+              activeSafeStateSummary: $active,
+              suiteFailureCount: $failed,
+              obligations: {
+                coreSafeModel: {
+                  expected: "CancellationSettlement.cfg",
+                  status: $coreSafeModelStatus,
+                  exitStatus: $coreSafeModelExit
+                },
+                activeSafeModel: {
+                  expected: "CancellationSettlementActive.cfg",
+                  status: $activeSafeModelStatus,
+                  exitStatus: $activeSafeModelExit
+                },
+                unsafeFence: {
+                  expected: "ReplacementRequiresFenceOrSettlement",
+                  status: $unsafeFenceStatus,
+                  exitStatus: $unsafeFenceExit
+                },
+                unsafeStale: {
+                  expected: "StaleGenerationCannotPublish",
+                  status: $unsafeStaleStatus,
+                  exitStatus: $unsafeStaleExit
+                },
+                preCloseSuccess: {
+                  expected: "PreCloseSuccessFailureWitnessAbsent",
+                  status: $preCloseSuccessStatus,
+                  exitStatus: $preCloseSuccessExit
+                },
+                preCloseFailure: {
+                  expected: "PreCloseFailureReconciliationWitnessAbsent",
+                  status: $preCloseFailureStatus,
+                  exitStatus: $preCloseFailureExit
+                },
+                repeatedClose: {
+                  expected: "RepeatedCloseWitnessAbsent",
+                  status: $repeatedCloseStatus,
+                  exitStatus: $repeatedCloseExit
+                },
+                cancelledRetry: {
+                  expected: "CancelledRetryWitnessAbsent",
+                  status: $cancelledRetryStatus,
+                  exitStatus: $cancelledRetryExit
+                },
+                activeRejoin: {
+                  expected: "ActiveRejoinWitnessAbsent",
+                  status: $activeRejoinStatus,
+                  exitStatus: $activeRejoinExit
+                }
+              },
+              checks: {
+                cancelledWaiterHasRetryCapacity: $activeSafeModelStatus,
+                activeRejoinReachesTerminal: $activeRejoinStatus
+              },
+              authorizesMerge: false,
+              authorizesMutation: false
+            }' > "$out/receipt.json"
           (cd "$out" && sha256sum -- * > SHA256SUMS)
 
       - name: Upload exact receipt
@@ -168,3 +410,12 @@ jobs:
           path: artifacts/cancellation-settlement-tlc
           if-no-files-found: error
           retention-days: 14
+
+      - name: Enforce proof success
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.install.outputs.status || 'not_run' }}" = "passed"
+          test "${{ steps.parse.outputs.status || 'not_run' }}" = "passed"
+          test "${{ steps.proof.outputs.status || 'not_run' }}" = "passed"
