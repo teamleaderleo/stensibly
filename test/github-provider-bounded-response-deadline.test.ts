@@ -76,7 +76,7 @@ describe("bounded GitHub provider response deadline", () => {
     const observed = stalledResponse(requestId);
     const adapter = new GitHubRestIssueSetWriteAdapter({
       tokenProvider: tokenProvider(),
-      fetch: (async () => observed.response) as typeof fetch,
+      fetch: (async () => observed.response) as unknown as typeof fetch,
       providerResponseDeadlineMs: responseDeadlineMs,
     });
 
@@ -96,7 +96,7 @@ describe("bounded GitHub provider response deadline", () => {
     const observed = stalledResponse(requestId);
     const adapter = new GitHubRestIssueWriteAdapter({
       tokenProvider: tokenProvider(),
-      fetch: (async () => observed.response) as typeof fetch,
+      fetch: (async () => observed.response) as unknown as typeof fetch,
       providerResponseDeadlineMs: responseDeadlineMs,
     });
 
@@ -117,7 +117,7 @@ describe("bounded GitHub provider response deadline", () => {
     const observed = stalledResponse(requestId);
     const adapter = new GitHubRestIssueSetWriteAdapter({
       tokenProvider: tokenProvider(),
-      fetch: (async () => observed.response) as typeof fetch,
+      fetch: (async () => observed.response) as unknown as typeof fetch,
       providerResponseDeadlineMs: responseDeadlineMs,
     });
 
@@ -138,7 +138,7 @@ describe("bounded GitHub provider response deadline", () => {
     const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.signal) signals.push(init.signal);
       return new Response(null, { status: 422 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const writeAdapter = new GitHubRestIssueWriteAdapter({
       tokenProvider: tokenProvider(),
@@ -184,7 +184,7 @@ describe("bounded GitHub provider response deadline", () => {
         fetch: (async () => {
           fetchCalls += 1;
           return Response.json({});
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
         providerResponseDeadlineMs,
       };
 
