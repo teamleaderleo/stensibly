@@ -513,7 +513,7 @@ async function assertStoredLaneCoherence(
       q.eq("projectId", scope.projectId)
         .eq("ownerReceiptExternalId", receipt.id)
     )
-    .collect();
+    .take(2);
   if (!blocksLane(receipt)) {
     if (ownerLanes.length !== 0) {
       throw new Error("GITHUB_REPOSITORY_WRITE_TERMINAL_LANE_RETAINED");
@@ -534,7 +534,7 @@ async function assertStoredLaneCoherence(
         .eq("repositoryFullName", receipt.repositoryFullName)
         .eq("targetRef", receipt.targetRef)
     )
-    .collect();
+    .take(2);
   const [refLane] = refLanes;
   if (!refLane) {
     throw new Error("GITHUB_REPOSITORY_WRITE_LANE_MISSING");
