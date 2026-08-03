@@ -58,16 +58,76 @@ jobs:
             2>&1 | tee /tmp/sany.log
 
       - name: Model-check the safe specification
+        id: safe
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          set +e
           java -cp /tmp/tla2tools-v1.7.4.jar tlc2.TLC \
             -workers 1 \
             -coverage 1 \
             -config formal/CancellationSettlement.cfg \
             formal/CancellationSettlement.tla \
             > /tmp/safe.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/safe.log
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          test "${status}" -eq 0
           grep -F "Model checking completed" /tmp/safe.log
+
+      - name: Build safe-model diagnostic artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="artifacts/cancellation-settlement-tlc-diagnostic"
+          mkdir -p "${evidence}"
+          for file in \
+            /tmp/sany.log \
+            /tmp/safe.log \
+            /tmp/java-version.txt \
+            /tmp/tla2tools-manifest.txt \
+            /tmp/tla2tools-v1.7.4.sha256
+          do
+            if [[ -f "${file}" ]]; then
+              cp "${file}" "${evidence}/"
+            fi
+          done
+          cp formal/CancellationSettlement.tla "${evidence}/"
+          cp formal/CancellationSettlement.cfg "${evidence}/"
+          jq -n \
+            --arg schemaVersion "stensibly-cancellation-settlement-tlc-diagnostic/1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg sourceRevision "${SOURCE_SHA}" \
+            --arg workflowRevision "${GITHUB_WORKFLOW_SHA}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg tlcVersion "v1.7.4" \
+            --arg tlcSha1 "bee4a54f3ee3d4afc347c3240ec2d9e93b075104" \
+            --arg safeStatus "${{ steps.safe.outputs.status || 'not_run' }}" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              sourceRevision: $sourceRevision,
+              workflowRevision: $workflowRevision,
+              run: { id: $runId, attempt: $runAttempt },
+              tlc: { version: $tlcVersion, publishedSha1: $tlcSha1 },
+              safeExitStatus: $safeStatus
+            }' > "${evidence}/receipt.json"
+          (
+            cd "${evidence}"
+            sha256sum -- * > SHA256SUMS
+          )
+
+      - name: Upload safe-model diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cancellation-settlement-tlc-diagnostic-${{ env.SOURCE_SHA }}
+          path: artifacts/cancellation-settlement-tlc-diagnostic
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Prove unsafe controls
         shell: bash
