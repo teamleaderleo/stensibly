@@ -1,0 +1,184 @@
+name: Plover repository write receipt privacy finalizer
+
+on:
+  push:
+    branches:
+      - plover/1030-repository-write-receipt-privacy
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plover-1030-repository-write-receipt-privacy
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: plover/1030-repository-write-receipt-privacy
+      - uses: oven-sh/setup-bun@v2
+      - name: Verify exact transition head
+        env:
+          EXPECTED_BASE: 3bce9c5a4752671405378f66ba2ee70ab87c271b
+          EXPECTED_CARRIER: .github/workflows/plover-1030-receipt-privacy-finalizer.yml
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_BASE"
+          test "$(git diff --name-only "$EXPECTED_BASE" HEAD)" = "$EXPECTED_CARRIER"
+      - name: Apply bounded privacy repair and controls
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('src/github-repository-write-receipt-admission.ts')
+          text = source.read_text()
+          old = '''const credentialShapedPattern = /(?:^|[\\s:./=,;'"()\\[\\]{}@#_-])(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|stn\\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{24,}|(?:env|secret):\\/\\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|bearer\\s+[A-Za-z0-9._~+\\/-]{16,}|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,})/iu;'''
+          new = '''const credentialShapedPattern = /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|stn\\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\\/\\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|bearer\\s+[A-Za-z0-9._~+\\/-]{12,}|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}|authorization\\s*:|-----BEGIN [A-Z ]*PRIVATE KEY-----)/iu;'''
+          if text.count(old) != 1:
+              raise SystemExit('expected credential detector not found exactly once')
+          source.write_text(text.replace(old, new))
+
+          Path('test/github-repository-write-receipt-embedded-credentials.test.ts').write_text(r'''import { describe, expect, test } from "bun:test";
+import {
+  admitGitHubRepositoryWriteReceipt,
+} from "../src/github-repository-write-receipt-admission.ts";
+import type {
+  GitHubRepositoryWriteReceipt,
+} from "../src/github-repository-write-provider-service.ts";
+
+describe("repository write receipt embedded credential admission", () => {
+  test("rejects realistic credential families anywhere in retained receipt text", () => {
+    const long = "a".repeat(24);
+    const jwt = `eyJ${"a".repeat(12)}.eyJ${"b".repeat(12)}.${"c".repeat(12)}`;
+    const cases: Array<Partial<GitHubRepositoryWriteReceipt>> = [
+      { id: `ghrwxgithub_pat_${long}` },
+      { actorId: `actorxghp_${long}` },
+      { clientId: `clientxsk-${long}` },
+      { idempotencyKey: `keyxstn.tok_${long}` },
+      { targetRef: `feature/xoxb-${long}` },
+      { path: `docs/revisionxBearer ${long}.md` },
+      { path: "docs/xsecret://github/key.md" },
+      { idempotencyKey: `keyx${jwt}` },
+      { path: "docs/xauthorization:token.md" },
+      { path: "docs/x-----BEGIN PRIVATE KEY-----.md" },
+      {
+        verified: verification({
+          authorityId: `authorityxgithub_pat_${long}`,
+        }),
+        state: "verified_pending_release",
+        dispatchCount: 1,
+        updatedAt: "2026-08-03T18:00:01.000Z",
+        error: {
+          code: "repository_write_settlement_incomplete",
+          retry: "reconcile_before_retry",
+        },
+      },
+    ];
+
+    for (const overrides of cases) {
+      expect(() => receipt(overrides)).toThrow(
+        "GitHub repository write receipt is invalid",
+      );
+    }
+  });
+
+  test("preserves benign short token-like identities", () => {
+    const admitted = receipt({
+      id: "ghrw_github_pat_review",
+      actorId: "actor_ghp_review",
+      clientId: "client_sk-review",
+      idempotencyKey: "key_stn.tok_review",
+      targetRef: "feature/xoxb-review",
+      path: "docs/Bearer-review.md",
+    });
+
+    expect(admitted.id).toBe("ghrw_github_pat_review");
+    expect(admitted.actorId).toBe("actor_ghp_review");
+    expect(admitted.clientId).toBe("client_sk-review");
+    expect(admitted.idempotencyKey).toBe("key_stn.tok_review");
+    expect(admitted.targetRef).toBe("feature/xoxb-review");
+    expect(admitted.path).toBe("docs/Bearer-review.md");
+  });
+});
+
+function receipt(
+  overrides: Partial<GitHubRepositoryWriteReceipt> = {},
+): GitHubRepositoryWriteReceipt {
+  return admitGitHubRepositoryWriteReceipt({
+    version: 1,
+    id: "ghrw_receipt_privacy",
+    project: "stensibly",
+    repositoryFullName: "teamleaderleo/stensibly",
+    targetRef: "feature/receipt-privacy",
+    path: "docs/receipt-privacy.md",
+    operation: "create_file",
+    expectedParentSha: "a".repeat(40),
+    requestSha256: hash("b"),
+    payloadSha256: hash("c"),
+    actorId: "actor_plover",
+    clientId: "client_github_only",
+    idempotencyKey: "repository-write-receipt-privacy",
+    state: "reserved",
+    dispatchCount: 0,
+    createdAt: "2026-08-03T18:00:00.000Z",
+    updatedAt: "2026-08-03T18:00:00.000Z",
+    verified: null,
+    error: null,
+    ...overrides,
+  });
+}
+
+function verification(
+  overrides: Partial<NonNullable<GitHubRepositoryWriteReceipt["verified"]>> = {},
+): NonNullable<GitHubRepositoryWriteReceipt["verified"]> {
+  return {
+    version: 1,
+    state: "verified",
+    repositoryFullName: "teamleaderleo/stensibly",
+    path: "docs/receipt-privacy.md",
+    operation: "create_file",
+    targetRef: "feature/receipt-privacy",
+    defaultBranch: "main",
+    expectedParentSha: "a".repeat(40),
+    authorityId: "authority_repository_write",
+    authorityGeneration: 1,
+    defaultBranchApprovalId: null,
+    commitSha: "d".repeat(40),
+    nextExpectedParentSha: "d".repeat(40),
+    providerRequestId: "request-repository-write",
+    requestSha256: hash("b"),
+    verifiedAt: "2026-08-03T18:00:01.000Z",
+    authorizesRetry: false,
+    ...overrides,
+  };
+}
+
+function hash(character: string): string {
+  return `sha256:${character.repeat(64)}`;
+}
+''')
+          PY
+      - name: Verify focused repair
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun test test/github-repository-write-receipt-admission.test.ts test/github-repository-write-receipt-embedded-credentials.test.ts
+          bun run typecheck
+      - name: Publish source-only head
+        env:
+          BRANCH: plover/1030-repository-write-receipt-privacy
+        run: |
+          set -euo pipefail
+          rm .github/workflows/plover-1030-receipt-privacy-finalizer.yml
+          test "$(git diff --name-only | sort)" = $'src/github-repository-write-receipt-admission.ts\ntest/github-repository-write-receipt-embedded-credentials.test.ts'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/github-repository-write-receipt-admission.ts test/github-repository-write-receipt-embedded-credentials.test.ts .github/workflows/plover-1030-receipt-privacy-finalizer.yml
+          git commit -m "Reject embedded credentials in repository write receipts"
+          git push origin "HEAD:${BRANCH}" --force-with-lease
