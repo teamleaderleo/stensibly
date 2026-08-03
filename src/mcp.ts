@@ -8,6 +8,9 @@ import {
 import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
 import { registerGitHubIssueProviderTools } from "./github-issue-provider-mcp.js";
+import {
+  registerGitHubIssueProviderSetWriteTools,
+} from "./github-issue-provider-set-write-mcp.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   createMcpCapabilityRegistrationGuard,
@@ -285,6 +288,7 @@ export function createMcpServer(
   registerOperationReceiptTools(server, ledger);
   registerProjectAttachmentTools(server, ledger);
   registerGitHubIssueProviderTools(server, ledger, context);
+  registerGitHubIssueProviderSetWriteTools(server, ledger, context);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
   registration.complete();
