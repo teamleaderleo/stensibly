@@ -18,6 +18,11 @@ interface GitHubProviderResponseDeadline {
   finished: boolean;
 }
 
+interface AdmittedReadResult {
+  readonly done: boolean;
+  readonly value: unknown;
+}
+
 const responseDeadlines = new WeakMap<Response, GitHubProviderResponseDeadline>();
 const wrappedFetchDeadlines = new WeakMap<typeof fetch, number>();
 
@@ -44,6 +49,12 @@ export function admitGitHubProviderResponseDeadlineMs(
  * so a hostile or injected fetch cannot defeat settlement by ignoring abort.
  * A successful Response retains the same deadline context for bounded body
  * consumption; no second or per-chunk timer is created.
+ *
+ * Before returning, provider-owned response metadata is snapshotted into a
+ * safe facade. Metadata failure before request identity rejects the fetch and
+ * is classified by the adapter as unattributed ambiguity. Failure after raw
+ * request identity is available becomes a synthetic retryable response so the
+ * adapter can re-admit that identity and preserve attributed ambiguity.
  *
  * A composed adapter that forwards an already wrapped fetch without an
  * explicit override preserves the existing deadline instead of nesting or
@@ -76,8 +87,11 @@ export function withGitHubProviderResponseDeadline(
         providerCall,
         context.deadline,
       ]);
+      if (!isObjectLike(response)) {
+        throw new GitHubProviderResponseReadError();
+      }
       responseDeadlines.set(response, context);
-      return response;
+      return admitGitHubProviderResponseFacade(response);
     } catch (error) {
       finishDeadline(context);
       throw error;
@@ -88,8 +102,8 @@ export function withGitHubProviderResponseDeadline(
 }
 
 /**
- * Reads one provider response body under independent byte, work, and total
- * lifetime bounds.
+ * Reads one provider response body under independent byte, work, metadata,
+ * and total lifetime bounds.
  *
  * Content-Length is an early encoded-size signal only. Fetch may expose
  * decoded bytes, so the declared length is not compared with decoded stream
@@ -106,38 +120,55 @@ export async function readBoundedGitHubProviderResponseText(
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
     throw new RangeError("GitHub provider response byte limit is invalid");
   }
-  const inherited = responseDeadlines.get(response);
-  const context = inherited ?? createDeadline(
-    admitGitHubProviderResponseDeadlineMs(providerResponseDeadlineMs),
-    null,
+  const admittedDeadlineMs = admitGitHubProviderResponseDeadlineMs(
+    providerResponseDeadlineMs,
   );
+  if (!isObjectLike(response)) {
+    throw new GitHubProviderResponseReadError();
+  }
+  const inherited = responseDeadlines.get(response);
+  const context = inherited ?? createDeadline(admittedDeadlineMs, null);
 
-  const declared = response.headers.get("content-length");
+  let headers: Headers;
+  let declared: string | null;
+  try {
+    headers = response.headers;
+    declared = headers.get("content-length");
+    if (declared !== null && typeof declared !== "string") {
+      throw new TypeError("invalid content-length metadata");
+    }
+  } catch {
+    failResponseRead(response, context);
+  }
+
   if (declared !== null) {
     if (!/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
-      discardGitHubProviderResponse(response);
-      finishDeadline(context);
-      throw new GitHubProviderResponseReadError();
+      failResponseRead(response, context);
     }
     const declaredBytes = Number(declared);
     if (!Number.isSafeInteger(declaredBytes) || declaredBytes > maximumBytes) {
-      discardGitHubProviderResponse(response);
-      finishDeadline(context);
-      throw new GitHubProviderResponseReadError();
+      failResponseRead(response, context);
     }
   }
 
-  if (response.body === null) {
+  let body: ReadableStream<Uint8Array> | null;
+  try {
+    body = response.body;
+  } catch {
+    finishResponseDeadline(response, context);
+    throw new GitHubProviderResponseReadError();
+  }
+  if (body === null) {
     finishResponseDeadline(response, context);
     return "";
   }
 
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
-    reader = response.body.getReader();
+    reader = body.getReader();
   } catch {
-    discardGitHubProviderResponse(response);
-    finishDeadline(context);
+    cancelBody(body);
+    finishResponseDeadline(response, context);
     throw new GitHubProviderResponseReadError();
   }
 
@@ -147,9 +178,18 @@ export async function readBoundedGitHubProviderResponseText(
   let failed = false;
   try {
     while (true) {
-      let next: ReadableStreamReadResult<Uint8Array>;
+      let rawResult: unknown;
       try {
-        next = await Promise.race([reader.read(), context.deadline]);
+        rawResult = await Promise.race([reader.read(), context.deadline]);
+      } catch {
+        failed = true;
+        cancelReader(reader);
+        throw new GitHubProviderResponseReadError();
+      }
+
+      let next: AdmittedReadResult;
+      try {
+        next = admitReadResult(rawResult);
       } catch {
         failed = true;
         cancelReader(reader);
@@ -164,14 +204,11 @@ export async function readBoundedGitHubProviderResponseText(
         throw new GitHubProviderResponseReadError();
       }
 
-      if (!(next.value instanceof Uint8Array)) {
-        failed = true;
-        cancelReader(reader);
-        throw new GitHubProviderResponseReadError();
-      }
-
       let detached: Uint8Array;
       try {
+        if (!(next.value instanceof Uint8Array)) {
+          throw new GitHubProviderResponseReadError();
+        }
         const nextTotal = totalBytes + next.value.byteLength;
         if (!Number.isSafeInteger(nextTotal) || nextTotal > maximumBytes) {
           throw new GitHubProviderResponseReadError();
@@ -209,13 +246,163 @@ export async function readBoundedGitHubProviderResponseText(
 }
 
 export function discardGitHubProviderResponse(response: Response): void {
+  if (!isObjectLike(response)) return;
   const context = responseDeadlines.get(response);
   if (context) finishResponseDeadline(response, context);
+  let body: ReadableStream<Uint8Array> | null;
   try {
-    suppressCancellation(response.body?.cancel());
+    body = response.body;
   } catch {
-    // The caller-owned status/error remains authoritative.
+    return;
   }
+  cancelBody(body);
+}
+
+function admitGitHubProviderResponseFacade(response: Response): Response {
+  let headers: Headers;
+  let requestId: string | null;
+  try {
+    headers = response.headers;
+    requestId = headers.get("x-github-request-id");
+    if (requestId !== null && typeof requestId !== "string") {
+      throw new TypeError("invalid request ID metadata");
+    }
+  } catch {
+    discardGitHubProviderResponse(response);
+    throw new GitHubProviderResponseReadError();
+  }
+
+  let contentLength: string | null;
+  try {
+    contentLength = headers.get("content-length");
+    if (contentLength !== null && typeof contentLength !== "string") {
+      throw new TypeError("invalid content-length metadata");
+    }
+  } catch {
+    return metadataFailureResponse(response, requestId, null);
+  }
+
+  let body: ReadableStream<Uint8Array> | null;
+  try {
+    body = response.body;
+  } catch {
+    return metadataFailureResponse(response, requestId, contentLength, null);
+  }
+
+  let ok: boolean;
+  let status: number;
+  try {
+    ok = response.ok;
+    status = response.status;
+    if (
+      typeof ok !== "boolean"
+      || !Number.isSafeInteger(status)
+      || status < 0
+      || status > 999
+    ) {
+      throw new TypeError("invalid response status metadata");
+    }
+  } catch {
+    return metadataFailureResponse(
+      response,
+      requestId,
+      contentLength,
+      body,
+    );
+  }
+
+  return responseFacade(
+    response,
+    requestId,
+    contentLength,
+    ok,
+    status,
+    body,
+  );
+}
+
+function metadataFailureResponse(
+  response: Response,
+  requestId: string | null,
+  contentLength: string | null,
+  bodyValue?: ReadableStream<Uint8Array> | null,
+): Response {
+  let body = bodyValue;
+  if (body === undefined) {
+    try {
+      body = response.body;
+    } catch {
+      body = null;
+    }
+  }
+  return responseFacade(
+    response,
+    requestId,
+    contentLength,
+    false,
+    503,
+    body,
+  );
+}
+
+function responseFacade(
+  original: Response,
+  requestId: string | null,
+  contentLength: string | null,
+  ok: boolean,
+  status: number,
+  body: ReadableStream<Uint8Array> | null,
+): Response {
+  const headers = new Headers();
+  if (requestId !== null) headers.set("x-github-request-id", requestId);
+  if (contentLength !== null) headers.set("content-length", contentLength);
+  const facade = Object.freeze({
+    headers,
+    ok,
+    status,
+    body,
+  }) as unknown as Response;
+  transferResponseDeadline(original, facade);
+  return facade;
+}
+
+function transferResponseDeadline(original: Response, facade: Response): void {
+  const context = responseDeadlines.get(original);
+  if (!context) return;
+  responseDeadlines.delete(original);
+  responseDeadlines.set(facade, context);
+}
+
+function admitReadResult(value: unknown): AdmittedReadResult {
+  if (value === null || typeof value !== "object") {
+    throw new GitHubProviderResponseReadError();
+  }
+  let done: unknown;
+  try {
+    done = (value as { done?: unknown }).done;
+  } catch {
+    throw new GitHubProviderResponseReadError();
+  }
+  if (typeof done !== "boolean") {
+    throw new GitHubProviderResponseReadError();
+  }
+  if (done) return Object.freeze({ done: true, value: undefined });
+  let chunk: unknown;
+  try {
+    chunk = (value as { value?: unknown }).value;
+  } catch {
+    throw new GitHubProviderResponseReadError();
+  }
+  return Object.freeze({ done: false, value: chunk });
+}
+
+function failResponseRead(
+  response: Response,
+  context: GitHubProviderResponseDeadline,
+): never {
+  discardGitHubProviderResponse(response);
+  finishDeadline(context);
+  throw new GitHubProviderResponseReadError();
 }
 
 function createDeadline(
@@ -280,6 +467,15 @@ function finishDeadline(context: GitHubProviderResponseDeadline): void {
   context.removeExternalAbort();
 }
 
+function cancelBody(body: ReadableStream<Uint8Array> | null): void {
+  if (body === null || !isObjectLike(body)) return;
+  try {
+    suppressCancellation(body.cancel());
+  } catch {
+    // The caller-owned status/error remains authoritative.
+  }
+}
+
 function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
   try {
     suppressCancellation(reader.cancel());
@@ -296,4 +492,9 @@ function suppressCancellation(value: unknown): void {
   ) {
     void Promise.resolve(value).catch(() => undefined);
   }
+}
+
+function isObjectLike(value: unknown): value is object {
+  return value !== null
+    && (typeof value === "object" || typeof value === "function");
 }
