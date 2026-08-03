@@ -64,10 +64,8 @@ export class GitHubRestRepositoryWriteAdapter
     repositoryFullName: string;
     targetRef: string;
   }): Promise<string | null> {
-    const repositoryFullName = admitGitHubRepositoryFullName(
-      input.repositoryFullName,
-    );
-    const targetRef = admitGitHubBranchRef(input.targetRef);
+    const repositoryFullName = exactRepository(input.repositoryFullName);
+    const targetRef = exactBranch(input.targetRef);
     const response = await this.#request({
       repositoryFullName,
       access: "read",
@@ -103,10 +101,8 @@ export class GitHubRestRepositoryWriteAdapter
     repositoryFullName: string;
     commitSha: string;
   }): Promise<readonly string[]> {
-    const repositoryFullName = admitGitHubRepositoryFullName(
-      input.repositoryFullName,
-    );
-    const commitSha = admitGitObjectId(input.commitSha);
+    const repositoryFullName = exactRepository(input.repositoryFullName);
+    const commitSha = exactCommitSha(input.commitSha, "GitHub commit SHA");
     const response = await this.#request({
       repositoryFullName,
       access: "read",
@@ -141,12 +137,13 @@ export class GitHubRestRepositoryWriteAdapter
     payload: GitHubRepositoryWritePayload;
     idempotencyKey: string;
   }): Promise<ProviderWriteResult> {
-    const repositoryFullName = admitGitHubRepositoryFullName(
-      input.repositoryFullName,
+    const repositoryFullName = exactRepository(input.repositoryFullName);
+    const path = exactPath(input.path);
+    const targetRef = exactBranch(input.targetRef);
+    const expectedParentSha = exactCommitSha(
+      input.expectedParentSha,
+      "Expected parent SHA",
     );
-    const path = admitGitHubRepositoryPath(input.path);
-    const targetRef = admitGitHubBranchRef(input.targetRef);
-    const expectedParentSha = admitGitObjectId(input.expectedParentSha);
     if (input.operation !== input.payload.operation) {
       throw new TypeError("Repository write payload operation changed before dispatch");
     }
@@ -154,7 +151,7 @@ export class GitHubRestRepositoryWriteAdapter
       input.payload.operation !== "create_file"
       && !sameGitObjectFormat(
         expectedParentSha,
-        admitGitObjectId(input.payload.contentSha),
+        exactCommitSha(input.payload.contentSha, "GitHub content SHA"),
       )
     ) {
       throw new RangeError("GitHub repository write object formats changed");
@@ -444,12 +441,40 @@ function repositoryParts(repositoryFullName: string): [string, string] {
   return [owner, repository];
 }
 
-function responseObjectId(value: unknown, label: string): string {
+function exactRepository(value: unknown): string {
+  try {
+    return admitGitHubRepositoryFullName(value);
+  } catch {
+    throw new RangeError("GitHub repository identity is invalid");
+  }
+}
+
+function exactBranch(value: unknown): string {
+  try {
+    return admitGitHubBranchRef(value);
+  } catch {
+    throw new RangeError("GitHub target branch is invalid");
+  }
+}
+
+function exactPath(value: unknown): string {
+  try {
+    return admitGitHubRepositoryPath(value);
+  } catch {
+    throw new RangeError("GitHub repository path is invalid");
+  }
+}
+
+function exactCommitSha(value: unknown, label: string): string {
   try {
     return admitGitObjectId(value);
   } catch {
     throw invalidResponse(`${label} was invalid`);
   }
+}
+
+function responseObjectId(value: unknown, label: string): string {
+  return exactCommitSha(value, label);
 }
 
 function exactParents(value: unknown, label: string): string[] {
