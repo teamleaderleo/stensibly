@@ -37,6 +37,53 @@ describe("GitHub set-write stream work admission", () => {
     expect(pulls).toBeLessThan(totalChunks);
     expect(cancelled).toBe(true);
   });
+
+  test("does not await an attacker-controlled cancellation promise", async () => {
+    const totalChunks = 10_000;
+    let pulls = 0;
+    let cancelCalled = false;
+    const response = injectedResponse({
+      async read() {
+        if (pulls >= totalChunks) return { done: true, value: undefined };
+        pulls += 1;
+        if (pulls % 64 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        return { done: false, value: new Uint8Array(0) };
+      },
+      cancel() {
+        cancelCalled = true;
+        return new Promise<void>(() => {});
+      },
+    });
+    const adapter = new GitHubRestIssueSetWriteAdapter({
+      tokenProvider: tokenProvider(),
+      fetch: (async () => response) as typeof fetch,
+    });
+
+    const outcome = await Promise.race([
+      adapter.addIssueLabels({
+        repositoryFullName,
+        issueNumber,
+        labels: ["area:github"],
+        idempotencyKey: "nonblocking-zero-byte-chunk-cancellation",
+      }).then(
+        () => ({ kind: "fulfilled" as const, error: null }),
+        (error: unknown) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout"; error: null }>((resolve) => {
+        setTimeout(() => resolve({ kind: "timeout", error: null }), 250);
+      }),
+    ]);
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind !== "rejected") {
+      throw new Error("Stream-work cancellation did not settle through fixed ambiguity");
+    }
+    expectPostEffectError(outcome.error);
+    expect(cancelCalled).toBe(true);
+    expect(pulls).toBeLessThan(totalChunks);
+  });
 });
 
 interface InjectedReaderInput {
@@ -44,13 +91,11 @@ interface InjectedReaderInput {
     | { done: false; value: Uint8Array }
     | { done: true; value: undefined }
   >;
-  cancel: () => void;
+  cancel: () => Promise<void> | void;
 }
 
 function injectedResponse(input: InjectedReaderInput): Response {
-  const cancel = async () => {
-    input.cancel();
-  };
+  const cancel = () => input.cancel();
   return {
     ok: true,
     status: 200,
@@ -76,13 +121,17 @@ async function expectPostEffect(promise: Promise<unknown>): Promise<void> {
     await promise;
     throw new Error("Expected excessive chunk work to require reconciliation");
   } catch (error) {
-    expect(error).toBeInstanceOf(GitHubProviderPostEffectError);
-    expect(error).toMatchObject({
-      providerRequestId: "REQ-CHUNK-WORK",
-      message:
-        "GitHub provider effect requires reconciliation after verification failed",
-    });
+    expectPostEffectError(error);
   }
+}
+
+function expectPostEffectError(error: unknown): void {
+  expect(error).toBeInstanceOf(GitHubProviderPostEffectError);
+  expect(error).toMatchObject({
+    providerRequestId: "REQ-CHUNK-WORK",
+    message:
+      "GitHub provider effect requires reconciliation after verification failed",
+  });
 }
 
 function tokenProvider() {
