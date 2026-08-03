@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { buildGitHubIssueContext } from "../src/github-issue-context.ts";
 import type {
   GitHubIssueProviderOperation,
   GitHubProviderReceipt,
 } from "../src/github-provider-contracts.ts";
+import { admitGitHubProviderReceipt } from "../src/github-provider-receipt-admission.ts";
 import {
   withGitHubIssueProviderSetWriteService,
   type GitHubIssueProviderSetWriteService,
@@ -17,6 +19,9 @@ import type { TokenPrincipal } from "../src/token-contracts.ts";
 const project = "stensibly";
 const repository = "teamleaderleo/stensibly";
 const issueNumber = 525;
+const createdAt = "2026-08-02T00:00:00.000Z";
+const updatedAt = "2026-08-02T00:00:01.000Z";
+const sourceRevision = `sha256:${"c".repeat(64)}`;
 
 describe("public GitHub issue set writes", () => {
   test("discovers and dispatches all four typed actions with authenticated identity", async () => {
@@ -99,7 +104,13 @@ describe("public GitHub issue set writes", () => {
           idempotencyKey: "public-label-add-1",
         },
       );
-      expect(addedLabels.operation).toBe("github_add_issue_labels");
+      expect(addedLabels).toMatchObject({
+        operation: "github_add_issue_labels",
+        target: `${repository}#${issueNumber}:labels`,
+        state: "succeeded",
+        verification: { state: "passed", sourceRevision },
+      });
+      expect(addedLabels.result).not.toBeNull();
 
       const removedLabel = await call<GitHubProviderReceipt>(
         client,
@@ -112,7 +123,10 @@ describe("public GitHub issue set writes", () => {
           idempotencyKey: "public-label-remove-1",
         },
       );
-      expect(removedLabel.operation).toBe("github_remove_issue_label");
+      expect(removedLabel).toMatchObject({
+        operation: "github_remove_issue_label",
+        target: `${repository}#${issueNumber}:labels`,
+      });
 
       const addedAssignees = await call<GitHubProviderReceipt>(
         client,
@@ -125,7 +139,10 @@ describe("public GitHub issue set writes", () => {
           idempotencyKey: "public-assignee-add-1",
         },
       );
-      expect(addedAssignees.operation).toBe("github_add_issue_assignees");
+      expect(addedAssignees).toMatchObject({
+        operation: "github_add_issue_assignees",
+        target: `${repository}#${issueNumber}:assignees`,
+      });
 
       const removedAssignees = await call<GitHubProviderReceipt>(
         client,
@@ -138,7 +155,10 @@ describe("public GitHub issue set writes", () => {
           idempotencyKey: "public-assignee-remove-1",
         },
       );
-      expect(removedAssignees.operation).toBe("github_remove_issue_assignees");
+      expect(removedAssignees).toMatchObject({
+        operation: "github_remove_issue_assignees",
+        target: `${repository}#${issueNumber}:assignees`,
+      });
 
       expect(calls).toEqual([
         {
@@ -198,73 +218,113 @@ describe("public GitHub issue set writes", () => {
     let calls = 0;
     const ledger = withGitHubIssueProviderSetWriteService(
       new SqliteWorkLedger(store),
+      countingService(() => {
+        calls += 1;
+      }),
+    );
+    const result = await callOne(
+      ledger,
+      readPrincipal(),
+      "github-set-write-denial-test",
+      "github_add_issue_labels",
       {
-        async addIssueLabels(input) {
-          calls += 1;
-          return receipt(
-            "github_add_issue_labels",
-            input.idempotencyKey,
-            input.actorId,
-            input.clientId,
-          );
-        },
-        async removeIssueLabel(input) {
-          calls += 1;
-          return receipt(
-            "github_remove_issue_label",
-            input.idempotencyKey,
-            input.actorId,
-            input.clientId,
-          );
-        },
-        async addIssueAssignees(input) {
-          calls += 1;
-          return receipt(
-            "github_add_issue_assignees",
-            input.idempotencyKey,
-            input.actorId,
-            input.clientId,
-          );
-        },
-        async removeIssueAssignees(input) {
-          calls += 1;
-          return receipt(
-            "github_remove_issue_assignees",
-            input.idempotencyKey,
-            input.actorId,
-            input.clientId,
-          );
-        },
+        project,
+        repository,
+        issueNumber,
+        labels: ["must-not-dispatch"],
+        idempotencyKey: "read-only-label-denial",
       },
     );
-    const server = createMcpServer(ledger, { principal: readPrincipal() });
-    const client = new Client(
-      { name: "github-set-write-denial-test", version: "0.0.1" },
-      { capabilities: {} },
-    );
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    expect(result.isError).toBe(true);
+    expect(textContent(result)).toContain("require write scope");
+    expect(calls).toBe(0);
+    store.close();
+  });
 
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "github_add_issue_labels",
-        arguments: {
-          project,
-          repository,
-          issueNumber,
-          labels: ["must-not-dispatch"],
-          idempotencyKey: "read-only-label-denial",
-        },
-      });
-      expect(result.isError).toBe(true);
-      expect(textContent(result)).toContain("require write scope");
-      expect(calls).toBe(0);
-    } finally {
-      await client.close();
-      await server.close();
-      store.close();
-    }
+  test("denies a foreign project before set-write dispatch", async () => {
+    const store = new StensiblyStore(":memory:");
+    let calls = 0;
+    const ledger = withGitHubIssueProviderSetWriteService(
+      new SqliteWorkLedger(store),
+      countingService(() => {
+        calls += 1;
+      }),
+    );
+    const result = await callOne(
+      ledger,
+      { ...writePrincipal(), projects: ["another-project"] },
+      "github-set-write-project-denial-test",
+      "github_add_issue_labels",
+      {
+        project,
+        repository,
+        issueNumber,
+        labels: ["must-not-dispatch"],
+        idempotencyKey: "foreign-project-label-denial",
+      },
+    );
+    expect(result.isError).toBe(true);
+    expect(textContent(result)).toContain("outside this principal's project scope");
+    expect(calls).toBe(0);
+    store.close();
+  });
+
+  test("fails closed when no set-write backend is mounted", async () => {
+    const store = new StensiblyStore(":memory:");
+    const result = await callOne(
+      new SqliteWorkLedger(store),
+      writePrincipal(),
+      "github-set-write-unavailable-test",
+      "github_add_issue_labels",
+      {
+        project,
+        repository,
+        issueNumber,
+        labels: ["must-not-dispatch"],
+        idempotencyKey: "unavailable-label-write",
+      },
+    );
+    expect(result.isError).toBe(true);
+    expect(textContent(result)).toContain("no enabled provider set-write service");
+    store.close();
+  });
+
+  test("rejects a malformed backend receipt before MCP serialization", async () => {
+    const store = new StensiblyStore(":memory:");
+    let calls = 0;
+    const malformed = {} as GitHubProviderReceipt;
+    const service: GitHubIssueProviderSetWriteService = {
+      async addIssueLabels() {
+        calls += 1;
+        return malformed;
+      },
+      async removeIssueLabel() {
+        throw new Error("outside this control");
+      },
+      async addIssueAssignees() {
+        throw new Error("outside this control");
+      },
+      async removeIssueAssignees() {
+        throw new Error("outside this control");
+      },
+    };
+    const result = await callOne(
+      withGitHubIssueProviderSetWriteService(new SqliteWorkLedger(store), service),
+      writePrincipal(),
+      "github-set-write-malformed-receipt-test",
+      "github_add_issue_labels",
+      {
+        project,
+        repository,
+        issueNumber,
+        labels: ["area:github"],
+        idempotencyKey: "malformed-backend-receipt",
+      },
+    );
+    expect(result.isError).toBe(true);
+    expect(textContent(result)).toContain("invalid field set");
+    expect(calls).toBe(1);
+    store.close();
   });
 });
 
@@ -304,6 +364,47 @@ function readPrincipal(): TokenPrincipal {
   };
 }
 
+function countingService(onCall: () => void): GitHubIssueProviderSetWriteService {
+  return {
+    async addIssueLabels(input) {
+      onCall();
+      return receipt(
+        "github_add_issue_labels",
+        input.idempotencyKey,
+        input.actorId,
+        input.clientId,
+      );
+    },
+    async removeIssueLabel(input) {
+      onCall();
+      return receipt(
+        "github_remove_issue_label",
+        input.idempotencyKey,
+        input.actorId,
+        input.clientId,
+      );
+    },
+    async addIssueAssignees(input) {
+      onCall();
+      return receipt(
+        "github_add_issue_assignees",
+        input.idempotencyKey,
+        input.actorId,
+        input.clientId,
+      );
+    },
+    async removeIssueAssignees(input) {
+      onCall();
+      return receipt(
+        "github_remove_issue_assignees",
+        input.idempotencyKey,
+        input.actorId,
+        input.clientId,
+      );
+    },
+  };
+}
+
 function receipt(
   operation: GitHubIssueProviderOperation,
   idempotencyKey: string,
@@ -311,7 +412,30 @@ function receipt(
   clientId: string,
 ): GitHubProviderReceipt {
   const field = operation.includes("label") ? "labels" : "assignees";
-  return {
+  const adding = operation === "github_add_issue_labels"
+    || operation === "github_add_issue_assignees";
+  const result = buildGitHubIssueContext({
+    owner: "teamleaderleo",
+    repository: "stensibly",
+    number: issueNumber,
+    title: "Public set-write fixture",
+    body: null,
+    state: "open",
+    stateReason: null,
+    labels: field === "labels"
+      ? adding ? ["area:github", "priority:p0"] : ["area:github"]
+      : [],
+    assignees: field === "assignees"
+      ? adding ? ["juniper-bot", "teamleaderleo"] : ["teamleaderleo"]
+      : [],
+    milestone: null,
+    relationships: [],
+    createdAt,
+    updatedAt,
+    providerNodeId: "I_public_set_write_525",
+    sourceRevision,
+  });
+  return admitGitHubProviderReceipt({
     version: 1,
     id: `ghop_${idempotencyKey}`,
     project,
@@ -332,18 +456,41 @@ function receipt(
     parametersSha256: `sha256:${"b".repeat(64)}`,
     state: "succeeded",
     attemptCount: 1,
-    createdAt: "2026-08-02T00:00:00.000Z",
-    updatedAt: "2026-08-02T00:00:01.000Z",
+    createdAt,
+    updatedAt,
     providerRequestId: "github-request-set-1",
-    result: null,
+    result,
     verification: {
       state: "passed",
-      checkedAt: "2026-08-02T00:00:01.000Z",
-      sourceRevision: null,
+      checkedAt: updatedAt,
+      sourceRevision: result.sourceRevision,
     },
     error: null,
     recovery: { nextAction: "none" },
-  };
+  });
+}
+
+async function callOne(
+  ledger: SqliteWorkLedger,
+  principal: TokenPrincipal,
+  clientName: string,
+  name: string,
+  arguments_: Record<string, unknown>,
+) {
+  const server = createMcpServer(ledger, { principal });
+  const client = new Client(
+    { name: clientName, version: "0.0.1" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return await client.callTool({ name, arguments: arguments_ });
+  } finally {
+    await client.close();
+    await server.close();
+  }
 }
 
 async function call<T>(
