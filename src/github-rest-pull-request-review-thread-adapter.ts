@@ -43,7 +43,7 @@ const threadPageSize = 25;
 const commentPageSize = 20;
 const maximumThreadPages = 4;
 const maximumThreads = threadPageSize * maximumThreadPages;
-const maximumComments = 400;
+const maximumComments = maximumThreads * commentPageSize;
 const providerResponseMaximumBytes = 256 * 1024;
 const providerRequestTimeoutMs = 10_000;
 const delegatedResultMaximumBytes = 256 * 1024;
@@ -643,43 +643,36 @@ function reviewThread(
     ["totalCount", "pageInfo", "nodes"],
     "GitHub review-thread comments",
   );
-  const commentsTotal = nonNegativeProviderInteger(
+  const commentsTotalCount = nonNegativeProviderInteger(
     commentsConnection.totalCount,
     "GitHub review-thread comment count",
   );
-  if (commentsTotal > commentPageSize) {
-    throw rejected(
-      "github_delegated_provider_result_too_large",
-      `GitHub delegated review-thread comments exceed ${commentPageSize} entries per thread`,
-    );
-  }
   const commentsPageInfo = providerRecord(
     commentsConnection.pageInfo,
     ["hasNextPage", "endCursor"],
     ["hasNextPage", "endCursor"],
     "GitHub review-thread comment page info",
   );
-  if (
-    booleanValue(
-      commentsPageInfo.hasNextPage,
-      "GitHub review-thread comment next-page flag",
-    )
-  ) {
-    throw rejected(
-      "github_delegated_provider_result_too_large",
-      "GitHub delegated nested review-thread comment pagination is unsupported",
-    );
-  }
-  nullableCursor(commentsPageInfo.endCursor);
+  const commentsHasNextPage = booleanValue(
+    commentsPageInfo.hasNextPage,
+    "GitHub review-thread comment next-page flag",
+  );
+  const commentsEndCursor = nullableCursor(commentsPageInfo.endCursor);
   const commentNodes = denseArray(
     commentsConnection.nodes,
     "GitHub review-thread comment nodes",
     commentPageSize,
   );
-  if (commentNodes.length !== commentsTotal) {
+  const commentsTruncated = commentsTotalCount > commentNodes.length;
+  if (
+    commentsTruncated !== commentsHasNextPage
+    || (commentsHasNextPage && commentsEndCursor === null)
+    || (commentsHasNextPage && commentNodes.length !== commentPageSize)
+    || (!commentsHasNextPage && commentNodes.length !== commentsTotalCount)
+  ) {
     throw rejected(
       "github_delegated_provider_invalid_response",
-      "GitHub review-thread comment count did not match its nodes",
+      "GitHub review-thread comment pagination was inconsistent",
     );
   }
   const comments = commentNodes.map((comment) =>
@@ -698,6 +691,8 @@ function reviewThread(
     side,
     startSide,
     resolvedByLogin,
+    commentsTotalCount,
+    commentsTruncated,
     comments: Object.freeze(comments),
   });
 }
