@@ -6,23 +6,22 @@ import {
 } from "../src/github-repository-write-receipt-admission.ts";
 
 describe("repository write receipt canonical JSON parsing", () => {
-  test("rejects whitespace and reordered encodings of an otherwise valid receipt", () => {
+  test("rejects whitespace, trailing bytes, and reordered encodings", () => {
     const canonical = canonicalGitHubRepositoryWriteReceiptJson(receipt());
     const parsed = JSON.parse(canonical) as Record<string, unknown>;
     const pretty = JSON.stringify(parsed, null, 2);
+    const trailing = `${canonical}\n`;
     const reordered = JSON.stringify({ state: parsed.state, ...parsed });
 
-    expect(pretty).not.toBe(canonical);
-    expect(reordered).not.toBe(canonical);
-    expect(() => parseGitHubRepositoryWriteReceiptJson(pretty)).toThrow(
-      "GitHub repository write receipt JSON must be canonical",
-    );
-    expect(() => parseGitHubRepositoryWriteReceiptJson(reordered)).toThrow(
-      "GitHub repository write receipt JSON must be canonical",
-    );
+    for (const candidate of [pretty, trailing, reordered]) {
+      expect(candidate).not.toBe(canonical);
+      expect(() => parseGitHubRepositoryWriteReceiptJson(candidate)).toThrow(
+        "GitHub repository write receipt JSON must be canonical",
+      );
+    }
   });
 
-  test("rejects duplicate keys even when the final parsed value is canonical", () => {
+  test("rejects duplicate keys without echoing hidden credential text", () => {
     const canonical = canonicalGitHubRepositoryWriteReceiptJson(receipt());
     const hidden = `github_pat_${"a".repeat(24)}`;
     const duplicate = canonical.replace(
@@ -32,9 +31,17 @@ describe("repository write receipt canonical JSON parsing", () => {
 
     expect(duplicate).not.toBe(canonical);
     expect(JSON.parse(duplicate)).toEqual(JSON.parse(canonical));
-    expect(() => parseGitHubRepositoryWriteReceiptJson(duplicate)).toThrow(
+    let observed: unknown;
+    try {
+      parseGitHubRepositoryWriteReceiptJson(duplicate);
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toBeInstanceOf(Error);
+    expect((observed as Error).message).toBe(
       "GitHub repository write receipt JSON must be canonical",
     );
+    expect((observed as Error).message).not.toContain(hidden);
   });
 
   test("continues to accept the exact canonical encoding", () => {
