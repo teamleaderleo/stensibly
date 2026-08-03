@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   GitHubRepositoryWriteProviderService,
   type GitHubRepositoryWriteAuthorityProvider,
+  type GitHubRepositoryWriteCommand,
 } from "../src/github-repository-write-provider-service.ts";
 import {
   GitHubRestRepositoryWriteAdapter,
@@ -92,7 +93,7 @@ function authorityProvider(): GitHubRepositoryWriteAuthorityProvider {
   };
 }
 
-function command() {
+function command(): GitHubRepositoryWriteCommand {
   return {
     project: "stensibly",
     actorId: "actor_repository_transport",
