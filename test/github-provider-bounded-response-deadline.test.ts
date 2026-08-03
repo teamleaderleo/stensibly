@@ -80,6 +80,61 @@ describe("bounded GitHub provider response deadline", () => {
     expect(observed.cancelCalled()).toBe(true);
   });
 
+  test("preserves an explicit set deadline through delegated create writes", async () => {
+    const requestId = "REQ-DELEGATED-CREATE-DEADLINE";
+    const observed = stalledResponse(requestId);
+    const adapter = new GitHubRestIssueSetWriteAdapter({
+      tokenProvider: tokenProvider(),
+      fetch: (async () => observed.response) as typeof fetch,
+      providerResponseDeadlineMs: responseDeadlineMs,
+    });
+
+    const outcome = await withinWitnessWindow(adapter.createIssue({
+      repositoryFullName,
+      title: "Preserve delegated response deadline",
+      labels: [],
+      assignees: [],
+      idempotencyKey: "delegated-create-response-deadline",
+    }));
+
+    expectPostEffectDeadline(outcome, requestId);
+    expect(observed.cancelCalled()).toBe(true);
+  });
+
+  test("starts the production default before dispatch for both adapters", async () => {
+    const signals: AbortSignal[] = [];
+    const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      return new Response(null, { status: 422 });
+    }) as typeof fetch;
+
+    const writeAdapter = new GitHubRestIssueWriteAdapter({
+      tokenProvider: tokenProvider(),
+      fetch: fetcher,
+    });
+    await expect(writeAdapter.createIssue({
+      repositoryFullName,
+      title: "Default response deadline",
+      labels: [],
+      assignees: [],
+      idempotencyKey: "default-write-response-deadline",
+    })).rejects.toThrow("GitHub rejected create issue");
+
+    const setAdapter = new GitHubRestIssueSetWriteAdapter({
+      tokenProvider: tokenProvider(),
+      fetch: fetcher,
+    });
+    await expect(setAdapter.addIssueLabels({
+      repositoryFullName,
+      issueNumber,
+      labels: ["area:github"],
+      idempotencyKey: "default-set-response-deadline",
+    })).rejects.toThrow("GitHub rejected add issue labels");
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+  });
+
   test("rejects invalid adapter deadlines before token or fetch access", () => {
     const invalidValues = [
       0,
