@@ -7,6 +7,8 @@ import {
 const controlledRepository = "teamleaderleo/stensibly";
 const encodedPathDiagnostic =
   "GitHub outbound direct reference contains percent-encoded path continuation";
+const invalidAuthorityDiagnostic =
+  "GitHub outbound direct reference URL authority is invalid";
 
 describe("GitHub outbound canonical direct URL routes", () => {
   test("fails closed when any identity-bearing path segment contains a percent escape", () => {
@@ -22,21 +24,16 @@ describe("GitHub outbound canonical direct URL routes", () => {
     ];
 
     for (const text of cases) {
-      const error = captureError(() => compile(text));
-      expect(error).toBeInstanceOf(RangeError);
-      expect(error.message).toBe(encodedPathDiagnostic);
-      expect(error.message).not.toContain(text);
-      expect(JSON.stringify(error)).not.toContain(text);
+      expectFixedRejection(text, encodedPathDiagnostic);
     }
   });
 
-  test("does not silently pass normalized GitHub host spellings", () => {
+  test("normalizes default ports and a trailing-dot GitHub host", () => {
     const cases = [
       "https://github.com:443/example/project/issues/12",
       "http://github.com:80/example/project/issues/12",
       "https://github.com./example/project/issues/12",
       "https://www.github.com:443/example/project/issues/12",
-      "https://reader@github.com/example/project/issues/12",
     ];
 
     for (const text of cases) {
@@ -51,6 +48,18 @@ describe("GitHub outbound canonical direct URL routes", () => {
         itemNumber: 12,
         commitPrefix: null,
       });
+    }
+  });
+
+  test("fails closed on userinfo and non-default GitHub ports", () => {
+    const cases = [
+      "https://reader@github.com/example/project/issues/12",
+      "https://github.com:444/example/project/issues/12",
+      "http://github.com:81/example/project/issues/12",
+    ];
+
+    for (const text of cases) {
+      expectFixedRejection(text, invalidAuthorityDiagnostic);
     }
   });
 
@@ -70,6 +79,14 @@ describe("GitHub outbound canonical direct URL routes", () => {
     });
   });
 });
+
+function expectFixedRejection(text: string, message: string): void {
+  const error = captureError(() => compile(text));
+  expect(error).toBeInstanceOf(RangeError);
+  expect(error.message).toBe(message);
+  expect(error.message).not.toContain(text);
+  expect(JSON.stringify(error)).not.toContain(text);
+}
 
 function compile(text: string) {
   return compileGitHubOutboundTextPreflightV1({
@@ -93,5 +110,5 @@ function captureError(run: () => unknown): Error {
     expect(error).toBeInstanceOf(Error);
     return error as Error;
   }
-  throw new Error("Expected non-canonical GitHub URL path rejection");
+  throw new Error("Expected non-canonical GitHub URL rejection");
 }
