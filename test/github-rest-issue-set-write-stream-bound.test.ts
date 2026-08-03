@@ -85,7 +85,7 @@ describe("GitHub set-write streamed response bounds", () => {
           });
         }
         return Response.json({ message: "unexpected request" }, { status: 500 });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const result = await addLabels(adapter);
@@ -130,7 +130,7 @@ function adapterFor(response: Response): GitHubRestIssueSetWriteAdapter {
       }
       used = true;
       return response;
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   });
 }
 
