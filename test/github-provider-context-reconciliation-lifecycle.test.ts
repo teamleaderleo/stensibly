@@ -67,7 +67,7 @@ describe("GitHub provider context reconciliation lifecycle", () => {
   });
 
   test("admits operation targets before every unsettled outcome", () => {
-    const valid: Array<readonly [GitHubProviderReceipt, string]> = [
+    const valid = [
       [
         unsettledReceipt(
           "github_create_issue",
@@ -108,7 +108,7 @@ describe("GitHub provider context reconciliation lifecycle", () => {
         ),
         "pending_provider_reconciliation",
       ],
-    ];
+    ] as const;
     for (const [receipt, outcome] of valid) {
       expect(compile(receipt).outcome).toBe(outcome);
     }
