@@ -122,7 +122,9 @@ function snapshotDataRecord(value: unknown, label: string): DataRecord {
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const output = Object.create(null) as DataRecord;
   for (const key of Reflect.ownKeys(descriptors)) {
-    const descriptor = descriptors[key as keyof typeof descriptors];
+    const descriptor = Reflect.get(descriptors, key) as
+      | PropertyDescriptor
+      | undefined;
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       throw new TypeError(`${label} fields must be enumerable data properties`);
     }
