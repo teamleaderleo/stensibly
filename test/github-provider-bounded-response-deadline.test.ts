@@ -15,8 +15,40 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const issueNumber = 525;
 const responseDeadlineMs = 20;
 const witnessWindowMs = 250;
+const invalidValues = [
+  0,
+  -0,
+  -1,
+  1.5,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+  120_001,
+  "20",
+  null,
+] as const;
+const invalidDeadlineError = "GitHub provider response deadline is invalid";
 
 describe("bounded GitHub provider response deadline", () => {
+  test("rejects invalid direct-reader deadlines before response-body access", async () => {
+    for (const providerResponseDeadlineMs of invalidValues) {
+      let bodyReads = 0;
+      const response = {
+        headers: new Headers(),
+        get body() {
+          bodyReads += 1;
+          throw new Error("body must remain unread");
+        },
+      } as unknown as Response;
+
+      await expect(readBoundedGitHubProviderResponseText(
+        response,
+        512 * 1024,
+        providerResponseDeadlineMs as number,
+      )).rejects.toThrow(invalidDeadlineError);
+      expect(bodyReads).toBe(0);
+    }
+  });
+
   test("cancels and rejects when the first response-body read never settles", async () => {
     const observed = stalledResponse("REQ-SHARED-DEADLINE");
 
@@ -136,18 +168,6 @@ describe("bounded GitHub provider response deadline", () => {
   });
 
   test("rejects invalid adapter deadlines before token or fetch access", () => {
-    const invalidValues = [
-      0,
-      -0,
-      -1,
-      1.5,
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-      120_001,
-      "20",
-      null,
-    ] as const;
-
     for (const providerResponseDeadlineMs of invalidValues) {
       let tokenCalls = 0;
       let fetchCalls = 0;
@@ -170,10 +190,10 @@ describe("bounded GitHub provider response deadline", () => {
 
       expect(() => new GitHubRestIssueWriteAdapter(
         options as ConstructorParameters<typeof GitHubRestIssueWriteAdapter>[0],
-      )).toThrow("GitHub provider response deadline is invalid");
+      )).toThrow(invalidDeadlineError);
       expect(() => new GitHubRestIssueSetWriteAdapter(
         options as ConstructorParameters<typeof GitHubRestIssueSetWriteAdapter>[0],
-      )).toThrow("GitHub provider response deadline is invalid");
+      )).toThrow(invalidDeadlineError);
       expect(tokenCalls).toBe(0);
       expect(fetchCalls).toBe(0);
     }
