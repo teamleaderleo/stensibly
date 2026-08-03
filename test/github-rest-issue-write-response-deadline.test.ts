@@ -159,7 +159,7 @@ async function settleWithin(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      promise.then<Settled>(
+      promise.then<Settled, Settled>(
         (value) => ({ kind: "value", value }),
         (error) => ({ kind: "error", error }),
       ),
