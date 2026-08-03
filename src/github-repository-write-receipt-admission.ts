@@ -130,7 +130,13 @@ export function parseGitHubRepositoryWriteReceiptJson(
   } catch {
     throw invalidReceipt();
   }
-  return admitGitHubRepositoryWriteReceipt(parsed);
+  const receipt = admitGitHubRepositoryWriteReceipt(parsed);
+  if (stableJson(receipt) !== value) {
+    throw new Error(
+      "GitHub repository write receipt JSON must be canonical",
+    );
+  }
+  return receipt;
 }
 
 export function fingerprintGitHubRepositoryWriteReceipt(
