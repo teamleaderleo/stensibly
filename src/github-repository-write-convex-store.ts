@@ -1,12 +1,21 @@
 import { makeFunctionReference } from "convex/server";
-import { sha256, stableJson } from "./canonical-json.js";
 import type { ConvexCaller } from "./convex-ledger.js";
 import {
-  freezeRepositoryWriteReceipt,
-  type GitHubRepositoryWriteReceipt,
-  type GitHubRepositoryWriteReservation,
-  type GitHubRepositoryWriteStore,
+  admitGitHubRepositoryWriteReceipt,
+  canonicalGitHubRepositoryWriteReceiptJson,
+  parseGitHubRepositoryWriteReceiptJson,
+} from "./github-repository-write-receipt-admission.js";
+import type {
+  GitHubRepositoryWriteReceipt,
+  GitHubRepositoryWriteReservation,
+  GitHubRepositoryWriteStore,
 } from "./github-repository-write-provider-service.js";
+
+export {
+  canonicalGitHubRepositoryWriteReceiptJson,
+  fingerprintGitHubRepositoryWriteReceipt,
+  parseGitHubRepositoryWriteReceiptJson,
+} from "./github-repository-write-receipt-admission.js";
 
 const reserveRef = makeFunctionReference<"mutation">(
   "githubRepositoryWrites:reserve",
@@ -61,10 +70,10 @@ export class ConvexGitHubRepositoryWriteStore
   async reserveRepositoryWrite(
     receiptInput: GitHubRepositoryWriteReceipt,
   ): Promise<GitHubRepositoryWriteReservation> {
-    const requested = admitRepositoryWriteReceipt(receiptInput);
+    const requested = storedReceipt(receiptInput);
     const raw = await this.client.mutation(reserveRef, this.args({
       project: requested.project,
-      receiptJson: canonicalGitHubRepositoryWriteReceiptJson(requested),
+      receiptJson: canonicalReceiptJson(requested),
     }));
     const result = admitReservation(raw);
     if (!validReservation(result, requested)) {
@@ -78,7 +87,7 @@ export class ConvexGitHubRepositoryWriteStore
     code: string;
     rejectedAt: string;
   }): Promise<GitHubRepositoryWriteReceipt> {
-    const current = admitRepositoryWriteReceipt(input.receipt);
+    const current = storedReceipt(input.receipt);
     return this.#transition("reject_and_release", current, {
       ...current,
       state: "rejected",
@@ -95,7 +104,7 @@ export class ConvexGitHubRepositoryWriteStore
     code: string;
     heldAt: string;
   }): Promise<GitHubRepositoryWriteReceipt> {
-    const current = admitRepositoryWriteReceipt(input.receipt);
+    const current = storedReceipt(input.receipt);
     return this.#transition("hold_for_reconciliation", current, {
       ...current,
       state: "pending_reconciliation",
@@ -111,7 +120,7 @@ export class ConvexGitHubRepositoryWriteStore
     receipt: GitHubRepositoryWriteReceipt;
     verified: NonNullable<GitHubRepositoryWriteReceipt["verified"]>;
   }): Promise<GitHubRepositoryWriteReceipt> {
-    const current = admitRepositoryWriteReceipt(input.receipt);
+    const current = storedReceipt(input.receipt);
     return this.#transition("record_verified", current, {
       ...current,
       state: "verified_pending_release",
@@ -131,7 +140,7 @@ export class ConvexGitHubRepositoryWriteStore
     code: string;
     heldAt: string;
   }): Promise<GitHubRepositoryWriteReceipt> {
-    const current = admitRepositoryWriteReceipt(input.receipt);
+    const current = storedReceipt(input.receipt);
     return this.#transition("hold_verified_for_reconciliation", current, {
       ...current,
       state: "verified_pending_release",
@@ -149,7 +158,7 @@ export class ConvexGitHubRepositoryWriteStore
     receipt: GitHubRepositoryWriteReceipt;
     releasedAt: string;
   }): Promise<GitHubRepositoryWriteReceipt> {
-    const current = admitRepositoryWriteReceipt(input.receipt);
+    const current = storedReceipt(input.receipt);
     return this.#transition("release_verified", current, {
       ...current,
       state: "succeeded",
@@ -169,7 +178,7 @@ export class ConvexGitHubRepositoryWriteStore
       idempotencyKey: exactKey,
     }));
     if (raw === null) return null;
-    const receipt = parseGitHubRepositoryWriteReceiptJson(raw);
+    const receipt = parseStoredReceipt(raw);
     if (
       receipt.project !== exactProject
       || receipt.idempotencyKey !== exactKey
@@ -184,22 +193,19 @@ export class ConvexGitHubRepositoryWriteStore
     currentInput: GitHubRepositoryWriteReceipt,
     nextInput: GitHubRepositoryWriteReceipt,
   ): Promise<GitHubRepositoryWriteReceipt> {
-    const current = admitRepositoryWriteReceipt(currentInput);
-    const next = admitRepositoryWriteReceipt(nextInput);
+    const current = storedReceipt(currentInput);
+    const next = storedReceipt(nextInput);
     if (!sameReservationIdentity(current, next)) {
       throw new GitHubRepositoryWriteStorageError();
     }
     const raw = await this.client.mutation(transitionRef, this.args({
       project: current.project,
       action,
-      currentReceiptJson: canonicalGitHubRepositoryWriteReceiptJson(current),
-      nextReceiptJson: canonicalGitHubRepositoryWriteReceiptJson(next),
+      currentReceiptJson: canonicalReceiptJson(current),
+      nextReceiptJson: canonicalReceiptJson(next),
     }));
-    const stored = parseGitHubRepositoryWriteReceiptJson(raw);
-    if (
-      canonicalGitHubRepositoryWriteReceiptJson(stored)
-      !== canonicalGitHubRepositoryWriteReceiptJson(next)
-    ) {
+    const stored = parseStoredReceipt(raw);
+    if (canonicalReceiptJson(stored) !== canonicalReceiptJson(next)) {
       throw new GitHubRepositoryWriteStorageError();
     }
     return stored;
@@ -236,43 +242,6 @@ export function withConvexGitHubRepositoryWriteStore<T extends object>(
   });
 }
 
-export function canonicalGitHubRepositoryWriteReceiptJson(
-  receipt: GitHubRepositoryWriteReceipt,
-): string {
-  return stableJson(admitRepositoryWriteReceipt(receipt));
-}
-
-export function parseGitHubRepositoryWriteReceiptJson(
-  value: unknown,
-): GitHubRepositoryWriteReceipt {
-  if (
-    typeof value !== "string"
-    || value.length === 0
-    || Buffer.byteLength(value, "utf8") > 256 * 1024
-  ) {
-    throw new GitHubRepositoryWriteStorageError();
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value) as unknown;
-  } catch {
-    throw new GitHubRepositoryWriteStorageError();
-  }
-  try {
-    return admitRepositoryWriteReceipt(
-      parsed as GitHubRepositoryWriteReceipt,
-    );
-  } catch {
-    throw new GitHubRepositoryWriteStorageError();
-  }
-}
-
-export function fingerprintGitHubRepositoryWriteReceipt(
-  receipt: GitHubRepositoryWriteReceipt,
-): string {
-  return sha256(canonicalGitHubRepositoryWriteReceiptJson(receipt));
-}
-
 export class GitHubRepositoryWriteStorageError extends Error {
   readonly code = "github_repository_write_storage_failed";
 
@@ -282,11 +251,25 @@ export class GitHubRepositoryWriteStorageError extends Error {
   }
 }
 
-function admitRepositoryWriteReceipt(
-  receipt: GitHubRepositoryWriteReceipt,
-): GitHubRepositoryWriteReceipt {
+function storedReceipt(value: unknown): GitHubRepositoryWriteReceipt {
   try {
-    return freezeRepositoryWriteReceipt(receipt);
+    return admitGitHubRepositoryWriteReceipt(value);
+  } catch {
+    throw new GitHubRepositoryWriteStorageError();
+  }
+}
+
+function parseStoredReceipt(value: unknown): GitHubRepositoryWriteReceipt {
+  try {
+    return parseGitHubRepositoryWriteReceiptJson(value);
+  } catch {
+    throw new GitHubRepositoryWriteStorageError();
+  }
+}
+
+function canonicalReceiptJson(receipt: GitHubRepositoryWriteReceipt): string {
+  try {
+    return canonicalGitHubRepositoryWriteReceiptJson(receipt);
   } catch {
     throw new GitHubRepositoryWriteStorageError();
   }
@@ -305,7 +288,7 @@ function admitReservation(value: unknown): GitHubRepositoryWriteReservation {
   }
   return {
     outcome: outcome as GitHubRepositoryWriteReservation["outcome"],
-    receipt: parseGitHubRepositoryWriteReceiptJson(record.receiptJson),
+    receipt: parseStoredReceipt(record.receiptJson),
   };
 }
 
@@ -316,8 +299,7 @@ function validReservation(
   const current = result.receipt;
   if (current.project !== requested.project) return false;
   if (result.outcome === "reserved") {
-    return canonicalGitHubRepositoryWriteReceiptJson(current)
-      === canonicalGitHubRepositoryWriteReceiptJson(requested);
+    return canonicalReceiptJson(current) === canonicalReceiptJson(requested);
   }
   if (result.outcome === "replay") {
     return current.idempotencyKey === requested.idempotencyKey
