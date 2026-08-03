@@ -2,14 +2,14 @@
 
 **Status:** active P0 execution and convergence focus  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-04 UTC after repository-write storage, bounded readback, context-admission, native transport, and formal-proof reviews  
+**Last reconciled:** 2026-08-04 UTC after final proposal-admission, proof-receipt attribution, method-sensitive readback, native admission, and Merkle privacy convergence  
 **Current main:** `cd81a86bad209419a9e5f98db3661aeeb1c5caa2`  
 **Tracking incident:** #490  
 **Programme:** #491  
 **GitHub context integration:** #492  
 **Governed GitHub writes:** #921  
 **Wave:** `W01`  
-**Wave revision:** `17`  
+**Wave revision:** `18`  
 **Operating protocol:** `stensibly-agent-ops/0.5.0` plus standing policy `stensibly-internal-dogfood/v2`
 
 ## Purpose
@@ -78,7 +78,7 @@ The private/public label and assignee chain remains:
 
 #1012 owns the shared total response lifetime, decoded-byte ceiling, chunk-work bound, chunk ownership, fatal UTF-8, request attribution, hostile response metadata, and fixed non-echoing failures.
 
-**#1050** has absorbed closed children #1060 and #1067 at exact head `5e85b0e2feb36ed8a3ec53023d28908fb37b0fe0`. It now:
+**#1050** has absorbed and closed #1060, #1067, and #1072 at exact head `f4362572e79319e2a03daa4900dfc55346d66700`. It now:
 
 - restores one-shot bounded `text()` through the inherited deadline;
 - preserves bounded `Link` metadata and descriptor-safe stream results;
@@ -88,7 +88,7 @@ The private/public label and assignee chain remains:
 - uses 256 KiB for GET one comment and POST comment creation;
 - preserves request identity through stalled final readback.
 
-Fresh run `30853164704` is pending. After unchanged-head acceptance, absorb #1050 into #1012 and rerun #972/#968/#970 on exact ancestry.
+CodeRabbit and threads are clean; replacement run `30853930145` remains pending. After unchanged-head acceptance, absorb #1050 into #1012 and rerun #972/#968/#970 on exact ancestry.
 
 ### Provider receipt to accepted context
 
@@ -97,7 +97,7 @@ The current sequence is:
 ```text
 #961 reconciliation proposal/request compiler
   → #1064 primitive enum admission
-  → #1063 final chronology/item-ceiling/privacy controls
+  → #1068 detached final proposal-admission implementation
   → #1013 instruction-observation resolution
   → #1055 stateless exactly-once nested-input controls
   → #975 context acceptance composer
@@ -105,37 +105,38 @@ The current sequence is:
 ```
 
 - **#961** current parent head is `76a8c41954d34fe1b47218f33e131722bff2f25f`.
-- **#1064** exact head `f08b980de00230fc4d7327c18e70cff15a5dd42c` requires primitive `outcome`/`nextAction` admission without conversion hooks and retains only admitted primitive values. Source is accepted; test, runtime-parity, and browser jobs are queued in run `30851471496`.
-- **#1063** exact red-control head `6dda2e350074d472421a0fd76240af7e67d95ba4` requires create chronology rejection before any nested snapshot `getPrototypeOf`, key, or descriptor access; provider issue number `<= 2_147_483_647`; and the landed Stensibly token/service plus authorization-header privacy policy across retained identities. It preserves benign short aliases. #961 must absorb this exact control and source repair; the child never merges.
+- **#1064** exact head `f08b980de00230fc4d7327c18e70cff15a5dd42c` requires primitive `outcome`/`nextAction` admission without conversion hooks and retains only admitted primitive values. Source is accepted; run `30851471496` is queued.
+- **#1068** exact head `6e05d89b4b6096b34bd9ae7d04c7e482ea5d53d7` is the complete six-file implementation/control packet. It snapshots caller-owned input once, rejects impossible chronology before nested snapshot access, enforces the GitHub item ceiling, applies the shared retained-credential policy across every retained field/slug, preserves the reviewed base compiler, and enforces that only the public wrapper imports that base. #1076 is absorbed and closed. Source review `4848863462` accepts the unchanged head; CodeRabbit and threads are clean; canonical run `30856330331` is allocated but queued.
+- **#1063** remains red evidence for the chronology/item-ceiling/privacy boundary but is no longer the implementation candidate.
 - **#1013** still uses a 256-entry process-local canonical-request registry and proposal-less origin fallback. The wrapper snapshots nested evidence for local checks, then passes original caller-owned request, attachment, and observation objects to the base resolver and later chronology reads.
 - **#1055** exact head `49207c61518948b6f7b9a693789b6ea9118b03c0` provides complete red evidence for a stateless repair: compiler history and cache pressure must never authorise proposal-less resolution; proposal/request/attachment/observation must each be detached exactly once; and later self-consistent reversals must not cross wrapper/base/chronology layers. Source review accepts the control; run `30851122300` is pending before job allocation.
-- **#1061** exact head `df12a515310b56c5af509891ddd67f437ddb3f9d` applies the same primitive-enum boundary to #975 before hostile binding access. Source is accepted; three parallel jobs are queued in run `30851195955`.
+- **#1061** exact head `df12a515310b56c5af509891ddd67f437ddb3f9d` applies the same primitive-enum boundary to #975 before hostile binding access. Source is accepted; run `30851195955` is queued.
 
-Complete #961 first, replace #1013’s registry with exact proposal-required detached input, then restack and renew #975/#1061. Receipt-reservation chronology remains a separate producer-evidence gate.
+Complete #1068, squash/replay #1064 plus #1068 into one current-main #961 head, replace #1013’s registry with exact proposal-required detached input, then restack and renew #975/#1061. Receipt-reservation chronology remains a separate producer-evidence gate.
 
 ### Outbound-reference and proof privacy
 
 - **#987** remains the consolidation parent for complete outbound GitHub URL admission after #971.
-- **#1046** exact head `7e7cde8822b9db5ab7ab0e7f17f7716703d8967a` is source-accepted for encoded invalid identity and literal/encoded route-continuation admission. It recognises supported route prefixes before terminal-shape rejection, preserves authority/privacy precedence, and must be absorbed into #987 after canonical execution. Separate descriptor/Proxy, candidate-length, and remaining WHATWG-normalisation work still belongs to the parent.
+- **#1046** exact head `7e7cde8822b9db5ab7ab0e7f17f7716703d8967a` closes authority-first and encoded route-prefix fail-opens, but it is not terminally source-accepted. Its supplemental continuation branch currently rejects canonical base-owned `/issues/12/comments` and `/commit/abcdef0/checks` findings. Preserve canonical host/no-port literal-suffix results while retaining encoded, userinfo, port, trailing-dot, and normalized-spelling rejection before parent absorption.
 - **#1000** owns append-only observation Merkle checkpoints and proofs. Its mathematics remain authority-free and prove only inclusion or append-only prefix consistency, not provider truth, completeness, signing, persistence, settlement, or deployment.
-- **#1033/#1045** continue to own retained public-route and commit-presentation privacy controls before the Merkle packet can become terminal.
+- **#1033** exact head `9618bbce6574c8b7a07791da48e141731d06be5a` owns terminal 7–64-hex routes, slash/path continuations, fragments, trailing-dot/default-port hosts, and forged-proof positions.
+- **#1045** exact head `57b8a7581432a5b7a40897035867377cd0a9c1ae` owns the complete immediate `.(patch|diff)` family after issue/pull/discussion item IDs and 40/64-hex commit IDs across compile, inclusion, and consistency evidence. CodeRabbit and threads are clean; run `30854700657` is queued.
 
 Both parent packets require exact-current-main replay and fresh complete execution after their controls are absorbed.
 
 ### Native repository-file writes
 
-#1020 contains a useful native transport core but is not an integration candidate. The shared admission child is now:
+#1020 contains a useful native transport core but is not an integration candidate. The current shared admission prerequisite is:
 
-- **#1065** live head `2f23e466eb4ba4bd538ead7486f44708dfaf2611`, stacked on #1020. It centralises canonical lowercase repository identity, strict branch names including all `refs/` namespaces, exact ASCII paths, realistic credential rejection, and full lowercase 40/64-hex object admission across the fence and REST adapter.
-- **#1070** exact red-control head `8d5151b4324ad11adb2dc1c10fedf185e45ca29e` pins the remaining fence-level object-format gap: the durable fence currently accepts a 64-hex returned/ref-head commit over an exact 40-hex parent because only the adapter checks width coherence. #1065 must apply `sameGitObjectFormat()` inside `verifyRepositoryWriteResult()` before provider-state reads.
-- #1065 must also repair the inherited positive fence fixture, which still uses mixed-case repository bytes despite the new exact-lowercase policy.
+- **#1065** exact head `98a988f416628a0e0c299c7ec0d2a58de843542a`, stacked on #1020. It centralises canonical lowercase repository identity, strict branch names including all `refs/` namespaces, exact ASCII paths, realistic credential rejection, and full lowercase 40/64-hex object admission across the fence and REST adapter. #1066, #1070, and #1073 are absorbed/retired. Terminal source reviews accept the seven-file packet; replacement run `30854152701` is pending.
+- **#1028/#1075** own exact provider file-effect admission and canonical response URL byte spelling. #1028 must restack on the final #1065 head and require provider `url`/`git_url` strings to equal canonical expected `.href` values byte-for-byte before effect admission.
 
-Even after #1065 repairs, #1020 still requires:
+Even after #1065 and #1028 settle, #1020 still requires:
 
 - an atomic exact-parent provider primitive rather than post-effect stale-parent detection;
-- exact requested path/bytes or deletion settlement at the returned commit;
-- retained request identity through post-effect admission failure;
-- one total fetch/body deadline and final response-reader lifetime refinements;
+- exact post-write readback/tree settlement beyond admitted response evidence;
+- retained request identity through later post-effect failures;
+- one total fetch/body deadline and remaining response-reader lifetime refinements;
 - hosted authority/composition and public actions only after the private transport becomes terminal.
 
 #1022 contents-token scope remains blocked behind the repaired transport and general installation-token response lifetime/resource contract.
@@ -144,11 +145,9 @@ Even after #1065 repairs, #1020 still requires:
 
 #1009 source head `3ecc731caa1a1c513cdb7991c31d34ae09436ea7` is the current-main cancellation-settlement model. The active extension checks retained retry capacity and includes a terminal cancel/rejoin witness without widening cleanup authority.
 
-Read-only proof carrier **#1057** moved to `c7782a3528ac0294cd806399f9bcb099c8b1a463`. Its per-obligation `passed | failed | not_run`, exit-code, state-summary, failure-count, always-upload, and non-authorizing receipt design is stronger than the cancelled predecessor. One semantic receipt defect remains:
+Read-only proof carrier **#1057** is now exact head `24b17ed2ae6acf89de058f860ef7ef2056a341da` with three files. It records install, parse, proof, and all nine obligations independently; requires exact intentional violations and non-empty safe summaries; uses the SHA-1-verified artifact-derived SHA-256 pin; and exposes three distinct booleans for the active-safe invariant, cancelled-retry witness, and active-rejoin witness. #1069 and #1077 are absorbed and closed. Source review `4848895541` accepts the carrier; fresh canonical run `30856802690` and TLC run `30856802698` are registered, with prove job `91829603260` queued.
 
-- `checks.cancelledWaiterHasRetryCapacity` is derived from the cancelled-retry witness status, although the invariant of that name is checked by the active safe obligation.
-
-Rename the boolean to the witness meaning, derive the invariant boolean from active-safe status, or retain both distinctly. Runs `30853273749` and `30853273736` are queued, but any receipt from this SHA is nonterminal until the mapping is repaired. The carrier never merges.
+The carrier never merges. After both runs complete, download and verify the receipt JSON, exact obligation identities, tool checksum, logs, and artifact `SHA256SUMS`, then transfer the attributable result to #1009.
 
 ## Temporary degraded mode
 
@@ -183,20 +182,20 @@ A merged PR, green repository run, dashboard sign-in, single provider write, or 
 | P0 | #921 / #492 / #697 live GitHub proof | Repository capabilities are merged; deployed/authenticated evidence is incomplete | Verify exact Worker/MCP revision, refresh the app, and record hosted write/context/job-detail receipts | Exact hosted receipts, reconnect, and no-duplicate replay pass |
 | P0 | #1038 / #1056 / #1049 | Source is accepted in sequence; canonical execution remains incomplete | Complete exact-head parent/child gates and integrate only unchanged stacked candidates | Canonical CI, exact-ref, reviews, ancestry, and terminal gates pass in order |
 | P0 | #1050 / #1012 / #972 / #970 | Method-sensitive issue/comment readback controls are absorbed; fresh execution is pending | Complete #1050, absorb through the private response stack, replay the 41-tool parent | Seven typed mutations pass source, canonical, manifest, and terminal gates |
-| P0 | #961 / #1064 / #1063 / #1013 / #1055 / #975 / #1061 | Final admission and stateless-origin repairs are pinned | Absorb #1063/#1064, remove registry authority, detach one exact packet, then renew composer | Exact proposal/request/attachment/instruction chronology composes deterministically |
-| P1 | #987 / #1046 | Encoded route-prefix repair is source-accepted; parent-wide boundaries remain | Complete #1046 execution, absorb it, and finish descriptor/normalisation gates | External GitHub routes never pass because of encoding or normalisation |
-| P1 | #1000 / #1033 / #1045 | Merkle engine is coherent; retained public-route matcher is incomplete | Absorb route-prefix and presentation controls, replay current main, run full proof/privacy gates | Public route identities reject without changing proof mathematics |
-| P1 | #1009 / #1057 | Model source is current; proof receipt check mapping is wrong | Correct invariant/witness attribution, rerun proof, inspect artifact and checksums | Trustworthy exact proof receipt plus canonical repository gates pass |
-| P1 | #1020 / #1065 / #1070 / #1022 | Shared identity admission is close; fence object-format coherence remains | Absorb #1070, repair fixture, then design atomic parent and exact file-effect settlement | Atomic exact-parent write and exact file effect are proved with bounded settlement |
+| P0 | #961 / #1064 / #1068 / #1013 / #1055 / #975 / #1061 | Final admission implementation is complete; stateless-origin repair remains | Complete #1068, replay one current-main #961 head, remove registry authority, then renew composer | Exact proposal/request/attachment/instruction chronology composes deterministically |
+| P1 | #987 / #1046 | Encoded route-prefix repair still regresses canonical suffix findings | Repair canonical suffix preservation, complete #1046, and absorb into #987 | External GitHub routes never pass or lose valid canonical findings because of normalization |
+| P1 | #1000 / #1033 / #1045 | Merkle engine is coherent; complete retained public-route controls are pinned | Implement one anchored matcher, absorb both controls, replay current main, run proof/privacy gates | Public route identities reject without changing proof mathematics |
+| P1 | #1009 / #1057 | Model source and receipt attribution are complete; fresh proof is queued | Execute both runs and inspect the artifact/checksums | Trustworthy exact proof receipt plus canonical repository gates pass |
+| P1 | #1020 / #1065 / #1028 / #1075 / #1022 | Shared identity admission is source-accepted; file-effect URL exactness/restack remains | Complete #1065, restack #1028, absorb #1075, then continue atomic-parent/readback design | Atomic exact-parent write and exact file effect are proved with bounded settlement |
 
 ## Immediate next actions
 
 1. Finish #1038/#1056/#1049 exact-head execution and integrate only unchanged candidates in order.
 2. Complete #1050 exact-head gates, absorb into #1012, then rerun #972/#968/#970.
-3. Absorb #1063/#1064 into #961; replace #1013’s registry with the stateless exactly-once repair pinned by #1055; renew #975/#1061 only after the parent chain settles.
-4. Complete #1046 and absorb it into #987; finish the Merkle retained-route/presentation controls and replay both parents on current main.
-5. Absorb #1070 into #1065, repair the inherited fence fixture, then continue #1020’s atomic-parent and exact-effect design.
-6. Repair #1057’s invariant/witness check mapping, rerun the exact TLA+ proof, and inspect the uploaded receipt/log/checksum artifact.
+3. Complete #1068, replay #1064 + #1068 as one current-main #961 candidate, then replace #1013’s registry using #1055 and renew #975/#1061.
+4. Repair #1046 canonical suffix preservation; absorb #1033/#1045 into one Merkle matcher and replay both parents on current main.
+5. Complete #1065, restack #1028, absorb #1075, then continue #1020’s atomic-parent and exact-effect settlement.
+6. Run #1057’s fresh exact proof and inspect the uploaded receipt/log/checksum artifact before accepting #1009.
 7. After repository gates settle, verify production revision/app declaration and run the complete #921/#492/#697/#490 authenticated journey.
 
 ## Failure handling
@@ -210,5 +209,5 @@ When a step fails:
 - repair and rerun the failing segment, then repeat the complete lifecycle;
 - leave GitHub with the current fact, exact evidence, recovery path, and one executable next action.
 
-— Morrow and Loom · W01 revision 17 reconciliation  
+— Morrow, Loom, and Cicada · W01 revision 18 reconciliation  
   Intention: keep one current campaign record that separates merged code, source blockers, execution evidence, and live product proof
