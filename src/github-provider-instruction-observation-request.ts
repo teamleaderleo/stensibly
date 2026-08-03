@@ -66,7 +66,7 @@ export function compileGitHubProviderInstructionObservationRequestV1(
 
   if (
     operation === "github_create_issue"
-    && currentSourceRevision !== null
+    && typeof currentSourceRevision === "string"
   ) {
     throw new RangeError(
       "GitHub reconciliation proposal semantics are invalid",
