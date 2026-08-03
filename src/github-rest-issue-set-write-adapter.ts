@@ -27,6 +27,7 @@ export interface GitHubRestIssueSetWriteAdapterOptions
 
 const githubApiVersion = "2022-11-28";
 const maximumResponseBytes = 512 * 1024;
+const maximumResponseChunks = 4_096;
 const maximumAssigneesPerMutation = 10;
 
 /**
@@ -328,7 +329,7 @@ function admitLabelResponse(value: unknown, operation: string): string[] {
     if (typeof entry === "string") {
       return boundedText(entry, "GitHub label", 100);
     }
-    if (isRecord(entry)) {
+    if (isRecord(entry) && typeof entry.name === "string") {
       return boundedText(entry.name, "GitHub label", 100);
     }
     throw new RangeError(`GitHub ${operation} response was invalid`);
@@ -359,7 +360,7 @@ function admitAssigneeIssueResponse(
     throw new RangeError(`GitHub ${operation} response was invalid`);
   }
   const assignees = value.assignees.map((entry) => {
-    if (!isRecord(entry)) {
+    if (!isRecord(entry) || typeof entry.login !== "string") {
       throw new RangeError(`GitHub ${operation} response was invalid`);
     }
     return boundedText(entry.login, "GitHub assignee", 39).toLowerCase();
@@ -404,10 +405,12 @@ async function boundedResponseText(
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null) {
     if (!/^(?:0|[1-9][0-9]*)$/u.test(contentLength)) {
+      bestEffortCancelBody(response.body);
       throw ambiguousTransportError(operation);
     }
     const length = Number(contentLength);
     if (!Number.isSafeInteger(length) || length > maximumResponseBytes) {
+      bestEffortCancelBody(response.body);
       throw ambiguousTransportError(operation);
     }
   }
@@ -417,26 +420,31 @@ async function boundedResponseText(
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
+  let chunkCount = 0;
   try {
     while (true) {
       const next = await reader.read();
       if (next.done) break;
+      chunkCount += 1;
+      if (chunkCount > maximumResponseChunks) {
+        throw ambiguousTransportError(operation);
+      }
       const chunk = next.value;
       if (!(chunk instanceof Uint8Array)) {
         throw ambiguousTransportError(operation);
       }
-      byteLength += chunk.byteLength;
-      if (byteLength > maximumResponseBytes) {
+      const nextByteLength = byteLength + chunk.byteLength;
+      if (
+        !Number.isSafeInteger(nextByteLength)
+        || nextByteLength > maximumResponseBytes
+      ) {
         throw ambiguousTransportError(operation);
       }
-      chunks.push(chunk);
+      chunks.push(new Uint8Array(chunk));
+      byteLength = nextByteLength;
     }
   } catch {
-    try {
-      await reader.cancel();
-    } catch {
-      // The fixed transport error below remains the public boundary.
-    }
+    bestEffortCancelReader(reader);
     throw ambiguousTransportError(operation);
   } finally {
     reader.releaseLock();
@@ -452,6 +460,25 @@ async function boundedResponseText(
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw ambiguousTransportError(operation);
+  }
+}
+
+function bestEffortCancelBody(body: ReadableStream<Uint8Array> | null): void {
+  if (body === null) return;
+  try {
+    void Promise.resolve(body.cancel()).catch(() => {});
+  } catch {
+    // Fixed ambiguity is returned by the caller.
+  }
+}
+
+function bestEffortCancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): void {
+  try {
+    void Promise.resolve(reader.cancel()).catch(() => {});
+  } catch {
+    // Fixed ambiguity is returned by the caller.
   }
 }
 
