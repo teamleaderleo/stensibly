@@ -168,7 +168,7 @@ const timestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const safeIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/u;
 const credentialPattern =
-  /(?:^|[._:/-])(?:(?:env|secret):\/\/|bearer(?:[._:/-]|$)|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-|eyJ[A-Za-z0-9_-]{8,}\.)/iu;
+  /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._\/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
 
 export function composeGitHubProviderContextAcceptanceV1(
   value: unknown,
@@ -313,7 +313,10 @@ function admitProposal(
   );
   const attachmentSnapshotSha256 = exactHash(proposal.attachmentSnapshotSha256);
   const verificationCheckedAt = nullableTimestamp(proposal.verificationCheckedAt);
-  const externalId = nullableExternalId(proposal.externalId);
+  const externalId = nullableExternalId(
+    proposal.externalId,
+    repositoryFullName,
+  );
   const currentSourceRevision = nullableSourceRevision(proposal.currentSourceRevision);
   const providerSourceRevision = nullableSourceRevision(proposal.providerSourceRevision);
   if (!proposalOutcomes.has(String(proposal.outcome))) {
@@ -422,6 +425,14 @@ function assertProposalSemanticCoherence(
         || proposal.repositoryFullName !== snapshot.reference.repositoryFullName
         || proposal.providerSourceRevision !== snapshot.sourceRevision
         || proposal.verificationCheckedAt === null
+        || (
+          proposal.operation === "github_create_issue"
+          && proposal.currentSourceRevision !== null
+        )
+        || (
+          proposal.currentSourceRevision !== null
+          && proposal.currentSourceRevision === proposal.providerSourceRevision
+        )
       ) invalid();
       return;
     case "identity_conflict":
@@ -460,8 +471,11 @@ function admitBinding(value: unknown): HostedGitHubIssueContextBindingInputV1 {
   const snapshot = admitGitHubIssueContextSnapshot(binding.snapshot);
   const instructionSet = admitAcceptedRepositoryInstructionSet(binding.instructionSet);
   const project = exactSlug(binding.project, "Hosted GitHub issue context project");
-  const externalId = exactExternalId(binding.externalId);
   const repositoryFullName = canonicalRepository(binding.repositoryFullName);
+  const externalId = exactExternalId(
+    binding.externalId,
+    repositoryFullName,
+  );
   if (
     snapshot.reference.externalId !== externalId
     || snapshot.reference.repositoryFullName !== repositoryFullName
@@ -615,6 +629,7 @@ function exactSlug(value: unknown, label: string): string {
     typeof value !== "string"
     || value !== value.trim()
     || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)
+    || credentialPattern.test(value)
   ) throw new RangeError(`${label} is invalid`);
   return value;
 }
@@ -627,22 +642,42 @@ function canonicalRepository(value: unknown): string {
   if (repository !== value) {
     throw new RangeError("GitHub repository identity must be canonical lowercase");
   }
+  if (credentialPattern.test(repository)) {
+    throw new RangeError("GitHub repository identity is invalid");
+  }
   return repository;
 }
 
-function exactExternalId(value: unknown): string {
+function exactExternalId(
+  value: unknown,
+  repositoryFullName: string,
+): string {
   if (typeof value !== "string" || value !== value.trim()) {
     throw new RangeError("GitHub issue external ID is invalid");
   }
-  const externalId = parseGitHubIssueExternalId(value).externalId;
+  const parsed = parseGitHubIssueExternalId(value);
+  const externalId = parsed.externalId;
   if (externalId !== value) {
     throw new RangeError("GitHub issue external ID must be canonical");
+  }
+  if (credentialPattern.test(externalId)) {
+    throw new RangeError("GitHub issue external ID is invalid");
+  }
+  if (parsed.repositoryFullName !== repositoryFullName) {
+    throw new RangeError(
+      "GitHub context acceptance external ID is outside the bound repository",
+    );
   }
   return externalId;
 }
 
-function nullableExternalId(value: unknown): string | null {
-  return value === null ? null : exactExternalId(value);
+function nullableExternalId(
+  value: unknown,
+  repositoryFullName: string,
+): string | null {
+  return value === null
+    ? null
+    : exactExternalId(value, repositoryFullName);
 }
 
 function exactHash(value: unknown): string {
