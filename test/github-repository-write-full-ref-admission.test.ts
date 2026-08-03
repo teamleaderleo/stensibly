@@ -39,7 +39,7 @@ describe("GitHub repository-write full ref admission", () => {
         fetch: (async () => {
           fetchCalls += 1;
           return Response.json({ message: "must not fetch" }, { status: 500 });
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
       });
 
       await expect(adapter.getRefHead({
