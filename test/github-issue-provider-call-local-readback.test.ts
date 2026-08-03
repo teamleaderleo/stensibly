@@ -81,7 +81,7 @@ class InterleavingAdapter implements GitHubIssueProviderAdapter {
     return structuredClone(this.current);
   }
 
-  async createIssue() {
+  async createIssue(): Promise<never> {
     throw new Error("create is outside this control");
   }
 
@@ -100,7 +100,7 @@ class InterleavingAdapter implements GitHubIssueProviderAdapter {
     };
   }
 
-  async addIssueComment() {
+  async addIssueComment(): Promise<never> {
     throw new Error("comment is outside this control");
   }
 
@@ -123,15 +123,15 @@ class InterleavingAdapter implements GitHubIssueProviderAdapter {
     };
   }
 
-  async removeIssueLabel() {
+  async removeIssueLabel(): Promise<never> {
     throw new Error("remove label is outside this control");
   }
 
-  async addIssueAssignees() {
+  async addIssueAssignees(): Promise<never> {
     throw new Error("add assignees is outside this control");
   }
 
-  async removeIssueAssignees() {
+  async removeIssueAssignees(): Promise<never> {
     throw new Error("remove assignees is outside this control");
   }
 }
@@ -157,15 +157,15 @@ class OutcomeAdapter implements GitHubIssueProviderAdapter {
     return structuredClone(this.current);
   }
 
-  async createIssue() {
+  async createIssue(): Promise<never> {
     throw new Error("create is outside this control");
   }
 
-  async updateIssue() {
+  async updateIssue(): Promise<never> {
     throw new Error("update is outside this control");
   }
 
-  async addIssueComment() {
+  async addIssueComment(): Promise<never> {
     throw new Error("comment is outside this control");
   }
 
@@ -186,15 +186,15 @@ class OutcomeAdapter implements GitHubIssueProviderAdapter {
     };
   }
 
-  async removeIssueLabel() {
+  async removeIssueLabel(): Promise<never> {
     throw new Error("remove label is outside this control");
   }
 
-  async addIssueAssignees() {
+  async addIssueAssignees(): Promise<never> {
     throw new Error("add assignees is outside this control");
   }
 
-  async removeIssueAssignees() {
+  async removeIssueAssignees(): Promise<never> {
     throw new Error("remove assignees is outside this control");
   }
 }
