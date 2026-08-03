@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/junco-1009-tlc-proof-v3.yml
       - test/cancellation-settlement-tlc-receipt-contract.test.ts
+      - test/cancellation-settlement-tlc-check-attribution.test.ts
 
 permissions:
   contents: read
@@ -310,6 +311,7 @@ jobs:
             --argjson failed "${{ steps.proof.outputs.failed || 'null' }}" \
             --arg coreSafeModelStatus "${{ steps.proof.outputs.coreSafeModelStatus || 'not_run' }}" \
             --argjson coreSafeModelExit "${{ steps.proof.outputs.coreSafeModelExit || 'null' }}" \
+            --arg activeStatus "${{ steps.proof.outputs.activeSafeModelStatus || 'not_run' }}" \
             --arg activeSafeModelStatus "${{ steps.proof.outputs.activeSafeModelStatus || 'not_run' }}" \
             --argjson activeSafeModelExit "${{ steps.proof.outputs.activeSafeModelExit || 'null' }}" \
             --arg unsafeFenceStatus "${{ steps.proof.outputs.unsafeFenceStatus || 'not_run' }}" \
@@ -393,9 +395,15 @@ jobs:
                   exitStatus: $activeRejoinExit
                 }
               },
+              checkExpected: {
+                cancelledWaiterHasRetryCapacity: "CancelledWaiterHasRetryCapacity",
+                cancelledRetryWitnessReached: "CancelledRetryWitnessAbsent",
+                activeRejoinReachesTerminal: "ActiveRejoinWitnessAbsent"
+              },
               checks: {
-                cancelledWaiterHasRetryCapacity: $activeSafeModelStatus,
-                activeRejoinReachesTerminal: $activeRejoinStatus
+                cancelledWaiterHasRetryCapacity:($activeStatus == "passed"),
+                cancelledRetryWitnessReached:($cancelledRetryStatus == "passed"),
+                activeRejoinReachesTerminal:($activeRejoinStatus == "passed")
               },
               authorizesMerge: false,
               authorizesMutation: false
