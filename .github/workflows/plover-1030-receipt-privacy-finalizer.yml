@@ -24,12 +24,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Verify exact transition head
         env:
-          EXPECTED_BASE: 3bce9c5a4752671405378f66ba2ee70ab87c271b
+          EXPECTED_PARENT: a7991deef853900c5e44f1d8a9dbb31c93e572da
           EXPECTED_CARRIER: .github/workflows/plover-1030-receipt-privacy-finalizer.yml
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$EXPECTED_BASE"
-          test "$(git diff --name-only "$EXPECTED_BASE" HEAD)" = "$EXPECTED_CARRIER"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only "$EXPECTED_PARENT" HEAD)" = "$EXPECTED_CARRIER"
       - name: Apply bounded privacy repair and controls
         run: |
           set -euo pipefail
@@ -176,7 +176,7 @@ function hash(character: string): string {
         run: |
           set -euo pipefail
           rm .github/workflows/plover-1030-receipt-privacy-finalizer.yml
-          test "$(git diff --name-only | sort)" = $'src/github-repository-write-receipt-admission.ts\ntest/github-repository-write-receipt-embedded-credentials.test.ts'
+          test "$(git diff --name-only 3bce9c5a4752671405378f66ba2ee70ab87c271b | sort)" = $'src/github-repository-write-receipt-admission.ts\ntest/github-repository-write-receipt-embedded-credentials.test.ts'
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add src/github-repository-write-receipt-admission.ts test/github-repository-write-receipt-embedded-credentials.test.ts .github/workflows/plover-1030-receipt-privacy-finalizer.yml
