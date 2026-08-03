@@ -2,7 +2,7 @@
   "snapshotVersion": 5,
   "manifestVersion": 1,
   "toolCount": 41,
-  "toolManifestFingerprint": "sha256:a503c88468a85884ee10b72e0a3d6df47afa8eba95dfe599e9c1c48f59874b70",
+  "toolManifestFingerprint": "sha256:b96543225bc17a1ffc6d85c62a4f8637b25cf8c89a19b7f11155f83a85e0ac76",
   "tools": [
     "attach_artifact",
     "block_work",
