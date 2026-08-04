@@ -1,250 +1,103 @@
-import { sha256 } from "./canonical-json.js";
+import {
+  compileGitHubOutboundTextPreflightV1 as compileBase,
+  GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
+  type GitHubOutboundReferenceKind,
+  type GitHubOutboundReferenceRule,
+  type GitHubOutboundTextFindingV1,
+  type GitHubOutboundTextPreflightResultV1,
+} from "./github-outbound-text-preflight-base.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
-export const GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1 = 1 as const;
+export { GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1 } from "./github-outbound-text-preflight-base.js";
+export type {
+  GitHubOutboundExternalReferenceDisposition,
+  GitHubOutboundReferenceKind,
+  GitHubOutboundReferenceRule,
+  GitHubOutboundReferenceSource,
+  GitHubOutboundTextField,
+  GitHubOutboundTextFindingV1,
+  GitHubOutboundTextPolicyV1,
+  GitHubOutboundTextPreflightDecision,
+  GitHubOutboundTextPreflightInputV1,
+  GitHubOutboundTextPreflightResultV1,
+} from "./github-outbound-text-preflight-base.js";
 
-export type GitHubOutboundTextField =
-  | "title"
-  | "body"
-  | "comment"
-  | "review"
-  | "inline_review";
-
-export type GitHubOutboundExternalReferenceDisposition =
-  | "reject"
-  | "require_authority";
-
-export type GitHubOutboundTextPreflightDecision =
-  | "pass"
-  | "reject"
-  | "requires_authority";
-
-export type GitHubOutboundReferenceKind =
-  | "issue"
-  | "pull_request"
-  | "issue_or_pull_request"
-  | "discussion"
-  | "commit";
-
-export type GitHubOutboundReferenceSource =
-  | "direct_url"
-  | "repository_shorthand"
-  | "commit_shorthand";
-
-export type GitHubOutboundReferenceRule =
-  | "external_reference"
-  | "external_closing_reference";
-
-export interface GitHubOutboundTextPolicyV1 {
-  version: typeof GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1;
-  policyId: string;
-  controlledRepositories: readonly string[];
-  externalReferenceDisposition: GitHubOutboundExternalReferenceDisposition;
-}
-
-export interface GitHubOutboundTextPreflightInputV1 {
-  schemaVersion: typeof GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1;
-  policy: GitHubOutboundTextPolicyV1;
-  repositoryFullName: string;
-  field: GitHubOutboundTextField;
-  text: string;
-}
-
-export interface GitHubOutboundTextFindingV1 {
-  version: typeof GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1;
-  field: GitHubOutboundTextField;
-  line: number;
-  column: number;
-  source: GitHubOutboundReferenceSource;
-  referenceKind: GitHubOutboundReferenceKind;
-  externalOwner: string;
-  externalRepository: string;
-  itemNumber: number | null;
-  commitPrefix: string | null;
-  rule: GitHubOutboundReferenceRule;
-  authorityRequired: boolean;
-  findingFingerprint: string;
-}
-
-export interface GitHubOutboundTextPreflightResultV1 {
-  version: typeof GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1;
-  policyId: string;
-  policyFingerprint: string;
-  repositoryFullName: string;
-  field: GitHubOutboundTextField;
-  textSha256: string;
-  textByteLength: number;
-  textCharacterCount: number;
-  decision: GitHubOutboundTextPreflightDecision;
-  findings: readonly GitHubOutboundTextFindingV1[];
-  inputFingerprint: string;
-  resultFingerprint: string;
-  authorizesProviderMutation: false;
-  authorizesExternalInteraction: false;
-  grantsAuthority: false;
-}
-
-interface DetectedReference {
+interface ParsedDirectReference {
   start: number;
-  end: number;
-  source: GitHubOutboundReferenceSource;
-  referenceKind: GitHubOutboundReferenceKind;
   repositoryFullName: string;
+  referenceKind: GitHubOutboundReferenceKind;
   itemNumber: number | null;
   commitIdentity: string | null;
   referenceIdentity: string;
 }
 
-const inputKeys = [
-  "schemaVersion",
-  "policy",
-  "repositoryFullName",
-  "field",
-  "text",
-] as const;
-const policyKeys = [
-  "version",
-  "policyId",
-  "controlledRepositories",
-  "externalReferenceDisposition",
-] as const;
-const allowedFields = new Set<GitHubOutboundTextField>([
-  "title",
-  "body",
-  "comment",
-  "review",
-  "inline_review",
-]);
-const allowedDispositions =
-  new Set<GitHubOutboundExternalReferenceDisposition>([
-    "reject",
-    "require_authority",
-  ]);
-const policyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
-const unsafeTextPattern =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
-const credentialShapedIdentityPattern =
-  /(?:Bearer\s+|gh[pousr]_|github_pat_|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_|xox[baprs]-|env:\/\/|secret:\/\/|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.)/iu;
 const closingKeywordBeforeReferencePattern =
-  /(?:^|[^A-Za-z])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
-const exactCommitIdentityPattern = /^[0-9a-f]{7,64}$/iu;
-const maximumTextBytes = 128 * 1024;
-const maximumControlledRepositories = 32;
+  /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
+const candidateSchemePattern = /https?:/giu;
+const rawCanonicalUrlPattern =
+  /^(https?):\/\/((?:www\.)?github\.com\.?)(?::([0-9]+))?(\/[^?#]*)(?:[?#].*)?$/iu;
+const encodedBytePattern = /%[0-9a-f]{2}/iu;
+const itemIdentityPattern = /^[0-9]+$/u;
+const commitIdentityPattern = /^[0-9a-f]{7,}$/iu;
+const realisticCredentialPattern =
+  /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
+const maximumCandidateCharacters = 4_096;
 const maximumFindings = 100;
 const maximumProviderItemNumber = 2_147_483_647;
 
-type DataRecord = Record<string, unknown>;
-
 /**
- * Evaluates exact outbound GitHub text without performing or authorizing a
- * provider mutation. Diagnostics deliberately separate repository identity
- * fields and never retain the source text or a complete external reference.
+ * Preserves the settled shorthand/direct detector while adding complete URL
+ * candidate admission for authority and WHATWG-normalized route spellings.
  */
 export function compileGitHubOutboundTextPreflightV1(
   value: unknown,
 ): GitHubOutboundTextPreflightResultV1 {
-  const input = exactRecord(
-    value,
-    inputKeys,
-    "GitHub outbound text preflight input",
-  );
-  if (input.schemaVersion !== GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1) {
-    throw new RangeError("GitHub outbound text preflight schemaVersion must equal 1");
-  }
+  const base = compileBase(value);
+  const text = dataProperty(value, "text") as string;
+  const policy = dataProperty(value, "policy");
+  const disposition = dataProperty(policy, "externalReferenceDisposition") as
+    | "reject"
+    | "require_authority";
+  const controlledValues = dataProperty(policy, "controlledRepositories") as
+    readonly string[];
+  const controlled = new Set(controlledValues);
+  const supplemental = detectNormalizedDirectReferences(text, controlled);
+  if (supplemental.length === 0) return base;
 
-  const policy = admitPolicy(input.policy);
-  const repositoryFullName = canonicalRepository(
-    input.repositoryFullName,
-    "GitHub outbound target repository",
-  );
-  if (!policy.controlledRepositories.includes(repositoryFullName)) {
-    throw new RangeError(
-      "GitHub outbound target repository must be controlled by the active policy",
-    );
-  }
-  const field = outboundField(input.field);
-  const text = exactOutboundText(input.text);
-  const textSha256 = sha256(text);
-  const textByteLength = Buffer.byteLength(text, "utf8");
-  const textCharacterCount = [...text].length;
-  const inputFingerprint = fingerprintCanonicalRequest({
-    schemaVersion: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
-    policyFingerprint: policy.policyFingerprint,
-    repositoryFullName,
-    field,
-    textSha256,
-    textByteLength,
-    textCharacterCount,
-  });
-
-  const controlled = new Set(policy.controlledRepositories);
   const lineStarts = buildLineStarts(text);
-  const detected = detectReferences(text)
-    .filter((reference) => !controlled.has(reference.repositoryFullName));
-  if (detected.length > maximumFindings) {
+  const added = supplemental.map((reference) =>
+    findingFromReference(
+      base,
+      text,
+      lineStarts,
+      reference,
+      disposition === "require_authority",
+    )
+  );
+  const findings = [...base.findings, ...added].sort((left, right) =>
+    left.line - right.line || left.column - right.column
+  );
+  if (findings.length > maximumFindings) {
     throw new RangeError(
       `GitHub outbound text accepts at most ${maximumFindings} external references`,
     );
   }
-
-  const findings = detected.map((reference) => {
-    const position = sourcePosition(text, lineStarts, reference.start);
-    const [externalOwner, externalRepository] =
-      reference.repositoryFullName.split("/") as [string, string];
-    const lineStart = lineStarts[position.line - 1] ?? 0;
-    const prefix = text.slice(lineStart, reference.start);
-    const rule: GitHubOutboundReferenceRule =
-      closingKeywordBeforeReferencePattern.test(prefix)
-        ? "external_closing_reference"
-        : "external_reference";
-    const body = {
-      version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
-      field,
-      line: position.line,
-      column: position.column,
-      source: reference.source,
-      referenceKind: reference.referenceKind,
-      externalOwner,
-      externalRepository,
-      itemNumber: reference.itemNumber,
-      commitPrefix: reference.commitIdentity?.slice(0, 4) ?? null,
-      rule,
-      authorityRequired:
-        policy.externalReferenceDisposition === "require_authority",
-    };
-    const referenceDigest = fingerprintCanonicalRequest({
-      version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
-      repositoryFullName: reference.repositoryFullName,
-      referenceKind: reference.referenceKind,
-      referenceIdentity: reference.referenceIdentity,
-    });
-    return deepFreeze({
-      ...body,
-      findingFingerprint: fingerprintCanonicalRequest({
-        ...body,
-        referenceDigest,
-      }),
-    });
-  });
-
-  const decision: GitHubOutboundTextPreflightDecision = findings.length === 0
-    ? "pass"
-    : policy.externalReferenceDisposition === "require_authority"
-    ? "requires_authority"
-    : "reject";
+  const decision = disposition === "require_authority"
+    ? "requires_authority" as const
+    : "reject" as const;
   const body = {
     version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
-    policyId: policy.policyId,
-    policyFingerprint: policy.policyFingerprint,
-    repositoryFullName,
-    field,
-    textSha256,
-    textByteLength,
-    textCharacterCount,
+    policyId: base.policyId,
+    policyFingerprint: base.policyFingerprint,
+    repositoryFullName: base.repositoryFullName,
+    field: base.field,
+    textSha256: base.textSha256,
+    textByteLength: base.textByteLength,
+    textCharacterCount: base.textCharacterCount,
     decision,
     findings: Object.freeze(findings),
-    inputFingerprint,
+    inputFingerprint: base.inputFingerprint,
     authorizesProviderMutation: false as const,
     authorizesExternalInteraction: false as const,
     grantsAuthority: false as const,
@@ -255,205 +108,243 @@ export function compileGitHubOutboundTextPreflightV1(
   });
 }
 
-function admitPolicy(value: unknown): Readonly<{
-  version: 1;
-  policyId: string;
-  controlledRepositories: readonly string[];
-  externalReferenceDisposition: GitHubOutboundExternalReferenceDisposition;
-  policyFingerprint: string;
-}> {
-  const input = exactRecord(value, policyKeys, "GitHub outbound text policy");
-  if (input.version !== GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1) {
-    throw new RangeError("GitHub outbound text policy version must equal 1");
-  }
-  const policyId = canonicalPolicyId(
-    input.policyId,
-    "GitHub outbound text policy ID",
-    160,
-  );
-  const controlledRepositories = canonicalRepositoryList(
-    input.controlledRepositories,
-  );
-  if (!allowedDispositions.has(
-    input.externalReferenceDisposition as GitHubOutboundExternalReferenceDisposition,
-  )) {
-    throw new RangeError(
-      "GitHub outbound external-reference disposition is unsupported",
-    );
-  }
-  const externalReferenceDisposition =
-    input.externalReferenceDisposition as GitHubOutboundExternalReferenceDisposition;
-  const body = {
-    version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
-    policyId,
-    controlledRepositories,
-    externalReferenceDisposition,
-  };
-  return deepFreeze({
-    ...body,
-    policyFingerprint: fingerprintCanonicalRequest(body),
-  });
-}
-
-function canonicalRepositoryList(value: unknown): readonly string[] {
-  const values = denseDataArray(
-    value,
-    "GitHub outbound controlled repositories",
-    maximumControlledRepositories,
-  );
-  if (values.length === 0) {
-    throw new RangeError(
-      "GitHub outbound policy requires at least one controlled repository",
-    );
-  }
-  const repositories = values.map((entry, index) =>
-    canonicalRepository(
-      entry,
-      `GitHub outbound controlled repository ${index}`,
-    )
-  );
-  if (new Set(repositories).size !== repositories.length) {
-    throw new RangeError(
-      "GitHub outbound controlled repositories must be unique",
-    );
-  }
-  const sorted = [...repositories].sort(codeUnitCompare);
-  if (sorted.some((repository, index) => repository !== repositories[index])) {
-    throw new RangeError(
-      "GitHub outbound controlled repositories must use canonical sorted order",
-    );
-  }
-  return Object.freeze(repositories);
-}
-
-function detectReferences(text: string): readonly DetectedReference[] {
-  const references: DetectedReference[] = [];
-  const occupied: Array<readonly [number, number]> = [];
-  const directReferencePattern =
-    /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/(issues|pull|discussions|commit)\/([0-9]+|[0-9a-f]{7,64})(?=$|[\p{P}\p{Z}\s])/giu;
-  const repositoryShorthandPattern =
-    /(?:^|[^\p{L}\p{N}\p{M}._~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})#([1-9][0-9]*)(?![\p{L}\p{N}\p{M}_~\/?#@!$&*+=%-])/gu;
-  const commitShorthandPattern =
-    /(?:^|[^\p{L}\p{N}\p{M}._~/?#@!$&*+=%-])([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})@([0-9a-f]{7,64})(?![\p{L}\p{N}\p{M}_~\/?#@!$&*+=%-])/giu;
-
-  for (const match of text.matchAll(directReferencePattern)) {
+function detectNormalizedDirectReferences(
+  text: string,
+  controlled: ReadonlySet<string>,
+): readonly ParsedDirectReference[] {
+  const references: ParsedDirectReference[] = [];
+  candidateSchemePattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = candidateSchemePattern.exec(text)) !== null) {
     const start = match.index;
-    const end = start + match[0].length;
-    const repositoryFullName = detectedRepository(match[1], match[2]);
-    if (!repositoryFullName) continue;
-    const pathKind = match[3]!.toLowerCase();
-    if (pathKind === "commit") {
-      const commitIdentity = match[4]!.toLowerCase();
-      if (!exactCommitIdentityPattern.test(commitIdentity)) continue;
-      references.push({
-        start,
-        end,
-        source: "direct_url",
-        referenceKind: "commit",
-        repositoryFullName,
-        itemNumber: null,
-        commitIdentity,
-        referenceIdentity: commitIdentity,
-      });
-      occupied.push([start, end]);
+    const candidate = extractCandidate(text, start);
+    if (candidate.length === 0) continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate);
+    } catch {
       continue;
     }
-    const itemIdentity = match[4]!;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+    if (!isGitHubHostname(parsed.hostname)) continue;
+    const route = parseNormalizedRoute(parsed.pathname);
+    if (route === null || controlled.has(route.repositoryFullName)) continue;
+
+    assertRepositoryIdentityIsPublic(route.repositoryFullName);
+    const raw = rawCanonicalUrlPattern.exec(candidate);
+    if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.port.length > 0) {
+      throw new RangeError(
+        "GitHub outbound direct reference URL authority is invalid",
+      );
+    }
+    if (route.containsEncodedIdentity) {
+      throw new RangeError(
+        "GitHub outbound direct reference contains percent-encoded path continuation",
+      );
+    }
+    if (raw === null) {
+      throw new RangeError(
+        "GitHub outbound direct reference URL spelling is invalid",
+      );
+    }
+
+    const rawScheme = raw[1]!.toLowerCase();
+    const rawHost = raw[2]!;
+    const rawPort = raw[3];
+    const rawPath = raw[4]!;
+    if (rawPath !== parsed.pathname) {
+      throw new RangeError(
+        "GitHub outbound direct reference URL spelling is invalid",
+      );
+    }
+    if (
+      rawPort !== undefined
+      && !(
+        (rawScheme === "https" && rawPort === "443")
+        || (rawScheme === "http" && rawPort === "80")
+      )
+    ) {
+      throw new RangeError(
+        "GitHub outbound direct reference URL authority is invalid",
+      );
+    }
+
+    if (rawPort === undefined && !rawHost.endsWith(".")) continue;
     references.push({
       start,
-      end,
-      source: "direct_url",
-      referenceKind: pathKind === "issues"
-        ? "issue"
-        : pathKind === "pull"
-        ? "pull_request"
-        : "discussion",
-      repositoryFullName,
-      itemNumber: providerItemNumber(itemIdentity),
-      commitIdentity: null,
-      referenceIdentity: itemIdentity,
+      repositoryFullName: route.repositoryFullName,
+      referenceKind: route.referenceKind,
+      itemNumber: route.itemNumber,
+      commitIdentity: route.commitIdentity,
+      referenceIdentity: route.referenceIdentity,
     });
-    occupied.push([start, end]);
+    if (references.length > maximumFindings) {
+      throw new RangeError(
+        `GitHub outbound text accepts at most ${maximumFindings} external references`,
+      );
+    }
   }
-
-  for (const match of text.matchAll(repositoryShorthandPattern)) {
-    const leadingLength = match[0].length
-      - `${match[1]}/${match[2]}#${match[3]}`.length;
-    const start = match.index + leadingLength;
-    const end = match.index + match[0].length;
-    if (overlaps(occupied, start, end)) continue;
-    const repositoryFullName = detectedRepository(match[1], match[2]);
-    if (!repositoryFullName) continue;
-    const itemIdentity = match[3]!;
-    references.push({
-      start,
-      end,
-      source: "repository_shorthand",
-      referenceKind: "issue_or_pull_request",
-      repositoryFullName,
-      itemNumber: providerItemNumber(itemIdentity),
-      commitIdentity: null,
-      referenceIdentity: itemIdentity,
-    });
-    occupied.push([start, end]);
-  }
-
-  for (const match of text.matchAll(commitShorthandPattern)) {
-    const leadingLength = match[0].length
-      - `${match[1]}/${match[2]}@${match[3]}`.length;
-    const start = match.index + leadingLength;
-    const end = match.index + match[0].length;
-    if (overlaps(occupied, start, end)) continue;
-    const repositoryFullName = detectedRepository(match[1], match[2]);
-    if (!repositoryFullName) continue;
-    const commitIdentity = match[3]!.toLowerCase();
-    references.push({
-      start,
-      end,
-      source: "commit_shorthand",
-      referenceKind: "commit",
-      repositoryFullName,
-      itemNumber: null,
-      commitIdentity,
-      referenceIdentity: commitIdentity,
-    });
-    occupied.push([start, end]);
-  }
-
-  return Object.freeze(references.sort((left, right) =>
-    left.start - right.start || left.end - right.end
-  ));
+  return Object.freeze(references);
 }
 
-function detectedRepository(
-  owner: string | undefined,
-  repository: string | undefined,
-): string | null {
-  if (!owner || !repository) return null;
+function parseNormalizedRoute(pathname: string): Readonly<{
+  repositoryFullName: string;
+  referenceKind: GitHubOutboundReferenceKind;
+  itemNumber: number | null;
+  commitIdentity: string | null;
+  referenceIdentity: string;
+  containsEncodedIdentity: boolean;
+}> | null {
+  const rawSegments = pathname.split("/").slice(1);
+  if (rawSegments.length !== 4) return null;
+  let segments: string[];
   try {
-    return normalizeGitHubRepository(
+    segments = rawSegments.map((segment) => decodeURIComponent(segment));
+  } catch {
+    return null;
+  }
+  const [owner, repository, kindValue, identityValue] = segments as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  const kind = kindValue.toLowerCase();
+  let repositoryFullName: string;
+  try {
+    repositoryFullName = normalizeGitHubRepository(
       `${owner.toLowerCase()}/${repository.toLowerCase()}`,
     );
   } catch {
     return null;
   }
+  const containsEncodedIdentity = rawSegments.some((segment) =>
+    encodedBytePattern.test(segment)
+  );
+
+  if (kind === "commit") {
+    if (!commitIdentityPattern.test(identityValue)) return null;
+    const commitIdentity = identityValue.toLowerCase();
+    return Object.freeze({
+      repositoryFullName,
+      referenceKind: "commit",
+      itemNumber: null,
+      commitIdentity,
+      referenceIdentity: commitIdentity,
+      containsEncodedIdentity,
+    });
+  }
+  if (
+    kind !== "issues"
+    && kind !== "pull"
+    && kind !== "discussions"
+  ) return null;
+  if (!itemIdentityPattern.test(identityValue)) return null;
+  const itemNumber = providerItemNumber(identityValue);
+  return Object.freeze({
+    repositoryFullName,
+    referenceKind: kind === "issues"
+      ? "issue"
+      : kind === "pull"
+      ? "pull_request"
+      : "discussion",
+    itemNumber,
+    commitIdentity: null,
+    referenceIdentity: identityValue,
+    containsEncodedIdentity,
+  });
 }
 
-function providerItemNumber(value: string | undefined): number | null {
-  if (!value || !/^[1-9][0-9]*$/u.test(value)) return null;
+function findingFromReference(
+  base: GitHubOutboundTextPreflightResultV1,
+  text: string,
+  lineStarts: readonly number[],
+  reference: ParsedDirectReference,
+  authorityRequired: boolean,
+): GitHubOutboundTextFindingV1 {
+  const position = sourcePosition(text, lineStarts, reference.start);
+  const [externalOwner, externalRepository] =
+    reference.repositoryFullName.split("/") as [string, string];
+  const lineStart = lineStarts[position.line - 1] ?? 0;
+  const prefix = text.slice(lineStart, reference.start);
+  const rule: GitHubOutboundReferenceRule =
+    closingKeywordBeforeReferencePattern.test(prefix)
+      ? "external_closing_reference"
+      : "external_reference";
+  const body = {
+    version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
+    field: base.field,
+    line: position.line,
+    column: position.column,
+    source: "direct_url" as const,
+    referenceKind: reference.referenceKind,
+    externalOwner,
+    externalRepository,
+    itemNumber: reference.itemNumber,
+    commitPrefix: reference.commitIdentity?.slice(0, 4) ?? null,
+    rule,
+    authorityRequired,
+  };
+  const referenceDigest = fingerprintCanonicalRequest({
+    version: GITHUB_OUTBOUND_TEXT_PREFLIGHT_V1,
+    repositoryFullName: reference.repositoryFullName,
+    referenceKind: reference.referenceKind,
+    referenceIdentity: reference.referenceIdentity,
+  });
+  return deepFreeze({
+    ...body,
+    findingFingerprint: fingerprintCanonicalRequest({
+      ...body,
+      referenceDigest,
+    }),
+  });
+}
+
+function extractCandidate(text: string, start: number): string {
+  let end = start;
+  const limit = Math.min(text.length, start + maximumCandidateCharacters);
+  while (end < limit) {
+    const character = text[end]!;
+    if (
+      character === " "
+      || character === '"'
+      || character === "'"
+      || character === "<"
+      || character === ">"
+      || character === "`"
+      || character === "\u00a0"
+    ) break;
+    end += 1;
+  }
+  while (end > start && /[.,;!?)\]}]/u.test(text[end - 1]!)) end -= 1;
+  return text.slice(start, end);
+}
+
+function isGitHubHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.$/u, "");
+  return normalized === "github.com" || normalized === "www.github.com";
+}
+
+function assertRepositoryIdentityIsPublic(repositoryFullName: string): void {
+  const [owner, repository] = repositoryFullName.split("/") as [string, string];
+  if (
+    realisticCredentialPattern.test(owner)
+    || realisticCredentialPattern.test(repository)
+    || realisticCredentialPattern.test(repositoryFullName)
+  ) {
+    throw new RangeError(
+      "GitHub outbound repository identity is credential-shaped",
+    );
+  }
+}
+
+function providerItemNumber(value: string): number | null {
+  if (!/^[1-9][0-9]*$/u.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed)
       && parsed <= maximumProviderItemNumber
     ? parsed
     : null;
-}
-
-function overlaps(
-  occupied: readonly (readonly [number, number])[],
-  start: number,
-  end: number,
-): boolean {
-  return occupied.some(([left, right]) => start < right && end > left);
 }
 
 function buildLineStarts(text: string): readonly number[] {
@@ -484,121 +375,10 @@ function sourcePosition(
   });
 }
 
-function canonicalRepository(value: unknown, label: string): string {
-  if (typeof value !== "string" || value !== value.trim()) {
-    throw new RangeError(`${label} is invalid`);
-  }
-  const repository = normalizeGitHubRepository(value);
-  if (repository !== value) {
-    throw new RangeError(`${label} must use canonical lowercase identity`);
-  }
-  return repository;
-}
-
-function outboundField(value: unknown): GitHubOutboundTextField {
-  if (!allowedFields.has(value as GitHubOutboundTextField)) {
-    throw new RangeError("GitHub outbound text field is unsupported");
-  }
-  return value as GitHubOutboundTextField;
-}
-
-function exactOutboundText(value: unknown): string {
-  if (
-    typeof value !== "string"
-    || Buffer.byteLength(value, "utf8") > maximumTextBytes
-    || unsafeTextPattern.test(value)
-  ) {
-    throw new RangeError("GitHub outbound text is invalid or exceeds its byte budget");
-  }
-  return value;
-}
-
-function canonicalPolicyId(
-  value: unknown,
-  label: string,
-  maximumBytes: number,
-): string {
-  if (
-    typeof value !== "string"
-    || value.length === 0
-    || value !== value.trim()
-    || Buffer.byteLength(value, "utf8") > maximumBytes
-    || !policyIdPattern.test(value)
-    || credentialShapedIdentityPattern.test(value)
-  ) {
-    throw new RangeError(`${label} is invalid`);
-  }
-  return value;
-}
-
-function denseDataArray(
-  value: unknown,
-  label: string,
-  maximum: number,
-): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TypeError(`${label} must be an array`);
-  }
-  if (Object.getPrototypeOf(value) !== Array.prototype) {
-    throw new TypeError(`${label} must use Array.prototype`);
-  }
-  if (value.length > maximum) {
-    throw new RangeError(`${label} accepts at most ${maximum} entries`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) =>
-    typeof key !== "string"
-    || (key !== "length" && !/^(0|[1-9][0-9]*)$/u.test(key))
-  )) {
-    throw new TypeError(`${label} must contain only dense data entries`);
-  }
-  const entries: unknown[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = descriptors[String(index)];
-    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
-      throw new TypeError(`${label} must contain only dense data entries`);
-    }
-    entries.push(descriptor.value);
-  }
-  return entries;
-}
-
-function exactRecord<const K extends readonly string[]>(
-  value: unknown,
-  keys: K,
-  label: string,
-): DataRecord {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError(`${label} must be an object`);
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError(`${label} must use a plain prototype`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) =>
-    typeof key !== "string" || !(keys as readonly string[]).includes(key)
-  )) {
-    throw new TypeError(`${label} contains unknown fields`);
-  }
-  if (ownKeys.length !== keys.length) {
-    throw new TypeError(`${label} is missing required fields`);
-  }
-  const output = Object.create(null) as DataRecord;
-  for (const key of keys) {
-    const descriptor = descriptors[key];
-    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
-      throw new TypeError(`${label} fields must be enumerable data properties`);
-    }
-    output[key] = descriptor.value;
-  }
-  return output;
-}
-
-function codeUnitCompare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+function dataProperty(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object") return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
