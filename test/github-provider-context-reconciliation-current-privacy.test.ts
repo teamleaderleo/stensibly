@@ -10,7 +10,7 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const externalId = `github:${repositoryFullName}#958`;
 
 describe("GitHub provider context reconciliation current-revision privacy", () => {
-  test("rejects every accepted-context credential family without echoing it", () => {
+  test("rejects every grammar-valid accepted-context credential family without echoing it", () => {
     const hostile = [
       `github_pat_${"a".repeat(24)}`,
       `ghp_${"a".repeat(24)}`,
@@ -19,7 +19,6 @@ describe("GitHub provider context reconciliation current-revision privacy", () =
       `xoxb-${"a".repeat(24)}`,
       "secret://github/source-revision",
       "env://GITHUB_SOURCE_REVISION",
-      `Bearer ${"a".repeat(16)}`,
       `eyJ${"a".repeat(12)}.eyJ${"b".repeat(12)}.${"c".repeat(12)}`,
     ];
 
@@ -36,6 +35,22 @@ describe("GitHub provider context reconciliation current-revision privacy", () =
       );
       expect((thrown as Error).message).not.toContain(sourceRevision);
     }
+  });
+
+  test("rejects whitespace-bearing Bearer credentials at structural admission without echoing them", () => {
+    const sourceRevision = `Bearer ${"a".repeat(16)}`;
+    let thrown: unknown;
+    try {
+      compile(sourceRevision);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(RangeError);
+    expect((thrown as Error).message).toBe(
+      "Current GitHub issue source revision is invalid",
+    );
+    expect((thrown as Error).message).not.toContain(sourceRevision);
   });
 
   test("retains benign canonical and short token-like revision families", () => {
