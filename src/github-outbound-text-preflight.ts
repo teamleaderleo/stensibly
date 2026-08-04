@@ -4,6 +4,8 @@ import {
   type GitHubOutboundReferenceKind,
   type GitHubOutboundReferenceRule,
   type GitHubOutboundTextFindingV1,
+  type GitHubOutboundTextPolicyV1,
+  type GitHubOutboundTextPreflightInputV1,
   type GitHubOutboundTextPreflightResultV1,
 } from "./github-outbound-text-preflight-base.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
@@ -32,6 +34,19 @@ interface ParsedDirectReference {
   referenceIdentity: string;
 }
 
+const preflightInputKeys = [
+  "schemaVersion",
+  "policy",
+  "repositoryFullName",
+  "field",
+  "text",
+] as const;
+const preflightPolicyKeys = [
+  "version",
+  "policyId",
+  "controlledRepositories",
+  "externalReferenceDisposition",
+] as const;
 const closingKeywordBeforeReferencePattern =
   /(?:^|[^\p{L}\p{N}\p{M}\p{Pc}])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s:,*_~`-]*$/iu;
 const candidateSchemePattern = /https?:/giu;
@@ -43,8 +58,11 @@ const commitIdentityPattern = /^[0-9a-f]{7,}$/iu;
 const realisticCredentialPattern =
   /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
 const maximumCandidateCharacters = 4_096;
+const maximumControlledRepositories = 32;
 const maximumFindings = 100;
 const maximumProviderItemNumber = 2_147_483_647;
+
+type DataRecord = Record<string, unknown>;
 
 /**
  * Preserves the settled shorthand/direct detector while adding complete URL
@@ -53,15 +71,11 @@ const maximumProviderItemNumber = 2_147_483_647;
 export function compileGitHubOutboundTextPreflightV1(
   value: unknown,
 ): GitHubOutboundTextPreflightResultV1 {
-  const base = compileBase(value);
-  const text = dataProperty(value, "text") as string;
-  const policy = dataProperty(value, "policy");
-  const disposition = dataProperty(policy, "externalReferenceDisposition") as
-    | "reject"
-    | "require_authority";
-  const controlledValues = dataProperty(policy, "controlledRepositories") as
-    readonly string[];
-  const controlled = new Set(controlledValues);
+  const snapshot = snapshotPreflightInput(value);
+  const base = compileBase(snapshot);
+  const text = snapshot.text;
+  const disposition = snapshot.policy.externalReferenceDisposition;
+  const controlled = new Set(snapshot.policy.controlledRepositories);
   const supplemental = detectNormalizedDirectReferences(text, controlled);
   if (supplemental.length === 0) return base;
 
@@ -106,6 +120,115 @@ export function compileGitHubOutboundTextPreflightV1(
     ...body,
     resultFingerprint: fingerprintCanonicalRequest(body),
   });
+}
+
+function snapshotPreflightInput(
+  value: unknown,
+): GitHubOutboundTextPreflightInputV1 {
+  const input = snapshotExactRecord(
+    value,
+    preflightInputKeys,
+    "GitHub outbound text preflight input",
+  );
+  const policyInput = snapshotExactRecord(
+    input.policy,
+    preflightPolicyKeys,
+    "GitHub outbound text policy",
+  );
+  const controlledRepositories = snapshotDenseDataArray(
+    policyInput.controlledRepositories,
+    "GitHub outbound controlled repositories",
+    maximumControlledRepositories,
+  );
+  const policy = Object.freeze({
+    version: policyInput.version,
+    policyId: policyInput.policyId,
+    controlledRepositories,
+    externalReferenceDisposition: policyInput.externalReferenceDisposition,
+  }) as unknown as GitHubOutboundTextPolicyV1;
+  return Object.freeze({
+    schemaVersion: input.schemaVersion,
+    policy,
+    repositoryFullName: input.repositoryFullName,
+    field: input.field,
+    text: input.text,
+  }) as unknown as GitHubOutboundTextPreflightInputV1;
+}
+
+function snapshotExactRecord<const K extends readonly string[]>(
+  value: unknown,
+  keys: K,
+  label: string,
+): DataRecord {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must use a plain prototype`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (ownKeys.some((key) =>
+    typeof key !== "string" || !(keys as readonly string[]).includes(key)
+  )) {
+    throw new TypeError(`${label} contains unknown fields`);
+  }
+  if (ownKeys.length !== keys.length) {
+    throw new TypeError(`${label} is missing required fields`);
+  }
+  const output = Object.create(null) as DataRecord;
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} fields must be enumerable data properties`);
+    }
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
+function snapshotDenseDataArray(
+  value: unknown,
+  label: string,
+  maximum: number,
+): readonly unknown[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array`);
+  }
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new TypeError(`${label} must use Array.prototype`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const lengthDescriptor = descriptors.length;
+  if (
+    !lengthDescriptor
+    || !("value" in lengthDescriptor)
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0
+  ) {
+    throw new TypeError(`${label} must contain only dense data entries`);
+  }
+  const length = lengthDescriptor.value as number;
+  if (length > maximum) {
+    throw new RangeError(`${label} accepts at most ${maximum} entries`);
+  }
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (ownKeys.some((key) =>
+    typeof key !== "string"
+    || (key !== "length" && !/^(0|[1-9][0-9]*)$/u.test(key))
+  )) {
+    throw new TypeError(`${label} must contain only dense data entries`);
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} must contain only dense data entries`);
+    }
+    entries.push(descriptor.value);
+  }
+  return Object.freeze(entries);
 }
 
 function detectNormalizedDirectReferences(
@@ -373,12 +496,6 @@ function sourcePosition(
     line: lineIndex + 1,
     column: [...text.slice(lineStart, index)].length + 1,
   });
-}
-
-function dataProperty(value: unknown, key: string): unknown {
-  if (value === null || typeof value !== "object") return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
