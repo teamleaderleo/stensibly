@@ -1,5 +1,8 @@
 import { v } from "convex/values";
 import {
+  admitGitHubRepositoryWriteIdentifier,
+} from "../src/github-repository-write-identifier-admission";
+import {
   admitGitHubRepositoryWriteReceipt,
   canonicalGitHubRepositoryWriteReceiptJson,
   fingerprintGitHubRepositoryWriteReceipt,
@@ -81,6 +84,12 @@ export const reserve = mutation({
       .unique();
     if (currentRow) {
       const current = admitStoredReceipt(currentRow, scope);
+      await admitUniqueStoredExternalReceipt(
+        ctx,
+        scope,
+        current.id,
+        { selectedRow: currentRow },
+      );
       await assertStoredLaneCoherence(ctx, scope, current);
       return {
         outcome: sameRequest(current, requested)
@@ -90,15 +99,15 @@ export const reserve = mutation({
       };
     }
 
-    const externalRows = await ctx.db
+    const [externalRow] = await ctx.db
       .query("githubRepositoryWriteReceipts")
       .withIndex("by_project_external", (q) =>
         q.eq("projectId", scope.projectId)
           .eq("externalId", requested.id)
       )
-      .collect();
-    if (externalRows.length !== 0) {
-      for (const row of externalRows) admitStoredReceipt(row, scope);
+      .take(1);
+    if (externalRow) {
+      admitStoredReceipt(externalRow, scope);
       throw new Error("GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT");
     }
 
@@ -111,21 +120,12 @@ export const reserve = mutation({
       )
       .unique();
     if (laneRow) {
-      const ownerRows = await ctx.db
-        .query("githubRepositoryWriteReceipts")
-        .withIndex("by_project_external", (q) =>
-          q.eq("projectId", scope.projectId)
-            .eq("externalId", laneRow.ownerReceiptExternalId)
-        )
-        .collect();
-      if (ownerRows.length === 0) {
-        throw new Error("GITHUB_REPOSITORY_WRITE_LANE_OWNER_MISSING");
-      }
-      const [ownerRow] = ownerRows;
-      if (ownerRows.length !== 1 || !ownerRow) {
-        throw new Error("GITHUB_REPOSITORY_WRITE_LANE_INVALID");
-      }
-      const owner = admitStoredReceipt(ownerRow, scope);
+      const owner = await admitUniqueStoredExternalReceipt(
+        ctx,
+        scope,
+        laneRow.ownerReceiptExternalId,
+        { missingCode: "GITHUB_REPOSITORY_WRITE_LANE_OWNER_MISSING" },
+      );
       admitStoredLane(laneRow, scope, owner);
       if (!blocksLane(owner)) {
         throw new Error("GITHUB_REPOSITORY_WRITE_TERMINAL_LANE_RETAINED");
@@ -197,6 +197,12 @@ export const transition = mutation({
       .unique();
     if (!row) throw new Error("GITHUB_REPOSITORY_WRITE_NOT_RESERVED");
     const stored = admitStoredReceipt(row, scope);
+    await admitUniqueStoredExternalReceipt(
+      ctx,
+      scope,
+      stored.id,
+      { selectedRow: row },
+    );
     if (!validCurrentTransitionView(stored, currentInput)) {
       throw new Error("GITHUB_REPOSITORY_WRITE_STALE_TRANSITION");
     }
@@ -253,9 +259,11 @@ export const get = query({
   returns: v.union(v.string(), v.null()),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
+    const idempotencyKey = admitGitHubRepositoryWriteIdentifier(
+      args.idempotencyKey,
+    );
     const scope = await resolveProject(ctx, args.workspace, args.project, false);
     if (!scope) return null;
-    const idempotencyKey = boundedIdempotencyKey(args.idempotencyKey);
     const row = await ctx.db
       .query("githubRepositoryWriteReceipts")
       .withIndex("by_project_idempotency", (q) =>
@@ -264,6 +272,12 @@ export const get = query({
       .unique();
     if (!row) return null;
     const receipt = admitStoredReceipt(row, scope);
+    await admitUniqueStoredExternalReceipt(
+      ctx,
+      scope,
+      receipt.id,
+      { selectedRow: row },
+    );
     await assertStoredLaneCoherence(ctx, scope, receipt);
     return canonicalGitHubRepositoryWriteReceiptJson(receipt);
   },
@@ -457,6 +471,37 @@ function admitStoredLane(
   }
 }
 
+async function admitUniqueStoredExternalReceipt(
+  ctx: QueryContext,
+  scope: ResolvedProject,
+  externalId: string,
+  options: {
+    selectedRow?: { _id: unknown };
+    missingCode?: string;
+  } = {},
+): Promise<GitHubRepositoryWriteReceipt> {
+  const rows = await ctx.db
+    .query("githubRepositoryWriteReceipts")
+    .withIndex("by_project_external", (q) =>
+      q.eq("projectId", scope.projectId)
+        .eq("externalId", externalId)
+    )
+    .take(2);
+  const [row] = rows;
+  if (rows.length === 0 || !row) {
+    throw new Error(
+      options.missingCode ?? "GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT",
+    );
+  }
+  if (
+    rows.length !== 1
+    || (options.selectedRow && row._id !== options.selectedRow._id)
+  ) {
+    throw new Error("GITHUB_REPOSITORY_WRITE_EXTERNAL_ID_CONFLICT");
+  }
+  return admitStoredReceipt(row, scope);
+}
+
 async function assertStoredLaneCoherence(
   ctx: QueryContext,
   scope: ResolvedProject,
@@ -468,7 +513,7 @@ async function assertStoredLaneCoherence(
       q.eq("projectId", scope.projectId)
         .eq("ownerReceiptExternalId", receipt.id)
     )
-    .collect();
+    .take(2);
   if (!blocksLane(receipt)) {
     if (ownerLanes.length !== 0) {
       throw new Error("GITHUB_REPOSITORY_WRITE_TERMINAL_LANE_RETAINED");
@@ -489,7 +534,7 @@ async function assertStoredLaneCoherence(
         .eq("repositoryFullName", receipt.repositoryFullName)
         .eq("targetRef", receipt.targetRef)
     )
-    .collect();
+    .take(2);
   const [refLane] = refLanes;
   if (!refLane) {
     throw new Error("GITHUB_REPOSITORY_WRITE_LANE_MISSING");
@@ -576,16 +621,4 @@ async function resolveProject(
     projectId: project._id,
     projectSlug,
   };
-}
-
-function boundedIdempotencyKey(value: string): string {
-  if (
-    typeof value !== "string"
-    || value.length === 0
-    || value.length > 240
-    || value.trim() !== value
-  ) {
-    throw new RangeError("GitHub repository write idempotency key is invalid");
-  }
-  return value;
 }
