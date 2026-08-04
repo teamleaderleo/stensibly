@@ -1,0 +1,124 @@
+name: Lumen 1106 Work Pulse admission finalizer
+
+on:
+  push:
+    branches:
+      - plover/699-work-pulse-first-slice
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1106-work-pulse-admission
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: plover/699-work-pulse-first-slice
+          fetch-depth: 2
+
+      - name: Verify exact carrier parent
+        run: test "$(git rev-parse HEAD^)" = "4a98073732d6136c059f74be1ae8b61236282532"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Re-admit fixture and stabilize ordering
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app_path = Path("site/labs/work-pulse/app.js")
+          app = app_path.read_text()
+          fixture_anchor = '''    const fixtureDescriptor = Object.getOwnPropertyDescriptor(api, "frontendLabFixture");
+              if (!fixtureDescriptor || !("value" in fixtureDescriptor)) {
+                throw new Error("The shared Labs fixture is unavailable");
+              }
+
+              const fixture = fixtureDescriptor.value;
+              app.replaceChildren(renderWorkPulse(fixture, scenario));'''
+          fixture_repair = '''    const fixtureDescriptor = Object.getOwnPropertyDescriptor(api, "frontendLabFixture");
+              if (!fixtureDescriptor || !("value" in fixtureDescriptor)) {
+                throw new Error("The shared Labs fixture is unavailable");
+              }
+              const parserDescriptor = Object.getOwnPropertyDescriptor(api, "parseFrontendLabFixture");
+              if (
+                !parserDescriptor
+                || !("value" in parserDescriptor)
+                || typeof parserDescriptor.value !== "function"
+              ) {
+                throw new Error("The shared Labs fixture parser is unavailable");
+              }
+
+              const fixture = Reflect.apply(
+                parserDescriptor.value,
+                undefined,
+                [fixtureDescriptor.value],
+              );
+              if (!fixture || typeof fixture !== "object" || !Object.isFrozen(fixture)) {
+                throw new Error("The shared Labs fixture parser returned an incompatible result");
+              }
+              app.replaceChildren(renderWorkPulse(fixture, scenario));'''
+          if app.count(fixture_anchor) != 1:
+              raise SystemExit("Work Pulse fixture anchor moved")
+          app = app.replace(fixture_anchor, fixture_repair)
+
+          sort_anchor = '''    return items.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));'''
+          sort_repair = '''    return items.sort((left, right) => left.priority - right.priority || codeUnitCompare(left.id, right.id));'''
+          if app.count(sort_anchor) != 1:
+              raise SystemExit("Work Pulse attention sort anchor moved")
+          app = app.replace(sort_anchor, sort_repair)
+
+          helper_anchor = '''  function capitalize(value) {
+              return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+            }
+          '''
+          helper_repair = '''  function codeUnitCompare(left, right) {
+              return left < right ? -1 : left > right ? 1 : 0;
+            }
+
+            function capitalize(value) {
+              return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+            }
+          '''
+          if app.count(helper_anchor) != 1:
+              raise SystemExit("Work Pulse helper anchor moved")
+          app = app.replace(helper_anchor, helper_repair)
+          app_path.write_text(app)
+
+          test_path = Path("test/frontend-labs-work-pulse.test.ts")
+          test = test_path.read_text()
+          test_anchor = '''    expect(app).toContain('Object.getOwnPropertyDescriptor(globalThis, globalName)');
+              expect(app).toContain('"Waiting and recoverable"');'''
+          test_repair = '''    expect(app).toContain('Object.getOwnPropertyDescriptor(globalThis, globalName)');
+              expect(app).toContain('Object.getOwnPropertyDescriptor(api, "parseFrontendLabFixture")');
+              expect(app).toContain("Reflect.apply(");
+              expect(app).toContain("Object.isFrozen(fixture)");
+              expect(app).toContain("codeUnitCompare(left.id, right.id)");
+              expect(app).not.toContain("localeCompare");
+              expect(app).toContain('"Waiting and recoverable"');'''
+          if test.count(test_anchor) != 1:
+              raise SystemExit("Work Pulse test anchor moved")
+          test = test.replace(test_anchor, test_repair)
+          test_path.write_text(test)
+          PY
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify repaired candidate
+        run: |
+          bun run typecheck
+          bun test ./test/frontend-labs-work-pulse.test.ts
+
+      - name: Publish workflow-free product head
+        run: |
+          git rm .github/workflows/lumen-1106-work-pulse-admission.yml
+          git add site/labs/work-pulse/app.js test/frontend-labs-work-pulse.test.ts
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Re-admit Work Pulse fixtures deterministically"
+          git push origin HEAD:plover/699-work-pulse-first-slice
