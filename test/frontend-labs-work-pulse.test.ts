@@ -22,7 +22,7 @@ describe("Work Pulse frontend lab", () => {
       thesis: "A text-first evidence pulse for active responsibility, stale authority, ambiguous effects, and human attention.",
       owner: "Plover",
       status: "prototype",
-      revision: "e73e778862b0736dc6753fbcac1a7380a7313b18",
+      revision: "4ce8fa8e3b83ff32d312135cc730d05dde830c07",
       issue: 699,
       path: "./work-pulse/",
       support: [
@@ -46,6 +46,7 @@ describe("Work Pulse frontend lab", () => {
 
     expect(fixtureIndex).toBeGreaterThan(0);
     expect(appIndex).toBeGreaterThan(fixtureIndex);
+    expect(html).toContain('<body data-stensibly-lab="prototype" data-scenario="default">');
     expect(html).toContain('href="#attention"');
     expect(html).toContain('data-scenario-link="default"');
     expect(html).toContain('data-scenario-link="degraded"');
@@ -63,6 +64,7 @@ describe("Work Pulse frontend lab", () => {
     expect(app).toContain('"Review lease and reassign safely"');
     expect(app).toContain('"Ambiguous outcomes reconcile before retry; recovery never erases history."');
     expect(app).toContain('value === "empty" || value === "degraded"');
+    expect(app).toContain('document.body.setAttribute("data-scenario", normalized)');
   });
 
   test("contains no live transport, fake progress, or unsafe HTML sink", () => {
