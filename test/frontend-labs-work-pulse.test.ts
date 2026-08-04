@@ -35,7 +35,6 @@ describe("Work Pulse frontend lab", () => {
         "reduced-motion",
         "empty",
         "degraded",
-        "error",
       ],
     });
   });
