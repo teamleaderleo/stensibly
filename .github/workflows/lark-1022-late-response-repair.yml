@@ -1,0 +1,277 @@
+name: Lark 1022 late response repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/lark-1022-late-response-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1022-late-response-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: juniper/1020-contents-write-token
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Bound late responses and read-result descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-app-installation-token.ts")
+          text = source.read_text()
+
+          interface_before = '''interface InstallationTokenResponseLifetime {
+            readonly signal: AbortSignal;
+            race<T>(operation: Promise<T>): Promise<T>;
+            dispose(): void;
+          }
+          '''
+          interface_after = '''interface InstallationTokenResponseLifetime {
+            readonly signal: AbortSignal;
+            race<T>(operation: Promise<T>): Promise<T>;
+            isTerminated(): boolean;
+            dispose(): void;
+          }
+          '''
+          if text.count(interface_before) != 1:
+            raise SystemExit("response lifetime interface anchor changed")
+          text = text.replace(interface_before, interface_after, 1)
+
+          fetch_before = '''    const lifetime = responseLifetime(this.#responseTimeoutMs);
+            let response: Response;
+            try {
+              response = await lifetime.race(this.#fetch(
+                `${this.#apiBaseUrl}/app/installations/${this.#installationId}/access_tokens`,
+                {
+                  method: "POST",
+                  headers: {
+                    Accept: "application/vnd.github+json",
+                    Authorization: `Bearer ${appJwt}`,
+                    "Content-Type": "application/json",
+                    "User-Agent": "stensibly",
+                    "X-GitHub-Api-Version": githubApiVersion,
+                  },
+                  body: JSON.stringify({
+                    repositories: [repository],
+                    permissions: { [permission.name]: permission.access },
+                  }),
+                  signal: lifetime.signal,
+                },
+              ));
+            } catch {
+          '''
+          fetch_after = '''    const lifetime = responseLifetime(this.#responseTimeoutMs);
+            const providerCall = Promise.resolve(this.#fetch(
+              `${this.#apiBaseUrl}/app/installations/${this.#installationId}/access_tokens`,
+              {
+                method: "POST",
+                headers: {
+                  Accept: "application/vnd.github+json",
+                  Authorization: `Bearer ${appJwt}`,
+                  "Content-Type": "application/json",
+                  "User-Agent": "stensibly",
+                  "X-GitHub-Api-Version": githubApiVersion,
+                },
+                body: JSON.stringify({
+                  repositories: [repository],
+                  permissions: { [permission.name]: permission.access },
+                }),
+                signal: lifetime.signal,
+              },
+            ));
+            void providerCall.then(
+              (lateResponse) => {
+                if (lifetime.isTerminated()) discardResponseBody(lateResponse);
+              },
+              () => undefined,
+            );
+            let response: Response;
+            try {
+              response = await lifetime.race(providerCall);
+            } catch {
+          '''
+          if text.count(fetch_before) != 1:
+            raise SystemExit("installation token fetch anchor changed")
+          text = text.replace(fetch_before, fetch_after, 1)
+
+          lifetime_before = '''function responseLifetime(timeoutMs: number): InstallationTokenResponseLifetime {
+            const controller = new AbortController();
+            let disposed = false;
+            let timer: ReturnType<typeof setTimeout>;
+            const timeout = new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                controller.abort();
+                reject(credentialTransportError("response"));
+              }, timeoutMs);
+            });
+            return Object.freeze({
+              signal: controller.signal,
+              race<T>(operation: Promise<T>): Promise<T> {
+                if (disposed) {
+                  return Promise.reject(credentialTransportError("response"));
+                }
+                return Promise.race([operation, timeout]);
+              },
+              dispose() {
+                if (disposed) return;
+                disposed = true;
+                clearTimeout(timer);
+              },
+            });
+          }
+          '''
+          lifetime_after = '''function responseLifetime(timeoutMs: number): InstallationTokenResponseLifetime {
+            const controller = new AbortController();
+            let disposed = false;
+            let expired = false;
+            let timer: ReturnType<typeof setTimeout>;
+            const timeout = new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                if (disposed) return;
+                expired = true;
+                controller.abort();
+                reject(credentialTransportError("response"));
+              }, timeoutMs);
+            });
+            return Object.freeze({
+              signal: controller.signal,
+              race<T>(operation: Promise<T>): Promise<T> {
+                if (disposed || expired) {
+                  return Promise.reject(credentialTransportError("response"));
+                }
+                return Promise.race([operation, timeout]);
+              },
+              isTerminated() {
+                return disposed || expired;
+              },
+              dispose() {
+                if (disposed) return;
+                disposed = true;
+                clearTimeout(timer);
+              },
+            });
+          }
+          '''
+          if text.count(lifetime_before) != 1:
+            raise SystemExit("response lifetime implementation anchor changed")
+          text = text.replace(lifetime_before, lifetime_after, 1)
+
+          admission_start = text.index("function admitStreamReadResult(value: unknown): AdmittedStreamReadResult {")
+          admission_end = text.index("\nfunction cancelReader(", admission_start)
+          admission_after = '''function admitStreamReadResult(value: unknown): AdmittedStreamReadResult {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw invalidCredentialResponse(
+                "GitHub installation token response body was invalid",
+              );
+            }
+            let prototype: object | null;
+            let done: PropertyDescriptor | undefined;
+            let chunk: PropertyDescriptor | undefined;
+            try {
+              prototype = Object.getPrototypeOf(value);
+              done = Object.getOwnPropertyDescriptor(value, "done");
+              chunk = Object.getOwnPropertyDescriptor(value, "value");
+            } catch {
+              throw invalidCredentialResponse(
+                "GitHub installation token response body was invalid",
+              );
+            }
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw invalidCredentialResponse(
+                "GitHub installation token response body was invalid",
+              );
+            }
+            if (
+              !done
+              || !("value" in done)
+              || done.enumerable !== true
+              || typeof done.value !== "boolean"
+            ) {
+              throw invalidCredentialResponse(
+                "GitHub installation token response body was invalid",
+              );
+            }
+            if (done.value) {
+              if (
+                chunk
+                && (
+                  !("value" in chunk)
+                  || chunk.enumerable !== true
+                  || chunk.value !== undefined
+                )
+              ) {
+                throw invalidCredentialResponse(
+                  "GitHub installation token response body was invalid",
+                );
+              }
+              return { done: true, value: null };
+            }
+            if (
+              !chunk
+              || !("value" in chunk)
+              || chunk.enumerable !== true
+              || !(chunk.value instanceof Uint8Array)
+            ) {
+              throw invalidCredentialResponse(
+                "GitHub installation token response body was invalid",
+              );
+            }
+            return { done: false, value: chunk.value };
+          }
+          '''
+          text = text[:admission_start] + admission_after + text[admission_end:]
+          source.write_text(text)
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-app-installation-contents-write.test.ts \
+            test/github-app-installation-token-response-lifetime.test.ts \
+            test/github-app-installation-token-late-response-admission.test.ts
+
+      - name: Publish source and control only
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/juniper/1020-contents-write-token:refs/remotes/origin/juniper/1020-contents-write-token
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-contents-write-token)" = "$EXPECTED_HEAD"
+          rm .github/workflows/lark-1022-late-response-repair.yml
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-app-installation-token.ts \
+            .github/workflows/lark-1022-late-response-repair.yml
+          git diff --cached --check
+          git commit -m "Bound late installation-token responses"
+          git push --force-with-lease=refs/heads/juniper/1020-contents-write-token:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1020-contents-write-token
