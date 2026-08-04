@@ -76,7 +76,7 @@ describe("GitHub outbound final privacy and exact-text boundaries", () => {
       `example/sk-proj-${"a".repeat(20)}`,
       `example/stn.tok_${"a".repeat(20)}`,
       `example/xoxb-${"a".repeat(16)}`,
-      `example/eyJ${"a".repeat(8)}.eyJ${"b".repeat(8)}.${"c".repeat(8)}`,
+      `example/eyj${"a".repeat(8)}.eyj${"b".repeat(8)}.${"c".repeat(8)}`,
     ]) {
       const error = captureError(() =>
         compileGitHubOutboundTextPreflightV1(input("safe", {
