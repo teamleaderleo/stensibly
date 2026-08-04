@@ -100,7 +100,7 @@ function createMinter(
     privateKeyPem,
     repositoryFullNames: [repositoryFullName],
     apiBaseUrl: "https://api.github.test",
-    fetch: implementation as typeof fetch,
+    fetch: implementation as unknown as typeof fetch,
     now: () => fixedNow,
   });
 }
