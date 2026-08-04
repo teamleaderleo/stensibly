@@ -14,14 +14,15 @@ export const githubInstallationPermissionNames = [
 export type GitHubInstallationPermissionName =
   typeof githubInstallationPermissionNames[number];
 
+type GitHubWriteInstallationPermissionName = "issues" | "contents";
 type GitHubReadInstallationPermissionName = Exclude<
   GitHubInstallationPermissionName,
-  "issues"
+  GitHubWriteInstallationPermissionName
 >;
 
 export type GitHubInstallationPermissionInput =
   | {
-    name: "issues";
+    name: GitHubWriteInstallationPermissionName;
     access: "read" | "write";
   }
   | {
@@ -60,6 +61,7 @@ export interface GitHubAppInstallationTokenMinterOptions {
   fetch?: typeof fetch;
   now?: () => number;
   refreshSkewSeconds?: number;
+  responseTimeoutMs?: number;
 }
 
 interface AdmittedInstallationTokenRequest {
@@ -79,8 +81,22 @@ interface InstallationTokenResponse {
   repositories?: unknown;
 }
 
+interface InstallationTokenResponseLifetime {
+  readonly signal: AbortSignal;
+  race<T>(operation: Promise<T>): Promise<T>;
+  isTerminated(): boolean;
+  dispose(): void;
+}
+
+interface AdmittedStreamReadResult {
+  done: boolean;
+  value: Uint8Array | null;
+}
+
 const githubApiVersion = "2022-11-28";
 const installationTokenResponseMaximumBytes = 64 * 1024;
+const installationTokenResponseMaximumChunks = 4_096;
+const defaultInstallationTokenResponseTimeoutMs = 10_000;
 const decimalByteLengthPattern = /^(?:0|[1-9][0-9]*)$/;
 const permissionNames = new Set<string>(githubInstallationPermissionNames);
 
@@ -100,6 +116,7 @@ export class GitHubAppInstallationTokenMinter
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
   readonly #refreshSkewMs: number;
+  readonly #responseTimeoutMs: number;
   readonly #cache = new Map<string, CachedToken>();
 
   constructor(options: GitHubAppInstallationTokenMinterOptions) {
@@ -142,6 +159,18 @@ export class GitHubAppInstallationTokenMinter
       );
     }
     this.#refreshSkewMs = refreshSkewSeconds * 1_000;
+    const responseTimeoutMs = options.responseTimeoutMs
+      ?? defaultInstallationTokenResponseTimeoutMs;
+    if (
+      !Number.isSafeInteger(responseTimeoutMs)
+      || responseTimeoutMs < 1
+      || responseTimeoutMs > 60_000
+    ) {
+      throw new RangeError(
+        "GitHub installation token response timeout must be between 1 and 60000 milliseconds",
+      );
+    }
+    this.#responseTimeoutMs = responseTimeoutMs;
   }
 
   async getInstallationToken(
@@ -172,33 +201,49 @@ export class GitHubAppInstallationTokenMinter
 
     const [, repository] = repositoryFullName.split("/");
     const appJwt = this.#createAppJwt(now);
+    const lifetime = responseLifetime(this.#responseTimeoutMs);
+    const providerCall = Promise.resolve(this.#fetch(
+      `${this.#apiBaseUrl}/app/installations/${this.#installationId}/access_tokens`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${appJwt}`,
+          "Content-Type": "application/json",
+          "User-Agent": "stensibly",
+          "X-GitHub-Api-Version": githubApiVersion,
+        },
+        body: JSON.stringify({
+          repositories: [repository],
+          permissions: { [permission.name]: permission.access },
+        }),
+        signal: lifetime.signal,
+      },
+    ));
+    void providerCall.then(
+      (lateResponse) => {
+        if (lifetime.isTerminated()) discardResponseBody(lateResponse);
+      },
+      () => undefined,
+    );
     let response: Response;
     try {
-      response = await this.#fetch(
-        `${this.#apiBaseUrl}/app/installations/${this.#installationId}/access_tokens`,
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/vnd.github+json",
-            Authorization: `Bearer ${appJwt}`,
-            "Content-Type": "application/json",
-            "User-Agent": "stensibly",
-            "X-GitHub-Api-Version": githubApiVersion,
-          },
-          body: JSON.stringify({
-            repositories: [repository],
-            permissions: { [permission.name]: permission.access },
-          }),
-        },
-      );
+      response = await lifetime.race(providerCall);
     } catch {
+      lifetime.dispose();
       throw credentialTransportError("request");
     }
     if (!response.ok) {
-      await discardResponseBody(response);
+      discardResponseBody(response);
+      lifetime.dispose();
       throw githubHttpError(response.status, "mint installation token");
     }
-    const payload = await readBoundedJson(response);
+    let payload: unknown;
+    try {
+      payload = await readBoundedJson(response, lifetime);
+    } finally {
+      lifetime.dispose();
+    }
     const tokenResponse = payload as InstallationTokenResponse;
     const token = secretString(tokenResponse.token, "GitHub installation token");
     const expiresAt = timestamp(tokenResponse.expires_at, "GitHub installation token expiry");
@@ -289,7 +334,7 @@ function admitPermission(value: unknown): Readonly<GitHubInstallationPermissionI
   if (access !== "read" && access !== "write") {
     throw new RangeError("GitHub installation permission access is invalid");
   }
-  if (name !== "issues" && access !== "read") {
+  if (name !== "issues" && name !== "contents" && access !== "read") {
     throw new RangeError(
       `GitHub installation permission ${name} supports read access only`,
     );
@@ -401,19 +446,54 @@ function base64Url(value: string | Uint8Array): string {
   return Buffer.from(value).toString("base64url");
 }
 
-async function discardResponseBody(response: Response): Promise<void> {
+function responseLifetime(timeoutMs: number): InstallationTokenResponseLifetime {
+  const controller = new AbortController();
+  let disposed = false;
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      if (disposed) return;
+      expired = true;
+      controller.abort();
+      reject(credentialTransportError("response"));
+    }, timeoutMs);
+  });
+  return Object.freeze({
+    signal: controller.signal,
+    race<T>(operation: Promise<T>): Promise<T> {
+      if (disposed || expired) {
+        return Promise.reject(credentialTransportError("response"));
+      }
+      return Promise.race([operation, timeout]);
+    },
+    isTerminated() {
+      return disposed || expired;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearTimeout(timer);
+    },
+  });
+}
+
+function discardResponseBody(response: Response): void {
   try {
-    await response.body?.cancel();
+    suppressCancellation(response.body?.cancel());
   } catch {
     // Provider body disposal never changes the fixed status-derived diagnostic.
   }
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+async function readBoundedJson(
+  response: Response,
+  lifetime: InstallationTokenResponseLifetime,
+): Promise<unknown> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     if (!decimalByteLengthPattern.test(declaredLength)) {
-      await discardResponseBody(response);
+      discardResponseBody(response);
       throw invalidCredentialResponse(
         "GitHub installation token response declared an invalid content length",
       );
@@ -423,7 +503,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
       !Number.isSafeInteger(declaredBytes)
       || declaredBytes > installationTokenResponseMaximumBytes
     ) {
-      await discardResponseBody(response);
+      discardResponseBody(response);
       throw credentialResponseTooLarge();
     }
   }
@@ -433,7 +513,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
   const body = response.body;
   if (body === null) return {};
-  const bytes = await readBoundedBody(body);
+  const bytes = await readBoundedBody(body, lifetime);
   if (bytes.byteLength === 0) return {};
 
   let text: string;
@@ -453,6 +533,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
 
 async function readBoundedBody(
   body: ReadableStream<Uint8Array>,
+  lifetime: InstallationTokenResponseLifetime,
 ): Promise<Uint8Array> {
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
@@ -463,31 +544,44 @@ async function readBoundedBody(
 
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
+  let chunkCount = 0;
   let failure: GitHubProviderRejectedError | undefined;
   try {
     while (true) {
-      const next = await reader.read();
+      const next = admitStreamReadResult(
+        await lifetime.race(reader.read()),
+      );
       if (next.done) break;
-      if (!(next.value instanceof Uint8Array)) {
+      chunkCount += 1;
+      if (chunkCount > installationTokenResponseMaximumChunks) {
+        throw invalidCredentialResponse(
+          "GitHub installation token response exceeded its work limit",
+        );
+      }
+      const value = next.value;
+      if (!(value instanceof Uint8Array)) {
         throw invalidCredentialResponse(
           "GitHub installation token response body was invalid",
         );
       }
-      byteLength += next.value.byteLength;
-      if (byteLength > installationTokenResponseMaximumBytes) {
-        try {
-          await reader.cancel();
-        } catch {
-          // The bounded rejection remains authoritative if provider cancellation fails.
-        }
+      const nextLength = byteLength + value.byteLength;
+      if (
+        !Number.isSafeInteger(nextLength)
+        || nextLength > installationTokenResponseMaximumBytes
+      ) {
         throw credentialResponseTooLarge();
       }
-      chunks.push(next.value);
+      byteLength = nextLength;
+      if (value.byteLength === 0) continue;
+      const copy = new Uint8Array(value.byteLength);
+      Uint8Array.prototype.set.call(copy, value);
+      chunks.push(copy);
     }
   } catch (error) {
     failure = error instanceof GitHubProviderRejectedError
       ? error
       : credentialTransportError("response");
+    cancelReader(reader);
   }
 
   try {
@@ -504,6 +598,85 @@ async function readBoundedBody(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+function admitStreamReadResult(value: unknown): AdmittedStreamReadResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidCredentialResponse(
+      "GitHub installation token response body was invalid",
+    );
+  }
+  let prototype: object | null;
+  let done: PropertyDescriptor | undefined;
+  let chunk: PropertyDescriptor | undefined;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    done = Object.getOwnPropertyDescriptor(value, "done");
+    chunk = Object.getOwnPropertyDescriptor(value, "value");
+  } catch {
+    throw invalidCredentialResponse(
+      "GitHub installation token response body was invalid",
+    );
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw invalidCredentialResponse(
+      "GitHub installation token response body was invalid",
+    );
+  }
+  if (
+    !done
+    || !("value" in done)
+    || done.enumerable !== true
+    || typeof done.value !== "boolean"
+  ) {
+    throw invalidCredentialResponse(
+      "GitHub installation token response body was invalid",
+    );
+  }
+  if (done.value) {
+    if (
+      chunk
+      && (
+        !("value" in chunk)
+        || chunk.enumerable !== true
+        || chunk.value !== undefined
+      )
+    ) {
+      throw invalidCredentialResponse(
+        "GitHub installation token response body was invalid",
+      );
+    }
+    return { done: true, value: null };
+  }
+  if (
+    !chunk
+    || !("value" in chunk)
+    || chunk.enumerable !== true
+    || !(chunk.value instanceof Uint8Array)
+  ) {
+    throw invalidCredentialResponse(
+      "GitHub installation token response body was invalid",
+    );
+  }
+  return { done: false, value: chunk.value };
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    suppressCancellation(reader.cancel());
+  } catch {
+    // The fixed response failure remains authoritative.
+  }
+}
+
+function suppressCancellation(value: unknown): void {
+  if (
+    value !== null
+    && (typeof value === "object" || typeof value === "function")
+    && "then" in value
+  ) {
+    void Promise.resolve(value).catch(() => undefined);
+  }
 }
 
 function credentialResponseTooLarge(): GitHubProviderRejectedError {
