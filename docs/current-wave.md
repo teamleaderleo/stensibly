@@ -2,14 +2,14 @@
 
 **Status:** active P0 convergence and execution  
 **Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-04 UTC after exact-head context, transport, credential, outbound, Merkle, and storage repair  
+**Last reconciled:** 2026-08-04 UTC after exact-head context, transport, credential, outbound, Merkle, storage, and ancestry repair  
 **Current main:** `e4ffc6a44818f62ef3770ccdcd4d5d5707a30bc2`  
 **Tracking incident:** #490  
 **Programme:** #491  
 **GitHub context integration:** #492  
 **Governed GitHub writes:** #921  
 **Wave:** `W01`  
-**Wave revision:** `22`
+**Wave revision:** `23`
 
 ## Purpose
 
@@ -68,8 +68,7 @@ Integrate #961 first. Replay and renew #1013 and #975 only after the unchanged p
 ```
 
 - **#1065** — exact head `6704c2c519777fa0f1e499b2cff78e09067de759`, three commits above #1020; nine workflow-free files. Shared repository/ref/path/object-ID admission and exact provider-state URL spelling are source-reviewed at review `4858072525`. Canonical run `30941017656` remains pending.
-- **#1022** — exact workflow-free head `7cb74fd7986838b69d092c7e28a7acf497eda612`; seven source/test files covering exact contents scope, synchronous fetch failures, one total token-response lifetime, late response disposal, fixed status/header/body metadata admission, byte/chunk bounds, and direct stream-result descriptors. Canonical run `30941611590` remains pending.
-- #1022 is **not** an integration candidate: it is seven commits ahead and two behind repaired #1065, with merge base `0a8996c666b687468441f91e7831c9ecb8dfc0c8`. Replay the exact seven-file packet onto `6704c2c5…` and renew all gates.
+- **#1022** — exact head `7ef9369c5fe732ea3782743a8faaebe90cc115c9`, one commit above exact #1065 and zero behind; seven workflow-free files covering exact contents scope, synchronous fetch failures, one total token-response lifetime, late response disposal, fixed status/header/body metadata admission, byte/chunk bounds, and direct stream-result descriptors. CodeRabbit and threads are clean; source review `4858183245` accepted the exact current-parent stack. Canonical run `30943152588` remains pending.
 - #1084 remains a workflow-bearing effect carrier on the old #1065 head and is also stale-parent. Do not integrate it until the carrier disappears and the intended effect packet is replayed onto `6704c2c5…`.
 
 Atomic expected-parent publication, canonical post-write file/tree settlement, post-effect request attribution, and one total native transport response lifetime remain separate #1020-family work.
@@ -120,7 +119,7 @@ Queued, pending, cancelled, stale-parent, or predecessor-head execution never au
 | P0 | #490 / #921 / #492 / #697 hosted proof | Repository capability exceeds hosted proof | Verify exact deployed revision and run one uniquely identified authenticated lifecycle with GitHub checkpoints | Hosted receipts, reconnect, exact replay, and repeated lifecycle pass |
 | P0 | #961 → #1013 / #975 | Exact workflow-free source packets are reviewed; canonical runs are pending | Complete #961 gates, integrate unchanged, then replay and renew both children | Proposal, instruction evidence, and acceptance compose deterministically on landed ancestry |
 | P0 | #1050 → #1012 → #972 → #970 | #1050 is source-reviewed and workflow-free | Complete exact-head execution and terminal review before parent absorption | Seven typed mutations pass source, canonical, manifest, and terminal gates |
-| P0 | #1065 → #1022 → #1020 family | Shared admission is repaired; token packet is source-complete but stale-parent | Complete #1065 gates, then replay #1022 and effect/settlement children onto it | Exact token scope and provider effects remain bounded, attributed, and reconcilable |
+| P0 | #1065 → #1022 → #1020 family | Shared admission and exact token packet are correctly stacked and source-reviewed | Complete #1065 gates, integrate unchanged, then replay/retarget #1022 and effect/settlement children onto the landed parent | Exact token scope and provider effects remain bounded, attributed, and reconcilable |
 | P1 | #987 | Exact source and architecture are reviewed | Complete exact-head canonical and terminal gates | External GitHub routes never pass through supported normalization or producer-mutation variants |
 | P1 | #1000 | Exact proof/privacy source is reviewed | Complete exact-head canonical and terminal gates | Inclusion/consistency evidence passes without retained public identity or array key-budget gaps |
 | P1 | #1056 → #1049 | Parent has three green parallel jobs; serial-full is queued | Complete #1056 terminal gates, merge unchanged, then replay/renew #1049 | Runtime-private credentials and unique stored identity pass on landed ancestry |
