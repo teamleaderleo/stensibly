@@ -188,7 +188,7 @@ describe("native GitHub repository file write adapter", () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider(tokens),
       apiBaseUrl,
-      fetch: fetcher as typeof fetch,
+      fetch: fetcher as unknown as typeof fetch,
     });
     const store = new SqliteGitHubRepositoryWriteStore({ path: ":memory:" });
     let tick = 0;
@@ -260,7 +260,7 @@ describe("native GitHub repository file write adapter", () => {
           body: init?.body ? JSON.parse(String(init.body)) : null,
         });
         return responses.shift()!;
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const updated = await adapter.dispatchRepositoryWrite({
@@ -351,7 +351,7 @@ describe("native GitHub repository file write adapter", () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider(tokens),
       apiBaseUrl,
-      fetch: (async () => responses.shift()!) as typeof fetch,
+      fetch: (async () => responses.shift()!) as unknown as typeof fetch,
     });
 
     expect(await adapter.getRefHead({ repositoryFullName, targetRef })).toBeNull();
@@ -384,7 +384,7 @@ describe("native GitHub repository file write adapter", () => {
       }), {
         status: 201,
         requestId: `github_pat_${"a".repeat(24)}`,
-      })) as typeof fetch,
+      })) as unknown as typeof fetch,
     });
     const result = await adapter.dispatchRepositoryWrite({
       repositoryFullName,
@@ -421,7 +421,7 @@ describe("native GitHub repository file write adapter", () => {
             cancelled = true;
           },
         },
-      } as unknown as Response)) as typeof fetch,
+      } as unknown as Response)) as unknown as typeof fetch,
     });
     const action = failing.dispatchRepositoryWrite({
       repositoryFullName,
@@ -466,7 +466,7 @@ describe("native GitHub repository file write adapter", () => {
             return new Promise<void>(() => {});
           },
         },
-      } as unknown as Response)) as typeof fetch,
+      } as unknown as Response)) as unknown as typeof fetch,
     });
 
     await expect(adapter.dispatchRepositoryWrite({

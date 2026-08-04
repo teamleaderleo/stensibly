@@ -90,7 +90,7 @@ async function dispatch(effectValue: ReturnType<typeof effect>) {
             `https://api.github.com/repos/${repositoryFullName}/git/commits/${parentSha}`,
         }],
       },
-    }, { status: 201 })) as typeof fetch,
+    }, { status: 201 })) as unknown as typeof fetch,
   });
 
   return await adapter.dispatchRepositoryWrite({

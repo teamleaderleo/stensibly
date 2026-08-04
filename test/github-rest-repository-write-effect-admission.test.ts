@@ -215,7 +215,7 @@ async function dispatch(
         };
       },
     },
-    fetch: (async () => response) as typeof fetch,
+    fetch: (async () => response) as unknown as typeof fetch,
   });
   return await adapter.dispatchRepositoryWrite({
     repositoryFullName,

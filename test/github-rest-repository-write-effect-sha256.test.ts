@@ -47,7 +47,7 @@ describe("GitHub repository file effect SHA-256 admission", () => {
           url: `${apiBaseUrl}/repos/${repositoryFullName}/git/commits/${commitSha}`,
           parents: [{ sha: expectedParentSha }],
         },
-      }, { status: 201 })) as typeof fetch,
+      }, { status: 201 })) as unknown as typeof fetch,
     });
 
     await expect(adapter.dispatchRepositoryWrite({
