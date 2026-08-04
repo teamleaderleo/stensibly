@@ -1,0 +1,150 @@
+name: Lark 1000 Merkle array prelimit repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/lark-1000-array-prelimit-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1000-array-prelimit-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: cicada/962-current-main-merkle-replay
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Apply bounded array prelimit repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          array_before = '''  const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
+              PropertyKey,
+              PropertyDescriptor
+            >;
+            const length = descriptors.length?.value;
+            if (!Number.isSafeInteger(length) || length < minimum || length > maximum) {
+              throw new RangeError(`${label} length is outside the accepted range`);
+            }
+          '''
+          array_after = '''  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            const length = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof length !== "number"
+              || !Number.isSafeInteger(length)
+              || length < minimum
+              || length > maximum
+            ) {
+              throw new RangeError(`${label} length is outside the accepted range`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
+              PropertyKey,
+              PropertyDescriptor
+            >;
+          '''
+
+          for source_name in [
+            "src/github-observation-merkle-checkpoint.ts",
+            "src/github-observation-merkle-checkpoint-base.ts",
+          ]:
+            source = Path(source_name)
+            text = source.read_text()
+            if text.count(array_before) != 1:
+              raise SystemExit(f"array admission anchor changed in {source_name}")
+            source.write_text(text.replace(array_before, array_after, 1))
+
+          wrapper = Path("src/github-observation-merkle-checkpoint.ts")
+          text = wrapper.read_text()
+          preflight_before = '''  const descriptors = Object.getOwnPropertyDescriptors(value);
+            const length = (
+              descriptors as Record<string, PropertyDescriptor>
+            ).length?.value;
+            if (
+              !Number.isSafeInteger(length)
+              || length < 0
+              || length > maximumLeaves
+            ) return;
+          '''
+          preflight_after = '''  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            const length = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof length !== "number"
+              || !Number.isSafeInteger(length)
+              || length < 0
+              || length > maximumLeaves
+            ) return;
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+          '''
+          if text.count(preflight_before) != 1:
+            raise SystemExit("leaf preflight anchor changed")
+          wrapper.write_text(text.replace(preflight_before, preflight_after, 1))
+
+          docs = Path("docs/github-observation-merkle-checkpoints.md")
+          text = docs.read_text()
+          docs_before = "The initial pure implementation admits at most 4,096 leaves and at most 64 sibling digests per proof. Inputs require ordinary dense arrays and enumerable data properties; accessors and decorated containers are rejected without getter execution. Returned checkpoints and proofs are deeply frozen."
+          docs_after = "The initial pure implementation admits at most 4,096 leaves and at most 64 sibling digests per proof. Array ceilings are checked from the direct own length descriptor before complete key inspection. Arrays inside those ceilings then require ordinary dense enumerable data entries and reject accessors, symbols, unknown fields, and decorated containers without getter execution. Returned checkpoints and proofs are deeply frozen."
+          if text.count(docs_before) != 1:
+            raise SystemExit("Merkle bounds documentation anchor changed")
+          docs.write_text(text.replace(docs_before, docs_after, 1))
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-observation-merkle-checkpoint.test.ts \
+            test/github-observation-merkle-checkpoint-admission.test.ts \
+            test/github-observation-merkle-checkpoint-matrix.test.ts \
+            test/github-observation-merkle-checkpoint-array-prelimit.test.ts \
+            test/github-observation-merkle-checkpoint-single-snapshot.test.ts
+          bun scripts/verify-runtime-parity.mjs
+
+      - name: Publish source, controls, and docs only
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/cicada/962-current-main-merkle-replay:refs/remotes/origin/cicada/962-current-main-merkle-replay
+          test "$(git rev-parse refs/remotes/origin/cicada/962-current-main-merkle-replay)" = "$EXPECTED_HEAD"
+          rm .github/workflows/lark-1000-array-prelimit-repair.yml
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-observation-merkle-checkpoint.ts \
+            src/github-observation-merkle-checkpoint-base.ts \
+            docs/github-observation-merkle-checkpoints.md \
+            .github/workflows/lark-1000-array-prelimit-repair.yml
+          git diff --cached --check
+          git commit -m "Check Merkle array limits before key enumeration"
+          git push --force-with-lease=refs/heads/cicada/962-current-main-merkle-replay:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/cicada/962-current-main-merkle-replay
