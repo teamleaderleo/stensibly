@@ -1,0 +1,124 @@
+name: Lark 1028 final file-effect restack
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/lark-1028-final-effect-restack.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1028-final-effect-restack
+  cancel-in-progress: false
+
+jobs:
+  restack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: lynx/1027-repository-file-effect-controls
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact live parent and trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: 0a8996c666b687468441f91e7831c9ecb8dfc0c8
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+
+      - name: Replay exact effect admission and canonical URL repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/lynx/1028-pre-final-1065-4dd84041:refs/remotes/origin/lynx/1028-pre-final-1065-4dd84041
+          git cherry-pick --no-commit 73db5346670f1c224cccf1b2ef8fb738da899339
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-rest-repository-write-adapter.ts")
+          text = source.read_text()
+          url_before = '''function assertRequiredExactApiUrl(value: unknown, expected: URL): void {
+            if (typeof value !== "string") throw fileEffectError();
+            let actual: URL;'''
+          url_after = '''function assertRequiredExactApiUrl(value: unknown, expected: URL): void {
+            if (typeof value !== "string" || value !== expected.href) {
+              throw fileEffectError();
+            }
+            let actual: URL;'''
+          if text.count(url_before) != 1:
+            raise SystemExit("exact effect URL admission anchor changed")
+          text = text.replace(url_before, url_after, 1)
+
+          old_result_type = "let result: ReadableStreamReadResult<Uint8Array>;"
+          new_result_type = "let result: Awaited<ReturnType<typeof reader.read>>;"
+          if old_result_type in text:
+            text = text.replace(old_result_type, new_result_type, 1)
+          if old_result_type in text:
+            raise SystemExit("stale Web Streams result type remains")
+          source.write_text(text)
+
+          test_files = [
+            "test/github-rest-repository-write-adapter.test.ts",
+            "test/github-rest-repository-write-effect-admission.test.ts",
+            "test/github-rest-repository-write-effect-sha256.test.ts",
+            "test/github-rest-repository-write-effect-url-spelling.test.ts",
+          ]
+          for name in test_files:
+            path = Path(name)
+            value = path.read_text()
+            value = value.replace(" as typeof fetch", " as unknown as typeof fetch")
+            if " as typeof fetch" in value:
+              raise SystemExit(f"stale direct fetch cast remains in {name}")
+            path.write_text(value)
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-effect-admission.test.ts \
+            test/github-rest-repository-write-effect-sha256.test.ts \
+            test/github-rest-repository-write-effect-url-spelling.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/repository-write-fence-object-format.test.ts
+
+      - name: Publish one source-and-test commit
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: 0a8996c666b687468441f91e7831c9ecb8dfc0c8
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/lynx/1027-repository-file-effect-controls:refs/remotes/origin/lynx/1027-repository-file-effect-controls
+          test "$(git rev-parse refs/remotes/origin/lynx/1027-repository-file-effect-controls)" = "$EXPECTED_HEAD"
+          rm .github/workflows/lark-1028-final-effect-restack.yml
+          git add \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-effect-admission.test.ts \
+            test/github-rest-repository-write-effect-sha256.test.ts \
+            test/github-rest-repository-write-effect-url-spelling.test.ts \
+            .github/workflows/lark-1028-final-effect-restack.yml
+          git diff --cached --check
+          git reset --soft "$BASE_SHA"
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Admit exact GitHub repository file effects"
+          git push --force-with-lease=refs/heads/lynx/1027-repository-file-effect-controls:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/lynx/1027-repository-file-effect-controls
