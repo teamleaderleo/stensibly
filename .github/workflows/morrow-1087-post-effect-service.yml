@@ -1,0 +1,153 @@
+# Retriggered after bounded fixed-field evidence admission.
+name: Morrow 1087 post-effect service restack
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/morrow-1087-post-effect-service.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: morrow-1087-post-effect-service
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: morrow/1087-post-effect-current-admission
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Apply verified post-effect service handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-repository-write-provider-service.ts")
+          text = path.read_text()
+
+          import_anchor = '''import { sha256, stableJson } from "./canonical-json.js";
+          import {
+            prepareRepositoryWrite,'''
+          import_replacement = '''import { sha256, stableJson } from "./canonical-json.js";
+          import {
+            GitHubRepositoryWritePostEffectError,
+          } from "./github-repository-write-post-effect-error.js";
+          import {
+            prepareRepositoryWrite,'''
+          if text.count(import_anchor) != 1:
+            raise SystemExit("post-effect import anchor changed")
+          text = text.replace(import_anchor, import_replacement, 1)
+
+          catch_anchor = '''    } catch {
+            const pending = await this.#hold(
+              receiptWithDispatch(receipt),
+              "repository_write_provider_outcome_ambiguous",
+            );
+            throw new GitHubRepositoryWritePendingReconciliationError(pending);
+          }
+
+          let verified: VerifiedRepositoryWrite;'''
+          catch_replacement = '''    } catch (error) {
+            if (error instanceof GitHubRepositoryWritePostEffectError) {
+              let postEffectVerified: VerifiedRepositoryWrite | null = null;
+              try {
+                postEffectVerified = await verifyRepositoryWriteResult({
+                  prepared: secondPrepared,
+                  providerResult: error.result,
+                  refs: this.#adapter,
+                  now: this.#now,
+                });
+              } catch {
+                // Invalid or substituted carried evidence remains unverified ambiguity.
+              }
+              if (postEffectVerified) {
+                const dispatched = receiptWithDispatch(receipt);
+                let pending = receiptWithVerified(
+                  dispatched,
+                  postEffectVerified,
+                  error.code,
+                );
+                try {
+                  pending = await this.#store
+                    .holdVerifiedRepositoryWriteForReconciliation({
+                      receipt: dispatched,
+                      verified: postEffectVerified,
+                      code: error.code,
+                      heldAt: exactTimestamp(
+                        this.#now(),
+                        "Repository write post-effect reconciliation time",
+                      ),
+                    });
+                } catch {
+                  // The thrown pending error retains the exact admitted evidence.
+                }
+                throw new GitHubRepositoryWritePendingReconciliationError(pending);
+              }
+            }
+            const pending = await this.#hold(
+              receiptWithDispatch(receipt),
+              "repository_write_provider_outcome_ambiguous",
+            );
+            throw new GitHubRepositoryWritePendingReconciliationError(pending);
+          }
+
+          let verified: VerifiedRepositoryWrite;'''
+          if text.count(catch_anchor) != 1:
+            raise SystemExit("post-effect catch anchor changed")
+          path.write_text(text.replace(catch_anchor, catch_replacement, 1))
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-repository-write-provider-service.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/repository-write-fence.test.ts
+
+      - name: Publish source and controls only
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/morrow/1087-post-effect-current-admission:refs/remotes/origin/morrow/1087-post-effect-current-admission
+          test "$(git rev-parse refs/remotes/origin/morrow/1087-post-effect-current-admission)" = "$EXPECTED_HEAD"
+          rm .github/workflows/morrow-1087-post-effect-service.yml
+          git config user.name "Morrow"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-repository-write-provider-service.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            .github/workflows/morrow-1087-post-effect-service.yml
+          git diff --cached --check
+          git commit -m "Retain verified repository post-effect evidence"
+          git push --force-with-lease=refs/heads/morrow/1087-post-effect-current-admission:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/morrow/1087-post-effect-current-admission
