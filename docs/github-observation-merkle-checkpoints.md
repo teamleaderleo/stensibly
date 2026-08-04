@@ -102,6 +102,6 @@ A valid proof means only that the later committed sequence has the earlier commi
 
 ## Bounds and recovery
 
-The initial pure implementation admits at most 4,096 leaves and at most 64 sibling digests per proof. Inputs require ordinary dense arrays and enumerable data properties; accessors and decorated containers are rejected without getter execution. Returned checkpoints and proofs are deeply frozen.
+The initial pure implementation admits at most 4,096 leaves and at most 64 sibling digests per proof. Public array inputs must be ordinary arrays with an exact own length and dense enumerable data entries at every declared index. The wrapper validates the length before index reads, copies only those declared indices into a fresh array, and discards caller-added string or symbol decorations without enumerating or retaining them. Leaf and proof records still require exact enumerable data fields, and accessors are rejected without getter execution. Returned checkpoints and proofs are deeply frozen.
 
 This module performs no persistence, provider request, public MCP registration, workflow change, or migration. Recovery is deletion or one squash revert. A later hosted design may persist roots and proofs only after separate schema, signing, retention, and disclosure review.
