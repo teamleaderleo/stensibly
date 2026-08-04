@@ -136,7 +136,7 @@ function detectNormalizedDirectReferences(
     if (!isGitHubHostname(parsed.hostname)) continue;
 
     const raw = rawCanonicalUrlPattern.exec(candidate);
-    const routePrefix = parseRoutePrefix(parsed.pathname);
+    const routePrefix = parseRoutePrefix(raw?.[4] ?? parsed.pathname);
     if (
       routePrefix !== null
       && !controlled.has(routePrefix.repositoryFullName)
