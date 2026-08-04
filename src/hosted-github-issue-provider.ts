@@ -47,6 +47,7 @@ interface HostedGitHubIssueProviderConfig {
   apiBaseUrl: string;
   credentialRef: string;
   issueWritesEnabled: boolean;
+  issueWritesRequired: boolean;
 }
 
 const readOperations = new Set<GitHubIssueProviderOperation>([
@@ -64,6 +65,7 @@ const initialWriteOperations = new Set<GitHubIssueProviderOperation>([
  * Mounts the production read provider when the complete GitHub App
  * configuration exists. Issue writes mount by default when the ledger exposes
  * the durable hosted receipt contract; an exact false flag is the kill switch.
+ * An exact true flag additionally requires that durable receipt contract.
  */
 export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   ledger: T,
@@ -115,13 +117,15 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     canonicalHostedReadService(readService),
   );
   if (!config.issueWritesEnabled) return mountedReads;
+  const receipts = durableReceiptStore(ledger, config.issueWritesRequired);
+  if (!receipts) return mountedReads;
 
   const writeService = new GitHubIssueProviderService({
     projects,
     bindings,
     authority,
     adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
-    receipts: durableReceiptStore(ledger),
+    receipts,
     now: () => new Date(now()).toISOString(),
   });
   return withGitHubIssueProviderWriteService(
@@ -189,6 +193,7 @@ function hostedGitHubIssueProviderConfig(
     apiBaseUrl,
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
     issueWritesEnabled,
+    issueWritesRequired: writeFlag === "true",
   };
 }
 
@@ -320,11 +325,15 @@ class ReadOnlyGitHubProviderReceiptStore implements GitHubProviderReceiptStore {
   }
 }
 
-function durableReceiptStore(value: unknown): GitHubProviderReceiptStore {
+function durableReceiptStore(
+  value: unknown,
+  required: boolean,
+): GitHubProviderReceiptStore | null {
   const reserve = captureMethod(value, "reserveGitHubProviderReceipt");
   const update = captureMethod(value, "updateGitHubProviderReceipt");
   const get = captureMethod(value, "getGitHubProviderReceipt");
   if (!reserve || !update || !get) {
+    if (!required) return null;
     throw new Error(
       "Hosted GitHub issue writes require the durable provider receipt store",
     );
@@ -429,7 +438,7 @@ function requiredEnv(
   const raw = env[key];
   const value = trim ? trimmed(raw) : raw;
   if (!value) {
-    throw new Error(`Hosted GitHub issue provider requires ${key}`);
+    throw new Error(`${label} is required`);
   }
   return value;
 }
