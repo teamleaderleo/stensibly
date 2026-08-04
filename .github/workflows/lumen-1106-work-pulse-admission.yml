@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - plover/699-work-pulse-first-slice
+    paths:
+      - .github/workflows/lumen-1106-work-pulse-admission.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,32 +17,41 @@ concurrency:
 
 jobs:
   finalize:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
           ref: plover/699-work-pulse-first-slice
-          fetch-depth: 2
+          fetch-depth: 3
 
-      - name: Verify exact carrier parent
-        run: test "$(git rev-parse HEAD^)" = "4a98073732d6136c059f74be1ae8b61236282532"
+      - name: Verify unchanged product inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:site/labs/work-pulse/app.js)" = "09eae3ecd32f57c42a0356f76ecc85d6b0dbd23a"
+          test "$(git rev-parse HEAD:test/frontend-labs-work-pulse.test.ts)" = "f1f9f6472d5273e4b1e6491c6527fa918875efeb"
 
       - uses: oven-sh/setup-bun@v2
 
       - name: Re-admit fixture and stabilize ordering
+        shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
           app_path = Path("site/labs/work-pulse/app.js")
           app = app_path.read_text()
-          fixture_anchor = '''    const fixtureDescriptor = Object.getOwnPropertyDescriptor(api, "frontendLabFixture");
-              if (!fixtureDescriptor || !("value" in fixtureDescriptor)) {
-                throw new Error("The shared Labs fixture is unavailable");
-              }
-
-              const fixture = fixtureDescriptor.value;
-              app.replaceChildren(renderWorkPulse(fixture, scenario));'''
+          fixture_anchor = (
+              '    const fixtureDescriptor = Object.getOwnPropertyDescriptor(api, "frontendLabFixture");\n'
+              '    if (!fixtureDescriptor || !("value" in fixtureDescriptor)) {\n'
+              '      throw new Error("The shared Labs fixture is unavailable");\n'
+              '    }\n'
+              '\n'
+              '    const fixture = fixtureDescriptor.value;\n'
+              '    app.replaceChildren(renderWorkPulse(fixture, scenario));'
+          )
           fixture_repair = '''    const fixtureDescriptor = Object.getOwnPropertyDescriptor(api, "frontendLabFixture");
               if (!fixtureDescriptor || !("value" in fixtureDescriptor)) {
                 throw new Error("The shared Labs fixture is unavailable");
@@ -64,35 +76,44 @@ jobs:
               app.replaceChildren(renderWorkPulse(fixture, scenario));'''
           if app.count(fixture_anchor) != 1:
               raise SystemExit("Work Pulse fixture anchor moved")
-          app = app.replace(fixture_anchor, fixture_repair)
+          app = app.replace(fixture_anchor, fixture_repair, 1)
 
-          sort_anchor = '''    return items.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));'''
-          sort_repair = '''    return items.sort((left, right) => left.priority - right.priority || codeUnitCompare(left.id, right.id));'''
+          sort_anchor = (
+              "    return items.sort((left, right) => left.priority - right.priority "
+              "|| left.id.localeCompare(right.id));"
+          )
+          sort_repair = (
+              "    return items.sort((left, right) => left.priority - right.priority "
+              "|| codeUnitCompare(left.id, right.id));"
+          )
           if app.count(sort_anchor) != 1:
               raise SystemExit("Work Pulse attention sort anchor moved")
-          app = app.replace(sort_anchor, sort_repair)
+          app = app.replace(sort_anchor, sort_repair, 1)
 
-          helper_anchor = '''  function capitalize(value) {
-              return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-            }
-          '''
+          helper_anchor = (
+              "  function capitalize(value) {\n"
+              "    return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;\n"
+              "  }\n"
+          )
           helper_repair = '''  function codeUnitCompare(left, right) {
-              return left < right ? -1 : left > right ? 1 : 0;
-            }
+            return left < right ? -1 : left > right ? 1 : 0;
+          }
 
-            function capitalize(value) {
-              return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-            }
+          function capitalize(value) {
+            return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+          }
           '''
           if app.count(helper_anchor) != 1:
               raise SystemExit("Work Pulse helper anchor moved")
-          app = app.replace(helper_anchor, helper_repair)
+          app = app.replace(helper_anchor, helper_repair, 1)
           app_path.write_text(app)
 
           test_path = Path("test/frontend-labs-work-pulse.test.ts")
           test = test_path.read_text()
-          test_anchor = '''    expect(app).toContain('Object.getOwnPropertyDescriptor(globalThis, globalName)');
-              expect(app).toContain('"Waiting and recoverable"');'''
+          test_anchor = (
+              "    expect(app).toContain('Object.getOwnPropertyDescriptor(globalThis, globalName)');\n"
+              "    expect(app).toContain('\"Waiting and recoverable\"');"
+          )
           test_repair = '''    expect(app).toContain('Object.getOwnPropertyDescriptor(globalThis, globalName)');
               expect(app).toContain('Object.getOwnPropertyDescriptor(api, "parseFrontendLabFixture")');
               expect(app).toContain("Reflect.apply(");
@@ -102,9 +123,10 @@ jobs:
               expect(app).toContain('"Waiting and recoverable"');'''
           if test.count(test_anchor) != 1:
               raise SystemExit("Work Pulse test anchor moved")
-          test = test.replace(test_anchor, test_repair)
+          test = test.replace(test_anchor, test_repair, 1)
           test_path.write_text(test)
           PY
+          git diff --check
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -115,9 +137,12 @@ jobs:
           bun test ./test/frontend-labs-work-pulse.test.ts
 
       - name: Publish workflow-free product head
+        shell: bash
         run: |
+          set -euo pipefail
           git rm .github/workflows/lumen-1106-work-pulse-admission.yml
           git add site/labs/work-pulse/app.js test/frontend-labs-work-pulse.test.ts
+          git diff --cached --check
           git config user.name "Lumen"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Re-admit Work Pulse fixtures deterministically"
