@@ -1,0 +1,77 @@
+name: Lumen 1050 typecheck finalizer
+
+on:
+  push:
+    branches:
+      - cedar/1012-bounded-readback-facade
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1050-typecheck-finalizer
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: cedar/1012-bounded-readback-facade
+      - uses: oven-sh/setup-bun@v2
+      - name: Verify exact carrier head
+        env:
+          EXPECTED_PARENT: f4362572e79319e2a03daa4900dfc55346d66700
+          CARRIER: .github/workflows/lumen-1050-typecheck-finalizer.yml
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only "$EXPECTED_PARENT" HEAD)" = "$CARRIER"
+      - name: Apply strict TypeScript repair
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('src/github-provider-bounded-response.ts')
+          text = source.read_text()
+          replacements = [
+              ('  readonly timer: ReturnType<typeof setTimeout>;',
+               '  timer: ReturnType<typeof setTimeout>;'),
+              ('  readonly removeExternalAbort: () => void;',
+               '  removeExternalAbort: () => void;'),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'expected one source marker {old!r}, got {text.count(old)}')
+              text = text.replace(old, new)
+          source.write_text(text)
+
+          test = Path('test/github-provider-bounded-readback-facade.test.ts')
+          text = test.read_text()
+          old = '    expect(signal?.aborted).toBe(false);'
+          new = '    expect((signal as AbortSignal | null)?.aborted).toBe(false);'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one test marker, got {text.count(old)}')
+          test.write_text(text.replace(old, new))
+          PY
+      - name: Verify focused repair
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-provider-bounded-readback-facade.test.ts test/github-provider-bounded-readback-method-limits.test.ts test/github-provider-bounded-readback-route-limits.test.ts test/github-provider-bounded-readback-comment-create-limit.test.ts test/github-provider-bounded-readback-comment-method-precedence.test.ts
+      - name: Publish source-only head
+        env:
+          BRANCH: cedar/1012-bounded-readback-facade
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-1050-typecheck-finalizer.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/github-provider-bounded-response.ts test/github-provider-bounded-readback-facade.test.ts .github/workflows/lumen-1050-typecheck-finalizer.yml
+          git commit -m "Repair bounded readback strict typing"
+          git push origin "HEAD:${BRANCH}" --force-with-lease
