@@ -1,0 +1,180 @@
+name: Ember 1064 test policy alignment
+
+on:
+  push:
+    branches:
+      - morrow/1043-reconciliation-enum-live
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact carrier
+        uses: actions/checkout@v6
+        with:
+          ref: morrow/1043-reconciliation-enum-live
+          fetch-depth: 2
+
+      - name: Verify carrier ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "f08b980de00230fc4d7327c18e70cff15a5dd42c"
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = ".github/workflows/ember-1064-test-policy-alignment.yml"
+
+      - name: Align exact reconciliation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              file.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "test/github-provider-context-reconciliation-admission.test.ts",
+              '''    expect(() => compile(receiptWithResult(result))).toThrow(
+              "source revision cannot be credential-shaped",
+            );''',
+              '''    expect(() => compile(receiptWithResult(result))).toThrow(
+              "GitHub provider receipt contains credential-shaped text",
+            );''',
+          )
+
+          replace_once(
+              "test/github-provider-context-reconciliation-admission.test.ts",
+              '''  test("rejects credential-shaped current accepted source revision", () => {
+            expect(() => compileGitHubProviderContextReconciliation({
+              schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
+              receipt: receipt(),
+              current: {
+                externalId: `github:${repositoryFullName}#958`,
+                sourceRevision: "sk-short",
+              },
+            })).toThrow(
+              "Current GitHub issue source revision cannot be credential-shaped",
+            );
+          });''',
+              '''  test("preserves a benign short token-like current source revision", () => {
+            const proposal = compileGitHubProviderContextReconciliation({
+              schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
+              receipt: receipt(),
+              current: {
+                externalId: `github:${repositoryFullName}#958`,
+                sourceRevision: "sk-short",
+              },
+            });
+
+            expect(proposal.currentSourceRevision).toBe("sk-short");
+            expect(proposal.outcome).toBe("propose_context_acceptance");
+          });''',
+          )
+
+          replace_once(
+              "test/github-provider-context-reconciliation-current-privacy.test.ts",
+              '''      "env://GITHUB_SOURCE_REVISION",
+              "Bearer/opaque-source-revision",
+              `eyJ${"a".repeat(12)}.eyJ${"b".repeat(12)}.${"c".repeat(12)}`,'',
+              '''      "env://GITHUB_SOURCE_REVISION",
+              `eyJ${"a".repeat(12)}.eyJ${"b".repeat(12)}.${"c".repeat(12)}`,'',
+          )
+
+          replace_once(
+              "test/github-provider-context-reconciliation-current-privacy.test.ts",
+              '''      "revision:release-2026.08.02",
+            ];''',
+              '''      "revision:release-2026.08.02",
+              "Bearer/opaque-source-revision",
+            ];''',
+          )
+
+          replace_once(
+              "test/github-provider-context-reconciliation-target-binding.test.ts",
+              '''  test("rejects a create receipt that does not retain the new-issue target", () => {
+            expect(() => compile(receipt({
+              operation: "github_create_issue",
+              target: `${repositoryFullName}#958`,
+              resultNumber: 958,
+            }))).toThrow("target does not bind the provider result");
+          });''',
+              '''  test("rejects a create receipt that does not retain the new-issue target", () => {
+            expect(() => compile(receipt({
+              operation: "github_create_issue",
+              target: `${repositoryFullName}#958`,
+              resultNumber: 958,
+            }))).toThrow(
+              "GitHub provider receipt target is invalid for its operation",
+            );
+          });''',
+          )
+
+          replace_once(
+              "test/github-provider-context-reconciliation-target-binding.test.ts",
+              '''      expect(() => compile(receipt({
+                ...input,
+                resultNumber: 958,
+              }))).toThrow("target does not bind the provider result");
+            }
+          });
+
+          test("rejects stale update readback from another issue"''',
+              '''      expect(() => compile(receipt({
+                ...input,
+                resultNumber: 958,
+              }))).toThrow(
+                "GitHub provider receipt target is invalid for its operation",
+              );
+            }
+          });
+
+          test("rejects stale update readback from another issue"''',
+          )
+
+          replace_once(
+              "test/github-provider-instruction-observation-request.test.ts",
+              '''    expect(() => compile(wrongRepository)).toThrow(
+              "proposal semantics are invalid",
+            );''',
+              '''    expect(() => compile(wrongRepository)).toThrow(
+              "GitHub reconciliation proposal external ID is outside the bound repository",
+            );''',
+          )
+          PY
+
+          rm .github/workflows/ember-1064-test-policy-alignment.yml
+
+      - name: Install dependencies
+        uses: oven-sh/setup-bun@v2
+
+      - name: Verify focused repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
+          bun test \
+            test/github-provider-context-reconciliation-admission.test.ts \
+            test/github-provider-context-reconciliation-current-privacy.test.ts \
+            test/github-provider-context-reconciliation-target-binding.test.ts \
+            test/github-provider-context-reconciliation-lifecycle.test.ts \
+            test/github-provider-instruction-observation-request.test.ts \
+            test/github-provider-instruction-observation-request-enum-coercion.test.ts
+
+      - name: Publish workflow-free repaired head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Ember"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Align reconciliation controls with current admission policy"
+          git push origin HEAD:morrow/1043-reconciliation-enum-live
