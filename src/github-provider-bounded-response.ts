@@ -573,7 +573,8 @@ function createDeadline(
     expired: false,
     finished: false,
   };
-  context.timer = setTimeout(() => {
+  const terminate = () => {
+    if (context.expired || context.finished) return;
     context.expired = true;
     try {
       controller.abort();
@@ -581,16 +582,11 @@ function createDeadline(
       // Direct Promise settlement remains authoritative.
     }
     rejectDeadline(new GitHubProviderResponseReadError());
-  }, deadlineMs);
+  };
+  context.timer = setTimeout(terminate, deadlineMs);
 
   if (externalSignal) {
-    const forwardAbort = () => {
-      try {
-        controller.abort();
-      } catch {
-        // The provider call owns final error classification.
-      }
-    };
+    const forwardAbort = () => terminate();
     if (externalSignal.aborted) {
       forwardAbort();
     } else {
