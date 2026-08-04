@@ -6,36 +6,39 @@ import {
   GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
 } from "../src/github-observation-merkle-checkpoint.ts";
 
+const benignLedger = "workspace/internal-observations";
+const benignObservation = "internal-observation-1";
 const publicRoute = "github.com/example/project/issues/12";
 
 describe("GitHub observation Merkle single-snapshot admission", () => {
-  test("rejects a changing top-level identity without a second caller read", () => {
+  test("retains the first top-level identity snapshot without a second caller read", () => {
     const reads = { value: 0 };
-    const input = alternatingDataRecord(
-      {
-        version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
-        ledgerId: "workspace/internal-observations",
-        compilerId: "github-observation-merkle/v1",
-        createdAt: "2026-08-05T00:00:00Z",
-        leaves: [],
-      },
-      "ledgerId",
-      "workspace/internal-observations",
-      publicRoute,
-      reads,
+    const checkpoint = compileGitHubObservationMerkleCheckpointV1(
+      alternatingDataRecord(
+        {
+          version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
+          ledgerId: benignLedger,
+          compilerId: "github-observation-merkle/v1",
+          createdAt: "2026-08-05T00:00:00Z",
+          leaves: [],
+        },
+        "ledgerId",
+        benignLedger,
+        publicRoute,
+        reads,
+      ),
     );
 
-    expect(() => compileGitHubObservationMerkleCheckpointV1(input)).toThrow(
-      "Observation ledger ID is invalid",
-    );
+    expect(checkpoint.ledgerId).toBe(benignLedger);
+    expect(JSON.stringify(checkpoint)).not.toContain(publicRoute);
     expect(reads.value).toBe(1);
   });
 
-  test("cannot retain a route revealed only during the base leaf read", () => {
+  test("cannot retain a route revealed only by a later leaf descriptor read", () => {
     const compileReads = { value: 0 };
     const checkpoint = compileGitHubObservationMerkleCheckpointV1({
       version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
-      ledgerId: "workspace/internal-observations",
+      ledgerId: benignLedger,
       compilerId: "github-observation-merkle/v1",
       createdAt: "2026-08-05T00:00:00Z",
       leaves: [alternatingLeaf(compileReads)],
@@ -43,11 +46,13 @@ describe("GitHub observation Merkle single-snapshot admission", () => {
     expect(compileReads.value).toBe(1);
 
     const proofReads = { value: 0 };
-    expect(() => createGitHubObservationInclusionProofV1({
+    const proof = createGitHubObservationInclusionProofV1({
       checkpoint,
       leaves: [alternatingLeaf(proofReads)],
       leafIndex: 0,
-    })).toThrow("Observation Merkle leaf 0 ID is invalid");
+    });
+    expect(proof.observationId).toBe(benignObservation);
+    expect(JSON.stringify(proof)).not.toContain(publicRoute);
     expect(proofReads.value).toBe(1);
   });
 });
@@ -56,11 +61,11 @@ function alternatingLeaf(reads: { value: number }) {
   return alternatingDataRecord(
     {
       sequence: 1,
-      observationId: "internal-observation-1",
+      observationId: benignObservation,
       semanticFingerprint: sha256("single-snapshot-semantic"),
     },
     "observationId",
-    "internal-observation-1",
+    benignObservation,
     publicRoute,
     reads,
   );
