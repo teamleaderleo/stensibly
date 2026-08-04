@@ -1,0 +1,233 @@
+name: Rook 987 final outbound admission repair
+
+on:
+  push:
+    branches:
+      - lumen/971-unicode-symbol-repair
+    paths:
+      - .github/workflows/rook-987-final-admission.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/971-unicode-symbol-repair
+          fetch-depth: 1
+      - uses: oven-sh/setup-bun@v2
+      - name: Apply exact reviewed repairs and controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin dc067aeed7a88cd749ffd3bd8a38b34cbfe778b5
+          git fetch --no-tags --depth=1 origin d6a0dc415c44fce6bc50276ea8dd1a9ec5fc2b70
+          git fetch --no-tags --depth=1 origin 6f0e1ec0a04bb33fe128745ab7ca718c9f4e03e7
+          git show dc067aeed7a88cd749ffd3bd8a38b34cbfe778b5:src/github-retained-credential-policy.ts > src/github-retained-credential-policy.ts
+          git show d6a0dc415c44fce6bc50276ea8dd1a9ec5fc2b70:test/github-outbound-text-preflight-final-credential-policy.test.ts > test/github-outbound-text-preflight-final-credential-policy.test.ts
+          git show 6f0e1ec0a04bb33fe128745ab7ca718c9f4e03e7:test/github-outbound-text-preflight-encoded-invalid-identity.test.ts > test/github-outbound-text-preflight-encoded-invalid-identity.test.ts
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          def remove_local_policy(text: str, label: str) -> str:
+              updated, count = re.subn(
+                  r'const realisticCredentialPattern =\n  /.*?/iu;\n',
+                  '',
+                  text,
+                  count=1,
+                  flags=re.S,
+              )
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one local policy, found {count}")
+              return updated
+
+          base_path = Path('src/github-outbound-text-preflight-base.ts')
+          base = base_path.read_text()
+          base = replace_once(
+              base,
+              'import { normalizeGitHubRepository } from "./github-provider-validation.js";\n',
+              'import { normalizeGitHubRepository } from "./github-provider-validation.js";\n'
+              'import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";\n',
+              'base policy import',
+          )
+          base = remove_local_policy(base, 'base')
+          base_count = base.count('realisticCredentialPattern.test(')
+          if base_count != 4:
+              raise SystemExit(f"base policy calls: expected 4, found {base_count}")
+          base = base.replace(
+              'realisticCredentialPattern.test(',
+              'containsRealisticRetainedCredential(',
+          )
+          base_path.write_text(base)
+
+          wrapper_path = Path('src/github-outbound-text-preflight.ts')
+          wrapper = wrapper_path.read_text()
+          wrapper = replace_once(
+              wrapper,
+              'import { normalizeGitHubRepository } from "./github-provider-validation.js";\n',
+              'import { normalizeGitHubRepository } from "./github-provider-validation.js";\n'
+              'import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";\n',
+              'wrapper policy import',
+          )
+          wrapper = remove_local_policy(wrapper, 'wrapper')
+          wrapper_count = wrapper.count('realisticCredentialPattern.test(')
+          if wrapper_count != 3:
+              raise SystemExit(f"wrapper policy calls: expected 3, found {wrapper_count}")
+          wrapper = wrapper.replace(
+              'realisticCredentialPattern.test(',
+              'containsRealisticRetainedCredential(',
+          )
+
+          wrapper = replace_once(
+              wrapper,
+              '}\n\nconst preflightInputKeys = [',
+              '}\n\ninterface ParsedRoutePrefix {\n'
+              '  repositoryFullName: string;\n'
+              '  containsEncodedPath: boolean;\n'
+              '  hasContinuation: boolean;\n'
+              '  identityIsValid: boolean;\n'
+              '}\n\nconst preflightInputKeys = [',
+              'route prefix interface',
+          )
+
+          wrapper = replace_once(
+              wrapper,
+              '    if (!isGitHubHostname(parsed.hostname)) continue;\n'
+              '    const route = parseNormalizedRoute(parsed.pathname);\n',
+              '    if (!isGitHubHostname(parsed.hostname)) continue;\n\n'
+              '    const raw = rawCanonicalUrlPattern.exec(candidate);\n'
+              '    const routePrefix = parseRoutePrefix(raw?.[4] ?? parsed.pathname);\n'
+              '    if (\n'
+              '      routePrefix !== null\n'
+              '      && !controlled.has(routePrefix.repositoryFullName)\n'
+              '    ) {\n'
+              '      assertRepositoryIdentityIsPublic(routePrefix.repositoryFullName);\n'
+              '      if (\n'
+              '        parsed.username.length > 0\n'
+              '        || parsed.password.length > 0\n'
+              '        || parsed.port.length > 0\n'
+              '      ) {\n'
+              '        throw new RangeError(\n'
+              '          "GitHub outbound direct reference URL authority is invalid",\n'
+              '        );\n'
+              '      }\n'
+              '      if (routePrefix.containsEncodedPath) {\n'
+              '        throw new RangeError(\n'
+              '          "GitHub outbound direct reference contains percent-encoded path continuation",\n'
+              '        );\n'
+              '      }\n'
+              '      if (routePrefix.identityIsValid && routePrefix.hasContinuation) {\n'
+              '        const baseOwnsCanonicalLiteralContinuation =\n'
+              '          raw !== null\n'
+              '          && raw[3] === undefined\n'
+              '          && !raw[2]!.endsWith(".")\n'
+              '          && raw[4] === parsed.pathname;\n'
+              '        if (baseOwnsCanonicalLiteralContinuation) continue;\n'
+              '        throw new RangeError(\n'
+              '          "GitHub outbound direct reference URL spelling is invalid",\n'
+              '        );\n'
+              '      }\n'
+              '    }\n\n'
+              '    const route = parseNormalizedRoute(parsed.pathname);\n',
+              'route prefix admission',
+          )
+          wrapper = replace_once(
+              wrapper,
+              '    assertRepositoryIdentityIsPublic(route.repositoryFullName);\n'
+              '    const raw = rawCanonicalUrlPattern.exec(candidate);\n',
+              '    assertRepositoryIdentityIsPublic(route.repositoryFullName);\n',
+              'deduplicate raw parse',
+          )
+
+          parse_prefix = '''function parseRoutePrefix(pathname: string): ParsedRoutePrefix | null {
+            const rawSegments = pathname.split("/").slice(1);
+            if (rawSegments.length < 4) return null;
+
+            let owner: string;
+            let repository: string;
+            let kind: string;
+            try {
+              owner = decodeURIComponent(rawSegments[0]!);
+              repository = decodeURIComponent(rawSegments[1]!);
+              kind = decodeURIComponent(rawSegments[2]!).toLowerCase();
+            } catch {
+              return null;
+            }
+            if (
+              kind !== "commit"
+              && kind !== "issues"
+              && kind !== "pull"
+              && kind !== "discussions"
+            ) return null;
+
+            let repositoryFullName: string;
+            try {
+              repositoryFullName = normalizeGitHubRepository(
+                `${owner.toLowerCase()}/${repository.toLowerCase()}`,
+              );
+            } catch {
+              return null;
+            }
+
+            let identity: string | null;
+            try {
+              identity = decodeURIComponent(rawSegments[3]!);
+            } catch {
+              identity = null;
+            }
+            const identityIsValid = kind === "commit"
+              ? identity !== null && commitIdentityPattern.test(identity)
+              : identity !== null && providerItemNumber(identity) !== null;
+            return Object.freeze({
+              repositoryFullName,
+              containsEncodedPath: rawSegments.some((segment) =>
+                encodedBytePattern.test(segment)
+              ),
+              hasContinuation: rawSegments.length > 4,
+              identityIsValid,
+            });
+          }
+
+          '''
+          wrapper = replace_once(
+              wrapper,
+              'function parseNormalizedRoute(pathname: string): Readonly<{\n',
+              parse_prefix + 'function parseNormalizedRoute(pathname: string): Readonly<{\n',
+              'route prefix parser',
+          )
+          wrapper_path.write_text(wrapper)
+          PY
+      - name: Validate focused outbound packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-outbound-text-preflight*.test.ts
+      - name: Publish workflow-free repaired head
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/rook-987-final-admission.yml
+          git add src/github-retained-credential-policy.ts \
+            src/github-outbound-text-preflight-base.ts \
+            src/github-outbound-text-preflight.ts \
+            test/github-outbound-text-preflight-final-credential-policy.test.ts \
+            test/github-outbound-text-preflight-encoded-invalid-identity.test.ts \
+            .github/workflows/rook-987-final-admission.yml
+          test -n "$(git status --porcelain)"
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Close final outbound admission gaps"
+          git push origin HEAD:lumen/971-unicode-symbol-repair
