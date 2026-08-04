@@ -1,0 +1,104 @@
+name: Lark 961 current revision privacy repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/lark-961-current-privacy-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-961-current-privacy-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: lynx/958-provider-context-reconciliation
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Apply shared retained-credential policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-provider-context-reconciliation.ts")
+          text = source.read_text()
+
+          import_before = '''import { admitGitHubProviderReceipt } from "./github-provider-receipt-admission.js";
+          import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+          '''
+          import_after = '''import { admitGitHubProviderReceipt } from "./github-provider-receipt-admission.js";
+          import {
+            containsRealisticRetainedCredential,
+          } from "./github-retained-credential-policy.js";
+          import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+          '''
+          if text.count(import_before) != 1:
+            raise SystemExit("reconciliation import anchor changed")
+          text = text.replace(import_before, import_after, 1)
+
+          pattern_before = '''const credentialPattern =
+            /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\\/\\/[A-Za-z0-9][A-Za-z0-9._\\/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,})/iu;
+          '''
+          if text.count(pattern_before) != 1:
+            raise SystemExit("reconciliation credential pattern anchor changed")
+          text = text.replace(pattern_before, "", 1)
+
+          call_before = "  if (credentialPattern.test(current.sourceRevision)) {"
+          call_after = "  if (containsRealisticRetainedCredential(current.sourceRevision)) {"
+          if text.count(call_before) != 1:
+            raise SystemExit("current revision credential call anchor changed")
+          text = text.replace(call_before, call_after, 1)
+
+          source.write_text(text)
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-provider-context-reconciliation-current-privacy.test.ts \
+            test/github-provider-context-reconciliation-current-realistic-privacy.test.ts \
+            test/github-provider-context-reconciliation.test.ts \
+            test/github-provider-instruction-observation-final-admission.test.ts
+
+      - name: Publish source and control only
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/lynx/958-provider-context-reconciliation:refs/remotes/origin/lynx/958-provider-context-reconciliation
+          test "$(git rev-parse refs/remotes/origin/lynx/958-provider-context-reconciliation)" = "$EXPECTED_HEAD"
+          rm .github/workflows/lark-961-current-privacy-repair.yml
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-provider-context-reconciliation.ts \
+            .github/workflows/lark-961-current-privacy-repair.yml
+          git diff --cached --check
+          git commit -m "Use shared privacy policy for current revisions"
+          git push --force-with-lease=refs/heads/lynx/958-provider-context-reconciliation:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/lynx/958-provider-context-reconciliation
