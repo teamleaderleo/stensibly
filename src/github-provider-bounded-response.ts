@@ -576,6 +576,9 @@ function createDeadline(
   const terminate = () => {
     if (context.expired || context.finished) return;
     context.expired = true;
+    clearTimeout(context.timer);
+    context.removeExternalAbort();
+    context.removeExternalAbort = () => {};
     try {
       controller.abort();
     } catch {
