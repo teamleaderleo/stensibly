@@ -82,11 +82,11 @@ export function withGitHubProviderResponseDeadline(
       ? init.signal
       : requestSignal;
     const context = createDeadline(deadlineMs, externalSignal);
-    const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
-      input,
-      init,
-    );
     try {
+      const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
+        input,
+        init,
+      );
       if (context.expired) {
         return await context.deadline;
       }
