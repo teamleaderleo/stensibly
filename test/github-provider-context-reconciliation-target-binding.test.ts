@@ -47,7 +47,7 @@ describe("GitHub provider context reconciliation target binding", () => {
       operation: "github_create_issue",
       target: `${repositoryFullName}#958`,
       resultNumber: 958,
-    }))).toThrow("target does not bind the provider result");
+    }))).toThrow("GitHub provider receipt target is invalid for its operation");
   });
 
   test("rejects same-repository issue substitution under each target grammar", () => {
@@ -133,7 +133,7 @@ describe("GitHub provider context reconciliation target binding", () => {
       expect(() => compile(receipt({
         ...input,
         resultNumber: 958,
-      }))).toThrow("target does not bind the provider result");
+      }))).toThrow("GitHub provider receipt target is invalid for its operation");
     }
   });
 
