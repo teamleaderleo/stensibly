@@ -169,12 +169,14 @@ export function registerGitHubIssueProviderTools(
   server.registerTool(
     "github_create_issue",
     {
-      description: "Create one GitHub issue in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key. Initial labels and assignees remain unavailable in this public packet.",
+      description: "Create one GitHub issue with optional initial labels and assignees in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
         title: z.string().trim().min(1).max(256),
         body: z.string().max(128 * 1024).optional(),
+        labels: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
+        assignees: z.array(z.string().trim().min(1).max(39)).max(10).optional(),
         idempotencyKey: idempotencyKeySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: true },
@@ -183,8 +185,8 @@ export function registerGitHubIssueProviderTools(
       ...providerContext(context, input.project, input.repository, "write"),
       title: input.title,
       ...(input.body === undefined ? {} : { body: input.body }),
-      labels: [],
-      assignees: [],
+      labels: input.labels ?? [],
+      assignees: input.assignees ?? [],
       idempotencyKey: input.idempotencyKey,
     })),
   );
@@ -382,7 +384,7 @@ function projectSchema() {
     .trim()
     .min(1)
     .max(80)
-    .regex(/^[a-z0-9][a-z0-9_-]*$/, "Use a lowercase project slug");
+    .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug");
 }
 
 function repositorySchema() {
