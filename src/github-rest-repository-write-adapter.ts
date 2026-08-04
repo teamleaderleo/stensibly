@@ -500,7 +500,9 @@ function assertOptionalExactApiUrl(
   label: string,
 ): void {
   if (value === undefined || value === null) return;
-  if (typeof value !== "string") throw invalidResponse(`${label} was invalid`);
+  if (typeof value !== "string" || value !== expected.href) {
+    throw invalidResponse(`${label} was invalid`);
+  }
   let actual: URL;
   try {
     actual = new URL(value);
