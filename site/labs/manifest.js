@@ -46,7 +46,7 @@ const sourceManifest = [
     thesis: "A text-first evidence pulse for active responsibility, stale authority, ambiguous effects, and human attention.",
     owner: "Plover",
     status: "prototype",
-    revision: "e73e778862b0736dc6753fbcac1a7380a7313b18",
+    revision: "4ce8fa8e3b83ff32d312135cc730d05dde830c07",
     issue: 699,
     path: "./work-pulse/",
     support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion", "empty", "degraded", "error"],
