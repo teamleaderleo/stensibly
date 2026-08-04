@@ -195,21 +195,22 @@ describe("GitHub provider context reconciliation semantic admission", () => {
     const result = issueResult(`sk-proj-${"a".repeat(24)}`);
 
     expect(() => compile(receiptWithResult(result))).toThrow(
-      "source revision cannot be credential-shaped",
+      "GitHub provider receipt contains credential-shaped text",
     );
   });
 
-  test("rejects credential-shaped current accepted source revision", () => {
-    expect(() => compileGitHubProviderContextReconciliation({
+  test("preserves a benign short token-like current source revision", () => {
+    const proposal = compileGitHubProviderContextReconciliation({
       schemaVersion: GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1,
       receipt: receipt(),
       current: {
         externalId: `github:${repositoryFullName}#958`,
         sourceRevision: "sk-short",
       },
-    })).toThrow(
-      "Current GitHub issue source revision cannot be credential-shaped",
-    );
+    });
+
+    expect(proposal.currentSourceRevision).toBe("sk-short");
+    expect(proposal.outcome).toBe("propose_context_acceptance");
   });
 });
 
