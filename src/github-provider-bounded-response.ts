@@ -9,11 +9,17 @@ export const maximumGitHubProviderResponseChunks = 4_096;
 export const defaultGitHubProviderResponseDeadlineMs = 30_000;
 export const maximumGitHubProviderResponseDeadlineMs = 120_000;
 
+const maximumIssueCollectionFacadeTextBytes = 24 * 1024 * 1024;
+const maximumSingleIssueFacadeTextBytes = 512 * 1024;
+const maximumSingleCommentFacadeTextBytes = 256 * 1024;
+const maximumLinkHeaderBytes = 16 * 1024;
+const unsafeHeaderTextPattern = /[\u0000-\u001f\u007f]/u;
+
 interface GitHubProviderResponseDeadline {
   readonly controller: AbortController;
   readonly deadline: Promise<never>;
-  readonly timer: ReturnType<typeof setTimeout>;
-  readonly removeExternalAbort: () => void;
+  timer: ReturnType<typeof setTimeout>;
+  removeExternalAbort: () => void;
   expired: boolean;
   finished: boolean;
 }
@@ -69,7 +75,17 @@ export function withGitHubProviderResponseDeadline(
   }
   const deadlineMs = admitGitHubProviderResponseDeadlineMs(value);
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const context = createDeadline(deadlineMs, init?.signal ?? null);
+    const requestSignal = typeof Request !== "undefined" && input instanceof Request
+      ? input.signal
+      : null;
+    const externalSignal = init?.signal !== undefined
+      ? init.signal
+      : requestSignal;
+    const context = createDeadline(deadlineMs, externalSignal);
+    const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
+      input,
+      init,
+    );
     try {
       const providerCall = Promise.resolve(fetchImplementation(input, {
         ...init,
@@ -91,7 +107,10 @@ export function withGitHubProviderResponseDeadline(
         throw new GitHubProviderResponseReadError();
       }
       responseDeadlines.set(response, context);
-      return admitGitHubProviderResponseFacade(response);
+      return admitGitHubProviderResponseFacade(
+        response,
+        facadeTextMaximumBytes,
+      );
     } catch (error) {
       finishDeadline(context);
       throw error;
@@ -108,9 +127,11 @@ export function withGitHubProviderResponseDeadline(
  * Content-Length is an early encoded-size signal only. Fetch may expose
  * decoded bytes, so the declared length is not compared with decoded stream
  * length. Every delivered chunk is detached immediately, including tiny
- * views over large provider-owned buffers. A direct call creates one body
- * deadline; a wrapped provider call reuses the deadline that began before
- * fetch. Failure-path cancellation is best-effort and never awaited.
+ * views over large provider-owned buffers, and decoded incrementally so the
+ * reader never retains all raw chunks plus another full-size byte buffer. A
+ * direct call creates one body deadline; a wrapped provider call reuses the
+ * deadline that began before fetch. Failure-path cancellation is best-effort
+ * and never awaited.
  */
 export async function readBoundedGitHubProviderResponseText(
   response: Response,
@@ -172,7 +193,8 @@ export async function readBoundedGitHubProviderResponseText(
     throw new GitHubProviderResponseReadError();
   }
 
-  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let text = "";
   let totalBytes = 0;
   let totalChunks = 0;
   let failed = false;
@@ -216,12 +238,19 @@ export async function readBoundedGitHubProviderResponseText(
         detached = new Uint8Array(next.value.byteLength);
         Uint8Array.prototype.set.call(detached, next.value);
         totalBytes = nextTotal;
+        text += decoder.decode(detached, { stream: true });
       } catch {
         failed = true;
         cancelReader(reader);
         throw new GitHubProviderResponseReadError();
       }
-      chunks.push(detached);
+    }
+    try {
+      text += decoder.decode();
+    } catch {
+      failed = true;
+      cancelReader(reader);
+      throw new GitHubProviderResponseReadError();
     }
   } finally {
     finishResponseDeadline(response, context);
@@ -232,17 +261,7 @@ export async function readBoundedGitHubProviderResponseText(
     }
   }
 
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw new GitHubProviderResponseReadError();
-  }
+  return text;
 }
 
 export function discardGitHubProviderResponse(response: Response): void {
@@ -258,7 +277,10 @@ export function discardGitHubProviderResponse(response: Response): void {
   cancelBody(body);
 }
 
-function admitGitHubProviderResponseFacade(response: Response): Response {
+function admitGitHubProviderResponseFacade(
+  response: Response,
+  facadeTextMaximumBytes: number,
+): Response {
   let headers: Headers;
   let requestId: string | null;
   try {
@@ -273,20 +295,38 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
   }
 
   let contentLength: string | null;
+  let link: string | null;
   try {
     contentLength = headers.get("content-length");
     if (contentLength !== null && typeof contentLength !== "string") {
       throw new TypeError("invalid content-length metadata");
     }
+    link = boundedOptionalHeader(
+      headers.get("link"),
+      maximumLinkHeaderBytes,
+    );
   } catch {
-    return metadataFailureResponse(response, requestId, null);
+    return metadataFailureResponse(
+      response,
+      requestId,
+      null,
+      null,
+      facadeTextMaximumBytes,
+    );
   }
 
   let body: ReadableStream<Uint8Array> | null;
   try {
     body = response.body;
   } catch {
-    return metadataFailureResponse(response, requestId, contentLength, null);
+    return metadataFailureResponse(
+      response,
+      requestId,
+      contentLength,
+      link,
+      facadeTextMaximumBytes,
+      null,
+    );
   }
 
   let ok: boolean;
@@ -308,6 +348,8 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
       response,
       requestId,
       contentLength,
+      link,
+      facadeTextMaximumBytes,
       body,
     );
   }
@@ -316,9 +358,11 @@ function admitGitHubProviderResponseFacade(response: Response): Response {
     response,
     requestId,
     contentLength,
+    link,
     ok,
     status,
     body,
+    facadeTextMaximumBytes,
   );
 }
 
@@ -326,6 +370,8 @@ function metadataFailureResponse(
   response: Response,
   requestId: string | null,
   contentLength: string | null,
+  link: string | null,
+  facadeTextMaximumBytes: number,
   bodyValue?: ReadableStream<Uint8Array> | null,
 ): Response {
   let body = bodyValue;
@@ -336,13 +382,16 @@ function metadataFailureResponse(
       body = null;
     }
   }
+  cancelBody(body);
   return responseFacade(
     response,
     requestId,
     contentLength,
+    link,
     false,
     503,
-    body,
+    null,
+    facadeTextMaximumBytes,
   );
 }
 
@@ -350,16 +399,28 @@ function responseFacade(
   original: Response,
   requestId: string | null,
   contentLength: string | null,
+  link: string | null,
   ok: boolean,
   status: number,
   body: ReadableStream<Uint8Array> | null,
+  facadeTextMaximumBytes: number,
 ): Response {
-  const headers = readOnlyResponseHeaders(requestId, contentLength);
-  const facade = Object.freeze({
+  const headers = readOnlyResponseHeaders(requestId, contentLength, link);
+  let consumed = false;
+  let facade: Response;
+  facade = Object.freeze({
     headers,
     ok,
     status,
     body,
+    async text(): Promise<string> {
+      if (consumed) throw new GitHubProviderResponseReadError();
+      consumed = true;
+      return await readBoundedGitHubProviderResponseText(
+        facade,
+        facadeTextMaximumBytes,
+      );
+    },
   }) as unknown as Response;
   transferResponseDeadline(original, facade);
   return facade;
@@ -368,12 +429,14 @@ function responseFacade(
 function readOnlyResponseHeaders(
   requestId: string | null,
   contentLength: string | null,
+  link: string | null,
 ): Headers {
   return Object.freeze({
     get(name: string) {
       const normalized = typeof name === "string" ? name.toLowerCase() : "";
       if (normalized === "x-github-request-id") return requestId;
       if (normalized === "content-length") return contentLength;
+      if (normalized === "link") return link;
       return null;
     },
   }) as unknown as Headers;
@@ -390,23 +453,104 @@ function admitReadResult(value: unknown): AdmittedReadResult {
   if (value === null || typeof value !== "object") {
     throw new GitHubProviderResponseReadError();
   }
-  let done: unknown;
+  let prototype: object | null;
+  let doneDescriptor: PropertyDescriptor | undefined;
+  let valueDescriptor: PropertyDescriptor | undefined;
   try {
-    done = (value as { done?: unknown }).done;
+    prototype = Object.getPrototypeOf(value) as object | null;
+    doneDescriptor = Object.getOwnPropertyDescriptor(value, "done");
+    valueDescriptor = Object.getOwnPropertyDescriptor(value, "value");
   } catch {
     throw new GitHubProviderResponseReadError();
   }
-  if (typeof done !== "boolean") {
+  if (prototype !== Object.prototype && prototype !== null) {
     throw new GitHubProviderResponseReadError();
   }
-  if (done) return Object.freeze({ done: true, value: undefined });
-  let chunk: unknown;
+  if (
+    !doneDescriptor
+    || !("value" in doneDescriptor)
+    || doneDescriptor.enumerable !== true
+    || typeof doneDescriptor.value !== "boolean"
+  ) {
+    throw new GitHubProviderResponseReadError();
+  }
+  if (valueDescriptor && (
+    !("value" in valueDescriptor)
+    || valueDescriptor.enumerable !== true
+  )) {
+    throw new GitHubProviderResponseReadError();
+  }
+  if (doneDescriptor.value) {
+    return Object.freeze({ done: true, value: undefined });
+  }
+  if (!valueDescriptor || !("value" in valueDescriptor)) {
+    throw new GitHubProviderResponseReadError();
+  }
+  return Object.freeze({ done: false, value: valueDescriptor.value });
+}
+
+function boundedOptionalHeader(
+  value: unknown,
+  maximumBytes: number,
+): string | null {
+  if (value === null) return null;
+  if (
+    typeof value !== "string"
+    || Buffer.byteLength(value, "utf8") > maximumBytes
+    || unsafeHeaderTextPattern.test(value)
+  ) {
+    throw new GitHubProviderResponseReadError();
+  }
+  return value;
+}
+
+function maximumFacadeTextBytesForRequest(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): number {
+  let urlText: string | null = null;
+  let requestMethod: string | undefined;
+  if (typeof input === "string") {
+    urlText = input;
+  } else if (input instanceof URL) {
+    urlText = input.toString();
+  } else if (typeof Request !== "undefined" && input instanceof Request) {
+    urlText = input.url;
+    requestMethod = input.method;
+  }
+  if (urlText === null) return maximumSingleIssueFacadeTextBytes;
+
+  const effectiveMethod = (init?.method ?? requestMethod ?? "GET").toUpperCase();
+  let pathname: string;
   try {
-    chunk = (value as { value?: unknown }).value;
+    pathname = new URL(urlText).pathname.replace(/\/+$/u, "");
   } catch {
-    throw new GitHubProviderResponseReadError();
+    return maximumSingleIssueFacadeTextBytes;
   }
-  return Object.freeze({ done: false, value: chunk });
+  if (
+    effectiveMethod === "GET"
+    && (
+      /\/search\/issues$/u.test(pathname)
+      || /\/repos\/[^/]+\/[^/]+\/issues$/u.test(pathname)
+    )
+  ) {
+    return maximumIssueCollectionFacadeTextBytes;
+  }
+  if (
+    (
+      effectiveMethod === "GET"
+      && /\/issues\/comments\/[1-9][0-9]*$/u.test(pathname)
+    )
+    || (
+      effectiveMethod === "POST"
+      && /\/repos\/[^/]+\/[^/]+\/issues\/[1-9][0-9]*\/comments$/u.test(
+        pathname,
+      )
+    )
+  ) {
+    return maximumSingleCommentFacadeTextBytes;
+  }
+  return maximumSingleIssueFacadeTextBytes;
 }
 
 function failResponseRead(
@@ -435,24 +579,23 @@ function createDeadline(
     expired: false,
     finished: false,
   };
-  context.timer = setTimeout(() => {
+  const terminate = () => {
+    if (context.expired || context.finished) return;
     context.expired = true;
+    clearTimeout(context.timer);
+    context.removeExternalAbort();
+    context.removeExternalAbort = () => {};
     try {
       controller.abort();
     } catch {
       // Direct Promise settlement remains authoritative.
     }
     rejectDeadline(new GitHubProviderResponseReadError());
-  }, deadlineMs);
+  };
+  context.timer = setTimeout(terminate, deadlineMs);
 
   if (externalSignal) {
-    const forwardAbort = () => {
-      try {
-        controller.abort();
-      } catch {
-        // The provider call owns final error classification.
-      }
-    };
+    const forwardAbort = () => terminate();
     if (externalSignal.aborted) {
       forwardAbort();
     } else {
