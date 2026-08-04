@@ -1,0 +1,123 @@
+name: Lumen 1084 current-parent effect replay
+
+on:
+  push:
+    branches:
+      - juniper/1028-clean-effect-admission
+    paths:
+      - .github/workflows/lumen-1084-current-parent-replay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1084-current-parent-effect-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1028-clean-effect-admission
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier and source-only predecessor
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "226e3dca2dde76cdf8f202862a93465469537cfe"
+          test "$(git diff --name-only 0a8996c666b687468441f91e7831c9ecb8dfc0c8 226e3dca2dde76cdf8f202862a93465469537cfe | sort)" = "$(printf '%s\n' \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-effect-admission.test.ts \
+            test/github-rest-repository-write-effect-sha256.test.ts \
+            test/github-rest-repository-write-effect-url-spelling.test.ts | sort)"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Replay reviewed effect delta onto current admission parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            6704c2c519777fa0f1e499b2cff78e09067de759 \
+            494f89011a6f690a272e75d1163776e9fb5188d4
+          git reset --hard 6704c2c519777fa0f1e499b2cff78e09067de759
+          git cherry-pick --no-commit 494f89011a6f690a272e75d1163776e9fb5188d4
+          python - <<'PY'
+          from pathlib import Path
+
+          paths = [
+              Path("test/github-rest-repository-write-adapter.test.ts"),
+              Path("test/github-rest-repository-write-effect-admission.test.ts"),
+              Path("test/github-rest-repository-write-effect-sha256.test.ts"),
+              Path("test/github-rest-repository-write-effect-url-spelling.test.ts"),
+          ]
+          repaired = 0
+          for path in paths:
+              text = path.read_text()
+              count = text.count("as typeof fetch")
+              if count:
+                  path.write_text(text.replace(
+                      "as typeof fetch",
+                      "as unknown as typeof fetch",
+                  ))
+                  repaired += count
+          if repaired < 1:
+              raise SystemExit("no stale Bun fetch casts found after effect replay")
+          print(f"repaired {repaired} focused fetch casts")
+          PY
+          git add \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-effect-admission.test.ts \
+            test/github-rest-repository-write-effect-sha256.test.ts \
+            test/github-rest-repository-write-effect-url-spelling.test.ts
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-effect-admission.test.ts \
+            test/github-rest-repository-write-effect-sha256.test.ts \
+            test/github-rest-repository-write-effect-url-spelling.test.ts | sort)"
+          git diff --cached --check
+
+      - name: Validate parent admission and effect packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-repository-write-full-ref-admission.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-effect-admission.test.ts \
+            test/github-rest-repository-write-effect-sha256.test.ts \
+            test/github-rest-repository-write-effect-url-spelling.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/repository-write-fence-object-format.test.ts \
+            test/repository-write-fence.test.ts
+
+      - name: Publish exact one-commit workflow-free replay
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Replay exact repository write effects on current admission"
+          test "$(git rev-list --count 6704c2c519777fa0f1e499b2cff78e09067de759..HEAD)" = "1"
+          git fetch origin refs/heads/juniper/1028-clean-effect-admission:refs/remotes/origin/juniper/1028-clean-effect-admission
+          test "$(git rev-parse refs/remotes/origin/juniper/1028-clean-effect-admission)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1028-clean-effect-admission:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1028-clean-effect-admission
