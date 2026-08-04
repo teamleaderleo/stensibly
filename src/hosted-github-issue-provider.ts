@@ -438,7 +438,7 @@ function requiredEnv(
   const raw = env[key];
   const value = trim ? trimmed(raw) : raw;
   if (!value) {
-    throw new Error(`${label} is required`);
+    throw new Error(`Hosted GitHub issue provider requires ${key}`);
   }
   return value;
 }
