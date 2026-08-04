@@ -1,4 +1,11 @@
 import { sha256, stableJson } from "./canonical-json.js";
+import {
+  admitGitHubBranchRef,
+  admitGitHubRepositoryFullName,
+  admitGitHubRepositoryPath,
+  admitGitObjectId,
+  sameGitObjectFormat,
+} from "./github-repository-write-admission.js";
 
 export const repositoryWriteOperations = [
   "create_file",
@@ -210,6 +217,14 @@ export async function verifyRepositoryWriteResult(input: {
     throw pending(
       "provider_commit_identity_missing",
       "Provider write evidence omitted the commit identity",
+      prepared,
+      providerResult,
+    );
+  }
+  if (!sameGitObjectFormat(providerResult.commitSha, prepared.expectedParentSha)) {
+    throw pending(
+      "provider_write_evidence_invalid",
+      "Provider write evidence is invalid",
       prepared,
       providerResult,
     );
@@ -588,30 +603,22 @@ function exactCommitParents(value: unknown): readonly string[] {
 }
 
 function exactRepository(value: unknown): string {
-  const text = exactAscii(value, "GitHub repository", 200);
-  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]{1,100}$/u.test(text)) {
+  try {
+    return admitGitHubRepositoryFullName(value);
+  } catch {
     throw rejected(
       "invalid_repository_full_name",
-      "Use one exact GitHub owner/repository identity",
+      "Use one exact canonical lowercase GitHub owner/repository identity",
     );
   }
-  return text.toLowerCase();
 }
+
 function exactRepositoryPath(value: unknown): string {
-  const text = exactAscii(value, "Repository path", 4_096);
-  if (
-    text.trim() !== text
-    || text.includes("\\")
-    || text.startsWith("/")
-    || text.endsWith("/")
-  ) {
+  try {
+    return admitGitHubRepositoryPath(value);
+  } catch {
     throw rejected("invalid_repository_path", "Repository path is invalid");
   }
-  const segments = text.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw rejected("invalid_repository_path", "Repository path is invalid");
-  }
-  return text;
 }
 
 function exactOperation(value: unknown): RepositoryWriteOperation {
@@ -627,47 +634,23 @@ function exactOperation(value: unknown): RepositoryWriteOperation {
   return value as RepositoryWriteOperation;
 }
 
-function exactBranchRef(value: unknown, label: string): string {
-  const text = exactAscii(value, label, 240);
-  if (
-    text === "@"
-    || text === "HEAD"
-    || text.startsWith("refs/heads/")
-    || text.startsWith("/")
-    || text.endsWith("/")
-    || text.startsWith("-")
-    || text.includes("//")
-    || text.includes("..")
-    || text.includes("@{")
-    || /[~^:?*\[\\\s]/u.test(text)
-  ) {
+function exactBranchRef(value: unknown, _label: string): string {
+  try {
+    return admitGitHubBranchRef(value);
+  } catch {
     throw rejected("invalid_repository_target_ref", "Repository target ref is invalid");
   }
-  const segments = text.split("/");
-  if (
-    segments.some((segment) =>
-      segment === ""
-      || segment === "."
-      || segment === ".."
-      || segment.startsWith(".")
-      || segment.endsWith(".")
-      || segment.endsWith(".lock")
-    )
-  ) {
-    throw rejected("invalid_repository_target_ref", "Repository target ref is invalid");
-  }
-  return text;
 }
 
-function exactCommitSha(value: unknown, label: string): string {
-  const text = exactAscii(value, label, 64);
-  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(text)) {
+function exactCommitSha(value: unknown, _label: string): string {
+  try {
+    return admitGitObjectId(value);
+  } catch {
     throw rejected(
       "invalid_commit_sha",
       "Commit identity must use exact lowercase full hexadecimal bytes",
     );
   }
-  return text;
 }
 
 function optionalCommitSha(value: unknown, label: string): string | null {
