@@ -121,9 +121,11 @@ export function withGitHubProviderResponseDeadline(
  * Content-Length is an early encoded-size signal only. Fetch may expose
  * decoded bytes, so the declared length is not compared with decoded stream
  * length. Every delivered chunk is detached immediately, including tiny
- * views over large provider-owned buffers. A direct call creates one body
- * deadline; a wrapped provider call reuses the deadline that began before
- * fetch. Failure-path cancellation is best-effort and never awaited.
+ * views over large provider-owned buffers, and decoded incrementally so the
+ * reader never retains all raw chunks plus another full-size byte buffer. A
+ * direct call creates one body deadline; a wrapped provider call reuses the
+ * deadline that began before fetch. Failure-path cancellation is best-effort
+ * and never awaited.
  */
 export async function readBoundedGitHubProviderResponseText(
   response: Response,
@@ -185,7 +187,8 @@ export async function readBoundedGitHubProviderResponseText(
     throw new GitHubProviderResponseReadError();
   }
 
-  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let text = "";
   let totalBytes = 0;
   let totalChunks = 0;
   let failed = false;
@@ -229,12 +232,19 @@ export async function readBoundedGitHubProviderResponseText(
         detached = new Uint8Array(next.value.byteLength);
         Uint8Array.prototype.set.call(detached, next.value);
         totalBytes = nextTotal;
+        text += decoder.decode(detached, { stream: true });
       } catch {
         failed = true;
         cancelReader(reader);
         throw new GitHubProviderResponseReadError();
       }
-      chunks.push(detached);
+    }
+    try {
+      text += decoder.decode();
+    } catch {
+      failed = true;
+      cancelReader(reader);
+      throw new GitHubProviderResponseReadError();
     }
   } finally {
     finishResponseDeadline(response, context);
@@ -245,17 +255,7 @@ export async function readBoundedGitHubProviderResponseText(
     }
   }
 
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw new GitHubProviderResponseReadError();
-  }
+  return text;
 }
 
 export function discardGitHubProviderResponse(response: Response): void {
