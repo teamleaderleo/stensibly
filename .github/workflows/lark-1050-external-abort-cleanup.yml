@@ -1,0 +1,103 @@
+name: Lark 1050 external abort cleanup
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/lark-1050-external-abort-cleanup.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1050-external-abort-cleanup
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: cedar/1012-bounded-readback-facade
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Finish caller-aborted deadline contexts immediately
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-provider-bounded-response.ts")
+          text = source.read_text()
+          before = '''  const terminate = () => {
+            if (context.expired || context.finished) return;
+            context.expired = true;
+            try {
+              controller.abort();
+            } catch {
+              // Direct Promise settlement remains authoritative.
+            }
+            rejectDeadline(new GitHubProviderResponseReadError());
+          };
+          '''
+          after = '''  const terminate = () => {
+            if (context.finished) return;
+            context.expired = true;
+            try {
+              controller.abort();
+            } catch {
+              // Direct Promise settlement remains authoritative.
+            }
+            finishDeadline(context);
+            rejectDeadline(new GitHubProviderResponseReadError());
+          };
+          '''
+          if text.count(before) != 1:
+            raise SystemExit("external abort cleanup anchor changed")
+          source.write_text(text.replace(before, after, 1))
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-provider-bounded-response-external-abort.test.ts \
+            test/github-provider-bounded-response-external-abort-cleanup.test.ts \
+            test/github-provider-response-deadline.test.ts \
+            test/github-provider-bounded-readback-facade.test.ts \
+            test/github-provider-bounded-response-incremental-decoding.test.ts
+
+      - name: Publish source and controls only
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/cedar/1012-bounded-readback-facade:refs/remotes/origin/cedar/1012-bounded-readback-facade
+          test "$(git rev-parse refs/remotes/origin/cedar/1012-bounded-readback-facade)" = "$EXPECTED_HEAD"
+          rm .github/workflows/lark-1050-external-abort-cleanup.yml
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-provider-bounded-response.ts \
+            .github/workflows/lark-1050-external-abort-cleanup.yml
+          git diff --cached --check
+          git commit -m "Finish caller-aborted response contexts"
+          git push --force-with-lease=refs/heads/cedar/1012-bounded-readback-facade:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/cedar/1012-bounded-readback-facade
