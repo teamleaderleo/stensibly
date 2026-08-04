@@ -329,6 +329,7 @@
 
   function markCurrentScenario(activeScenario) {
     const normalized = activeScenario === "default" ? "default" : activeScenario;
+    document.body.setAttribute("data-scenario", normalized);
     for (const link of document.querySelectorAll("[data-scenario-link]")) {
       if (link.getAttribute("data-scenario-link") === normalized) link.setAttribute("aria-current", "page");
     }
