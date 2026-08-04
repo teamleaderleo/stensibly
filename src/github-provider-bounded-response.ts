@@ -448,28 +448,18 @@ function admitReadResult(value: unknown): AdmittedReadResult {
     throw new GitHubProviderResponseReadError();
   }
   let prototype: object | null;
-  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  let doneDescriptor: PropertyDescriptor | undefined;
+  let valueDescriptor: PropertyDescriptor | undefined;
   try {
     prototype = Object.getPrototypeOf(value) as object | null;
-    descriptors = Object.getOwnPropertyDescriptors(value) as Record<
-      PropertyKey,
-      PropertyDescriptor
-    >;
+    doneDescriptor = Object.getOwnPropertyDescriptor(value, "done");
+    valueDescriptor = Object.getOwnPropertyDescriptor(value, "value");
   } catch {
     throw new GitHubProviderResponseReadError();
   }
   if (prototype !== Object.prototype && prototype !== null) {
     throw new GitHubProviderResponseReadError();
   }
-  const keys = Reflect.ownKeys(descriptors);
-  if (
-    keys.some((key) =>
-      typeof key !== "string" || (key !== "done" && key !== "value")
-    )
-  ) {
-    throw new GitHubProviderResponseReadError();
-  }
-  const doneDescriptor = descriptors.done;
   if (
     !doneDescriptor
     || !("value" in doneDescriptor)
@@ -478,7 +468,6 @@ function admitReadResult(value: unknown): AdmittedReadResult {
   ) {
     throw new GitHubProviderResponseReadError();
   }
-  const valueDescriptor = descriptors.value;
   if (valueDescriptor && (
     !("value" in valueDescriptor)
     || valueDescriptor.enumerable !== true
