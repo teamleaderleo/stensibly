@@ -50,12 +50,14 @@ jobs:
 
           tests = Path("test/github-rest-repository-write-adapter.test.ts")
           text = tests.read_text()
-          if text.count("as typeof fetch") != 4:
-            raise SystemExit("fetch test-double cast count changed")
+          stale_casts = text.count("as typeof fetch")
+          if stale_casts < 1:
+            raise SystemExit("no stale fetch test-double casts found")
           tests.write_text(text.replace(
             "as typeof fetch",
             "as unknown as typeof fetch",
           ))
+          print(f"repaired {stale_casts} fetch test-double casts")
           PY
           git diff --check
 
