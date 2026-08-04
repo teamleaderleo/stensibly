@@ -189,6 +189,8 @@ describe("GitHub issue provider write composition", () => {
           repository,
           title: "Create through public MCP",
           body: "Bounded issue body",
+          labels: ["area:github", "priority:high"],
+          assignees: ["teamleaderleo", "cedar-bot"],
           idempotencyKey: "public-create-1",
         },
       );
@@ -204,8 +206,8 @@ describe("GitHub issue provider write composition", () => {
         repository,
         title: "Create through public MCP",
         body: "Bounded issue body",
-        labels: [],
-        assignees: [],
+        labels: ["area:github", "priority:high"],
+        assignees: ["teamleaderleo", "cedar-bot"],
         actorId: "api-token:github-write-token",
         clientId: "mcp:api-token:github-write-token",
       });
@@ -281,6 +283,32 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(malformed.isError).toBe(true);
+      expect(calls).toHaveLength(3);
+
+      const tooManyAssignees = await client.callTool({
+        name: "github_create_issue",
+        arguments: {
+          project,
+          repository,
+          title: "must not dispatch",
+          assignees: Array.from({ length: 11 }, (_, index) => `user-${index}`),
+          idempotencyKey: "too-many-assignees",
+        },
+      });
+      expect(tooManyAssignees.isError).toBe(true);
+      expect(calls).toHaveLength(3);
+
+      const tooManyLabels = await client.callTool({
+        name: "github_create_issue",
+        arguments: {
+          project,
+          repository,
+          title: "must not dispatch",
+          labels: Array.from({ length: 101 }, (_, index) => `label-${index}`),
+          idempotencyKey: "too-many-labels",
+        },
+      });
+      expect(tooManyLabels.isError).toBe(true);
       expect(calls).toHaveLength(3);
     } finally {
       await client.close();
