@@ -57,7 +57,8 @@ const states = [
   "verified_pending_release",
   "succeeded",
 ] as const;
-const credentialShapedPattern = /(?:^|[\s:./=,;'"()\[\]{}@#_-])(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{24,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|bearer\s+[A-Za-z0-9._~+\/-]{16,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
+const credentialShapedPattern =
+  /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|bearer\s+[A-Za-z0-9._~+\/-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|authorization\s*:|-----BEGIN [A-Z ]*PRIVATE KEY-----)/iu;
 const utcTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
 
 export function admitGitHubRepositoryWriteReceipt(
@@ -130,7 +131,13 @@ export function parseGitHubRepositoryWriteReceiptJson(
   } catch {
     throw invalidReceipt();
   }
-  return admitGitHubRepositoryWriteReceipt(parsed);
+  const receipt = admitGitHubRepositoryWriteReceipt(parsed);
+  if (stableJson(receipt) !== value) {
+    throw new Error(
+      "GitHub repository write receipt JSON must be canonical",
+    );
+  }
+  return receipt;
 }
 
 export function fingerprintGitHubRepositoryWriteReceipt(
