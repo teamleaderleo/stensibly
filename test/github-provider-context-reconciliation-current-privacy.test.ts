@@ -19,7 +19,6 @@ describe("GitHub provider context reconciliation current-revision privacy", () =
       `xoxb-${"a".repeat(24)}`,
       "secret://github/source-revision",
       "env://GITHUB_SOURCE_REVISION",
-      "Bearer/opaque-source-revision",
       `eyJ${"a".repeat(12)}.eyJ${"b".repeat(12)}.${"c".repeat(12)}`,
     ];
 
@@ -44,6 +43,7 @@ describe("GitHub provider context reconciliation current-revision privacy", () =
       `sha256:${"a".repeat(64)}`,
       "github-rest:I_kwDOBenign:2026-08-02T17:27:00.000Z",
       "revision:release-2026.08.02",
+      "Bearer/opaque-source-revision",
     ];
 
     for (const sourceRevision of benign) {
