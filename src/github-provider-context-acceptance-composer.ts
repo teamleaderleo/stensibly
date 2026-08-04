@@ -8,6 +8,9 @@ import type {
   GitHubProviderContextReconciliationProposalV1,
 } from "./github-provider-context-reconciliation.js";
 import {
+  containsRealisticRetainedCredential,
+} from "./github-retained-credential-policy.js";
+import {
   admitAcceptedRepositoryInstructionSet,
   admitGitHubIssueContextAcceptanceSubject,
   admitGitHubIssueContextSnapshot,
@@ -163,12 +166,11 @@ const bindingOutcomes = new Set<GitHubIssueContextAcceptanceOutcome>([
   "instruction_rebound",
   "synchronization_updated",
 ]);
+const maximumGitHubProviderItemNumber = 2_147_483_647;
 const hashPattern = /^sha256:[a-f0-9]{64}$/u;
 const timestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const safeIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/u;
-const credentialPattern =
-  /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._\/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
 
 export function composeGitHubProviderContextAcceptanceV1(
   value: unknown,
@@ -333,6 +335,16 @@ function admitProposal(
   }
   const outcome = proposal.outcome as GitHubProviderContextReconciliationProposalV1["outcome"];
   const nextAction = proposal.nextAction as GitHubProviderContextReconciliationProposalV1["nextAction"];
+  if (
+    (operation === "github_create_issue" && currentSourceRevision !== null)
+    || (
+      outcome === "propose_context_acceptance"
+      && currentSourceRevision !== null
+      && currentSourceRevision === providerSourceRevision
+    )
+  ) {
+    throw new RangeError("GitHub reconciliation proposal semantics are invalid");
+  }
   const providerSnapshot = proposal.providerSnapshot === null
     ? null
     : admitGitHubIssueContextSnapshot(proposal.providerSnapshot);
@@ -637,7 +649,7 @@ function exactSlug(value: unknown, label: string): string {
     typeof value !== "string"
     || value !== value.trim()
     || !/^[a-z0-9][a-z0-9_-]{0,79}$/u.test(value)
-    || credentialPattern.test(value)
+    || containsRealisticRetainedCredential(value)
   ) throw new RangeError(`${label} is invalid`);
   return value;
 }
@@ -650,7 +662,7 @@ function canonicalRepository(value: unknown): string {
   if (repository !== value) {
     throw new RangeError("GitHub repository identity must be canonical lowercase");
   }
-  if (credentialPattern.test(repository)) {
+  if (containsRealisticRetainedCredential(repository)) {
     throw new RangeError("GitHub repository identity is invalid");
   }
   return repository;
@@ -668,7 +680,10 @@ function exactExternalId(
   if (externalId !== value) {
     throw new RangeError("GitHub issue external ID must be canonical");
   }
-  if (credentialPattern.test(externalId)) {
+  if (parsed.number > maximumGitHubProviderItemNumber) {
+    throw new RangeError("GitHub issue external ID is invalid");
+  }
+  if (containsRealisticRetainedCredential(externalId)) {
     throw new RangeError("GitHub issue external ID is invalid");
   }
   if (parsed.repositoryFullName !== repositoryFullName) {
@@ -721,7 +736,7 @@ function safeIdentity(value: unknown, label: string, maximum: number): string {
     || value.length === 0
     || value.length > maximum
     || !safeIdentityPattern.test(value)
-    || credentialPattern.test(value)
+    || containsRealisticRetainedCredential(value)
   ) throw new RangeError(`${label} is invalid`);
   return value;
 }
