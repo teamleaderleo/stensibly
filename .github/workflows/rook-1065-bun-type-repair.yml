@@ -1,0 +1,95 @@
+name: Rook 1065 Bun type compatibility repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/rook-1065-bun-type-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rook-1065-bun-type-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: juniper/1020-shared-write-admission
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact trigger head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Repair Bun and DOM type compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/github-rest-repository-write-adapter.ts")
+          text = source.read_text()
+          before = '''      let next: ReadableStreamReadResult<Uint8Array>;
+                try {
+                  next = await reader.read();'''
+          after = '''      let next: Awaited<ReturnType<typeof reader.read>>;
+                try {
+                  next = await reader.read();'''
+          if text.count(before) != 1:
+            raise SystemExit("reader result type anchor changed")
+          source.write_text(text.replace(before, after, 1))
+
+          tests = Path("test/github-rest-repository-write-adapter.test.ts")
+          text = tests.read_text()
+          if text.count("as typeof fetch") != 4:
+            raise SystemExit("fetch test-double cast count changed")
+          tests.write_text(text.replace(
+            "as typeof fetch",
+            "as unknown as typeof fetch",
+          ))
+          PY
+          git diff --check
+
+      - name: Install committed dependencies
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Run focused exact-head gates
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-repository-write-full-ref-admission.test.ts \
+            test/repository-write-fence-object-format.test.ts \
+            test/repository-write-fence.test.ts
+
+      - name: Publish source and tests only
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/juniper/1020-shared-write-admission:refs/remotes/origin/juniper/1020-shared-write-admission
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-shared-write-admission)" = "$EXPECTED_HEAD"
+          rm .github/workflows/rook-1065-bun-type-repair.yml
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            .github/workflows/rook-1065-bun-type-repair.yml
+          git diff --cached --check
+          git commit -m "Fix repository write Bun type compatibility"
+          git push --force-with-lease=refs/heads/juniper/1020-shared-write-admission:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1020-shared-write-admission
