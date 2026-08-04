@@ -14,7 +14,12 @@ export const githubInstallationPermissionNames = [
 export type GitHubInstallationPermissionName =
   typeof githubInstallationPermissionNames[number];
 
-type GitHubWriteInstallationPermissionName = "issues" | "contents";
+type GitHubWriteInstallationPermissionName =
+  | "issues"
+  | "contents"
+  | "pull_requests"
+  | "statuses"
+  | "actions";
 type GitHubReadInstallationPermissionName = Exclude<
   GitHubInstallationPermissionName,
   GitHubWriteInstallationPermissionName
@@ -99,6 +104,13 @@ const installationTokenResponseMaximumChunks = 4_096;
 const defaultInstallationTokenResponseTimeoutMs = 10_000;
 const decimalByteLengthPattern = /^(?:0|[1-9][0-9]*)$/;
 const permissionNames = new Set<string>(githubInstallationPermissionNames);
+const writePermissionNames = new Set<string>([
+  "issues",
+  "contents",
+  "pull_requests",
+  "statuses",
+  "actions",
+]);
 
 /**
  * Mints short-lived, repository-narrowed GitHub App installation tokens.
@@ -334,7 +346,7 @@ function admitPermission(value: unknown): Readonly<GitHubInstallationPermissionI
   if (access !== "read" && access !== "write") {
     throw new RangeError("GitHub installation permission access is invalid");
   }
-  if (name !== "issues" && name !== "contents" && access !== "read") {
+  if (!writePermissionNames.has(name) && access !== "read") {
     throw new RangeError(
       `GitHub installation permission ${name} supports read access only`,
     );
