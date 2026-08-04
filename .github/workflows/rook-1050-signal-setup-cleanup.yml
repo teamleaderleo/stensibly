@@ -1,0 +1,90 @@
+name: Rook 1050 signal setup cleanup repair
+
+on:
+  push:
+    branches:
+      - cedar/1012-bounded-readback-facade
+    paths:
+      - .github/workflows/rook-1050-signal-setup-cleanup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1012-bounded-readback-facade
+          fetch-depth: 1
+      - uses: oven-sh/setup-bun@v2
+      - name: Repair external signal setup cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-provider-bounded-response.ts")
+          text = path.read_text()
+          old = '''  if (externalSignal) {
+            const forwardAbort = () => terminate();
+            if (externalSignal.aborted) {
+              forwardAbort();
+            } else {
+              externalSignal.addEventListener("abort", forwardAbort, { once: true });
+              context.removeExternalAbort = () =>
+                externalSignal.removeEventListener("abort", forwardAbort);
+            }
+          }
+          '''
+          new = '''  if (externalSignal) {
+            const forwardAbort = () => terminate();
+            context.removeExternalAbort = () => {
+              try {
+                externalSignal.removeEventListener("abort", forwardAbort);
+              } catch {
+                // Fixed cleanup remains best-effort for hostile signal objects.
+              }
+            };
+            try {
+              if (externalSignal.aborted) {
+                forwardAbort();
+              } else {
+                externalSignal.addEventListener("abort", forwardAbort, { once: true });
+              }
+            } catch {
+              finishDeadline(context);
+              throw new GitHubProviderResponseReadError();
+            }
+          }
+          '''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"external signal setup anchor changed: {count}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+      - name: Validate bounded response packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-provider-bounded-response*.test.ts test/github-provider-bounded-readback*.test.ts
+      - name: Publish workflow-free repaired head
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/rook-1050-signal-setup-cleanup.yml
+          git add src/github-provider-bounded-response.ts \
+            test/github-provider-bounded-response-signal-setup-cleanup.test.ts \
+            .github/workflows/rook-1050-signal-setup-cleanup.yml
+          git diff --cached --check
+          git config user.name "Rook"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Clean up hostile provider signal setup"
+          git push origin HEAD:cedar/1012-bounded-readback-facade
