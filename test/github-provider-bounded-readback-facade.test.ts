@@ -43,7 +43,8 @@ describe("bounded GitHub provider readback facade", () => {
     await expect(response.text()).rejects.toThrow(fixedReadError);
 
     await new Promise((resolve) => setTimeout(resolve, deadlineMs + 10));
-    expect(signal?.aborted).toBe(false);
+    const observedSignal = signal as AbortSignal | null;
+    expect(observedSignal?.aborted).toBe(false);
   });
 
   test("keeps ordinary list reads executable and publishes the next cursor", async () => {
