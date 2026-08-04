@@ -208,7 +208,7 @@ describe("GitHub provider instruction observation requests", () => {
       ),
     };
     expect(() => compile(wrongRepository)).toThrow(
-      "proposal semantics are invalid",
+      "GitHub reconciliation proposal external ID is outside the bound repository",
     );
   });
 
