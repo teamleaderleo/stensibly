@@ -39,6 +39,61 @@ async function run(command, args) {
   }
 }
 
+async function capture(command, args) {
+  const child = spawn(command, args, {
+    cwd: repositoryRoot,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const code = await new Promise((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("exit", resolveExit);
+  });
+  if (code !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} exited with code ${code}\n${stderr}`,
+    );
+  }
+  return stdout.trim();
+}
+
+async function verifyObservationMerkleParity() {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "stensibly-merkle-parity-"),
+  );
+  const bundle = join(temporaryDirectory, "observation-merkle-vector.mjs");
+  try {
+    await run("bun", [
+      "build",
+      "./test/runtime/observation-merkle-vector.ts",
+      "--target=node",
+      "--format=esm",
+      `--outfile=${bundle}`,
+    ]);
+    const bunVector = await capture("bun", [bundle]);
+    const nodeVector = await capture("node", [bundle]);
+    if (bunVector !== nodeVector) {
+      throw new Error(
+        `Observation Merkle vectors diverged across Bun and Node\nBun: ${bunVector}\nNode: ${nodeVector}`,
+      );
+    }
+    console.log(bunVector);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 async function findWorkerdBinary() {
   const executable = process.platform === "win32" ? "workerd.exe" : "workerd";
   const candidates = [
@@ -180,6 +235,9 @@ async function main() {
     "test/runtime/run-fetch-receiver-matrix.mjs",
     "server-runtime",
   ]);
+
+  console.log("== Observation Merkle vector parity ==");
+  await verifyObservationMerkleParity();
 
   const workerdBinary = await findWorkerdBinary();
   console.log("== workerd version ==");
