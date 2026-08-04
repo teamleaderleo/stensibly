@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   GitHubRepositoryWriteProviderService,
@@ -70,10 +71,31 @@ function commitPayload(sha: string, parents: string[]) {
   };
 }
 
-function writePayload(sha = commitSha) {
+function writePayload(input: {
+  sha?: string;
+  content?: unknown;
+} = {}) {
   return {
-    content: null,
-    commit: commitPayload(sha, [parentSha]),
+    content: input.content ?? null,
+    commit: commitPayload(input.sha ?? commitSha, [parentSha]),
+  };
+}
+
+function writeContent(path: string, content: string) {
+  const bytes = Buffer.from(content, "utf8");
+  const blobSha = createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  return {
+    name: path.split("/").at(-1),
+    path,
+    sha: blobSha,
+    size: bytes.byteLength,
+    url: `${apiBaseUrl}/repos/${repositoryFullName}/contents/${encodedPath}`,
+    git_url: `${apiBaseUrl}/repos/${repositoryFullName}/git/blobs/${blobSha}`,
+    type: "file",
   };
 }
 
@@ -148,7 +170,12 @@ describe("native GitHub repository file write adapter", () => {
           branch: targetRef,
         });
         head = commitSha;
-        return responseJson(writePayload(), {
+        return responseJson(writePayload({
+          content: writeContent(
+            "docs/provider write.json",
+            "{\"verified\":true}\n",
+          ),
+        }), {
           status: 201,
           requestId: "REQ-REPOSITORY-CREATE",
         });
@@ -161,7 +188,7 @@ describe("native GitHub repository file write adapter", () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider(tokens),
       apiBaseUrl,
-      fetch: fetcher as unknown as typeof fetch,
+      fetch: fetcher as typeof fetch,
     });
     const store = new SqliteGitHubRepositoryWriteStore({ path: ":memory:" });
     let tick = 0;
@@ -214,7 +241,12 @@ describe("native GitHub repository file write adapter", () => {
     const calls: CapturedCall[] = [];
     const tokens: Array<{ access: "read" | "write"; repository: string }> = [];
     const responses = [
-      responseJson(writePayload(), { requestId: "REQ-UPDATE-FILE" }),
+      responseJson(writePayload({
+        content: writeContent(
+          "src/example.ts",
+          "export const ready = true;\n",
+        ),
+      }), { requestId: "REQ-UPDATE-FILE" }),
       responseJson(writePayload(), { requestId: "REQ-DELETE-FILE" }),
     ];
     const adapter = new GitHubRestRepositoryWriteAdapter({
@@ -228,7 +260,7 @@ describe("native GitHub repository file write adapter", () => {
           body: init?.body ? JSON.parse(String(init.body)) : null,
         });
         return responses.shift()!;
-      }) as unknown as typeof fetch,
+      }) as typeof fetch,
     });
 
     const updated = await adapter.dispatchRepositoryWrite({
@@ -319,7 +351,7 @@ describe("native GitHub repository file write adapter", () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider(tokens),
       apiBaseUrl,
-      fetch: (async () => responses.shift()!) as unknown as typeof fetch,
+      fetch: (async () => responses.shift()!) as typeof fetch,
     });
 
     expect(await adapter.getRefHead({ repositoryFullName, targetRef })).toBeNull();
@@ -347,9 +379,12 @@ describe("native GitHub repository file write adapter", () => {
         },
       },
       apiBaseUrl,
-      fetch: (async () => responseJson(writePayload(), {
+      fetch: (async () => responseJson(writePayload({
+        content: writeContent("docs/safe.md", "safe\n"),
+      }), {
+        status: 201,
         requestId: `github_pat_${"a".repeat(24)}`,
-      })) as unknown as typeof fetch,
+      })) as typeof fetch,
     });
     const result = await adapter.dispatchRepositoryWrite({
       repositoryFullName,
@@ -386,7 +421,7 @@ describe("native GitHub repository file write adapter", () => {
             cancelled = true;
           },
         },
-      } as unknown as Response)) as unknown as typeof fetch,
+      } as unknown as Response)) as typeof fetch,
     });
     const action = failing.dispatchRepositoryWrite({
       repositoryFullName,
@@ -431,7 +466,7 @@ describe("native GitHub repository file write adapter", () => {
             return new Promise<void>(() => {});
           },
         },
-      } as unknown as Response)) as unknown as typeof fetch,
+      } as unknown as Response)) as typeof fetch,
     });
 
     await expect(adapter.dispatchRepositoryWrite({

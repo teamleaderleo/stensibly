@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GitHubInstallationToken } from "./github-app-installation-token.js";
 import type {
   GitHubRepositoryWritePayload,
@@ -37,6 +38,8 @@ const maximumResponseChunks = 4_096;
 const requestIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const credentialShapedPattern =
   /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{16,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
+const fixedFileEffectError =
+  "GitHub repository write response file effect was invalid";
 
 /**
  * Native transport for the durable repository-write provider service.
@@ -166,12 +169,21 @@ export class GitHubRestRepositoryWriteAdapter
       body: request.body,
       operation: repositoryWriteOperationLabel(input.operation),
     });
-    requireOk(response, repositoryWriteOperationLabel(input.operation));
+    requireWriteStatus(response, input.operation);
     const value = await readJson(
       response,
       repositoryWriteOperationLabel(input.operation),
     );
     const record = exactRecord(value, "GitHub repository write response");
+    admitRepositoryWriteEffect({
+      content: record.content,
+      operation: input.operation,
+      payload: input.payload,
+      repositoryFullName,
+      path,
+      objectIdBytes: expectedParentSha.length,
+      apiBaseUrl: this.#apiBaseUrl,
+    });
     const commit = exactRecord(record.commit, "GitHub repository write commit");
     const commitSha = responseObjectId(
       commit.sha,
@@ -271,6 +283,80 @@ function mutationRequest(
       branch: targetRef,
     },
   };
+}
+
+function requireWriteStatus(
+  response: Response,
+  operation: "create_file" | "update_file" | "delete_file",
+): void {
+  if (!response.ok) {
+    requireOk(response, repositoryWriteOperationLabel(operation));
+    return;
+  }
+  const expected = operation === "create_file" ? 201 : 200;
+  if (response.status === expected) return;
+  discardResponse(response);
+  throw fileEffectError();
+}
+
+function admitRepositoryWriteEffect(input: {
+  content: unknown;
+  operation: "create_file" | "update_file" | "delete_file";
+  payload: GitHubRepositoryWritePayload;
+  repositoryFullName: string;
+  path: string;
+  objectIdBytes: number;
+  apiBaseUrl: string;
+}): void {
+  try {
+    if (input.operation === "delete_file") {
+      if (input.content !== null) throw fileEffectError();
+      return;
+    }
+    if (input.payload.operation === "delete_file") throw fileEffectError();
+    const content = exactRecord(
+      input.content,
+      "GitHub repository write content",
+    );
+    const bytes = Buffer.from(input.payload.content, "utf8");
+    const expectedBlobSha = gitBlobObjectId(bytes, input.objectIdBytes);
+    const blobSha = admitGitObjectId(content.sha);
+    const segments = input.path.split("/");
+    const name = segments.at(-1);
+    if (
+      content.type !== "file"
+      || content.name !== name
+      || content.path !== input.path
+      || content.size !== bytes.byteLength
+      || blobSha !== expectedBlobSha
+      || blobSha.length !== input.objectIdBytes
+    ) {
+      throw fileEffectError();
+    }
+    assertRequiredExactApiUrl(
+      content.url,
+      contentUrl(input.apiBaseUrl, input.repositoryFullName, input.path),
+    );
+    assertRequiredExactApiUrl(
+      content.git_url,
+      blobUrl(input.apiBaseUrl, input.repositoryFullName, blobSha),
+    );
+  } catch {
+    throw fileEffectError();
+  }
+}
+
+function gitBlobObjectId(bytes: Uint8Array, objectIdBytes: number): string {
+  const algorithm = objectIdBytes === 40
+    ? "sha1"
+    : objectIdBytes === 64
+      ? "sha256"
+      : null;
+  if (!algorithm) throw fileEffectError();
+  return createHash(algorithm)
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
 }
 
 function requireOk(response: Response, operation: string): void {
@@ -414,6 +500,16 @@ function commitUrl(
   );
 }
 
+function blobUrl(
+  apiBaseUrl: string,
+  repositoryFullName: string,
+  blobSha: string,
+): URL {
+  return new URL(
+    `${repositoryUrl(apiBaseUrl, repositoryFullName)}/git/blobs/${blobSha}`,
+  );
+}
+
 function contentUrl(
   apiBaseUrl: string,
   repositoryFullName: string,
@@ -491,7 +587,46 @@ function exactRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw invalidResponse(`${label} was malformed`);
   }
-  return value as Record<string, unknown>;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw invalidResponse(`${label} was malformed`);
+  }
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw invalidResponse(`${label} was malformed`);
+  }
+  const result = Object.create(null) as Record<string, unknown>;
+  for (const [key, descriptor] of Object.entries(
+    Object.getOwnPropertyDescriptors(value),
+  )) {
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw invalidResponse(`${label} was malformed`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function assertRequiredExactApiUrl(value: unknown, expected: URL): void {
+  if (typeof value !== "string" || value !== expected.href) {
+    throw fileEffectError();
+  }
+  let actual: URL;
+  try {
+    actual = new URL(value);
+  } catch {
+    throw fileEffectError();
+  }
+  if (
+    actual.protocol !== "https:"
+    || actual.username
+    || actual.password
+    || actual.search
+    || actual.hash
+    || actual.origin !== expected.origin
+    || actual.pathname !== expected.pathname
+  ) {
+    throw fileEffectError();
+  }
 }
 
 function assertOptionalExactApiUrl(
@@ -557,6 +692,10 @@ function repositoryWriteOperationLabel(
   if (operation === "create_file") return "create repository file";
   if (operation === "update_file") return "update repository file";
   return "delete repository file";
+}
+
+function fileEffectError(): Error {
+  return new Error(fixedFileEffectError);
 }
 
 function invalidResponse(message: string): Error {
