@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: rook-1050-signal-setup-cleanup
+  cancel-in-progress: false
+
 jobs:
   repair:
     runs-on: ubuntu-24.04
@@ -19,8 +23,17 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: cedar/1012-bounded-readback-facade
-          fetch-depth: 1
+          fetch-depth: 3
+
+      - name: Verify unchanged cleanup inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/github-provider-bounded-response.ts)" = "90f3ed7285ea7b6bcf79ab18b1ccdb1140548a78"
+          test "$(git rev-parse HEAD:test/github-provider-bounded-response-signal-setup-cleanup.test.ts)" = "de143ebd6f809665c82dda14e3b9d45a8967cc5e"
+
       - uses: oven-sh/setup-bun@v2
+
       - name: Repair external signal setup cleanup
         shell: bash
         run: |
@@ -30,17 +43,18 @@ jobs:
 
           path = Path("src/github-provider-bounded-response.ts")
           text = path.read_text()
-          old = '''  if (externalSignal) {
-            const forwardAbort = () => terminate();
-            if (externalSignal.aborted) {
-              forwardAbort();
-            } else {
-              externalSignal.addEventListener("abort", forwardAbort, { once: true });
-              context.removeExternalAbort = () =>
-                externalSignal.removeEventListener("abort", forwardAbort);
-            }
-          }
-          '''
+          old = (
+              "  if (externalSignal) {\n"
+              "    const forwardAbort = () => terminate();\n"
+              "    if (externalSignal.aborted) {\n"
+              "      forwardAbort();\n"
+              "    } else {\n"
+              "      externalSignal.addEventListener(\"abort\", forwardAbort, { once: true });\n"
+              "      context.removeExternalAbort = () =>\n"
+              "        externalSignal.removeEventListener(\"abort\", forwardAbort);\n"
+              "    }\n"
+              "  }\n"
+          )
           new = '''  if (externalSignal) {
             const forwardAbort = () => terminate();
             context.removeExternalAbort = () => {
@@ -62,12 +76,12 @@ jobs:
             }
           }
           '''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f"external signal setup anchor changed: {count}")
+          if text.count(old) != 1:
+              raise SystemExit("external signal setup anchor moved")
           path.write_text(text.replace(old, new, 1))
           PY
           git diff --check
+
       - name: Validate bounded response packet
         shell: bash
         run: |
@@ -75,14 +89,14 @@ jobs:
           bun install --frozen-lockfile
           bun run typecheck
           bun test test/github-provider-bounded-response*.test.ts test/github-provider-bounded-readback*.test.ts
+
       - name: Publish workflow-free repaired head
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/rook-1050-signal-setup-cleanup.yml
+          git rm .github/workflows/rook-1050-signal-setup-cleanup.yml
           git add src/github-provider-bounded-response.ts \
-            test/github-provider-bounded-response-signal-setup-cleanup.test.ts \
-            .github/workflows/rook-1050-signal-setup-cleanup.yml
+            test/github-provider-bounded-response-signal-setup-cleanup.test.ts
           git diff --cached --check
           git config user.name "Rook"
           git config user.email "actions@users.noreply.github.com"
