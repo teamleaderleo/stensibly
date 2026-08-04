@@ -268,11 +268,10 @@ function snapshotArray(
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
     throw new TypeError(`${label} must be an ordinary array`);
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
-    PropertyKey,
-    PropertyDescriptor
-  >;
-  const length = descriptors.length?.value;
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
   if (!Number.isSafeInteger(length) || length < minimum || length > maximum) {
     throw new RangeError(`${label} length is outside the accepted range`);
   }
@@ -280,11 +279,11 @@ function snapshotArray(
     "length",
     ...Array.from({ length }, (_, index) => String(index)),
   ]);
-  if (Reflect.ownKeys(descriptors).some((key) => !allowed.has(key))) {
+  if (Reflect.ownKeys(value).some((key) => !allowed.has(key))) {
     throw new TypeError(`${label} contains unsupported fields`);
   }
   return Array.from({ length }, (_, index) => {
-    const descriptor = descriptors[String(index)];
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       throw new TypeError(`${label} must contain dense enumerable data properties`);
     }
