@@ -18,8 +18,8 @@ const unsafeHeaderTextPattern = /[\u0000-\u001f\u007f]/u;
 interface GitHubProviderResponseDeadline {
   readonly controller: AbortController;
   readonly deadline: Promise<never>;
-  readonly timer: ReturnType<typeof setTimeout>;
-  readonly removeExternalAbort: () => void;
+  timer: ReturnType<typeof setTimeout>;
+  removeExternalAbort: () => void;
   expired: boolean;
   finished: boolean;
 }
