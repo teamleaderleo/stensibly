@@ -1,0 +1,83 @@
+name: Ember 1129 edited trigger repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ember-1129-edited-trigger-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ember-1129-edited-trigger-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ember/1128-edited-trigger-repair
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: oven-sh/setup-bun@v2
+      - name: Verify exact carrier head
+        env:
+          EXPECTED_SOURCE: 207813cc0ab7c9eb1aa5dcd6c1f3a41cc9328dbd
+          CARRIER: .github/workflows/ember-1129-edited-trigger-repair.yml
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_SOURCE"
+          test "$(git diff --name-only "$EXPECTED_SOURCE" HEAD)" = "$CARRIER"
+      - name: Add description edit validation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/ci.yml')
+          text = workflow.read_text()
+          old = '      - reopened\n      - labeled'
+          new = '      - reopened\n      - edited\n      - labeled'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one workflow trigger anchor, got {text.count(old)}')
+          workflow.write_text(text.replace(old, new))
+
+          test = Path('test/ci-red-control-profile.test.ts')
+          text = test.read_text()
+          old = '      "reopened",\n      "labeled",'
+          new = '      "reopened",\n      "edited",\n      "labeled",'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one static activity anchor, got {text.count(old)}')
+          test.write_text(text.replace(old, new))
+
+          guide = Path('docs/red-control-ci.md')
+          text = guide.read_text()
+          old = 'Opening, synchronizing, labeling, unlabeling, changing draft state, and closing'
+          new = 'Opening, synchronizing, editing the description, labeling, unlabeling, changing draft state, and closing'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one lifecycle anchor, got {text.count(old)}')
+          guide.write_text(text.replace(old, new))
+          PY
+          git diff --check
+      - name: Verify focused contract
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun test test/ci-red-control-profile.test.ts test/ci-exact-ref-validation-receipt.test.ts
+      - name: Publish workflow-free repair
+        env:
+          BRANCH: ember/1128-edited-trigger-repair
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rm .github/workflows/ember-1129-edited-trigger-repair.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/ci.yml docs/red-control-ci.md test/ci-red-control-profile.test.ts .github/workflows/ember-1129-edited-trigger-repair.yml
+          git diff --cached --check
+          git commit -m "Validate red-control description edits"
+          git push --force-with-lease=refs/heads/${BRANCH}:${EXPECTED_HEAD} origin HEAD:refs/heads/${BRANCH}
