@@ -41,13 +41,17 @@ describe("red-control CI profile", () => {
     );
     expect(redControlJob).toContain("github.event.action != 'closed'");
     expect(redControlJob).toContain("ref: ${{ env.PR_HEAD_SHA }}");
+    expect(redControlJob).toContain("fetch-depth: 0");
     expect(redControlJob).toContain("persist-credentials: false");
     expect(redControlJob).toContain('actual_sha="$(git rev-parse HEAD)"');
     expect(redControlJob).toContain(
-      'git fetch --no-tags --depth=1 origin "${PR_BASE_SHA}"',
+      'git fetch --no-tags origin "${PR_BASE_SHA}"',
     );
     expect(redControlJob).toContain(
-      'git diff --name-only --diff-filter=ACDMR "${PR_BASE_SHA}" "${PR_HEAD_SHA}"',
+      'merge_base="$(git merge-base "${PR_BASE_SHA}" "${PR_HEAD_SHA}")"',
+    );
+    expect(redControlJob).toContain(
+      'git diff --name-only --diff-filter=ACDMR "${merge_base}" "${PR_HEAD_SHA}"',
     );
   });
 
@@ -57,20 +61,22 @@ describe("red-control CI profile", () => {
     expect(redControlJob).toContain("Red-control fence SHA-256:");
     expect(redControlJob).toContain("red-control-fence.txt");
     expect(redControlJob).toContain("sha256sum red-control-fence.txt");
+    expect(redControlJob).toContain("grep -Eq '^\\.github/workflows/'");
     expect(redControlJob).toContain(
-      "A red-control child cannot modify the canonical CI workflow",
+      "A red-control child cannot modify GitHub workflow files",
     );
-    expect(redControlJob).toContain(".github/workflows/ci.yml");
   });
 
   test("publishes a distinct immutable non-authorizing receipt", () => {
     expect(redControlJob).toContain("stensibly-ci-red-control-receipt/1");
     expect(redControlJob).toContain('classification: "red_control"');
     expect(redControlJob).toContain('expectedOutcome: "red"');
+    expect(redControlJob).toContain("mergeBaseRevision: $mergeBaseRevision");
     expect(redControlJob).toContain("authorizesMerge: false");
     expect(redControlJob).toContain("authorizesMutation: false");
     expect(redControlJob).toContain("red-control-receipt.json");
     expect(redControlJob).toContain("red-control-receipt.sha256");
+    expect(redControlJob).toContain("red-control-merge-base.txt");
     expect(redControlJob).toContain(
       "name: red-control-receipt-${{ github.run_id }}-${{ github.run_attempt }}",
     );
