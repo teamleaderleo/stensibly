@@ -160,15 +160,15 @@ const credentialPattern = /(?:github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]
 
 /**
  * Compiles one content-minimised activity fact for automatic orchestrator
- * telemetry. The record grants no authority and contains no worker narrative,
- * provider body, prompt, credential, or unbounded log field.
+ * telemetry. It grants no authority and accepts no narrative, prompt, provider
+ * body, credential, or unbounded log field.
  */
 export function compileOrchestratorActivityObservation(
   input: unknown,
 ): OrchestratorActivityObservation {
   const record = exactInputRecord(input);
-  const workspace = slug(record.workspace, "workspace");
-  const project = slug(record.project, "project");
+  const workspace = slug(record.workspace, "workspace", 80);
+  const project = slug(record.project, "project", 80);
   const actorId = identifier(record.actorId, "actor ID");
   const sourceClass = closedValue(
     record.sourceClass,
@@ -215,9 +215,17 @@ export function compileOrchestratorActivityObservation(
       "provider lifecycle",
     );
   if ((provider === null) !== (providerLifecycle === null)) {
-    throw new Error(
-      "Provider and provider lifecycle must be supplied together",
-    );
+    throw new Error("Provider and provider lifecycle must be supplied together");
+  }
+  if (
+    (
+      sourceClass === "provider_receipt"
+      || sourceClass === "provider_observation"
+      || activityClass === "provider_effect"
+    )
+    && provider === null
+  ) {
+    throw new Error("Provider activity requires provider lifecycle evidence");
   }
 
   const attentionLevel = record.attentionLevel === undefined
@@ -239,16 +247,11 @@ export function compileOrchestratorActivityObservation(
       );
     }
   } else if (attentionReasonCode === null || nextAction === null) {
-    throw new Error(
-      "Non-none attention requires a reason code and next action",
-    );
+    throw new Error("Non-none attention requires a reason code and next action");
   }
   if (activityClass === "attention_required" && attentionLevel === "none") {
-    throw new Error(
-      "Attention-required activity requires non-none attention",
-    );
+    throw new Error("Attention-required activity requires non-none attention");
   }
-
   enforceActivityCoherence(activityClass, activityState);
 
   const payload = {
@@ -284,7 +287,8 @@ export function compileOrchestratorActivityObservation(
     },
   };
   const observationFingerprint = sha256(stableJson(payload));
-  const observationId = `oao_${observationFingerprint.slice("sha256:".length, 39)}`;
+  const observationId =
+    `oao_${observationFingerprint.slice("sha256:".length, 39)}`;
 
   return deepFreeze({
     ...payload,
@@ -294,18 +298,23 @@ export function compileOrchestratorActivityObservation(
 }
 
 function exactInputRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
     throw new Error("Orchestrator activity observation must be an object");
   }
+  let isArray: boolean;
   let prototype: object | null;
   let symbols: symbol[];
   let descriptors: Record<string, PropertyDescriptor>;
   try {
+    isArray = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
     symbols = Object.getOwnPropertySymbols(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new Error("Orchestrator activity observation could not be inspected");
+  }
+  if (isArray) {
+    throw new Error("Orchestrator activity observation must be an object");
   }
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error(
@@ -315,6 +324,7 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
   if (symbols.length > 0) {
     throw new Error("Orchestrator activity observation contains a symbol field");
   }
+
   const result = Object.create(null) as Record<string, unknown>;
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!allowedInputFields.has(key)) {
@@ -338,18 +348,30 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
 }
 
 function identifierArray(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
-    throw new Error(`${label} list must be an ordinary array`);
-  }
+  let isArray: boolean;
+  let prototype: object | null;
   let names: string[];
   let symbols: symbol[];
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
-    names = Object.getOwnPropertyNames(value);
-    symbols = Object.getOwnPropertySymbols(value);
-    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    isArray = Array.isArray(value);
+    prototype = isArray && value !== null
+      ? Object.getPrototypeOf(value)
+      : null;
+    names = isArray && value !== null
+      ? Object.getOwnPropertyNames(value)
+      : [];
+    symbols = isArray && value !== null
+      ? Object.getOwnPropertySymbols(value)
+      : [];
+    lengthDescriptor = isArray && value !== null
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
   } catch {
     throw new Error(`${label} list could not be inspected`);
+  }
+  if (!isArray || prototype !== Array.prototype) {
+    throw new Error(`${label} list must be an ordinary array`);
   }
   if (
     symbols.length > 0
@@ -361,6 +383,7 @@ function identifierArray(value: unknown, label: string): string[] {
   ) {
     throw new Error(`${label} list is invalid`);
   }
+
   const length = lengthDescriptor.value as number;
   if (names.length !== length + 1 || !names.includes("length")) {
     throw new Error(`${label} list must be dense and undecorated`);
@@ -382,15 +405,10 @@ function identifierArray(value: unknown, label: string): string[] {
     }
     admitted.push(identifier(descriptor.value, label));
   }
-  const unique = new Set(admitted);
-  if (unique.size !== admitted.length) {
+  if (new Set(admitted).size !== admitted.length) {
     throw new Error(`${label} list must be unique`);
   }
-  return [...unique].sort(codeUnitCompare);
-}
-
-function slug(value: unknown, label: string): string {
-  return requiredSlug(value, label, 80);
+  return admitted.sort(codeUnitCompare);
 }
 
 function optionalSlug(
@@ -398,10 +416,10 @@ function optionalSlug(
   label: string,
   maximumLength: number,
 ): string | null {
-  return value === undefined ? null : requiredSlug(value, label, maximumLength);
+  return value === undefined ? null : slug(value, label, maximumLength);
 }
 
-function requiredSlug(
+function slug(
   value: unknown,
   label: string,
   maximumLength: number,
@@ -506,9 +524,7 @@ function enforceActivityCoherence(
 
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== "object") return value;
-  for (const child of Object.values(value as Record<string, unknown>)) {
-    deepFreeze(child);
-  }
+  for (const child of Object.values(value)) deepFreeze(child);
   return Object.freeze(value);
 }
 
