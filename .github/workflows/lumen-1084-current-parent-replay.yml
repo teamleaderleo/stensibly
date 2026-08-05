@@ -48,9 +48,9 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin \
-            6704c2c519777fa0f1e499b2cff78e09067de759 \
+            c428f18b9f208c9fb081c4ce7643bc2b20ddea19 \
             494f89011a6f690a272e75d1163776e9fb5188d4
-          git reset --hard 6704c2c519777fa0f1e499b2cff78e09067de759
+          git reset --hard c428f18b9f208c9fb081c4ce7643bc2b20ddea19
           git cherry-pick --no-commit 494f89011a6f690a272e75d1163776e9fb5188d4
           python - <<'PY'
           from pathlib import Path
@@ -116,7 +116,7 @@ jobs:
           git config user.name "Lumen"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Replay exact repository write effects on current admission"
-          test "$(git rev-list --count 6704c2c519777fa0f1e499b2cff78e09067de759..HEAD)" = "1"
+          test "$(git rev-list --count c428f18b9f208c9fb081c4ce7643bc2b20ddea19..HEAD)" = "1"
           git fetch origin refs/heads/juniper/1028-clean-effect-admission:refs/remotes/origin/juniper/1028-clean-effect-admission
           test "$(git rev-parse refs/remotes/origin/juniper/1028-clean-effect-admission)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/juniper/1028-clean-effect-admission:$EXPECTED_HEAD \
