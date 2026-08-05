@@ -1,39 +1,59 @@
-# Retriggered after bounded fixed-field evidence admission.
-name: Morrow 1087 post-effect service restack
+name: Lark 1096 current-parent post-effect replay
 
 on:
-  pull_request:
+  push:
+    branches:
+      - morrow/1087-post-effect-current-admission
     paths:
       - .github/workflows/morrow-1087-post-effect-service.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: morrow-1087-post-effect-service
+  group: lark-1096-current-parent-post-effect-replay
   cancel-in-progress: false
 
 jobs:
-  repair:
+  replay:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Check out exact pull-request head
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@v6
         with:
           ref: morrow/1087-post-effect-current-admission
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact trigger head
+      - name: Verify exact carrier and reviewed packet
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-
-      - name: Apply verified post-effect service handling
+          EXPECTED_HEAD: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "cb3a31b83c579ae58d263915fee29851a30ac7d9"
+          test "$(git diff --name-only 6704c2c519777fa0f1e499b2cff78e09067de759 cb3a31b83c579ae58d263915fee29851a30ac7d9 | sort)" = "$(printf '%s\n' \
+            .github/workflows/morrow-1087-post-effect-service.yml \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts | sort)"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Replay bounded evidence and apply service handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            c428f18b9f208c9fb081c4ce7643bc2b20ddea19 \
+            cb3a31b83c579ae58d263915fee29851a30ac7d9
+          git reset --hard c428f18b9f208c9fb081c4ce7643bc2b20ddea19
+          git cherry-pick --no-commit cb3a31b83c579ae58d263915fee29851a30ac7d9
+          rm .github/workflows/morrow-1087-post-effect-service.yml
           python3 - <<'PY'
           from pathlib import Path
 
@@ -111,12 +131,24 @@ jobs:
             raise SystemExit("post-effect catch anchor changed")
           path.write_text(text.replace(catch_anchor, catch_replacement, 1))
           PY
-          git diff --check
+          git add \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-repository-write-provider-service.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-repository-write-provider-service.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts | sort)"
+          git diff --cached --check
 
-      - name: Install committed dependencies
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-
-      - name: Run focused exact-head gates
+      - name: Validate parent, evidence, and service lifecycle
         shell: bash
         run: |
           set -euo pipefail
@@ -125,29 +157,24 @@ jobs:
           bun test \
             test/github-repository-write-provider-service.test.ts \
             test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts \
             test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-full-ref-admission.test.ts \
             test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
             test/repository-write-fence.test.ts
 
-      - name: Publish source and controls only
-        shell: bash
+      - name: Publish exact one-commit workflow-free replay
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
         run: |
           set -euo pipefail
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Replay verified post-effect evidence on current admission"
+          test "$(git rev-list --count c428f18b9f208c9fb081c4ce7643bc2b20ddea19..HEAD)" = "1"
           git fetch origin refs/heads/morrow/1087-post-effect-current-admission:refs/remotes/origin/morrow/1087-post-effect-current-admission
           test "$(git rev-parse refs/remotes/origin/morrow/1087-post-effect-current-admission)" = "$EXPECTED_HEAD"
-          rm .github/workflows/morrow-1087-post-effect-service.yml
-          git config user.name "Morrow"
-          git config user.email "actions@users.noreply.github.com"
-          git add \
-            src/github-repository-write-admission.ts \
-            src/github-repository-write-post-effect-error.ts \
-            src/github-repository-write-provider-service.ts \
-            test/github-repository-write-post-effect-error-admission.test.ts \
-            test/github-repository-write-post-effect-attribution.test.ts \
-            .github/workflows/morrow-1087-post-effect-service.yml
-          git diff --cached --check
-          git commit -m "Retain verified repository post-effect evidence"
           git push --force-with-lease=refs/heads/morrow/1087-post-effect-current-admission:$EXPECTED_HEAD \
             origin HEAD:refs/heads/morrow/1087-post-effect-current-admission
