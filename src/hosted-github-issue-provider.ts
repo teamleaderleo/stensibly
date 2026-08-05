@@ -47,6 +47,7 @@ interface HostedGitHubIssueProviderConfig {
   apiBaseUrl: string;
   credentialRef: string;
   issueWritesEnabled: boolean;
+  issueWritesRequired: boolean;
 }
 
 const readOperations = new Set<GitHubIssueProviderOperation>([
@@ -62,8 +63,9 @@ const initialWriteOperations = new Set<GitHubIssueProviderOperation>([
 
 /**
  * Mounts the production read provider when the complete GitHub App
- * configuration exists. A separate exact flag mounts an independent write
- * service only when the ledger also exposes the durable hosted receipt contract.
+ * configuration exists. Issue writes mount by default when the ledger exposes
+ * the durable hosted receipt contract; an exact false flag is the kill switch.
+ * An exact true flag additionally requires that durable receipt contract.
  */
 export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   ledger: T,
@@ -115,13 +117,15 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     canonicalHostedReadService(readService),
   );
   if (!config.issueWritesEnabled) return mountedReads;
+  const receipts = durableReceiptStore(ledger, config.issueWritesRequired);
+  if (!receipts) return mountedReads;
 
   const writeService = new GitHubIssueProviderService({
     projects,
     bindings,
     authority,
     adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
-    receipts: durableReceiptStore(ledger),
+    receipts,
     now: () => new Date(now()).toISOString(),
   });
   return withGitHubIssueProviderWriteService(
@@ -139,10 +143,7 @@ export function hostedGitHubIssueProviderConfigured(
 function hostedGitHubIssueProviderConfig(
   env: Record<string, string | undefined>,
 ): HostedGitHubIssueProviderConfig | null {
-  const issueWritesEnabled = optionalBooleanEnv(
-    env,
-    "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED",
-  );
+  const writeFlag = env.STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED;
   const keys = [
     "STENSIBLY_GITHUB_APP_ID",
     "STENSIBLY_GITHUB_APP_PRIVATE_KEY",
@@ -152,9 +153,17 @@ function hostedGitHubIssueProviderConfig(
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
     "STENSIBLY_GITHUB_API_BASE_URL",
   ] as const;
-  const configured = issueWritesEnabled
+  const flagRequestsConfiguration = writeFlag !== undefined
+    && writeFlag !== ""
+    && writeFlag !== "false";
+  const configured = flagRequestsConfiguration
     || keys.some((key) => Boolean(trimmed(env[key])));
   if (!configured) return null;
+  const issueWritesEnabled = optionalBooleanEnv(
+    env,
+    "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED",
+    true,
+  );
 
   const appId = requiredEnv(env, "STENSIBLY_GITHUB_APP_ID");
   const privateKeyPem = requiredEnv(
@@ -187,6 +196,7 @@ function hostedGitHubIssueProviderConfig(
     apiBaseUrl,
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
     issueWritesEnabled,
+    issueWritesRequired: writeFlag === "true",
   };
 }
 
@@ -318,11 +328,15 @@ class ReadOnlyGitHubProviderReceiptStore implements GitHubProviderReceiptStore {
   }
 }
 
-function durableReceiptStore(value: unknown): GitHubProviderReceiptStore {
+function durableReceiptStore(
+  value: unknown,
+  required: boolean,
+): GitHubProviderReceiptStore | null {
   const reserve = captureMethod(value, "reserveGitHubProviderReceipt");
   const update = captureMethod(value, "updateGitHubProviderReceipt");
   const get = captureMethod(value, "getGitHubProviderReceipt");
   if (!reserve || !update || !get) {
+    if (!required) return null;
     throw new Error(
       "Hosted GitHub issue writes require the durable provider receipt store",
     );
@@ -383,9 +397,11 @@ function canonicalRequest<T extends GitHubProviderRequestContext>(input: T): T {
 function optionalBooleanEnv(
   env: Record<string, string | undefined>,
   key: string,
+  defaultValue: boolean,
 ): boolean {
   const value = env[key];
-  if (value === undefined || value === "" || value === "false") return false;
+  if (value === undefined || value === "") return defaultValue;
+  if (value === "false") return false;
   if (value === "true") return true;
   throw new Error(`${key} must be exact true or false`);
 }
