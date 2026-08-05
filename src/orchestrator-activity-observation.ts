@@ -1,4 +1,7 @@
 import { sha256, stableJson } from "./canonical-json.js";
+import {
+  containsRealisticRetainedCredential,
+} from "./github-retained-credential-policy.js";
 
 export const ORCHESTRATOR_ACTIVITY_SOURCE_CLASSES = [
   "ledger_event",
@@ -156,7 +159,6 @@ const maximumRelatedEvidence = 32;
 const maximumResponsibilityGeneration = 2_147_483_647;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/u;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,239}$/u;
-const credentialPattern = /(?:github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|sk-(?:proj-)?[A-Za-z0-9_\-]{12,}|stn\.(?:tok|svc)_[A-Za-z0-9._\-]{12,}|xox[baprs]-[A-Za-z0-9\-]{12,}|authorization\s*:)/iu;
 
 /**
  * Compiles one content-minimised activity fact for automatic orchestrator
@@ -227,6 +229,11 @@ export function compileOrchestratorActivityObservation(
   ) {
     throw new Error("Provider activity requires provider lifecycle evidence");
   }
+  enforceProviderLifecycleCoherence(
+    activityClass,
+    activityState,
+    providerLifecycle,
+  );
 
   const attentionLevel = record.attentionLevel === undefined
     ? "none"
@@ -303,12 +310,10 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
   }
   let isArray: boolean;
   let prototype: object | null;
-  let symbols: symbol[];
   let descriptors: Record<string, PropertyDescriptor>;
   try {
     isArray = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
-    symbols = Object.getOwnPropertySymbols(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new Error("Orchestrator activity observation could not be inspected");
@@ -321,7 +326,7 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
       "Orchestrator activity observation must use a plain or null prototype",
     );
   }
-  if (symbols.length > 0) {
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) {
     throw new Error("Orchestrator activity observation contains a symbol field");
   }
 
@@ -350,20 +355,12 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
 function identifierArray(value: unknown, label: string): string[] {
   let isArray: boolean;
   let prototype: object | null;
-  let names: string[];
-  let symbols: symbol[];
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
     isArray = Array.isArray(value);
     prototype = isArray && value !== null
       ? Object.getPrototypeOf(value)
       : null;
-    names = isArray && value !== null
-      ? Object.getOwnPropertyNames(value)
-      : [];
-    symbols = isArray && value !== null
-      ? Object.getOwnPropertySymbols(value)
-      : [];
     lengthDescriptor = isArray && value !== null
       ? Object.getOwnPropertyDescriptor(value, "length")
       : undefined;
@@ -374,8 +371,7 @@ function identifierArray(value: unknown, label: string): string[] {
     throw new Error(`${label} list must be an ordinary array`);
   }
   if (
-    symbols.length > 0
-    || !lengthDescriptor
+    !lengthDescriptor
     || !("value" in lengthDescriptor)
     || !Number.isSafeInteger(lengthDescriptor.value)
     || lengthDescriptor.value < 0
@@ -385,15 +381,9 @@ function identifierArray(value: unknown, label: string): string[] {
   }
 
   const length = lengthDescriptor.value as number;
-  if (names.length !== length + 1 || !names.includes("length")) {
-    throw new Error(`${label} list must be dense and undecorated`);
-  }
   const admitted: string[] = [];
   for (let index = 0; index < length; index += 1) {
     const key = String(index);
-    if (!names.includes(key)) {
-      throw new Error(`${label} list must be dense and undecorated`);
-    }
     let descriptor: PropertyDescriptor | undefined;
     try {
       descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -450,7 +440,7 @@ function identifier(value: unknown, label: string): string {
 }
 
 function rejectCredential(value: string, label: string): void {
-  if (credentialPattern.test(value)) {
+  if (containsRealisticRetainedCredential(value)) {
     throw new Error(`${label} cannot contain credential material`);
   }
 }
@@ -500,6 +490,37 @@ function closedValue<const T extends readonly string[]>(
     throw new Error(`${label} is invalid`);
   }
   return value as T[number];
+}
+
+function enforceProviderLifecycleCoherence(
+  activityClass: OrchestratorActivityClass,
+  activityState: OrchestratorActivityState,
+  providerLifecycle: OrchestratorProviderLifecycle | null,
+): void {
+  if (providerLifecycle === null) return;
+  if (
+    activityClass === "reconciliation_required"
+    && providerLifecycle !== "pending_reconciliation"
+  ) {
+    throw new Error(
+      "Provider-backed reconciliation requires pending reconciliation lifecycle",
+    );
+  }
+
+  const compatible = providerLifecycle === "reserved"
+    ? activityState === "observed"
+    : providerLifecycle === "dispatched"
+      ? activityState === "in_progress"
+      : providerLifecycle === "accepted"
+        ? activityState === "in_progress"
+        : providerLifecycle === "verified"
+          ? activityState === "succeeded"
+          : providerLifecycle === "rejected"
+            ? activityState === "failed"
+            : activityState === "ambiguous";
+  if (!compatible) {
+    throw new Error("Provider lifecycle and activity state are incompatible");
+  }
 }
 
 function enforceActivityCoherence(
