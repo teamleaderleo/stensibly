@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { sha256, stableJson } from "../src/canonical-json.ts";
+import {
+  compareCodeUnits,
+  sha256,
+  stableJson,
+} from "../src/canonical-json.ts";
 import {
   sha256 as githubSha256,
   stableJson as githubStableJson,
@@ -12,6 +16,23 @@ describe("canonical JSON and digest helpers", () => {
       z: [{ beta: 2, alpha: 1 }, true],
       a: "first",
     })).toBe('{"a":"first","z":[{"alpha":1,"beta":2},true]}');
+  });
+
+  test("uses deterministic UTF-16 code-unit ordering", () => {
+    expect(compareCodeUnits("same", "same")).toBe(0);
+    expect(compareCodeUnits("Z", "a")).toBe(-1);
+    expect(compareCodeUnits("é", "z")).toBe(1);
+    expect(compareCodeUnits("😀", "é")).toBe(1);
+
+    expect(["😀", "a", "é", "Z"].sort(compareCodeUnits)).toEqual([
+      "Z",
+      "a",
+      "é",
+      "😀",
+    ]);
+    expect(stableJson({ "😀": 4, a: 2, "é": 3, Z: 1 })).toBe(
+      '{"Z":1,"a":2,"é":3,"😀":4}',
+    );
   });
 
   test("normalizes negative zero and rejects unsupported values", () => {
