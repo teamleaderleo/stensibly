@@ -2,6 +2,22 @@ import { createHash } from "node:crypto";
 
 export const MCP_RELEASE_MANIFEST_SCHEMA_VERSION = 1;
 
+const lowerBoundKeywords = [
+  "minimum",
+  "exclusiveMinimum",
+  "minLength",
+  "minItems",
+  "minProperties",
+] as const;
+const upperBoundKeywords = [
+  "maximum",
+  "exclusiveMaximum",
+  "maxLength",
+  "maxItems",
+  "maxProperties",
+] as const;
+type NumericBoundDirection = "lower" | "upper";
+
 export interface McpToolContract {
   name: string;
   description?: string;
@@ -245,16 +261,26 @@ function schemaAcceptsPreviousInputs(
 
   compatible = compareAdditionalProperties(previous, candidate, path, reasons) && compatible;
 
-  compatible = compareLowerBound(previous, candidate, "minimum", path, reasons) && compatible;
-  compatible = compareLowerBound(previous, candidate, "exclusiveMinimum", path, reasons) && compatible;
-  compatible = compareLowerBound(previous, candidate, "minLength", path, reasons) && compatible;
-  compatible = compareLowerBound(previous, candidate, "minItems", path, reasons) && compatible;
-  compatible = compareLowerBound(previous, candidate, "minProperties", path, reasons) && compatible;
-  compatible = compareUpperBound(previous, candidate, "maximum", path, reasons) && compatible;
-  compatible = compareUpperBound(previous, candidate, "exclusiveMaximum", path, reasons) && compatible;
-  compatible = compareUpperBound(previous, candidate, "maxLength", path, reasons) && compatible;
-  compatible = compareUpperBound(previous, candidate, "maxItems", path, reasons) && compatible;
-  compatible = compareUpperBound(previous, candidate, "maxProperties", path, reasons) && compatible;
+  for (const keyword of lowerBoundKeywords) {
+    compatible = compareNumericBound(
+      previous,
+      candidate,
+      keyword,
+      "lower",
+      path,
+      reasons,
+    ) && compatible;
+  }
+  for (const keyword of upperBoundKeywords) {
+    compatible = compareNumericBound(
+      previous,
+      candidate,
+      keyword,
+      "upper",
+      path,
+      reasons,
+    ) && compatible;
+  }
 
   for (const keyword of ["pattern", "format", "multipleOf", "uniqueItems"] as const) {
     if (Object.hasOwn(candidate, keyword) && canonicalJson(candidate[keyword]) !== canonicalJson(previous[keyword])) {
@@ -312,39 +338,27 @@ function compareAdditionalProperties(
   return false;
 }
 
-function compareLowerBound(
+function compareNumericBound(
   previous: Record<string, unknown>,
   candidate: Record<string, unknown>,
   keyword: string,
+  direction: NumericBoundDirection,
   path: string,
   reasons: string[],
 ): boolean {
   const prior = numeric(previous[keyword]);
   const next = numeric(candidate[keyword]);
   if (next === undefined) return true;
-  if (prior === undefined || next > prior) {
-    reasons.push(`${path}: ${keyword} became more restrictive`);
-    return false;
-  }
-  if (next < prior) reasons.push(`${path}: ${keyword} was relaxed`);
-  return true;
-}
 
-function compareUpperBound(
-  previous: Record<string, unknown>,
-  candidate: Record<string, unknown>,
-  keyword: string,
-  path: string,
-  reasons: string[],
-): boolean {
-  const prior = numeric(previous[keyword]);
-  const next = numeric(candidate[keyword]);
-  if (next === undefined) return true;
-  if (prior === undefined || next < prior) {
+  const moreRestrictive = prior === undefined
+    || (direction === "lower" ? next > prior : next < prior);
+  if (moreRestrictive) {
     reasons.push(`${path}: ${keyword} became more restrictive`);
     return false;
   }
-  if (next > prior) reasons.push(`${path}: ${keyword} was relaxed`);
+
+  const relaxed = direction === "lower" ? next < prior : next > prior;
+  if (relaxed) reasons.push(`${path}: ${keyword} was relaxed`);
   return true;
 }
 
