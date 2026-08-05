@@ -82,6 +82,7 @@ export function withGitHubProviderResponseDeadline(
       ? init.signal
       : requestSignal;
     const context = createDeadline(deadlineMs, externalSignal);
+    let providerDispatched = false;
     try {
       if (context.expired) {
         return await context.deadline;
@@ -93,10 +94,15 @@ export function withGitHubProviderResponseDeadline(
       if (context.expired) {
         return await context.deadline;
       }
-      const providerCall = Promise.resolve(fetchImplementation(input, {
+      const dispatchInit = {
         ...init,
         signal: context.controller.signal,
-      }));
+      };
+      if (context.expired) {
+        return await context.deadline;
+      }
+      providerDispatched = true;
+      const providerCall = Promise.resolve(fetchImplementation(input, dispatchInit));
       void providerCall.then(
         (lateResponse) => {
           if (context.expired || context.finished) {
@@ -118,6 +124,9 @@ export function withGitHubProviderResponseDeadline(
         facadeTextMaximumBytes,
       );
     } catch (error) {
+      if (!providerDispatched && context.expired) {
+        return await context.deadline;
+      }
       finishDeadline(context);
       throw error;
     }
