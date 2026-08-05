@@ -5,6 +5,16 @@ on:
     branches:
       - main
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - labeled
+      - unlabeled
+      - ready_for_review
+      - converted_to_draft
+      - closed
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -46,9 +56,14 @@ permissions:
 jobs:
   browser-evidence:
     if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
+      ${{ (github.event_name != 'pull_request' ||
+      (github.event.pull_request.state == 'open' &&
+      github.event.action != 'closed' &&
+      (github.event.pull_request.draft != true ||
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control') != true))) &&
+      ((github.event_name != 'workflow_dispatch' &&
       github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
+      inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -102,9 +117,14 @@ jobs:
 
   test:
     if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
+      ${{ (github.event_name != 'pull_request' ||
+      (github.event.pull_request.state == 'open' &&
+      github.event.action != 'closed' &&
+      (github.event.pull_request.draft != true ||
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control') != true))) &&
+      ((github.event_name != 'workflow_dispatch' &&
       github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
+      inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -174,9 +194,14 @@ jobs:
 
   runtime-parity:
     if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
+      ${{ (github.event_name != 'pull_request' ||
+      (github.event.pull_request.state == 'open' &&
+      github.event.action != 'closed' &&
+      (github.event.pull_request.draft != true ||
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control') != true))) &&
+      ((github.event_name != 'workflow_dispatch' &&
       github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
+      inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -333,10 +358,127 @@ jobs:
             runtime-parity-output.txt
           if-no-files-found: ignore
 
+  red-control-receipt:
+    name: red-control-non-authorizing-receipt
+    if: >-
+      ${{ github.event_name == 'pull_request' &&
+      github.event.pull_request.state == 'open' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.draft == true &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control') }}
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+      BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify red-control classification and exact revision
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ ! "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ || "${actual_sha}" != "${SOURCE_REVISION}" ]]; then
+            echo "Red-control receipt expected ${SOURCE_REVISION:-missing} but checked out ${actual_sha}." >&2
+            exit 1
+          fi
+          if [[ ! "${BASE_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Red-control receipt requires one exact base revision." >&2
+            exit 1
+          fi
+
+          draft="$(jq -r '.pull_request.draft' "${GITHUB_EVENT_PATH}")"
+          has_label="$(jq -r '[.pull_request.labels[].name] | index("ci:red-control") != null' "${GITHUB_EVENT_PATH}")"
+          if [[ "${draft}" != "true" || "${has_label}" != "true" ]]; then
+            echo "Red-control CI requires both draft state and the repository label ci:red-control." >&2
+            exit 1
+          fi
+
+          body="$(jq -r '.pull_request.body // ""' "${GITHUB_EVENT_PATH}")"
+          if ! grep -Fqi "cannot merge independently" <<<"${body}"; then
+            echo "Red-control PR descriptions must state: cannot merge independently." >&2
+            exit 1
+          fi
+          absorbing_parent="$(
+            sed -nE 's/^[[:space:]]*Absorbing parent:[[:space:]]*(#[1-9][0-9]*)[[:space:]]*$/\1/ip' \
+              <<<"${body}" | head -n1
+          )"
+          if [[ -z "${absorbing_parent}" ]]; then
+            echo "Red-control PR descriptions must include an exact 'Absorbing parent: #123' line." >&2
+            exit 1
+          fi
+
+          git diff --name-only --no-renames \
+            "${BASE_REVISION}...${SOURCE_REVISION}" \
+            | LC_ALL=C sort > red-control-files.txt
+          if [[ ! -s red-control-files.txt ]]; then
+            echo "Red-control PRs must retain one non-empty exact file fence." >&2
+            exit 1
+          fi
+          files_sha256="$(sha256sum red-control-files.txt | cut -d' ' -f1)"
+          file_count="$(wc -l < red-control-files.txt | tr -d ' ')"
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          jq -n \
+            --arg schemaVersion "stensibly-ci-red-control-receipt/1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg pullRequest "${PR_NUMBER}" \
+            --arg sourceRevision "${SOURCE_REVISION}" \
+            --arg baseRevision "${BASE_REVISION}" \
+            --arg classification "red_control" \
+            --arg label "ci:red-control" \
+            --arg absorbingParent "${absorbing_parent}" \
+            --arg filesSha256 "${files_sha256}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg runUrl "${RUN_URL}" \
+            --arg completedAt "${completed_at}" \
+            --argjson fileCount "${file_count}" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              pullRequest: ($pullRequest | tonumber),
+              sourceRevision: $sourceRevision,
+              baseRevision: $baseRevision,
+              classification: $classification,
+              label: $label,
+              draft: true,
+              authorizing: false,
+              absorbingParent: $absorbingParent,
+              fence: {
+                fileCount: $fileCount,
+                filesSha256: $filesSha256
+              },
+              run: {
+                id: $runId,
+                attempt: $runAttempt,
+                url: $runUrl
+              },
+              completedAt: $completedAt
+            }' > red-control-receipt.json
+          sha256sum red-control-receipt.json > red-control-receipt.sha256
+      - name: Upload non-authorizing red-control receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: red-control-receipt-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: |
+            red-control-files.txt
+            red-control-receipt.json
+            red-control-receipt.sha256
+          if-no-files-found: error
+          retention-days: 30
+
   validation-receipt:
     name: exact-ref-validation-receipt
     needs: [browser-evidence, test, runtime-parity, serial-full]
-    if: ${{ always() }}
+    if: >-
+      ${{ always() &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.state == 'open' && github.event.action != 'closed')) }}
     runs-on: ubuntu-latest
     env:
       SOURCE_REVISION: >-
@@ -444,3 +586,12 @@ jobs:
             exact-ref-validation-receipt.sha256
           if-no-files-found: error
           retention-days: 30
+
+      - name: Enforce authorizing exact-ref result
+        run: |
+          set -euo pipefail
+          status="$(jq -r '.status' exact-ref-validation-receipt.json)"
+          if [[ "${status}" != "success" ]]; then
+            echo "Exact-ref validation receipt is ${status}; full canonical CI did not authorize this revision." >&2
+            exit 1
+          fi
