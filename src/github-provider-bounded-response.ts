@@ -83,13 +83,13 @@ export function withGitHubProviderResponseDeadline(
       : requestSignal;
     const context = createDeadline(deadlineMs, externalSignal);
     try {
+      if (context.expired) {
+        return await context.deadline;
+      }
       const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
         input,
         init,
       );
-      if (context.expired) {
-        return await context.deadline;
-      }
       const providerCall = Promise.resolve(fetchImplementation(input, {
         ...init,
         signal: context.controller.signal,
