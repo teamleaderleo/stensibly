@@ -1,4 +1,8 @@
-import { sha256, stableJson } from "./canonical-json.js";
+import {
+  compareCodeUnits,
+  sha256,
+  stableJson,
+} from "./canonical-json.js";
 import {
   buildGitHubIssueContext,
   buildGitHubIssueReference,
@@ -115,7 +119,7 @@ export function canonicalStringList(
   if (new Set(result).size !== result.length) {
     throw new RangeError("GitHub provider list values must be unique");
   }
-  return result.sort(codeUnitCompare);
+  return result.sort(compareCodeUnits);
 }
 
 export function canonicalLogins(values: readonly string[]): string[] {
@@ -132,7 +136,7 @@ export function canonicalLogins(values: readonly string[]): string[] {
   if (new Set(result).size !== result.length) {
     throw new RangeError("GitHub assignees must be unique");
   }
-  return result.sort(codeUnitCompare);
+  return result.sort(compareCodeUnits);
 }
 
 export function boundedLimit(value: number): number {
@@ -220,8 +224,4 @@ function canonicalCommentUrl(
     );
   }
   return `https://github.com${expectedPath}${expectedHash}`;
-}
-
-function codeUnitCompare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
