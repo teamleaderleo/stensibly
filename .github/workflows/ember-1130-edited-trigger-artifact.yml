@@ -1,0 +1,65 @@
+name: Ember 1130 edited trigger artifact
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ember-1130-edited-trigger-artifact.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ember/1128-edited-trigger-repair
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Build exact repair files
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/ci.yml')
+          text = workflow.read_text()
+          old = '      - reopened\n      - labeled'
+          new = '      - reopened\n      - edited\n      - labeled'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one workflow trigger anchor, got {text.count(old)}')
+          workflow.write_text(text.replace(old, new))
+
+          test = Path('test/ci-red-control-profile.test.ts')
+          text = test.read_text()
+          old = '      "reopened",\n      "labeled",'
+          new = '      "reopened",\n      "edited",\n      "labeled",'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one static activity anchor, got {text.count(old)}')
+          test.write_text(text.replace(old, new))
+
+          guide = Path('docs/red-control-ci.md')
+          text = guide.read_text()
+          old = 'Opening, synchronizing, labeling, unlabeling, changing draft state, and closing'
+          new = 'Opening, synchronizing, editing the description, labeling, unlabeling, changing draft state, and closing'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one lifecycle anchor, got {text.count(old)}')
+          guide.write_text(text.replace(old, new))
+          PY
+          git diff --check
+          bun install --frozen-lockfile
+          bun test test/ci-red-control-profile.test.ts test/ci-exact-ref-validation-receipt.test.ts
+          mkdir -p repair/.github/workflows repair/docs repair/test
+          cp .github/workflows/ci.yml repair/.github/workflows/ci.yml
+          cp docs/red-control-ci.md repair/docs/red-control-ci.md
+          cp test/ci-red-control-profile.test.ts repair/test/ci-red-control-profile.test.ts
+          find repair -type f -print0 | sort -z | xargs -0 sha256sum > repair/SHA256SUMS
+      - name: Upload verified repair files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ember-1130-edited-trigger-repair-${{ github.run_id }}
+          path: repair
+          if-no-files-found: error
+          retention-days: 7
