@@ -48,7 +48,7 @@ Copy the 64-character digest into the pull request description. Review the path 
 8. Remove the label or mark the child ready only when deliberately proving that ordinary full CI returns on the unchanged child head.
 9. Close the child without merging it independently.
 
-Opening, synchronizing, labeling, unlabeling, changing draft state, and closing use one per-pull-request concurrency group. A newer transition cancels an obsolete queued or running profile.
+Opening, synchronizing, editing the description, labeling, unlabeling, changing draft state, and closing use one per-pull-request concurrency group. A newer transition cancels an obsolete queued or running profile.
 
 ## Failure and recovery
 
