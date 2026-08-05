@@ -8,6 +8,10 @@ import {
   type GitHubIssueProviderReadService,
   type GitHubIssueProviderWriteService,
 } from "./github-issue-provider-mcp.js";
+import {
+  withGitHubIssueProviderSetWriteService,
+  type GitHubIssueProviderSetWriteService,
+} from "./github-issue-provider-set-write-service.js";
 import type {
   GitHubIssueProviderOperation,
   GitHubProjectRepositoryBinding,
@@ -25,7 +29,7 @@ import {
   stableJson,
 } from "./github-provider-validation.js";
 import { GitHubRestIssueProviderAdapter } from "./github-rest-issue-adapter.js";
-import { GitHubRestIssueWriteAdapter } from "./github-rest-issue-write-adapter.js";
+import { GitHubRestIssueSetWriteAdapter } from "./github-rest-issue-set-write-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import {
   projectAttachmentLedger,
@@ -54,16 +58,21 @@ const readOperations = new Set<GitHubIssueProviderOperation>([
   "github_search_issues",
   "github_get_issue",
 ]);
-const initialWriteOperations = new Set<GitHubIssueProviderOperation>([
+const writeOperations = new Set<GitHubIssueProviderOperation>([
   "github_create_issue",
   "github_update_issue",
   "github_add_issue_comment",
+  "github_add_issue_labels",
+  "github_remove_issue_label",
+  "github_add_issue_assignees",
+  "github_remove_issue_assignees",
 ]);
 
 /**
  * Mounts the production read provider when the complete GitHub App
- * configuration exists. A separate exact flag mounts an independent write
- * service only when the ledger also exposes the durable hosted receipt contract.
+ * configuration exists. A separate exact flag mounts independent write
+ * services only when the ledger also exposes the durable hosted receipt
+ * contract.
  */
 export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   ledger: T,
@@ -71,7 +80,8 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   overrides: HostedGitHubIssueProviderOverrides = {},
 ): T
   & Partial<GitHubIssueProviderReadService>
-  & Partial<GitHubIssueProviderWriteService> {
+  & Partial<GitHubIssueProviderWriteService>
+  & Partial<GitHubIssueProviderSetWriteService> {
   const config = hostedGitHubIssueProviderConfig(env);
   if (!config) return ledger;
   const projects = projectAttachmentLedger(ledger);
@@ -120,13 +130,17 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     projects,
     bindings,
     authority,
-    adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
+    adapter: new GitHubRestIssueSetWriteAdapter(adapterOptions),
     receipts: durableReceiptStore(ledger),
     now: () => new Date(now()).toISOString(),
   });
-  return withGitHubIssueProviderWriteService(
+  const mountedInitialWrites = withGitHubIssueProviderWriteService(
     mountedReads,
     canonicalHostedWriteService(writeService),
+  );
+  return withGitHubIssueProviderSetWriteService(
+    mountedInitialWrites,
+    canonicalHostedSetWriteService(writeService),
   );
 }
 
@@ -280,14 +294,14 @@ class HostedGitHubAuthority implements GitHubProviderAuthority {
     if (readOperations.has(input.operation)) return { allowed: true };
     if (
       this.#config.issueWritesEnabled
-      && initialWriteOperations.has(input.operation)
+      && writeOperations.has(input.operation)
     ) {
       return { allowed: true };
     }
     return {
       allowed: false,
       reason: this.#config.issueWritesEnabled
-        ? "Hosted GitHub label and assignee writes remain unavailable"
+        ? "Hosted GitHub provider operation is unavailable"
         : "Hosted GitHub provider currently authorizes typed issue reads only",
     };
   }
@@ -370,6 +384,19 @@ function canonicalHostedWriteService(
     createIssue: (input) => service.createIssue(canonicalRequest(input)),
     updateIssue: (input) => service.updateIssue(canonicalRequest(input)),
     addIssueComment: (input) => service.addIssueComment(canonicalRequest(input)),
+  };
+}
+
+function canonicalHostedSetWriteService(
+  service: GitHubIssueProviderSetWriteService,
+): GitHubIssueProviderSetWriteService {
+  return {
+    addIssueLabels: (input) => service.addIssueLabels(canonicalRequest(input)),
+    removeIssueLabel: (input) => service.removeIssueLabel(canonicalRequest(input)),
+    addIssueAssignees: (input) =>
+      service.addIssueAssignees(canonicalRequest(input)),
+    removeIssueAssignees: (input) =>
+      service.removeIssueAssignees(canonicalRequest(input)),
   };
 }
 
