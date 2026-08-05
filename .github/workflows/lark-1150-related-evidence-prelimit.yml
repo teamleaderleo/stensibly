@@ -1,0 +1,257 @@
+name: Lark 1150 related evidence prelimit repair
+
+on:
+  push:
+    branches:
+      - cedar/1149-activity-observation-contract
+    paths:
+      - .github/workflows/lark-1150-related-evidence-prelimit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1150-related-evidence-prelimit
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1149-activity-observation-contract
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier ancestry
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "666b9215c64b067084a5348af7ff301d5c8298b7"
+
+      - name: Bound related evidence before caller key enumeration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/orchestrator-activity-observation.ts")
+          source = source_path.read_text()
+          before = '''function identifierArray(value: unknown, label: string): string[] {
+            let isArray: boolean;
+            let prototype: object | null;
+            let names: string[];
+            let symbols: symbol[];
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray && value !== null
+                ? Object.getPrototypeOf(value)
+                : null;
+              names = isArray && value !== null
+                ? Object.getOwnPropertyNames(value)
+                : [];
+              symbols = isArray && value !== null
+                ? Object.getOwnPropertySymbols(value)
+                : [];
+              lengthDescriptor = isArray && value !== null
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw new Error(`${label} list could not be inspected`);
+            }
+            if (!isArray || prototype !== Array.prototype) {
+              throw new Error(`${label} list must be an ordinary array`);
+            }
+            if (
+              symbols.length > 0
+              || !lengthDescriptor
+              || !("value" in lengthDescriptor)
+              || !Number.isSafeInteger(lengthDescriptor.value)
+              || lengthDescriptor.value < 0
+              || lengthDescriptor.value > maximumRelatedEvidence
+            ) {
+              throw new Error(`${label} list is invalid`);
+            }
+
+            const length = lengthDescriptor.value as number;
+            if (names.length !== length + 1 || !names.includes("length")) {
+              throw new Error(`${label} list must be dense and undecorated`);
+            }
+            const admitted: string[] = [];
+            for (let index = 0; index < length; index += 1) {
+              const key = String(index);
+              if (!names.includes(key)) {
+                throw new Error(`${label} list must be dense and undecorated`);
+              }
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new Error(`${label} list could not be inspected`);
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new Error(`${label} list entries must be enumerable data properties`);
+              }
+              admitted.push(identifier(descriptor.value, label));
+            }
+            if (new Set(admitted).size !== admitted.length) {
+              throw new Error(`${label} list must be unique`);
+            }
+            return admitted.sort(codeUnitCompare);
+          }'''
+          after = '''function identifierArray(value: unknown, label: string): string[] {
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray && value !== null
+                ? Object.getPrototypeOf(value)
+                : null;
+              lengthDescriptor = isArray && value !== null
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw new Error(`${label} list could not be inspected`);
+            }
+            if (!isArray || prototype !== Array.prototype) {
+              throw new Error(`${label} list must be an ordinary array`);
+            }
+            if (
+              !lengthDescriptor
+              || !("value" in lengthDescriptor)
+              || !Number.isSafeInteger(lengthDescriptor.value)
+              || lengthDescriptor.value < 0
+              || lengthDescriptor.value > maximumRelatedEvidence
+            ) {
+              throw new Error(`${label} list is invalid`);
+            }
+
+            const length = lengthDescriptor.value as number;
+            const admitted: string[] = [];
+            for (let index = 0; index < length; index += 1) {
+              const key = String(index);
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new Error(`${label} list could not be inspected`);
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new Error(`${label} list entries must be enumerable data properties`);
+              }
+              admitted.push(identifier(descriptor.value, label));
+            }
+            if (new Set(admitted).size !== admitted.length) {
+              throw new Error(`${label} list must be unique`);
+            }
+            return admitted.sort(codeUnitCompare);
+          }'''
+          if source.count(before) != 1:
+            raise SystemExit(f"identifierArray anchor changed: {source.count(before)} matches")
+          source_path.write_text(source.replace(before, after, 1))
+
+          main_test_path = Path("test/orchestrator-activity-observation.test.ts")
+          main_test = main_test_path.read_text()
+          before_test = '''  test("requires dense unique undecorated evidence arrays", () => {
+            const decorated = ["receipt_1"] as string[] & { note?: string };
+            decorated.note = "must not survive";
+            expect(() => compileOrchestratorActivityObservation({
+              ...validInput(),
+              relatedEvidenceIds: decorated,
+            })).toThrow("must be dense and undecorated");
+
+            expect(() => compileOrchestratorActivityObservation({'''
+          after_test = '''  test("requires dense unique evidence arrays and discards decorations", () => {
+            const decorated = ["receipt_1"] as string[] & { note?: string };
+            decorated.note = "must not survive";
+            const admitted = compileOrchestratorActivityObservation({
+              ...validInput(),
+              relatedEvidenceIds: decorated,
+            });
+            expect(admitted.relatedEvidenceIds).toEqual(["receipt_1"]);
+            expect(JSON.stringify(admitted)).not.toContain("must not survive");
+
+            expect(() => compileOrchestratorActivityObservation({'''
+          if main_test.count(before_test) != 1:
+            raise SystemExit(f"decorated array test anchor changed: {main_test.count(before_test)} matches")
+          main_test_path.write_text(main_test.replace(before_test, after_test, 1))
+
+          inspection_path = Path("test/orchestrator-activity-observation-inspection.test.ts")
+          inspection = inspection_path.read_text()
+          before_inspection = '''  test("bounds related evidence before entry admission", () => {
+            expect(() => compileOrchestratorActivityObservation({
+              ...input(),
+              relatedEvidenceIds: Array.from(
+                { length: 33 },
+                (_, index) => `receipt_${index}`,
+              ),
+            })).toThrow("list is invalid");
+          });'''
+          after_inspection = '''  test("bounds related evidence before caller key enumeration", () => {
+            let ownKeysCalls = 0;
+            const relatedEvidenceIds = new Proxy(
+              Array.from(
+                { length: 33 },
+                (_, index) => `receipt_${index}`,
+              ),
+              {
+                ownKeys(target) {
+                  ownKeysCalls += 1;
+                  return Reflect.ownKeys(target);
+                },
+              },
+            );
+            expect(() => compileOrchestratorActivityObservation({
+              ...input(),
+              relatedEvidenceIds,
+            })).toThrow("list is invalid");
+            expect(ownKeysCalls).toBe(0);
+          });'''
+          if inspection.count(before_inspection) != 1:
+            raise SystemExit(f"prelimit test anchor changed: {inspection.count(before_inspection)} matches")
+          inspection_path.write_text(inspection.replace(before_inspection, after_inspection, 1))
+          PY
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'src/orchestrator-activity-observation.ts\ntest/orchestrator-activity-observation-inspection.test.ts\ntest/orchestrator-activity-observation.test.ts'
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate exact repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/orchestrator-activity-observation.test.ts \
+            test/orchestrator-activity-observation-inspection.test.ts
+
+      - name: Publish workflow-free repaired head
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lark-1150-related-evidence-prelimit.yml
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/orchestrator-activity-observation.ts \
+            test/orchestrator-activity-observation.test.ts \
+            test/orchestrator-activity-observation-inspection.test.ts \
+            .github/workflows/lark-1150-related-evidence-prelimit.yml
+          git diff --cached --check
+          git commit -m "Bound related evidence admission before enumeration"
+          git fetch origin refs/heads/cedar/1149-activity-observation-contract:refs/remotes/origin/cedar/1149-activity-observation-contract
+          test "$(git rev-parse refs/remotes/origin/cedar/1149-activity-observation-contract)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cedar/1149-activity-observation-contract:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/cedar/1149-activity-observation-contract
