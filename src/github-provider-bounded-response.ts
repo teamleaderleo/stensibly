@@ -599,12 +599,22 @@ function createDeadline(
 
   if (externalSignal) {
     const forwardAbort = () => terminate();
-    if (externalSignal.aborted) {
-      forwardAbort();
-    } else {
-      externalSignal.addEventListener("abort", forwardAbort, { once: true });
-      context.removeExternalAbort = () =>
+    context.removeExternalAbort = () => {
+      try {
         externalSignal.removeEventListener("abort", forwardAbort);
+      } catch {
+        // Fixed cleanup remains best-effort for hostile signal objects.
+      }
+    };
+    try {
+      if (externalSignal.aborted) {
+        forwardAbort();
+      } else {
+        externalSignal.addEventListener("abort", forwardAbort, { once: true });
+      }
+    } catch {
+      finishDeadline(context);
+      throw new GitHubProviderResponseReadError();
     }
   }
 
