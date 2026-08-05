@@ -63,6 +63,61 @@ describe("GitHub provider response signal setup cleanup", () => {
     expect(installed).toBeNull();
   });
 
+  test("consumes a synchronous setup abort before a later subscription throw", async () => {
+    let fetchCalls = 0;
+    let addCalls = 0;
+    let removeCalls = 0;
+    let installed: EventListenerOrEventListenerObject | null = null;
+
+    const signal = {
+      aborted: false,
+      addEventListener(
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+      ) {
+        expect(type).toBe("abort");
+        addCalls += 1;
+        installed = listener;
+        const event = new Event("abort");
+        if (typeof listener === "function") {
+          listener.call(signal, event);
+        } else {
+          listener.handleEvent(event);
+        }
+        throw new Error("subscription threw after synchronous abort");
+      },
+      removeEventListener(
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+      ) {
+        expect(type).toBe("abort");
+        expect(listener).toBe(
+          installed as EventListenerOrEventListenerObject,
+        );
+        removeCalls += 1;
+        installed = null;
+      },
+    } as unknown as AbortSignal;
+
+    const wrapped = withGitHubProviderResponseDeadline(
+      (async () => {
+        fetchCalls += 1;
+        return new Response("unexpected");
+      }) as unknown as typeof fetch,
+      120_000,
+    );
+
+    await expect(wrapped(
+      "https://api.github.com/repos/example/project/issues",
+      { signal },
+    )).rejects.toBeInstanceOf(GitHubProviderResponseReadError);
+
+    expect(fetchCalls).toBe(0);
+    expect(addCalls).toBe(1);
+    expect(removeCalls).toBe(1);
+    expect(installed).toBeNull();
+  });
+
   test("converts a hostile aborted getter into the fixed bounded error", async () => {
     let fetchCalls = 0;
     const signal = Object.create(null) as Record<string, unknown>;
