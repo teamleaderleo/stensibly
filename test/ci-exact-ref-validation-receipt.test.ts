@@ -36,7 +36,8 @@ describe("reusable exact-ref CI receipt", () => {
     expect(workflow).toContain("validation-receipt:");
     expect(workflow).toContain("name: exact-ref-validation-receipt");
     expect(workflow).toContain("needs: [browser-evidence, test, runtime-parity, serial-full]");
-    expect(workflow).toContain("if: ${{ always() }}");
+    expect(workflow).toContain("${{ always() &&");
+    expect(workflow).toContain("contains(github.event.pull_request.labels.*.name, 'ci:red-control')");
     expect(workflow).toContain("SOURCE_REVISION:");
     expect(workflow).toContain("EVENT_REVISION: ${{ github.sha }}");
     expect(workflow).toContain("WORKFLOW_REVISION: ${{ github.workflow_sha }}");
