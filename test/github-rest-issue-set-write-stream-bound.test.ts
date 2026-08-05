@@ -34,6 +34,7 @@ describe("GitHub set-write streamed response bounds", () => {
       addLabels(adapterFor(observed.response)),
       "REQ-STREAM-BOUND",
     );
+    await settleBestEffortCancellation();
     expect(observed.cancelled()).toBe(true);
     expect(observed.pulls()).toBe(2);
   });
@@ -48,6 +49,7 @@ describe("GitHub set-write streamed response bounds", () => {
       addLabels(adapterFor(observed.response)),
       "REQ-STREAM-BOUND",
     );
+    await settleBestEffortCancellation();
     expect(observed.cancelled()).toBe(true);
     expect(observed.pulls()).toBe(2);
   });
@@ -118,6 +120,11 @@ async function expectPostEffect(
         "GitHub provider effect requires reconciliation after verification failed",
     });
   }
+}
+
+async function settleBestEffortCancellation(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function adapterFor(response: Response): GitHubRestIssueSetWriteAdapter {
