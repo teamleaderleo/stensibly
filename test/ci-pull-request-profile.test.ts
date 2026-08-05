@@ -191,6 +191,12 @@ describe("CI pull request profile classification", () => {
       repository: "TeamLeaderLeo/Stensibly",
     }))).toThrow("exact lowercase owner/name identity");
     expect(() => compileCiPullRequestProfileV1(input({
+      repository: "owner_with_underscore/repository",
+    }))).toThrow("CI repository is invalid");
+    expect(() => compileCiPullRequestProfileV1(input({
+      repository: "owner--name/repository",
+    }))).toThrow("CI repository is invalid");
+    expect(() => compileCiPullRequestProfileV1(input({
       candidateRevision: "A".repeat(40),
     }))).toThrow("lowercase commit SHA");
     expect(() => compileCiPullRequestProfileV1(input({
