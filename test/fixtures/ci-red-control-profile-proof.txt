@@ -1,0 +1,2 @@
+This one-file child exists only to prove the ci:red-control classification against PR #1122.
+It cannot merge independently and must be closed after its non-authorizing receipt is inspected.
