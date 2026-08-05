@@ -1,0 +1,168 @@
+name: Lark 1083 coherent tree controls
+
+on:
+  push:
+    branches:
+      - juniper/1020-atomic-publication-controls
+    paths:
+      - .github/workflows/lark-1083-coherent-tree-controls.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1083-coherent-tree-controls
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1020-atomic-publication-controls
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact test-only carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "eca98d3dbcb57ca92905f05e297f7b78b3b71a16"
+
+      - name: Align publication control with immutable-tree mode proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/github-rest-repository-write-atomic-publication.test.ts")
+          text = path.read_text()
+
+          replacements = [
+            (
+              '''        url: `${contentUrl()}?ref=${parentSha}`,
+''',
+              '''        url: treeUrl(parentTreeSha),
+''',
+              1,
+            ),
+            (
+              '''    const preflight = recorded.find((request) =>
+      request.method === "GET" && request.url.startsWith(contentUrl())
+    );
+    expect(preflight?.url).toBe(`${contentUrl()}?ref=${parentSha}`);
+''',
+              '''    const preflight = recorded.find((request) =>
+      request.method === "GET" && request.url === treeUrl(parentTreeSha)
+    );
+    expect(preflight?.url).toBe(treeUrl(parentTreeSha));
+''',
+              1,
+            ),
+            (
+              '''    if (method === "GET" && url === `${contentUrl()}?ref=${parentSha}`) {
+      if (input.operation === "create_file") {
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      }
+      return Response.json({
+        type: "file",
+        name: "atomic-publication.md",
+        path,
+        sha: input.observedBlobSha ?? previousBlobSha,
+        size: 12,
+        url: `${contentUrl()}?ref=${parentSha}`,
+        git_url:
+          `${apiBaseUrl}/repos/${repositoryFullName}/git/blobs/${input.observedBlobSha ?? previousBlobSha}`,
+      });
+    }
+''',
+              '''    if (method === "GET" && url === treeUrl(parentTreeSha)) {
+      const observedBlobSha = input.observedBlobSha ?? previousBlobSha;
+      return Response.json({
+        sha: parentTreeSha,
+        url: treeUrl(parentTreeSha),
+        tree: input.operation === "create_file"
+          ? []
+          : [{
+              path,
+              mode: "100644",
+              type: "blob",
+              sha: observedBlobSha,
+              url: blobUrl(observedBlobSha),
+              size: 12,
+            }],
+        truncated: false,
+      });
+    }
+''',
+              1,
+            ),
+            (
+              '''function treeCollectionUrl(): string {
+  return `${repositoryUrl()}/git/trees`;
+}
+
+function contentUrl(): string {
+  return `${repositoryUrl()}/contents/${path}`;
+}
+''',
+              '''function treeCollectionUrl(): string {
+  return `${repositoryUrl()}/git/trees`;
+}
+
+function treeUrl(sha: string): string {
+  return `${treeCollectionUrl()}/${sha}`;
+}
+
+function blobUrl(sha: string): string {
+  return `${blobCollectionUrl()}/${sha}`;
+}
+''',
+              1,
+            ),
+          ]
+
+          for before, after, count in replacements:
+            if text.count(before) != count:
+              raise SystemExit(f"atomic publication control anchor changed: {before[:60]!r}")
+            text = text.replace(before, after, count)
+
+          path.write_text(text)
+          PY
+          git diff --check
+          test "$(git diff --name-only)" = "test/github-rest-repository-write-atomic-publication.test.ts"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate test source without authorizing implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+
+      - name: Publish corrected red controls only
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lark-1083-coherent-tree-controls.yml
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            .github/workflows/lark-1083-coherent-tree-controls.yml
+          git diff --cached --check
+          git commit -m "Align atomic publication controls on immutable trees"
+          git fetch origin refs/heads/juniper/1020-atomic-publication-controls:refs/remotes/origin/juniper/1020-atomic-publication-controls
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-publication-controls)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1020-atomic-publication-controls:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1020-atomic-publication-controls
