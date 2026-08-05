@@ -1,0 +1,297 @@
+name: Lumen 970 current-parent finalizer
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'juniper/525-public-label-assignee-writes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Verify exact carrier and source packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=d366b0160355c03ecb8732a857721a3b10a5254d
+          SOURCE=685c3449787b1328387744aa6e3e2c44053f8efd
+          test "$(git rev-parse HEAD^)" = "$BASE"
+          test "$(git diff --name-only "$BASE" HEAD)" = ".github/workflows/lumen-970-current-parent-finalizer.yml"
+          git cat-file -e "$SOURCE^{commit}"
+          test "$(git rev-parse "$SOURCE:docs/chatgpt-app-actions.json")" = "043b540dbe1f02e66ccf3d04f2f1c0c68341da8f"
+          test "$(git rev-parse "$SOURCE:docs/chatgpt-app-recovery.md")" = "0e35c343d7702907e90c69467951364f8a87b03d"
+          test "$(git rev-parse "$SOURCE:src/github-issue-provider-set-write-mcp.ts")" = "e0cff07f72018495c000e224aae08a3ca368d737"
+          test "$(git rev-parse "$SOURCE:test/mcp-github-issue-provider-set-writes.test.ts")" = "be69d173e22f5ac36e7c66b676fc1596f1159325"
+
+      - name: Replay reviewed public packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=685c3449787b1328387744aa6e3e2c44053f8efd
+          paths=(
+            docs/chatgpt-app-actions.json
+            docs/chatgpt-app-recovery.md
+            src/github-issue-provider-set-write-mcp.ts
+            src/mcp-capability-policy.ts
+            src/mcp-diagnostics.ts
+            src/mcp.ts
+            test/chatgpt-app-actions-snapshot.test.ts
+            test/mcp-capability-policy.test.ts
+            test/mcp-github-issue-provider-set-writes.test.ts
+            test/mcp-github-issue-provider-set-write-issue-number.test.ts
+            test/mcp-github-issue-provider-set-write-authority-order.test.ts
+          )
+          for path in "${paths[@]}"; do
+            mkdir -p "$(dirname "$path")"
+            git show "$SOURCE:$path" > "$path"
+          done
+
+      - name: Apply release, ordering, and duplicate-admission repairs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          old_fingerprint = "sha256:b96543225bc17a1ffc6d85c62a4f8637b25cf8c89a19b7f11155f83a85e0ac76"
+          new_fingerprint = "sha256:ea3ecc738b60d9dc69e961774d06fa18f423e0a54ef07d6b57a48f53eead7deb"
+          for filename in (
+              "docs/chatgpt-app-actions.json",
+              "docs/chatgpt-app-recovery.md",
+          ):
+              path = Path(filename)
+              text = path.read_text()
+              if text.count(old_fingerprint) != 1:
+                  raise SystemExit(f"unexpected old fingerprint count in {filename}")
+              path.write_text(text.replace(old_fingerprint, new_fingerprint))
+
+          test_path = Path("test/mcp-github-issue-provider-set-writes.test.ts")
+          test_text = test_path.read_text()
+          old_order = 'assignees: ["teamleaderleo", "juniper-bot"],\n          idempotencyKey: "public-assignee-add-1",'
+          new_order = 'assignees: ["juniper-bot", "teamleaderleo"],\n          idempotencyKey: "public-assignee-add-1",'
+          if test_text.count(old_order) != 2:
+              raise SystemExit("unexpected caller/expected assignee order count")
+          first = test_text.find(old_order)
+          second = test_text.find(old_order, first + 1)
+          test_text = test_text[:second] + test_text[second:].replace(old_order, new_order, 1)
+          test_path.write_text(test_text)
+
+          source_path = Path("src/github-issue-provider-set-write-mcp.ts")
+          source = source_path.read_text()
+          labels_schema = "labels: z.array(labelSchema()).min(1).max(100),"
+          assignees_schema = "assignees: z.array(loginSchema()).min(1).max(10),"
+          if source.count(labels_schema) != 1 or source.count(assignees_schema) != 2:
+              raise SystemExit("unexpected set-write array schema count")
+          source = source.replace(labels_schema, "labels: uniqueLabelsSchema(),")
+          source = source.replace(assignees_schema, "assignees: uniqueAssigneesSchema(),")
+          marker = "function idempotencyKeySchema() {\n"
+          helpers = '''function uniqueLabelsSchema() {
+            return z
+              .array(labelSchema())
+              .min(1)
+              .max(100)
+              .refine(
+                (values) => new Set(values).size === values.length,
+                "GitHub labels must be unique",
+              );
+          }
+
+          function uniqueAssigneesSchema() {
+            return z
+              .array(loginSchema())
+              .min(1)
+              .max(10)
+              .refine(
+                (values) => new Set(values.map((value) => value.toLowerCase())).size
+                  === values.length,
+                "GitHub assignees must be unique",
+              );
+          }
+
+          '''
+          helpers = "\n".join(line[10:] if line.startswith("          ") else line for line in helpers.splitlines()) + "\n"
+          if source.count(marker) != 1:
+              raise SystemExit("idempotency schema marker drifted")
+          source_path.write_text(source.replace(marker, helpers + marker))
+
+      - name: Add duplicate-input zero-dispatch proof
+        shell: bash
+        run: |
+          cat > test/mcp-github-issue-provider-set-write-duplicates.test.ts <<'EOF'
+          import { describe, expect, test } from "bun:test";
+          import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+          import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+          import type { GitHubIssueProviderSetWriteService } from "../src/github-issue-provider-set-write-service.ts";
+          import { withGitHubIssueProviderSetWriteService } from "../src/github-issue-provider-set-write-service.ts";
+          import { createMcpServer } from "../src/mcp.ts";
+          import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
+          import { StensiblyStore } from "../src/store.ts";
+          import type { TokenPrincipal } from "../src/token-contracts.ts";
+
+          const project = "stensibly";
+          const repository = "teamleaderleo/stensibly";
+          const issueNumber = 525;
+
+          describe("public GitHub issue set-write duplicate admission", () => {
+            test("rejects duplicate labels and assignees before mounted service dispatch", async () => {
+              const store = new StensiblyStore(":memory:");
+              let calls = 0;
+              const dispatched = async () => {
+                calls += 1;
+                throw new Error("duplicate input reached the mounted service");
+              };
+              const service: GitHubIssueProviderSetWriteService = {
+                addIssueLabels: dispatched,
+                removeIssueLabel: dispatched,
+                addIssueAssignees: dispatched,
+                removeIssueAssignees: dispatched,
+              };
+              const ledger = withGitHubIssueProviderSetWriteService(
+                new SqliteWorkLedger(store),
+                service,
+              );
+              const server = createMcpServer(ledger, { principal: writePrincipal() });
+              const client = new Client(
+                { name: "github-set-write-duplicate-test", version: "0.0.1" },
+                { capabilities: {} },
+              );
+              const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+              try {
+                await server.connect(serverTransport);
+                await client.connect(clientTransport);
+                const cases = [
+                  {
+                    name: "github_add_issue_labels",
+                    arguments: {
+                      project,
+                      repository,
+                      issueNumber,
+                      labels: ["area:github", "area:github"],
+                      idempotencyKey: "duplicate-label-exact",
+                    },
+                  },
+                  {
+                    name: "github_add_issue_labels",
+                    arguments: {
+                      project,
+                      repository,
+                      issueNumber,
+                      labels: ["area:github", " area:github "],
+                      idempotencyKey: "duplicate-label-trimmed",
+                    },
+                  },
+                  {
+                    name: "github_add_issue_assignees",
+                    arguments: {
+                      project,
+                      repository,
+                      issueNumber,
+                      assignees: ["TeamLeaderLeo", "teamleaderleo"],
+                      idempotencyKey: "duplicate-assignee-case",
+                    },
+                  },
+                  {
+                    name: "github_remove_issue_assignees",
+                    arguments: {
+                      project,
+                      repository,
+                      issueNumber,
+                      assignees: ["juniper-bot", "juniper-bot"],
+                      idempotencyKey: "duplicate-assignee-exact",
+                    },
+                  },
+                ] as const;
+
+                for (const input of cases) {
+                  const result = await client.callTool(input);
+                  expect(result.isError).toBe(true);
+                  expect(textContent(result)).toContain("unique");
+                  expect(calls).toBe(0);
+                }
+              } finally {
+                await client.close();
+                await server.close();
+                store.close();
+              }
+            });
+          });
+
+          function writePrincipal(): TokenPrincipal {
+            return {
+              tokenId: "github-set-write-duplicate-token",
+              name: "GitHub set-write duplicate test",
+              scopes: ["read", "write"],
+              projects: [project],
+            };
+          }
+
+          function textContent(result: unknown): string {
+            const content = (result as { content?: unknown }).content;
+            if (!Array.isArray(content) || content.length === 0) {
+              throw new Error("MCP result had no content");
+            }
+            const first = content[0] as { type?: unknown; text?: unknown };
+            if (first.type !== "text" || typeof first.text !== "string") {
+              throw new Error("MCP result did not contain text");
+            }
+            return first.text;
+          }
+          EOF
+          sed -i 's/^          //' test/mcp-github-issue-provider-set-write-duplicates.test.ts
+
+      - name: Verify final public packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
+          bun test \
+            test/chatgpt-app-actions-snapshot.test.ts \
+            test/mcp-capability-policy.test.ts \
+            test/mcp-github-issue-provider-set-writes.test.ts \
+            test/mcp-github-issue-provider-set-write-authority-order.test.ts \
+            test/mcp-github-issue-provider-set-write-issue-number.test.ts \
+            test/mcp-github-issue-provider-set-write-duplicates.test.ts
+
+      - name: Publish one workflow-free current-parent commit
+        shell: bash
+        env:
+          BASE: d366b0160355c03ecb8732a857721a3b10a5254d
+          CARRIER_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-970-current-parent-finalizer.yml
+          git reset --mixed "$BASE"
+          mapfile -t changed < <(git status --short | sed -E 's/^.. //' | sort)
+          expected=(
+            docs/chatgpt-app-actions.json
+            docs/chatgpt-app-recovery.md
+            src/github-issue-provider-set-write-mcp.ts
+            src/mcp-capability-policy.ts
+            src/mcp-diagnostics.ts
+            src/mcp.ts
+            test/chatgpt-app-actions-snapshot.test.ts
+            test/mcp-capability-policy.test.ts
+            test/mcp-github-issue-provider-set-write-authority-order.test.ts
+            test/mcp-github-issue-provider-set-write-duplicates.test.ts
+            test/mcp-github-issue-provider-set-write-issue-number.test.ts
+            test/mcp-github-issue-provider-set-writes.test.ts
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected_sorted[@]}")"
+          git config user.name "Lumen"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${expected[@]}"
+          git commit -m "Expose bounded GitHub label and assignee writes"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" origin "HEAD:${HEAD_REF}"
