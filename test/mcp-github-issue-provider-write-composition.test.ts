@@ -212,6 +212,29 @@ describe("GitHub issue provider write composition", () => {
         clientId: "mcp:api-token:github-write-token",
       });
 
+      const createdWithoutMetadata = await call<GitHubProviderReceipt>(
+        client,
+        "github_create_issue",
+        {
+          project,
+          repository,
+          title: "Create without initial metadata",
+          idempotencyKey: "public-create-empty-metadata-1",
+        },
+      );
+      expect(createdWithoutMetadata.operation).toBe("github_create_issue");
+      expect(calls[1]).toEqual({
+        operation: "create",
+        project,
+        repository,
+        title: "Create without initial metadata",
+        labels: [],
+        assignees: [],
+        idempotencyKey: "public-create-empty-metadata-1",
+        actorId: "api-token:github-write-token",
+        clientId: "mcp:api-token:github-write-token",
+      });
+
       const updated = await call<GitHubProviderReceipt>(
         client,
         "github_update_issue",
@@ -240,7 +263,7 @@ describe("GitHub issue provider write composition", () => {
         },
       );
       expect(commented.operation).toBe("github_add_issue_comment");
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
 
       const found = await call<GitHubProviderReceipt | null>(
         client,
@@ -283,7 +306,7 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(malformed.isError).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
 
       const tooManyAssignees = await client.callTool({
         name: "github_create_issue",
@@ -296,7 +319,7 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(tooManyAssignees.isError).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
 
       const tooManyLabels = await client.callTool({
         name: "github_create_issue",
@@ -309,7 +332,7 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(tooManyLabels.isError).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
 
       const invalidAssignee = await client.callTool({
         name: "github_create_issue",
@@ -322,7 +345,7 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(invalidAssignee.isError).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
 
       const duplicateLabels = await client.callTool({
         name: "github_create_issue",
@@ -335,7 +358,7 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(duplicateLabels.isError).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
 
       const duplicateAssignees = await client.callTool({
         name: "github_create_issue",
@@ -348,7 +371,7 @@ describe("GitHub issue provider write composition", () => {
         },
       });
       expect(duplicateAssignees.isError).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
     } finally {
       await client.close();
       await server.close();
