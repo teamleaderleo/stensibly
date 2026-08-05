@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Work Pulse · Stensibly Labs</title>
+  <meta name="description" content="A fixture-only Stensibly operator view for active work, evidence freshness, human decisions, and safe recovery.">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-stensibly-lab="prototype" data-scenario="default">
+  <a class="skip-link" href="#attention">Skip to attention ledger</a>
+
+  <header class="topbar">
+    <div>
+      <a class="labs-link" href="../">Stensibly Labs</a>
+      <p class="eyebrow">Experimental operator view</p>
+      <h1>Work Pulse</h1>
+      <p class="lede">Evidence before animation. Responsibility before activity theater.</p>
+    </div>
+    <nav class="scenario-nav" aria-label="Preview scenario">
+      <a href="./" data-scenario-link="default">Fixture</a>
+      <a href="./?scenario=degraded" data-scenario-link="degraded">Degraded</a>
+      <a href="./?scenario=empty" data-scenario-link="empty">Empty</a>
+    </nav>
+  </header>
+
+  <main id="app" tabindex="-1" aria-live="polite" aria-busy="true">
+    <p class="loading-copy">Loading the static evidence fixture…</p>
+  </main>
+
+  <footer class="footer">
+    <p>Fixture-only prototype for issue #699. No network calls, mutations, analytics, simulated progress, or private data.</p>
+  </footer>
+
+  <noscript>
+    <p class="noscript">Work Pulse needs JavaScript to render the local Labs fixture. It does not contact a server.</p>
+  </noscript>
+  <script src="../fixtures.classic.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
