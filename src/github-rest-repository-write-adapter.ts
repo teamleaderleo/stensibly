@@ -3,7 +3,13 @@ import type {
   GitHubRepositoryWritePayload,
   GitHubRepositoryWriteProviderAdapter,
 } from "./github-repository-write-provider-service.js";
-import { normalizeGitHubRepository } from "./github-provider-validation.js";
+import {
+  admitGitHubBranchRef,
+  admitGitHubRepositoryFullName,
+  admitGitHubRepositoryPath,
+  admitGitObjectId,
+  sameGitObjectFormat,
+} from "./github-repository-write-admission.js";
 
 export interface GitHubRepositoryWriteTokenProvider {
   getRepositoryContentsToken(input: {
@@ -82,7 +88,7 @@ export class GitHubRestRepositoryWriteAdapter
     if (object.type !== "commit") {
       throw invalidResponse("GitHub ref response did not name a commit");
     }
-    const sha = exactCommitSha(object.sha, "GitHub ref commit SHA");
+    const sha = responseObjectId(object.sha, "GitHub ref commit SHA");
     assertOptionalExactApiUrl(
       object.url,
       commitUrl(this.#apiBaseUrl, repositoryFullName, sha),
@@ -107,10 +113,13 @@ export class GitHubRestRepositoryWriteAdapter
     requireOk(response, "read commit parents");
     const value = await readJson(response, "read commit parents");
     const record = exactRecord(value, "GitHub commit response");
-    if (exactCommitSha(record.sha, "GitHub commit response SHA") !== commitSha) {
+    if (responseObjectId(record.sha, "GitHub commit response SHA") !== commitSha) {
       throw invalidResponse("GitHub commit response identity changed");
     }
     const parents = exactParents(record.parents, "GitHub commit parents");
+    if (!sameGitObjectFormat(commitSha, ...parents)) {
+      throw invalidResponse("GitHub commit response mixed object formats");
+    }
     assertOptionalExactApiUrl(
       record.url,
       commitUrl(this.#apiBaseUrl, repositoryFullName, commitSha),
@@ -131,9 +140,21 @@ export class GitHubRestRepositoryWriteAdapter
     const repositoryFullName = exactRepository(input.repositoryFullName);
     const path = exactPath(input.path);
     const targetRef = exactBranch(input.targetRef);
-    exactCommitSha(input.expectedParentSha, "Expected parent SHA");
+    const expectedParentSha = exactCommitSha(
+      input.expectedParentSha,
+      "Expected parent SHA",
+    );
     if (input.operation !== input.payload.operation) {
       throw new TypeError("Repository write payload operation changed before dispatch");
+    }
+    if (
+      input.payload.operation !== "create_file"
+      && !sameGitObjectFormat(
+        expectedParentSha,
+        exactCommitSha(input.payload.contentSha, "GitHub content SHA"),
+      )
+    ) {
+      throw new RangeError("GitHub repository write object formats changed");
     }
 
     const request = mutationRequest(input.payload, targetRef);
@@ -152,7 +173,7 @@ export class GitHubRestRepositoryWriteAdapter
     );
     const record = exactRecord(value, "GitHub repository write response");
     const commit = exactRecord(record.commit, "GitHub repository write commit");
-    const commitSha = exactCommitSha(
+    const commitSha = responseObjectId(
       commit.sha,
       "GitHub repository write commit SHA",
     );
@@ -168,6 +189,9 @@ export class GitHubRestRepositoryWriteAdapter
       throw invalidResponse(
         "GitHub repository write response returned a multi-parent commit",
       );
+    }
+    if (!sameGitObjectFormat(expectedParentSha, commitSha, ...parents)) {
+      throw invalidResponse("GitHub repository write response mixed object formats");
     }
     const providerRequestId = admittedRequestId(
       response.headers.get("x-github-request-id"),
@@ -295,7 +319,7 @@ async function readBoundedText(
   let failed = false;
   try {
     while (true) {
-      let next: ReadableStreamReadResult<Uint8Array>;
+      let next: Awaited<ReturnType<typeof reader.read>>;
       try {
         next = await reader.read();
       } catch {
@@ -418,53 +442,39 @@ function repositoryParts(repositoryFullName: string): [string, string] {
 }
 
 function exactRepository(value: unknown): string {
-  if (typeof value !== "string" || value !== value.trim()) {
+  try {
+    return admitGitHubRepositoryFullName(value);
+  } catch {
     throw new RangeError("GitHub repository identity is invalid");
   }
-  return normalizeGitHubRepository(value).toLowerCase();
 }
 
 function exactBranch(value: unknown): string {
-  if (
-    typeof value !== "string"
-    || !value
-    || value.length > 240
-    || value !== value.trim()
-    || !/^[A-Za-z0-9._/-]+$/u.test(value)
-    || value.startsWith("/")
-    || value.endsWith("/")
-    || value.includes("//")
-    || value.includes("..")
-  ) {
+  try {
+    return admitGitHubBranchRef(value);
+  } catch {
     throw new RangeError("GitHub target branch is invalid");
   }
-  return value;
 }
 
 function exactPath(value: unknown): string {
-  if (
-    typeof value !== "string"
-    || !value
-    || Buffer.byteLength(value, "utf8") > 4_096
-    || value !== value.trim()
-    || value.startsWith("/")
-    || value.endsWith("/")
-    || value.includes("\\")
-  ) {
+  try {
+    return admitGitHubRepositoryPath(value);
+  } catch {
     throw new RangeError("GitHub repository path is invalid");
   }
-  const segments = value.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new RangeError("GitHub repository path is invalid");
-  }
-  return value;
 }
 
 function exactCommitSha(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^[a-f0-9]{40}$/u.test(value)) {
+  try {
+    return admitGitObjectId(value);
+  } catch {
     throw invalidResponse(`${label} was invalid`);
   }
-  return value;
+}
+
+function responseObjectId(value: unknown, label: string): string {
+  return exactCommitSha(value, label);
 }
 
 function exactParents(value: unknown, label: string): string[] {
@@ -473,7 +483,7 @@ function exactParents(value: unknown, label: string): string[] {
   }
   return value.map((entry) => {
     const parent = exactRecord(entry, "GitHub commit parent");
-    return exactCommitSha(parent.sha, "GitHub commit parent SHA");
+    return responseObjectId(parent.sha, "GitHub commit parent SHA");
   });
 }
 
@@ -490,7 +500,9 @@ function assertOptionalExactApiUrl(
   label: string,
 ): void {
   if (value === undefined || value === null) return;
-  if (typeof value !== "string") throw invalidResponse(`${label} was invalid`);
+  if (typeof value !== "string" || value !== expected.href) {
+    throw invalidResponse(`${label} was invalid`);
+  }
   let actual: URL;
   try {
     actual = new URL(value);
@@ -504,7 +516,7 @@ function assertOptionalExactApiUrl(
     || actual.search
     || actual.hash
     || actual.origin !== expected.origin
-    || actual.pathname.toLowerCase() !== expected.pathname.toLowerCase()
+    || actual.pathname !== expected.pathname
   ) {
     throw invalidResponse(`${label} was invalid`);
   }

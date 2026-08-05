@@ -26,7 +26,7 @@ function command(overrides: Record<string, unknown> = {}): Record<string, unknow
     idempotencyKey: "write_plover_1",
     intent: {
       version: 1,
-      repositoryFullName: "TeamLeaderLeo/Stensibly",
+      repositoryFullName: "teamleaderleo/stensibly",
       path: "docs/write-receipt.json",
       operation: "create_file",
       targetRef: "feature/exact-write",
