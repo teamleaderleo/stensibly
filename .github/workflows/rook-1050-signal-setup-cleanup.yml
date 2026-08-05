@@ -30,7 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD:src/github-provider-bounded-response.ts)" = "90f3ed7285ea7b6bcf79ab18b1ccdb1140548a78"
-          test "$(git rev-parse HEAD:test/github-provider-bounded-response-signal-setup-cleanup.test.ts)" = "de143ebd6f809665c82dda14e3b9d45a8967cc5e"
+          test "$(git rev-parse HEAD:test/github-provider-bounded-response-request-inspection-cleanup.test.ts)" = "a349a72adff9e839b469e1de8589fe6754787b66"
+          test "$(git rev-parse HEAD:test/github-provider-bounded-response-signal-setup-cleanup.test.ts)" = "d990e04c6f17d60fb6f1118557dcdfa2c4266dd5"
 
       - uses: oven-sh/setup-bun@v2
 
