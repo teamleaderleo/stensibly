@@ -1,0 +1,105 @@
+name: Lumen 1140 public issue number ceiling
+
+on:
+  push:
+    branches:
+      - lumen/1139-public-issue-number-ceiling
+    paths:
+      - .github/workflows/lumen-1140-public-issue-number-ceiling.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1140-public-issue-number-ceiling
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1139-public-issue-number-ceiling
+          fetch-depth: 2
+
+      - name: Verify exact inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/github-issue-provider-mcp.ts)" = "86ce2f4f99948c43531cc2ba6cb06501c0970855"
+          test "$(git rev-parse HEAD:test/mcp-github-issue-provider-issue-number-ceiling.test.ts)" = "8ef92655f94e77c98f6881439633d5d6f814730c"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply closed provider issue-number admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-issue-provider-mcp.ts")
+          text = path.read_text()
+
+          import_anchor = '''} from "./token-contracts.js";
+
+export interface GitHubIssueProviderReadService {
+'''
+          import_replacement = '''} from "./token-contracts.js";
+
+const maximumGitHubIssueNumber = 2_147_483_647;
+
+export interface GitHubIssueProviderReadService {
+'''
+          if text.count(import_anchor) != 1:
+              raise SystemExit("issue ceiling constant anchor moved")
+          text = text.replace(import_anchor, import_replacement, 1)
+
+          schema_anchor = "        issueNumber: z.number().int().min(1),\n"
+          if text.count(schema_anchor) != 3:
+              raise SystemExit(
+                  f"expected three public issue-number schemas, found {text.count(schema_anchor)}"
+              )
+          text = text.replace(
+              schema_anchor,
+              "        issueNumber: issueNumberSchema(),\n",
+          )
+
+          helper_anchor = '''function labelSchema() {
+'''
+          helper_replacement = '''function issueNumberSchema() {
+  return z.number().int().min(1).max(maximumGitHubIssueNumber);
+}
+
+function labelSchema() {
+'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit("issue ceiling helper anchor moved")
+          path.write_text(text.replace(helper_anchor, helper_replacement, 1))
+          PY
+          git diff --check
+
+      - name: Validate exact repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/mcp-github-issue-provider-issue-number-ceiling.test.ts \
+            test/mcp-github-issue-provider-write-composition.test.ts
+
+      - name: Publish workflow-free head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lumen-1140-public-issue-number-ceiling.yml
+          git add src/github-issue-provider-mcp.ts \
+            test/mcp-github-issue-provider-issue-number-ceiling.test.ts
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound public GitHub issue target numbers"
+          git push origin HEAD:lumen/1139-public-issue-number-ceiling
