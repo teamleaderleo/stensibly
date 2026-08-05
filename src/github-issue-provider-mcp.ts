@@ -169,12 +169,14 @@ export function registerGitHubIssueProviderTools(
   server.registerTool(
     "github_create_issue",
     {
-      description: "Create one GitHub issue in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key. Initial labels and assignees remain unavailable in this public packet.",
+      description: "Create one GitHub issue with optional initial labels and assignees in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
         title: z.string().trim().min(1).max(256),
         body: z.string().max(128 * 1024).optional(),
+        labels: uniqueLabelsSchema().optional(),
+        assignees: uniqueAssigneesSchema().optional(),
         idempotencyKey: idempotencyKeySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: true },
@@ -183,8 +185,8 @@ export function registerGitHubIssueProviderTools(
       ...providerContext(context, input.project, input.repository, "write"),
       title: input.title,
       ...(input.body === undefined ? {} : { body: input.body }),
-      labels: [],
-      assignees: [],
+      labels: input.labels ?? [],
+      assignees: input.assignees ?? [],
       idempotencyKey: input.idempotencyKey,
     })),
   );
@@ -394,6 +396,43 @@ function repositorySchema() {
     .regex(
       /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
       "Use a GitHub owner/repository identifier",
+    );
+}
+
+function labelSchema() {
+  return z.string().trim().min(1).max(100);
+}
+
+function loginSchema() {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(39)
+    .regex(
+      /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/,
+      "Use a GitHub login",
+    )
+    .refine((value) => !value.includes("--"), "Use a GitHub login");
+}
+
+function uniqueLabelsSchema() {
+  return z
+    .array(labelSchema())
+    .max(100)
+    .refine(
+      (values) => new Set(values).size === values.length,
+      "GitHub labels must be unique",
+    );
+}
+
+function uniqueAssigneesSchema() {
+  return z
+    .array(loginSchema())
+    .max(10)
+    .refine(
+      (values) => new Set(values.map((value) => value.toLowerCase())).size === values.length,
+      "GitHub assignees must be unique",
     );
 }
 
