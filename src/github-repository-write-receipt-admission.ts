@@ -61,6 +61,16 @@ const credentialShapedPattern =
   /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}|bearer\s+[A-Za-z0-9._~+\/-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|authorization\s*:|-----BEGIN [A-Z ]*PRIVATE KEY-----)/iu;
 const utcTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
 
+export function admitGitHubRepositoryWriteIdentifier(value: unknown): string {
+  const text = exactAscii(value, 240);
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,238}[A-Za-z0-9])?$/u.test(text)
+  ) {
+    throw invalidReceipt();
+  }
+  return text;
+}
+
 export function admitGitHubRepositoryWriteReceipt(
   value: unknown,
 ): GitHubRepositoryWriteReceipt {
@@ -73,7 +83,7 @@ export function admitGitHubRepositoryWriteReceipt(
 
   const receipt: GitHubRepositoryWriteReceipt = {
     version: 1,
-    id: exactIdentifier(record.id),
+    id: admitGitHubRepositoryWriteIdentifier(record.id),
     project: exactSlug(record.project),
     repositoryFullName: exactRepository(record.repositoryFullName),
     targetRef: exactBranchRef(record.targetRef),
@@ -82,9 +92,9 @@ export function admitGitHubRepositoryWriteReceipt(
     expectedParentSha: exactCommitSha(record.expectedParentSha),
     requestSha256: exactSha256(record.requestSha256),
     payloadSha256: exactSha256(record.payloadSha256),
-    actorId: exactIdentifier(record.actorId),
-    clientId: exactIdentifier(record.clientId),
-    idempotencyKey: exactIdentifier(record.idempotencyKey),
+    actorId: admitGitHubRepositoryWriteIdentifier(record.actorId),
+    clientId: admitGitHubRepositoryWriteIdentifier(record.clientId),
+    idempotencyKey: admitGitHubRepositoryWriteIdentifier(record.idempotencyKey),
     state,
     dispatchCount: exactDispatchCount(record.dispatchCount),
     createdAt,
@@ -162,7 +172,7 @@ function admitVerified(
   const defaultBranch = exactBranchRef(record.defaultBranch);
   const approvalId = record.defaultBranchApprovalId === null
     ? null
-    : exactIdentifier(record.defaultBranchApprovalId);
+    : admitGitHubRepositoryWriteIdentifier(record.defaultBranchApprovalId);
   if (
     (targetRef === defaultBranch && approvalId === null)
     || (targetRef !== defaultBranch && approvalId !== null)
@@ -180,14 +190,14 @@ function admitVerified(
     targetRef,
     defaultBranch,
     expectedParentSha: exactCommitSha(record.expectedParentSha),
-    authorityId: exactIdentifier(record.authorityId),
+    authorityId: admitGitHubRepositoryWriteIdentifier(record.authorityId),
     authorityGeneration: exactPositiveInteger(record.authorityGeneration),
     defaultBranchApprovalId: approvalId,
     commitSha,
     nextExpectedParentSha: exactCommitSha(record.nextExpectedParentSha),
     providerRequestId: record.providerRequestId === null
       ? null
-      : exactIdentifier(record.providerRequestId),
+      : admitGitHubRepositoryWriteIdentifier(record.providerRequestId),
     requestSha256: exactSha256(record.requestSha256),
     verifiedAt,
     authorizesRetry: false,
@@ -217,7 +227,7 @@ function admitError(value: unknown): NonNullable<GitHubRepositoryWriteReceipt["e
     throw invalidReceipt();
   }
   return {
-    code: exactIdentifier(record.code),
+    code: admitGitHubRepositoryWriteIdentifier(record.code),
     retry: record.retry,
   };
 }
@@ -364,16 +374,6 @@ function exactBranchRef(value: unknown): string {
       || segment.endsWith(".")
       || segment.endsWith(".lock")
     )
-  ) {
-    throw invalidReceipt();
-  }
-  return text;
-}
-
-function exactIdentifier(value: unknown): string {
-  const text = exactAscii(value, 240);
-  if (
-    !/^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,238}[A-Za-z0-9])?$/u.test(text)
   ) {
     throw invalidReceipt();
   }
