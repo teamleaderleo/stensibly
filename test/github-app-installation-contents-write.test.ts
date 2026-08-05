@@ -138,7 +138,7 @@ describe("GitHub App contents write installation tokens", () => {
     expect(mintCalls).toBe(2);
   });
 
-  test("keeps every unrelated installation permission read-only", async () => {
+  test("keeps metadata installation permission read-only", async () => {
     let mintCalls = 0;
     const provider = minter((async () => {
       mintCalls += 1;
@@ -146,11 +146,11 @@ describe("GitHub App contents write installation tokens", () => {
     }) as unknown as typeof fetch);
     const invalid = {
       repositoryFullName,
-      permission: { name: "actions", access: "write" },
+      permission: { name: "metadata", access: "write" },
     } as unknown as GitHubInstallationTokenRequest;
 
     await expect(provider.getInstallationToken(invalid)).rejects.toThrow(
-      "GitHub installation permission actions supports read access only",
+      "GitHub installation permission metadata supports read access only",
     );
     expect(mintCalls).toBe(0);
   });
