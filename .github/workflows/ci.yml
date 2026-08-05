@@ -5,6 +5,15 @@ on:
     branches:
       - main
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+      - converted_to_draft
+      - ready_for_review
+      - closed
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -44,11 +53,138 @@ permissions:
   contents: read
 
 jobs:
+  red-control:
+    name: red-control-non-authorizing
+    if: >-
+      ${{ github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control') }}
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PR_HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact red-control classification and fence
+        run: |
+          set -euo pipefail
+          if [[ ! "${PR_HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${PR_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Red-control revision identity is invalid." >&2
+            exit 1
+          fi
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "${actual_sha}" != "${PR_HEAD_SHA}" ]]; then
+            echo "Red-control checkout does not match the pull-request head." >&2
+            exit 1
+          fi
+          parent="$(printf '%s\n' "${PR_BODY}" | sed -nE 's/^Red-control parent:[[:space:]]*#([1-9][0-9]*)[[:space:]]*$/\1/p' | head -n 1)"
+          declared_fence="$(printf '%s\n' "${PR_BODY}" | sed -nE 's/^Red-control fence SHA-256:[[:space:]]*([0-9a-f]{64})[[:space:]]*$/\1/p' | head -n 1)"
+          if ! printf '%s\n' "${PR_BODY}" | grep -Eiq '^Merge independently:[[:space:]]*no[[:space:]]*$'; then
+            echo "Red-control PRs must declare 'Merge independently: no'." >&2
+            exit 1
+          fi
+          if [[ -z "${parent}" ]]; then
+            echo "Red-control PRs must name one absorbing parent as 'Red-control parent: #<number>'." >&2
+            exit 1
+          fi
+          if [[ -z "${declared_fence}" ]]; then
+            echo "Red-control PRs must declare the exact changed-path fence digest." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin "${PR_BASE_SHA}"
+          merge_base="$(git merge-base "${PR_BASE_SHA}" "${PR_HEAD_SHA}")"
+          if [[ ! "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Red-control merge-base identity is invalid." >&2
+            exit 1
+          fi
+          git diff --name-only --diff-filter=ACDMR "${merge_base}" "${PR_HEAD_SHA}" \
+            | LC_ALL=C sort > red-control-fence.txt
+          if [[ ! -s red-control-fence.txt ]]; then
+            echo "Red-control PR has an empty changed-path fence." >&2
+            exit 1
+          fi
+          if grep -Eq '^\.github/workflows/' red-control-fence.txt; then
+            echo "A red-control child cannot modify GitHub workflow files that could emit check contexts." >&2
+            exit 1
+          fi
+          actual_fence="$(sha256sum red-control-fence.txt | cut -d' ' -f1)"
+          if [[ "${actual_fence}" != "${declared_fence}" ]]; then
+            echo "Red-control changed-path fence differs from the declared digest." >&2
+            exit 1
+          fi
+          printf '%s\n' "${parent}" > red-control-parent.txt
+          printf '%s\n' "${merge_base}" > red-control-merge-base.txt
+          printf '%s\n' "${actual_fence}" > red-control-fence.sha256
+      - name: Build non-authorizing red-control receipt
+        run: |
+          set -euo pipefail
+          parent="$(cat red-control-parent.txt)"
+          merge_base="$(cat red-control-merge-base.txt)"
+          fence_sha256="$(cat red-control-fence.sha256)"
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          jq -n \
+            --arg schemaVersion "stensibly-ci-red-control-receipt/1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg pullRequest "${PR_NUMBER}" \
+            --arg sourceRevision "${PR_HEAD_SHA}" \
+            --arg baseRevision "${PR_BASE_SHA}" \
+            --arg mergeBaseRevision "${merge_base}" \
+            --arg absorbingParent "${parent}" \
+            --arg fenceSha256 "${fence_sha256}" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg runUrl "${RUN_URL}" \
+            --arg completedAt "${completed_at}" \
+            '{
+              schemaVersion: $schemaVersion,
+              repository: $repository,
+              pullRequest: $pullRequest,
+              sourceRevision: $sourceRevision,
+              baseRevision: $baseRevision,
+              mergeBaseRevision: $mergeBaseRevision,
+              classification: "red_control",
+              absorbingParent: $absorbingParent,
+              changedPathFenceSha256: $fenceSha256,
+              expectedOutcome: "red",
+              authorizesMerge: false,
+              authorizesMutation: false,
+              run: {
+                id: $runId,
+                attempt: $runAttempt,
+                url: $runUrl
+              },
+              completedAt: $completedAt
+            }' > red-control-receipt.json
+          sha256sum red-control-receipt.json > red-control-receipt.sha256
+      - name: Upload non-authorizing red-control receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: red-control-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            red-control-receipt.json
+            red-control-receipt.sha256
+            red-control-fence.txt
+            red-control-merge-base.txt
+          if-no-files-found: error
+          retention-days: 30
+
   browser-evidence:
     if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
+      ${{ (github.event_name != 'pull_request' ||
+      (github.event.action != 'closed' &&
+      !(github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
+      ((github.event_name != 'workflow_dispatch' &&
       github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
+      inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -102,9 +238,13 @@ jobs:
 
   test:
     if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
+      ${{ (github.event_name != 'pull_request' ||
+      (github.event.action != 'closed' &&
+      !(github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
+      ((github.event_name != 'workflow_dispatch' &&
       github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
+      inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -174,9 +314,13 @@ jobs:
 
   runtime-parity:
     if: >-
-      ${{ (github.event_name != 'workflow_dispatch' &&
+      ${{ (github.event_name != 'pull_request' ||
+      (github.event.action != 'closed' &&
+      !(github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
+      ((github.event_name != 'workflow_dispatch' &&
       github.event_name != 'workflow_call') ||
-      inputs.validation_profile == 'full_parallel' }}
+      inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -336,7 +480,12 @@ jobs:
   validation-receipt:
     name: exact-ref-validation-receipt
     needs: [browser-evidence, test, runtime-parity, serial-full]
-    if: ${{ always() }}
+    if: >-
+      ${{ always() &&
+      (github.event_name != 'pull_request' ||
+      (github.event.action != 'closed' &&
+      !(github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) }}
     runs-on: ubuntu-latest
     env:
       SOURCE_REVISION: >-
