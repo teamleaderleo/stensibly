@@ -1,3 +1,4 @@
+import { exactBooleanEnv } from "./exact-boolean-env.js";
 import {
   GitHubAppInstallationTokenMinter,
 } from "./github-app-installation-token.js";
@@ -139,7 +140,7 @@ export function hostedGitHubIssueProviderConfigured(
 function hostedGitHubIssueProviderConfig(
   env: Record<string, string | undefined>,
 ): HostedGitHubIssueProviderConfig | null {
-  const issueWritesEnabled = optionalBooleanEnv(
+  const issueWritesEnabled = exactBooleanEnv(
     env,
     "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED",
   );
@@ -378,16 +379,6 @@ function canonicalRequest<T extends GitHubProviderRequestContext>(input: T): T {
     ...input,
     repository: normalizeGitHubRepository(input.repository).toLowerCase(),
   };
-}
-
-function optionalBooleanEnv(
-  env: Record<string, string | undefined>,
-  key: string,
-): boolean {
-  const value = env[key];
-  if (value === undefined || value === "" || value === "false") return false;
-  if (value === "true") return true;
-  throw new Error(`${key} must be exact true or false`);
 }
 
 function hostedProjectSlug(value: string): string {

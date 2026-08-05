@@ -1,3 +1,4 @@
+import { exactBooleanEnv } from "./exact-boolean-env.js";
 import {
   GitHubAppInstallationTokenMinter,
 } from "./github-app-installation-token.js";
@@ -192,15 +193,11 @@ export function hostedGitHubDelegatedReadProviderConfigured(
 function hostedGitHubDelegatedReadConfig(
   env: Record<string, string | undefined>,
 ): HostedGitHubDelegatedReadConfig | null {
-  const enabled = env.STENSIBLY_GITHUB_DELEGATED_READS_ENABLED;
-  if (enabled === undefined || enabled === "" || enabled === "false") {
-    return null;
-  }
-  if (enabled !== "true") {
-    throw new Error(
-      "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED must be exact true or false",
-    );
-  }
+  const enabled = exactBooleanEnv(
+    env,
+    "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED",
+  );
+  if (!enabled) return null;
 
   const appId = requiredEnv(env, "STENSIBLY_GITHUB_APP_ID");
   const privateKeyPem = requiredEnv(
@@ -223,7 +220,7 @@ function hostedGitHubDelegatedReadConfig(
   ).toLowerCase();
   const apiBaseUrl = trimmed(env.STENSIBLY_GITHUB_API_BASE_URL)
     ?? "https://api.github.com";
-  const jobDetailReadsEnabled = optionalBooleanEnv(
+  const jobDetailReadsEnabled = exactBooleanEnv(
     env,
     "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED",
   );
@@ -385,18 +382,6 @@ function exactAuthorityEnv(
     );
   }
   return value;
-}
-
-function optionalBooleanEnv(
-  env: Record<string, string | undefined>,
-  key: string,
-): boolean {
-  const value = env[key];
-  if (value === undefined || value === "" || value === "false") {
-    return false;
-  }
-  if (value === "true") return true;
-  throw new Error(`${key} must be exact true or false`);
 }
 
 function requiredEnv(
