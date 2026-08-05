@@ -13,7 +13,7 @@ const browserJob = workflow.match(
   /\n  browser-evidence:\n([\s\S]*?)\n  test:\n/u,
 )?.[1];
 const serialJob = workflow.match(
-  /\n  serial-full:\n([\s\S]*)$/u,
+  /\n  serial-full:\n([\s\S]*?)\n  red-control-receipt:\n/u,
 )?.[1];
 const serialDiagnostics = serialJob?.match(
   /\n      - name: Upload serial full diagnostics\n([\s\S]*)$/u,
@@ -56,7 +56,7 @@ describe("CI browser evidence profile", () => {
     expect(browserJob).toContain("github.event_name != 'workflow_dispatch' &&");
     expect(browserJob).toContain("github.event_name != 'workflow_call'");
     expect(browserJob).toContain("inputs.validation_profile == 'full_parallel'");
-    expect(browserJob).toContain('"${GITHUB_SHA}" != "${EXPECTED_SHA}"');
+    expect(browserJob).toContain('\"${GITHUB_SHA}\" != \"${EXPECTED_SHA}\"');
     expect(browserJob).toContain("bunx playwright install --with-deps chromium");
     expect(browserJob).toContain("frontend-browser-evidence-${{ github.sha }}");
     expect(browserJob).toContain("steps.browser-test.outcome == 'success'");
