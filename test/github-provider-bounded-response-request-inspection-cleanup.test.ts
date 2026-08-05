@@ -26,7 +26,9 @@ describe("GitHub provider response request-inspection cleanup", () => {
         listener: EventListenerOrEventListenerObject,
       ) {
         expect(type).toBe("abort");
-        expect(listener).toBe(activeListener);
+        expect(listener).toBe(
+          activeListener as EventListenerOrEventListenerObject,
+        );
         removeCalls += 1;
         activeListener = null;
       },
@@ -48,7 +50,7 @@ describe("GitHub provider response request-inspection cleanup", () => {
       (async () => {
         fetchCalls += 1;
         return new Response("unexpected");
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
       60_000,
     );
 
