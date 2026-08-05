@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.PR_HEAD_SHA }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify exact red-control classification and fence
         run: |
@@ -99,15 +99,20 @@ jobs:
             echo "Red-control PRs must declare the exact changed-path fence digest." >&2
             exit 1
           fi
-          git fetch --no-tags --depth=1 origin "${PR_BASE_SHA}"
-          git diff --name-only --diff-filter=ACDMR "${PR_BASE_SHA}" "${PR_HEAD_SHA}" \
+          git fetch --no-tags origin "${PR_BASE_SHA}"
+          merge_base="$(git merge-base "${PR_BASE_SHA}" "${PR_HEAD_SHA}")"
+          if [[ ! "${merge_base}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Red-control merge-base identity is invalid." >&2
+            exit 1
+          fi
+          git diff --name-only --diff-filter=ACDMR "${merge_base}" "${PR_HEAD_SHA}" \
             | LC_ALL=C sort > red-control-fence.txt
           if [[ ! -s red-control-fence.txt ]]; then
             echo "Red-control PR has an empty changed-path fence." >&2
             exit 1
           fi
-          if grep -Fxq '.github/workflows/ci.yml' red-control-fence.txt; then
-            echo "A red-control child cannot modify the canonical CI workflow that classifies it." >&2
+          if grep -Eq '^\.github/workflows/' red-control-fence.txt; then
+            echo "A red-control child cannot modify GitHub workflow files that could emit check contexts." >&2
             exit 1
           fi
           actual_fence="$(sha256sum red-control-fence.txt | cut -d' ' -f1)"
@@ -116,11 +121,13 @@ jobs:
             exit 1
           fi
           printf '%s\n' "${parent}" > red-control-parent.txt
+          printf '%s\n' "${merge_base}" > red-control-merge-base.txt
           printf '%s\n' "${actual_fence}" > red-control-fence.sha256
       - name: Build non-authorizing red-control receipt
         run: |
           set -euo pipefail
           parent="$(cat red-control-parent.txt)"
+          merge_base="$(cat red-control-merge-base.txt)"
           fence_sha256="$(cat red-control-fence.sha256)"
           completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           jq -n \
@@ -129,6 +136,7 @@ jobs:
             --arg pullRequest "${PR_NUMBER}" \
             --arg sourceRevision "${PR_HEAD_SHA}" \
             --arg baseRevision "${PR_BASE_SHA}" \
+            --arg mergeBaseRevision "${merge_base}" \
             --arg absorbingParent "${parent}" \
             --arg fenceSha256 "${fence_sha256}" \
             --arg runId "${GITHUB_RUN_ID}" \
@@ -141,6 +149,7 @@ jobs:
               pullRequest: $pullRequest,
               sourceRevision: $sourceRevision,
               baseRevision: $baseRevision,
+              mergeBaseRevision: $mergeBaseRevision,
               classification: "red_control",
               absorbingParent: $absorbingParent,
               changedPathFenceSha256: $fenceSha256,
@@ -163,6 +172,7 @@ jobs:
             red-control-receipt.json
             red-control-receipt.sha256
             red-control-fence.txt
+            red-control-merge-base.txt
           if-no-files-found: error
           retention-days: 30
 
