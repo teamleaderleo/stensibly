@@ -14,6 +14,8 @@ import {
   principalHasScope,
 } from "./token-contracts.js";
 
+const maximumGitHubIssueNumber = 2_147_483_647;
+
 export interface GitHubIssueProviderReadService {
   listIssues(input: GitHubProviderRequestContext & {
     state?: "open" | "closed" | "all";
@@ -156,7 +158,7 @@ export function registerGitHubIssueProviderTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
       },
       annotations: { readOnlyHint: true },
     },
@@ -198,7 +200,7 @@ export function registerGitHubIssueProviderTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
         expectedSourceRevision: sourceRevisionSchema(),
         title: z.string().trim().min(1).max(256).optional(),
         body: z.string().max(128 * 1024).optional(),
@@ -232,7 +234,7 @@ export function registerGitHubIssueProviderTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
         body: z.string().min(1).max(64 * 1024),
         idempotencyKey: idempotencyKeySchema(),
       },
@@ -397,6 +399,10 @@ function repositorySchema() {
       /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
       "Use a GitHub owner/repository identifier",
     );
+}
+
+function issueNumberSchema() {
+  return z.number().int().min(1).max(maximumGitHubIssueNumber);
 }
 
 function labelSchema() {
