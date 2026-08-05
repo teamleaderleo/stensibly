@@ -22,17 +22,9 @@ describe("GitHub set-write stream work admission", () => {
         cancelled = true;
       },
     });
-    const adapter = new GitHubRestIssueSetWriteAdapter({
-      tokenProvider: tokenProvider(),
-      fetch: (async () => response) as unknown as typeof fetch,
-    });
+    const adapter = adapterFor(response);
 
-    await expectPostEffect(adapter.addIssueLabels({
-      repositoryFullName,
-      issueNumber,
-      labels: ["area:github"],
-      idempotencyKey: "bound-zero-byte-chunk-work",
-    }));
+    await expectPostEffect(addLabels(adapter));
 
     expect(pulls).toBeLessThan(totalChunks);
     expect(cancelled).toBe(true);
@@ -56,25 +48,8 @@ describe("GitHub set-write stream work admission", () => {
         return new Promise<void>(() => {});
       },
     });
-    const adapter = new GitHubRestIssueSetWriteAdapter({
-      tokenProvider: tokenProvider(),
-      fetch: (async () => response) as unknown as typeof fetch,
-    });
 
-    const outcome = await Promise.race([
-      adapter.addIssueLabels({
-        repositoryFullName,
-        issueNumber,
-        labels: ["area:github"],
-        idempotencyKey: "nonblocking-zero-byte-chunk-cancellation",
-      }).then(
-        () => ({ kind: "fulfilled" as const, error: null }),
-        (error: unknown) => ({ kind: "rejected" as const, error }),
-      ),
-      new Promise<{ kind: "timeout"; error: null }>((resolve) => {
-        setTimeout(() => resolve({ kind: "timeout", error: null }), 250);
-      }),
-    ]);
+    const outcome = await boundedOutcome(addLabels(adapterFor(response)));
 
     expect(outcome.kind).toBe("rejected");
     if (outcome.kind !== "rejected") {
@@ -83,6 +58,76 @@ describe("GitHub set-write stream work admission", () => {
     expectPostEffectError(outcome.error);
     expect(cancelCalled).toBe(true);
     expect(pulls).toBeLessThan(totalChunks);
+  });
+
+  test("bounds many one-byte chunks independently of the byte ceiling", async () => {
+    const totalChunks = 10_000;
+    let pulls = 0;
+    let cancelled = false;
+    const response = injectedResponse({
+      async read() {
+        if (pulls >= totalChunks) return { done: true, value: undefined };
+        pulls += 1;
+        return { done: false, value: new Uint8Array([0x20]) };
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expectPostEffect(addLabels(adapterFor(response)));
+
+    expect(pulls).toBeLessThan(totalChunks);
+    expect(cancelled).toBe(true);
+  });
+
+  test("cancels after reader.read rejects", async () => {
+    let cancelled = false;
+    const response = injectedResponse({
+      async read() {
+        throw new Error("provider read failure detail");
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expectPostEffect(addLabels(adapterFor(response)));
+
+    expect(cancelled).toBe(true);
+  });
+
+  test("does not await cancellation after malformed declared length", async () => {
+    let readerRequested = false;
+    let cancelCalled = false;
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        "content-length": "malformed",
+        "x-github-request-id": "REQ-CHUNK-WORK",
+      }),
+      body: {
+        getReader() {
+          readerRequested = true;
+          throw new Error("body must be rejected before reading");
+        },
+        cancel() {
+          cancelCalled = true;
+          return new Promise<void>(() => {});
+        },
+      },
+    } as unknown as Response;
+
+    const outcome = await boundedOutcome(addLabels(adapterFor(response)));
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind !== "rejected") {
+      throw new Error("Declared-length disposal did not settle through fixed ambiguity");
+    }
+    expectPostEffectError(outcome.error);
+    expect(readerRequested).toBe(false);
+    expect(cancelCalled).toBe(true);
   });
 });
 
@@ -116,10 +161,38 @@ function injectedResponse(input: InjectedReaderInput): Response {
   } as unknown as Response;
 }
 
+function adapterFor(response: Response): GitHubRestIssueSetWriteAdapter {
+  return new GitHubRestIssueSetWriteAdapter({
+    tokenProvider: tokenProvider(),
+    fetch: (async () => response) as unknown as typeof fetch,
+  });
+}
+
+function addLabels(adapter: GitHubRestIssueSetWriteAdapter) {
+  return adapter.addIssueLabels({
+    repositoryFullName,
+    issueNumber,
+    labels: ["area:github"],
+    idempotencyKey: "stream-work-admission",
+  });
+}
+
+async function boundedOutcome(promise: Promise<unknown>) {
+  return await Promise.race([
+    promise.then(
+      () => ({ kind: "fulfilled" as const, error: null }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    ),
+    new Promise<{ kind: "timeout"; error: null }>((resolve) => {
+      setTimeout(() => resolve({ kind: "timeout", error: null }), 250);
+    }),
+  ]);
+}
+
 async function expectPostEffect(promise: Promise<unknown>): Promise<void> {
   try {
     await promise;
-    throw new Error("Expected excessive chunk work to require reconciliation");
+    throw new Error("Expected excessive stream work to require reconciliation");
   } catch (error) {
     expectPostEffectError(error);
   }
