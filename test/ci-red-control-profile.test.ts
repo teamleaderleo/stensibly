@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 const workflowPath = fileURLToPath(
   new URL("../.github/workflows/ci.yml", import.meta.url),
 );
+const guidePath = fileURLToPath(
+  new URL("../docs/red-control-ci.md", import.meta.url),
+);
 const workflow = readFileSync(workflowPath, "utf8");
+const guide = readFileSync(guidePath, "utf8");
 
 const redControlJob = section("  red-control:", "  browser-evidence:");
 const browserJob = section("  browser-evidence:", "  test:");
@@ -108,6 +112,19 @@ describe("red-control CI profile", () => {
     expect(testJob).toContain("bun run test:convex");
     expect(testJob).toContain("bun run worker:check");
     expect(runtimeJob).toContain("bun run test:runtime-parity");
+  });
+
+  test("documents evidence meaning, operator declarations, and parent recovery", () => {
+    expect(guide).toContain("A red-control receipt proves");
+    expect(guide).toContain("authorizesMerge: false");
+    expect(guide).toContain("authorizesMutation: false");
+    expect(guide).toContain("never proves integration eligibility");
+    expect(guide).toContain("Merge independently: no");
+    expect(guide).toContain("Red-control parent: #<number>");
+    expect(guide).toContain("Red-control fence SHA-256: <digest>");
+    expect(guide).toContain("changes no file below `.github/workflows/`");
+    expect(guide).toContain("Run the complete canonical topology");
+    expect(guide).toContain("Close the child without merging it independently");
   });
 });
 
