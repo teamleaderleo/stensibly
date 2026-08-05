@@ -1,4 +1,4 @@
-name: Ember 1129 edited trigger repair
+name: Oriole 1129 edited trigger generator
 
 on:
   pull_request:
@@ -9,27 +9,27 @@ permissions:
   contents: write
 
 concurrency:
-  group: ember-1129-edited-trigger-repair
+  group: oriole-1129-edited-trigger-generator
   cancel-in-progress: false
 
 jobs:
-  repair:
+  generate:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ember/1128-edited-trigger-repair
+          ref: oriole/1129-edited-trigger-generator
           fetch-depth: 0
           persist-credentials: true
       - uses: oven-sh/setup-bun@v2
-      - name: Verify exact carrier head
+      - name: Verify exact generator lineage
         env:
           EXPECTED_SOURCE: 207813cc0ab7c9eb1aa5dcd6c1f3a41cc9328dbd
           CARRIER: .github/workflows/ember-1129-edited-trigger-repair.yml
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$EXPECTED_SOURCE"
+          test "$(git rev-parse HEAD^^)" = "$EXPECTED_SOURCE"
           test "$(git diff --name-only "$EXPECTED_SOURCE" HEAD)" = "$CARRIER"
       - name: Add description edit validation
         run: |
@@ -67,17 +67,19 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile
           bun test test/ci-red-control-profile.test.ts test/ci-exact-ref-validation-receipt.test.ts
-      - name: Publish workflow-free repair
+      - name: Publish generated blobs at safe paths
         env:
-          BRANCH: ember/1128-edited-trigger-repair
+          BRANCH: oriole/1129-edited-trigger-generator
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          rm .github/workflows/ember-1129-edited-trigger-repair.yml
+          mkdir -p tmp/oriole-1129
+          cp .github/workflows/ci.yml tmp/oriole-1129/ci.yml
+          git restore .github/workflows/ci.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/ci.yml docs/red-control-ci.md test/ci-red-control-profile.test.ts .github/workflows/ember-1129-edited-trigger-repair.yml
+          git add tmp/oriole-1129/ci.yml docs/red-control-ci.md test/ci-red-control-profile.test.ts
           git diff --cached --check
-          git commit -m "Validate red-control description edits"
+          git commit -m "Generate red-control edited-trigger repair blobs"
           git push --force-with-lease=refs/heads/${BRANCH}:${EXPECTED_HEAD} origin HEAD:refs/heads/${BRANCH}
