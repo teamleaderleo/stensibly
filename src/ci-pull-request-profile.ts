@@ -63,10 +63,10 @@ const inputKeys = [
 const maximumBodyBytes = 65_536;
 const maximumLabels = 100;
 const maximumLabelLength = 100;
-const repositoryPattern = /^[a-z0-9](?:[a-z0-9._-]{0,99})\/[a-z0-9](?:[a-z0-9._-]{0,99})$/u;
 const commitPattern = /^[0-9a-f]{40}$/u;
 const parentPrefix = "absorbing-parent:";
 const parentPattern = /^absorbing-parent: #([1-9][0-9]{0,9})$/u;
+const credentialPattern = /(?:^|[._:/-])(?:(?:env|secret):\/\/|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-)/iu;
 
 export function compileCiPullRequestProfileV1(value: unknown): CiPullRequestProfileDecisionV1 {
   const input = exactRecord(value, inputKeys, "CI pull request profile input");
@@ -243,8 +243,29 @@ function stringArray(
 }
 
 function repositoryName(value: unknown): string {
-  if (typeof value !== "string" || !repositoryPattern.test(value)) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 201 ||
+    value.trim() !== value ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
+    credentialPattern.test(value)
+  ) {
+    throw new RangeError("CI repository is invalid");
+  }
+  if (value !== value.toLowerCase()) {
     throw new RangeError("CI repository must be an exact lowercase owner/name identity");
+  }
+  const [owner, name, extra] = value.split("/");
+  if (
+    extra !== undefined ||
+    owner === undefined ||
+    name === undefined ||
+    owner.includes("--") ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/u.test(owner) ||
+    !/^[a-z0-9](?:[a-z0-9_.-]{0,99})$/u.test(name)
+  ) {
+    throw new RangeError("CI repository is invalid");
   }
   return value;
 }
