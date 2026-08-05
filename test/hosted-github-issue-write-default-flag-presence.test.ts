@@ -31,6 +31,6 @@ describe("hosted GitHub issue-write flag presence", () => {
 
     expect(() => hostedGitHubIssueProviderConfigured({
       [writeFlag]: "true",
-    })).toThrow("STENSIBLY_GITHUB_APP_ID is required");
+    })).toThrow("Hosted GitHub issue provider requires STENSIBLY_GITHUB_APP_ID");
   });
 });
