@@ -6,7 +6,6 @@ on:
       - juniper/1020-atomic-publication-controls
     paths:
       - .github/workflows/lark-1083-coherent-tree-controls.yml
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  repair:
+  publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -26,17 +25,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact test-only carrier
+      - name: Verify exact carrier head
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-        shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "a9ea8aa50017f761d5e7f1e859438a5d031cdd37"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          test "$(git rev-parse HEAD^)" = "057565703a7c28ad0b52561fb14e4f7eb1c6ce55"
 
-      - name: Align controls on one recursive immutable-tree protocol
-        shell: bash
+      - name: Align both controls on recursive immutable trees
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -50,7 +47,6 @@ jobs:
 ''',
               '''        url: recursiveTreeUrl(parentTreeSha),
 ''',
-              1,
             ),
             (
               '''    const preflight = recorded.find((request) =>
@@ -63,7 +59,6 @@ jobs:
     );
     expect(preflight?.url).toBe(recursiveTreeUrl(parentTreeSha));
 ''',
-              1,
             ),
             (
               '''    if (method === "GET" && url === `${contentUrl()}?ref=${parentSha}`) {
@@ -101,7 +96,6 @@ jobs:
       });
     }
 ''',
-              1,
             ),
             (
               '''function treeCollectionUrl(): string {
@@ -128,13 +122,12 @@ function blobUrl(sha: string): string {
   return `${blobCollectionUrl()}/${sha}`;
 }
 ''',
-              1,
             ),
           ]
-          for before, after, count in replacements:
-            if text.count(before) != count:
-              raise SystemExit(f"atomic publication control anchor changed: {before[:60]!r}")
-            text = text.replace(before, after, count)
+          for before, after in replacements:
+            if text.count(before) != 1:
+              raise SystemExit("atomic publication control anchor changed")
+            text = text.replace(before, after)
           publication.write_text(text)
 
           mode = Path("test/github-rest-repository-write-atomic-mode-preservation.test.ts")
@@ -145,14 +138,12 @@ function blobUrl(sha: string): string {
 ''',
               '''      url: recursiveTreeUrl(parentTreeSha),
 ''',
-              1,
             ),
             (
               '''    if (method === "GET" && url === treeUrl(parentTreeSha)) {
 ''',
               '''    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
 ''',
-              1,
             ),
             (
               '''function treeUrl(sha: string): string {
@@ -171,33 +162,34 @@ function recursiveTreeUrl(sha: string): string {
 
 function treeCollectionUrl(): string {
 ''',
-              1,
             ),
           ]
-          for before, after, count in replacements:
-            if text.count(before) != count:
-              raise SystemExit(f"atomic mode control anchor changed: {before[:60]!r}")
-            text = text.replace(before, after, count)
+          for before, after in replacements:
+            if text.count(before) != 1:
+              raise SystemExit("atomic mode control anchor changed")
+            text = text.replace(before, after)
           mode.write_text(text)
           PY
           git diff --check
-          test "$(git diff --name-only | sort)" = "$(printf '%s\n' \
+          test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
             test/github-rest-repository-write-atomic-mode-preservation.test.ts \
-            test/github-rest-repository-write-atomic-publication.test.ts | sort)"
+            test/github-rest-repository-write-atomic-publication.test.ts | LC_ALL=C sort)"
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Validate test source without authorizing implementation
-        shell: bash
+      - name: Bundle red controls without executing them
         run: |
           set -euo pipefail
           bun install --frozen-lockfile
-          bun run typecheck
+          bun build \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            --target=bun \
+            --outdir=/tmp/atomic-red-controls
 
-      - name: Publish corrected red controls only
+      - name: Publish workflow-free red controls
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-        shell: bash
         run: |
           set -euo pipefail
           rm .github/workflows/lark-1083-coherent-tree-controls.yml
@@ -210,6 +202,6 @@ function treeCollectionUrl(): string {
           git diff --cached --check
           git commit -m "Align atomic controls on recursive immutable trees"
           git fetch origin refs/heads/juniper/1020-atomic-publication-controls:refs/remotes/origin/juniper/1020-atomic-publication-controls
-          test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-publication-controls)" = "$EXPECTED_HEAD"
-          git push --force-with-lease=refs/heads/juniper/1020-atomic-publication-controls:$EXPECTED_HEAD \
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-publication-controls)" = "${EXPECTED_HEAD}"
+          git push --force-with-lease=refs/heads/juniper/1020-atomic-publication-controls:${EXPECTED_HEAD} \
             origin HEAD:refs/heads/juniper/1020-atomic-publication-controls
