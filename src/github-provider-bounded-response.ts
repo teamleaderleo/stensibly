@@ -613,6 +613,7 @@ function createDeadline(
         externalSignal.addEventListener("abort", forwardAbort, { once: true });
       }
     } catch {
+      if (context.expired) return context;
       finishDeadline(context);
       throw new GitHubProviderResponseReadError();
     }
