@@ -35,14 +35,21 @@ export function registerGitHubIssueProviderSetWriteTools(
       },
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async (input) => asToolResult(async () => admitGitHubProviderReceipt(
-      await setWriteService(ledger).addIssueLabels({
-        ...providerContext(context, input.project, input.repository),
-        issueNumber: input.issueNumber,
-        labels: input.labels,
-        idempotencyKey: input.idempotencyKey,
-      }),
-    )),
+    async (input) => asToolResult(async () => {
+      const requestContext = providerContext(
+        context,
+        input.project,
+        input.repository,
+      );
+      return admitGitHubProviderReceipt(
+        await setWriteService(ledger).addIssueLabels({
+          ...requestContext,
+          issueNumber: input.issueNumber,
+          labels: input.labels,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      );
+    }),
   );
 
   server.registerTool(
@@ -58,14 +65,21 @@ export function registerGitHubIssueProviderSetWriteTools(
       },
       annotations: { destructiveHint: true, idempotentHint: true },
     },
-    async (input) => asToolResult(async () => admitGitHubProviderReceipt(
-      await setWriteService(ledger).removeIssueLabel({
-        ...providerContext(context, input.project, input.repository),
-        issueNumber: input.issueNumber,
-        label: input.label,
-        idempotencyKey: input.idempotencyKey,
-      }),
-    )),
+    async (input) => asToolResult(async () => {
+      const requestContext = providerContext(
+        context,
+        input.project,
+        input.repository,
+      );
+      return admitGitHubProviderReceipt(
+        await setWriteService(ledger).removeIssueLabel({
+          ...requestContext,
+          issueNumber: input.issueNumber,
+          label: input.label,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      );
+    }),
   );
 
   server.registerTool(
@@ -81,14 +95,21 @@ export function registerGitHubIssueProviderSetWriteTools(
       },
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async (input) => asToolResult(async () => admitGitHubProviderReceipt(
-      await setWriteService(ledger).addIssueAssignees({
-        ...providerContext(context, input.project, input.repository),
-        issueNumber: input.issueNumber,
-        assignees: input.assignees,
-        idempotencyKey: input.idempotencyKey,
-      }),
-    )),
+    async (input) => asToolResult(async () => {
+      const requestContext = providerContext(
+        context,
+        input.project,
+        input.repository,
+      );
+      return admitGitHubProviderReceipt(
+        await setWriteService(ledger).addIssueAssignees({
+          ...requestContext,
+          issueNumber: input.issueNumber,
+          assignees: input.assignees,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      );
+    }),
   );
 
   server.registerTool(
@@ -104,14 +125,21 @@ export function registerGitHubIssueProviderSetWriteTools(
       },
       annotations: { destructiveHint: true, idempotentHint: true },
     },
-    async (input) => asToolResult(async () => admitGitHubProviderReceipt(
-      await setWriteService(ledger).removeIssueAssignees({
-        ...providerContext(context, input.project, input.repository),
-        issueNumber: input.issueNumber,
-        assignees: input.assignees,
-        idempotencyKey: input.idempotencyKey,
-      }),
-    )),
+    async (input) => asToolResult(async () => {
+      const requestContext = providerContext(
+        context,
+        input.project,
+        input.repository,
+      );
+      return admitGitHubProviderReceipt(
+        await setWriteService(ledger).removeIssueAssignees({
+          ...requestContext,
+          issueNumber: input.issueNumber,
+          assignees: input.assignees,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      );
+    }),
   );
 }
 
