@@ -65,5 +65,6 @@ jobs:
         with:
           name: ember-1130-edited-trigger-repair-${{ github.run_id }}
           path: repair
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
