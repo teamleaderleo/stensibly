@@ -127,7 +127,10 @@ describe("orchestrator activity observation", () => {
     for (const sourceId of [
       `event_github_pat_${"a".repeat(20)}`,
       `run_stn.tok_${"a".repeat(12)}`,
-      `attempt_sk-proj-${"a".repeat(12)}`,
+      `attempt_sk-proj-${"a".repeat(20)}`,
+      "source_secret://github/app-private-key",
+      "source_env://GITHUB_TOKEN",
+      `source_eyJ${"a".repeat(8)}.eyJ${"b".repeat(8)}.${"c".repeat(8)}`,
       "authorization:token",
     ]) {
       expect(() => compileOrchestratorActivityObservation({
@@ -135,15 +138,23 @@ describe("orchestrator activity observation", () => {
         sourceId,
       })).toThrow("source ID cannot contain credential material");
     }
+
+    const benign = `attempt_sk-proj-${"a".repeat(12)}`;
+    expect(compileOrchestratorActivityObservation({
+      ...validInput(),
+      sourceId: benign,
+    }).sourceId).toBe(benign);
   });
 
-  test("requires dense unique undecorated evidence arrays", () => {
+  test("requires dense unique evidence arrays and discards decorations", () => {
     const decorated = ["receipt_1"] as string[] & { note?: string };
     decorated.note = "must not survive";
-    expect(() => compileOrchestratorActivityObservation({
+    const admitted = compileOrchestratorActivityObservation({
       ...validInput(),
       relatedEvidenceIds: decorated,
-    })).toThrow("must be dense and undecorated");
+    });
+    expect(admitted.relatedEvidenceIds).toEqual(["receipt_1"]);
+    expect(JSON.stringify(admitted)).not.toContain("must not survive");
 
     expect(() => compileOrchestratorActivityObservation({
       ...validInput(),
@@ -183,13 +194,58 @@ describe("orchestrator activity observation", () => {
       ...validInput(),
       activityClass: "completed",
       activityState: "in_progress",
+      providerLifecycle: "accepted",
     })).toThrow("Completed activity must be succeeded");
 
     expect(() => compileOrchestratorActivityObservation({
       ...validInput(),
       activityClass: "blocked",
       activityState: "failed",
+      providerLifecycle: "rejected",
     })).toThrow("Blocked activity must use blocked state");
+  });
+
+  test("binds every provider lifecycle to one deliberate activity state", () => {
+    for (const [providerLifecycle, activityState] of [
+      ["reserved", "observed"],
+      ["dispatched", "in_progress"],
+      ["accepted", "in_progress"],
+      ["verified", "succeeded"],
+      ["rejected", "failed"],
+      ["pending_reconciliation", "ambiguous"],
+    ] as const) {
+      expect(() => compileOrchestratorActivityObservation({
+        ...validInput(),
+        providerLifecycle,
+        activityState,
+      })).not.toThrow();
+    }
+
+    for (const [providerLifecycle, activityState] of [
+      ["reserved", "in_progress"],
+      ["dispatched", "observed"],
+      ["accepted", "succeeded"],
+      ["verified", "failed"],
+      ["rejected", "succeeded"],
+      ["pending_reconciliation", "succeeded"],
+    ] as const) {
+      expect(() => compileOrchestratorActivityObservation({
+        ...validInput(),
+        providerLifecycle,
+        activityState,
+      })).toThrow("Provider lifecycle and activity state are incompatible");
+    }
+  });
+
+  test("requires pending reconciliation for provider-backed reconciliation", () => {
+    expect(() => compileOrchestratorActivityObservation({
+      ...validInput(),
+      activityClass: "reconciliation_required",
+      activityState: "ambiguous",
+      providerLifecycle: "verified",
+    })).toThrow(
+      "Provider-backed reconciliation requires pending reconciliation lifecycle",
+    );
   });
 
   test("rejects noncanonical time, fingerprints, enums, and generations", () => {
