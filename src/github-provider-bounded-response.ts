@@ -90,6 +90,9 @@ export function withGitHubProviderResponseDeadline(
         input,
         init,
       );
+      if (context.expired) {
+        return await context.deadline;
+      }
       const providerCall = Promise.resolve(fetchImplementation(input, {
         ...init,
         signal: context.controller.signal,
