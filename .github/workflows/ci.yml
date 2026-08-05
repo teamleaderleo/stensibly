@@ -9,6 +9,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - edited
       - labeled
       - unlabeled
       - converted_to_draft

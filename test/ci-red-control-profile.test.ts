@@ -23,6 +23,7 @@ describe("red-control CI profile", () => {
       "opened",
       "synchronize",
       "reopened",
+      "edited",
       "labeled",
       "unlabeled",
       "converted_to_draft",
