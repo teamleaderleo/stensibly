@@ -1,4 +1,4 @@
-name: Lark 1150 related evidence prelimit repair
+name: Lark 1150 bounded private activity observation repair
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: lark-1150-related-evidence-prelimit
+  group: lark-1150-bounded-private-observation-repair
   cancel-in-progress: false
 
 jobs:
@@ -33,9 +33,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "666b9215c64b067084a5348af7ff301d5c8298b7"
+          test "$(git rev-parse HEAD^)" = "1e039157a1b579acdcb93ea06d35863c2bc564c6"
 
-      - name: Bound related evidence before caller key enumeration
+      - name: Apply shared privacy and bounded array admission
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +44,24 @@ jobs:
 
           source_path = Path("src/orchestrator-activity-observation.ts")
           source = source_path.read_text()
+
+          import_before = 'import { sha256, stableJson } from "./canonical-json.js";\n'
+          import_after = (
+              'import { sha256, stableJson } from "./canonical-json.js";\n'
+              'import {\n'
+              '  containsRealisticRetainedCredential,\n'
+              '} from "./github-retained-credential-policy.js";\n'
+          )
+          if source.count(import_before) != 1:
+              raise SystemExit("activity observation import anchor changed")
+          source = source.replace(import_before, import_after, 1)
+
+          credential_before = '''const credentialPattern = /(?:github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|sk-(?:proj-)?[A-Za-z0-9_\-]{12,}|stn\.(?:tok|svc)_[A-Za-z0-9._\-]{12,}|xox[baprs]-[A-Za-z0-9\-]{12,}|authorization\s*:)/iu;
+          '''
+          if source.count(credential_before) != 1:
+              raise SystemExit("local credential policy anchor changed")
+          source = source.replace(credential_before, "", 1)
+
           before = '''function identifierArray(value: unknown, label: string): string[] {
             let isArray: boolean;
             let prototype: object | null;
@@ -156,8 +174,22 @@ jobs:
             return admitted.sort(codeUnitCompare);
           }'''
           if source.count(before) != 1:
-            raise SystemExit(f"identifierArray anchor changed: {source.count(before)} matches")
-          source_path.write_text(source.replace(before, after, 1))
+              raise SystemExit(f"identifierArray anchor changed: {source.count(before)} matches")
+          source = source.replace(before, after, 1)
+
+          reject_before = '''function rejectCredential(value: string, label: string): void {
+            if (credentialPattern.test(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+          }'''
+          reject_after = '''function rejectCredential(value: string, label: string): void {
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+          }'''
+          if source.count(reject_before) != 1:
+              raise SystemExit("credential rejection anchor changed")
+          source_path.write_text(source.replace(reject_before, reject_after, 1))
 
           main_test_path = Path("test/orchestrator-activity-observation.test.ts")
           main_test = main_test_path.read_text()
@@ -182,8 +214,47 @@ jobs:
 
             expect(() => compileOrchestratorActivityObservation({'''
           if main_test.count(before_test) != 1:
-            raise SystemExit(f"decorated array test anchor changed: {main_test.count(before_test)} matches")
-          main_test_path.write_text(main_test.replace(before_test, after_test, 1))
+              raise SystemExit(f"decorated array test anchor changed: {main_test.count(before_test)} matches")
+          main_test = main_test.replace(before_test, after_test, 1)
+
+          credential_test_before = '''    for (const sourceId of [
+              `event_github_pat_${"a".repeat(20)}`,
+              `run_stn.tok_${"a".repeat(12)}`,
+              `attempt_sk-proj-${"a".repeat(12)}`,
+              "authorization:token",
+            ]) {
+              expect(() => compileOrchestratorActivityObservation({
+                ...validInput(),
+                sourceId,
+              })).toThrow("source ID cannot contain credential material");
+            }
+          });'''
+          credential_test_after = '''    for (const sourceId of [
+              `event_github_pat_${"a".repeat(20)}`,
+              `run_stn.tok_${"a".repeat(12)}`,
+              `attempt_sk-proj-${"a".repeat(20)}`,
+              "source_secret://github/app-private-key",
+              "source_env://GITHUB_TOKEN",
+              `source_eyJ${"a".repeat(8)}.eyJ${"b".repeat(8)}.${"c".repeat(8)}`,
+              "authorization:token",
+            ]) {
+              expect(() => compileOrchestratorActivityObservation({
+                ...validInput(),
+                sourceId,
+              })).toThrow("source ID cannot contain credential material");
+            }
+
+            const benign = `attempt_sk-proj-${"a".repeat(12)}`;
+            expect(compileOrchestratorActivityObservation({
+              ...validInput(),
+              sourceId: benign,
+            }).sourceId).toBe(benign);
+          });'''
+          if main_test.count(credential_test_before) != 1:
+              raise SystemExit("credential control anchor changed")
+          main_test_path.write_text(
+              main_test.replace(credential_test_before, credential_test_after, 1)
+          )
 
           inspection_path = Path("test/orchestrator-activity-observation-inspection.test.ts")
           inspection = inspection_path.read_text()
@@ -217,7 +288,7 @@ jobs:
             expect(ownKeysCalls).toBe(0);
           });'''
           if inspection.count(before_inspection) != 1:
-            raise SystemExit(f"prelimit test anchor changed: {inspection.count(before_inspection)} matches")
+              raise SystemExit(f"prelimit test anchor changed: {inspection.count(before_inspection)} matches")
           inspection_path.write_text(inspection.replace(before_inspection, after_inspection, 1))
           PY
           git diff --check
@@ -250,7 +321,7 @@ jobs:
             test/orchestrator-activity-observation-inspection.test.ts \
             .github/workflows/lark-1150-related-evidence-prelimit.yml
           git diff --cached --check
-          git commit -m "Bound related evidence admission before enumeration"
+          git commit -m "Bound and privacy-screen activity observation evidence"
           git fetch origin refs/heads/cedar/1149-activity-observation-contract:refs/remotes/origin/cedar/1149-activity-observation-contract
           test "$(git rev-parse refs/remotes/origin/cedar/1149-activity-observation-contract)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/cedar/1149-activity-observation-contract:$EXPECTED_HEAD \
