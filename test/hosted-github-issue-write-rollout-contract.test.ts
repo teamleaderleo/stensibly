@@ -72,7 +72,7 @@ describe("hosted GitHub issue-write rollout contract", () => {
 
     expect(() => hostedGitHubIssueProviderConfigured({
       [writeFlag]: "true",
-    })).toThrow("STENSIBLY_GITHUB_APP_ID is required");
+    })).toThrow("Hosted GitHub issue provider requires STENSIBLY_GITHUB_APP_ID");
 
     expect(() => mountHostedGitHubIssueProviderFromEnv(
       fakeLedger(false),
