@@ -63,10 +63,11 @@ describe("GitHub provider response signal setup cleanup", () => {
     expect(installed).toBeNull();
   });
 
-  test("consumes a synchronous setup abort before a later subscription throw", async () => {
+  test("consumes a synchronous setup abort before request inspection", async () => {
     let fetchCalls = 0;
     let addCalls = 0;
     let removeCalls = 0;
+    let methodReads = 0;
     let installed: EventListenerOrEventListenerObject | null = null;
 
     const signal = {
@@ -99,6 +100,19 @@ describe("GitHub provider response signal setup cleanup", () => {
       },
     } as unknown as AbortSignal;
 
+    const init = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(init, "signal", {
+      value: signal,
+      enumerable: true,
+    });
+    Object.defineProperty(init, "method", {
+      enumerable: true,
+      get() {
+        methodReads += 1;
+        throw new Error("request inspection must not run after setup abort");
+      },
+    });
+
     const wrapped = withGitHubProviderResponseDeadline(
       (async () => {
         fetchCalls += 1;
@@ -109,12 +123,13 @@ describe("GitHub provider response signal setup cleanup", () => {
 
     await expect(wrapped(
       "https://api.github.com/repos/example/project/issues",
-      { signal },
+      init as unknown as RequestInit,
     )).rejects.toBeInstanceOf(GitHubProviderResponseReadError);
 
     expect(fetchCalls).toBe(0);
     expect(addCalls).toBe(1);
     expect(removeCalls).toBe(1);
+    expect(methodReads).toBe(0);
     expect(installed).toBeNull();
   });
 
