@@ -1,0 +1,107 @@
+name: Lark 1022 typed-parent replay
+
+on:
+  push:
+    branches:
+      - juniper/1020-contents-write-token
+    paths:
+      - .github/workflows/lark-1022-typed-parent-replay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1022-typed-parent-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1020-contents-write-token
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier and reviewed child
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "7ef9369c5fe732ea3782743a8faaebe90cc115c9"
+          test "$(git diff --name-only 6704c2c519777fa0f1e499b2cff78e09067de759 7ef9369c5fe732ea3782743a8faaebe90cc115c9 | sort)" = "$(printf '%s\n' \
+            src/github-app-installation-token.ts \
+            src/github-repository-write-installation-token.ts \
+            test/github-app-installation-contents-write.test.ts \
+            test/github-app-installation-token-late-response-admission.test.ts \
+            test/github-app-installation-token-response-lifetime.test.ts \
+            test/github-app-installation-token-response-metadata.test.ts \
+            test/github-app-installation-token-synchronous-fetch.test.ts | sort)"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Replay token packet onto typed admission parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            c428f18b9f208c9fb081c4ce7643bc2b20ddea19 \
+            7ef9369c5fe732ea3782743a8faaebe90cc115c9
+          git reset --hard c428f18b9f208c9fb081c4ce7643bc2b20ddea19
+          git cherry-pick --no-commit 7ef9369c5fe732ea3782743a8faaebe90cc115c9
+          git add \
+            src/github-app-installation-token.ts \
+            src/github-repository-write-installation-token.ts \
+            test/github-app-installation-contents-write.test.ts \
+            test/github-app-installation-token-late-response-admission.test.ts \
+            test/github-app-installation-token-response-lifetime.test.ts \
+            test/github-app-installation-token-response-metadata.test.ts \
+            test/github-app-installation-token-synchronous-fetch.test.ts
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-app-installation-token.ts \
+            src/github-repository-write-installation-token.ts \
+            test/github-app-installation-contents-write.test.ts \
+            test/github-app-installation-token-late-response-admission.test.ts \
+            test/github-app-installation-token-response-lifetime.test.ts \
+            test/github-app-installation-token-response-metadata.test.ts \
+            test/github-app-installation-token-synchronous-fetch.test.ts | sort)"
+          git diff --cached --check
+
+      - name: Validate parent and token packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-app-installation-contents-write.test.ts \
+            test/github-app-installation-token-late-response-admission.test.ts \
+            test/github-app-installation-token-response-lifetime.test.ts \
+            test/github-app-installation-token-response-metadata.test.ts \
+            test/github-app-installation-token-synchronous-fetch.test.ts \
+            test/github-repository-write-full-ref-admission.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/repository-write-fence-object-format.test.ts \
+            test/repository-write-fence.test.ts
+
+      - name: Publish exact one-commit workflow-free replay
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Replay bounded contents tokens on typed admission"
+          test "$(git rev-list --count c428f18b9f208c9fb081c4ce7643bc2b20ddea19..HEAD)" = "1"
+          git fetch origin refs/heads/juniper/1020-contents-write-token:refs/remotes/origin/juniper/1020-contents-write-token
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-contents-write-token)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1020-contents-write-token:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1020-contents-write-token
