@@ -11,15 +11,31 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: rook-987-final-outbound-admission
+  cancel-in-progress: false
+
 jobs:
   repair:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
           ref: lumen/971-unicode-symbol-repair
           fetch-depth: 1
+          persist-credentials: true
+
+      - name: Verify exact carrier head
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          test "$(git rev-parse HEAD^)" = "5f44f1ff1f4525f2ff2128cd89b388b2c0e9c9c4"
+
       - uses: oven-sh/setup-bun@v2
+
       - name: Apply exact reviewed repairs and controls
         shell: bash
         run: |
@@ -30,7 +46,7 @@ jobs:
           git show dc067aeed7a88cd749ffd3bd8a38b34cbfe778b5:src/github-retained-credential-policy.ts > src/github-retained-credential-policy.ts
           git show d6a0dc415c44fce6bc50276ea8dd1a9ec5fc2b70:test/github-outbound-text-preflight-final-credential-policy.test.ts > test/github-outbound-text-preflight-final-credential-policy.test.ts
           git show 6f0e1ec0a04bb33fe128745ab7ca718c9f4e03e7:test/github-outbound-text-preflight-encoded-invalid-identity.test.ts > test/github-outbound-text-preflight-encoded-invalid-identity.test.ts
-          python - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           import re
 
@@ -68,6 +84,19 @@ jobs:
           base = base.replace(
               'realisticCredentialPattern.test(',
               'containsRealisticRetainedCredential(',
+          )
+          base = replace_once(
+              base,
+              '''  const repository = normalizeGitHubRepository(value);
+''',
+              '''  if (containsRealisticRetainedCredential(value)) {
+    throw new RangeError(
+      "GitHub outbound repository identity is credential-shaped",
+    );
+  }
+  const repository = normalizeGitHubRepository(value);
+''',
+              'raw repository privacy precedence',
           )
           base_path.write_text(base)
 
@@ -207,27 +236,61 @@ jobs:
               'route prefix parser',
           )
           wrapper_path.write_text(wrapper)
+
+          test_path = Path('test/github-outbound-text-preflight.test.ts')
+          test_text = test_path.read_text()
+          test_text = replace_once(
+              test_text,
+              'test("rejects sparse, decorated, and accessor-bearing controlled-repository lists", () => {',
+              'test("rejects sparse and accessor-bearing controlled-repository lists while ignoring decorations", () => {',
+              'legacy decorated-array test title',
+          )
+          test_text = replace_once(
+              test_text,
+              '''    expect(() => compileGitHubOutboundTextPreflightV1(input("safe", {
+      policy: policy("reject", decorated),
+    }))).toThrow("dense data entries");
+''',
+              '''    expect(compileGitHubOutboundTextPreflightV1(input("safe", {
+      policy: policy("reject", decorated),
+    })).decision).toBe("pass");
+''',
+              'legacy decorated-array expectation',
+          )
+          test_path.write_text(test_text)
           PY
-      - name: Validate focused outbound packet
+
+          rm .github/workflows/rook-987-final-admission.yml
+          git diff --check
+
+      - name: Validate workflow-free outbound packet
         shell: bash
         run: |
           set -euo pipefail
           bun install --frozen-lockfile
           bun run typecheck
-          bun test test/github-outbound-text-preflight*.test.ts
+          bun test test/github-outbound-text-preflight*.test.ts test/github-workflow-allowlist.test.ts
+
       - name: Publish workflow-free repaired head
         shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
-          rm .github/workflows/rook-987-final-admission.yml
-          git add src/github-retained-credential-policy.ts \
+          git add \
+            src/github-retained-credential-policy.ts \
             src/github-outbound-text-preflight-base.ts \
             src/github-outbound-text-preflight.ts \
+            test/github-outbound-text-preflight.test.ts \
             test/github-outbound-text-preflight-final-credential-policy.test.ts \
             test/github-outbound-text-preflight-encoded-invalid-identity.test.ts \
             .github/workflows/rook-987-final-admission.yml
-          test -n "$(git status --porcelain)"
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only)"
           git config user.name "Rook"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Close final outbound admission gaps"
-          git push origin HEAD:lumen/971-unicode-symbol-repair
+          git fetch origin refs/heads/lumen/971-unicode-symbol-repair:refs/remotes/origin/lumen/971-unicode-symbol-repair
+          test "$(git rev-parse refs/remotes/origin/lumen/971-unicode-symbol-repair)" = "${EXPECTED_HEAD}"
+          git push --force-with-lease=refs/heads/lumen/971-unicode-symbol-repair:${EXPECTED_HEAD} \
+            origin HEAD:refs/heads/lumen/971-unicode-symbol-repair
