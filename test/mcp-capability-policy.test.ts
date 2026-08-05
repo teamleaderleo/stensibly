@@ -17,7 +17,7 @@ describe("MCP capability policy registry", () => {
     const names = mcpCapabilityPolicyRegistry.policies.map((policy) => policy.toolName);
 
     expect(mcpCapabilityPolicyRegistry.version).toBe(1);
-    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(38);
+    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(42);
     expect(names).toEqual([...names].sort());
     expect(new Set(names).size).toBe(names.length);
     expect(mcpCapabilityPolicyRegistry.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -43,8 +43,12 @@ describe("MCP capability policy registry", () => {
       reconciliationPolicy: "none",
     });
     for (const toolName of [
+      "github_add_issue_assignees",
       "github_add_issue_comment",
+      "github_add_issue_labels",
       "github_create_issue",
+      "github_remove_issue_assignees",
+      "github_remove_issue_label",
       "github_update_issue",
     ]) {
       expect(getMcpCapabilityPolicy(toolName)).toMatchObject({
