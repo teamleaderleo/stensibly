@@ -357,10 +357,10 @@
   }
 
   function codeUnitCompare(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
+    return left < right ? -1 : left > right ? 1 : 0;
+  }
 
-function capitalize(value) {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-}
+  function capitalize(value) {
+    return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+  }
 })();
