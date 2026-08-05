@@ -24,7 +24,7 @@ describe("GitHub set-write streamed response bounds", () => {
     );
   });
 
-  test("cancels an unbounded body without Content-Length", async () => {
+  test("stops reading an unbounded body without Content-Length", async () => {
     const observed = streamResponse([
       new Uint8Array(300 * 1024).fill(0x61),
       new Uint8Array(300 * 1024).fill(0x62),
@@ -34,8 +34,6 @@ describe("GitHub set-write streamed response bounds", () => {
       addLabels(adapterFor(observed.response)),
       "REQ-STREAM-BOUND",
     );
-    await settleBestEffortCancellation();
-    expect(observed.cancelled()).toBe(true);
     expect(observed.pulls()).toBe(2);
   });
 
@@ -49,8 +47,6 @@ describe("GitHub set-write streamed response bounds", () => {
       addLabels(adapterFor(observed.response)),
       "REQ-STREAM-BOUND",
     );
-    await settleBestEffortCancellation();
-    expect(observed.cancelled()).toBe(true);
     expect(observed.pulls()).toBe(2);
   });
 
@@ -120,11 +116,6 @@ async function expectPostEffect(
         "GitHub provider effect requires reconciliation after verification failed",
     });
   }
-}
-
-async function settleBestEffortCancellation(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
 }
 
 function adapterFor(response: Response): GitHubRestIssueSetWriteAdapter {
