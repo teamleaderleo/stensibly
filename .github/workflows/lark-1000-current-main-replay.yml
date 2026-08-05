@@ -1,0 +1,133 @@
+name: Lark 1000 current-main replay
+
+on:
+  push:
+    branches:
+      - cicada/962-current-main-merkle-replay
+    paths:
+      - .github/workflows/lark-1000-current-main-replay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1000-current-main-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/962-current-main-merkle-replay
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier and reviewed packet
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "2133eead3af656e43da229ec322d6cc6117839db"
+          test "$(git diff --name-only e4ffc6a44818f62ef3770ccdcd4d5d5707a30bc2 2133eead3af656e43da229ec322d6cc6117839db | sort)" = "$(printf '%s\n' \
+            docs/github-observation-merkle-checkpoints.md \
+            scripts/verify-runtime-parity.mjs \
+            src/github-observation-merkle-checkpoint-base.ts \
+            src/github-observation-merkle-checkpoint.ts \
+            test/github-observation-merkle-checkpoint-admission.test.ts \
+            test/github-observation-merkle-checkpoint-array-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint-array-prelimit.test.ts \
+            test/github-observation-merkle-checkpoint-credentials.test.ts \
+            test/github-observation-merkle-checkpoint-import-boundary.test.ts \
+            test/github-observation-merkle-checkpoint-matrix.test.ts \
+            test/github-observation-merkle-checkpoint-retained-reference-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-route-prefix-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-item-view-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-patch-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-route-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-single-snapshot.test.ts \
+            test/github-observation-merkle-checkpoint.test.ts \
+            test/runtime/observation-merkle-vector.ts | sort)"
+          test "$(git show e4ffc6a44818f62ef3770ccdcd4d5d5707a30bc2:scripts/verify-runtime-parity.mjs | git hash-object --stdin)" = "$(git show 34906ee13d8e880e556faa2fa189eee1583feadb:scripts/verify-runtime-parity.mjs | git hash-object --stdin)"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Replay exact Merkle packet onto current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            34906ee13d8e880e556faa2fa189eee1583feadb \
+            2133eead3af656e43da229ec322d6cc6117839db
+          git reset --hard 34906ee13d8e880e556faa2fa189eee1583feadb
+          git cherry-pick --no-commit e4ffc6a44818f62ef3770ccdcd4d5d5707a30bc2..2133eead3af656e43da229ec322d6cc6117839db
+          rm -f .github/workflows/lark-1000-current-main-replay.yml
+          git add \
+            docs/github-observation-merkle-checkpoints.md \
+            scripts/verify-runtime-parity.mjs \
+            src/github-observation-merkle-checkpoint-base.ts \
+            src/github-observation-merkle-checkpoint.ts \
+            test/github-observation-merkle-checkpoint-admission.test.ts \
+            test/github-observation-merkle-checkpoint-array-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint-array-prelimit.test.ts \
+            test/github-observation-merkle-checkpoint-credentials.test.ts \
+            test/github-observation-merkle-checkpoint-import-boundary.test.ts \
+            test/github-observation-merkle-checkpoint-matrix.test.ts \
+            test/github-observation-merkle-checkpoint-retained-reference-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-route-prefix-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-item-view-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-patch-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-route-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-single-snapshot.test.ts \
+            test/github-observation-merkle-checkpoint.test.ts \
+            test/runtime/observation-merkle-vector.ts
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            docs/github-observation-merkle-checkpoints.md \
+            scripts/verify-runtime-parity.mjs \
+            src/github-observation-merkle-checkpoint-base.ts \
+            src/github-observation-merkle-checkpoint.ts \
+            test/github-observation-merkle-checkpoint-admission.test.ts \
+            test/github-observation-merkle-checkpoint-array-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint-array-prelimit.test.ts \
+            test/github-observation-merkle-checkpoint-credentials.test.ts \
+            test/github-observation-merkle-checkpoint-import-boundary.test.ts \
+            test/github-observation-merkle-checkpoint-matrix.test.ts \
+            test/github-observation-merkle-checkpoint-retained-reference-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-route-prefix-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-item-view-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-patch-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-route-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-single-snapshot.test.ts \
+            test/github-observation-merkle-checkpoint.test.ts \
+            test/runtime/observation-merkle-vector.ts | sort)"
+          git diff --cached --check
+
+      - name: Validate current-main Merkle packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-observation-merkle-checkpoint*.test.ts
+          bun run test:runtime-parity
+
+      - name: Publish exact one-commit workflow-free replay
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Replay bounded observation Merkle packet on current main"
+          test "$(git rev-list --count 34906ee13d8e880e556faa2fa189eee1583feadb..HEAD)" = "1"
+          git fetch origin refs/heads/cicada/962-current-main-merkle-replay:refs/remotes/origin/cicada/962-current-main-merkle-replay
+          test "$(git rev-parse refs/remotes/origin/cicada/962-current-main-merkle-replay)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cicada/962-current-main-merkle-replay:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/cicada/962-current-main-merkle-replay
