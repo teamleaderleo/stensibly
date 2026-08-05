@@ -1,0 +1,90 @@
+name: Lumen 970 public release repair
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'juniper/525-public-label-assignee-writes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Verify exact source leases
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object docs/chatgpt-app-actions.json)" = "043b540dbe1f02e66ccf3d04f2f1c0c68341da8f"
+          test "$(git hash-object docs/chatgpt-app-recovery.md)" = "0e35c343d7702907e90c69467951364f8a87b03d"
+          test "$(git hash-object test/mcp-github-issue-provider-set-writes.test.ts)" = "be69d173e22f5ac36e7c66b676fc1596f1159325"
+
+      - name: Apply exact release and canonical-order repairs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          old_fingerprint = "sha256:b96543225bc17a1ffc6d85c62a4f8637b25cf8c89a19b7f11155f83a85e0ac76"
+          new_fingerprint = "sha256:ea3ecc738b60d9dc69e961774d06fa18f423e0a54ef07d6b57a48f53eead7deb"
+
+          for filename in (
+              "docs/chatgpt-app-actions.json",
+              "docs/chatgpt-app-recovery.md",
+          ):
+              path = Path(filename)
+              text = path.read_text()
+              if text.count(old_fingerprint) != 1:
+                  raise SystemExit(f"unexpected old fingerprint count in {filename}")
+              if new_fingerprint in text:
+                  raise SystemExit(f"new fingerprint already present in {filename}")
+              path.write_text(text.replace(old_fingerprint, new_fingerprint))
+
+          test_path = Path("test/mcp-github-issue-provider-set-writes.test.ts")
+          test_text = test_path.read_text()
+          old_order = 'assignees: ["teamleaderleo", "juniper-bot"],\n          idempotencyKey: "public-assignee-add-1",'
+          new_order = 'assignees: ["juniper-bot", "teamleaderleo"],\n          idempotencyKey: "public-assignee-add-1",'
+          if test_text.count(old_order) != 2:
+              raise SystemExit("unexpected caller/expected assignee order count")
+          first = test_text.find(old_order)
+          second = test_text.find(old_order, first + 1)
+          test_text = test_text[:second] + test_text[second:].replace(old_order, new_order, 1)
+          test_path.write_text(test_text)
+
+      - name: Verify focused repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
+          bun test test/chatgpt-app-actions-snapshot.test.ts test/mcp-github-issue-provider-set-writes.test.ts test/mcp-github-issue-provider-set-write-authority-order.test.ts test/mcp-github-issue-provider-set-write-issue-number.test.ts
+
+      - name: Publish workflow-free head
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-970-public-release-repair.yml
+          mapfile -t changed < <(git status --short | sed -E 's/^.. //' | sort)
+          expected=(
+            docs/chatgpt-app-actions.json
+            docs/chatgpt-app-recovery.md
+            test/mcp-github-issue-provider-set-writes.test.ts
+            .github/workflows/lumen-970-public-release-repair.yml
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected_sorted[@]}")"
+          git config user.name "Lumen"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/chatgpt-app-actions.json docs/chatgpt-app-recovery.md test/mcp-github-issue-provider-set-writes.test.ts .github/workflows/lumen-970-public-release-repair.yml
+          git commit -m "Refresh public GitHub set-write release proof"
+          git push origin "HEAD:${HEAD_REF}"
