@@ -15,6 +15,8 @@ export interface OrchestratorActivityIngestionInput {
 export interface OrchestratorActivityIngestionReceipt {
   schemaVersion: 1;
   receiptId: string;
+  workspace: string;
+  project: string;
   deliveryId: string;
   deliveryFingerprint: string;
   requestFingerprint: string;
@@ -51,6 +53,7 @@ const requiredInputFields = [
   "observation",
 ] as const;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,239}$/u;
+const scopeSlugPattern = /^[a-z0-9][a-z0-9_\-]{0,79}$/u;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/u;
 
 /**
@@ -78,12 +81,19 @@ export class InMemoryOrchestratorActivityIngestionStore {
       throw new Error("Accepted time cannot precede observed time");
     }
 
+    const deliveryKey = scopedDeliveryKey(
+      observation.workspace,
+      observation.project,
+      deliveryId,
+    );
     const requestFingerprint = sha256(stableJson({
+      workspace: observation.workspace,
+      project: observation.project,
       deliveryId,
       deliveryFingerprint,
       observationFingerprint: observation.observationFingerprint,
     }));
-    const existingDelivery = this.#deliveries.get(deliveryId);
+    const existingDelivery = this.#deliveries.get(deliveryKey);
     if (existingDelivery) {
       if (existingDelivery.requestFingerprint !== requestFingerprint) {
         throw new Error("Orchestrator activity delivery identity conflict");
@@ -125,6 +135,8 @@ export class InMemoryOrchestratorActivityIngestionStore {
 
     const receiptPayload = {
       schemaVersion: 1 as const,
+      workspace: canonicalObservation.workspace,
+      project: canonicalObservation.project,
       deliveryId,
       deliveryFingerprint,
       requestFingerprint,
@@ -142,7 +154,7 @@ export class InMemoryOrchestratorActivityIngestionStore {
       ...receiptPayload,
       receiptId,
     });
-    this.#deliveries.set(deliveryId, Object.freeze({
+    this.#deliveries.set(deliveryKey, Object.freeze({
       requestFingerprint,
       receipt,
       observation: canonicalObservation,
@@ -166,14 +178,30 @@ export class InMemoryOrchestratorActivityIngestionStore {
   }
 
   getReceipt(
+    workspace: unknown,
+    project: unknown,
     deliveryId: unknown,
   ): OrchestratorActivityIngestionReceipt | null {
-    const admitted = identifier(deliveryId, "delivery ID");
-    return this.#deliveries.get(admitted)?.receipt ?? null;
+    const admittedWorkspace = scopeSlug(workspace, "workspace");
+    const admittedProject = scopeSlug(project, "project");
+    const admittedDeliveryId = identifier(deliveryId, "delivery ID");
+    return this.#deliveries.get(scopedDeliveryKey(
+      admittedWorkspace,
+      admittedProject,
+      admittedDeliveryId,
+    ))?.receipt ?? null;
   }
 
-  listObservations(): readonly OrchestratorActivityObservation[] {
-    return Object.freeze([...this.#observations.values()]);
+  listObservations(
+    workspace: unknown,
+    project: unknown,
+  ): readonly OrchestratorActivityObservation[] {
+    const admittedWorkspace = scopeSlug(workspace, "workspace");
+    const admittedProject = scopeSlug(project, "project");
+    return Object.freeze([...this.#observations.values()].filter(
+      (observation) => observation.workspace === admittedWorkspace
+        && observation.project === admittedProject,
+    ));
   }
 
   get deliveryCount(): number {
@@ -183,6 +211,14 @@ export class InMemoryOrchestratorActivityIngestionStore {
   get observationCount(): number {
     return this.#observations.size;
   }
+}
+
+function scopedDeliveryKey(
+  workspace: string,
+  project: string,
+  deliveryId: string,
+): string {
+  return stableJson([workspace, project, deliveryId]);
 }
 
 function exactInputRecord(value: unknown): Record<string, unknown> {
@@ -229,6 +265,16 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
     }
   }
   return record;
+}
+
+function scopeSlug(value: unknown, label: string): string {
+  if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+  if (containsRealisticRetainedCredential(value)) {
+    throw new Error(`${label} cannot contain credential material`);
+  }
+  return value;
 }
 
 function identifier(value: unknown, label: string): string {
