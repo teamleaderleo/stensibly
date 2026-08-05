@@ -27,7 +27,9 @@ describe("GitHub provider response signal setup cleanup", () => {
         listener: EventListenerOrEventListenerObject,
       ) {
         expect(type).toBe("abort");
-        expect(listener).toBe(installed);
+        expect(listener).toBe(
+          installed as EventListenerOrEventListenerObject,
+        );
         removeCalls += 1;
         installed = null;
       },
@@ -37,7 +39,7 @@ describe("GitHub provider response signal setup cleanup", () => {
       (async () => {
         fetchCalls += 1;
         return new Response("unexpected");
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
       120_000,
     );
 
@@ -75,7 +77,7 @@ describe("GitHub provider response signal setup cleanup", () => {
       (async () => {
         fetchCalls += 1;
         return new Response("unexpected");
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
       120_000,
     );
 
