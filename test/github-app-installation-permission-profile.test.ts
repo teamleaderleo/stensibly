@@ -106,9 +106,9 @@ describe("GitHub App installation permission profiles", () => {
 
     await expect(minter.getInstallationToken({
       repositoryFullName,
-      permission: { name: "contents", access: "write" },
+      permission: { name: "metadata", access: "write" },
     } as unknown as GitHubInstallationTokenRequest)).rejects.toThrow(
-      "contents supports read access only",
+      "metadata supports read access only",
     );
 
     await expect(minter.getInstallationToken({
