@@ -310,6 +310,45 @@ describe("GitHub issue provider write composition", () => {
       });
       expect(tooManyLabels.isError).toBe(true);
       expect(calls).toHaveLength(3);
+
+      const invalidAssignee = await client.callTool({
+        name: "github_create_issue",
+        arguments: {
+          project,
+          repository,
+          title: "must not dispatch",
+          assignees: ["invalid_login"],
+          idempotencyKey: "invalid-assignee",
+        },
+      });
+      expect(invalidAssignee.isError).toBe(true);
+      expect(calls).toHaveLength(3);
+
+      const duplicateLabels = await client.callTool({
+        name: "github_create_issue",
+        arguments: {
+          project,
+          repository,
+          title: "must not dispatch",
+          labels: ["area:github", "area:github"],
+          idempotencyKey: "duplicate-labels",
+        },
+      });
+      expect(duplicateLabels.isError).toBe(true);
+      expect(calls).toHaveLength(3);
+
+      const duplicateAssignees = await client.callTool({
+        name: "github_create_issue",
+        arguments: {
+          project,
+          repository,
+          title: "must not dispatch",
+          assignees: ["TeamLeaderLeo", "teamleaderleo"],
+          idempotencyKey: "duplicate-assignees",
+        },
+      });
+      expect(duplicateAssignees.isError).toBe(true);
+      expect(calls).toHaveLength(3);
     } finally {
       await client.close();
       await server.close();
