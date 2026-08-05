@@ -55,6 +55,11 @@ describe("Work Pulse frontend lab", () => {
 
   test("renders literal responsibility, attention, evidence, and recovery concepts", () => {
     expect(app).toContain('Object.getOwnPropertyDescriptor(globalThis, globalName)');
+    expect(app).toContain('Object.getOwnPropertyDescriptor(api, "parseFrontendLabFixture")');
+    expect(app).toContain("Reflect.apply(");
+    expect(app).toContain("Object.isFrozen(fixture)");
+    expect(app).toContain("codeUnitCompare(left.id, right.id)");
+    expect(app).not.toContain("localeCompare");
     expect(app).toContain('"Waiting and recoverable"');
     expect(app).toContain('"Moving now"');
     expect(app).toContain('"External effects"');

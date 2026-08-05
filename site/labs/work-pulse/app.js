@@ -27,8 +27,23 @@
     if (!fixtureDescriptor || !("value" in fixtureDescriptor)) {
       throw new Error("The shared Labs fixture is unavailable");
     }
+    const parserDescriptor = Object.getOwnPropertyDescriptor(api, "parseFrontendLabFixture");
+    if (
+      !parserDescriptor
+      || !("value" in parserDescriptor)
+      || typeof parserDescriptor.value !== "function"
+    ) {
+      throw new Error("The shared Labs fixture parser is unavailable");
+    }
 
-    const fixture = fixtureDescriptor.value;
+    const fixture = Reflect.apply(
+      parserDescriptor.value,
+      undefined,
+      [fixtureDescriptor.value],
+    );
+    if (!fixture || typeof fixture !== "object" || !Object.isFrozen(fixture)) {
+      throw new Error("The shared Labs fixture parser returned an incompatible result");
+    }
     app.replaceChildren(renderWorkPulse(fixture, scenario));
     app.setAttribute("aria-busy", "false");
   } catch (error) {
@@ -250,7 +265,7 @@
       }
     }
 
-    return items.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+    return items.sort((left, right) => left.priority - right.priority || codeUnitCompare(left.id, right.id));
   }
 
   function emptyView() {
@@ -341,7 +356,11 @@
     return "default";
   }
 
-  function capitalize(value) {
-    return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-  }
+  function codeUnitCompare(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function capitalize(value) {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
 })();
