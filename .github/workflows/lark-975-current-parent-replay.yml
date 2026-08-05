@@ -1,0 +1,107 @@
+name: Lark 975 current-parent replay
+
+on:
+  push:
+    branches:
+      - lynx/973-context-acceptance-composer
+    paths:
+      - .github/workflows/lark-975-current-parent-replay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-975-current-parent-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lynx/973-context-acceptance-composer
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier and reviewed child
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "abc3406c990bb335190ec1c71ad46dc3853ea435"
+          test "$(git diff --name-only dc067aeed7a88cd749ffd3bd8a38b34cbfe778b5 abc3406c990bb335190ec1c71ad46dc3853ea435 | sort)" = "$(printf '%s\n' \
+            src/github-provider-context-acceptance-composer.ts \
+            test/github-provider-context-acceptance-composer-binding-final-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-enum-coercion.test.ts \
+            test/github-provider-context-acceptance-composer-final-proposal-admission.test.ts \
+            test/github-provider-context-acceptance-composer-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-proposal-chronology.test.ts \
+            test/github-provider-context-acceptance-composer.test.ts | sort)"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Replay exact composer delta onto current parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            5584529ea877019ed85a55bb9ebbcb01ed3f9dad \
+            abc3406c990bb335190ec1c71ad46dc3853ea435
+          git reset --hard 5584529ea877019ed85a55bb9ebbcb01ed3f9dad
+          git cherry-pick --no-commit dc067aeed7a88cd749ffd3bd8a38b34cbfe778b5..abc3406c990bb335190ec1c71ad46dc3853ea435
+          rm -f .github/workflows/lark-975-current-parent-replay.yml
+          git add \
+            src/github-provider-context-acceptance-composer.ts \
+            test/github-provider-context-acceptance-composer-binding-final-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-enum-coercion.test.ts \
+            test/github-provider-context-acceptance-composer-final-proposal-admission.test.ts \
+            test/github-provider-context-acceptance-composer-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-proposal-chronology.test.ts \
+            test/github-provider-context-acceptance-composer.test.ts
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-provider-context-acceptance-composer.ts \
+            test/github-provider-context-acceptance-composer-binding-final-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-enum-coercion.test.ts \
+            test/github-provider-context-acceptance-composer-final-proposal-admission.test.ts \
+            test/github-provider-context-acceptance-composer-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-proposal-chronology.test.ts \
+            test/github-provider-context-acceptance-composer.test.ts | sort)"
+          git diff --cached --check
+
+      - name: Validate parent and composer packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-provider-context-reconciliation-admission.test.ts \
+            test/github-provider-context-reconciliation-current-realistic-privacy.test.ts \
+            test/github-provider-instruction-observation-final-admission.test.ts \
+            test/github-provider-context-acceptance-composer-binding-final-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-enum-coercion.test.ts \
+            test/github-provider-context-acceptance-composer-final-proposal-admission.test.ts \
+            test/github-provider-context-acceptance-composer-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-proposal-chronology.test.ts \
+            test/github-provider-context-acceptance-composer.test.ts
+
+      - name: Publish exact one-commit workflow-free replay
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Replay context acceptance on current reconciliation"
+          test "$(git rev-list --count 5584529ea877019ed85a55bb9ebbcb01ed3f9dad..HEAD)" = "1"
+          git fetch origin refs/heads/lynx/973-context-acceptance-composer:refs/remotes/origin/lynx/973-context-acceptance-composer
+          test "$(git rev-parse refs/remotes/origin/lynx/973-context-acceptance-composer)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/lynx/973-context-acceptance-composer:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/lynx/973-context-acceptance-composer
