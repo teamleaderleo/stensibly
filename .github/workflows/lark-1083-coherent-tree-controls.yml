@@ -33,23 +33,22 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "eca98d3dbcb57ca92905f05e297f7b78b3b71a16"
+          test "$(git rev-parse HEAD^)" = "a9ea8aa50017f761d5e7f1e859438a5d031cdd37"
 
-      - name: Align publication control with immutable-tree mode proof
+      - name: Align controls on one recursive immutable-tree protocol
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("test/github-rest-repository-write-atomic-publication.test.ts")
-          text = path.read_text()
-
+          publication = Path("test/github-rest-repository-write-atomic-publication.test.ts")
+          text = publication.read_text()
           replacements = [
             (
               '''        url: `${contentUrl()}?ref=${parentSha}`,
 ''',
-              '''        url: treeUrl(parentTreeSha),
+              '''        url: recursiveTreeUrl(parentTreeSha),
 ''',
               1,
             ),
@@ -60,9 +59,9 @@ jobs:
     expect(preflight?.url).toBe(`${contentUrl()}?ref=${parentSha}`);
 ''',
               '''    const preflight = recorded.find((request) =>
-      request.method === "GET" && request.url === treeUrl(parentTreeSha)
+      request.method === "GET" && request.url === recursiveTreeUrl(parentTreeSha)
     );
-    expect(preflight?.url).toBe(treeUrl(parentTreeSha));
+    expect(preflight?.url).toBe(recursiveTreeUrl(parentTreeSha));
 ''',
               1,
             ),
@@ -83,7 +82,7 @@ jobs:
       });
     }
 ''',
-              '''    if (method === "GET" && url === treeUrl(parentTreeSha)) {
+              '''    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
       const observedBlobSha = input.observedBlobSha ?? previousBlobSha;
       return Response.json({
         sha: parentTreeSha,
@@ -121,6 +120,10 @@ function treeUrl(sha: string): string {
   return `${treeCollectionUrl()}/${sha}`;
 }
 
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
+}
+
 function blobUrl(sha: string): string {
   return `${blobCollectionUrl()}/${sha}`;
 }
@@ -128,16 +131,59 @@ function blobUrl(sha: string): string {
               1,
             ),
           ]
-
           for before, after, count in replacements:
             if text.count(before) != count:
               raise SystemExit(f"atomic publication control anchor changed: {before[:60]!r}")
             text = text.replace(before, after, count)
+          publication.write_text(text)
 
-          path.write_text(text)
+          mode = Path("test/github-rest-repository-write-atomic-mode-preservation.test.ts")
+          text = mode.read_text()
+          replacements = [
+            (
+              '''      url: treeUrl(parentTreeSha),
+''',
+              '''      url: recursiveTreeUrl(parentTreeSha),
+''',
+              1,
+            ),
+            (
+              '''    if (method === "GET" && url === treeUrl(parentTreeSha)) {
+''',
+              '''    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
+''',
+              1,
+            ),
+            (
+              '''function treeUrl(sha: string): string {
+  return `${repositoryUrl()}/git/trees/${sha}`;
+}
+
+function treeCollectionUrl(): string {
+''',
+              '''function treeUrl(sha: string): string {
+  return `${repositoryUrl()}/git/trees/${sha}`;
+}
+
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
+}
+
+function treeCollectionUrl(): string {
+''',
+              1,
+            ),
+          ]
+          for before, after, count in replacements:
+            if text.count(before) != count:
+              raise SystemExit(f"atomic mode control anchor changed: {before[:60]!r}")
+            text = text.replace(before, after, count)
+          mode.write_text(text)
           PY
           git diff --check
-          test "$(git diff --name-only)" = "test/github-rest-repository-write-atomic-publication.test.ts"
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n' \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts | sort)"
 
       - uses: oven-sh/setup-bun@v2
 
@@ -158,10 +204,11 @@ function blobUrl(sha: string): string {
           git config user.name "Lark"
           git config user.email "actions@users.noreply.github.com"
           git add \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
             test/github-rest-repository-write-atomic-publication.test.ts \
             .github/workflows/lark-1083-coherent-tree-controls.yml
           git diff --cached --check
-          git commit -m "Align atomic publication controls on immutable trees"
+          git commit -m "Align atomic controls on recursive immutable trees"
           git fetch origin refs/heads/juniper/1020-atomic-publication-controls:refs/remotes/origin/juniper/1020-atomic-publication-controls
           test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-publication-controls)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/juniper/1020-atomic-publication-controls:$EXPECTED_HEAD \
