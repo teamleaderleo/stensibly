@@ -29,6 +29,23 @@ describe("orchestrator activity observation inspection", () => {
       .toThrow("could not be inspected");
   });
 
+  test("captures the complete input through one caller own-key read", () => {
+    let ownKeysCalls = 0;
+    const observed = new Proxy(input(), {
+      ownKeys(target) {
+        ownKeysCalls += 1;
+        if (ownKeysCalls > 1) {
+          throw new Error("caller keys were enumerated twice");
+        }
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    expect(compileOrchestratorActivityObservation(observed).sourceId)
+      .toBe("event_1149");
+    expect(ownKeysCalls).toBe(1);
+  });
+
   test("rejects hostile evidence-array metadata without invoking element getters", () => {
     let getterCalls = 0;
     const target = ["receipt_1"];
@@ -89,13 +106,25 @@ describe("orchestrator activity observation inspection", () => {
     expect(observation.providerLifecycle).toBeNull();
   });
 
-  test("bounds related evidence before entry admission", () => {
-    expect(() => compileOrchestratorActivityObservation({
-      ...input(),
-      relatedEvidenceIds: Array.from(
+  test("bounds related evidence before caller key enumeration", () => {
+    let ownKeysCalls = 0;
+    const relatedEvidenceIds = new Proxy(
+      Array.from(
         { length: 33 },
         (_, index) => `receipt_${index}`,
       ),
+      {
+        ownKeys(target) {
+          ownKeysCalls += 1;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+
+    expect(() => compileOrchestratorActivityObservation({
+      ...input(),
+      relatedEvidenceIds,
     })).toThrow("list is invalid");
+    expect(ownKeysCalls).toBe(0);
   });
 });
