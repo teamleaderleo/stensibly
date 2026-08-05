@@ -21,7 +21,7 @@ const runtimeParityJob = workflow.match(
   /\n  runtime-parity:\n([\s\S]*?)\n  serial-full:\n/u,
 )?.[1];
 const serialFullJob = workflow.match(
-  /\n  serial-full:\n([\s\S]*)$/u,
+  /\n  serial-full:\n([\s\S]*?)\n  red-control-receipt:\n/u,
 )?.[1];
 const commandMarkers = {
   lockfile: "bun run lockfile:check",
