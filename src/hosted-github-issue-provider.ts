@@ -153,7 +153,10 @@ function hostedGitHubIssueProviderConfig(
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
     "STENSIBLY_GITHUB_API_BASE_URL",
   ] as const;
-  const configured = Boolean(writeFlag)
+  const flagRequestsConfiguration = writeFlag !== undefined
+    && writeFlag !== ""
+    && writeFlag !== "false";
+  const configured = flagRequestsConfiguration
     || keys.some((key) => Boolean(trimmed(env[key])));
   if (!configured) return null;
   const issueWritesEnabled = optionalBooleanEnv(
