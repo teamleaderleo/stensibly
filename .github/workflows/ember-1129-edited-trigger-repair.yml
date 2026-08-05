@@ -6,7 +6,7 @@ on:
       - .github/workflows/ember-1129-edited-trigger-repair.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ember-1129-edited-trigger-repair
@@ -14,24 +14,15 @@ concurrency:
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ember/1128-edited-trigger-repair
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
-      - name: Verify exact carrier head
-        env:
-          EXPECTED_SOURCE: 45b03dab892891a5fbb9343b2ab7d6c395d919db
-          CARRIER: .github/workflows/ember-1129-edited-trigger-repair.yml
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$EXPECTED_SOURCE"
-          test "$(git diff --name-only "$EXPECTED_SOURCE" HEAD)" = "$CARRIER"
-      - name: Add description edit validation
+      - name: Build and verify exact repair files
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -62,22 +53,17 @@ jobs:
           guide.write_text(text.replace(old, new))
           PY
           git diff --check
-      - name: Verify focused contract
-        run: |
-          set -euo pipefail
           bun install --frozen-lockfile
           bun test test/ci-red-control-profile.test.ts test/ci-exact-ref-validation-receipt.test.ts
-      - name: Publish workflow-free repair
-        env:
-          BRANCH: ember/1128-edited-trigger-repair
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          rm .github/workflows/ember-1129-edited-trigger-repair.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/ci.yml docs/red-control-ci.md test/ci-red-control-profile.test.ts .github/workflows/ember-1129-edited-trigger-repair.yml
-          git diff --cached --check
-          git commit -m "Validate red-control description edits"
-          git push --force-with-lease=refs/heads/${BRANCH}:${EXPECTED_HEAD} origin HEAD:refs/heads/${BRANCH}
+          mkdir -p repair/.github/workflows repair/docs repair/test
+          cp .github/workflows/ci.yml repair/.github/workflows/ci.yml
+          cp docs/red-control-ci.md repair/docs/red-control-ci.md
+          cp test/ci-red-control-profile.test.ts repair/test/ci-red-control-profile.test.ts
+          find repair -type f -print0 | sort -z | xargs -0 sha256sum > repair/SHA256SUMS
+      - name: Upload verified repair files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ember-1130-edited-trigger-repair-${{ github.run_id }}
+          path: repair
+          if-no-files-found: error
+          retention-days: 7
