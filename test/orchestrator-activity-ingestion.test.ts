@@ -52,6 +52,8 @@ describe("orchestrator activity ingestion reference", () => {
       observationAppended: true,
       receipt: {
         schemaVersion: 1,
+        workspace: "default",
+        project: "stensibly",
         deliveryId: "delivery_1149_1",
         deliveryFingerprint,
         observationId: result.observation.observationId,
@@ -65,8 +67,10 @@ describe("orchestrator activity ingestion reference", () => {
     expect(result.receipt.requestFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(store.deliveryCount).toBe(1);
     expect(store.observationCount).toBe(1);
-    expect(store.listObservations()).toEqual([result.observation]);
-    expect(store.getReceipt("delivery_1149_1")).toBe(result.receipt);
+    expect(store.listObservations("default", "stensibly"))
+      .toEqual([result.observation]);
+    expect(store.getReceipt("default", "stensibly", "delivery_1149_1"))
+      .toBe(result.receipt);
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.receipt)).toBe(true);
   });
@@ -157,6 +161,37 @@ describe("orchestrator activity ingestion reference", () => {
     expect(store.observationCount).toBe(2);
   });
 
+  test("scopes delivery identity, receipt lookup, and observation listing", () => {
+    const store = new InMemoryOrchestratorActivityIngestionStore();
+    const first = store.ingest(delivery());
+    const second = store.ingest(delivery({
+      deliveryFingerprint: `sha256:${"3".repeat(64)}`,
+      observation: observation({
+        project: "other-project",
+      }),
+    }));
+
+    expect(second.receipt.deliveryId).toBe(first.receipt.deliveryId);
+    expect(second.receipt.project).toBe("other-project");
+    expect(store.deliveryCount).toBe(2);
+    expect(store.observationCount).toBe(2);
+    expect(store.getReceipt("default", "stensibly", "delivery_1149_1"))
+      .toBe(first.receipt);
+    expect(store.getReceipt("default", "other-project", "delivery_1149_1"))
+      .toBe(second.receipt);
+    expect(store.getReceipt("default", "missing", "delivery_1149_1"))
+      .toBeNull();
+    expect(store.listObservations("default", "stensibly"))
+      .toEqual([first.observation]);
+    expect(store.listObservations("default", "other-project"))
+      .toEqual([second.observation]);
+    expect(() => store.getReceipt(
+      "Default",
+      "stensibly",
+      "delivery_1149_1",
+    )).toThrow("workspace is invalid");
+  });
+
   test("requires accepted time at or after observed time", () => {
     const store = new InMemoryOrchestratorActivityIngestionStore();
     expect(() => store.ingest(delivery({
@@ -224,15 +259,16 @@ describe("orchestrator activity ingestion reference", () => {
     }))).toThrow("exact SHA-256 fingerprint");
   });
 
-  test("returns frozen snapshots that cannot mutate store state", () => {
+  test("returns frozen scoped snapshots that cannot mutate store state", () => {
     const store = new InMemoryOrchestratorActivityIngestionStore();
     const first = store.ingest(delivery());
-    const snapshot = store.listObservations();
+    const snapshot = store.listObservations("default", "stensibly");
 
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(() => (snapshot as OrchestratorActivityObservationInput[]).push(
       observation({ sourceId: "other" }),
     )).toThrow();
-    expect(store.listObservations()).toEqual([first.observation]);
+    expect(store.listObservations("default", "stensibly"))
+      .toEqual([first.observation]);
   });
 });
