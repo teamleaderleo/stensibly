@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "226e3dca2dde76cdf8f202862a93465469537cfe"
+          test "$(git rev-parse HEAD^)" = "c30e119a49302996f930f056a456f3f79ae9a5fd"
           test "$(git diff --name-only 0a8996c666b687468441f91e7831c9ecb8dfc0c8 226e3dca2dde76cdf8f202862a93465469537cfe | sort)" = "$(printf '%s\n' \
             src/github-rest-repository-write-adapter.ts \
             test/github-rest-repository-write-adapter.test.ts \
@@ -43,14 +43,14 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Replay reviewed effect delta onto current admission parent
+      - name: Replay reviewed effect delta onto final admission parent
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin \
-            c428f18b9f208c9fb081c4ce7643bc2b20ddea19 \
+            b245f996ba39147587f92c92b2962b8f8bdffaf6 \
             494f89011a6f690a272e75d1163776e9fb5188d4
-          git reset --hard c428f18b9f208c9fb081c4ce7643bc2b20ddea19
+          git reset --hard b245f996ba39147587f92c92b2962b8f8bdffaf6
           git cherry-pick --no-commit 494f89011a6f690a272e75d1163776e9fb5188d4
           python - <<'PY'
           from pathlib import Path
@@ -98,6 +98,7 @@ jobs:
           bun run typecheck
           bun test \
             test/github-repository-write-full-ref-admission.test.ts \
+            test/github-repository-write-repository-dot-segment.test.ts \
             test/github-rest-repository-write-adapter-fence-parity.test.ts \
             test/github-rest-repository-write-adapter.test.ts \
             test/github-rest-repository-write-effect-admission.test.ts \
@@ -115,8 +116,8 @@ jobs:
           set -euo pipefail
           git config user.name "Lumen"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Replay exact repository write effects on current admission"
-          test "$(git rev-list --count c428f18b9f208c9fb081c4ce7643bc2b20ddea19..HEAD)" = "1"
+          git commit -m "Replay exact repository write effects on final admission"
+          test "$(git rev-list --count b245f996ba39147587f92c92b2962b8f8bdffaf6..HEAD)" = "1"
           git fetch origin refs/heads/juniper/1028-clean-effect-admission:refs/remotes/origin/juniper/1028-clean-effect-admission
           test "$(git rev-parse refs/remotes/origin/juniper/1028-clean-effect-admission)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/juniper/1028-clean-effect-admission:$EXPECTED_HEAD \
