@@ -15,6 +15,8 @@ import {
   principalHasScope,
 } from "./token-contracts.js";
 
+const maximumGitHubIssueNumber = 2_147_483_647;
+
 export function registerGitHubIssueProviderSetWriteTools(
   server: McpServer,
   ledger: WorkLedger,
@@ -27,7 +29,7 @@ export function registerGitHubIssueProviderSetWriteTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
         labels: z.array(labelSchema()).min(1).max(100),
         idempotencyKey: idempotencyKeySchema(),
       },
@@ -50,7 +52,7 @@ export function registerGitHubIssueProviderSetWriteTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
         label: labelSchema(),
         idempotencyKey: idempotencyKeySchema(),
       },
@@ -73,7 +75,7 @@ export function registerGitHubIssueProviderSetWriteTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
         assignees: z.array(loginSchema()).min(1).max(10),
         idempotencyKey: idempotencyKeySchema(),
       },
@@ -96,7 +98,7 @@ export function registerGitHubIssueProviderSetWriteTools(
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
-        issueNumber: z.number().int().min(1),
+        issueNumber: issueNumberSchema(),
         assignees: z.array(loginSchema()).min(1).max(10),
         idempotencyKey: idempotencyKeySchema(),
       },
@@ -206,6 +208,10 @@ function repositorySchema() {
       /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
       "Use a GitHub owner/repository identifier",
     );
+}
+
+function issueNumberSchema() {
+  return z.number().int().min(1).max(maximumGitHubIssueNumber);
 }
 
 function labelSchema() {
