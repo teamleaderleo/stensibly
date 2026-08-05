@@ -1,0 +1,401 @@
+name: Lumen 968 request init snapshot repair
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'juniper/525-private-label-assignee-writes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Verify exact carrier and source lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=dfb6b61dfbb1f895d9dc4dec4b58c3093dcd96b3
+          SOURCE=d366b0160355c03ecb8732a857721a3b10a5254d
+          test "$(git rev-parse HEAD^)" = "$SOURCE"
+          test "$(git diff --name-only "$SOURCE" HEAD)" = ".github/workflows/lumen-968-init-snapshot-repair.yml"
+          test "$(git rev-parse "$SOURCE:src/github-provider-bounded-response.ts")" = "541409cd7de3b370b083d1b2df76dc8610a11d0e"
+          test "$(git rev-parse "$SOURCE:test/github-provider-bounded-response-signal-setup-cleanup.test.ts")" = "b1a5c3cb2a91cf87a4c946002bbc07ca8607d63d"
+          git cat-file -e "$BASE^{commit}"
+
+      - name: Apply one-pass RequestInit snapshot repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/github-provider-bounded-response.ts")
+          text = path.read_text()
+
+          old = '''  const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const requestSignal = typeof Request !== "undefined" && input instanceof Request
+              ? input.signal
+              : null;
+            const externalSignal = init?.signal !== undefined
+              ? init.signal
+              : requestSignal;
+            const context = createDeadline(deadlineMs, externalSignal);
+            let providerDispatched = false;
+            try {
+              if (context.expired) {
+                return await context.deadline;
+              }
+              const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
+                input,
+                init,
+              );
+              if (context.expired) {
+                return await context.deadline;
+              }
+              const dispatchInit = {
+                ...init,
+                signal: context.controller.signal,
+              };
+              if (context.expired) {
+                return await context.deadline;
+              }
+          '''
+          new = '''  const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            let externalSignal: AbortSignal | null;
+            try {
+              const explicitSignal = init?.signal;
+              externalSignal = explicitSignal !== undefined
+                ? explicitSignal
+                : typeof Request !== "undefined" && input instanceof Request
+                ? input.signal
+                : null;
+            } catch {
+              throw new GitHubProviderResponseReadError();
+            }
+            const context = createDeadline(deadlineMs, externalSignal);
+            let providerDispatched = false;
+            try {
+              if (context.expired) {
+                return await context.deadline;
+              }
+              const dispatchInit = snapshotRequestInit(
+                init,
+                context.controller.signal,
+              );
+              if (context.expired) {
+                return await context.deadline;
+              }
+              const facadeTextMaximumBytes = maximumFacadeTextBytesForRequest(
+                input,
+                dispatchInit,
+              );
+              if (context.expired) {
+                return await context.deadline;
+              }
+          '''
+          old = "\n".join(line[10:] if line.startswith("          ") else line for line in old.splitlines()) + "\n"
+          new = "\n".join(line[10:] if line.startswith("          ") else line for line in new.splitlines()) + "\n"
+          if text.count(old) != 1:
+              raise SystemExit("wrapped request setup block drifted")
+          text = text.replace(old, new)
+
+          marker = '''function maximumFacadeTextBytesForRequest(
+          '''
+          marker = "\n".join(line[10:] if line.startswith("          ") else line for line in marker.splitlines())
+          helper = '''function snapshotRequestInit(
+            init: RequestInit | undefined,
+            signal: AbortSignal,
+          ): RequestInit {
+            try {
+              const method = init?.method;
+              const snapshot: Record<PropertyKey, unknown> = {};
+              if (
+                init !== undefined
+                && init !== null
+                && (typeof init === "object" || typeof init === "function")
+              ) {
+                for (const key of Reflect.ownKeys(init)) {
+                  if (key === "signal" || key === "method") continue;
+                  const descriptor = Reflect.getOwnPropertyDescriptor(init, key);
+                  if (!descriptor?.enumerable) continue;
+                  Object.defineProperty(snapshot, key, {
+                    value: Reflect.get(init, key, init),
+                    enumerable: true,
+                    configurable: true,
+                    writable: true,
+                  });
+                }
+              }
+              if (init !== undefined && init !== null) {
+                Object.defineProperty(snapshot, "method", {
+                  value: method,
+                  enumerable: true,
+                  configurable: true,
+                  writable: true,
+                });
+              }
+              Object.defineProperty(snapshot, "signal", {
+                value: signal,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+              return snapshot as RequestInit;
+            } catch {
+              throw new GitHubProviderResponseReadError();
+            }
+          }
+
+          '''
+          helper = "\n".join(line[10:] if line.startswith("          ") else line for line in helper.splitlines()) + "\n"
+          if text.count(marker) != 1:
+              raise SystemExit("route helper marker drifted")
+          text = text.replace(marker, helper + marker)
+
+          old_route = '''  if (typeof input === "string") {
+            urlText = input;
+          } else if (input instanceof URL) {
+            urlText = input.toString();
+          } else if (typeof Request !== "undefined" && input instanceof Request) {
+            urlText = input.url;
+            requestMethod = input.method;
+          }
+          if (urlText === null) return maximumSingleIssueFacadeTextBytes;
+
+          const effectiveMethod = (init?.method ?? requestMethod ?? "GET").toUpperCase();
+          '''
+          new_route = '''  try {
+            if (typeof input === "string") {
+              urlText = input;
+            } else if (input instanceof URL) {
+              urlText = input.toString();
+            } else if (typeof Request !== "undefined" && input instanceof Request) {
+              urlText = input.url;
+              requestMethod = input.method;
+            }
+          } catch {
+            throw new GitHubProviderResponseReadError();
+          }
+          if (urlText === null) return maximumSingleIssueFacadeTextBytes;
+
+          const method = init?.method ?? requestMethod ?? "GET";
+          const effectiveMethod = typeof method === "string"
+            ? method.toUpperCase()
+            : "";
+          '''
+          old_route = "\n".join(line[10:] if line.startswith("          ") else line for line in old_route.splitlines()) + "\n"
+          new_route = "\n".join(line[10:] if line.startswith("          ") else line for line in new_route.splitlines()) + "\n"
+          if text.count(old_route) != 1:
+              raise SystemExit("route inspection block drifted")
+          path.write_text(text.replace(old_route, new_route))
+
+      - name: Add exact getter and method-snapshot controls
+        shell: bash
+        run: |
+          cat > test/github-provider-bounded-response-init-single-snapshot.test.ts <<'EOF'
+          import { describe, expect, test } from "bun:test";
+          import {
+            GitHubProviderResponseReadError,
+            withGitHubProviderResponseDeadline,
+          } from "../src/github-provider-bounded-response.ts";
+
+          const issueCollectionUrl =
+            "https://api.github.com/repos/teamleaderleo/stensibly/issues";
+
+          describe("GitHub provider RequestInit single-snapshot admission", () => {
+            test("reads explicit signal once and does not inspect Request.signal when init supplies null", async () => {
+              let signalReads = 0;
+              let requestSignalReads = 0;
+              let fetchCalls = 0;
+              let dispatchedSignal: AbortSignal | null | undefined;
+
+              class HostileRequest extends Request {
+                override get signal(): AbortSignal {
+                  requestSignalReads += 1;
+                  throw new Error("Request.signal must be suppressed by explicit null");
+                }
+              }
+
+              const init = Object.create(null) as Record<string, unknown>;
+              Object.defineProperty(init, "signal", {
+                enumerable: true,
+                get() {
+                  signalReads += 1;
+                  if (signalReads > 1) {
+                    throw new Error("RequestInit.signal was read more than once");
+                  }
+                  return null;
+                },
+              });
+
+              const wrapped = withGitHubProviderResponseDeadline(
+                (async (_input, dispatchInit) => {
+                  fetchCalls += 1;
+                  dispatchedSignal = dispatchInit?.signal;
+                  return emptyResponse();
+                }) as unknown as typeof fetch,
+                120_000,
+              );
+
+              const response = await wrapped(
+                new HostileRequest(issueCollectionUrl),
+                init as unknown as RequestInit,
+              );
+              await expect(response.text()).resolves.toBe("");
+
+              expect(signalReads).toBe(1);
+              expect(requestSignalReads).toBe(0);
+              expect(fetchCalls).toBe(1);
+              expect(dispatchedSignal).toBeInstanceOf(AbortSignal);
+            });
+
+            test("uses one method snapshot for both route admission and provider dispatch", async () => {
+              let methodReads = 0;
+              let dispatchedMethod: unknown;
+
+              const init = Object.create(null) as Record<string, unknown>;
+              Object.defineProperty(init, "method", {
+                enumerable: true,
+                get() {
+                  methodReads += 1;
+                  return methodReads === 1 ? "GET" : "POST";
+                },
+              });
+
+              const wrapped = withGitHubProviderResponseDeadline(
+                (async (_input, dispatchInit) => {
+                  dispatchedMethod = dispatchInit?.method;
+                  return emptyResponse(512 * 1024 + 1);
+                }) as unknown as typeof fetch,
+                120_000,
+              );
+
+              const response = await wrapped(
+                issueCollectionUrl,
+                init as unknown as RequestInit,
+              );
+              await expect(response.text()).resolves.toBe("");
+
+              expect(methodReads).toBe(1);
+              expect(dispatchedMethod).toBe("GET");
+            });
+
+            test("converts a throwing signal getter into the fixed error before dispatch", async () => {
+              let fetchCalls = 0;
+              const init = Object.create(null) as Record<string, unknown>;
+              Object.defineProperty(init, "signal", {
+                get() {
+                  throw new Error("github_pat_must_not_escape");
+                },
+              });
+              const wrapped = withGitHubProviderResponseDeadline(
+                (async () => {
+                  fetchCalls += 1;
+                  return emptyResponse();
+                }) as unknown as typeof fetch,
+                120_000,
+              );
+
+              let observed: unknown;
+              try {
+                await wrapped(issueCollectionUrl, init as unknown as RequestInit);
+              } catch (error) {
+                observed = error;
+              }
+
+              expect(observed).toBeInstanceOf(GitHubProviderResponseReadError);
+              expect((observed as Error).message).toBe(
+                "GitHub provider response could not be read within its bounds",
+              );
+              expect(fetchCalls).toBe(0);
+            });
+
+            test("converts a throwing method getter into the fixed error before dispatch", async () => {
+              let fetchCalls = 0;
+              const init = Object.create(null) as Record<string, unknown>;
+              Object.defineProperty(init, "method", {
+                enumerable: true,
+                get() {
+                  throw new Error("Bearer must-not-escape");
+                },
+              });
+              const wrapped = withGitHubProviderResponseDeadline(
+                (async () => {
+                  fetchCalls += 1;
+                  return emptyResponse();
+                }) as unknown as typeof fetch,
+                120_000,
+              );
+
+              let observed: unknown;
+              try {
+                await wrapped(issueCollectionUrl, init as unknown as RequestInit);
+              } catch (error) {
+                observed = error;
+              }
+
+              expect(observed).toBeInstanceOf(GitHubProviderResponseReadError);
+              expect((observed as Error).message).toBe(
+                "GitHub provider response could not be read within its bounds",
+              );
+              expect(fetchCalls).toBe(0);
+            });
+          });
+
+          function emptyResponse(declaredBytes = 0): Response {
+            return {
+              headers: new Headers({
+                "content-length": String(declaredBytes),
+              }),
+              ok: true,
+              status: 200,
+              body: null,
+            } as unknown as Response;
+          }
+          EOF
+          sed -i 's/^          //' test/github-provider-bounded-response-init-single-snapshot.test.ts
+
+      - name: Verify repaired private packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
+          bun test \
+            test/github-provider-bounded-response-init-single-snapshot.test.ts \
+            test/github-provider-bounded-response-signal-setup-cleanup.test.ts \
+            test/github-provider-bounded-response-request-inspection-cleanup.test.ts \
+            test/github-provider-bounded-response-init-snapshot-abort.test.ts \
+            test/github-provider-bounded-readback-method-limits.test.ts \
+            test/github-provider-bounded-readback-comment-method-precedence.test.ts
+
+      - name: Publish one workflow-free current-main commit
+        shell: bash
+        env:
+          BASE: dfb6b61dfbb1f895d9dc4dec4b58c3093dcd96b3
+          CARRIER_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          rm .github/workflows/lumen-968-init-snapshot-repair.yml
+          git reset --mixed "$BASE"
+          mapfile -t changed < <(git status --short | sed -E 's/^.. //' | sort)
+          test "${#changed[@]}" -eq 40
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^src/')" -eq 10
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^test/')" -eq 30
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^\.github/')" -eq 0
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/github-provider-bounded-response.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'test/github-provider-bounded-response-init-single-snapshot.test.ts'
+          git config user.name "Lumen"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src test
+          git commit -m "Consolidate private GitHub issue mutation settlement"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" origin "HEAD:${HEAD_REF}"
