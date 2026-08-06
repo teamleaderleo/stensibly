@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "2e7dd0b9329ec9915292d450135faac362390826"
+          test "$(git rev-parse HEAD^)" = "455fdf5cec981f417a30b11ab1171f8da1d3037a"
           test "$(git diff --name-only 6704c2c519777fa0f1e499b2cff78e09067de759 cb3a31b83c579ae58d263915fee29851a30ac7d9 | sort)" = "$(printf '%s\n' \
             .github/workflows/morrow-1087-post-effect-service.yml \
             src/github-repository-write-admission.ts \
@@ -160,7 +160,7 @@ jobs:
             test/github-repository-write-post-effect-error-identity.test.ts \
             test/github-repository-write-post-effect-attribution.test.ts \
             test/github-repository-write-full-ref-admission.test.ts \
-            test/github-repository-write-repository-dot-segment.test.ts \
+            test/github-repository-write-repository-segment-admission.test.ts \
             test/github-rest-repository-write-adapter-fence-parity.test.ts \
             test/github-rest-repository-write-provider-url-spelling.test.ts \
             test/repository-write-fence.test.ts
