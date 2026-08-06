@@ -1,0 +1,117 @@
+name: Loom 1135 current-main context acceptance replay
+
+on:
+  push:
+    branches:
+      - sable/975-current-main-replay
+    paths:
+      - .github/workflows/loom-1135-current-main-replay.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: loom-1135-current-main-context-acceptance-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: sable/975-current-main-replay
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier ancestry
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          EXPECTED_MAIN: 286958de6fd954753ffc8c31a3db7d0d9cc9c4f5
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          test "$(git rev-parse HEAD^)" = "${EXPECTED_MAIN}"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Rebuild exact accepted packet on current main
+        shell: bash
+        env:
+          SOURCE_HEAD: 5cf93e2c9165c644b1cf607ec7814295b131d665
+          EXPECTED_MAIN: 286958de6fd954753ffc8c31a3db7d0d9cc9c4f5
+        run: |
+          set -euo pipefail
+          files=(
+            src/github-provider-context-acceptance-composer.ts
+            test/github-provider-context-acceptance-composer-binding-final-privacy.test.ts
+            test/github-provider-context-acceptance-composer-enum-coercion.test.ts
+            test/github-provider-context-acceptance-composer-final-proposal-admission.test.ts
+            test/github-provider-context-acceptance-composer-instruction-set-final-privacy.test.ts
+            test/github-provider-context-acceptance-composer-privacy.test.ts
+            test/github-provider-context-acceptance-composer-proposal-chronology.test.ts
+            test/github-provider-context-acceptance-composer.test.ts
+          )
+
+          git fetch --no-tags origin \
+            refs/heads/archive/1135-stale-carrier-5cf93e2c:refs/remotes/origin/archive/1135-stale-carrier-5cf93e2c
+          test "$(git rev-parse refs/remotes/origin/archive/1135-stale-carrier-5cf93e2c)" = "${SOURCE_HEAD}"
+          git checkout "${SOURCE_HEAD}" -- "${files[@]}"
+
+          test "$(git rev-parse "${SOURCE_HEAD}:src/github-provider-context-acceptance-composer.ts")" = \
+            "4383e418b004b699700f35d42aeebc644a38c37a"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/github-provider-context-acceptance-composer.test.ts")
+          text = path.read_text()
+          old = '''    expect(() => compose(
+              wrongRepository as GitHubProviderContextReconciliationProposalV1,
+              null,
+            )).toThrow("proposal semantics are invalid");'''
+          new = '''    expect(() => compose(
+              wrongRepository as GitHubProviderContextReconciliationProposalV1,
+              null,
+            )).toThrow("external ID is outside the bound repository");'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected one stale mismatch assertion, found {count}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          tar -cf /tmp/1135-packet.tar "${files[@]}"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "${EXPECTED_MAIN}"
+          git reset --hard origin/main
+          tar -xf /tmp/1135-packet.tar
+
+          git add "${files[@]}"
+          git diff --cached --check
+          printf '%s\n' "${files[@]}" | sort > /tmp/expected-files
+          git diff --cached --name-only | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate current-main packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-provider-context-acceptance-composer*.test.ts
+
+      - name: Publish workflow-free one-commit head
+        shell: bash
+        env:
+          EXPECTED_CARRIER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Loom"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Compose GitHub context acceptance on current main"
+          git fetch origin refs/heads/sable/975-current-main-replay:refs/remotes/origin/sable/975-current-main-replay
+          test "$(git rev-parse refs/remotes/origin/sable/975-current-main-replay)" = "${EXPECTED_CARRIER}"
+          git push --force-with-lease=refs/heads/sable/975-current-main-replay:${EXPECTED_CARRIER} \
+            origin HEAD:refs/heads/sable/975-current-main-replay
