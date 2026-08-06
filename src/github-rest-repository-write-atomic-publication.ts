@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GitHubRepositoryWritePayload } from "./github-repository-write-provider-service.js";
 import {
   admitGitObjectId,
@@ -139,11 +140,16 @@ async function readParentTreeEntry(
     treeUrl(repositoryRoot, parentTreeSha),
     "GitHub expected parent tree response URL",
   );
-  if (record.truncated !== false || !Array.isArray(record.tree) || record.tree.length > 100_000) {
+  if (record.truncated !== false) {
     throw invalidResponse("GitHub expected parent tree response was incomplete");
   }
+  const entries = exactArray(
+    record.tree,
+    "GitHub expected parent tree entries",
+    100_000,
+  );
   const matches: Record<string, unknown>[] = [];
-  for (const value of record.tree) {
+  for (const value of entries) {
     const entry = exactRecord(value, "GitHub expected parent tree entry");
     if (entry.path === input.path) matches.push(entry);
   }
@@ -184,6 +190,10 @@ async function createBlob(
     throw new TypeError("Delete repository writes do not create blobs");
   }
   const operation = "create repository blob";
+  const expectedSha = gitBlobObjectId(
+    input.payload.content,
+    input.expectedParentSha.length,
+  );
   const response = await input.request({
     repositoryFullName: input.repositoryFullName,
     access: "write",
@@ -198,8 +208,11 @@ async function createBlob(
   requireStatus(input, response, 201, operation);
   const record = exactRecord(await input.readJson(response, operation), operation);
   const sha = objectId(record.sha, "GitHub repository blob SHA");
-  if (!sameGitObjectFormat(input.expectedParentSha, sha)) {
-    throw invalidResponse("GitHub repository blob mixed object formats");
+  if (
+    !sameGitObjectFormat(input.expectedParentSha, sha)
+    || sha !== expectedSha
+  ) {
+    throw invalidResponse("GitHub repository blob identity changed");
   }
   assertExactUrl(
     record.url,
@@ -352,13 +365,56 @@ function requireStatus(
 }
 
 function exactParents(value: unknown): string[] {
-  if (!Array.isArray(value) || value.length > 16) {
-    throw invalidResponse("GitHub repository commit parents were invalid");
+  return exactArray(value, "GitHub repository commit parents", 16).map(
+    (entry) => {
+      const record = exactRecord(entry, "GitHub repository commit parent");
+      return objectId(record.sha, "GitHub repository commit parent SHA");
+    },
+  );
+}
+
+function exactArray(
+  value: unknown,
+  label: string,
+  maximumLength: number,
+): unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw invalidResponse(`${label} were malformed`);
   }
-  return value.map((entry) => {
-    const record = exactRecord(entry, "GitHub repository commit parent");
-    return objectId(record.sha, "GitHub repository commit parent SHA");
-  });
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw invalidResponse(`${label} were malformed`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const lengthDescriptor = descriptors.length;
+  if (
+    !lengthDescriptor
+    || !("value" in lengthDescriptor)
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0
+    || lengthDescriptor.value > maximumLength
+  ) {
+    throw invalidResponse(`${label} were malformed`);
+  }
+  const length = lengthDescriptor.value as number;
+  const result: unknown[] = [];
+  for (const key of Object.keys(descriptors)) {
+    if (key === "length") continue;
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+      throw invalidResponse(`${label} were malformed`);
+    }
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || index >= length || String(index) !== key) {
+      throw invalidResponse(`${label} were malformed`);
+    }
+  }
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
+      throw invalidResponse(`${label} were malformed`);
+    }
+    result.push(descriptor.value);
+  }
+  return result;
 }
 
 function exactRecord(value: unknown, label: string): Record<string, unknown> {
@@ -390,6 +446,22 @@ function objectId(value: unknown, label: string): string {
   } catch {
     throw invalidResponse(`${label} was invalid`);
   }
+}
+
+function gitBlobObjectId(content: string, objectIdLength: number): string {
+  const bytes = Buffer.from(content, "utf8");
+  const algorithm = objectIdLength === 40
+    ? "sha1"
+    : objectIdLength === 64
+      ? "sha256"
+      : null;
+  if (!algorithm) {
+    throw invalidResponse("GitHub repository object format was invalid");
+  }
+  return createHash(algorithm)
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
 }
 
 function assertExactUrl(value: unknown, expected: URL, label: string): void {
