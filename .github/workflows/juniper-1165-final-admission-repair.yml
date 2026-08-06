@@ -1,0 +1,97 @@
+name: Juniper 1165 final admission repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/juniper-1165-final-admission-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-1165-final-admission-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-post-effect-service
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact repaired admission head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "108c2b74792e0d49750ba7cd43919b75671bad3a"
+
+      - name: Reuse reviewed service patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          carrier = Path(
+            ".github/workflows/juniper-1163-post-effect-service.yml"
+          ).read_text()
+          start_marker = "          python3 - <<'PY'\n"
+          end_marker = "          PY\n"
+          start = carrier.index(start_marker) + len(start_marker)
+          end = carrier.index(end_marker, start)
+          lines = carrier[start:end].splitlines()
+          script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in lines
+          ) + "\n"
+          Path("/tmp/juniper-1165-service.py").write_text(script)
+          PY
+          python3 /tmp/juniper-1165-service.py
+          rm \
+            .github/workflows/juniper-1163-post-effect-service.yml \
+            .github/workflows/juniper-1165-final-admission-repair.yml
+          git add \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-repository-write-provider-service.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts \
+            .github/workflows/juniper-1163-post-effect-service.yml \
+            .github/workflows/juniper-1165-final-admission-repair.yml
+          git diff --cached --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate final admission and service lifecycle
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-repository-write-provider-service.test.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts \
+            test/github-repository-write-repository-segment-admission.test.ts \
+            test/github-repository-write-full-ref-admission.test.ts \
+            test/repository-write-fence.test.ts
+
+      - name: Publish workflow-free service packet
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Juniper"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Retain verified repository post-effect evidence"
+          git fetch origin refs/heads/juniper/1163-post-effect-service:refs/remotes/origin/juniper/1163-post-effect-service
+          test "$(git rev-parse refs/remotes/origin/juniper/1163-post-effect-service)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1163-post-effect-service:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1163-post-effect-service
