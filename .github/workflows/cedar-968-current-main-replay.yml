@@ -59,20 +59,23 @@ jobs:
           import textwrap
 
           text = Path('/tmp/lumen-968.yml').read_text()
-          python_marker = '''      - name: Apply one-pass RequestInit snapshot repair
-                shell: python
-                run: |
-          '''
-          python_marker = textwrap.dedent(python_marker)
+          python_marker = (
+              "      - name: Apply one-pass RequestInit snapshot repair\n"
+              "        shell: python\n"
+              "        run: |\n"
+          )
           start = text.index(python_marker) + len(python_marker)
-          end = text.index('\n      - name: Add exact getter and method-snapshot controls', start)
+          end = text.index(
+              '\n      - name: Add exact getter and method-snapshot controls',
+              start,
+          )
           Path('/tmp/repair.py').write_text(textwrap.dedent(text[start:end]))
 
-          shell_marker = '''      - name: Add exact getter and method-snapshot controls
-                shell: bash
-                run: |
-          '''
-          shell_marker = textwrap.dedent(shell_marker)
+          shell_marker = (
+              "      - name: Add exact getter and method-snapshot controls\n"
+              "        shell: bash\n"
+              "        run: |\n"
+          )
           start = text.index(shell_marker) + len(shell_marker)
           end = text.index('\n      - name: Verify repaired private packet', start)
           Path('/tmp/add-control.sh').write_text(textwrap.dedent(text[start:end]))
