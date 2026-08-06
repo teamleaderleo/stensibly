@@ -23,36 +23,100 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact repaired admission head
+      - name: Verify exact repaired carrier head
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "108c2b74792e0d49750ba7cd43919b75671bad3a"
+          test "$(git rev-parse HEAD^)" = "f5300c5bd2c0afb44f770d21662ed001970c36c6"
 
-      - name: Reuse reviewed service patch
+      - name: Apply verified post-effect service handling
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          carrier = Path(
-            ".github/workflows/juniper-1163-post-effect-service.yml"
-          ).read_text()
-          start_marker = "          python3 - <<'PY'\n"
-          end_marker = "          PY\n"
-          start = carrier.index(start_marker) + len(start_marker)
-          end = carrier.index(end_marker, start)
-          lines = carrier[start:end].splitlines()
-          script = "\n".join(
-            line[10:] if line.startswith("          ") else line
-            for line in lines
-          ) + "\n"
-          Path("/tmp/juniper-1165-service.py").write_text(script)
+          path = Path("src/github-repository-write-provider-service.ts")
+          text = path.read_text()
+          import_before = (
+            'import { sha256, stableJson } from "./canonical-json.js";\n'
+            'import {\n'
+            '  prepareRepositoryWrite,'
+          )
+          import_after = (
+            'import { sha256, stableJson } from "./canonical-json.js";\n'
+            'import {\n'
+            '  GitHubRepositoryWritePostEffectError,\n'
+            '} from "./github-repository-write-post-effect-error.js";\n'
+            'import {\n'
+            '  prepareRepositoryWrite,'
+          )
+          if text.count(import_before) != 1:
+            raise SystemExit("post-effect import source shape changed")
+          text = text.replace(import_before, import_after, 1)
+
+          catch_before = (
+            '    } catch {\n'
+            '      const pending = await this.#hold(\n'
+            '        receiptWithDispatch(receipt),\n'
+            '        "repository_write_provider_outcome_ambiguous",\n'
+            '      );\n'
+            '      throw new GitHubRepositoryWritePendingReconciliationError(pending);\n'
+            '    }\n\n'
+            '    let verified: VerifiedRepositoryWrite;'
+          )
+          catch_after = (
+            '    } catch (error) {\n'
+            '      if (error instanceof GitHubRepositoryWritePostEffectError) {\n'
+            '        let postEffectVerified: VerifiedRepositoryWrite | null = null;\n'
+            '        try {\n'
+            '          postEffectVerified = await verifyRepositoryWriteResult({\n'
+            '            prepared: secondPrepared,\n'
+            '            providerResult: error.result,\n'
+            '            refs: this.#adapter,\n'
+            '            now: this.#now,\n'
+            '          });\n'
+            '        } catch {\n'
+            '          // Invalid or substituted carried evidence remains unverified ambiguity.\n'
+            '        }\n'
+            '        if (postEffectVerified) {\n'
+            '          const dispatched = receiptWithDispatch(receipt);\n'
+            '          let pending = receiptWithVerified(\n'
+            '            dispatched,\n'
+            '            postEffectVerified,\n'
+            '            error.code,\n'
+            '          );\n'
+            '          try {\n'
+            '            pending = await this.#store\n'
+            '              .holdVerifiedRepositoryWriteForReconciliation({\n'
+            '                receipt: dispatched,\n'
+            '                verified: postEffectVerified,\n'
+            '                code: error.code,\n'
+            '                heldAt: exactTimestamp(\n'
+            '                  this.#now(),\n'
+            '                  "Repository write post-effect reconciliation time",\n'
+            '                ),\n'
+            '              });\n'
+            '          } catch {\n'
+            '            // The thrown pending error retains exact admitted evidence.\n'
+            '          }\n'
+            '          throw new GitHubRepositoryWritePendingReconciliationError(pending);\n'
+            '        }\n'
+            '      }\n'
+            '      const pending = await this.#hold(\n'
+            '        receiptWithDispatch(receipt),\n'
+            '        "repository_write_provider_outcome_ambiguous",\n'
+            '      );\n'
+            '      throw new GitHubRepositoryWritePendingReconciliationError(pending);\n'
+            '    }\n\n'
+            '    let verified: VerifiedRepositoryWrite;'
+          )
+          if text.count(catch_before) != 1:
+            raise SystemExit("post-effect catch source shape changed")
+          path.write_text(text.replace(catch_before, catch_after, 1))
           PY
-          python3 /tmp/juniper-1165-service.py
           rm \
             .github/workflows/juniper-1163-post-effect-service.yml \
             .github/workflows/juniper-1165-final-admission-repair.yml
