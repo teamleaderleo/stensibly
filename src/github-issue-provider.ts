@@ -30,6 +30,10 @@ export type {
 export { InMemoryGitHubProviderReceiptStore } from "./github-provider-receipts.js";
 export { GitHubIssueProviderService } from "./github-issue-provider-service.js";
 export {
+  GitHubOutboundTextPreflightError,
+  GitHubOutboundTextPreflightWriteService,
+} from "./github-issue-provider-outbound-text.js";
+export {
   buildScopedGitHubIssueComment as buildGitHubIssueComment,
   buildScopedGitHubIssueContext,
   normalizeGitHubRepository,
