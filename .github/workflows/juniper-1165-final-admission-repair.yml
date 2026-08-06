@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "f5300c5bd2c0afb44f770d21662ed001970c36c6"
+          test "$(git rev-parse HEAD^)" = "5aadffede0956ebfa06ad35d4935c50bbf10587a"
 
       - name: Apply verified post-effect service handling
         shell: bash
@@ -133,16 +133,27 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Validate final admission and service lifecycle
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run strict TypeScript
+        run: bun run typecheck
+
+      - name: Run provider service controls
+        run: bun test test/github-repository-write-provider-service.test.ts
+
+      - name: Run post-effect attribution controls
+        run: bun test test/github-repository-write-post-effect-attribution.test.ts
+
+      - name: Run post-effect admission controls
+        run: bun test test/github-repository-write-post-effect-error-admission.test.ts
+
+      - name: Run post-effect identity controls
+        run: bun test test/github-repository-write-post-effect-error-identity.test.ts
+
+      - name: Run final repository admission controls
         run: |
-          set -euo pipefail
-          bun install --frozen-lockfile
-          bun run typecheck
           bun test \
-            test/github-repository-write-provider-service.test.ts \
-            test/github-repository-write-post-effect-attribution.test.ts \
-            test/github-repository-write-post-effect-error-admission.test.ts \
-            test/github-repository-write-post-effect-error-identity.test.ts \
             test/github-repository-write-repository-segment-admission.test.ts \
             test/github-repository-write-full-ref-admission.test.ts \
             test/repository-write-fence.test.ts
