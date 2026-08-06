@@ -1,0 +1,320 @@
+name: Juniper 1164 landed-tree settlement
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/juniper-1164-landed-tree-settlement.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-1164-landed-tree-settlement
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1164-landed-tree-settlement
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact evidence head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "066f924928d53a0d58c69c724d5f1e1f8d30b8d3"
+
+      - name: Apply response and landed-tree settlement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          adapter = Path("src/github-rest-repository-write-adapter.ts")
+          text = adapter.read_text()
+          before = '''async function readJson(response: Response, operation: string): Promise<unknown> {
+            let text: string;'''
+          after = '''async function readJson(response: Response, operation: string): Promise<unknown> {
+            const declared = response.headers.get("content-length");
+            if (declared !== null) {
+              if (!/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
+                discardGitHubProviderResponse(response);
+                throw invalidResponse(`GitHub ${operation} response length was invalid`);
+              }
+              const declaredBytes = Number(declared);
+              if (
+                !Number.isSafeInteger(declaredBytes)
+                || declaredBytes > maximumResponseBytes
+              ) {
+                discardGitHubProviderResponse(response);
+                throw invalidResponse(
+                  `GitHub ${operation} response exceeded its byte limit`,
+                );
+              }
+            }
+            let text: string;'''
+          if text.count(before) != 1:
+            raise SystemExit("repository response read anchor changed")
+          adapter.write_text(text.replace(before, after, 1))
+
+          atomic = Path("src/github-rest-repository-write-atomic-publication.ts")
+          text = atomic.read_text()
+          import_anchor = '''import type { GitHubRepositoryWritePayload } from "./github-repository-write-provider-service.js";
+          import {'''
+          import_replacement = '''import type { GitHubRepositoryWritePayload } from "./github-repository-write-provider-service.js";
+          import {
+            GitHubRepositoryWritePostEffectError,
+          } from "./github-repository-write-post-effect-error.js";
+          import {'''
+          if text.count(import_anchor) != 1:
+            raise SystemExit("post-effect import anchor changed")
+          text = text.replace(import_anchor, import_replacement, 1)
+
+          length_before = '''  const lengthDescriptor = descriptors.length;
+          if (
+            !lengthDescriptor
+            || !("value" in lengthDescriptor)
+            || !Number.isSafeInteger(lengthDescriptor.value)
+            || lengthDescriptor.value < 0
+            || lengthDescriptor.value > maximumLength
+          ) {
+            throw invalidResponse(`${label} were malformed`);
+          }
+          const length = lengthDescriptor.value as number;'''
+          length_after = '''  const lengthDescriptor = descriptors.length;
+          const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+            ? lengthDescriptor.value
+            : undefined;
+          if (
+            typeof lengthValue !== "number"
+            || !Number.isSafeInteger(lengthValue)
+            || lengthValue < 0
+            || lengthValue > maximumLength
+          ) {
+            throw invalidResponse(`${label} were malformed`);
+          }
+          const length = lengthValue;'''
+          if text.count(length_before) != 1:
+            raise SystemExit("dense-array length anchor changed")
+          text = text.replace(length_before, length_after, 1)
+
+          return_anchor = '''  return await publishRef(input, repositoryRoot, nextCommitSha);
+          }
+
+          async function readParentTreeSha('''
+          return_replacement = '''  const result = await publishRef(input, repositoryRoot, nextCommitSha);
+            try {
+              await settlePublishedEffect(
+                input,
+                repositoryRoot,
+                result,
+                mode,
+              );
+              return result;
+            } catch {
+              throw new GitHubRepositoryWritePostEffectError({
+                code: "repository_write_effect_readback_incomplete",
+                result,
+              });
+            }
+          }
+
+          async function readParentTreeSha('''
+          if text.count(return_anchor) != 1:
+            raise SystemExit("atomic publication return anchor changed")
+          text = text.replace(return_anchor, return_replacement, 1)
+
+          insert_anchor = '''function requireStatus(
+            input: GitHubAtomicRepositoryWriteDependencies,'''
+          settlement = '''async function settlePublishedEffect(
+            input: GitHubAtomicRepositoryWriteDependencies,
+            repositoryRoot: string,
+            result: GitHubAtomicRepositoryWriteResult,
+            expectedMode: "100644" | "100755",
+          ): Promise<void> {
+            const commitOperation = "read published repository commit";
+            const commitResponse = await input.request({
+              repositoryFullName: input.repositoryFullName,
+              access: "read",
+              method: "GET",
+              url: commitUrl(repositoryRoot, result.commitSha),
+              operation: commitOperation,
+            });
+            requireStatus(input, commitResponse, 200, commitOperation);
+            const commit = exactRecord(
+              await input.readJson(commitResponse, commitOperation),
+              commitOperation,
+            );
+            if (objectId(commit.sha, "GitHub published commit SHA") !== result.commitSha) {
+              throw invalidResponse("GitHub published commit identity changed");
+            }
+            assertExactUrl(
+              commit.url,
+              commitUrl(repositoryRoot, result.commitSha),
+              "GitHub published commit URL",
+            );
+            const tree = exactRecord(commit.tree, "GitHub published commit tree");
+            const treeSha = objectId(tree.sha, "GitHub published commit tree SHA");
+            if (!sameGitObjectFormat(result.commitSha, treeSha)) {
+              throw invalidResponse("GitHub published commit tree mixed object formats");
+            }
+            assertExactUrl(
+              tree.url,
+              treeUrl(repositoryRoot, treeSha),
+              "GitHub published commit tree URL",
+            );
+            const parents = exactArray(
+              commit.parents,
+              "GitHub published commit parents",
+              16,
+            );
+            if (parents.length !== 1) {
+              throw invalidResponse("GitHub published commit parent changed");
+            }
+            const parent = exactRecord(parents[0], "GitHub published commit parent");
+            if (objectId(parent.sha, "GitHub published commit parent SHA") !== result.parentSha) {
+              throw invalidResponse("GitHub published commit parent changed");
+            }
+            assertExactUrl(
+              parent.url,
+              commitUrl(repositoryRoot, result.parentSha),
+              "GitHub published commit parent URL",
+            );
+
+            const treeOperation = "read published repository tree";
+            const treeResponse = await input.request({
+              repositoryFullName: input.repositoryFullName,
+              access: "read",
+              method: "GET",
+              url: recursiveTreeUrl(repositoryRoot, treeSha),
+              operation: treeOperation,
+            });
+            requireStatus(input, treeResponse, 200, treeOperation);
+            const publishedTree = exactRecord(
+              await input.readJson(treeResponse, treeOperation),
+              treeOperation,
+            );
+            if (objectId(publishedTree.sha, "GitHub published tree SHA") !== treeSha) {
+              throw invalidResponse("GitHub published tree identity changed");
+            }
+            assertExactUrl(
+              publishedTree.url,
+              treeUrl(repositoryRoot, treeSha),
+              "GitHub published tree URL",
+            );
+            if (publishedTree.truncated !== false) {
+              throw invalidResponse("GitHub published tree response was incomplete");
+            }
+            const entries = exactArray(
+              publishedTree.tree,
+              "GitHub published tree entries",
+              100_000,
+            );
+            const matches: Record<string, unknown>[] = [];
+            for (const value of entries) {
+              const entry = exactRecord(value, "GitHub published tree entry");
+              if (entry.path === input.path) matches.push(entry);
+            }
+            if (input.payload.operation === "delete_file") {
+              if (matches.length !== 0) {
+                throw invalidResponse("GitHub deleted path remained in the published tree");
+              }
+              return;
+            }
+            if (matches.length !== 1) {
+              throw invalidResponse("GitHub published file path changed");
+            }
+            const entry = matches[0]!;
+            const expectedBlobSha = gitBlobObjectId(
+              input.payload.content,
+              result.commitSha.length,
+            );
+            if (
+              entry.mode !== expectedMode
+              || entry.type !== "blob"
+              || objectId(entry.sha, "GitHub published file SHA") !== expectedBlobSha
+              || entry.size !== Buffer.byteLength(input.payload.content, "utf8")
+            ) {
+              throw invalidResponse("GitHub published file effect changed");
+            }
+            assertExactUrl(
+              entry.url,
+              blobUrl(repositoryRoot, expectedBlobSha),
+              "GitHub published file URL",
+            );
+          }
+
+          function requireStatus(
+            input: GitHubAtomicRepositoryWriteDependencies,'''
+          if text.count(insert_anchor) != 1:
+            raise SystemExit("settlement insertion anchor changed")
+          atomic.write_text(text.replace(insert_anchor, settlement, 1))
+
+          tests = Path("test/github-rest-repository-write-response-lifetime.test.ts")
+          text = tests.read_text()
+          replacements = [
+            ('    let signal: AbortSignal | null = null;\n',
+             '    const signal = { value: null as AbortSignal | null };\n'),
+            ('      signal = init?.signal as AbortSignal;\n',
+             '      signal.value = init?.signal as AbortSignal;\n'),
+            ('    expect(signal?.aborted).toBe(true);\n',
+             '    expect(signal.value?.aborted).toBe(true);\n'),
+            ('    let resolveFetch: ((response: Response) => void) | null = null;\n',
+             '    const resolveFetch = { value: null as ((response: Response) => void) | null };\n'),
+            ('      resolveFetch = resolve;\n',
+             '      resolveFetch.value = resolve;\n'),
+            ('    resolveFetch?.(new Response(body, { status: 200 }));\n',
+             '    resolveFetch.value?.(new Response(body, { status: 200 }));\n'),
+          ]
+          for old, new in replacements:
+            if text.count(old) != 1:
+              raise SystemExit("response lifetime test anchor changed")
+            text = text.replace(old, new, 1)
+          tests.write_text(text)
+          PY
+          rm .github/workflows/juniper-1164-landed-tree-settlement.yml
+          git add \
+            src/github-provider-bounded-response.ts \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-rest-repository-write-adapter.ts \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-landed-tree-settlement.test.ts \
+            .github/workflows/juniper-1164-landed-tree-settlement.yml
+          git diff --cached --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate landed-tree settlement packet
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-landed-tree-settlement.test.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-adapter.test.ts
+
+      - name: Publish workflow-free settlement packet
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Juniper"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Verify canonical landed repository tree"
+          git fetch origin refs/heads/juniper/1164-landed-tree-settlement:refs/remotes/origin/juniper/1164-landed-tree-settlement
+          test "$(git rev-parse refs/remotes/origin/juniper/1164-landed-tree-settlement)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1164-landed-tree-settlement:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1164-landed-tree-settlement
