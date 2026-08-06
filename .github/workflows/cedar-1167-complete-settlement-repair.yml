@@ -1,0 +1,176 @@
+name: Cedar 1167 complete settlement repair
+
+on:
+  push:
+    branches:
+      - juniper/1164-landed-tree-settlement
+    paths:
+      - .github/workflows/cedar-1167-complete-settlement-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1167-complete-settlement-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1164-landed-tree-settlement
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact failed carrier head
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "2870aaf67a70c577b8980dae3fb3101622c76a0b"
+
+      - name: Generate complete workflow-free settlement packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          carrier = Path(
+              ".github/workflows/juniper-1164-landed-tree-settlement.yml"
+          ).read_text()
+          start_marker = "          python3 - <<'PY'\n"
+          end_marker = "          PY\n"
+          start = carrier.index(start_marker) + len(start_marker)
+          end = carrier.index(end_marker, start)
+          lines = carrier[start:end].splitlines()
+          script = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in lines
+          ) + "\n"
+          old = '''if text.count(length_before) != 1:
+              raise SystemExit("dense-array length anchor changed")
+          text = text.replace(length_before, length_after, 1)'''
+          new = '''if text.count(length_before) == 1:
+              text = text.replace(length_before, length_after, 1)
+          elif length_after not in text:
+              raise SystemExit("dense-array length admission is neither old nor repaired")'''
+          if script.count(old) != 1:
+              raise SystemExit("dense-array generator guard changed")
+          Path("/tmp/settlement.py").write_text(script.replace(old, new, 1))
+          PY
+          python3 /tmp/settlement.py
+
+          git fetch --no-tags origin bf80e7723d626954742e72b26109681f620855c5
+          git show bf80e7723d626954742e72b26109681f620855c5:test/github-rest-repository-write-publication-response-attribution.test.ts \
+            > test/github-rest-repository-write-publication-response-attribution.test.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-rest-repository-write-atomic-publication.ts")
+          text = path.read_text()
+          before = '''  requireStatus(input, response, 200, operation);
+          const record = exactRecord(await input.readJson(response, operation), operation);
+          if (record.ref !== `refs/heads/${input.targetRef}`) {
+            throw invalidResponse("GitHub published ref identity changed");
+          }
+          const object = exactRecord(record.object, "GitHub published ref object");
+          if (
+            object.type !== "commit"
+            || objectId(object.sha, "GitHub published ref commit SHA") !== commitSha
+          ) {
+            throw invalidResponse("GitHub published ref commit changed");
+          }
+          assertExactUrl(
+            object.url,
+            commitUrl(repositoryRoot, commitSha),
+            "GitHub published ref commit URL",
+          );
+          const providerRequestId = input.admitRequestId(
+            response.headers.get("x-github-request-id"),
+          );
+          return Object.freeze({
+            commitSha,
+            ...(providerRequestId ? { providerRequestId } : {}),
+            targetRef: input.targetRef,
+            parentSha: input.expectedParentSha,
+          });'''
+          after = '''  requireStatus(input, response, 200, operation);
+          const providerRequestId = input.admitRequestId(
+            response.headers.get("x-github-request-id"),
+          );
+          const result = Object.freeze({
+            commitSha,
+            ...(providerRequestId ? { providerRequestId } : {}),
+            targetRef: input.targetRef,
+            parentSha: input.expectedParentSha,
+          });
+          try {
+            const record = exactRecord(
+              await input.readJson(response, operation),
+              operation,
+            );
+            if (record.ref !== `refs/heads/${input.targetRef}`) {
+              throw invalidResponse("GitHub published ref identity changed");
+            }
+            const object = exactRecord(record.object, "GitHub published ref object");
+            if (
+              object.type !== "commit"
+              || objectId(object.sha, "GitHub published ref commit SHA") !== commitSha
+            ) {
+              throw invalidResponse("GitHub published ref commit changed");
+            }
+            assertExactUrl(
+              object.url,
+              commitUrl(repositoryRoot, commitSha),
+              "GitHub published ref commit URL",
+            );
+            return result;
+          } catch {
+            throw new GitHubRepositoryWritePostEffectError({
+              code: "repository_write_effect_readback_incomplete",
+              result,
+            });
+          }'''
+          if text.count(before) != 1:
+              raise SystemExit("published ref attribution anchor changed")
+          path.write_text(text.replace(before, after, 1))
+          PY
+
+          rm -f \
+            .github/workflows/juniper-1164-landed-tree-settlement.yml \
+            .github/workflows/juniper-1167-publication-attribution-repair.yml \
+            .github/workflows/cedar-1167-complete-settlement-repair.yml
+          git add -A
+          git diff --cached --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate complete settlement packet
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-landed-tree-settlement.test.ts \
+            test/github-rest-repository-write-publication-response-attribution.test.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-repository-write-repository-segment-admission.test.ts
+
+      - name: Publish repaired settlement packet
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Verify canonical landed repository tree"
+          git fetch origin refs/heads/juniper/1164-landed-tree-settlement:refs/remotes/origin/juniper/1164-landed-tree-settlement
+          test "$(git rev-parse refs/remotes/origin/juniper/1164-landed-tree-settlement)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1164-landed-tree-settlement:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1164-landed-tree-settlement
