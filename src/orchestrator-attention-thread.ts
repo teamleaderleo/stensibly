@@ -175,6 +175,7 @@ function compileThread(
   lineageObservations: readonly OrchestratorActivityObservation[],
 ): OrchestratorAttentionThread {
   const supports = [...seed.observations].sort(compareObservations);
+  const latestSupport = supports.at(-1)!;
   const supportIds = new Set(supports.map((entry) => entry.observationId));
   const provider = supports[0]!.provider;
   if (!provider) {
@@ -185,7 +186,11 @@ function compileThread(
     .filter((entry) => entry.provider === provider)
     .sort(compareObservations);
   const resolvers = relevantLineage.filter((entry) =>
-    isExactProviderResolver(entry, supportIds, supports.at(-1)!.observedAt)
+    isExactProviderResolver(
+      entry,
+      latestSupport.observationId,
+      latestSupport.observedAt,
+    )
   );
   const resolverIds = new Set(resolvers.map((entry) => entry.observationId));
   const contradictions = relevantLineage.filter((entry) =>
@@ -506,21 +511,19 @@ function observationLineageKey(observation: OrchestratorActivityObservation): st
 function isProviderAmbiguity(
   observation: OrchestratorActivityObservation,
 ): boolean {
-  if (!observation.provider) return false;
-  return observation.activityClass === "reconciliation_required"
-    || observation.providerLifecycle === "pending_reconciliation"
-    || observation.attention.reasonCode === "provider_outcome_ambiguous";
+  return observation.provider !== null
+    && observation.providerLifecycle === "pending_reconciliation"
+    && observation.activityState === "ambiguous";
 }
 
 function isExactProviderResolver(
   observation: OrchestratorActivityObservation,
-  supportIds: ReadonlySet<string>,
+  latestSupportId: string,
   latestSupportTime: string,
 ): boolean {
   return observation.activityState === "succeeded"
     && observation.providerLifecycle === "verified"
-    && observation.causalPredecessorId !== null
-    && supportIds.has(observation.causalPredecessorId)
+    && observation.causalPredecessorId === latestSupportId
     && observation.observedAt >= latestSupportTime;
 }
 
