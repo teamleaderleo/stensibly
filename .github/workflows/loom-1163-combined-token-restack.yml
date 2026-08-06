@@ -1,0 +1,100 @@
+name: Loom 1163 combined-token atomic restack
+
+on:
+  push:
+    branches:
+      - juniper/1020-atomic-git-publication
+    paths:
+      - .github/workflows/loom-1163-combined-token-restack.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: loom-1163-combined-token-atomic-restack
+  cancel-in-progress: false
+
+jobs:
+  restack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1020-atomic-git-publication
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier ancestry
+        shell: bash
+        env:
+          EXPECTED_CARRIER: ${{ github.sha }}
+          CURRENT_TOKEN_PARENT: 61e71c606518e5bf0570ac35f269d8f8252dea71
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CARRIER}"
+          test "$(git rev-parse HEAD^)" = "${CURRENT_TOKEN_PARENT}"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/loom-1163-combined-token-restack.yml"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Rebuild exact atomic packet on combined token parent
+        shell: bash
+        env:
+          SOURCE_HEAD: bd3614400f7ffc0eccd9cb2f1a3d9b0f16de9510
+          CURRENT_TOKEN_PARENT: 61e71c606518e5bf0570ac35f269d8f8252dea71
+        run: |
+          set -euo pipefail
+          files=(
+            src/github-rest-repository-write-adapter.ts
+            src/github-rest-repository-write-atomic-publication.ts
+            test/github-rest-repository-write-adapter-fence-parity.test.ts
+            test/github-rest-repository-write-adapter.test.ts
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts
+            test/github-rest-repository-write-atomic-publication.test.ts
+            test/github-rest-repository-write-provider-url-spelling.test.ts
+          )
+
+          git fetch --no-tags origin \
+            refs/heads/archive/1163-pre-combined-token-bd361440:refs/remotes/origin/archive/1163-pre-combined-token-bd361440
+          test "$(git rev-parse refs/remotes/origin/archive/1163-pre-combined-token-bd361440)" = "${SOURCE_HEAD}"
+          test "$(git rev-parse HEAD^)" = "${CURRENT_TOKEN_PARENT}"
+
+          git checkout "${SOURCE_HEAD}" -- "${files[@]}"
+          git add "${files[@]}"
+          git diff --cached --check
+          printf '%s\n' "${files[@]}" | sort > /tmp/expected-files
+          git diff --cached --name-only | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate combined-parent atomic packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/github-app-installation-broader-write-rights.test.ts \
+            test/github-app-installation-contents-write.test.ts
+
+      - name: Publish workflow-free one-commit atomic head
+        shell: bash
+        env:
+          EXPECTED_CARRIER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Loom"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Publish GitHub repository writes atomically"
+          git fetch origin \
+            refs/heads/juniper/1020-atomic-git-publication:refs/remotes/origin/juniper/1020-atomic-git-publication
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-git-publication)" = \
+            "${EXPECTED_CARRIER}"
+          git push \
+            --force-with-lease=refs/heads/juniper/1020-atomic-git-publication:${EXPECTED_CARRIER} \
+            origin HEAD:refs/heads/juniper/1020-atomic-git-publication
