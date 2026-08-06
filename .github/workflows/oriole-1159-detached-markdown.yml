@@ -29,39 +29,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD:src/project-delta-brief.ts)" = "e21f1019b03e6f0dc5f85594ca4701babcd9d659"
+          test "$(git rev-parse HEAD:src/project-delta-brief.ts)" = "2848f07ffe0c40e14e617a694d82c3da5ad930bb"
           test "$(git rev-parse HEAD:test/project-delta-brief-public-boundary.test.ts)" = "8d859203970fcfd45840732fcac4abc8b17d9e27"
           test -f test/project-delta-brief-input-inspection.test.ts
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Detach Markdown input once
+      - name: Add detached Markdown reversal control
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
-          source = Path("src/project-delta-brief.ts")
-          text = source.read_text()
-          old = '''export function renderProjectDeltaBriefMarkdown(
-            brief: ProjectDeltaBrief,
-          ): string {
-            assertRetainedCredentialFree(brief);
-            return renderProjectDeltaBriefMarkdownBase(brief);
-          }
-          '''
-          new = '''export function renderProjectDeltaBriefMarkdown(
-            brief: ProjectDeltaBrief,
-          ): string {
-            const detached = detachInputGraph(brief) as ProjectDeltaBrief;
-            assertRetainedCredentialFree(detached);
-            return renderProjectDeltaBriefMarkdownBase(detached);
-          }
-          '''
-          if text.count(old) != 1:
-              raise SystemExit("Markdown rendering boundary moved")
-          source.write_text(text.replace(old, new, 1))
 
           test_path = Path("test/project-delta-brief-public-boundary.test.ts")
           test_text = test_path.read_text()
@@ -133,10 +112,9 @@ jobs:
         run: |
           set -euo pipefail
           git rm .github/workflows/oriole-1159-detached-markdown.yml
-          git add src/project-delta-brief.ts \
-            test/project-delta-brief-public-boundary.test.ts
+          git add test/project-delta-brief-public-boundary.test.ts
           git diff --cached --check
           git config user.name "Oriole"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Detach project delta Markdown inputs"
+          git commit -m "Prove detached project delta Markdown inputs"
           git push origin HEAD:lumen/1145-project-delta-brief
