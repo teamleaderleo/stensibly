@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { captureDataMethod } from "./captured-data-method.js";
 import { registerGitHubCapabilityTools } from "./github-capability-mcp.js";
 import type { GitHubIssueContext } from "./github-issue-context.js";
 import type {
@@ -293,9 +294,9 @@ function readService(ledger: WorkLedger): GitHubIssueProviderReadService {
 }
 
 function writeService(ledger: WorkLedger): GitHubIssueProviderWriteService {
-  const createIssue = capturedMethod(ledger, "createIssue");
-  const updateIssue = capturedMethod(ledger, "updateIssue");
-  const addIssueComment = capturedMethod(ledger, "addIssueComment");
+  const createIssue = captureDataMethod(ledger, "createIssue");
+  const updateIssue = captureDataMethod(ledger, "updateIssue");
+  const addIssueComment = captureDataMethod(ledger, "addIssueComment");
   if (!createIssue || !updateIssue || !addIssueComment) {
     throw new Error(
       "GitHub issue provider writes are unavailable because this backend has no enabled provider write service",
@@ -312,7 +313,7 @@ function writeService(ledger: WorkLedger): GitHubIssueProviderWriteService {
 function receiptLookupService(
   ledger: WorkLedger,
 ): GitHubProviderReceiptLookupService {
-  const get = capturedMethod(ledger, "getGitHubProviderReceipt");
+  const get = captureDataMethod(ledger, "getGitHubProviderReceipt");
   if (!get) {
     throw new Error("GitHub provider receipts are unavailable on this backend");
   }
@@ -320,25 +321,6 @@ function receiptLookupService(
     getGitHubProviderReceipt:
       get as GitHubProviderReceiptLookupService["getGitHubProviderReceipt"],
   });
-}
-
-function capturedMethod(
-  value: unknown,
-  name: string,
-): ((...args: unknown[]) => unknown) | null {
-  if (!value || typeof value !== "object") return null;
-  let current: object | null = value;
-  while (current && current !== Object.prototype) {
-    const descriptor = Object.getOwnPropertyDescriptor(current, name);
-    if (descriptor) {
-      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
-        return null;
-      }
-      return (...args: unknown[]) => Reflect.apply(descriptor.value, value, args);
-    }
-    current = Object.getPrototypeOf(current) as object | null;
-  }
-  return null;
 }
 
 function hasReadService(value: unknown): value is WorkLedger & GitHubIssueProviderReadService {
