@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "c30e119a49302996f930f056a456f3f79ae9a5fd"
+          test "$(git rev-parse HEAD^)" = "236500e159800356f33a7de8079496ee7c865261"
           test "$(git diff --name-only 0a8996c666b687468441f91e7831c9ecb8dfc0c8 226e3dca2dde76cdf8f202862a93465469537cfe | sort)" = "$(printf '%s\n' \
             src/github-rest-repository-write-adapter.ts \
             test/github-rest-repository-write-adapter.test.ts \
@@ -98,7 +98,7 @@ jobs:
           bun run typecheck
           bun test \
             test/github-repository-write-full-ref-admission.test.ts \
-            test/github-repository-write-repository-dot-segment.test.ts \
+            test/github-repository-write-repository-segment-admission.test.ts \
             test/github-rest-repository-write-adapter-fence-parity.test.ts \
             test/github-rest-repository-write-adapter.test.ts \
             test/github-rest-repository-write-effect-admission.test.ts \
