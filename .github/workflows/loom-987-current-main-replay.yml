@@ -1,4 +1,4 @@
-name: Loom 987 current-main outbound replay
+name: Loom 987 latest-current-main outbound replay
 
 on:
   push:
@@ -17,22 +17,23 @@ concurrency:
 jobs:
   repair:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
         with:
           ref: lumen/971-unicode-symbol-repair
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact current-main carrier
+      - name: Verify exact stale-carrier lease
+        shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          BASE_SHA: b92a241b3c5ecdf7c75540dd5526f6cd7ee133e1
+          STALE_CARRIER: 7b9923dde54f39f09711171326414ac9c1ed913c
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
-          test "$(git rev-parse HEAD^)" = "${BASE_SHA}"
+          test "$(git rev-parse HEAD^)" = "${STALE_CARRIER}"
 
       - uses: oven-sh/setup-bun@v2
 
@@ -42,11 +43,33 @@ jobs:
           SOURCE_SHA: 5f44f1ff1f4525f2ff2128cd89b388b2c0e9c9c4
           CREDENTIAL_TEST_SHA: d6a0dc415c44fce6bc50276ea8dd1a9ec5fc2b70
           ROUTE_TEST_SHA: 6f0e1ec0a04bb33fe128745ab7ca718c9f4e03e7
+          CURRENT_MAIN: 286958de6fd954753ffc8c31a3db7d0d9cc9c4f5
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin "${SOURCE_SHA}"
-          git fetch --no-tags --depth=1 origin "${CREDENTIAL_TEST_SHA}"
-          git fetch --no-tags --depth=1 origin "${ROUTE_TEST_SHA}"
+          files=(
+            src/github-outbound-text-preflight-base.ts
+            src/github-outbound-text-preflight.ts
+            test/github-outbound-text-preflight.test.ts
+            test/github-outbound-text-preflight-canonical-url-route.test.ts
+            test/github-outbound-text-preflight-closing-keyword-unicode.test.ts
+            test/github-outbound-text-preflight-controlled-repository-array-key-budget.test.ts
+            test/github-outbound-text-preflight-encoded-invalid-identity.test.ts
+            test/github-outbound-text-preflight-final-boundaries.test.ts
+            test/github-outbound-text-preflight-final-credential-policy.test.ts
+            test/github-outbound-text-preflight-import-boundary.test.ts
+            test/github-outbound-text-preflight-percent-encoded-continuation.test.ts
+            test/github-outbound-text-preflight-single-snapshot.test.ts
+            test/github-outbound-text-preflight-unicode-symbol-boundary.test.ts
+            test/github-outbound-text-preflight-url-normalization-bypass.test.ts
+            test/github-outbound-text-preflight-whatwg-url-normalization.test.ts
+          )
+
+          git fetch --no-tags origin \
+            "${SOURCE_SHA}" \
+            "${CREDENTIAL_TEST_SHA}" \
+            "${ROUTE_TEST_SHA}" \
+            main
+          test "$(git rev-parse origin/main)" = "${CURRENT_MAIN}"
 
           git checkout "${SOURCE_SHA}" -- \
             src/github-outbound-text-preflight-base.ts \
@@ -138,7 +161,6 @@ jobs:
               'realisticCredentialPattern.test(',
               'containsRealisticRetainedCredential(',
           )
-
           wrapper = replace_once(
               wrapper,
               '}\n\nconst preflightInputKeys = [',
@@ -150,7 +172,6 @@ jobs:
               '}\n\nconst preflightInputKeys = [',
               'route prefix interface',
           )
-
           wrapper = replace_once(
               wrapper,
               '    if (!isGitHubHostname(parsed.hostname)) continue;\n'
@@ -281,8 +302,14 @@ jobs:
           test_path.write_text(test_text)
           PY
 
-          rm .github/workflows/loom-987-current-main-replay.yml
-          git diff --check
+          tar -cf /tmp/987-packet.tar "${files[@]}"
+          git reset --hard origin/main
+          tar -xf /tmp/987-packet.tar
+          git add "${files[@]}"
+          git diff --cached --check
+          printf '%s\n' "${files[@]}" | LC_ALL=C sort > /tmp/expected-files
+          git diff --cached --name-only | LC_ALL=C sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
 
       - name: Validate workflow-free outbound packet
         shell: bash
@@ -292,44 +319,15 @@ jobs:
           bun run typecheck
           bun test test/github-outbound-text-preflight*.test.ts test/github-workflow-allowlist.test.ts
 
-      - name: Publish one workflow-free current-main commit
+      - name: Publish one workflow-free latest-current-main commit
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          BASE_SHA: b92a241b3c5ecdf7c75540dd5526f6cd7ee133e1
         run: |
           set -euo pipefail
-          test ! -e .github/workflows/loom-987-current-main-replay.yml
-          git reset --soft "${BASE_SHA}"
-          git add -A
-          git diff --cached --check
-
-          cat > expected-files.txt <<'EOF'
-          src/github-outbound-text-preflight-base.ts
-          src/github-outbound-text-preflight.ts
-          test/github-outbound-text-preflight-canonical-url-route.test.ts
-          test/github-outbound-text-preflight-closing-keyword-unicode.test.ts
-          test/github-outbound-text-preflight-controlled-repository-array-key-budget.test.ts
-          test/github-outbound-text-preflight-encoded-invalid-identity.test.ts
-          test/github-outbound-text-preflight-final-boundaries.test.ts
-          test/github-outbound-text-preflight-final-credential-policy.test.ts
-          test/github-outbound-text-preflight-import-boundary.test.ts
-          test/github-outbound-text-preflight-percent-encoded-continuation.test.ts
-          test/github-outbound-text-preflight-single-snapshot.test.ts
-          test/github-outbound-text-preflight-unicode-symbol-boundary.test.ts
-          test/github-outbound-text-preflight-url-normalization-bypass.test.ts
-          test/github-outbound-text-preflight-whatwg-url-normalization.test.ts
-          test/github-outbound-text-preflight.test.ts
-          EOF
-          LC_ALL=C sort -o expected-files.txt expected-files.txt
-          git diff --cached --name-only | LC_ALL=C sort > actual-files.txt
-          diff -u expected-files.txt actual-files.txt
-          rm expected-files.txt actual-files.txt
-
           git config user.name "Loom"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Replay final outbound admission on current main"
-
           git fetch origin refs/heads/lumen/971-unicode-symbol-repair:refs/remotes/origin/lumen/971-unicode-symbol-repair
           test "$(git rev-parse refs/remotes/origin/lumen/971-unicode-symbol-repair)" = "${EXPECTED_HEAD}"
           git push --force-with-lease=refs/heads/lumen/971-unicode-symbol-repair:${EXPECTED_HEAD} \
