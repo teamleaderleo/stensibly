@@ -1,3 +1,4 @@
+# Triggered once by Vireo to publish the exact taxonomy repair.
 name: Sable 1135 repository mismatch taxonomy
 
 on:
