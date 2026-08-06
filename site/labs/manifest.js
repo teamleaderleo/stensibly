@@ -41,6 +41,17 @@ const sourceManifest = [
     support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion", "empty", "degraded"],
   },
   {
+    id: "work-pulse",
+    title: "Work Pulse",
+    thesis: "A text-first evidence pulse for active responsibility, stale authority, ambiguous effects, and human attention.",
+    owner: "Plover",
+    status: "prototype",
+    revision: "de2c9aed8b9d1d7c5d5eab0d7ea50193f40c32f3",
+    issue: 699,
+    path: "./work-pulse/",
+    support: ["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion", "empty", "degraded"],
+  },
+  {
     id: "soft-companion",
     title: "Soft Companion",
     thesis: "A warm pastel productivity desk with tactile controls, gentle feedback, and an original companion character.",

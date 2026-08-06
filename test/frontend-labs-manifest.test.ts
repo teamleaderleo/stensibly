@@ -13,6 +13,7 @@ describe("frontend labs manifest", () => {
   test("publishes bounded same-origin variant identities", () => {
     expect(frontendLabManifest.map((entry) => entry.id)).toEqual([
       "quiet-control",
+      "work-pulse",
       "soft-companion",
       "field-console",
       "signal-atlas",
