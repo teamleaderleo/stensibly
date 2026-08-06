@@ -1,0 +1,221 @@
+name: Oriole 1160 checkpoint recovery coherence
+
+on:
+  push:
+    branches:
+      - lumen/1146-execution-recipes
+    paths:
+      - .github/workflows/oriole-1160-checkpoint-coherence.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oriole-1160-checkpoint-coherence
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1146-execution-recipes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source and control
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/execution-recipe.ts)" = "aee287e6a6c83327312e0ea2f9c0fe9a216a9b64"
+          test "$(git rev-parse HEAD:test/execution-recipe.test.ts)" = "c62525d8345dee56d9f178b4621d70116d9f58f8"
+          test "$(git rev-parse HEAD:test/execution-recipe-boundary.test.ts)" = "cf641ac8cd2102e828238eef2015c7511adbc1d6"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Enforce checkpoint and recovery coherence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/execution-recipe.ts")
+          text = source.read_text()
+          checks_anchor = '''  const checks = identityArray(
+            dataValue(value, "checks"),
+            64,
+            "Execution recipe checks",
+            false,
+          );
+          return {
+          '''
+          checks_replacement = '''  const checks = identityArray(
+            dataValue(value, "checks"),
+            64,
+            "Execution recipe checks",
+            false,
+          );
+          const phases = admitPhases(
+            dataValue(value, "orderedPhases"),
+            capabilities,
+            checks,
+          );
+          const checkpointPolicy = enumValue(
+            dataValue(value, "checkpointPolicy"),
+            checkpointPolicySet,
+            "Execution recipe checkpoint policy",
+          );
+          const recoveryPolicy = enumValue(
+            dataValue(value, "recoveryPolicy"),
+            recoveryPolicySet,
+            "Execution recipe recovery policy",
+          );
+          assertCheckpointRecoveryCoherence(
+            phases,
+            checkpointPolicy,
+            recoveryPolicy,
+          );
+          return {
+          '''
+          if text.count(checks_anchor) != 1:
+              raise SystemExit("recipe checks anchor moved")
+          text = text.replace(checks_anchor, checks_replacement, 1)
+
+          phases_anchor = '''    orderedPhases: admitPhases(
+              dataValue(value, "orderedPhases"),
+              capabilities,
+              checks,
+            ),
+          '''
+          if text.count(phases_anchor) != 1:
+              raise SystemExit("recipe phase admission anchor moved")
+          text = text.replace(phases_anchor, "    orderedPhases: phases,\n", 1)
+
+          checkpoint_anchor = '''    checkpointPolicy: enumValue(
+              dataValue(value, "checkpointPolicy"),
+              checkpointPolicySet,
+              "Execution recipe checkpoint policy",
+            ),
+          '''
+          if text.count(checkpoint_anchor) != 1:
+              raise SystemExit("checkpoint policy anchor moved")
+          text = text.replace(checkpoint_anchor, "    checkpointPolicy,\n", 1)
+
+          recovery_anchor = '''    recoveryPolicy: enumValue(
+              dataValue(value, "recoveryPolicy"),
+              recoveryPolicySet,
+              "Execution recipe recovery policy",
+            ),
+          '''
+          if text.count(recovery_anchor) != 1:
+              raise SystemExit("recovery policy anchor moved")
+          text = text.replace(recovery_anchor, "    recoveryPolicy,\n", 1)
+
+          helper_anchor = '''function admitBudget(value: unknown): ExecutionRecipeBudgetEnvelope {
+          '''
+          helper = '''function assertCheckpointRecoveryCoherence(
+            phases: readonly ExecutionRecipePhase[],
+            checkpointPolicy: ExecutionRecipeCheckpointPolicy,
+            recoveryPolicy: ExecutionRecipeRecoveryPolicy,
+          ): void {
+            const checkpointCount = phases.filter((phase) => phase.checkpoint).length;
+            if (checkpointPolicy === "none" && checkpointCount !== 0) {
+              throw new RangeError(
+                "Execution recipe none checkpoint policy cannot mark checkpoint phases",
+              );
+            }
+            if (checkpointPolicy === "phase" && checkpointCount === 0) {
+              throw new RangeError(
+                "Execution recipe phase checkpoint policy requires a checkpoint phase",
+              );
+            }
+            if (
+              recoveryPolicy === "resume_checkpoint"
+              && (checkpointPolicy === "none" || checkpointCount === 0)
+            ) {
+              throw new RangeError(
+                "Execution recipe checkpoint recovery requires an admitted checkpoint phase",
+              );
+            }
+          }
+
+          function admitBudget(value: unknown): ExecutionRecipeBudgetEnvelope {
+          '''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit("checkpoint helper insertion anchor moved")
+          source.write_text(text.replace(helper_anchor, helper, 1))
+
+          test_path = Path("test/execution-recipe.test.ts")
+          test_text = test_path.read_text()
+          marker = '''  test("rejects credential retention, undeclared phase references, and unbounded versions", () => {
+          '''
+          addition = '''  test("enforces checkpoint and recovery coherence", () => {
+            const noneWithPhase = recipe();
+            noneWithPhase.checkpointPolicy = "none";
+            noneWithPhase.recoveryPolicy = "restart_phase";
+            expect(() => compileExecutionRecipe(noneWithPhase)).toThrow(
+              "none checkpoint policy cannot mark checkpoint phases",
+            );
+
+            const phaseWithoutCheckpoint = recipe();
+            phaseWithoutCheckpoint.orderedPhases = phaseWithoutCheckpoint.orderedPhases.map(
+              (phase) => ({ ...phase, checkpoint: false }),
+            );
+            phaseWithoutCheckpoint.recoveryPolicy = "restart_phase";
+            expect(() => compileExecutionRecipe(phaseWithoutCheckpoint)).toThrow(
+              "phase checkpoint policy requires a checkpoint phase",
+            );
+
+            const resumeWithoutCheckpoint = recipe();
+            resumeWithoutCheckpoint.checkpointPolicy = "manual";
+            resumeWithoutCheckpoint.orderedPhases = resumeWithoutCheckpoint.orderedPhases.map(
+              (phase) => ({ ...phase, checkpoint: false }),
+            );
+            expect(() => compileExecutionRecipe(resumeWithoutCheckpoint)).toThrow(
+              "checkpoint recovery requires an admitted checkpoint phase",
+            );
+
+            const validNone = recipe();
+            validNone.checkpointPolicy = "none";
+            validNone.recoveryPolicy = "restart_phase";
+            validNone.orderedPhases = validNone.orderedPhases.map(
+              (phase) => ({ ...phase, checkpoint: false }),
+            );
+            expect(() => compileExecutionRecipe(validNone)).not.toThrow();
+
+            const validManual = recipe();
+            validManual.checkpointPolicy = "manual";
+            expect(() => compileExecutionRecipe(validManual)).not.toThrow();
+          });
+
+          '''
+          if marker not in test_text or "enforces checkpoint and recovery coherence" in test_text:
+              raise SystemExit("checkpoint coherence control anchor moved")
+          test_path.write_text(test_text.replace(marker, addition + marker, 1))
+          PY
+          git diff --check
+
+      - name: Validate exact repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/execution-recipe.test.ts \
+            test/execution-recipe-boundary.test.ts
+
+      - name: Publish workflow-free repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/oriole-1160-checkpoint-coherence.yml
+          git add src/execution-recipe.ts test/execution-recipe.test.ts
+          git diff --cached --check
+          git config user.name "Oriole"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Enforce execution recipe checkpoint coherence"
+          git push origin HEAD:lumen/1146-execution-recipes
