@@ -17,7 +17,7 @@ concurrency:
 jobs:
   repair:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,26 +25,46 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact atomic parent
+      - name: Verify exact carrier and obsolete parent
         shell: bash
+        env:
+          EXPECTED_CARRIER: ${{ github.sha }}
+          OBSOLETE_PARENT: a8426216cca738ceca31bbddf65ff89fb9caa242
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "a8426216cca738ceca31bbddf65ff89fb9caa242"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CARRIER}"
+          test "$(git rev-parse HEAD^)" = "${OBSOLETE_PARENT}"
           test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/ember-1164-response-lifetime-restack.yml"
-          test "$(git rev-parse HEAD^:src/github-rest-repository-write-adapter.ts)" = "f0f740640dfe62f4210b02c75f2b50a1e8cc8d15"
+          test "$(git rev-parse HEAD^:src/github-rest-repository-write-adapter.ts)" = \
+            "f0f740640dfe62f4210b02c75f2b50a1e8cc8d15"
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Replay and repair response lifetime packet
+      - name: Rebuild lifetime child on final atomic parent
         shell: bash
+        env:
+          SOURCE_HEAD: 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be
+          FINAL_PARENT: bd3614400f7ffc0eccd9cb2f1a3d9b0f16de9510
         run: |
           set -euo pipefail
-          git show 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be:src/github-provider-bounded-response.ts \
-            > src/github-provider-bounded-response.ts
-          git show 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be:src/github-rest-repository-write-adapter.ts \
-            > src/github-rest-repository-write-adapter.ts
-          git show 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be:test/github-rest-repository-write-response-lifetime.test.ts \
-            > test/github-rest-repository-write-response-lifetime.test.ts
+          git fetch --no-tags origin "${SOURCE_HEAD}" "${FINAL_PARENT}"
+          git cat-file -e "${SOURCE_HEAD}^{commit}"
+          git cat-file -e "${FINAL_PARENT}^{commit}"
+          test "$(git rev-parse "${FINAL_PARENT}:src/github-rest-repository-write-adapter.ts")" = \
+            "f0f740640dfe62f4210b02c75f2b50a1e8cc8d15"
+
+          git show "${SOURCE_HEAD}:src/github-provider-bounded-response.ts" \
+            > /tmp/github-provider-bounded-response.ts
+          git show "${SOURCE_HEAD}:src/github-rest-repository-write-adapter.ts" \
+            > /tmp/github-rest-repository-write-adapter.ts
+          git show "${SOURCE_HEAD}:test/github-rest-repository-write-response-lifetime.test.ts" \
+            > /tmp/github-rest-repository-write-response-lifetime.test.ts
+
+          git reset --hard "${FINAL_PARENT}"
+          cp /tmp/github-provider-bounded-response.ts src/github-provider-bounded-response.ts
+          cp /tmp/github-rest-repository-write-adapter.ts src/github-rest-repository-write-adapter.ts
+          cp /tmp/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts
 
           python3 - <<'PY'
           from pathlib import Path
@@ -72,8 +92,9 @@ jobs:
               }
             }
             let text: string;'''
-          if text.count(before) != 1:
-              raise SystemExit(f"expected one adapter read anchor, found {text.count(before)}")
+          count = text.count(before)
+          if count != 1:
+              raise SystemExit(f"expected one adapter read anchor, found {count}")
           adapter.write_text(text.replace(before, after, 1))
 
           tests = Path("test/github-rest-repository-write-response-lifetime.test.ts")
@@ -105,14 +126,27 @@ jobs:
             ),
           ]
           for old, new in replacements:
-              if text.count(old) != 1:
-                  raise SystemExit(f"expected one response test anchor: {old!r}")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected one response test anchor, found {count}: {old!r}")
               text = text.replace(old, new, 1)
           tests.write_text(text)
           PY
-          git diff --check
 
-      - name: Validate exact child
+          git add \
+            src/github-provider-bounded-response.ts \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts
+          git diff --cached --check
+          printf '%s\n' \
+            src/github-provider-bounded-response.ts \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            | sort > /tmp/expected-files
+          git diff --cached --name-only | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate exact final-parent child
         shell: bash
         run: |
           set -euo pipefail
@@ -121,19 +155,25 @@ jobs:
           bun test \
             test/github-rest-repository-write-response-lifetime.test.ts \
             test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
             test/github-rest-repository-write-atomic-publication.test.ts \
-            test/github-rest-repository-write-atomic-mode-preservation.test.ts
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-provider-bounded-response.test.ts
 
-      - name: Publish source packet
+      - name: Publish workflow-free source packet
         shell: bash
+        env:
+          EXPECTED_CARRIER: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git add \
-            src/github-provider-bounded-response.ts \
-            src/github-rest-repository-write-adapter.ts \
-            test/github-rest-repository-write-response-lifetime.test.ts
-          git diff --cached --check
           git config user.name "Ember"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Bound native repository response lifetime"
-          git push origin HEAD:juniper/1163-total-response-lifetime
+          git fetch origin \
+            refs/heads/juniper/1163-total-response-lifetime:refs/remotes/origin/juniper/1163-total-response-lifetime
+          test "$(git rev-parse refs/remotes/origin/juniper/1163-total-response-lifetime)" = \
+            "${EXPECTED_CARRIER}"
+          git push \
+            --force-with-lease=refs/heads/juniper/1163-total-response-lifetime:${EXPECTED_CARRIER} \
+            origin HEAD:refs/heads/juniper/1163-total-response-lifetime
