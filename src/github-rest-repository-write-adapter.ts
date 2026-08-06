@@ -4,6 +4,9 @@ import type {
   GitHubRepositoryWriteProviderAdapter,
 } from "./github-repository-write-provider-service.js";
 import {
+  publishGitHubRepositoryWriteAtomically,
+} from "./github-rest-repository-write-atomic-publication.js";
+import {
   admitGitHubBranchRef,
   admitGitHubRepositoryFullName,
   admitGitHubRepositoryPath,
@@ -41,9 +44,10 @@ const credentialShapedPattern =
 /**
  * Native transport for the durable repository-write provider service.
  *
- * This adapter performs only exact file create/update/delete operations. It
- * does not choose authority, reserve idempotency, retry ambiguous writes, or
- * release the repository/ref lane; those semantics remain service-owned.
+ * This adapter constructs one direct-child commit from an immutable parent and
+ * publishes it through a non-forced ref update. It does not choose authority,
+ * reserve idempotency, retry ambiguous writes, or release the repository/ref
+ * lane; those semantics remain service-owned.
  */
 export class GitHubRestRepositoryWriteAdapter
   implements GitHubRepositoryWriteProviderAdapter
@@ -156,58 +160,24 @@ export class GitHubRestRepositoryWriteAdapter
     ) {
       throw new RangeError("GitHub repository write object formats changed");
     }
-
-    const request = mutationRequest(input.payload, targetRef);
-    const response = await this.#request({
+    return await publishGitHubRepositoryWriteAtomically({
+      apiBaseUrl: this.#apiBaseUrl,
       repositoryFullName,
-      access: "write",
-      method: request.method,
-      url: contentUrl(this.#apiBaseUrl, repositoryFullName, path),
-      body: request.body,
-      operation: repositoryWriteOperationLabel(input.operation),
-    });
-    requireOk(response, repositoryWriteOperationLabel(input.operation));
-    const value = await readJson(
-      response,
-      repositoryWriteOperationLabel(input.operation),
-    );
-    const record = exactRecord(value, "GitHub repository write response");
-    const commit = exactRecord(record.commit, "GitHub repository write commit");
-    const commitSha = responseObjectId(
-      commit.sha,
-      "GitHub repository write commit SHA",
-    );
-    assertOptionalExactApiUrl(
-      commit.url,
-      commitUrl(this.#apiBaseUrl, repositoryFullName, commitSha),
-      "GitHub repository write commit URL",
-    );
-    const parents = commit.parents === undefined
-      ? []
-      : exactParents(commit.parents, "GitHub repository write commit parents");
-    if (parents.length > 1) {
-      throw invalidResponse(
-        "GitHub repository write response returned a multi-parent commit",
-      );
-    }
-    if (!sameGitObjectFormat(expectedParentSha, commitSha, ...parents)) {
-      throw invalidResponse("GitHub repository write response mixed object formats");
-    }
-    const providerRequestId = admittedRequestId(
-      response.headers.get("x-github-request-id"),
-    );
-    return Object.freeze({
-      commitSha,
-      ...(providerRequestId ? { providerRequestId } : {}),
+      path,
       targetRef,
-      ...(parents[0] ? { parentSha: parents[0] } : {}),
+      expectedParentSha,
+      payload: input.payload,
+      request: (request) => this.#request(request),
+      readJson,
+      discardResponse,
+      admitRequestId: admittedRequestId,
     });
   }
 
   async #request(input: {
     repositoryFullName: string;
     access: "read" | "write";
-    method: "GET" | "PUT" | "DELETE";
+    method: "GET" | "POST" | "PATCH";
     url: URL;
     body?: Record<string, unknown>;
     operation: string;
@@ -233,44 +203,6 @@ export class GitHubRestRepositoryWriteAdapter
       throw new Error(`GitHub could not ${input.operation} before a response was available`);
     }
   }
-}
-
-function mutationRequest(
-  payload: GitHubRepositoryWritePayload,
-  targetRef: string,
-): {
-  method: "PUT" | "DELETE";
-  body: Record<string, unknown>;
-} {
-  if (payload.operation === "create_file") {
-    return {
-      method: "PUT",
-      body: {
-        message: payload.message,
-        content: Buffer.from(payload.content, "utf8").toString("base64"),
-        branch: targetRef,
-      },
-    };
-  }
-  if (payload.operation === "update_file") {
-    return {
-      method: "PUT",
-      body: {
-        message: payload.message,
-        content: Buffer.from(payload.content, "utf8").toString("base64"),
-        sha: payload.contentSha,
-        branch: targetRef,
-      },
-    };
-  }
-  return {
-    method: "DELETE",
-    body: {
-      message: payload.message,
-      sha: payload.contentSha,
-      branch: targetRef,
-    },
-  };
 }
 
 function requireOk(response: Response, operation: string): void {
@@ -414,16 +346,6 @@ function commitUrl(
   );
 }
 
-function contentUrl(
-  apiBaseUrl: string,
-  repositoryFullName: string,
-  path: string,
-): URL {
-  return new URL(
-    `${repositoryUrl(apiBaseUrl, repositoryFullName)}/contents/${encodePath(path)}`,
-  );
-}
-
 function repositoryUrl(apiBaseUrl: string, repositoryFullName: string): string {
   const [owner, repository] = repositoryParts(repositoryFullName);
   return `${apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
@@ -491,7 +413,23 @@ function exactRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw invalidResponse(`${label} was malformed`);
   }
-  return value as Record<string, unknown>;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw invalidResponse(`${label} was malformed`);
+  }
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw invalidResponse(`${label} was malformed`);
+  }
+  const result = Object.create(null) as Record<string, unknown>;
+  for (const [key, descriptor] of Object.entries(
+    Object.getOwnPropertyDescriptors(value),
+  )) {
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw invalidResponse(`${label} was malformed`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
 }
 
 function assertOptionalExactApiUrl(
@@ -551,14 +489,6 @@ function normalizedApiBaseUrl(value: string): string {
     throw new Error("GitHub API base URL must use an exact secure origin");
   }
   return url.toString().replace(/\/$/, "");
-}
-
-function repositoryWriteOperationLabel(
-  operation: "create_file" | "update_file" | "delete_file",
-): string {
-  if (operation === "create_file") return "create repository file";
-  if (operation === "update_file") return "update repository file";
-  return "delete repository file";
 }
 
 function invalidResponse(message: string): Error {
