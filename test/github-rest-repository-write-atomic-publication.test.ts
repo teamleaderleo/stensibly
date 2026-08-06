@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   GitHubRepositoryWritePendingReconciliationError,
@@ -18,7 +19,7 @@ const path = "docs/atomic-publication.md";
 const parentSha = "1".repeat(40);
 const parentTreeSha = "2".repeat(40);
 const previousBlobSha = "3".repeat(40);
-const nextBlobSha = "4".repeat(40);
+const nextBlobSha = gitBlobSha("atomic content\n");
 const nextTreeSha = "5".repeat(40);
 const nextCommitSha = "6".repeat(40);
 const apiBaseUrl = "https://api.github.test";
@@ -146,7 +147,7 @@ describe("atomic native repository write publication", () => {
         path,
         mode: "100644",
         type: "blob",
-        sha: nextBlobSha,
+        sha: gitBlobSha("updated atomically\n"),
       },
       expectsBlobWrite: true,
     },
@@ -337,6 +338,9 @@ function atomicFetcher(input: {
   includeServiceHeadRead?: boolean;
 }): typeof fetch {
   let serviceHeadRead = input.includeServiceHeadRead ?? false;
+  const producedBlobSha = input.payload.operation === "delete_file"
+    ? null
+    : gitBlobSha(input.payload.content);
   return (async (request: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const url = String(request);
@@ -391,9 +395,14 @@ function atomicFetcher(input: {
       });
     }
     if (method === "POST" && url === blobCollectionUrl()) {
+      if (!producedBlobSha) {
+        return Response.json({ message: "unexpected blob write" }, {
+          status: 500,
+        });
+      }
       return Response.json({
-        sha: nextBlobSha,
-        url: blobUrl(nextBlobSha),
+        sha: producedBlobSha,
+        url: blobUrl(producedBlobSha),
       }, { status: 201 });
     }
     if (method === "POST" && url === treeCollectionUrl()) {
@@ -498,6 +507,14 @@ function monotonicClock(): () => string {
   return () => new Date(
     Date.UTC(2026, 7, 4, 17, 0, tick++),
   ).toISOString();
+}
+
+function gitBlobSha(content: string): string {
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
 }
 
 function repositoryUrl(): string {
