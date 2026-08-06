@@ -1,0 +1,271 @@
+name: Juniper 1020 atomic Git publication
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/juniper-1020-atomic-git-publication.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-1020-atomic-git-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1020-atomic-git-publication
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "5ab1e5939e33129feb8f800f30af9630259c510f"
+
+      - name: Wire atomic adapter and coherent controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin eca98d3dbcb57ca92905f05e297f7b78b3b71a16
+          git show eca98d3dbcb57ca92905f05e297f7b78b3b71a16:test/github-rest-repository-write-atomic-publication.test.ts \
+            > test/github-rest-repository-write-atomic-publication.test.ts
+          git show eca98d3dbcb57ca92905f05e297f7b78b3b71a16:test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            > test/github-rest-repository-write-atomic-mode-preservation.test.ts
+          python3 - <<'PY'
+          from pathlib import Path
+
+          publication = Path("test/github-rest-repository-write-atomic-publication.test.ts")
+          text = publication.read_text()
+          replacements = [
+            ('        url: `${contentUrl()}?ref=${parentSha}`,\n',
+             '        url: recursiveTreeUrl(parentTreeSha),\n'),
+            ('''    const preflight = recorded.find((request) =>
+      request.method === "GET" && request.url.startsWith(contentUrl())
+    );
+    expect(preflight?.url).toBe(`${contentUrl()}?ref=${parentSha}`);
+''', '''    const preflight = recorded.find((request) =>
+      request.method === "GET" && request.url === recursiveTreeUrl(parentTreeSha)
+    );
+    expect(preflight?.url).toBe(recursiveTreeUrl(parentTreeSha));
+'''),
+            ('''    if (method === "GET" && url === `${contentUrl()}?ref=${parentSha}`) {
+      if (input.operation === "create_file") {
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      }
+      return Response.json({
+        type: "file",
+        name: "atomic-publication.md",
+        path,
+        sha: input.observedBlobSha ?? previousBlobSha,
+        size: 12,
+        url: `${contentUrl()}?ref=${parentSha}`,
+        git_url:
+          `${apiBaseUrl}/repos/${repositoryFullName}/git/blobs/${input.observedBlobSha ?? previousBlobSha}`,
+      });
+    }
+''', '''    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
+      const observedBlobSha = input.observedBlobSha ?? previousBlobSha;
+      return Response.json({
+        sha: parentTreeSha,
+        url: treeUrl(parentTreeSha),
+        tree: input.operation === "create_file"
+          ? []
+          : [{
+              path,
+              mode: "100644",
+              type: "blob",
+              sha: observedBlobSha,
+              url: blobUrl(observedBlobSha),
+              size: 12,
+            }],
+        truncated: false,
+      });
+    }
+'''),
+            ('''function treeCollectionUrl(): string {
+  return `${repositoryUrl()}/git/trees`;
+}
+
+function contentUrl(): string {
+  return `${repositoryUrl()}/contents/${path}`;
+}
+''', '''function treeCollectionUrl(): string {
+  return `${repositoryUrl()}/git/trees`;
+}
+
+function treeUrl(sha: string): string {
+  return `${treeCollectionUrl()}/${sha}`;
+}
+
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
+}
+
+function blobUrl(sha: string): string {
+  return `${blobCollectionUrl()}/${sha}`;
+}
+'''),
+          ]
+          for before, after in replacements:
+            if text.count(before) != 1:
+              raise SystemExit("atomic publication control anchor changed")
+            text = text.replace(before, after)
+          publication.write_text(text)
+
+          mode = Path("test/github-rest-repository-write-atomic-mode-preservation.test.ts")
+          text = mode.read_text()
+          replacements = [
+            ('      url: treeUrl(parentTreeSha),\n',
+             '      url: recursiveTreeUrl(parentTreeSha),\n'),
+            ('    if (method === "GET" && url === treeUrl(parentTreeSha)) {\n',
+             '    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {\n'),
+            ('''function treeUrl(sha: string): string {
+  return `${repositoryUrl()}/git/trees/${sha}`;
+}
+
+function treeCollectionUrl(): string {
+''', '''function treeUrl(sha: string): string {
+  return `${repositoryUrl()}/git/trees/${sha}`;
+}
+
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
+}
+
+function treeCollectionUrl(): string {
+'''),
+          ]
+          for before, after in replacements:
+            if text.count(before) != 1:
+              raise SystemExit("atomic mode control anchor changed")
+            text = text.replace(before, after)
+          mode.write_text(text)
+
+          adapter = Path("src/github-rest-repository-write-adapter.ts")
+          text = adapter.read_text()
+          import_anchor = '''} from "./github-repository-write-provider-service.js";
+import {
+  admitGitHubBranchRef,'''
+          import_replacement = '''} from "./github-repository-write-provider-service.js";
+import {
+  publishGitHubRepositoryWriteAtomically,
+} from "./github-rest-repository-write-atomic-publication.js";
+import {
+  admitGitHubBranchRef,'''
+          if text.count(import_anchor) != 1:
+            raise SystemExit("atomic import anchor changed")
+          text = text.replace(import_anchor, import_replacement, 1)
+
+          start = text.index("  async dispatchRepositoryWrite(input: {")
+          end = text.index("\n  async #request(input: {", start)
+          replacement = '''  async dispatchRepositoryWrite(input: {
+    repositoryFullName: string;
+    path: string;
+    operation: "create_file" | "update_file" | "delete_file";
+    targetRef: string;
+    expectedParentSha: string;
+    payload: GitHubRepositoryWritePayload;
+    idempotencyKey: string;
+  }): Promise<ProviderWriteResult> {
+    const repositoryFullName = exactRepository(input.repositoryFullName);
+    const path = exactPath(input.path);
+    const targetRef = exactBranch(input.targetRef);
+    const expectedParentSha = exactCommitSha(
+      input.expectedParentSha,
+      "Expected parent SHA",
+    );
+    if (input.operation !== input.payload.operation) {
+      throw new TypeError("Repository write payload operation changed before dispatch");
+    }
+    if (
+      input.payload.operation !== "create_file"
+      && !sameGitObjectFormat(
+        expectedParentSha,
+        exactCommitSha(input.payload.contentSha, "GitHub content SHA"),
+      )
+    ) {
+      throw new RangeError("GitHub repository write object formats changed");
+    }
+    return await publishGitHubRepositoryWriteAtomically({
+      apiBaseUrl: this.#apiBaseUrl,
+      repositoryFullName,
+      path,
+      targetRef,
+      expectedParentSha,
+      payload: input.payload,
+      request: (request) => this.#request(request),
+      readJson,
+      discardResponse,
+      admitRequestId: admittedRequestId,
+    });
+  }
+'''
+          text = text[:start] + replacement + text[end:]
+          if text.count('method: "GET" | "PUT" | "DELETE";') != 1:
+            raise SystemExit("atomic request method anchor changed")
+          text = text.replace(
+            'method: "GET" | "PUT" | "DELETE";',
+            'method: "GET" | "POST" | "PATCH";',
+            1,
+          )
+          mutation_start = text.index("function mutationRequest(")
+          mutation_end = text.index("function requireOk(", mutation_start)
+          text = text[:mutation_start] + text[mutation_end:]
+          content_start = text.index("function contentUrl(")
+          content_end = text.index("function repositoryUrl(", content_start)
+          text = text[:content_start] + text[content_end:]
+          label_start = text.index("function repositoryWriteOperationLabel(")
+          label_end = text.index("function invalidResponse(", label_start)
+          text = text[:label_start] + text[label_end:]
+          adapter.write_text(text)
+          PY
+          rm .github/workflows/juniper-1020-atomic-git-publication.yml
+          git add \
+            src/github-rest-repository-write-adapter.ts \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            .github/workflows/juniper-1020-atomic-git-publication.yml
+          git diff --cached --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate atomic publication packet
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-repository-write-provider-service.test.ts \
+            test/github-repository-write-full-ref-admission.test.ts \
+            test/github-repository-write-repository-segment-admission.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/repository-write-fence-object-format.test.ts \
+            test/repository-write-fence.test.ts
+
+      - name: Publish workflow-free atomic source
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Juniper"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Publish repository writes atomically with Git data"
+          git fetch origin refs/heads/juniper/1020-atomic-git-publication:refs/remotes/origin/juniper/1020-atomic-git-publication
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-git-publication)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1020-atomic-git-publication:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1020-atomic-git-publication
