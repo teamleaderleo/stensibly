@@ -1,0 +1,139 @@
+name: Ember 1164 response lifetime restack
+
+on:
+  push:
+    branches:
+      - juniper/1163-total-response-lifetime
+    paths:
+      - .github/workflows/ember-1164-response-lifetime-restack.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ember-1164-response-lifetime-restack
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-total-response-lifetime
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact atomic parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "a8426216cca738ceca31bbddf65ff89fb9caa242"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/ember-1164-response-lifetime-restack.yml"
+          test "$(git rev-parse HEAD^:src/github-rest-repository-write-adapter.ts)" = "f0f740640dfe62f4210b02c75f2b50a1e8cc8d15"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Replay and repair response lifetime packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be:src/github-provider-bounded-response.ts \
+            > src/github-provider-bounded-response.ts
+          git show 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be:src/github-rest-repository-write-adapter.ts \
+            > src/github-rest-repository-write-adapter.ts
+          git show 17fc44c514c092ba1f9670dd6ac88f0c3f2df8be:test/github-rest-repository-write-response-lifetime.test.ts \
+            > test/github-rest-repository-write-response-lifetime.test.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          adapter = Path("src/github-rest-repository-write-adapter.ts")
+          text = adapter.read_text()
+          before = '''async function readJson(response: Response, operation: string): Promise<unknown> {
+            let text: string;'''
+          after = '''async function readJson(response: Response, operation: string): Promise<unknown> {
+            const declared = response.headers.get("content-length");
+            if (declared !== null) {
+              if (!/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
+                discardGitHubProviderResponse(response);
+                throw invalidResponse(`GitHub ${operation} response length was invalid`);
+              }
+              const declaredBytes = Number(declared);
+              if (
+                !Number.isSafeInteger(declaredBytes)
+                || declaredBytes > maximumResponseBytes
+              ) {
+                discardGitHubProviderResponse(response);
+                throw invalidResponse(
+                  `GitHub ${operation} response exceeded its byte limit`,
+                );
+              }
+            }
+            let text: string;'''
+          if text.count(before) != 1:
+              raise SystemExit(f"expected one adapter read anchor, found {text.count(before)}")
+          adapter.write_text(text.replace(before, after, 1))
+
+          tests = Path("test/github-rest-repository-write-response-lifetime.test.ts")
+          text = tests.read_text()
+          replacements = [
+            (
+              '    let signal: AbortSignal | null = null;\n',
+              '    const signal = { value: null as AbortSignal | null };\n',
+            ),
+            (
+              '      signal = init?.signal as AbortSignal;\n',
+              '      signal.value = init?.signal as AbortSignal;\n',
+            ),
+            (
+              '    expect(signal?.aborted).toBe(true);\n',
+              '    expect(signal.value?.aborted).toBe(true);\n',
+            ),
+            (
+              '    let resolveFetch: ((response: Response) => void) | null = null;\n',
+              '    const resolveFetch = { value: null as ((response: Response) => void) | null };\n',
+            ),
+            (
+              '      resolveFetch = resolve;\n',
+              '      resolveFetch.value = resolve;\n',
+            ),
+            (
+              '    resolveFetch?.(new Response(body, { status: 200 }));\n',
+              '    resolveFetch.value?.(new Response(body, { status: 200 }));\n',
+            ),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected one response test anchor: {old!r}")
+              text = text.replace(old, new, 1)
+          tests.write_text(text)
+          PY
+          git diff --check
+
+      - name: Validate exact child
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts
+
+      - name: Publish source packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            src/github-provider-bounded-response.ts \
+            src/github-rest-repository-write-adapter.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts
+          git diff --cached --check
+          git config user.name "Ember"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound native repository response lifetime"
+          git push origin HEAD:juniper/1163-total-response-lifetime
