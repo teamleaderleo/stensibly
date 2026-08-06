@@ -1,7 +1,9 @@
 name: Juniper 1165 final admission repair
 
 on:
-  pull_request:
+  push:
+    branches:
+      - juniper/1163-post-effect-service
     paths:
       - .github/workflows/juniper-1165-final-admission-repair.yml
 
@@ -15,7 +17,7 @@ concurrency:
 jobs:
   repair:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -23,18 +25,43 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact repaired carrier head
-        env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "5aadffede0956ebfa06ad35d4935c50bbf10587a"
-
-      - name: Apply verified post-effect service handling
+      - name: Verify exact stale carrier lease
         shell: bash
+        env:
+          EXPECTED_CARRIER: ${{ github.sha }}
+          STALE_SOURCE: 84f30363046c98a8e4032a6918f4d18faae6a2bd
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CARRIER}"
+          test "$(git rev-parse HEAD^)" = "${STALE_SOURCE}"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Rebuild verified post-effect packet on final atomic parent
+        shell: bash
+        env:
+          SOURCE_HEAD: 84f30363046c98a8e4032a6918f4d18faae6a2bd
+          FINAL_PARENT: bd3614400f7ffc0eccd9cb2f1a3d9b0f16de9510
+        run: |
+          set -euo pipefail
+          files=(
+            src/github-repository-write-admission.ts
+            src/github-repository-write-post-effect-error.ts
+            test/github-repository-write-post-effect-attribution.test.ts
+            test/github-repository-write-post-effect-error-admission.test.ts
+            test/github-repository-write-post-effect-error-identity.test.ts
+          )
+
+          git fetch --no-tags origin "${SOURCE_HEAD}" "${FINAL_PARENT}"
+          git cat-file -e "${SOURCE_HEAD}^{commit}"
+          git cat-file -e "${FINAL_PARENT}^{commit}"
+          test "$(git rev-parse "${FINAL_PARENT}:src/github-repository-write-provider-service.ts")" = \
+            "2d1fc515945e6d90ffca6bb08e7eb44f80548554"
+
+          tar -cf /tmp/1165-evidence.tar "${files[@]}"
+          git reset --hard "${FINAL_PARENT}"
+          tar -xf /tmp/1165-evidence.tar
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -53,8 +80,9 @@ jobs:
             'import {\n'
             '  prepareRepositoryWrite,'
           )
-          if text.count(import_before) != 1:
-            raise SystemExit("post-effect import source shape changed")
+          count = text.count(import_before)
+          if count != 1:
+            raise SystemExit(f"post-effect import source shape changed: {count}")
           text = text.replace(import_before, import_after, 1)
 
           catch_before = (
@@ -113,60 +141,61 @@ jobs:
             '    }\n\n'
             '    let verified: VerifiedRepositoryWrite;'
           )
-          if text.count(catch_before) != 1:
-            raise SystemExit("post-effect catch source shape changed")
+          count = text.count(catch_before)
+          if count != 1:
+            raise SystemExit(f"post-effect catch source shape changed: {count}")
           path.write_text(text.replace(catch_before, catch_after, 1))
           PY
-          rm \
-            .github/workflows/juniper-1163-post-effect-service.yml \
-            .github/workflows/juniper-1165-final-admission-repair.yml
+
           git add \
             src/github-repository-write-admission.ts \
             src/github-repository-write-post-effect-error.ts \
             src/github-repository-write-provider-service.ts \
             test/github-repository-write-post-effect-attribution.test.ts \
             test/github-repository-write-post-effect-error-admission.test.ts \
-            test/github-repository-write-post-effect-error-identity.test.ts \
-            .github/workflows/juniper-1163-post-effect-service.yml \
-            .github/workflows/juniper-1165-final-admission-repair.yml
+            test/github-repository-write-post-effect-error-identity.test.ts
           git diff --cached --check
+          printf '%s\n' \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-repository-write-provider-service.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts \
+            | sort > /tmp/expected-files
+          git diff --cached --name-only | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
 
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install committed dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run strict TypeScript
-        run: bun run typecheck
-
-      - name: Run provider service controls
-        run: bun test test/github-repository-write-provider-service.test.ts
-
-      - name: Run post-effect attribution controls
-        run: bun test test/github-repository-write-post-effect-attribution.test.ts
-
-      - name: Run post-effect admission controls
-        run: bun test test/github-repository-write-post-effect-error-admission.test.ts
-
-      - name: Run post-effect identity controls
-        run: bun test test/github-repository-write-post-effect-error-identity.test.ts
-
-      - name: Run final repository admission controls
+      - name: Validate exact final-parent service packet
+        shell: bash
         run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
           bun test \
+            test/github-repository-write-provider-service.test.ts \
+            test/github-repository-write-post-effect-attribution.test.ts \
+            test/github-repository-write-post-effect-error-admission.test.ts \
+            test/github-repository-write-post-effect-error-identity.test.ts \
             test/github-repository-write-repository-segment-admission.test.ts \
             test/github-repository-write-full-ref-admission.test.ts \
-            test/repository-write-fence.test.ts
+            test/repository-write-fence.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts
 
       - name: Publish workflow-free service packet
+        shell: bash
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_CARRIER: ${{ github.sha }}
         run: |
           set -euo pipefail
           git config user.name "Juniper"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Retain verified repository post-effect evidence"
-          git fetch origin refs/heads/juniper/1163-post-effect-service:refs/remotes/origin/juniper/1163-post-effect-service
-          test "$(git rev-parse refs/remotes/origin/juniper/1163-post-effect-service)" = "$EXPECTED_HEAD"
-          git push --force-with-lease=refs/heads/juniper/1163-post-effect-service:$EXPECTED_HEAD \
+          git fetch origin \
+            refs/heads/juniper/1163-post-effect-service:refs/remotes/origin/juniper/1163-post-effect-service
+          test "$(git rev-parse refs/remotes/origin/juniper/1163-post-effect-service)" = \
+            "${EXPECTED_CARRIER}"
+          git push \
+            --force-with-lease=refs/heads/juniper/1163-post-effect-service:${EXPECTED_CARRIER} \
             origin HEAD:refs/heads/juniper/1163-post-effect-service
