@@ -219,22 +219,19 @@ describe("orchestrator activity ingestion reference", () => {
     expect(store.deliveryCount).toBe(0);
   });
 
-  test("snapshots the ingestion envelope through one own-key read", () => {
+  test("does not enumerate ingestion envelope keys", () => {
     const store = new InMemoryOrchestratorActivityIngestionStore();
     let ownKeysCalls = 0;
     const input = new Proxy(delivery(), {
-      ownKeys(target) {
+      ownKeys() {
         ownKeysCalls += 1;
-        if (ownKeysCalls > 1) {
-          throw new Error("caller keys were enumerated twice");
-        }
-        return Reflect.ownKeys(target);
+        throw new Error("caller keys must remain unreachable");
       },
     });
 
     const result = store.ingest(input);
     expect(result.receipt.deliveryId).toBe("delivery_1149_1");
-    expect(ownKeysCalls).toBe(1);
+    expect(ownKeysCalls).toBe(0);
   });
 
   test("uses the shared retained-credential policy for delivery identities", () => {
