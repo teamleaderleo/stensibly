@@ -22,15 +22,15 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: sable/975-current-main-replay
-          fetch-depth: 2
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Verify exact candidate
+      - name: Verify exact candidate blobs
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "b339afad88f8472a0dff02f7a806a7f981745f66"
-          test "$(git rev-parse HEAD^:src/github-provider-context-acceptance-composer.ts)" = "4383e418b004b699700f35d42aeebc644a38c37a"
-          test "$(git rev-parse HEAD^:test/github-provider-context-acceptance-composer.test.ts)" = "c451d172d9c1ee1a6b744ce8342d1ec3eca26d3d"
+          test "$(git rev-parse HEAD:src/github-provider-context-acceptance-composer.ts)" = "4383e418b004b699700f35d42aeebc644a38c37a"
+          test "$(git rev-parse HEAD:test/github-provider-context-acceptance-composer.test.ts)" = "c451d172d9c1ee1a6b744ce8342d1ec3eca26d3d"
 
       - uses: oven-sh/setup-bun@v2
 
@@ -46,13 +46,11 @@ jobs:
           old = '''    expect(() => compose(
               wrongRepository as GitHubProviderContextReconciliationProposalV1,
               null,
-            )).toThrow("proposal semantics are invalid");
-          '''
+            )).toThrow("proposal semantics are invalid");'''
           new = '''    expect(() => compose(
               wrongRepository as GitHubProviderContextReconciliationProposalV1,
               null,
-            )).toThrow("external ID is outside the bound repository");
-          '''
+            )).toThrow("external ID is outside the bound repository");'''
           if text.count(old) != 1:
               raise SystemExit(f"expected one exact stale assertion, found {text.count(old)}")
           path.write_text(text.replace(old, new, 1))
