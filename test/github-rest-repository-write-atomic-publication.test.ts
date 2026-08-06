@@ -76,7 +76,7 @@ describe("atomic native repository write publication", () => {
       },
       {
         method: "GET",
-        url: `${contentUrl()}?ref=${parentSha}`,
+        url: recursiveTreeUrl(parentTreeSha),
         body: null,
         authorization: "Bearer contents-read-token",
       },
@@ -165,7 +165,7 @@ describe("atomic native repository write publication", () => {
       },
       expectsBlobWrite: false,
     },
-  ])("binds $operation to the immutable parent file identity", async ({
+  ])("binds $operation to the immutable parent tree entry", async ({
     operation,
     payload,
     expectedTreeEntry,
@@ -175,11 +175,7 @@ describe("atomic native repository write publication", () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider([]),
       apiBaseUrl,
-      fetch: atomicFetcher({
-        recorded,
-        operation,
-        payload,
-      }),
+      fetch: atomicFetcher({ recorded, operation, payload }),
     });
 
     await expect(adapter.dispatchRepositoryWrite({
@@ -196,21 +192,21 @@ describe("atomic native repository write publication", () => {
       targetRef,
     });
 
-    const preflight = recorded.find((request) =>
-      request.method === "GET" && request.url.startsWith(contentUrl())
-    );
-    expect(preflight?.url).toBe(`${contentUrl()}?ref=${parentSha}`);
-    const blobWrites = recorded.filter((request) =>
+    expect(recorded).toContainEqual(expect.objectContaining({
+      method: "GET",
+      url: recursiveTreeUrl(parentTreeSha),
+    }));
+    expect(recorded.filter((request) =>
       request.method === "POST" && request.url === blobCollectionUrl()
-    );
-    expect(blobWrites).toHaveLength(expectsBlobWrite ? 1 : 0);
-    const treeWrite = recorded.find((request) =>
-      request.method === "POST" && request.url === treeCollectionUrl()
-    );
-    expect(treeWrite?.body).toEqual({
-      base_tree: parentTreeSha,
-      tree: [expectedTreeEntry],
-    });
+    )).toHaveLength(expectsBlobWrite ? 1 : 0);
+    expect(recorded).toContainEqual(expect.objectContaining({
+      method: "POST",
+      url: treeCollectionUrl(),
+      body: {
+        base_tree: parentTreeSha,
+        tree: [expectedTreeEntry],
+      },
+    }));
     expect(recorded.at(-1)).toMatchObject({
       method: "PATCH",
       url: updateRefUrl(),
@@ -221,27 +217,25 @@ describe("atomic native repository write publication", () => {
   test("keeps the lane for reconciliation when a concurrent ref move rejects publication", async () => {
     const recorded: RecordedRequest[] = [];
     let publicationCalls = 0;
-    const fetcher = atomicFetcher({
-      recorded,
-      operation: "create_file",
-      payload: {
-        operation: "create_file",
-        content: "raced content\n",
-        message: "Race atomic file",
-      },
-      publicationResponse() {
-        publicationCalls += 1;
-        return Response.json({
-          message: "Reference update failed",
-          documentation_url: "https://docs.github.test/rest/git/refs",
-        }, { status: 422 });
-      },
-      includeServiceHeadRead: true,
-    });
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider([]),
       apiBaseUrl,
-      fetch: fetcher,
+      fetch: atomicFetcher({
+        recorded,
+        operation: "create_file",
+        payload: {
+          operation: "create_file",
+          content: "raced content\n",
+          message: "Race atomic file",
+        },
+        publicationResponse() {
+          publicationCalls += 1;
+          return Response.json({ message: "Reference update failed" }, {
+            status: 422,
+          });
+        },
+        includeServiceHeadRead: true,
+      }),
     });
     const store = new SqliteGitHubRepositoryWriteStore({ path: ":memory:" });
     const service = new GitHubRepositoryWriteProviderService({
@@ -372,37 +366,40 @@ function atomicFetcher(input: {
         sha: parentSha,
         tree: {
           sha: parentTreeSha,
-          url: `${treeCollectionUrl()}/${parentTreeSha}`,
+          url: treeUrl(parentTreeSha),
         },
         parents: [],
         url: commitUrl(parentSha),
       });
     }
-    if (method === "GET" && url === `${contentUrl()}?ref=${parentSha}`) {
-      if (input.operation === "create_file") {
-        return Response.json({ message: "Not Found" }, { status: 404 });
-      }
+    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
+      const observedBlobSha = input.observedBlobSha ?? previousBlobSha;
       return Response.json({
-        type: "file",
-        name: "atomic-publication.md",
-        path,
-        sha: input.observedBlobSha ?? previousBlobSha,
-        size: 12,
-        url: `${contentUrl()}?ref=${parentSha}`,
-        git_url:
-          `${apiBaseUrl}/repos/${repositoryFullName}/git/blobs/${input.observedBlobSha ?? previousBlobSha}`,
+        sha: parentTreeSha,
+        url: treeUrl(parentTreeSha),
+        tree: input.operation === "create_file"
+          ? []
+          : [{
+              path,
+              mode: "100644",
+              type: "blob",
+              sha: observedBlobSha,
+              url: blobUrl(observedBlobSha),
+              size: 12,
+            }],
+        truncated: false,
       });
     }
     if (method === "POST" && url === blobCollectionUrl()) {
       return Response.json({
         sha: nextBlobSha,
-        url: `${blobCollectionUrl()}/${nextBlobSha}`,
+        url: blobUrl(nextBlobSha),
       }, { status: 201 });
     }
     if (method === "POST" && url === treeCollectionUrl()) {
       return Response.json({
         sha: nextTreeSha,
-        url: `${treeCollectionUrl()}/${nextTreeSha}`,
+        url: treeUrl(nextTreeSha),
         tree: [],
         truncated: false,
       }, { status: 201 });
@@ -412,7 +409,7 @@ function atomicFetcher(input: {
         sha: nextCommitSha,
         tree: {
           sha: nextTreeSha,
-          url: `${treeCollectionUrl()}/${nextTreeSha}`,
+          url: treeUrl(nextTreeSha),
         },
         parents: [{ sha: parentSha, url: commitUrl(parentSha) }],
         url: commitUrl(nextCommitSha),
@@ -441,7 +438,9 @@ function refResponse(): Response {
   });
 }
 
-function tokenProvider(calls: Array<"read" | "write">): GitHubRepositoryWriteTokenProvider {
+function tokenProvider(
+  calls: Array<"read" | "write">,
+): GitHubRepositoryWriteTokenProvider {
   return {
     async getRepositoryContentsToken(input) {
       calls.push(input.access);
@@ -525,10 +524,18 @@ function blobCollectionUrl(): string {
   return `${repositoryUrl()}/git/blobs`;
 }
 
+function blobUrl(sha: string): string {
+  return `${blobCollectionUrl()}/${sha}`;
+}
+
 function treeCollectionUrl(): string {
   return `${repositoryUrl()}/git/trees`;
 }
 
-function contentUrl(): string {
-  return `${repositoryUrl()}/contents/${path}`;
+function treeUrl(sha: string): string {
+  return `${treeCollectionUrl()}/${sha}`;
+}
+
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
 }
