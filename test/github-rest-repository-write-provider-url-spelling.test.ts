@@ -13,6 +13,11 @@ const blobSha = "6603f5fe188ed53cb293e5a4b6697765e9a6f6e9";
 const canonicalCommitUrl = commitUrl(commitSha);
 const canonicalParentUrl = commitUrl(parentSha);
 
+type FetchImplementation = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 describe("GitHub repository-write provider state URL spelling", () => {
   test("admits canonical optional ref, commit, and write URLs", async () => {
     await expect(refHead(canonicalCommitUrl)).resolves.toBe(commitSha);
@@ -145,7 +150,7 @@ async function writeResult(providerCommitUrl: string) {
 }
 
 function adapterFor(
-  fetchImplementation: typeof fetch,
+  fetchImplementation: FetchImplementation,
 ): GitHubRestRepositoryWriteAdapter {
   return new GitHubRestRepositoryWriteAdapter({
     tokenProvider: {
@@ -156,7 +161,7 @@ function adapterFor(
         };
       },
     },
-    fetch: fetchImplementation,
+    fetch: fetchImplementation as unknown as typeof fetch,
   });
 }
 
