@@ -8,6 +8,8 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const sha40 = "a".repeat(40);
 const parent64 = "b".repeat(64);
 const commit64 = "c".repeat(64);
+const parentTree64 = "d".repeat(64);
+const nextTree64 = "e".repeat(64);
 const createContent = "bounded content";
 const blob64 = gitBlobSha256(createContent);
 
@@ -92,23 +94,68 @@ describe("GitHub repository-write adapter fence parity", () => {
         const method = init?.method ?? "GET";
         const url = String(input);
         requests.push({ method, url });
-        if (method === "GET" && url.endsWith(`/git/commits/${commit64}`)) {
+
+        if (method === "GET" && url === commitUrl(commit64)) {
           return Response.json({
             sha: commit64,
             url: commitUrl(commit64),
             parents: [{ sha: parent64, url: commitUrl(parent64) }],
           });
         }
-        if (method === "PUT" && url.endsWith("/contents/docs/review.md")) {
+        if (method === "GET" && url === commitUrl(parent64)) {
           return Response.json({
-            content: contentObject64(),
-            commit: {
+            sha: parent64,
+            tree: {
+              sha: parentTree64,
+              url: treeUrl(parentTree64),
+            },
+            parents: [],
+            url: commitUrl(parent64),
+          });
+        }
+        if (method === "GET" && url === recursiveTreeUrl(parentTree64)) {
+          return Response.json({
+            sha: parentTree64,
+            url: treeUrl(parentTree64),
+            tree: [],
+            truncated: false,
+          });
+        }
+        if (method === "POST" && url === blobCollectionUrl()) {
+          return Response.json({
+            sha: blob64,
+            url: blobUrl(blob64),
+          }, { status: 201 });
+        }
+        if (method === "POST" && url === treeCollectionUrl()) {
+          return Response.json({
+            sha: nextTree64,
+            url: treeUrl(nextTree64),
+            tree: [],
+            truncated: false,
+          }, { status: 201 });
+        }
+        if (method === "POST" && url === commitCollectionUrl()) {
+          return Response.json({
+            sha: commit64,
+            tree: {
+              sha: nextTree64,
+              url: treeUrl(nextTree64),
+            },
+            parents: [{ sha: parent64, url: commitUrl(parent64) }],
+            url: commitUrl(commit64),
+          }, { status: 201 });
+        }
+        if (method === "PATCH" && url === updateRefUrl("topic/review")) {
+          return Response.json({
+            ref: "refs/heads/topic/review",
+            object: {
+              type: "commit",
               sha: commit64,
               url: commitUrl(commit64),
-              parents: [{ sha: parent64, url: commitUrl(parent64) }],
             },
           }, {
-            status: 201,
+            status: 200,
             headers: { "x-github-request-id": "REQ-SHA256-WRITE" },
           });
         }
@@ -141,46 +188,51 @@ describe("GitHub repository-write adapter fence parity", () => {
     });
 
     expect(requests).toEqual([
-      {
-        method: "GET",
-        url: commitUrl(commit64),
-      },
-      {
-        method: "PUT",
-        url: "https://api.github.com/repos/teamleaderleo/stensibly/contents/docs/review.md",
-      },
+      { method: "GET", url: commitUrl(commit64) },
+      { method: "GET", url: commitUrl(parent64) },
+      { method: "GET", url: recursiveTreeUrl(parentTree64) },
+      { method: "POST", url: blobCollectionUrl() },
+      { method: "POST", url: treeCollectionUrl() },
+      { method: "POST", url: commitCollectionUrl() },
+      { method: "PATCH", url: updateRefUrl("topic/review") },
     ]);
   });
 });
 
-function contentObject64() {
-  const contentUrl =
-    "https://api.github.com/repos/teamleaderleo/stensibly/contents/docs/review.md";
-  const gitUrl =
-    `https://api.github.com/repos/${repositoryFullName}/git/blobs/${blob64}`;
-  const htmlUrl =
-    `https://github.com/${repositoryFullName}/blob/${commit64}/docs/review.md`;
-  return {
-    name: "review.md",
-    path: "docs/review.md",
-    sha: blob64,
-    size: Buffer.byteLength(createContent, "utf8"),
-    url: contentUrl,
-    html_url: htmlUrl,
-    git_url: gitUrl,
-    download_url:
-      `https://raw.githubusercontent.com/${repositoryFullName}/${commit64}/docs/review.md`,
-    type: "file",
-    _links: {
-      self: contentUrl,
-      git: gitUrl,
-      html: htmlUrl,
-    },
-  };
+function repositoryUrl(): string {
+  return `https://api.github.com/repos/${repositoryFullName}`;
 }
 
 function commitUrl(sha: string): string {
-  return `https://api.github.com/repos/${repositoryFullName}/git/commits/${sha}`;
+  return `${repositoryUrl()}/git/commits/${sha}`;
+}
+
+function commitCollectionUrl(): string {
+  return `${repositoryUrl()}/git/commits`;
+}
+
+function blobCollectionUrl(): string {
+  return `${repositoryUrl()}/git/blobs`;
+}
+
+function blobUrl(sha: string): string {
+  return `${blobCollectionUrl()}/${sha}`;
+}
+
+function treeCollectionUrl(): string {
+  return `${repositoryUrl()}/git/trees`;
+}
+
+function treeUrl(sha: string): string {
+  return `${treeCollectionUrl()}/${sha}`;
+}
+
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
+}
+
+function updateRefUrl(targetRef: string): string {
+  return `${repositoryUrl()}/git/refs/heads/${targetRef}`;
 }
 
 function gitBlobSha256(content: string): string {
