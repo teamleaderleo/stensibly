@@ -23,13 +23,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact repaired carrier head
+      - name: Verify exact diagnostic carrier head
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "cae67b04e7ef704196987d89ecb6950ede32e31b"
+          test "$(git rev-parse HEAD^)" = "a58bf673e99881302bf36060b0560d6703408d81"
 
       - name: Narrow dense-array length descriptor
         shell: bash
@@ -83,8 +83,27 @@ jobs:
       - name: Install committed dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run strict TypeScript
-        run: bun run typecheck
+      - name: Capture strict TypeScript diagnostics
+        id: typecheck
+        shell: bash
+        run: |
+          set +e
+          bun run typecheck > typecheck-output.txt 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat typecheck-output.txt
+          exit 0
+
+      - name: Upload strict TypeScript diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atomic-typecheck-${{ github.event.pull_request.head.sha }}
+          path: typecheck-output.txt
+          if-no-files-found: error
+
+      - name: Enforce strict TypeScript
+        run: test "${{ steps.typecheck.outputs.status }}" = "0"
 
       - name: Run atomic publication controls
         run: bun test test/github-rest-repository-write-atomic-publication.test.ts
