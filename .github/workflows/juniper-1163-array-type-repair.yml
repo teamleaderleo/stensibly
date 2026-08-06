@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "dfcc31d93753f786b1e79069e7d70404f26df83b"
+          test "$(git rev-parse HEAD^)" = "cae67b04e7ef704196987d89ecb6950ede32e31b"
 
       - name: Narrow dense-array length descriptor
         shell: bash
@@ -80,15 +80,20 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Validate exact type repair
-        run: |
-          set -euo pipefail
-          bun install --frozen-lockfile
-          bun run typecheck
-          bun test \
-            test/github-rest-repository-write-atomic-publication.test.ts \
-            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
-            test/github-rest-repository-write-adapter.test.ts
+      - name: Install committed dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run strict TypeScript
+        run: bun run typecheck
+
+      - name: Run atomic publication controls
+        run: bun test test/github-rest-repository-write-atomic-publication.test.ts
+
+      - name: Run atomic mode controls
+        run: bun test test/github-rest-repository-write-atomic-mode-preservation.test.ts
+
+      - name: Run adapter controls
+        run: bun test test/github-rest-repository-write-adapter.test.ts
 
       - name: Publish workflow-free repaired source
         env:
