@@ -30,12 +30,14 @@ jobs:
           SOURCE: d366b0160355c03ecb8732a857721a3b10a5254d
           OLD_BASE: dfb6b61dfbb1f895d9dc4dec4b58c3093dcd96b3
           MAIN: 2bd2b831d4d9c2e6545e3c17b5dcd4e23727679a
+          REPAIR_CARRIER: de36f66b6698cce2cf022349757278aa237fb905
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$SOURCE"
           test "$(git rev-parse "$SOURCE^")" = "$OLD_BASE"
+          test "$(git diff --name-only "$SOURCE" HEAD)" = ".github/workflows/cedar-968-current-main-replay.yml"
           git fetch --no-tags origin "$MAIN"
           test "$(git rev-parse FETCH_HEAD)" = "$MAIN"
+          git show "$REPAIR_CARRIER:.github/workflows/lumen-968-init-snapshot-repair.yml" > /tmp/lumen-968.yml
 
       - name: Replay exact private packet
         env:
@@ -48,12 +50,46 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git rebase --onto "$MAIN" "$OLD_BASE" "$SOURCE"
           test "$(git rev-parse HEAD^)" = "$MAIN"
+
+      - name: Apply final RequestInit snapshot repair
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          text = Path('/tmp/lumen-968.yml').read_text()
+          python_marker = '''      - name: Apply one-pass RequestInit snapshot repair
+                shell: python
+                run: |
+          '''
+          python_marker = textwrap.dedent(python_marker)
+          start = text.index(python_marker) + len(python_marker)
+          end = text.index('\n      - name: Add exact getter and method-snapshot controls', start)
+          Path('/tmp/repair.py').write_text(textwrap.dedent(text[start:end]))
+
+          shell_marker = '''      - name: Add exact getter and method-snapshot controls
+                shell: bash
+                run: |
+          '''
+          shell_marker = textwrap.dedent(shell_marker)
+          start = text.index(shell_marker) + len(shell_marker)
+          end = text.index('\n      - name: Verify repaired private packet', start)
+          Path('/tmp/add-control.sh').write_text(textwrap.dedent(text[start:end]))
+          PY
+          python3 /tmp/repair.py
+          bash /tmp/add-control.sh
+          git add src test
+          git commit --amend --no-edit
+
+          MAIN=2bd2b831d4d9c2e6545e3c17b5dcd4e23727679a
           mapfile -t changed < <(git diff --name-only "$MAIN" HEAD | sort)
-          test "${#changed[@]}" -eq 39
+          test "${#changed[@]}" -eq 40
           test "$(printf '%s\n' "${changed[@]}" | grep -c '^src/')" -eq 10
-          test "$(printf '%s\n' "${changed[@]}" | grep -c '^test/')" -eq 29
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^test/')" -eq 30
           test "$(printf '%s\n' "${changed[@]}" | grep -c '^\.github/')" -eq 0
           printf '%s\n' "${changed[@]}" | grep -qx 'src/hosted-github-issue-provider.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'test/github-provider-bounded-response-init-single-snapshot.test.ts'
           printf '%s\n' "${changed[@]}" | grep -qx 'test/hosted-github-issue-set-write-provider.test.ts'
           git diff --check "$MAIN" HEAD
 
@@ -72,6 +108,7 @@ jobs:
             test/github-rest-issue-set-write-stream-bound.test.ts \
             test/github-issue-provider-call-local-readback.test.ts \
             test/github-issue-provider-request-id-retention.test.ts \
+            test/github-provider-bounded-response-init-single-snapshot.test.ts \
             test/github-provider-bounded-response-signal-setup-cleanup.test.ts
 
       - name: Publish workflow-free current-main packet
