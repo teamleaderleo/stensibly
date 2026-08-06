@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "a58bf673e99881302bf36060b0560d6703408d81"
+          test "$(git rev-parse HEAD^)" = "e8a33455d758a416b73c12cbce106a13fa6eb21e"
 
       - name: Narrow dense-array length descriptor
         shell: bash
@@ -54,7 +54,10 @@ jobs:
             "  const length = lengthDescriptor.value as number;"
           )
           after = (
-            "  const lengthDescriptor = descriptors.length;\n"
+            "  const lengthDescriptor = Object.getOwnPropertyDescriptor(\n"
+            "    value,\n"
+            "    \"length\",\n"
+            "  );\n"
             "  const lengthValue = lengthDescriptor && \"value\" in lengthDescriptor\n"
             "    ? lengthDescriptor.value\n"
             "    : undefined;\n"
