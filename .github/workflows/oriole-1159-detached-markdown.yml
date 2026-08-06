@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD:src/project-delta-brief.ts)" = "e21f1019b03e6f0dc5f85594ca4701babcd9d659"
           test "$(git rev-parse HEAD:test/project-delta-brief-public-boundary.test.ts)" = "8d859203970fcfd45840732fcac4abc8b17d9e27"
+          test -f test/project-delta-brief-input-inspection.test.ts
 
       - uses: oven-sh/setup-bun@v2
 
@@ -116,7 +117,7 @@ jobs:
           PY
           git diff --check
 
-      - name: Validate exact repair
+      - name: Validate exact repair and bounded caller inspection
         shell: bash
         run: |
           set -euo pipefail
@@ -124,7 +125,8 @@ jobs:
           bun run typecheck
           bun test \
             test/project-delta-brief.test.ts \
-            test/project-delta-brief-public-boundary.test.ts
+            test/project-delta-brief-public-boundary.test.ts \
+            test/project-delta-brief-input-inspection.test.ts
 
       - name: Publish workflow-free repair
         shell: bash
