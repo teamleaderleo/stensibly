@@ -9,9 +9,12 @@ export function containsGitHubRepositoryWriteCredential(
 
 export function admitGitHubRepositoryFullName(value: unknown): string {
   const text = exactAscii(value, 200);
+  const repository = text.slice(text.indexOf("/") + 1);
   if (
     text !== text.toLowerCase()
     || !/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?\/[a-z0-9_.-]{1,100}$/u.test(text)
+    || repository === "."
+    || repository === ".."
   ) {
     throw invalidAdmission();
   }
