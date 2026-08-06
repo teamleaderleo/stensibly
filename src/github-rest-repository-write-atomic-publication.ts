@@ -385,17 +385,22 @@ function exactArray(
     throw invalidResponse(`${label} were malformed`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const lengthDescriptor = descriptors.length;
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(
+    value,
+    "length",
+  );
+  const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
   if (
-    !lengthDescriptor
-    || !("value" in lengthDescriptor)
-    || !Number.isSafeInteger(lengthDescriptor.value)
-    || lengthDescriptor.value < 0
-    || lengthDescriptor.value > maximumLength
+    typeof lengthValue !== "number"
+    || !Number.isSafeInteger(lengthValue)
+    || lengthValue < 0
+    || lengthValue > maximumLength
   ) {
     throw invalidResponse(`${label} were malformed`);
   }
-  const length = lengthDescriptor.value as number;
+  const length = lengthValue;
   const result: unknown[] = [];
   for (const key of Object.keys(descriptors)) {
     if (key === "length") continue;
