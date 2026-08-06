@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { sha256, stableJson } from "../src/canonical-json.ts";
 import {
+  compareCodeUnits,
+  sha256,
+  stableJson,
+} from "../src/canonical-json.ts";
+import {
+  canonicalLogins,
+  canonicalStringList,
   sha256 as githubSha256,
   stableJson as githubStableJson,
 } from "../src/github-provider-validation.ts";
@@ -12,6 +18,35 @@ describe("canonical JSON and digest helpers", () => {
       z: [{ beta: 2, alpha: 1 }, true],
       a: "first",
     })).toBe('{"a":"first","z":[{"alpha":1,"beta":2},true]}');
+  });
+
+  test("uses exact UTF-16 code-unit order across canonical and provider paths", () => {
+    const supplementary = "\u{10000}";
+    const privateUse = "\uE000";
+    const unordered = [privateUse, supplementary, "a", "Z"];
+    const expected = ["Z", "a", supplementary, privateUse];
+
+    expect([...unordered].sort(compareCodeUnits)).toEqual(expected);
+    expect(compareCodeUnits("same", "same")).toBe(0);
+
+    const canonical = stableJson({
+      [privateUse]: 3,
+      [supplementary]: 4,
+      a: 2,
+      Z: 1,
+    });
+    expect(canonical).toBe(
+      `{"Z":1,"a":2,"${supplementary}":4,"${privateUse}":3}`,
+    );
+    expect(sha256(canonical)).toBe(
+      "sha256:7725e02f3312cd360c9cfb126e8645889a2b21801528cd7209b91674efa9f054",
+    );
+    expect(canonicalStringList(unordered, 4, 10)).toEqual(expected);
+    expect(canonicalLogins(["zeta", "alpha", "beta"])).toEqual([
+      "alpha",
+      "beta",
+      "zeta",
+    ]);
   });
 
   test("normalizes negative zero and rejects unsupported values", () => {
