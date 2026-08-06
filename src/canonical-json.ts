@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 
+/**
+ * Compares strings by exact UTF-16 code units for deterministic canonical
+ * ordering. This intentionally avoids locale- and runtime-sensitive collation.
+ */
+export function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
@@ -16,12 +24,8 @@ export function stableJson(value: unknown): string {
     return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
   }
   if (!isRecord(value)) throw new RangeError("Canonical JSON value is invalid");
-  const keys = Object.keys(value).sort(codeUnitCompare);
+  const keys = Object.keys(value).sort(compareCodeUnits);
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
-}
-
-function codeUnitCompare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
