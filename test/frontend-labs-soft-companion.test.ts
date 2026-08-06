@@ -35,8 +35,9 @@ describe("Soft Companion frontend lab", () => {
       path: "./soft-companion/",
     });
     expect(variant?.support).toEqual(["wide", "medium", "narrow", "light", "dark", "keyboard", "reduced-motion", "loading", "empty", "degraded", "error"]);
-    expect(frontendLabManifest.slice(0, 2).map(({ id, status }) => ({ id, status }))).toEqual([
+    expect(frontendLabManifest.slice(0, 3).map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "quiet-control", status: "prototype" },
+      { id: "work-pulse", status: "prototype" },
       { id: "soft-companion", status: "prototype" },
     ]);
     expect(html).toContain('data-stensibly-lab="prototype"');
