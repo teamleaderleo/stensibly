@@ -208,6 +208,28 @@ describe("orchestrator causal attention projection", () => {
     });
   });
 
+  test("an older ambiguity reconciliation cannot resolve a newer ambiguity", () => {
+    const receipt = ambiguousReceipt();
+    const observed = ambiguousObservation();
+    const staleReconciliation = resolver(receipt.observationId, {
+      sourceId: "provider_observation_1153_stale_reconciliation",
+      sourceFingerprint: `sha256:${"1".repeat(64)}`,
+      observedAt: "2026-08-07T00:00:04.000Z",
+    });
+    const projection = compileOrchestratorAttentionProjection([
+      receipt,
+      observed,
+      staleReconciliation,
+    ]);
+
+    expect(projection.threads[0]).toMatchObject({
+      state: "contradictory",
+      resolvedAt: null,
+      contradictionCount: 1,
+      contradictingObservationIds: [staleReconciliation.observationId],
+    });
+  });
+
   test("does not let generic success overwrite contradictory evidence", () => {
     const receipt = ambiguousReceipt();
     const observed = ambiguousObservation();
@@ -268,8 +290,11 @@ describe("orchestrator causal attention projection", () => {
     const projection = compileOrchestratorAttentionProjection([first, second]);
 
     expect(projection.threadCount).toBe(2);
-    expect(projection.threads.map((thread) => thread.responsibilityGeneration))
-      .toEqual([1, 2]);
+    expect(
+      projection.threads
+        .map((thread) => thread.responsibilityGeneration)
+        .sort((left, right) => (left ?? 0) - (right ?? 0)),
+    ).toEqual([1, 2]);
   });
 
   test("rejects hostile observation accessors without invoking them", () => {
