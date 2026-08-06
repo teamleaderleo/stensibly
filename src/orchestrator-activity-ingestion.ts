@@ -40,12 +40,6 @@ interface StoredDelivery {
   observation: OrchestratorActivityObservation;
 }
 
-const inputFields = new Set<string>([
-  "deliveryId",
-  "deliveryFingerprint",
-  "acceptedAt",
-  "observation",
-]);
 const requiredInputFields = [
   "deliveryId",
   "deliveryFingerprint",
@@ -227,11 +221,9 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
   }
   let isArray: boolean;
   let prototype: object | null;
-  let descriptors: Record<string, PropertyDescriptor>;
   try {
     isArray = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
-    descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new Error("Orchestrator activity ingestion input could not be inspected");
   }
@@ -243,14 +235,17 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
       "Orchestrator activity ingestion input must use a plain or null prototype",
     );
   }
-  if (Object.getOwnPropertySymbols(descriptors).length > 0) {
-    throw new Error("Orchestrator activity ingestion input contains a symbol field");
-  }
 
   const record = Object.create(null) as Record<string, unknown>;
-  for (const [key, descriptor] of Object.entries(descriptors)) {
-    if (!inputFields.has(key)) {
-      throw new Error("Orchestrator activity ingestion input has an unknown field");
+  for (const key of requiredInputFields) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new Error("Orchestrator activity ingestion input could not be inspected");
+    }
+    if (!descriptor) {
+      throw new Error(`Orchestrator activity ingestion is missing field ${key}`);
     }
     if (!descriptor.enumerable || !("value" in descriptor)) {
       throw new Error(
@@ -258,11 +253,6 @@ function exactInputRecord(value: unknown): Record<string, unknown> {
       );
     }
     record[key] = descriptor.value;
-  }
-  for (const key of requiredInputFields) {
-    if (!Object.hasOwn(record, key)) {
-      throw new Error(`Orchestrator activity ingestion is missing field ${key}`);
-    }
   }
   return record;
 }
