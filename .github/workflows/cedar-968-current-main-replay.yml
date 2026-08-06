@@ -29,7 +29,7 @@ jobs:
         env:
           SOURCE: d366b0160355c03ecb8732a857721a3b10a5254d
           OLD_BASE: dfb6b61dfbb1f895d9dc4dec4b58c3093dcd96b3
-          MAIN: 2bd2b831d4d9c2e6545e3c17b5dcd4e23727679a
+          MAIN: 286958de6fd954753ffc8c31a3db7d0d9cc9c4f5
           REPAIR_CARRIER: de36f66b6698cce2cf022349757278aa237fb905
         run: |
           set -euo pipefail
@@ -43,7 +43,7 @@ jobs:
         env:
           SOURCE: d366b0160355c03ecb8732a857721a3b10a5254d
           OLD_BASE: dfb6b61dfbb1f895d9dc4dec4b58c3093dcd96b3
-          MAIN: 2bd2b831d4d9c2e6545e3c17b5dcd4e23727679a
+          MAIN: 286958de6fd954753ffc8c31a3db7d0d9cc9c4f5
         run: |
           set -euo pipefail
           git config user.name "Cedar"
@@ -82,7 +82,7 @@ jobs:
           git add src test
           git commit --amend --no-edit
 
-          MAIN=2bd2b831d4d9c2e6545e3c17b5dcd4e23727679a
+          MAIN=286958de6fd954753ffc8c31a3db7d0d9cc9c4f5
           mapfile -t changed < <(git diff --name-only "$MAIN" HEAD | sort)
           test "${#changed[@]}" -eq 40
           test "$(printf '%s\n' "${changed[@]}" | grep -c '^src/')" -eq 10
