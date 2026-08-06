@@ -1,0 +1,83 @@
+name: Sable 1135 repository mismatch taxonomy
+
+on:
+  push:
+    branches:
+      - sable/975-current-main-replay
+    paths:
+      - .github/workflows/sable-1135-repository-mismatch-taxonomy.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sable-1135-repository-mismatch-taxonomy
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: sable/975-current-main-replay
+          fetch-depth: 2
+
+      - name: Verify exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "b339afad88f8472a0dff02f7a806a7f981745f66"
+          test "$(git rev-parse HEAD^:src/github-provider-context-acceptance-composer.ts)" = "4383e418b004b699700f35d42aeebc644a38c37a"
+          test "$(git rev-parse HEAD^:test/github-provider-context-acceptance-composer.test.ts)" = "c451d172d9c1ee1a6b744ce8342d1ec3eca26d3d"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Repair exact mismatch diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/github-provider-context-acceptance-composer.test.ts")
+          text = path.read_text()
+          old = '''    expect(() => compose(
+              wrongRepository as GitHubProviderContextReconciliationProposalV1,
+              null,
+            )).toThrow("proposal semantics are invalid");
+          '''
+          new = '''    expect(() => compose(
+              wrongRepository as GitHubProviderContextReconciliationProposalV1,
+              null,
+            )).toThrow("external ID is outside the bound repository");
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one exact stale assertion, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+
+      - name: Validate focused repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-provider-context-acceptance-composer.test.ts \
+            test/github-provider-context-acceptance-composer-binding-final-privacy.test.ts \
+            test/github-provider-context-acceptance-composer-final-proposal-admission.test.ts
+
+      - name: Publish workflow-free repaired head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/sable-1135-repository-mismatch-taxonomy.yml
+          git add test/github-provider-context-acceptance-composer.test.ts
+          git diff --cached --check
+          git config user.name "Sable"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Align composer repository mismatch diagnostic"
+          git push origin HEAD:sable/975-current-main-replay
