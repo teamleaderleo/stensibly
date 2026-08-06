@@ -61,11 +61,28 @@ export type {
 
 const maximumInputObjects = 20_000;
 const maximumInputArrayLength = 4_096;
+const projectDeltaCategories = [
+  "completed",
+  "failed",
+  "newlyBlocked",
+  "unblocked",
+  "decisionsAdded",
+  "decisionsResolved",
+  "authorityChanged",
+  "superseded",
+  "ambiguous",
+  "recovered",
+  "sourceFreshness",
+] as const satisfies readonly ProjectDeltaCategory[];
+
+interface SnapshotBudget {
+  objects: number;
+}
 
 export function compileProjectDeltaBrief(
   input: CompileProjectDeltaBriefInput,
 ): ProjectDeltaBrief {
-  const detached = detachInputGraph(input) as CompileProjectDeltaBriefInput;
+  const detached = snapshotCompileInput(input);
   assertRetainedCredentialFree(detached);
   const brief = compileProjectDeltaBriefBase(detached);
   assertRetainedCredentialFree(brief);
@@ -75,73 +92,364 @@ export function compileProjectDeltaBrief(
 export function renderProjectDeltaBriefMarkdown(
   brief: ProjectDeltaBrief,
 ): string {
-  assertRetainedCredentialFree(brief);
-  return renderProjectDeltaBriefMarkdownBase(brief);
+  const detached = snapshotProjectDeltaBrief(brief);
+  assertRetainedCredentialFree(detached);
+  return renderProjectDeltaBriefMarkdownBase(detached);
 }
 
-function detachInputGraph(value: unknown): unknown {
-  const seen = new Map<object, unknown>();
-  let inspectedObjects = 0;
+function snapshotCompileInput(value: unknown): CompileProjectDeltaBriefInput {
+  const budget = { objects: 0 };
+  requireInputObject(value, budget);
+  const record = value as object;
+  return {
+    project: inputEnvelopeValue(record, "project") as string,
+    fromCheckpoint: snapshotInputCheckpoint(
+      inputEnvelopeValue(record, "fromCheckpoint"),
+      budget,
+    ),
+    toCheckpoint: snapshotInputCheckpoint(
+      inputEnvelopeValue(record, "toCheckpoint"),
+      budget,
+    ),
+    observations: snapshotInputArray(
+      inputEnvelopeValue(record, "observations"),
+      budget,
+      maximumInputArrayLength,
+      snapshotInputObservation,
+    ),
+    limit: inputEnvelopeValue(record, "limit") as number,
+  };
+}
 
-  const detach = (current: unknown): unknown => {
-    if (current === null || typeof current !== "object") return current;
-    const prior = seen.get(current);
-    if (prior !== undefined) return prior;
-    inspectedObjects += 1;
-    if (inspectedObjects > maximumInputObjects) {
-      throw new TypeError("Project delta input inspection exceeded its limit");
-    }
+function snapshotInputCheckpoint(
+  value: unknown,
+  budget: SnapshotBudget,
+): ProjectDeltaCheckpoint {
+  requireInputObject(value, budget);
+  const record = value as object;
+  return {
+    id: inputDataDescriptorValue(record, "id") as string,
+    throughSequence: inputDataDescriptorValue(record, "throughSequence") as number,
+    observedAt: inputDataDescriptorValue(record, "observedAt") as string,
+  };
+}
 
-    const { prototype, keys } = inspectObject(
-      current,
-      "Project delta input inspection failed",
-    );
-    if (Array.isArray(current)) {
-      if (prototype !== Array.prototype) {
-        throw new TypeError("Project delta input inspection failed");
-      }
-      const length = arrayLength(current);
-      if (length > maximumInputArrayLength) {
-        throw new TypeError("Project delta input inspection exceeded its limit");
-      }
-      const allowed = new Set<PropertyKey>(["length"]);
-      for (let index = 0; index < length; index += 1) {
-        allowed.add(String(index));
-      }
-      if (keys.length !== allowed.size || keys.some((key) => !allowed.has(key))) {
-        throw new TypeError("Project delta input inspection failed");
-      }
-      const result: unknown[] = new Array(length);
-      seen.set(current, result);
-      for (let index = 0; index < length; index += 1) {
-        result[index] = detach(inputDataDescriptorValue(current, String(index)));
-      }
-      return result;
-    }
-
-    if (prototype !== Object.prototype) {
-      throw new TypeError("Project delta input inspection failed");
-    }
-    const result: Record<string, unknown> = {};
-    seen.set(current, result);
-    for (const key of keys) {
-      if (typeof key !== "string") {
-        throw new TypeError("Project delta input inspection failed");
-      }
-      Object.defineProperty(result, key, {
-        value: detach(inputDataDescriptorValue(current, key)),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-    }
-    return result;
+function snapshotInputObservation(
+  value: unknown,
+  budget: SnapshotBudget,
+): ProjectDeltaObservation {
+  requireInputObject(value, budget);
+  const record = value as object;
+  const kind = inputDataDescriptorValue(record, "kind") as ProjectDeltaObservationKind;
+  const base = {
+    observationId: inputDataDescriptorValue(record, "observationId") as string,
+    sequence: inputDataDescriptorValue(record, "sequence") as number,
+    project: inputDataDescriptorValue(record, "project") as string,
+    subjectId: inputDataDescriptorValue(record, "subjectId") as string,
+    title: inputDataDescriptorValue(record, "title") as string,
+    summary: inputDataDescriptorValue(record, "summary") as string | null,
+    observedAt: inputDataDescriptorValue(record, "observedAt") as string,
+    sourceReferences: snapshotInputArray(
+      inputDataDescriptorValue(record, "sourceReferences"),
+      budget,
+      maximumInputArrayLength,
+      (entry) => entry as string,
+    ),
   };
 
-  return detach(value);
+  if (kind === "authority") {
+    return {
+      ...base,
+      kind,
+      state: inputDataDescriptorValue(record, "state") as ProjectDeltaAuthorityState,
+      generation: inputDataDescriptorValue(record, "generation") as number,
+      holderId: inputDataDescriptorValue(record, "holderId") as string | null,
+    };
+  }
+  if (kind === "work") {
+    return {
+      ...base,
+      kind,
+      state: inputDataDescriptorValue(record, "state") as ProjectDeltaWorkState,
+    };
+  }
+  if (kind === "decision") {
+    return {
+      ...base,
+      kind,
+      state: inputDataDescriptorValue(record, "state") as ProjectDeltaDecisionState,
+    };
+  }
+  if (kind === "provider_effect") {
+    return {
+      ...base,
+      kind,
+      state: inputDataDescriptorValue(record, "state") as ProjectDeltaProviderEffectState,
+    };
+  }
+  return {
+    ...base,
+    kind: kind as "source",
+    state: inputDataDescriptorValue(record, "state") as ProjectDeltaSourceState,
+  };
 }
 
-function arrayLength(value: unknown[]): number {
+function snapshotInputArray<T>(
+  value: unknown,
+  budget: SnapshotBudget,
+  maximumLength: number,
+  snapshotEntry: (entry: unknown, budget: SnapshotBudget) => T,
+): T[] {
+  requireInputArray(value, budget);
+  const array = value as unknown[];
+  const length = inputArrayLength(array);
+  if (length > maximumLength) {
+    throw new TypeError("Project delta input inspection exceeded its limit");
+  }
+  const result: T[] = [];
+  for (let index = 0; index < length; index += 1) {
+    result.push(snapshotEntry(inputDataDescriptorValue(array, String(index)), budget));
+  }
+  return result;
+}
+
+function snapshotProjectDeltaBrief(value: unknown): ProjectDeltaBrief {
+  const budget = { objects: 0 };
+  requireBriefObject(value, budget);
+  const record = value as object;
+  const categories = Object.fromEntries(
+    projectDeltaCategories.map((category) => [
+      category,
+      snapshotBriefArray(
+        briefDataDescriptorValue(record, category),
+        budget,
+        snapshotProjectDeltaChange,
+      ),
+    ]),
+  ) as Record<ProjectDeltaCategory, ProjectDeltaChange[]>;
+  const rawNextAction = briefDataDescriptorValue(record, "nextAction");
+  return {
+    project: briefDataDescriptorValue(record, "project") as string,
+    fromCheckpoint: snapshotBriefCheckpoint(
+      briefDataDescriptorValue(record, "fromCheckpoint"),
+      budget,
+    ),
+    toCheckpoint: snapshotBriefCheckpoint(
+      briefDataDescriptorValue(record, "toCheckpoint"),
+      budget,
+    ),
+    completed: categories.completed,
+    failed: categories.failed,
+    newlyBlocked: categories.newlyBlocked,
+    unblocked: categories.unblocked,
+    decisionsAdded: categories.decisionsAdded,
+    decisionsResolved: categories.decisionsResolved,
+    authorityChanged: categories.authorityChanged,
+    superseded: categories.superseded,
+    ambiguous: categories.ambiguous,
+    recovered: categories.recovered,
+    sourceFreshness: categories.sourceFreshness,
+    omittedCounts: snapshotOmittedCounts(
+      briefDataDescriptorValue(record, "omittedCounts"),
+      budget,
+    ),
+    nextAction: rawNextAction === null
+      ? null
+      : snapshotBriefNextAction(rawNextAction, budget),
+    sourceReferences: snapshotBriefArray(
+      briefDataDescriptorValue(record, "sourceReferences"),
+      budget,
+      (entry) => entry as string,
+    ),
+    authorizesMutation: briefDataDescriptorValue(record, "authorizesMutation") as false,
+    authorizesAuthority: briefDataDescriptorValue(record, "authorizesAuthority") as false,
+    briefFingerprint: briefDataDescriptorValue(record, "briefFingerprint") as string,
+  };
+}
+
+function snapshotBriefCheckpoint(
+  value: unknown,
+  budget: SnapshotBudget,
+): ProjectDeltaCheckpoint {
+  requireBriefObject(value, budget);
+  const record = value as object;
+  return {
+    id: briefDataDescriptorValue(record, "id") as string,
+    throughSequence: briefDataDescriptorValue(record, "throughSequence") as number,
+    observedAt: briefDataDescriptorValue(record, "observedAt") as string,
+  };
+}
+
+function snapshotProjectDeltaChange(
+  value: unknown,
+  budget: SnapshotBudget,
+): ProjectDeltaChange {
+  requireBriefObject(value, budget);
+  const record = value as object;
+  return {
+    observationId: briefDataDescriptorValue(record, "observationId") as string,
+    sequence: briefDataDescriptorValue(record, "sequence") as number,
+    kind: briefDataDescriptorValue(record, "kind") as ProjectDeltaObservationKind,
+    subjectId: briefDataDescriptorValue(record, "subjectId") as string,
+    title: briefDataDescriptorValue(record, "title") as string,
+    summary: briefDataDescriptorValue(record, "summary") as string | null,
+    fromState: briefDataDescriptorValue(record, "fromState") as string | null,
+    toState: briefDataDescriptorValue(record, "toState") as string,
+    fromGeneration: briefDataDescriptorValue(record, "fromGeneration") as number | null,
+    toGeneration: briefDataDescriptorValue(record, "toGeneration") as number | null,
+    fromHolderId: briefDataDescriptorValue(record, "fromHolderId") as string | null,
+    toHolderId: briefDataDescriptorValue(record, "toHolderId") as string | null,
+    observedAt: briefDataDescriptorValue(record, "observedAt") as string,
+    sourceReferences: snapshotBriefArray(
+      briefDataDescriptorValue(record, "sourceReferences"),
+      budget,
+      (entry) => entry as string,
+    ),
+  };
+}
+
+function snapshotBriefNextAction(
+  value: unknown,
+  budget: SnapshotBudget,
+): ProjectDeltaNextAction {
+  requireBriefObject(value, budget);
+  const record = value as object;
+  return {
+    kind: briefDataDescriptorValue(record, "kind") as ProjectDeltaNextActionKind,
+    subjectId: briefDataDescriptorValue(record, "subjectId") as string,
+    title: briefDataDescriptorValue(record, "title") as string,
+    reason: briefDataDescriptorValue(record, "reason") as string,
+    sourceReferences: snapshotBriefArray(
+      briefDataDescriptorValue(record, "sourceReferences"),
+      budget,
+      (entry) => entry as string,
+    ),
+  };
+}
+
+function snapshotOmittedCounts(
+  value: unknown,
+  budget: SnapshotBudget,
+): Readonly<Record<ProjectDeltaCategory | "sourceReferences", number>> {
+  requireBriefObject(value, budget);
+  const record = value as object;
+  return Object.freeze({
+    ...Object.fromEntries(projectDeltaCategories.map((category) => [
+      category,
+      briefDataDescriptorValue(record, category) as number,
+    ])),
+    sourceReferences: briefDataDescriptorValue(record, "sourceReferences") as number,
+  }) as Readonly<Record<ProjectDeltaCategory | "sourceReferences", number>>;
+}
+
+function snapshotBriefArray<T>(
+  value: unknown,
+  budget: SnapshotBudget,
+  snapshotEntry: (entry: unknown, budget: SnapshotBudget) => T,
+): T[] {
+  requireBriefArray(value, budget);
+  const array = value as unknown[];
+  const length = briefArrayLength(array);
+  if (length > maximumInputArrayLength) {
+    throw new TypeError("Project delta brief inspection exceeded its limit");
+  }
+  const result: T[] = [];
+  for (let index = 0; index < length; index += 1) {
+    result.push(snapshotEntry(briefDataDescriptorValue(array, String(index)), budget));
+  }
+  return result;
+}
+
+function requireInputObject(value: unknown, budget: SnapshotBudget): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Project delta input inspection failed");
+  }
+  noteObject(budget, "Project delta input inspection exceeded its limit");
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      throw new TypeError("Project delta input inspection failed");
+    }
+  } catch (error) {
+    if (isFixedInspectionError(error, "Project delta input inspection failed")) throw error;
+    throw new TypeError("Project delta input inspection failed");
+  }
+}
+
+function requireInputArray(value: unknown, budget: SnapshotBudget): void {
+  if (!Array.isArray(value)) {
+    throw new TypeError("Project delta input inspection failed");
+  }
+  noteObject(budget, "Project delta input inspection exceeded its limit");
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new TypeError("Project delta input inspection failed");
+    }
+  } catch (error) {
+    if (isFixedInspectionError(error, "Project delta input inspection failed")) throw error;
+    throw new TypeError("Project delta input inspection failed");
+  }
+}
+
+function requireBriefObject(value: unknown, budget: SnapshotBudget): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  noteObject(budget, "Project delta brief inspection exceeded its limit");
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      throw new TypeError("Project delta brief inspection failed");
+    }
+  } catch (error) {
+    if (isFixedInspectionError(error, "Project delta brief inspection failed")) throw error;
+    throw new TypeError("Project delta brief inspection failed");
+  }
+}
+
+function requireBriefArray(value: unknown, budget: SnapshotBudget): void {
+  if (!Array.isArray(value)) {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  noteObject(budget, "Project delta brief inspection exceeded its limit");
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new TypeError("Project delta brief inspection failed");
+    }
+  } catch (error) {
+    if (isFixedInspectionError(error, "Project delta brief inspection failed")) throw error;
+    throw new TypeError("Project delta brief inspection failed");
+  }
+}
+
+function noteObject(budget: SnapshotBudget, message: string): void {
+  budget.objects += 1;
+  if (budget.objects > maximumInputObjects) throw new TypeError(message);
+}
+
+function inputEnvelopeValue(value: object, key: string): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) throw new TypeError("Project delta input inspection failed");
+    if (!("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(
+        "Project delta input fields must be enumerable data properties",
+      );
+    }
+    return descriptor.value;
+  } catch (error) {
+    if (
+      isFixedInspectionError(error, "Project delta input inspection failed")
+      || isFixedInspectionError(
+        error,
+        "Project delta input fields must be enumerable data properties",
+      )
+    ) {
+      throw error;
+    }
+    throw new TypeError("Project delta input inspection failed");
+  }
+}
+
+function inputArrayLength(value: unknown[]): number {
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, "length");
     if (
@@ -181,6 +489,42 @@ function inputDataDescriptorValue(value: object, key: PropertyKey): unknown {
       throw error;
     }
     throw new TypeError("Project delta input inspection failed");
+  }
+}
+
+function briefArrayLength(value: unknown[]): number {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (
+      !descriptor
+      || !("value" in descriptor)
+      || descriptor.enumerable
+      || !Number.isSafeInteger(descriptor.value)
+      || descriptor.value < 0
+    ) {
+      throw new TypeError("Project delta brief inspection failed");
+    }
+    return descriptor.value as number;
+  } catch (error) {
+    if (isFixedInspectionError(error, "Project delta brief inspection failed")) {
+      throw error;
+    }
+    throw new TypeError("Project delta brief inspection failed");
+  }
+}
+
+function briefDataDescriptorValue(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError("Project delta brief inspection failed");
+    }
+    return descriptor.value;
+  } catch (error) {
+    if (isFixedInspectionError(error, "Project delta brief inspection failed")) {
+      throw error;
+    }
+    throw new TypeError("Project delta brief inspection failed");
   }
 }
 
