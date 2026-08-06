@@ -23,13 +23,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact failed head
+      - name: Verify exact repaired carrier head
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "59f1e3e99f8f1b88e868dc9a0382391fcafc3254"
+          test "$(git rev-parse HEAD^)" = "dfcc31d93753f786b1e79069e7d70404f26df83b"
 
       - name: Narrow dense-array length descriptor
         shell: bash
@@ -40,32 +40,36 @@ jobs:
 
           path = Path("src/github-rest-repository-write-atomic-publication.ts")
           text = path.read_text()
-          before = '''  const lengthDescriptor = descriptors.length;
-          if (
-            !lengthDescriptor
-            || !("value" in lengthDescriptor)
-            || !Number.isSafeInteger(lengthDescriptor.value)
-            || lengthDescriptor.value < 0
-            || lengthDescriptor.value > maximumLength
-          ) {
-            throw invalidResponse(`${label} were malformed`);
-          }
-          const length = lengthDescriptor.value as number;'''
-          after = '''  const lengthDescriptor = descriptors.length;
-          const lengthValue = lengthDescriptor && "value" in lengthDescriptor
-            ? lengthDescriptor.value
-            : undefined;
-          if (
-            typeof lengthValue !== "number"
-            || !Number.isSafeInteger(lengthValue)
-            || lengthValue < 0
-            || lengthValue > maximumLength
-          ) {
-            throw invalidResponse(`${label} were malformed`);
-          }
-          const length = lengthValue;'''
+          before = (
+            "  const lengthDescriptor = descriptors.length;\n"
+            "  if (\n"
+            "    !lengthDescriptor\n"
+            "    || !(\"value\" in lengthDescriptor)\n"
+            "    || !Number.isSafeInteger(lengthDescriptor.value)\n"
+            "    || lengthDescriptor.value < 0\n"
+            "    || lengthDescriptor.value > maximumLength\n"
+            "  ) {\n"
+            "    throw invalidResponse(`${label} were malformed`);\n"
+            "  }\n"
+            "  const length = lengthDescriptor.value as number;"
+          )
+          after = (
+            "  const lengthDescriptor = descriptors.length;\n"
+            "  const lengthValue = lengthDescriptor && \"value\" in lengthDescriptor\n"
+            "    ? lengthDescriptor.value\n"
+            "    : undefined;\n"
+            "  if (\n"
+            "    typeof lengthValue !== \"number\"\n"
+            "    || !Number.isSafeInteger(lengthValue)\n"
+            "    || lengthValue < 0\n"
+            "    || lengthValue > maximumLength\n"
+            "  ) {\n"
+            "    throw invalidResponse(`${label} were malformed`);\n"
+            "  }\n"
+            "  const length = lengthValue;"
+          )
           if text.count(before) != 1:
-            raise SystemExit("dense-array length anchor changed")
+            raise SystemExit("dense-array length source shape changed")
           path.write_text(text.replace(before, after, 1))
           PY
           rm .github/workflows/juniper-1163-array-type-repair.yml
