@@ -262,7 +262,7 @@ describe("orchestrator activity ingestion reference", () => {
     const snapshot = store.listObservations("default", "stensibly");
 
     expect(Object.isFrozen(snapshot)).toBe(true);
-    expect(() => (snapshot as OrchestratorActivityObservationInput[]).push(
+    expect(() => (snapshot as unknown as OrchestratorActivityObservationInput[]).push(
       observation({ sourceId: "other" }),
     )).toThrow();
     expect(store.listObservations("default", "stensibly"))
