@@ -32,6 +32,7 @@ jobs:
           test "$(git rev-parse HEAD:src/execution-recipe.ts)" = "aee287e6a6c83327312e0ea2f9c0fe9a216a9b64"
           test "$(git rev-parse HEAD:test/execution-recipe.test.ts)" = "c62525d8345dee56d9f178b4621d70116d9f58f8"
           test "$(git rev-parse HEAD:test/execution-recipe-boundary.test.ts)" = "cf641ac8cd2102e828238eef2015c7511adbc1d6"
+          test -f test/execution-recipe-input-inspection.test.ts
 
       - uses: oven-sh/setup-bun@v2
 
@@ -198,7 +199,7 @@ jobs:
           PY
           git diff --check
 
-      - name: Validate exact repair
+      - name: Validate exact repair and bounded input contract
         shell: bash
         run: |
           set -euo pipefail
@@ -206,7 +207,8 @@ jobs:
           bun run typecheck
           bun test \
             test/execution-recipe.test.ts \
-            test/execution-recipe-boundary.test.ts
+            test/execution-recipe-boundary.test.ts \
+            test/execution-recipe-input-inspection.test.ts
 
       - name: Publish workflow-free repair
         shell: bash
