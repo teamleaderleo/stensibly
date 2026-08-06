@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   GitHubRestRepositoryWriteAdapter,
@@ -9,7 +10,7 @@ const targetRef = "feature/repository-write";
 const path = "docs/provider-write.md";
 const parentSha = "a".repeat(40);
 const parentTreeSha = "b".repeat(40);
-const blobSha = "c".repeat(40);
+const blobSha = gitBlobSha("safe\n");
 const treeSha = "d".repeat(40);
 const commitSha = "e".repeat(40);
 const apiBaseUrl = "https://api.github.test";
@@ -234,6 +235,14 @@ function tokenProvider(
       };
     },
   };
+}
+
+function gitBlobSha(content: string): string {
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
 }
 
 function repositoryUrl(): string {
