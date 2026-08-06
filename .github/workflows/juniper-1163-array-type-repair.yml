@@ -1,0 +1,100 @@
+name: Juniper 1163 dense-array type repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/juniper-1163-array-type-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-1163-array-type-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1020-atomic-git-publication
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact failed head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "59f1e3e99f8f1b88e868dc9a0382391fcafc3254"
+
+      - name: Narrow dense-array length descriptor
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-rest-repository-write-atomic-publication.ts")
+          text = path.read_text()
+          before = '''  const lengthDescriptor = descriptors.length;
+          if (
+            !lengthDescriptor
+            || !("value" in lengthDescriptor)
+            || !Number.isSafeInteger(lengthDescriptor.value)
+            || lengthDescriptor.value < 0
+            || lengthDescriptor.value > maximumLength
+          ) {
+            throw invalidResponse(`${label} were malformed`);
+          }
+          const length = lengthDescriptor.value as number;'''
+          after = '''  const lengthDescriptor = descriptors.length;
+          const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+            ? lengthDescriptor.value
+            : undefined;
+          if (
+            typeof lengthValue !== "number"
+            || !Number.isSafeInteger(lengthValue)
+            || lengthValue < 0
+            || lengthValue > maximumLength
+          ) {
+            throw invalidResponse(`${label} were malformed`);
+          }
+          const length = lengthValue;'''
+          if text.count(before) != 1:
+            raise SystemExit("dense-array length anchor changed")
+          path.write_text(text.replace(before, after, 1))
+          PY
+          rm .github/workflows/juniper-1163-array-type-repair.yml
+          git add \
+            src/github-rest-repository-write-atomic-publication.ts \
+            .github/workflows/juniper-1163-array-type-repair.yml
+          git diff --cached --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate exact type repair
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-adapter.test.ts
+
+      - name: Publish workflow-free repaired source
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Juniper"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Narrow atomic tree array length"
+          git fetch origin refs/heads/juniper/1020-atomic-git-publication:refs/remotes/origin/juniper/1020-atomic-git-publication
+          test "$(git rev-parse refs/remotes/origin/juniper/1020-atomic-git-publication)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1020-atomic-git-publication:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1020-atomic-git-publication
