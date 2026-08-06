@@ -1,0 +1,177 @@
+name: Juniper 1167 publication attribution repair
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/juniper-1167-publication-attribution-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: juniper-1167-publication-attribution-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1164-landed-tree-settlement
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact repaired admission head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "13ec93d74656600eef00892d07a9264b927e22cf"
+
+      - name: Reuse settlement patch and close PATCH attribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          carrier = Path(
+            ".github/workflows/juniper-1164-landed-tree-settlement.yml"
+          ).read_text()
+          start_marker = "          python3 - <<'PY'\n"
+          end_marker = "          PY\n"
+          start = carrier.index(start_marker) + len(start_marker)
+          end = carrier.index(end_marker, start)
+          lines = carrier[start:end].splitlines()
+          script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in lines
+          ) + "\n"
+          Path("/tmp/juniper-1167-settlement.py").write_text(script)
+          PY
+          python3 /tmp/juniper-1167-settlement.py
+
+          git fetch --no-tags origin bf80e7723d626954742e72b26109681f620855c5
+          git show bf80e7723d626954742e72b26109681f620855c5:test/github-rest-repository-write-publication-response-attribution.test.ts \
+            > test/github-rest-repository-write-publication-response-attribution.test.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-rest-repository-write-atomic-publication.ts")
+          text = path.read_text()
+          before = '''  requireStatus(input, response, 200, operation);
+          const record = exactRecord(await input.readJson(response, operation), operation);
+          if (record.ref !== `refs/heads/${input.targetRef}`) {
+            throw invalidResponse("GitHub published ref identity changed");
+          }
+          const object = exactRecord(record.object, "GitHub published ref object");
+          if (
+            object.type !== "commit"
+            || objectId(object.sha, "GitHub published ref commit SHA") !== commitSha
+          ) {
+            throw invalidResponse("GitHub published ref commit changed");
+          }
+          assertExactUrl(
+            object.url,
+            commitUrl(repositoryRoot, commitSha),
+            "GitHub published ref commit URL",
+          );
+          const providerRequestId = input.admitRequestId(
+            response.headers.get("x-github-request-id"),
+          );
+          return Object.freeze({
+            commitSha,
+            ...(providerRequestId ? { providerRequestId } : {}),
+            targetRef: input.targetRef,
+            parentSha: input.expectedParentSha,
+          });'''
+          after = '''  requireStatus(input, response, 200, operation);
+          const providerRequestId = input.admitRequestId(
+            response.headers.get("x-github-request-id"),
+          );
+          const result = Object.freeze({
+            commitSha,
+            ...(providerRequestId ? { providerRequestId } : {}),
+            targetRef: input.targetRef,
+            parentSha: input.expectedParentSha,
+          });
+          try {
+            const record = exactRecord(
+              await input.readJson(response, operation),
+              operation,
+            );
+            if (record.ref !== `refs/heads/${input.targetRef}`) {
+              throw invalidResponse("GitHub published ref identity changed");
+            }
+            const object = exactRecord(record.object, "GitHub published ref object");
+            if (
+              object.type !== "commit"
+              || objectId(object.sha, "GitHub published ref commit SHA") !== commitSha
+            ) {
+              throw invalidResponse("GitHub published ref commit changed");
+            }
+            assertExactUrl(
+              object.url,
+              commitUrl(repositoryRoot, commitSha),
+              "GitHub published ref commit URL",
+            );
+            return result;
+          } catch {
+            throw new GitHubRepositoryWritePostEffectError({
+              code: "repository_write_effect_readback_incomplete",
+              result,
+            });
+          }'''
+          if text.count(before) != 1:
+            raise SystemExit("published ref attribution anchor changed")
+          path.write_text(text.replace(before, after, 1))
+          PY
+
+          rm \
+            .github/workflows/juniper-1164-landed-tree-settlement.yml \
+            .github/workflows/juniper-1167-publication-attribution-repair.yml
+          git add \
+            src/github-provider-bounded-response.ts \
+            src/github-repository-write-admission.ts \
+            src/github-repository-write-post-effect-error.ts \
+            src/github-rest-repository-write-adapter.ts \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-landed-tree-settlement.test.ts \
+            test/github-rest-repository-write-publication-response-attribution.test.ts \
+            .github/workflows/juniper-1164-landed-tree-settlement.yml \
+            .github/workflows/juniper-1167-publication-attribution-repair.yml
+          git diff --cached --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate complete settlement packet
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-landed-tree-settlement.test.ts \
+            test/github-rest-repository-write-publication-response-attribution.test.ts \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-repository-write-repository-segment-admission.test.ts
+
+      - name: Publish workflow-free complete settlement
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Juniper"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Verify canonical landed repository tree"
+          git fetch origin refs/heads/juniper/1164-landed-tree-settlement:refs/remotes/origin/juniper/1164-landed-tree-settlement
+          test "$(git rev-parse refs/remotes/origin/juniper/1164-landed-tree-settlement)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1164-landed-tree-settlement:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1164-landed-tree-settlement
