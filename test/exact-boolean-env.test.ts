@@ -5,7 +5,7 @@ const key = "FEATURE_ENABLED";
 const configuredReadKeys = [
   "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED",
   "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED",
-] as const;
+];
 const providerConfigurationSignal = {
   STENSIBLY_GITHUB_APP_ID: "12345",
 };
