@@ -1,0 +1,140 @@
+name: Oriole 1159 detached Markdown rendering
+
+on:
+  push:
+    branches:
+      - lumen/1145-project-delta-brief
+    paths:
+      - .github/workflows/oriole-1159-detached-markdown.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oriole-1159-detached-markdown
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1145-project-delta-brief
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/project-delta-brief.ts)" = "e21f1019b03e6f0dc5f85594ca4701babcd9d659"
+          test "$(git rev-parse HEAD:test/project-delta-brief-public-boundary.test.ts)" = "8d859203970fcfd45840732fcac4abc8b17d9e27"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Detach Markdown input once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/project-delta-brief.ts")
+          text = source.read_text()
+          old = '''export function renderProjectDeltaBriefMarkdown(
+            brief: ProjectDeltaBrief,
+          ): string {
+            assertRetainedCredentialFree(brief);
+            return renderProjectDeltaBriefMarkdownBase(brief);
+          }
+          '''
+          new = '''export function renderProjectDeltaBriefMarkdown(
+            brief: ProjectDeltaBrief,
+          ): string {
+            const detached = detachInputGraph(brief) as ProjectDeltaBrief;
+            assertRetainedCredentialFree(detached);
+            return renderProjectDeltaBriefMarkdownBase(detached);
+          }
+          '''
+          if text.count(old) != 1:
+              raise SystemExit("Markdown rendering boundary moved")
+          source.write_text(text.replace(old, new, 1))
+
+          test_path = Path("test/project-delta-brief-public-boundary.test.ts")
+          test_text = test_path.read_text()
+          addition = r'''
+
+          test("Markdown rendering uses one detached brief graph", () => {
+            const safe = compileProjectDeltaBrief({
+              project: "alpha",
+              fromCheckpoint: {
+                id: "checkpoint:0",
+                throughSequence: 0,
+                observedAt: "2026-08-06T00:00:00.000Z",
+              },
+              toCheckpoint: {
+                id: "checkpoint:1",
+                throughSequence: 1,
+                observedAt: "2026-08-06T00:01:00.000Z",
+              },
+              observations: [{
+                observationId: "obs:1",
+                sequence: 1,
+                project: "alpha",
+                subjectId: "work:1",
+                kind: "work",
+                state: "active",
+                title: "Safe work",
+                summary: null,
+                observedAt: "2026-08-06T00:01:00.000Z",
+                sourceReferences: ["source:1"],
+              }],
+              limit: 10,
+            });
+            const target = structuredClone(safe) as ProjectDeltaBrief;
+            let getCalls = 0;
+            const hostile = new Proxy(target, {
+              get(current, key, receiver) {
+                getCalls += 1;
+                if (key === "project") return "authorization: Bearer hidden";
+                return Reflect.get(current, key, receiver);
+              },
+            });
+
+            const markdown = renderProjectDeltaBriefMarkdown(hostile);
+            expect(markdown).toContain("# Project changes: alpha");
+            expect(markdown).not.toContain("authorization:");
+            expect(markdown).not.toContain("Bearer hidden");
+            expect(getCalls).toBe(0);
+          });
+          '''
+          if "Markdown rendering uses one detached brief graph" in test_text:
+              raise SystemExit("Markdown detachment control already exists")
+          test_path.write_text(test_text.rstrip() + addition + "\n")
+          PY
+          git diff --check
+
+      - name: Validate exact repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/project-delta-brief.test.ts \
+            test/project-delta-brief-public-boundary.test.ts
+
+      - name: Publish workflow-free repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/oriole-1159-detached-markdown.yml
+          git add src/project-delta-brief.ts \
+            test/project-delta-brief-public-boundary.test.ts
+          git diff --cached --check
+          git config user.name "Oriole"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Detach project delta Markdown inputs"
+          git push origin HEAD:lumen/1145-project-delta-brief
