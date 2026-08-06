@@ -77,7 +77,7 @@ describe("atomic repository file mode preservation", () => {
 
     expect(recorded).toContainEqual({
       method: "GET",
-      url: treeUrl(parentTreeSha),
+      url: recursiveTreeUrl(parentTreeSha),
       body: null,
     });
     expect(recorded).toContainEqual({
@@ -164,7 +164,7 @@ function atomicModeFetcher(input: {
         url: commitUrl(parentSha),
       });
     }
-    if (method === "GET" && url === treeUrl(parentTreeSha)) {
+    if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
       return Response.json({
         sha: parentTreeSha,
         url: treeUrl(parentTreeSha),
@@ -247,6 +247,10 @@ function commitCollectionUrl(): string {
 
 function treeUrl(sha: string): string {
   return `${repositoryUrl()}/git/trees/${sha}`;
+}
+
+function recursiveTreeUrl(sha: string): string {
+  return `${treeUrl(sha)}?recursive=1`;
 }
 
 function treeCollectionUrl(): string {
