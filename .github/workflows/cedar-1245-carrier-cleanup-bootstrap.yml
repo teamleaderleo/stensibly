@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Patch exact carrier cleanup
+      - name: Patch exact carrier cleanup and parent lease
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
@@ -34,13 +34,20 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "e28c36f095aabf96beb2a6cf63b9400d3e20e4c6"
+          test "$(git rev-parse HEAD^)" = "61db1575a79d52c2b952dc05a55ca2441593fd4f"
           test "$(git rev-parse HEAD:.github/workflows/cedar-1238-observation-hardening.yml)" = "$CARRIER_BLOB"
           python3 - <<'PY'
+          import os
           from pathlib import Path
 
           path = Path('.github/workflows/cedar-1238-observation-hardening.yml')
           text = path.read_text()
+
+          old_parent = '          PARENT: 13b9f7e90ee80e8168cf306f7bd4cdbd150c4189\n'
+          new_parent = f'          PARENT: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old_parent) != 2:
+              raise SystemExit(f'carrier parent lease anchors moved: {text.count(old_parent)}')
+          text = text.replace(old_parent, new_parent)
 
           marker = '          convex = convex_path.read_text()\n\n'
           insertion = """          convex = convex_path.read_text()
