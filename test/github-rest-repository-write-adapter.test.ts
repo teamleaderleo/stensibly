@@ -143,7 +143,13 @@ function atomicFetcher(input: {
       return Response.json({ sha: parentTreeSha, url: treeUrl(parentTreeSha), tree: [], truncated: false });
     }
     if (method === "POST" && url === graphqlUrl()) {
-      if (isRepositoryNodeQuery(body)) return Response.json({ data: { repository: { id: repositoryId } } });
+      if (isRepositoryNodeQuery(body)) {
+        return Response.json({
+          data: {
+            repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+          },
+        });
+      }
       if (isUpdateRefsMutation(body)) {
         expect(body).toEqual(updateRefsBody());
         return input.publicationResponse?.() ?? Response.json({
