@@ -26,132 +26,40 @@ jobs:
           persist-credentials: true
 
       - name: Verify exact integration parent
-        env:
-          EXPECTED_PARENT: 25cba3ebb6c15caf4e9ab99d22f7fc023085f56b
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
-          test "$(git rev-parse HEAD:src/github-update-refs-cas.ts)" = "a58dc0c891bda18b2c7667716b3a1ee7a14746ee"
+          test "$(git rev-parse HEAD^)" = "226946ccba11dc6501931a6f536854f19be1d3cc"
+          test "$(git rev-parse HEAD:src/github-update-refs-cas.ts)" = "9ccb6869e211d282473cfa8f53146c83b88aac36"
           test "$(git rev-parse HEAD:src/github-rest-repository-write-atomic-publication.ts)" = "dace75741348e3d7883fa11bc490bcc515274169"
-          test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-ancestor-regression.test.ts)" = "45c90088a2d3a5726459688132b6a217529d014e"
+          test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-publication.test.ts)" = "5e88c397d4aaae29deb4efef5d346f9b9f11aa5b"
           test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-mode-preservation.test.ts)" = "e53d5f9c0b07aa214a2a3ee301a3604d41320134"
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Import strongest CAS core and small-tree control
+      - name: Import small-tree reversing control
         env:
-          CAS_REPAIR: 3cd2adf6a4b8c9cfab5040aa413f800535903d77
-          SMALL_TREE_CONTROL: 701fa8691c63342c12bd7252c506a8db26723253
+          CONTROL_HEAD: 701fa8691c63342c12bd7252c506a8db26723253
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$CAS_REPAIR" "$SMALL_TREE_CONTROL"
-          test "$(git rev-parse "$CAS_REPAIR":src/github-update-refs-cas.ts)" = "8de82a0d41669b00982e40be1b90b4e55e9faec3"
-          test "$(git rev-parse "$CAS_REPAIR":test/github-update-refs-cas.test.ts)" = "fcbb2a7d35781ad6142bc15853f35537a23e9f9d"
-          test "$(git rev-parse "$CAS_REPAIR":test/github-update-refs-cas-api-base-security.test.ts)" = "6ba574c80bc36be8ac4a44c45907979f1cf9258b"
-          test "$(git rev-parse "$CAS_REPAIR":test/github-update-refs-cas-mutation-identity.test.ts)" = "7cbda28752294dedda1d9ae5ff0821819d559fc2"
-          test "$(git rev-parse "$SMALL_TREE_CONTROL":test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
-          git show "$CAS_REPAIR":src/github-update-refs-cas.ts > src/github-update-refs-cas.ts
-          git show "$CAS_REPAIR":test/github-update-refs-cas.test.ts > test/github-update-refs-cas.test.ts
-          git show "$CAS_REPAIR":test/github-update-refs-cas-api-base-security.test.ts > test/github-update-refs-cas-api-base-security.test.ts
-          git show "$CAS_REPAIR":test/github-update-refs-cas-mutation-identity.test.ts > test/github-update-refs-cas-mutation-identity.test.ts
-          git show "$SMALL_TREE_CONTROL":test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts > test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts
+          git fetch --no-tags origin "$CONTROL_HEAD"
+          test "$(git rev-parse "$CONTROL_HEAD":test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
+          git show "$CONTROL_HEAD":test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \
+            > test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts
 
-      - name: Apply complete integration repair
+      - name: Finish tree admission and integration fixtures
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          cas_path = Path("src/github-update-refs-cas.ts")
-          cas = cas_path.read_text()
-          class_start = cas.index('export class GitHubUpdateRefsCasStaleRefError')
-          class_end = cas.index('const repositoryNodeIdQuery', class_start)
-          cas = cas[:class_start] + cas[class_end:]
-          cas = cas.replace('const maximumGraphqlErrors = 4;\n', '', 1)
-          old_errors = '''  if (errors !== undefined) {
-            if (isExactStaleRefResponse(envelope, errors)) {
-              throw new GitHubUpdateRefsCasStaleRefError();
-            }
-            throw new Error("GitHub could not publish repository ref");
-          }
-          '''
-          new_errors = '''  if (errors !== undefined) {
-            throw new Error("GitHub could not publish repository ref");
-          }
-          '''
-          if cas.count(old_errors) != 1:
-              raise SystemExit("CAS GraphQL error anchor moved")
-          cas = cas.replace(old_errors, new_errors, 1)
-          stale_start = cas.index('function isExactStaleRefResponse(')
-          stale_end = cas.index('function admitNodeId(', stale_start)
-          cas = cas[:stale_start] + cas[stale_end:]
-
-          old_snapshot = '''function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
-            if (!value || typeof value !== "object" || Array.isArray(value)) {
-              throw invalidCasInput();
-            }
-            return Object.freeze({'''
-          new_snapshot = '''function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
-            if (!value || typeof value !== "object") {
-              throw invalidCasInput();
-            }
-            try {
-              if (Array.isArray(value)) throw invalidCasInput();
-            } catch (error) {
-              if (error instanceof RangeError && error.message === invalidCasInput().message) {
-                throw error;
-              }
-              throw invalidCasInput();
-            }
-            return Object.freeze({'''
-          if cas.count(old_snapshot) != 1:
-              raise SystemExit("CAS input guard anchor moved")
-          cas = cas.replace(old_snapshot, new_snapshot, 1)
-
-          old_record = '''function record(value: unknown): Record<string, unknown> {
-            if (!value || typeof value !== "object" || Array.isArray(value)) {
-              throw invalidGraphqlResponse();
-            }
-            let prototype: object | null;
-            try {
-              prototype = Object.getPrototypeOf(value);
-            } catch {
-              throw invalidGraphqlResponse();
-            }
-            if (prototype !== Object.prototype && prototype !== null) {
-              throw invalidGraphqlResponse();
-            }'''
-          new_record = '''function record(value: unknown): Record<string, unknown> {
-            if (!value || typeof value !== "object") {
-              throw invalidGraphqlResponse();
-            }
-            let isArray: boolean;
-            let prototype: object | null;
-            try {
-              isArray = Array.isArray(value);
-              prototype = Object.getPrototypeOf(value);
-            } catch {
-              throw invalidGraphqlResponse();
-            }
-            if (isArray || (prototype !== Object.prototype && prototype !== null)) {
-              throw invalidGraphqlResponse();
-            }'''
-          if cas.count(old_record) != 1:
-              raise SystemExit("CAS record guard anchor moved")
-          cas = cas.replace(old_record, new_record, 1)
-          dense_start = cas.index('function denseArray(')
-          dense_end = cas.index('function invalidCasInput(', dense_start)
-          cas = cas[:dense_start] + cas[dense_end:]
-          cas_path.write_text(cas)
-
           atomic_path = Path("src/github-rest-repository-write-atomic-publication.ts")
           atomic = atomic_path.read_text()
-          array_start = atomic.index('function exactArray(')
-          array_end = atomic.index('function exactRecord(', array_start)
-          array_repair = '''function exactArray(
+          start = atomic.index('function exactArray(')
+          end = atomic.index('function exactRecord(', start)
+          repaired = '''function exactArray(
   value: unknown,
   label: string,
   maximumLength: number,
@@ -199,87 +107,34 @@ jobs:
 }
 
 '''
-          atomic = atomic[:array_start] + array_repair + atomic[array_end:]
-          atomic_path.write_text(atomic)
+          atomic_path.write_text(atomic[:start] + repaired + atomic[end:])
 
-          cas_test_path = Path("test/github-update-refs-cas.test.ts")
-          cas_tests = cas_test_path.read_text()
-          cas_tests = cas_tests.replace('  GitHubUpdateRefsCasStaleRefError,\n', '', 1)
-          stale_test_start = cas_tests.index('  test("classifies one standards-compliant stale-ref error without retaining prose"')
-          fixed_record_start = cas_tests.index('  test("does not invoke caller ownKeys or getters for admitted fixed records"', stale_test_start)
-          generic = '''  test("keeps every GraphQL mutation error generic without retaining provider prose", () => {
-    const clientMutationId = sha1Request().clientMutationId;
-    const values = [
-      {
-        data: { updateRefs: null },
-        errors: [{
-          message: "provider stale ref detail must never be echoed",
-          type: "STALE_REF",
-          path: ["updateRefs"],
-        }],
-      },
-      {
-        data: { updateRefs: null },
-        errors: [{ message: "other", type: "OTHER" }],
-      },
-      {
-        data: { updateRefs: null },
-        errors: [
-          { message: "stale", type: "STALE_REF" },
-          { message: "other", type: "OTHER" },
-        ],
-      },
-    ];
-    for (const value of values) {
-      let caught: unknown;
-      try {
-        admitGitHubUpdateRefsCasResponse(value, clientMutationId);
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toBeInstanceOf(Error);
-      expect((caught as Error).message).toBe("GitHub could not publish repository ref");
-      expect(JSON.stringify(caught)).not.toContain("provider stale ref detail");
-    }
-  });
+          def import_compiler(text: str) -> str:
+            statement = 'import { buildGitHubUpdateRefsCasRequest } from "../src/github-update-refs-cas.ts";\n'
+            if statement in text:
+              return text
+            marker = 'import { describe, expect, test } from "bun:test";\n'
+            if marker in text:
+              return text.replace(marker, marker + statement, 1)
+            marker = 'import { expect, test } from "bun:test";\n'
+            if marker in text:
+              return text.replace(marker, marker + statement, 1)
+            raise SystemExit("test import anchor moved")
 
-'''
-          cas_tests = cas_tests[:stale_test_start] + generic + cas_tests[fixed_record_start:]
-          cas_test_path.write_text(cas_tests)
+          def add_helper(text: str, anchor: str, helper: str) -> str:
+            if helper in text:
+              return text
+            if text.count(anchor) != 1:
+              raise SystemExit(f"helper anchor moved: {anchor}")
+            return text.replace(anchor, helper + anchor, 1)
 
-          inspection_path = Path("test/github-update-refs-cas-input-inspection.test.ts")
-          inspection = inspection_path.read_text()
-          old_identity = '        clientMutationId: `stensibly-write-${baseInput.newHeadSha.slice(0, 16)}`,\n'
-          if inspection.count(old_identity) != 1:
-              raise SystemExit("CAS input fixture identity anchor moved")
-          inspection = inspection.replace(
-            old_identity,
-            '        clientMutationId: expect.stringMatching(/^stensibly-write-[a-f0-9]{64}$/),\n',
-            1,
-          )
-          inspection += '''
-
-test("normalizes a revoked CAS input to the fixed admission error", () => {
-  const revoked = Proxy.revocable(baseInput, {});
-  revoked.revoke();
-  expect(() => buildGitHubUpdateRefsCasRequest(revoked.proxy))
-    .toThrow("GitHub updateRefs CAS input is invalid");
-});
-'''
-          inspection_path.write_text(inspection)
-
-          def add_cas_import(text: str) -> str:
-              anchor = 'import {\n  GitHubRestRepositoryWriteAdapter,'
-              index = text.index(anchor)
-              return text[:index] + 'import { buildGitHubUpdateRefsCasRequest } from "../src/github-update-refs-cas.ts";\n' + text[index:]
-
-          pub_path = Path("test/github-rest-repository-write-atomic-publication.test.ts")
-          pub = add_cas_import(pub_path.read_text())
-          old_id = '`stensibly-write-${nextCommitSha.slice(0, 16)}`'
-          if pub.count(old_id) != 2:
-              raise SystemExit(f"atomic publication mutation-id fixtures moved: {pub.count(old_id)}")
-          pub = pub.replace(old_id, 'atomicClientMutationId()')
-          helper_anchor = 'function updateRefsBody(): unknown {'
+          # Atomic publication fixtures.
+          p = Path("test/github-rest-repository-write-atomic-publication.test.ts")
+          text = import_compiler(p.read_text())
+          literal = '`stensibly-write-${nextCommitSha.slice(0, 16)}`'
+          if text.count(literal) != 2:
+            raise SystemExit(f"atomic publication identity fixtures moved: {text.count(literal)}")
+          text = text.replace(literal, 'atomicClientMutationId()')
           helper = '''function atomicClientMutationId(): string {
   return buildGitHubUpdateRefsCasRequest({
     apiBaseUrl,
@@ -292,17 +147,16 @@ test("normalizes a revoked CAS input to the fixed admission error", () => {
 }
 
 '''
-          if pub.count(helper_anchor) != 1:
-              raise SystemExit("atomic publication helper anchor moved")
-          pub = pub.replace(helper_anchor, helper + helper_anchor, 1)
-          pub_path.write_text(pub)
+          text = add_helper(text, 'function updateRefsBody(): unknown {', helper)
+          p.write_text(text)
 
-          mode_path = Path("test/github-rest-repository-write-atomic-mode-preservation.test.ts")
-          mode = add_cas_import(mode_path.read_text())
-          if mode.count(old_id) != 2:
-              raise SystemExit(f"mode mutation-id fixtures moved: {mode.count(old_id)}")
-          mode = mode.replace(old_id, 'modeClientMutationId()')
-          mode_helper = '''function modeClientMutationId(): string {
+          # Mode-preservation fixtures.
+          p = Path("test/github-rest-repository-write-atomic-mode-preservation.test.ts")
+          text = import_compiler(p.read_text())
+          if text.count(literal) != 2:
+            raise SystemExit(f"mode identity fixtures moved: {text.count(literal)}")
+          text = text.replace(literal, 'modeClientMutationId()')
+          helper = '''function modeClientMutationId(): string {
   return buildGitHubUpdateRefsCasRequest({
     apiBaseUrl,
     repositoryFullName,
@@ -314,46 +168,89 @@ test("normalizes a revoked CAS input to the fixed admission error", () => {
 }
 
 '''
-          if mode.count(helper_anchor) != 1:
-              raise SystemExit("mode helper anchor moved")
-          mode = mode.replace(helper_anchor, mode_helper + helper_anchor, 1)
-          mode_path.write_text(mode)
+          text = add_helper(text, 'function updateRefsBody(): unknown {', helper)
+          p.write_text(text)
 
-          ancestor_path = Path("test/github-rest-repository-write-atomic-ancestor-regression.test.ts")
-          ancestor = add_cas_import(ancestor_path.read_text())
-          if ancestor.count(old_id) != 2:
-              raise SystemExit(f"ancestor mutation-id fixtures moved: {ancestor.count(old_id)}")
-          ancestor = ancestor.replace(old_id, 'ancestorClientMutationId()')
-          ancestor = ancestor.replace(
-            '"GitHub repository write exact old ref changed before publication",',
-            '"GitHub could not publish repository ref",',
-            1,
-          )
-          ancestor_helper_anchor = 'function tokenProvider(): GitHubRepositoryWriteTokenProvider {'
-          ancestor_helper = '''function ancestorClientMutationId(): string {
+          # Adapter fixtures.
+          p = Path("test/github-rest-repository-write-adapter.test.ts")
+          text = import_compiler(p.read_text())
+          adapter_literal = '`stensibly-write-${commitSha.slice(0, 16)}`'
+          if text.count(adapter_literal) != 2:
+            raise SystemExit(f"adapter identity fixtures moved: {text.count(adapter_literal)}")
+          text = text.replace(adapter_literal, 'adapterClientMutationId()')
+          helper = '''function adapterClientMutationId(): string {
   return buildGitHubUpdateRefsCasRequest({
     apiBaseUrl,
     repositoryFullName,
     repositoryId,
     targetRef,
-    expectedHeadSha,
-    newHeadSha: nextCommitSha,
+    expectedHeadSha: parentSha,
+    newHeadSha: commitSha,
   }).clientMutationId;
 }
 
 '''
-          if ancestor.count(ancestor_helper_anchor) != 1:
-              raise SystemExit("ancestor helper anchor moved")
-          ancestor = ancestor.replace(
-            ancestor_helper_anchor,
-            ancestor_helper + ancestor_helper_anchor,
-            1,
-          )
-          ancestor_path.write_text(ancestor)
+          text = add_helper(text, 'function updateRefsBody(): unknown {', helper)
+          p.write_text(text)
+
+          # SHA-256 parity fixture.
+          p = Path("test/github-rest-repository-write-adapter-fence-parity.test.ts")
+          text = import_compiler(p.read_text())
+          parity_literal = '`stensibly-write-${commit64.slice(0, 16)}`'
+          if text.count(parity_literal) != 2:
+            raise SystemExit(f"parity identity fixtures moved: {text.count(parity_literal)}")
+          text = text.replace(parity_literal, 'parityClientMutationId()')
+          helper = '''function parityClientMutationId(): string {
+  return buildGitHubUpdateRefsCasRequest({
+    apiBaseUrl: "https://api.github.com",
+    repositoryFullName,
+    repositoryId,
+    targetRef: "topic/review",
+    expectedHeadSha: parent64,
+    newHeadSha: commit64,
+  }).clientMutationId;
+}
+
+'''
+          text = add_helper(text, 'function repositoryUrl(): string {', helper)
+          p.write_text(text)
+
+          # Provider URL spelling fixture.
+          p = Path("test/github-rest-repository-write-provider-url-spelling.test.ts")
+          text = import_compiler(p.read_text())
+          provider_literal = '`stensibly-write-${commitSha.slice(0, 16)}`'
+          if text.count(provider_literal) != 1:
+            raise SystemExit(f"provider URL identity fixture moved: {text.count(provider_literal)}")
+          text = text.replace(provider_literal, 'providerUrlClientMutationId()')
+          helper = '''function providerUrlClientMutationId(): string {
+  return buildGitHubUpdateRefsCasRequest({
+    apiBaseUrl: "https://api.github.com",
+    repositoryFullName,
+    repositoryId,
+    targetRef,
+    expectedHeadSha: parentSha,
+    newHeadSha: commitSha,
+  }).clientMutationId;
+}
+
+'''
+          text = add_helper(text, 'function isRepositoryNodeQuery(body: unknown): boolean {', helper)
+          p.write_text(text)
           PY
+
+          # The direct integration must not retain the old truncated mutation identity.
+          if grep -R --line-number 'slice(0, 16)' \
+              test/github-rest-repository-write-adapter.test.ts \
+              test/github-rest-repository-write-adapter-fence-parity.test.ts \
+              test/github-rest-repository-write-atomic-publication.test.ts \
+              test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+              test/github-rest-repository-write-provider-url-spelling.test.ts; then
+            echo "stale truncated mutation identity remains" >&2
+            exit 1
+          fi
           git diff --check
 
-      - name: Validate exact CAS integration
+      - name: Validate remaining exact-CAS integration boundary
         shell: bash
         run: |
           set -euo pipefail
@@ -365,6 +262,10 @@ test("normalizes a revoked CAS input to the fixed admission error", () => {
             test/github-update-refs-cas-node-id.test.ts \
             test/github-update-refs-cas-api-base-security.test.ts \
             test/github-update-refs-cas-mutation-identity.test.ts \
+            test/github-update-refs-cas-hostile-response.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
             test/github-rest-repository-write-atomic-publication.test.ts \
             test/github-rest-repository-write-atomic-mode-preservation.test.ts \
             test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
@@ -379,20 +280,17 @@ test("normalizes a revoked CAS input to the fixed admission error", () => {
           set -euo pipefail
           git rm .github/workflows/cinder-1208-exact-cas-convergence.yml
           git add \
-            src/github-update-refs-cas.ts \
             src/github-rest-repository-write-atomic-publication.ts \
-            test/github-update-refs-cas.test.ts \
-            test/github-update-refs-cas-input-inspection.test.ts \
-            test/github-update-refs-cas-api-base-security.test.ts \
-            test/github-update-refs-cas-mutation-identity.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
             test/github-rest-repository-write-atomic-publication.test.ts \
             test/github-rest-repository-write-atomic-mode-preservation.test.ts \
-            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
             test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts
           git diff --cached --check
           git config user.name "Cinder"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Converge exact old-ref repository publication"
+          git commit -m "Finish exact old-ref repository publication"
           git fetch origin refs/heads/juniper/1163-updaterefs-cas-integration:refs/remotes/origin/juniper/1163-updaterefs-cas-integration
           test "$(git rev-parse refs/remotes/origin/juniper/1163-updaterefs-cas-integration)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/juniper/1163-updaterefs-cas-integration:$EXPECTED_HEAD \
