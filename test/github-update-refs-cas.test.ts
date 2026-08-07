@@ -9,17 +9,26 @@ import {
 
 const repositoryFullName = "teamleaderleo/stensibly";
 const repositoryId = "R_kgDOAtomicRepository";
-const repository = Object.freeze({ repositoryFullName, repositoryId });
+const repositoryShape = Object.freeze({ repositoryFullName, repositoryId });
 const targetRef = "feature/exact-cas";
 const sha1Parent = "a".repeat(40);
 const sha1Commit = "b".repeat(40);
 const sha256Parent = "c".repeat(64);
 const sha256Commit = "d".repeat(64);
 
+function repositoryIdentity(
+  fullName = repositoryFullName,
+  id = repositoryId,
+) {
+  return admitGitHubRepositoryNodeIdResponse({
+    data: { repository: { id, nameWithOwner: fullName } },
+  }, fullName);
+}
+
 function sha1Request() {
   return buildGitHubUpdateRefsCasRequest({
     apiBaseUrl: "https://api.github.com",
-    repository,
+    repository: repositoryIdentity(),
     targetRef,
     expectedHeadSha: sha1Parent,
     newHeadSha: sha1Commit,
@@ -56,7 +65,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       const admitted = admitGitHubRepositoryNodeIdResponse({
         data: { repository: { id: repositoryId, nameWithOwner } },
       }, repositoryFullName);
-      expect(admitted).toEqual(repository);
+      expect(admitted).toEqual(repositoryShape);
       expect(Object.isFrozen(admitted)).toBe(true);
     }
 
@@ -108,7 +117,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   test("admits SHA-256 CAS and rejects mixed object formats", () => {
     expect(() => buildGitHubUpdateRefsCasRequest({
       apiBaseUrl: "https://api.github.com",
-      repository,
+      repository: repositoryIdentity(),
       targetRef,
       expectedHeadSha: sha256Parent,
       newHeadSha: sha256Commit,
@@ -116,7 +125,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
 
     expect(() => buildGitHubUpdateRefsCasRequest({
       apiBaseUrl: "https://api.github.com",
-      repository,
+      repository: repositoryIdentity(),
       targetRef,
       expectedHeadSha: sha1Parent,
       newHeadSha: sha256Commit,
@@ -209,7 +218,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     expect(admitGitHubRepositoryNodeIdResponse(
       envelope,
       repositoryFullName,
-    )).toEqual(repository);
+    )).toEqual(repositoryShape);
     expect(ownKeysCalls).toBe(0);
     expect(getCalls).toBe(0);
   });
