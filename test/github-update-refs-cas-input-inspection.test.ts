@@ -6,36 +6,28 @@ import {
 
 const repositoryFullName = "teamleaderleo/stensibly";
 const repositoryId = "R_kgDOAtomicRepository";
-const targetRef = "feature/exact-cas";
-const expectedHeadSha = "a".repeat(40);
-const newHeadSha = "b".repeat(40);
+const baseInput = {
+  targetRef: "feature/exact-cas",
+  expectedHeadSha: "a".repeat(40),
+  newHeadSha: "b".repeat(40),
+};
 
-function repositoryIdentity() {
+function admittedRepository() {
   return admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
-        repositoryFullName,
         id: repositoryId,
         nameWithOwner: repositoryFullName,
       },
     },
-  }, repositoryFullName);
+  }, "https://api.github.com", repositoryFullName);
 }
 
-function baseInput() {
-  return {
-    apiBaseUrl: "https://api.github.com",
-    repository: repositoryIdentity(),
-    targetRef,
-    expectedHeadSha,
-    newHeadSha,
-  };
-}
-
-test("builds CAS request without caller get or ownKeys", () => {
+test("builds CAS request without top-level caller get or ownKeys", () => {
+  const repository = admittedRepository();
   let getCalls = 0;
   let ownKeysCalls = 0;
-  const input = new Proxy(baseInput(), {
+  const input = new Proxy({ ...baseInput, repository }, {
     get() {
       getCalls += 1;
       throw new Error("caller get must not run");
@@ -47,6 +39,7 @@ test("builds CAS request without caller get or ownKeys", () => {
   });
 
   const request = buildGitHubUpdateRefsCasRequest(input);
+  expect(request.url.href).toBe(repository.graphqlUrl);
   expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
   expect(request.body).toEqual({
     query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
@@ -54,9 +47,9 @@ test("builds CAS request without caller get or ownKeys", () => {
       input: {
         repositoryId,
         refUpdates: [{
-          name: `refs/heads/${targetRef}`,
-          beforeOid: expectedHeadSha,
-          afterOid: newHeadSha,
+          name: `refs/heads/${baseInput.targetRef}`,
+          beforeOid: baseInput.expectedHeadSha,
+          afterOid: baseInput.newHeadSha,
           force: false,
         }],
         clientMutationId: request.clientMutationId,
@@ -67,39 +60,39 @@ test("builds CAS request without caller get or ownKeys", () => {
   expect(ownKeysCalls).toBe(0);
 });
 
-test("rejects accessor-backed fabricated repository identity without invoking getters", () => {
-  let getterCalls = 0;
-  const repository = {
-    repositoryFullName,
-  } as Record<string, unknown>;
-  Object.defineProperty(repository, "repositoryId", {
-    enumerable: true,
+test("rejects forged or wrapped repository receipts without caller execution", () => {
+  const repository = admittedRepository();
+  expect(() => buildGitHubUpdateRefsCasRequest({
+    ...baseInput,
+    repository: { ...repository },
+  })).toThrow("GitHub updateRefs CAS input is invalid");
+
+  let getCalls = 0;
+  let ownKeysCalls = 0;
+  const wrapped = new Proxy(repository, {
     get() {
-      getterCalls += 1;
-      return repositoryId;
+      getCalls += 1;
+      throw new Error("repository get must not run");
+    },
+    ownKeys() {
+      ownKeysCalls += 1;
+      throw new Error("repository ownKeys must not run");
     },
   });
-
   expect(() => buildGitHubUpdateRefsCasRequest({
-    ...baseInput(),
-    repository: repository as never,
+    ...baseInput,
+    repository: wrapped,
   })).toThrow("GitHub updateRefs CAS input is invalid");
-  expect(getterCalls).toBe(0);
+  expect(getCalls).toBe(0);
+  expect(ownKeysCalls).toBe(0);
 });
 
-test("normalizes revoked top-level and rejects revoked lookalike repository inputs", () => {
-  const revokedInput = Proxy.revocable(baseInput(), {});
-  revokedInput.revoke();
-  expect(() => buildGitHubUpdateRefsCasRequest(revokedInput.proxy))
-    .toThrow("GitHub updateRefs CAS input is invalid");
-
-  const revokedRepository = Proxy.revocable({
-    repositoryFullName,
-    repositoryId,
+test("normalizes a revoked top-level CAS input", () => {
+  const revoked = Proxy.revocable({
+    ...baseInput,
+    repository: admittedRepository(),
   }, {});
-  revokedRepository.revoke();
-  expect(() => buildGitHubUpdateRefsCasRequest({
-    ...baseInput(),
-    repository: revokedRepository.proxy as never,
-  })).toThrow("GitHub updateRefs CAS input is invalid");
+  revoked.revoke();
+  expect(() => buildGitHubUpdateRefsCasRequest(revoked.proxy))
+    .toThrow("GitHub updateRefs CAS input is invalid");
 });

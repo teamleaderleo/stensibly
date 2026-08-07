@@ -17,4 +17,17 @@ describe("GitHub updateRefs GraphQL API base transport security", () => {
     expect(githubGraphqlUrl("http://localhost:8787/api/v3").href)
       .toBe("http://localhost:8787/api/graphql");
   });
+
+  test("rejects a non-string API base without caller coercion", () => {
+    let coercions = 0;
+    const hostile = {
+      toString() {
+        coercions += 1;
+        throw new Error("caller conversion must not run");
+      },
+    };
+    expect(() => githubGraphqlUrl(hostile as never))
+      .toThrow("GitHub API base URL is invalid");
+    expect(coercions).toBe(0);
+  });
 });

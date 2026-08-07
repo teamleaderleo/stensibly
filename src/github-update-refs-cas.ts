@@ -15,6 +15,7 @@ export interface GitHubGraphqlRequest {
 }
 
 export interface GitHubRepositoryNodeIdentity {
+  graphqlUrl: string;
   repositoryFullName: string;
   repositoryId: string;
 }
@@ -24,7 +25,6 @@ export interface GitHubUpdateRefsCasRequest extends GitHubGraphqlRequest {
 }
 
 export interface GitHubUpdateRefsCasInput {
-  apiBaseUrl: string;
   repository: GitHubRepositoryNodeIdentity;
   targetRef: string;
   expectedHeadSha: string;
@@ -62,8 +62,10 @@ export function buildGitHubRepositoryNodeIdRequest(
 
 export function admitGitHubRepositoryNodeIdResponse(
   value: unknown,
+  apiBaseUrl: string,
   expectedRepositoryFullName: string,
 ): Readonly<GitHubRepositoryNodeIdentity> {
+  const graphqlUrl = githubGraphqlUrl(apiBaseUrl).href;
   const expectedRepository = admitGitHubRepositoryFullName(
     expectedRepositoryFullName,
   );
@@ -80,6 +82,7 @@ export function admitGitHubRepositoryNodeIdResponse(
     throw invalidGraphqlResponse();
   }
   const identity = Object.freeze({
+    graphqlUrl,
     repositoryFullName,
     repositoryId: admitNodeId(requiredDataProperty(repository, "id")),
   });
@@ -91,7 +94,7 @@ export function buildGitHubUpdateRefsCasRequest(
   input: GitHubUpdateRefsCasInput,
 ): GitHubUpdateRefsCasRequest {
   const snapshot = snapshotCasInput(input);
-  const url = githubGraphqlUrl(snapshot.apiBaseUrl);
+  const url = admittedGraphqlEndpoint(snapshot.repository.graphqlUrl);
   const repositoryFullName = admitGitHubRepositoryFullName(
     snapshot.repository.repositoryFullName,
   );
@@ -155,6 +158,9 @@ export function admitGitHubUpdateRefsCasResponse(
 }
 
 export function githubGraphqlUrl(apiBaseUrl: string): URL {
+  if (typeof apiBaseUrl !== "string") {
+    throw new RangeError("GitHub API base URL is invalid");
+  }
   let url: URL;
   try {
     url = new URL(apiBaseUrl);
@@ -178,6 +184,29 @@ export function githubGraphqlUrl(apiBaseUrl: string): URL {
   return url;
 }
 
+function admittedGraphqlEndpoint(value: unknown): URL {
+  if (typeof value !== "string") throw invalidCasInput();
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalidCasInput();
+  }
+  const localhostHttp = url.protocol === "http:" && url.hostname === "localhost";
+  if (
+    (url.protocol !== "https:" && !localhostHttp)
+    || url.username !== ""
+    || url.password !== ""
+    || url.search !== ""
+    || url.hash !== ""
+    || !url.pathname.endsWith("/graphql")
+    || url.href !== value
+  ) {
+    throw invalidCasInput();
+  }
+  return url;
+}
+
 function mutationIdentity(value: Readonly<{
   apiUrl: string;
   repositoryFullName: string;
@@ -194,7 +223,6 @@ function mutationIdentity(value: Readonly<{
 function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
   const record = casInputRecord(value);
   return Object.freeze({
-    apiBaseUrl: casInputString(record, "apiBaseUrl"),
     repository: snapshotRepositoryIdentity(
       casInputValue(record, "repository"),
     ),
@@ -216,6 +244,7 @@ function snapshotRepositoryIdentity(
   }
   const record = casInputRecord(value);
   return Object.freeze({
+    graphqlUrl: casInputString(record, "graphqlUrl"),
     repositoryFullName: casInputString(record, "repositoryFullName"),
     repositoryId: casInputString(record, "repositoryId"),
   });

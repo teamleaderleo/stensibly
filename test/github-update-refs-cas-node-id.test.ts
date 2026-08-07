@@ -4,29 +4,27 @@ import {
   buildGitHubUpdateRefsCasRequest,
 } from "../src/github-update-refs-cas.ts";
 
+const apiBaseUrl = "https://api.github.com";
 const repositoryFullName = "teamleaderleo/stensibly";
 const opaqueNodeId = "R_kgDOAtomic/Repository+legacy=";
 
-function repositoryIdentity() {
-  return admitGitHubRepositoryNodeIdResponse({
+test("admits a bounded opaque node ID inside its exact endpoint/repository receipt", () => {
+  const repository = admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
         id: opaqueNodeId,
         nameWithOwner: repositoryFullName,
       },
     },
-  }, repositoryFullName);
-}
+  }, apiBaseUrl, repositoryFullName);
 
-test("admits a bounded opaque node ID only with its exact provider repository", () => {
-  expect(repositoryIdentity()).toEqual({
+  expect(repository).toEqual({
+    graphqlUrl: "https://api.github.com/graphql",
     repositoryFullName,
     repositoryId: opaqueNodeId,
   });
-
   expect(buildGitHubUpdateRefsCasRequest({
-    apiBaseUrl: "https://api.github.com",
-    repository: repositoryIdentity(),
+    repository,
     targetRef: "feature/exact-cas",
     expectedHeadSha: "a".repeat(40),
     newHeadSha: "b".repeat(40),
@@ -45,7 +43,9 @@ test("rejects repository substitution, whitespace, and overlong node IDs", () =>
         nameWithOwner: "teamleaderleo/other",
       },
     },
-  }, repositoryFullName)).toThrow("GitHub updateRefs GraphQL response is invalid");
+  }, apiBaseUrl, repositoryFullName)).toThrow(
+    "GitHub updateRefs GraphQL response is invalid",
+  );
 
   for (const id of ["node id", "x".repeat(257)]) {
     expect(() => admitGitHubRepositoryNodeIdResponse({
@@ -55,6 +55,8 @@ test("rejects repository substitution, whitespace, and overlong node IDs", () =>
           nameWithOwner: repositoryFullName,
         },
       },
-    }, repositoryFullName)).toThrow("GitHub updateRefs GraphQL response is invalid");
+    }, apiBaseUrl, repositoryFullName)).toThrow(
+      "GitHub updateRefs GraphQL response is invalid",
+    );
   }
 });

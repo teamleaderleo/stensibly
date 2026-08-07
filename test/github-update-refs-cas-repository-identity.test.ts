@@ -3,7 +3,6 @@ import {
   admitGitHubRepositoryNodeIdResponse,
   buildGitHubRepositoryNodeIdRequest,
   buildGitHubUpdateRefsCasRequest,
-  type GitHubUpdateRefsCasInput,
 } from "../src/github-update-refs-cas.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
@@ -12,79 +11,76 @@ const targetRef = "feature/exact-cas";
 const expectedHeadSha = "a".repeat(40);
 const newHeadSha = "b".repeat(40);
 
-type BoundRepository = Readonly<{
-  repositoryFullName: string;
-  repositoryId: string;
-}>;
-
-const admitBoundRepository = admitGitHubRepositoryNodeIdResponse as unknown as (
-  value: unknown,
-  expectedRepositoryFullName: string,
-) => BoundRepository;
-
-const buildBoundCas = buildGitHubUpdateRefsCasRequest as unknown as (
-  input: Omit<
-    GitHubUpdateRefsCasInput,
-    "repositoryFullName" | "repositoryId"
-  > & {
-    repository: BoundRepository;
-  },
-) => unknown;
-
-function providerBoundRepository(): BoundRepository {
-  return admitBoundRepository({
-    data: {
-      repository: {
-        id: repositoryId,
-        nameWithOwner: repositoryFullName,
-      },
-    },
-  }, repositoryFullName);
-}
-
-test("binds the repository node lookup receipt to the requested canonical repository", () => {
+test("binds lookup endpoint, repository, and node ID in one admitted identity", () => {
   const request = buildGitHubRepositoryNodeIdRequest(
     "https://api.github.com",
     repositoryFullName,
   );
   expect(String(request.body.query)).toContain("nameWithOwner");
 
-  expect(providerBoundRepository()).toEqual({
+  const repository = admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        id: repositoryId,
+        nameWithOwner: repositoryFullName,
+      },
+    },
+  }, "https://api.github.com", repositoryFullName);
+
+  expect(repository).toEqual({
+    graphqlUrl: "https://api.github.com/graphql",
     repositoryFullName,
     repositoryId,
   });
+  expect(Object.isFrozen(repository)).toBe(true);
+  expect(buildGitHubUpdateRefsCasRequest({
+    repository,
+    targetRef,
+    expectedHeadSha,
+    newHeadSha,
+  }).url.href).toBe(repository.graphqlUrl);
+});
 
-  expect(() => admitBoundRepository({
+test("rejects structural receipt forgery and provider repository substitution", () => {
+  expect(() => buildGitHubUpdateRefsCasRequest({
+    repository: {
+      graphqlUrl: "https://api.github.com/graphql",
+      repositoryFullName,
+      repositoryId,
+    },
+    targetRef,
+    expectedHeadSha,
+    newHeadSha,
+  })).toThrow("GitHub updateRefs CAS input is invalid");
+
+  expect(() => admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
         id: repositoryId,
         nameWithOwner: "teamleaderleo/other-repository",
       },
     },
-  }, repositoryFullName)).toThrow();
+  }, "https://api.github.com", repositoryFullName)).toThrow(
+    "GitHub updateRefs GraphQL response is invalid",
+  );
 });
 
-test("builds CAS from the exact provider-admitted repository receipt", () => {
-  expect(() => buildBoundCas({
-    apiBaseUrl: "https://api.github.com",
-    repository: providerBoundRepository(),
+test("a receipt from endpoint A cannot be paired with endpoint B", () => {
+  const repository = admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        id: repositoryId,
+        nameWithOwner: repositoryFullName,
+      },
+    },
+  }, "https://github.example.com/api/v3", repositoryFullName);
+
+  const request = buildGitHubUpdateRefsCasRequest({
+    repository,
     targetRef,
     expectedHeadSha,
     newHeadSha,
-  })).not.toThrow();
-});
-
-test("rejects a caller-fabricated lookalike repository receipt", () => {
-  const forged = Object.freeze({
-    repositoryFullName,
-    repositoryId,
   });
-
-  expect(() => buildBoundCas({
-    apiBaseUrl: "https://api.github.com",
-    repository: forged,
-    targetRef,
-    expectedHeadSha,
-    newHeadSha,
-  })).toThrow();
+  expect(request.url.href).toBe("https://github.example.com/api/graphql");
+  expect(request.url.href).not.toBe("https://api.github.com/graphql");
 });

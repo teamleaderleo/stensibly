@@ -7,28 +7,30 @@ import {
   githubGraphqlUrl,
 } from "../src/github-update-refs-cas.ts";
 
+const apiBaseUrl = "https://api.github.com";
+const graphqlUrl = "https://api.github.com/graphql";
 const repositoryFullName = "teamleaderleo/stensibly";
 const repositoryId = "R_kgDOAtomicRepository";
-const repositoryShape = Object.freeze({ repositoryFullName, repositoryId });
 const targetRef = "feature/exact-cas";
 const sha1Parent = "a".repeat(40);
 const sha1Commit = "b".repeat(40);
 const sha256Parent = "c".repeat(64);
 const sha256Commit = "d".repeat(64);
 
-function repositoryIdentity(
-  fullName = repositoryFullName,
+function admittedRepository(
+  base = apiBaseUrl,
+  expected = repositoryFullName,
+  nameWithOwner = expected,
   id = repositoryId,
 ) {
   return admitGitHubRepositoryNodeIdResponse({
-    data: { repository: { id, nameWithOwner: fullName } },
-  }, fullName);
+    data: { repository: { id, nameWithOwner } },
+  }, base, expected);
 }
 
 function sha1Request() {
   return buildGitHubUpdateRefsCasRequest({
-    apiBaseUrl: "https://api.github.com",
-    repository: repositoryIdentity(),
+    repository: admittedRepository(),
     targetRef,
     expectedHeadSha: sha1Parent,
     newHeadSha: sha1Commit,
@@ -38,10 +40,10 @@ function sha1Request() {
 describe("GitHub updateRefs exact-old-ref CAS", () => {
   test("builds exact github.com repository identity query", () => {
     const request = buildGitHubRepositoryNodeIdRequest(
-      "https://api.github.com",
+      apiBaseUrl,
       repositoryFullName,
     );
-    expect(request.url.href).toBe("https://api.github.com/graphql");
+    expect(request.url.href).toBe(graphqlUrl);
     expect(request.body).toEqual({
       query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id nameWithOwner } }",
       variables: { owner: "teamleaderleo", name: "stensibly" },
@@ -57,45 +59,40 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       .toBe("https://github.example.com/custom/api/graphql");
   });
 
-  test("binds repository node identity to the exact canonical provider repository", () => {
-    for (const nameWithOwner of [
-      repositoryFullName,
-      "TeamLeaderLeo/Stensibly",
-    ]) {
-      const admitted = admitGitHubRepositoryNodeIdResponse({
-        data: { repository: { id: repositoryId, nameWithOwner } },
-      }, repositoryFullName);
-      expect(admitted).toEqual(repositoryShape);
+  test("binds endpoint, canonical repository, and node ID in one admitted receipt", () => {
+    for (const nameWithOwner of [repositoryFullName, "TeamLeaderLeo/Stensibly"]) {
+      const admitted = admittedRepository(
+        apiBaseUrl,
+        repositoryFullName,
+        nameWithOwner,
+      );
+      expect(admitted).toEqual({ graphqlUrl, repositoryFullName, repositoryId });
       expect(Object.isFrozen(admitted)).toBe(true);
     }
 
-    expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: {
-        repository: {
-          id: repositoryId,
-          nameWithOwner: "teamleaderleo/other",
-        },
-      },
-    }, repositoryFullName)).toThrow("GitHub updateRefs GraphQL response is invalid");
+    expect(admittedRepository("https://github.example.com/api/v3")).toEqual({
+      graphqlUrl: "https://github.example.com/api/graphql",
+      repositoryFullName,
+      repositoryId,
+    });
+
+    expect(() => admittedRepository(
+      apiBaseUrl,
+      repositoryFullName,
+      "teamleaderleo/other",
+    )).toThrow("GitHub updateRefs GraphQL response is invalid");
 
     expect(() => admitGitHubRepositoryNodeIdResponse({
       data: { repository: { id: repositoryId, nameWithOwner: repositoryFullName } },
       errors: [{ message: "provider detail" }],
-    }, repositoryFullName)).toThrow("GitHub could not read repository node identity");
-
-    expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: {
-        repository: {
-          id: "bad node id with spaces",
-          nameWithOwner: repositoryFullName,
-        },
-      },
-    }, repositoryFullName)).toThrow("GitHub updateRefs GraphQL response is invalid");
+    }, apiBaseUrl, repositoryFullName)).toThrow(
+      "GitHub could not read repository node identity",
+    );
   });
 
-  test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
+  test("uses the provider-bound endpoint for exact SHA-1 CAS", () => {
     const request = sha1Request();
-    expect(request.url.href).toBe("https://api.github.com/graphql");
+    expect(request.url.href).toBe(graphqlUrl);
     expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
     expect(request.body).toEqual({
       query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
@@ -115,17 +112,16 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("admits SHA-256 CAS and rejects mixed object formats", () => {
+    const repository = admittedRepository();
     expect(() => buildGitHubUpdateRefsCasRequest({
-      apiBaseUrl: "https://api.github.com",
-      repository: repositoryIdentity(),
+      repository,
       targetRef,
       expectedHeadSha: sha256Parent,
       newHeadSha: sha256Commit,
     })).not.toThrow();
 
     expect(() => buildGitHubUpdateRefsCasRequest({
-      apiBaseUrl: "https://api.github.com",
-      repository: repositoryIdentity(),
+      repository,
       targetRef,
       expectedHeadSha: sha1Parent,
       newHeadSha: sha256Commit,
@@ -179,7 +175,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     }
   });
 
-  test("does not invoke caller ownKeys or getters for admitted fixed records", () => {
+  test("does not invoke caller ownKeys or getters for provider response records", () => {
     let ownKeysCalls = 0;
     let getCalls = 0;
     const providerRepository = new Proxy({
@@ -217,8 +213,9 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     });
     expect(admitGitHubRepositoryNodeIdResponse(
       envelope,
+      apiBaseUrl,
       repositoryFullName,
-    )).toEqual(repositoryShape);
+    )).toEqual({ graphqlUrl, repositoryFullName, repositoryId });
     expect(ownKeysCalls).toBe(0);
     expect(getCalls).toBe(0);
   });
@@ -232,6 +229,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     revoked.revoke();
     expect(() => admitGitHubRepositoryNodeIdResponse(
       revoked.proxy,
+      apiBaseUrl,
       repositoryFullName,
     )).toThrow("GitHub updateRefs GraphQL response is invalid");
   });
