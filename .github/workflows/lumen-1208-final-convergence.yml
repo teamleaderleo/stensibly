@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact current carrier
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          CARRIER_PARENT: a8351873642cedf5e63bf1fe9af69d3658a2dbbd
+          CARRIER_PARENT: e8746de6d06242f2c48d95f04151775074346fef
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
@@ -38,6 +38,7 @@ jobs:
           test "$(git rev-parse HEAD^)" = "$CARRIER_PARENT"
           test "$(git rev-parse HEAD^:src/github-rest-repository-write-atomic-publication.ts)" = "0cfe937f238e7018d3fbb30d99c9cab78c35c820"
           test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
+          test -f .github/workflows/lark-1208-final-cas-convergence.yml
           test ! -f .github/workflows/oriole-1208-required-provider-fields.yml
           test ! -f .github/workflows/vireo-1208-cas-provenance-required-fields.yml
           git fetch --no-tags origin "$CAS_REPAIR" "$REQUIRED_FIELDS_CONTROL"
@@ -125,50 +126,34 @@ jobs:
 
           hostile = Path("test/github-update-refs-cas-hostile-response.test.ts")
           source = hostile.read_text()
-          old = '''import {
-              admitGitHubRepositoryNodeIdResponse,
-              admitGitHubUpdateRefsCasResponse,
-            } from "../src/github-update-refs-cas.ts";'''
-          new = '''import {
-              admitGitHubRepositoryNodeIdResponse,
-              admitGitHubUpdateRefsCasResponse,
-              buildGitHubRepositoryNodeIdRequest,
-            } from "../src/github-update-refs-cas.ts";'''
+          old = '''  expect(() => admitGitHubRepositoryNodeIdResponse(
+    revocable.proxy,
+    repositoryFullName,
+    repositoryRequest.url.href,
+  )).toThrow("GitHub updateRefs GraphQL response is invalid");'''
+          new = '''  expect(() => admitGitHubRepositoryNodeIdResponse(
+    revocable.proxy,
+    repositoryRequest,
+  )).toThrow("GitHub updateRefs GraphQL response is invalid");'''
           if source.count(old) != 1:
-              raise SystemExit("hostile-response import anchor moved")
-          source = source.replace(old, new, 1)
-          old = '''test("normalizes revoked repository-node response proxies", () => {
-              const revocable = Proxy.revocable({
-                data: { repository: { id: "R_kgDORepository" } },
-              }, {});
-              revocable.revoke();
-              expect(() => admitGitHubRepositoryNodeIdResponse(revocable.proxy))
-                .toThrow("GitHub updateRefs GraphQL response is invalid");
-            });'''
-          new = '''test("normalizes revoked repository-node response proxies", () => {
-              const lookup = buildGitHubRepositoryNodeIdRequest(
-                "https://api.github.com",
-                "teamleaderleo/stensibly",
-              );
-              const revocable = Proxy.revocable({
-                data: {
-                  repository: {
-                    id: "R_kgDORepository",
-                    nameWithOwner: "teamleaderleo/stensibly",
-                  },
-                },
-              }, {});
-              revocable.revoke();
-              expect(() => admitGitHubRepositoryNodeIdResponse(revocable.proxy, lookup))
-                .toThrow("GitHub updateRefs GraphQL response is invalid");
-            });'''
-          if source.count(old) != 1:
-              raise SystemExit("hostile-response repository test anchor moved")
+              raise SystemExit(f"hostile-response lookup anchor moved: {source.count(old)}")
           hostile.write_text(source.replace(old, new, 1))
+
+          provider_url = Path("test/github-rest-repository-write-provider-url-spelling.test.ts")
+          source = provider_url.read_text()
+          old = 'if (isQuery(body)) return Response.json({ data: { repository: { id: repositoryId } } });'
+          new = '''if (isQuery(body)) {
+        return Response.json({
+          data: {
+            repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+          },
+        });
+      }'''
+          if source.count(old) != 1:
+              raise SystemExit(f"provider-url repository fixture anchor moved: {source.count(old)}")
+          provider_url.write_text(source.replace(old, new, 1))
           PY
           git diff --check
-
-      - uses: oven-sh/setup-bun@v2
 
       - name: Validate final exact-CAS integration
         shell: bash
@@ -203,11 +188,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/lumen-1208-final-convergence.yml
+          git rm \
+            .github/workflows/lark-1208-final-cas-convergence.yml \
+            .github/workflows/lumen-1208-final-convergence.yml
           git add \
             src/github-rest-repository-write-atomic-publication.ts \
             src/github-update-refs-cas.ts \
             test/github-rest-repository-write-atomic-required-fields.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
             test/github-update-refs-cas.test.ts \
             test/github-update-refs-cas-api-base-security.test.ts \
             test/github-update-refs-cas-hostile-response.test.ts \
