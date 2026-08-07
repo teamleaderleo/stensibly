@@ -4,17 +4,29 @@ import {
   buildGitHubUpdateRefsCasRequest,
 } from "../src/github-update-refs-cas.ts";
 
+const repositoryFullName = "teamleaderleo/stensibly";
 const opaqueNodeId = "R_kgDOAtomic/Repository+legacy=";
 
-test("admits bounded opaque printable GitHub node IDs", () => {
+function repositoryIdentity() {
+  return Object.freeze({
+    repositoryFullName,
+    repositoryId: opaqueNodeId,
+  });
+}
+
+test("admits a bounded opaque node ID only with its exact provider repository", () => {
   expect(admitGitHubRepositoryNodeIdResponse({
-    data: { repository: { id: opaqueNodeId } },
-  })).toBe(opaqueNodeId);
+    data: {
+      repository: {
+        id: opaqueNodeId,
+        nameWithOwner: repositoryFullName,
+      },
+    },
+  }, repositoryFullName)).toEqual(repositoryIdentity());
 
   expect(buildGitHubUpdateRefsCasRequest({
     apiBaseUrl: "https://api.github.com",
-    repositoryFullName: "teamleaderleo/stensibly",
-    repositoryId: opaqueNodeId,
+    repository: repositoryIdentity(),
     targetRef: "feature/exact-cas",
     expectedHeadSha: "a".repeat(40),
     newHeadSha: "b".repeat(40),
@@ -25,10 +37,24 @@ test("admits bounded opaque printable GitHub node IDs", () => {
   }));
 });
 
-test("rejects whitespace and overlong node IDs", () => {
+test("rejects repository substitution, whitespace, and overlong node IDs", () => {
+  expect(() => admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        id: opaqueNodeId,
+        nameWithOwner: "teamleaderleo/other",
+      },
+    },
+  }, repositoryFullName)).toThrow("GitHub updateRefs GraphQL response is invalid");
+
   for (const id of ["node id", "x".repeat(257)]) {
     expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: { repository: { id } },
-    })).toThrow("GitHub updateRefs GraphQL response is invalid");
+      data: {
+        repository: {
+          id,
+          nameWithOwner: repositoryFullName,
+        },
+      },
+    }, repositoryFullName)).toThrow("GitHub updateRefs GraphQL response is invalid");
   }
 });

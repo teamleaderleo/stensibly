@@ -14,14 +14,18 @@ export interface GitHubGraphqlRequest {
   body: Readonly<Record<string, unknown>>;
 }
 
+export interface GitHubRepositoryNodeIdentity {
+  repositoryFullName: string;
+  repositoryId: string;
+}
+
 export interface GitHubUpdateRefsCasRequest extends GitHubGraphqlRequest {
   clientMutationId: string;
 }
 
 export interface GitHubUpdateRefsCasInput {
   apiBaseUrl: string;
-  repositoryFullName: string;
-  repositoryId: string;
+  repository: GitHubRepositoryNodeIdentity;
   targetRef: string;
   expectedHeadSha: string;
   newHeadSha: string;
@@ -32,7 +36,7 @@ export interface GitHubUpdateRefsCasResult {
 }
 
 const repositoryNodeIdQuery =
-  "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }";
+  "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id nameWithOwner } }";
 const updateRefsMutation =
   "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }";
 const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
@@ -54,14 +58,29 @@ export function buildGitHubRepositoryNodeIdRequest(
   });
 }
 
-export function admitGitHubRepositoryNodeIdResponse(value: unknown): string {
+export function admitGitHubRepositoryNodeIdResponse(
+  value: unknown,
+  expectedRepositoryFullName: string,
+): Readonly<GitHubRepositoryNodeIdentity> {
+  const expectedRepository = admitGitHubRepositoryFullName(
+    expectedRepositoryFullName,
+  );
   const envelope = record(value);
   if (optionalDataProperty(envelope, "errors") !== undefined) {
     throw new Error("GitHub could not read repository node identity");
   }
   const data = record(requiredDataProperty(envelope, "data"));
   const repository = record(requiredDataProperty(data, "repository"));
-  return admitNodeId(requiredDataProperty(repository, "id"));
+  const repositoryFullName = admitGitHubRepositoryFullName(
+    requiredDataProperty(repository, "nameWithOwner"),
+  );
+  if (repositoryFullName !== expectedRepository) {
+    throw invalidGraphqlResponse();
+  }
+  return Object.freeze({
+    repositoryFullName,
+    repositoryId: admitNodeId(requiredDataProperty(repository, "id")),
+  });
 }
 
 export function buildGitHubUpdateRefsCasRequest(
@@ -69,8 +88,10 @@ export function buildGitHubUpdateRefsCasRequest(
 ): GitHubUpdateRefsCasRequest {
   const snapshot = snapshotCasInput(input);
   const url = githubGraphqlUrl(snapshot.apiBaseUrl);
-  const repositoryFullName = admitGitHubRepositoryFullName(snapshot.repositoryFullName);
-  const repositoryId = admitNodeId(snapshot.repositoryId);
+  const repositoryFullName = admitGitHubRepositoryFullName(
+    snapshot.repository.repositoryFullName,
+  );
+  const repositoryId = admitNodeId(snapshot.repository.repositoryId);
   const targetRef = admitGitHubBranchRef(snapshot.targetRef);
   const expectedHeadSha = admitGitObjectId(snapshot.expectedHeadSha);
   const newHeadSha = admitGitObjectId(snapshot.newHeadSha);
@@ -167,28 +188,48 @@ function mutationIdentity(value: Readonly<{
 }
 
 function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
+  const record = casInputRecord(value);
+  return Object.freeze({
+    apiBaseUrl: casInputString(record, "apiBaseUrl"),
+    repository: snapshotRepositoryIdentity(
+      casInputValue(record, "repository"),
+    ),
+    targetRef: casInputString(record, "targetRef"),
+    expectedHeadSha: casInputString(record, "expectedHeadSha"),
+    newHeadSha: casInputString(record, "newHeadSha"),
+  });
+}
+
+function snapshotRepositoryIdentity(
+  value: unknown,
+): GitHubRepositoryNodeIdentity {
+  const record = casInputRecord(value);
+  return Object.freeze({
+    repositoryFullName: casInputString(record, "repositoryFullName"),
+    repositoryId: casInputString(record, "repositoryId"),
+  });
+}
+
+function casInputRecord(value: unknown): object {
   if (!value || typeof value !== "object") {
     throw invalidCasInput();
   }
   try {
     if (Array.isArray(value)) throw invalidCasInput();
   } catch (error) {
-    if (error instanceof RangeError && error.message === invalidCasInput().message) {
-      throw error;
-    }
+    if (isInvalidCasInput(error)) throw error;
     throw invalidCasInput();
   }
-  return Object.freeze({
-    apiBaseUrl: casInputString(value, "apiBaseUrl"),
-    repositoryFullName: casInputString(value, "repositoryFullName"),
-    repositoryId: casInputString(value, "repositoryId"),
-    targetRef: casInputString(value, "targetRef"),
-    expectedHeadSha: casInputString(value, "expectedHeadSha"),
-    newHeadSha: casInputString(value, "newHeadSha"),
-  });
+  return value;
 }
 
 function casInputString(value: object, key: string): string {
+  const admitted = casInputValue(value, key);
+  if (typeof admitted !== "string") throw invalidCasInput();
+  return admitted;
+}
+
+function casInputValue(value: object, key: string): unknown {
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -199,7 +240,6 @@ function casInputString(value: object, key: string): string {
     !descriptor
     || !("value" in descriptor)
     || descriptor.enumerable !== true
-    || typeof descriptor.value !== "string"
   ) {
     throw invalidCasInput();
   }
@@ -261,6 +301,11 @@ function dataDescriptor(
 
 function invalidCasInput(): RangeError {
   return new RangeError("GitHub updateRefs CAS input is invalid");
+}
+
+function isInvalidCasInput(error: unknown): error is RangeError {
+  return error instanceof RangeError
+    && error.message === "GitHub updateRefs CAS input is invalid";
 }
 
 function invalidGraphqlResponse(): RangeError {
