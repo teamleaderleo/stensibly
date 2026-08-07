@@ -35,6 +35,7 @@ const maximumRequiredCapabilities = 1_000;
 const maximumRecoveryActions = 6;
 const maximumProvenanceEntries = 16;
 const maximumInputObjects = 10_000;
+const admittedHostBindingSnapshots = new WeakSet<object>();
 
 interface InputBudget {
   objects: number;
@@ -43,14 +44,34 @@ interface InputBudget {
 export function buildEffectiveToolSurfaceHostBindingSnapshot(
   input: EffectiveToolSurfaceHostBindingSnapshotInput,
 ): EffectiveToolSurfaceHostBindingSnapshot {
-  return buildHostBindingBase(snapshotHostBindingInput(input));
+  const snapshot = buildHostBindingBase(snapshotHostBindingInput(input));
+  admittedHostBindingSnapshots.add(snapshot);
+  return snapshot;
 }
 
 export function reconcileEffectiveToolSurfaceHostBinding(
   current: EffectiveToolSurfaceHostBindingSnapshot,
   previous?: EffectiveToolSurfaceHostBindingSnapshot,
 ): EffectiveToolSurfaceHostBindingReconciliation {
+  requireAdmittedSnapshot(current);
+  if (previous !== undefined) requireAdmittedSnapshot(previous);
   return reconcileHostBindingBase(current, previous);
+}
+
+function requireAdmittedSnapshot(value: unknown): asserts value is EffectiveToolSurfaceHostBindingSnapshot {
+  if (
+    value === null
+    || typeof value !== "object"
+    || !admittedHostBindingSnapshots.has(value)
+  ) {
+    throw snapshotInspectionError();
+  }
+}
+
+function snapshotInspectionError(): RangeError {
+  return new RangeError(
+    "Effective tool-surface host-binding snapshot inspection failed",
+  );
 }
 
 function snapshotHostBindingInput(
