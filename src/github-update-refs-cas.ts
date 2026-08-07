@@ -69,17 +69,18 @@ export function admitGitHubRepositoryNodeIdResponse(value: unknown): string {
 export function buildGitHubUpdateRefsCasRequest(
   input: GitHubUpdateRefsCasInput,
 ): GitHubGraphqlRequest {
-  const repositoryFullName = admitGitHubRepositoryFullName(input.repositoryFullName);
-  const repositoryId = admitNodeId(input.repositoryId);
-  const targetRef = admitGitHubBranchRef(input.targetRef);
-  const expectedHeadSha = admitGitObjectId(input.expectedHeadSha);
-  const newHeadSha = admitGitObjectId(input.newHeadSha);
+  const snapshot = snapshotCasInput(input);
+  const repositoryFullName = admitGitHubRepositoryFullName(snapshot.repositoryFullName);
+  const repositoryId = admitNodeId(snapshot.repositoryId);
+  const targetRef = admitGitHubBranchRef(snapshot.targetRef);
+  const expectedHeadSha = admitGitObjectId(snapshot.expectedHeadSha);
+  const newHeadSha = admitGitObjectId(snapshot.newHeadSha);
   if (!sameGitObjectFormat(expectedHeadSha, newHeadSha)) {
     throw new RangeError("GitHub updateRefs object format is invalid");
   }
   const clientMutationId = `stensibly-write-${newHeadSha.slice(0, 16)}`;
   return Object.freeze({
-    url: githubGraphqlUrl(input.apiBaseUrl),
+    url: githubGraphqlUrl(snapshot.apiBaseUrl),
     body: Object.freeze({
       query: updateRefsMutation,
       variables: Object.freeze({
@@ -145,6 +146,38 @@ export function githubGraphqlUrl(apiBaseUrl: string): URL {
     ? "/api/graphql"
     : `${pathname}/graphql`.replace(/\/{2,}/gu, "/");
   return url;
+}
+
+function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidCasInput();
+  }
+  return Object.freeze({
+    apiBaseUrl: casInputString(value, "apiBaseUrl"),
+    repositoryFullName: casInputString(value, "repositoryFullName"),
+    repositoryId: casInputString(value, "repositoryId"),
+    targetRef: casInputString(value, "targetRef"),
+    expectedHeadSha: casInputString(value, "expectedHeadSha"),
+    newHeadSha: casInputString(value, "newHeadSha"),
+  });
+}
+
+function casInputString(value: object, key: string): string {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    throw invalidCasInput();
+  }
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || descriptor.enumerable !== true
+    || typeof descriptor.value !== "string"
+  ) {
+    throw invalidCasInput();
+  }
+  return descriptor.value;
 }
 
 function isExactStaleRefResponse(
@@ -248,6 +281,10 @@ function denseArray(value: unknown, maximumLength: number): unknown[] {
     result.push(descriptor.value);
   }
   return result;
+}
+
+function invalidCasInput(): RangeError {
+  return new RangeError("GitHub updateRefs CAS input is invalid");
 }
 
 function invalidGraphqlResponse(): RangeError {
