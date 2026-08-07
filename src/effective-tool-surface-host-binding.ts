@@ -87,7 +87,7 @@ function snapshotHostBindingInput(
     budget,
   );
   const observationDescriptor = optionalDataDescriptor(record, "classObservations");
-  return observationDescriptor && observationDescriptor.value !== undefined
+  return observationDescriptor
     ? {
         toolSurface,
         classObservations: snapshotClassObservations(
@@ -363,6 +363,7 @@ function optionalDataDescriptor(
   }
   if (!descriptor) return undefined;
   if (!("value" in descriptor) || !descriptor.enumerable) throw inspectionError();
+  if (descriptor.value === undefined) return undefined;
   return descriptor as PropertyDescriptor & { value: unknown };
 }
 
