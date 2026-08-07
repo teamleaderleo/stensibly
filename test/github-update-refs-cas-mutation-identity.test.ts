@@ -1,12 +1,35 @@
 import { describe, expect, test } from "bun:test";
 import {
+  admitGitHubRepositoryNodeIdResponse,
+  buildGitHubRepositoryNodeIdRequest,
   buildGitHubUpdateRefsCasRequest,
 } from "../src/github-update-refs-cas.ts";
 
+function admittedRepository(
+  apiBaseUrl: string,
+  repositoryFullName: string,
+  repositoryId: string,
+) {
+  const request = buildGitHubRepositoryNodeIdRequest(
+    apiBaseUrl,
+    repositoryFullName,
+  );
+  return admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        id: repositoryId,
+        nameWithOwner: repositoryFullName,
+      },
+    },
+  }, repositoryFullName, request.url.href);
+}
+
 const base = {
-  apiBaseUrl: "https://api.github.com",
-  repositoryFullName: "teamleaderleo/stensibly",
-  repositoryId: "R_kgDOExample",
+  repository: admittedRepository(
+    "https://api.github.com",
+    "teamleaderleo/stensibly",
+    "R_kgDOExample",
+  ),
   targetRef: "topic/exact-cas",
   expectedHeadSha: "1".repeat(40),
   newHeadSha: "abcdef0123456789" + "2".repeat(24),
@@ -16,9 +39,30 @@ describe("GitHub updateRefs CAS mutation identity", () => {
   test("changes when any exact CAS identity changes", () => {
     const original = buildGitHubUpdateRefsCasRequest(base).clientMutationId;
     const variants = [
-      { ...base, apiBaseUrl: "https://github.example.com/api/v3" },
-      { ...base, repositoryFullName: "teamleaderleo/other" },
-      { ...base, repositoryId: "R_kgDOOther" },
+      {
+        ...base,
+        repository: admittedRepository(
+          "https://github.example.com/api/v3",
+          "teamleaderleo/stensibly",
+          "R_kgDOExample",
+        ),
+      },
+      {
+        ...base,
+        repository: admittedRepository(
+          "https://api.github.com",
+          "teamleaderleo/other",
+          "R_kgDOExample",
+        ),
+      },
+      {
+        ...base,
+        repository: admittedRepository(
+          "https://api.github.com",
+          "teamleaderleo/stensibly",
+          "R_kgDOOther",
+        ),
+      },
       { ...base, targetRef: "topic/other" },
       { ...base, expectedHeadSha: "3".repeat(40) },
       {
