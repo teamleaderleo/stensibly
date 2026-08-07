@@ -1,0 +1,97 @@
+name: Oriole 1219 v1 input-budget compatibility
+
+on:
+  push:
+    branches:
+      - lumen/1195-tool-class-observation
+    paths:
+      - .github/workflows/oriole-1219-input-budget-compat.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oriole-1219-input-budget-compatibility
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1195-tool-class-observation
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source lease
+        shell: bash
+        env:
+          SOURCE_BLOB: a0645346484710d1fddcdfd29034ecdd052a1fcb
+          RED_CONTROL_SHA: f045d11794af52347c26f75c12a9999b9f39e644
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/effective-tool-surface-host-binding.ts)" = "$SOURCE_BLOB"
+          git fetch --no-tags origin "$RED_CONTROL_SHA"
+          git show "$RED_CONTROL_SHA":test/effective-tool-surface-host-binding-input-budget-red-control.test.ts \
+            > /tmp/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+
+      - name: Preserve inherited v1 legal ceilings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/effective-tool-surface-host-binding.ts")
+          text = path.read_text()
+          old = "const maximumInputObjects = 10_000;"
+          new = '''// The inherited v1 legal maximum can visit 11,026 caller objects:
+// envelope/tool-surface/classes + five class records + catalogue/executable/
+// provenance arrays + 10,000 capability records + the required-capability
+// array and 1,000 requirement records + recovery-actions + observations.
+// Keep one bounded defense-in-depth ceiling above that exact inherited graph.
+const maximumInputObjects = 12_000;'''
+          if text.count(old) != 1:
+              raise SystemExit(f"input-object budget anchor moved: {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cp /tmp/effective-tool-surface-host-binding-input-budget-red-control.test.ts \
+            test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate compatibility and hardened boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/effective-tool-surface-host-binding.test.ts \
+            test/effective-tool-surface-host-binding-boundary.test.ts \
+            test/effective-tool-surface-host-binding-provenance.test.ts \
+            test/effective-tool-surface-host-binding-reconcile-boundary.test.ts \
+            test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+
+      - name: Publish workflow-free compatibility repair
+        shell: bash
+        env:
+          CARRIER_SHA: ${{ github.sha }}
+          HEAD_REF: lumen/1195-tool-class-observation
+        run: |
+          set -euo pipefail
+          git add \
+            src/effective-tool-surface-host-binding.ts \
+            test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+          git rm .github/workflows/oriole-1219-input-budget-compat.yml
+          git diff --cached --check
+          git config user.name "Oriole"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Preserve host-binding v1 input ceilings"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
