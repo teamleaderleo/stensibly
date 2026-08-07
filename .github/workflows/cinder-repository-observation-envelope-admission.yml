@@ -1,0 +1,141 @@
+name: Cinder repository observation envelope admission
+
+on:
+  push:
+    branches:
+      - cinder/repository-observation-envelope-admission
+    paths:
+      - .github/workflows/cinder-repository-observation-envelope-admission.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-repository-observation-envelope-admission
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cinder/repository-observation-envelope-admission
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "fc7f8f82165f8002388db8d806ad8ae3f5ce404d"
+          test "$(git rev-parse HEAD:src/github-repository-observation-admission.ts)" = "c3c45309b12e6d362b523125a6424c505e2cd7e4"
+          test "$(git rev-parse HEAD:test/github-repository-observation-envelope-boundary.test.ts)" = "a42cb247be39d02f93899a66932ee6f20baf5baa"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Snapshot only the closed envelope fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-repository-observation-admission.ts")
+          text = path.read_text()
+          old = '''  const snapshot = snapshotBoundedJson(
+    value,
+    "GitHub repository observation envelope",
+  );
+  if (!isRecord(snapshot) || !hasExactKeys(snapshot, envelopeKeys)) {
+    throw new RangeError(
+      "GitHub repository observation envelope has noncanonical fields",
+    );
+  }
+'''
+          new = '''  const snapshot = snapshotClosedRecord(
+    value,
+    envelopeKeys,
+    "GitHub repository observation envelope",
+  );
+'''
+          if text.count(old) != 1:
+              raise SystemExit("repository observation envelope admission anchor moved")
+          text = text.replace(old, new, 1)
+
+          anchor = '''export function snapshotBoundedJson(
+  value: unknown,
+  label: string,
+): BoundedJsonValue {
+'''
+          helper = '''function snapshotClosedRecord(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new RangeError(`${label} could not be inspected`);
+  }
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new RangeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new RangeError(`${label}.${key} must be an enumerable data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
+'''
+          if text.count(anchor) != 1:
+              raise SystemExit("bounded snapshot export anchor moved")
+          text = text.replace(anchor, helper + anchor, 1)
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Validate repository observation admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-repository-observation*.test.ts
+
+      - name: Publish workflow-free source head
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cinder-repository-observation-envelope-admission.yml
+          git add \
+            src/github-repository-observation-admission.ts \
+            test/github-repository-observation-envelope-boundary.test.ts
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound repository observation envelope admission"
+          git fetch origin refs/heads/cinder/repository-observation-envelope-admission:refs/remotes/origin/cinder/repository-observation-envelope-admission
+          test "$(git rev-parse refs/remotes/origin/cinder/repository-observation-envelope-admission)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cinder/repository-observation-envelope-admission:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/cinder/repository-observation-envelope-admission
