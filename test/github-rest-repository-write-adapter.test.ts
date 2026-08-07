@@ -25,11 +25,7 @@ describe("native GitHub repository file write adapter", () => {
         ok: false,
         status: 404,
         headers: new Headers(),
-        body: {
-          cancel() {
-            cancelled = true;
-          },
-        },
+        body: { cancel() { cancelled = true; } },
       } as unknown as Response,
       Response.json({
         sha: commitSha,
@@ -45,10 +41,7 @@ describe("native GitHub repository file write adapter", () => {
 
     expect(await adapter.getRefHead({ repositoryFullName, targetRef })).toBeNull();
     expect(cancelled).toBe(true);
-    expect(await adapter.getCommitParents({
-      repositoryFullName,
-      commitSha,
-    })).toEqual([parentSha]);
+    expect(await adapter.getCommitParents({ repositoryFullName, commitSha })).toEqual([parentSha]);
     expect(tokens).toEqual(["read", "read"]);
   });
 
@@ -56,9 +49,7 @@ describe("native GitHub repository file write adapter", () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider([]),
       apiBaseUrl,
-      fetch: atomicFetcher({
-        requestId: `github_pat_${"x".repeat(24)}`,
-      }),
+      fetch: atomicFetcher({ requestId: `github_pat_${"x".repeat(24)}` }),
     });
 
     const result = await adapter.dispatchRepositoryWrite({
@@ -67,19 +58,11 @@ describe("native GitHub repository file write adapter", () => {
       operation: "create_file",
       targetRef,
       expectedParentSha: parentSha,
-      payload: {
-        operation: "create_file",
-        content: "safe\n",
-        message: "Create safe file",
-      },
+      payload: { operation: "create_file", content: "safe\n", message: "Create safe file" },
       idempotencyKey: "atomic-hostile-request-id",
     });
 
-    expect(result).toEqual({
-      commitSha,
-      targetRef,
-      parentSha,
-    });
+    expect(result).toEqual({ commitSha, targetRef, parentSha });
     expect(JSON.stringify(result)).not.toContain("github_pat_");
   });
 
@@ -91,15 +74,8 @@ describe("native GitHub repository file write adapter", () => {
       fetch: (async () => ({
         ok: true,
         status: 200,
-        headers: new Headers({
-          "content-length": String(512 * 1024 + 1),
-        }),
-        body: {
-          cancel() {
-            cancelled = true;
-            return new Promise<void>(() => {});
-          },
-        },
+        headers: new Headers({ "content-length": String(512 * 1024 + 1) }),
+        body: { cancel() { cancelled = true; return new Promise<void>(() => {}); } },
       } as unknown as Response)) as unknown as typeof fetch,
     });
 
@@ -109,15 +85,9 @@ describe("native GitHub repository file write adapter", () => {
       operation: "create_file",
       targetRef,
       expectedParentSha: parentSha,
-      payload: {
-        operation: "create_file",
-        content: "safe\n",
-        message: "Create bounded file",
-      },
+      payload: { operation: "create_file", content: "safe\n", message: "Create bounded file" },
       idempotencyKey: "atomic-oversized-parent",
-    })).rejects.toThrow(
-      "GitHub read expected parent commit response exceeded its byte limit",
-    );
+    })).rejects.toThrow("GitHub read expected parent commit response exceeded its byte limit");
     expect(cancelled).toBe(true);
   });
 
@@ -128,19 +98,12 @@ describe("native GitHub repository file write adapter", () => {
       tokenProvider: tokenProvider([]),
       apiBaseUrl,
       fetch: atomicFetcher({
-        onPatch() {
-          patchCalls += 1;
-        },
+        onPatch() { patchCalls += 1; },
         publicationResponse: () => ({
           ok: false,
           status: 422,
           headers: new Headers(),
-          body: {
-            cancel() {
-              cancelled = true;
-              return new Promise<void>(() => {});
-            },
-          },
+          body: { cancel() { cancelled = true; return new Promise<void>(() => {}); } },
         } as unknown as Response),
       }),
     });
@@ -151,15 +114,9 @@ describe("native GitHub repository file write adapter", () => {
       operation: "create_file",
       targetRef,
       expectedParentSha: parentSha,
-      payload: {
-        operation: "create_file",
-        content: "safe\n",
-        message: "Create raced file",
-      },
+      payload: { operation: "create_file", content: "safe\n", message: "Create raced file" },
       idempotencyKey: "atomic-ref-race",
-    })).rejects.toThrow(
-      "GitHub could not publish repository ref (HTTP 422)",
-    );
+    })).rejects.toThrow("GitHub could not publish repository ref (HTTP 422)");
     expect(cancelled).toBe(true);
     expect(patchCalls).toBe(0);
   });
@@ -173,9 +130,7 @@ function atomicFetcher(input: {
   return (async (request: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const url = String(request);
-    const body = init?.body === undefined
-      ? null
-      : JSON.parse(String(init.body)) as unknown;
+    const body = init?.body === undefined ? null : JSON.parse(String(init.body)) as unknown;
     if (method === "GET" && url === commitUrl(parentSha)) {
       return Response.json({
         sha: parentSha,
@@ -185,46 +140,24 @@ function atomicFetcher(input: {
       });
     }
     if (method === "GET" && url === recursiveTreeUrl(parentTreeSha)) {
-      return Response.json({
-        sha: parentTreeSha,
-        url: treeUrl(parentTreeSha),
-        tree: [],
-        truncated: false,
-      });
+      return Response.json({ sha: parentTreeSha, url: treeUrl(parentTreeSha), tree: [], truncated: false });
     }
     if (method === "POST" && url === graphqlUrl()) {
-      if (isRepositoryNodeQuery(body)) {
-        return Response.json({ data: { repository: { id: repositoryId } } });
-      }
+      if (isRepositoryNodeQuery(body)) return Response.json({ data: { repository: { id: repositoryId } } });
       if (isUpdateRefsMutation(body)) {
         expect(body).toEqual(updateRefsBody());
         return input.publicationResponse?.() ?? Response.json({
-          data: {
-            updateRefs: {
-              clientMutationId: `stensibly-write-${commitSha.slice(0, 16)}`,
-            },
-          },
+          data: { updateRefs: { clientMutationId: mutationId(body) } },
         }, {
-          status: 200,
-          headers: input.requestId
-            ? { "x-github-request-id": input.requestId }
-            : undefined,
+          headers: input.requestId ? { "x-github-request-id": input.requestId } : undefined,
         });
       }
     }
     if (method === "POST" && url === blobCollectionUrl()) {
-      return Response.json({
-        sha: blobSha,
-        url: blobUrl(blobSha),
-      }, { status: 201 });
+      return Response.json({ sha: blobSha, url: blobUrl(blobSha) }, { status: 201 });
     }
     if (method === "POST" && url === treeCollectionUrl()) {
-      return Response.json({
-        sha: treeSha,
-        url: treeUrl(treeSha),
-        tree: [],
-        truncated: false,
-      }, { status: 201 });
+      return Response.json({ sha: treeSha, url: treeUrl(treeSha), tree: [], truncated: false }, { status: 201 });
     }
     if (method === "POST" && url === commitCollectionUrl()) {
       return Response.json({
@@ -236,26 +169,10 @@ function atomicFetcher(input: {
     }
     if (method === "PATCH") {
       input.onPatch?.();
-      return Response.json({ message: "REST ref PATCH is forbidden" }, {
-        status: 500,
-      });
+      return Response.json({ message: "unexpected REST publication" }, { status: 500 });
     }
     return Response.json({ message: "unexpected request" }, { status: 500 });
   }) as unknown as typeof fetch;
-}
-
-function isRepositoryNodeQuery(body: unknown): boolean {
-  return typeof (body as { query?: unknown })?.query === "string"
-    && String((body as { query: string }).query).startsWith(
-      "query StensiblyRepositoryNodeId",
-    );
-}
-
-function isUpdateRefsMutation(body: unknown): boolean {
-  return typeof (body as { query?: unknown })?.query === "string"
-    && String((body as { query: string }).query).startsWith(
-      "mutation StensiblyUpdateRefs",
-    );
 }
 
 function updateRefsBody(): unknown {
@@ -264,72 +181,43 @@ function updateRefsBody(): unknown {
     variables: {
       input: {
         repositoryId,
-        refUpdates: [{
-          name: `refs/heads/${targetRef}`,
-          beforeOid: parentSha,
-          afterOid: commitSha,
-          force: false,
-        }],
-        clientMutationId: `stensibly-write-${commitSha.slice(0, 16)}`,
+        refUpdates: [{ name: `refs/heads/${targetRef}`, beforeOid: parentSha, afterOid: commitSha, force: false }],
+        clientMutationId: expect.stringMatching(/^stensibly-write-[a-f0-9]{64}$/),
       },
     },
   };
 }
-
-function tokenProvider(
-  calls: Array<"read" | "write">,
-): GitHubRepositoryWriteTokenProvider {
+function mutationId(body: unknown): string {
+  const value = (body as { variables?: { input?: { clientMutationId?: unknown } } }).variables?.input?.clientMutationId;
+  if (typeof value !== "string") throw new Error("Missing mutation identity in test fixture");
+  return value;
+}
+function isRepositoryNodeQuery(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith("query StensiblyRepositoryNodeId");
+}
+function isUpdateRefsMutation(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith("mutation StensiblyUpdateRefs");
+}
+function tokenProvider(calls: Array<"read" | "write">): GitHubRepositoryWriteTokenProvider {
   return {
     async getRepositoryContentsToken(input) {
       calls.push(input.access);
-      return {
-        token: `contents-${input.access}-token`,
-        expiresAt: "2026-08-06T12:00:00.000Z",
-      };
+      return { token: `contents-${input.access}-token`, expiresAt: "2026-08-08T12:00:00.000Z" };
     },
   };
 }
-
 function gitBlobSha(content: string): string {
   const bytes = Buffer.from(content, "utf8");
-  return createHash("sha1")
-    .update(`blob ${bytes.byteLength}\0`, "utf8")
-    .update(bytes)
-    .digest("hex");
+  return createHash("sha1").update(`blob ${bytes.byteLength}\0`, "utf8").update(bytes).digest("hex");
 }
-
-function repositoryUrl(): string {
-  return `${apiBaseUrl}/repos/${repositoryFullName}`;
-}
-
-function graphqlUrl(): string {
-  return `${apiBaseUrl}/graphql`;
-}
-
-function commitUrl(sha: string): string {
-  return `${repositoryUrl()}/git/commits/${sha}`;
-}
-
-function commitCollectionUrl(): string {
-  return `${repositoryUrl()}/git/commits`;
-}
-
-function treeUrl(sha: string): string {
-  return `${repositoryUrl()}/git/trees/${sha}`;
-}
-
-function recursiveTreeUrl(sha: string): string {
-  return `${treeUrl(sha)}?recursive=1`;
-}
-
-function treeCollectionUrl(): string {
-  return `${repositoryUrl()}/git/trees`;
-}
-
-function blobUrl(sha: string): string {
-  return `${repositoryUrl()}/git/blobs/${sha}`;
-}
-
-function blobCollectionUrl(): string {
-  return `${repositoryUrl()}/git/blobs`;
-}
+function root(): string { return `${apiBaseUrl}/repos/${repositoryFullName}`; }
+function graphqlUrl(): string { return `${apiBaseUrl}/graphql`; }
+function commitUrl(sha: string): string { return `${root()}/git/commits/${sha}`; }
+function commitCollectionUrl(): string { return `${root()}/git/commits`; }
+function treeUrl(sha: string): string { return `${root()}/git/trees/${sha}`; }
+function recursiveTreeUrl(sha: string): string { return `${treeUrl(sha)}?recursive=1`; }
+function treeCollectionUrl(): string { return `${root()}/git/trees`; }
+function blobUrl(sha: string): string { return `${root()}/git/blobs/${sha}`; }
+function blobCollectionUrl(): string { return `${root()}/git/blobs`; }
