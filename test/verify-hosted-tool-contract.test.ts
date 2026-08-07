@@ -65,6 +65,8 @@ describe("hosted MCP full-contract verification", () => {
       expect(headers.get("authorization")).toBe(`Bearer ${token}`);
       expect(headers.get("origin")).toBe("https://www.stensibly.com");
       expect(headers.get("mcp-protocol-version")).toBe("2025-06-18");
+      expect(headers.get("accept-encoding")).toBe("identity");
+      expect(init.redirect).toBe("error");
       const payload = JSON.parse(String(init.body)) as { method?: string; id?: number };
       expect(payload).toMatchObject({ method: "tools/list", id: 2 });
       return jsonResponse({
@@ -169,5 +171,71 @@ describe("hosted MCP full-contract verification", () => {
       detail: "MCP tools/list contract is invalid; requestId=tool-contract-hostile-name",
     });
     expect(result.detail).not.toContain(hostileName);
+  });
+
+  test("rejects a declared tools/list body above the verifier byte ceiling", async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response("{}", {
+        status: 200,
+        headers: {
+          ...contractHeaders("tool-contract-oversized"),
+          "content-length": String(1024 * 1024 + 1),
+          "content-type": "application/json",
+        },
+      });
+
+    const result = await verifyHostedToolContract({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(result).toEqual({
+      name: "remote MCP tool contract",
+      ok: false,
+      detail: "MCP tools/list response exceeded 1 MiB",
+    });
+  });
+
+  test("times out a stalled tools/list response body", async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+        status: 200,
+        headers: {
+          ...contractHeaders("tool-contract-stalled"),
+          "content-type": "application/json",
+        },
+      });
+
+    const result = await verifyHostedToolContract({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+      timeoutMs: 100,
+    }, fetchImpl);
+
+    expect(result).toEqual({
+      name: "remote MCP tool contract",
+      ok: false,
+      detail: "Request timed out after 100ms",
+    });
+  });
+
+  test("normalizes transport failures without retaining thrown provider prose", async () => {
+    const fetchImpl: FetchLike = async () => {
+      throw new Error(`provider failure ${token} secret://private-reference`);
+    };
+
+    const result = await verifyHostedToolContract({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(result).toEqual({
+      name: "remote MCP tool contract",
+      ok: false,
+      detail: "MCP tools/list request failed",
+    });
   });
 });
