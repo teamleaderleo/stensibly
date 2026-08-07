@@ -1,0 +1,219 @@
+name: Finch 1217 final private result convergence
+
+on:
+  push:
+    branches:
+      - cedar/1149-durable-activity-ingestion
+    paths:
+      - .github/workflows/finch-1217-final-private-result-retarget.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finch-1217-final-private-result-convergence
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1149-durable-activity-ingestion
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Add final private/result repairs to Ember carrier
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: cedar/1149-durable-activity-ingestion
+          SOURCE_PARENT: 8a9da9a3f2c1a2013c23a311d19b5ca850b3d85d
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_PARENT"
+          test -f .github/workflows/cedar-1149-durable-activity-store.yml
+          test -f .github/workflows/cinder-1217-convex-response-boundary.yml
+          test -f .github/workflows/ember-1217-durable-parity-repair.yml
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path('.github/workflows/ember-1217-durable-parity-repair.yml')
+          text = path.read_text()
+
+          old_source = '          SOURCE_HEAD: a3baa13a9e02160567834ba9a8f554e48ace2e72\n'
+          new_source = f'          SOURCE_HEAD: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old_source) != 1:
+              raise SystemExit(f'Ember source-head anchor moved: {text.count(old_source)}')
+          text = text.replace(old_source, new_source, 1)
+
+          marker = """              'adapter identity helpers',
+          )
+          text = text[:start] + section + text[end:]
+"""
+          replacement = """              'adapter identity helpers',
+          )
+
+          section = replace_once(
+              section,
+              '''          export class ConvexOrchestratorActivityIngestionStore {
+            readonly client: ConvexCaller;
+            readonly serviceSecret: string;
+            readonly workspace: string;
+
+            constructor(options: ConvexOrchestratorActivityIngestionStoreOptions) {
+              this.client = options.client;
+              this.serviceSecret = exactText(options.serviceSecret, "Convex service secret", 1_000);
+              this.workspace = exactSlug(options.workspace ?? "default", "Workspace");
+            }''',
+              '''          export class ConvexOrchestratorActivityIngestionStore {
+            readonly #client: ConvexCaller;
+            readonly #serviceSecret: string;
+            readonly #workspace: string;
+
+            constructor(options: ConvexOrchestratorActivityIngestionStoreOptions) {
+              this.#client = options.client;
+              this.#serviceSecret = exactText(options.serviceSecret, "Convex service secret", 1_000);
+              this.#workspace = exactSlug(options.workspace ?? "default", "Workspace");
+            }''',
+              'runtime-private durable dependencies',
+          )
+          section = section.replace('this.client', 'this.#client')
+          section = section.replace('this.serviceSecret', 'this.#serviceSecret')
+          section = section.replace('this.workspace', 'this.#workspace')
+          section = section.replace('this.args(', 'this.#args(')
+          section = replace_once(
+              section,
+              '''            private args(input: Record<string, unknown>): Record<string, unknown> {''',
+              '''            #args(input: Record<string, unknown>): Record<string, unknown> {''',
+              'runtime-private argument builder',
+          )
+          section = replace_once(
+              section,
+              '''              if (
+                typeof record.replayed !== "boolean"
+                || typeof record.observationAppended !== "boolean"
+              ) {
+                throw new OrchestratorActivityStorageError();
+              }''',
+              '''              if (
+                typeof record.replayed !== "boolean"
+                || typeof record.observationAppended !== "boolean"
+                || (record.replayed && record.observationAppended)
+              ) {
+                throw new OrchestratorActivityStorageError();
+              }''',
+              'replay append invariant',
+          )
+          text = text[:start] + section + text[end:]
+"""
+          if text.count(marker) != 1:
+              raise SystemExit(f'Ember adapter insertion anchor moved: {text.count(marker)}')
+          text = text.replace(marker, replacement, 1)
+
+          write_marker = """          path.write_text(text)
+          PY
+"""
+          test_patch = """          # Add focused runtime-private and impossible-result controls to Cedar's generated suite.
+          test_start = text.index("          cat > test/orchestrator-activity-convex-store.test.ts <<'EOF'")
+          test_end = text.index("\\n          EOF", test_start)
+          tests = text[test_start:test_end]
+          test_anchor = '''            test("rejects backend observation substitution and foreign workspace", async () => {'''
+          extra = '''            test("keeps durable Convex dependencies runtime-private", async () => {
+              const client = new FakeClient();
+              client.queryResult = [];
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+                workspace: "default",
+              });
+              const publicView = store as unknown as Record<string, unknown>;
+              const prototype = Object.getPrototypeOf(store) as Record<PropertyKey, unknown>;
+              for (const key of ["client", "serviceSecret", "workspace", "args"]) {
+                expect(key in store).toBe(false);
+                expect(publicView[key]).toBeUndefined();
+                expect(Reflect.ownKeys(store)).not.toContain(key);
+                expect(Reflect.ownKeys(prototype)).not.toContain(key);
+                expect({ ...publicView }).not.toHaveProperty(key);
+              }
+              expect(JSON.stringify(store)).not.toContain("service-secret");
+
+              let substitutedCalls = 0;
+              publicView.client = {
+                async mutation() { substitutedCalls += 1; return null; },
+                async query() { substitutedCalls += 1; return []; },
+              };
+              publicView.serviceSecret = "substituted-secret";
+              publicView.workspace = "other";
+              publicView.args = () => ({
+                serviceSecret: "substituted-secret",
+                workspace: "other",
+              });
+
+              await expect(store.listObservations("default", "stensibly"))
+                .resolves.toEqual([]);
+              expect(substitutedCalls).toBe(0);
+              expect(client.queries).toHaveLength(1);
+              expect(client.queries[0]).toMatchObject({
+                serviceSecret: "service-secret",
+                workspace: "default",
+                project: "stensibly",
+              });
+            });
+
+            test("rejects replayed results that also claim an appended observation", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              client.mutationResult = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  admitted.observation,
+                ),
+                replayed: true,
+                observationAppended: true,
+              };
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+
+              await expect(store.ingest(input)).rejects.toBeInstanceOf(
+                OrchestratorActivityStorageError,
+              );
+            });
+
+'''
+          if tests.count(test_anchor) != 1:
+              raise SystemExit(f'durable adapter test anchor moved: {tests.count(test_anchor)}')
+          tests = tests.replace(test_anchor, extra + test_anchor, 1)
+          text = text[:test_start] + tests + text[test_end:]
+
+          path.write_text(text)
+          PY
+"""
+          if text.count(write_marker) != 1:
+              raise SystemExit(f'Ember write anchor moved: {text.count(write_marker)}')
+          text = text.replace(write_marker, test_patch, 1)
+          path.write_text(text)
+          PY
+
+          git rm -f \
+            .github/workflows/finch-1217-final-private-result-retarget.yml \
+            .github/workflows/lumen-1217-ember-retarget-bootstrap.yml \
+            .github/workflows/oriole-1217-durable-boundary-convergence.yml
+          git add .github/workflows/ember-1217-durable-parity-repair.yml
+          git diff --cached --check
+          git config user.name "Finch"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bind durable activity private result boundary"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
