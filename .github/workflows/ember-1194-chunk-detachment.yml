@@ -1,0 +1,138 @@
+name: Ember 1194 chunk detachment repair
+
+on:
+  push:
+    branches:
+      - sable/537-hosted-tool-contract-protocol-bounds
+    paths:
+      - .github/workflows/ember-1194-chunk-detachment.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ember-1194-chunk-detachment-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: sable/537-hosted-tool-contract-protocol-bounds
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "5a10b9fa76074d8c31832e2cbf88ea57c97f1ea6"
+          test "$(git rev-parse HEAD:src/verify-hosted-tool-contract.ts)" = "17c7520f06d5aafeca3ce0979ee5a61a14964863"
+          test "$(git rev-parse HEAD:test/verify-hosted-tool-contract-protocol-boundaries.test.ts)" = "54202ca02eefb1fa2249320bd90b54060dfcd290"
+          test "$(git rev-parse origin/main)" = "e78ae196c31cc8ba9416bb8d8a050a98cb61a32a"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply intrinsic chunk detachment and absorb red control
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/verify-hosted-tool-contract.ts")
+          text = path.read_text()
+          old = '''      totalBytes += result.value.byteLength;
+                if (totalBytes > MAXIMUM_RESPONSE_BYTES) {
+                  void cancelReader(reader);
+                  throw new Error("MCP tools/list response exceeded 1 MiB");
+                }
+                chunks.push(result.value.slice());'''
+          new = '''      let detached: Uint8Array;
+                try {
+                  detached = detachResponseChunk(
+                    result.value,
+                    MAXIMUM_RESPONSE_BYTES - totalBytes,
+                  );
+                } catch (error) {
+                  void cancelReader(reader);
+                  throw error;
+                }
+                totalBytes += detached.byteLength;
+                chunks.push(detached);'''
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one chunk-copy anchor, found {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          anchor = '''async function readWithDeadline(
+          '''
+          helper = '''const RESPONSE_BYTE_LIMIT = Symbol("response-byte-limit");
+
+          function detachResponseChunk(
+            value: Uint8Array,
+            maximumBytes: number,
+          ): Uint8Array {
+            const bytes: number[] = [];
+            try {
+              Uint8Array.prototype.forEach.call(value, (byte: number) => {
+                if (bytes.length >= maximumBytes) throw RESPONSE_BYTE_LIMIT;
+                bytes.push(byte);
+              });
+            } catch (error) {
+              if (error === RESPONSE_BYTE_LIMIT) {
+                throw new Error("MCP tools/list response exceeded 1 MiB");
+              }
+              throw new Error("MCP tools/list returned an invalid byte stream");
+            }
+            return new Uint8Array(bytes);
+          }
+
+          async function readWithDeadline(
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit(f"expected one helper anchor, found {text.count(anchor)}")
+          path.write_text(text.replace(anchor, helper, 1))
+          PY
+          git show fa02c8fc774768948d7662ba49fe69c0c6d14480:test/verify-hosted-tool-contract-chunk-detachment.test.ts > test/verify-hosted-tool-contract-chunk-detachment.test.ts
+          git diff --check
+
+      - name: Validate focused verifier packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/verify-hosted-tool-contract.test.ts \
+            test/verify-hosted-tool-contract-protocol-boundaries.test.ts \
+            test/verify-hosted-tool-contract-chunk-detachment.test.ts
+
+      - name: Publish one workflow-free current-main commit
+        env:
+          CARRIER_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp src/verify-hosted-tool-contract.ts /tmp/verify-hosted-tool-contract.ts
+          cp test/verify-hosted-tool-contract-protocol-boundaries.test.ts /tmp/protocol.test.ts
+          cp test/verify-hosted-tool-contract-chunk-detachment.test.ts /tmp/chunk.test.ts
+          git reset --hard e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          cp /tmp/verify-hosted-tool-contract.ts src/verify-hosted-tool-contract.ts
+          cp /tmp/protocol.test.ts test/verify-hosted-tool-contract-protocol-boundaries.test.ts
+          cp /tmp/chunk.test.ts test/verify-hosted-tool-contract-chunk-detachment.test.ts
+          git add \
+            src/verify-hosted-tool-contract.ts \
+            test/verify-hosted-tool-contract-protocol-boundaries.test.ts \
+            test/verify-hosted-tool-contract-chunk-detachment.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 3
+          git config user.name "Ember"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Harden hosted verifier chunk detachment"
+          git fetch origin refs/heads/sable/537-hosted-tool-contract-protocol-bounds:refs/remotes/origin/sable/537-hosted-tool-contract-protocol-bounds
+          test "$(git rev-parse refs/remotes/origin/sable/537-hosted-tool-contract-protocol-bounds)" = "$CARRIER_SHA"
+          git push --force-with-lease=refs/heads/sable/537-hosted-tool-contract-protocol-bounds:$CARRIER_SHA \
+            origin HEAD:refs/heads/sable/537-hosted-tool-contract-protocol-bounds
