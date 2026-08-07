@@ -66,7 +66,6 @@ function buildPayload(
         executableCount: value.executableCount,
         executableDigest: value.executableDigest,
         provenanceCount: value.provenance.length,
-        provenanceDigest: digestStrings(value.provenance),
       }];
     }),
   );
@@ -173,12 +172,4 @@ function eventIdempotencyKey(
       snapshotFingerprint: snapshot.snapshotFingerprint,
     }))
     .digest("hex")}`;
-}
-
-function digestStrings(values: readonly string[]): string {
-  return sha256(JSON.stringify([...values].sort()));
-}
-
-function sha256(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
