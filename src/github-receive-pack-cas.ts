@@ -180,28 +180,23 @@ export function admitGitReceivePackCasReport(
   const branch = admitGitHubBranchRef(targetRef);
   const fullTargetRef = `refs/heads/${branch}`;
   const packets = parsePacketLines(detachedBytes, maximumPacketCount, invalidReport);
-  if (packets.length < 3 || packets.at(-1) !== null) throw invalidReport();
-  let unpackOk = false;
-  let targetOk = false;
-  for (let index = 0; index < packets.length - 1; index += 1) {
-    const packet = packets[index];
-    if (packet === undefined || packet === null) throw invalidReport();
-    const line = decodePacket(packet, invalidReport);
-    if (!line.endsWith("\n")) throw invalidReport();
-    const text = line.slice(0, -1);
-    if (text === "unpack ok") {
-      if (unpackOk) throw invalidReport();
-      unpackOk = true;
-      continue;
-    }
-    if (text === `ok ${fullTargetRef}`) {
-      if (targetOk) throw invalidReport();
-      targetOk = true;
-      continue;
-    }
+  if (packets.length !== 3 || packets[2] !== null) throw invalidReport();
+  const unpackPacket = packets[0];
+  const targetPacket = packets[1];
+  if (
+    unpackPacket === undefined
+    || unpackPacket === null
+    || targetPacket === undefined
+    || targetPacket === null
+  ) {
     throw invalidReport();
   }
-  if (!unpackOk || !targetOk) throw invalidReport();
+  if (decodePacket(unpackPacket, invalidReport) !== "unpack ok\n") {
+    throw invalidReport();
+  }
+  if (decodePacket(targetPacket, invalidReport) !== `ok ${fullTargetRef}\n`) {
+    throw invalidReport();
+  }
 }
 
 function snapshotRequest(value: unknown): BuildGitReceivePackCasRequestInput {
