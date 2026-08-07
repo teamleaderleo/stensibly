@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   admitGitHubRepositoryNodeIdResponse,
+  buildGitHubRepositoryNodeIdRequest,
   buildGitHubUpdateRefsCasRequest,
 } from "../src/github-update-refs-cas.ts";
 
@@ -8,7 +9,11 @@ const apiBaseUrl = "https://api.github.com";
 const repositoryFullName = "teamleaderleo/stensibly";
 const opaqueNodeId = "R_kgDOAtomic/Repository+legacy=";
 
-test("admits a bounded opaque node ID inside its exact endpoint/repository receipt", () => {
+test("admits a bounded opaque node ID inside its exact provider receipt", () => {
+  const request = buildGitHubRepositoryNodeIdRequest(
+    apiBaseUrl,
+    repositoryFullName,
+  );
   const repository = admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
@@ -16,7 +21,7 @@ test("admits a bounded opaque node ID inside its exact endpoint/repository recei
         nameWithOwner: repositoryFullName,
       },
     },
-  }, apiBaseUrl, repositoryFullName);
+  }, repositoryFullName, request.url.href);
 
   expect(repository).toEqual({
     graphqlUrl: "https://api.github.com/graphql",
@@ -36,6 +41,10 @@ test("admits a bounded opaque node ID inside its exact endpoint/repository recei
 });
 
 test("rejects repository substitution, whitespace, and overlong node IDs", () => {
+  const request = buildGitHubRepositoryNodeIdRequest(
+    apiBaseUrl,
+    repositoryFullName,
+  );
   expect(() => admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
@@ -43,7 +52,7 @@ test("rejects repository substitution, whitespace, and overlong node IDs", () =>
         nameWithOwner: "teamleaderleo/other",
       },
     },
-  }, apiBaseUrl, repositoryFullName)).toThrow(
+  }, repositoryFullName, request.url.href)).toThrow(
     "GitHub updateRefs GraphQL response is invalid",
   );
 
@@ -55,7 +64,7 @@ test("rejects repository substitution, whitespace, and overlong node IDs", () =>
           nameWithOwner: repositoryFullName,
         },
       },
-    }, apiBaseUrl, repositoryFullName)).toThrow(
+    }, repositoryFullName, request.url.href)).toThrow(
       "GitHub updateRefs GraphQL response is invalid",
     );
   }

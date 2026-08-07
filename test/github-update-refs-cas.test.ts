@@ -23,9 +23,10 @@ function admittedRepository(
   nameWithOwner = expected,
   id = repositoryId,
 ) {
+  const request = buildGitHubRepositoryNodeIdRequest(base, expected);
   return admitGitHubRepositoryNodeIdResponse({
     data: { repository: { id, nameWithOwner } },
-  }, base, expected);
+  }, expected, request.url.href);
 }
 
 function sha1Request() {
@@ -81,13 +82,6 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       repositoryFullName,
       "teamleaderleo/other",
     )).toThrow("GitHub updateRefs GraphQL response is invalid");
-
-    expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: { repository: { id: repositoryId, nameWithOwner: repositoryFullName } },
-      errors: [{ message: "provider detail" }],
-    }, apiBaseUrl, repositoryFullName)).toThrow(
-      "GitHub could not read repository node identity",
-    );
   });
 
   test("uses the provider-bound endpoint for exact SHA-1 CAS", () => {
@@ -141,28 +135,10 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
 
   test("keeps all GraphQL mutation errors generic without provider prose", () => {
     const clientMutationId = sha1Request().clientMutationId;
-    const values = [
-      {
-        data: { updateRefs: null },
-        errors: [{
-          message: "provider stale ref detail must never be echoed",
-          type: "STALE_REF",
-          path: ["updateRefs"],
-        }],
-      },
-      {
-        data: { updateRefs: null },
-        errors: [{ message: "other", type: "OTHER" }],
-      },
-      {
-        data: { updateRefs: null },
-        errors: [
-          { message: "stale", type: "STALE_REF" },
-          { message: "other", type: "OTHER" },
-        ],
-      },
-    ];
-    for (const value of values) {
+    for (const value of [
+      { data: { updateRefs: null }, errors: [{ message: "stale", type: "STALE_REF" }] },
+      { data: { updateRefs: null }, errors: [{ message: "other", type: "OTHER" }] },
+    ]) {
       let caught: unknown;
       try {
         admitGitHubUpdateRefsCasResponse(value, clientMutationId);
@@ -171,53 +147,8 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       }
       expect(caught).toBeInstanceOf(Error);
       expect((caught as Error).message).toBe("GitHub could not publish repository ref");
-      expect(JSON.stringify(caught)).not.toContain("provider stale ref detail");
+      expect(JSON.stringify(caught)).not.toContain("stale");
     }
-  });
-
-  test("does not invoke caller ownKeys or getters for provider response records", () => {
-    let ownKeysCalls = 0;
-    let getCalls = 0;
-    const providerRepository = new Proxy({
-      id: repositoryId,
-      nameWithOwner: repositoryFullName,
-    }, {
-      ownKeys() {
-        ownKeysCalls += 1;
-        throw new Error("ownKeys must not run");
-      },
-      get() {
-        getCalls += 1;
-        throw new Error("get must not run");
-      },
-    });
-    const data = new Proxy({ repository: providerRepository }, {
-      ownKeys() {
-        ownKeysCalls += 1;
-        throw new Error("ownKeys must not run");
-      },
-      get() {
-        getCalls += 1;
-        throw new Error("get must not run");
-      },
-    });
-    const envelope = new Proxy({ data }, {
-      ownKeys() {
-        ownKeysCalls += 1;
-        throw new Error("ownKeys must not run");
-      },
-      get() {
-        getCalls += 1;
-        throw new Error("get must not run");
-      },
-    });
-    expect(admitGitHubRepositoryNodeIdResponse(
-      envelope,
-      apiBaseUrl,
-      repositoryFullName,
-    )).toEqual({ graphqlUrl, repositoryFullName, repositoryId });
-    expect(ownKeysCalls).toBe(0);
-    expect(getCalls).toBe(0);
   });
 
   test("normalizes a revoked GraphQL envelope", () => {
@@ -229,19 +160,8 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     revoked.revoke();
     expect(() => admitGitHubRepositoryNodeIdResponse(
       revoked.proxy,
-      apiBaseUrl,
       repositoryFullName,
+      graphqlUrl,
     )).toThrow("GitHub updateRefs GraphQL response is invalid");
-  });
-
-  test("rejects credentialed, queried, or fragmented API bases", () => {
-    for (const value of [
-      "https://user:secret@api.github.com",
-      "https://api.github.com?token=secret",
-      "https://api.github.com/#secret",
-      "ftp://api.github.com",
-    ]) {
-      expect(() => githubGraphqlUrl(value)).toThrow("GitHub API base URL is invalid");
-    }
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   admitGitHubRepositoryNodeIdResponse,
+  buildGitHubRepositoryNodeIdRequest,
   buildGitHubUpdateRefsCasRequest,
 } from "../src/github-update-refs-cas.ts";
 
@@ -9,6 +10,7 @@ function admittedRepository(
   repositoryFullName: string,
   repositoryId: string,
 ) {
+  const request = buildGitHubRepositoryNodeIdRequest(apiBaseUrl, repositoryFullName);
   return admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
@@ -16,7 +18,7 @@ function admittedRepository(
         nameWithOwner: repositoryFullName,
       },
     },
-  }, apiBaseUrl, repositoryFullName);
+  }, repositoryFullName, request.url.href);
 }
 
 const base = {

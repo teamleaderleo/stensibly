@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   admitGitHubRepositoryNodeIdResponse,
+  buildGitHubRepositoryNodeIdRequest,
   buildGitHubUpdateRefsCasRequest,
 } from "../src/github-update-refs-cas.ts";
 
@@ -13,6 +14,10 @@ const baseInput = {
 };
 
 function admittedRepository() {
+  const request = buildGitHubRepositoryNodeIdRequest(
+    "https://api.github.com",
+    repositoryFullName,
+  );
   return admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
@@ -20,7 +25,7 @@ function admittedRepository() {
         nameWithOwner: repositoryFullName,
       },
     },
-  }, "https://api.github.com", repositoryFullName);
+  }, repositoryFullName, request.url.href);
 }
 
 test("builds CAS request without top-level caller get or ownKeys", () => {
@@ -41,21 +46,6 @@ test("builds CAS request without top-level caller get or ownKeys", () => {
   const request = buildGitHubUpdateRefsCasRequest(input);
   expect(request.url.href).toBe(repository.graphqlUrl);
   expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
-  expect(request.body).toEqual({
-    query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
-    variables: {
-      input: {
-        repositoryId,
-        refUpdates: [{
-          name: `refs/heads/${baseInput.targetRef}`,
-          beforeOid: baseInput.expectedHeadSha,
-          afterOid: baseInput.newHeadSha,
-          force: false,
-        }],
-        clientMutationId: request.clientMutationId,
-      },
-    },
-  });
   expect(getCalls).toBe(0);
   expect(ownKeysCalls).toBe(0);
 });

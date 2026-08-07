@@ -62,10 +62,15 @@ export function buildGitHubRepositoryNodeIdRequest(
 
 export function admitGitHubRepositoryNodeIdResponse(
   value: unknown,
-  apiBaseUrl: string,
   expectedRepositoryFullName: string,
+  expectedGraphqlUrl: string,
 ): Readonly<GitHubRepositoryNodeIdentity> {
-  const graphqlUrl = githubGraphqlUrl(apiBaseUrl).href;
+  let graphqlUrl: string;
+  try {
+    graphqlUrl = admittedGraphqlEndpoint(expectedGraphqlUrl).href;
+  } catch {
+    throw invalidGraphqlResponse();
+  }
   const expectedRepository = admitGitHubRepositoryFullName(
     expectedRepositoryFullName,
   );
