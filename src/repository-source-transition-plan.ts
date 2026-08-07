@@ -1,4 +1,5 @@
 import { sha256, stableJson } from "./canonical-json.js";
+import { normalizeGitHubRepository } from "./github-provider-validation.js";
 
 export const repositorySourceTransitionOperations = Object.freeze([
   "replay_exact_files",
@@ -16,6 +17,7 @@ export interface RepositorySourceTransitionFileInput {
 export interface RepositorySourceTransitionPlanInput {
   version: 1;
   operation: RepositorySourceTransitionOperation;
+  repositoryFullName: string;
   targetBranch: string;
   expectedTargetHead: string;
   expectedSourceBase: string;
@@ -32,9 +34,11 @@ export interface RepositorySourceTransitionFile {
 export interface RepositorySourceTransitionPlan {
   version: 1;
   operation: RepositorySourceTransitionOperation;
+  repositoryFullName: string;
   targetBranch: string;
   expectedTargetHead: string;
   expectedSourceBase: string;
+  objectIdLength: 40 | 64;
   files: readonly RepositorySourceTransitionFile[];
   validationProfile: string;
   expectedChangedPaths: readonly string[];
@@ -52,9 +56,21 @@ const maximumProfileBytes = 64;
 const objectIdPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const validationProfilePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f]/u;
+const forbiddenRefCharacters = Object.freeze([
+  " ",
+  "~",
+  "^",
+  ":",
+  "?",
+  "*",
+  "[",
+  "]",
+  "\\",
+]);
 const planKeys = Object.freeze([
   "version",
   "operation",
+  "repositoryFullName",
   "targetBranch",
   "expectedTargetHead",
   "expectedSourceBase",
@@ -88,6 +104,7 @@ export function compileRepositorySourceTransitionPlan(
     throw new RangeError("Repository source transition operation is invalid");
   }
 
+  const repositoryFullName = admitRepository(snapshot.repositoryFullName);
   const targetBranch = admitBranch(snapshot.targetBranch);
   const expectedTargetHead = admitObjectId(
     snapshot.expectedTargetHead,
@@ -97,8 +114,12 @@ export function compileRepositorySourceTransitionPlan(
     snapshot.expectedSourceBase,
     "Expected source base",
   );
+  if (expectedTargetHead.length !== expectedSourceBase.length) {
+    throw new RangeError("Repository source transition object-ID widths must match");
+  }
+  const objectIdLength = expectedTargetHead.length as 40 | 64;
   const validationProfile = admitValidationProfile(snapshot.validationProfile);
-  const files = snapshotFiles(snapshot.files);
+  const files = snapshotFiles(snapshot.files, objectIdLength);
   if (files.length === 0) {
     throw new RangeError("Repository source transition requires at least one file");
   }
@@ -113,9 +134,11 @@ export function compileRepositorySourceTransitionPlan(
   const payload = {
     version: 1 as const,
     operation: "replay_exact_files" as const,
+    repositoryFullName,
     targetBranch,
     expectedTargetHead,
     expectedSourceBase,
+    objectIdLength,
     files: Object.freeze(sortedFiles),
     validationProfile,
     expectedChangedPaths,
@@ -128,7 +151,10 @@ export function compileRepositorySourceTransitionPlan(
   return deepFreeze({ ...payload, planFingerprint });
 }
 
-function snapshotFiles(value: unknown): RepositorySourceTransitionFile[] {
+function snapshotFiles(
+  value: unknown,
+  objectIdLength: 40 | 64,
+): RepositorySourceTransitionFile[] {
   const length = admitArrayLength(
     value,
     maximumFiles,
@@ -156,10 +182,18 @@ function snapshotFiles(value: unknown): RepositorySourceTransitionFile[] {
       throw new RangeError("Repository source transition file paths must be unique");
     }
     paths.add(path);
+    const donorCommitSha = admitObjectId(file.donorCommitSha, "Donor commit SHA");
+    const donorBlobSha = admitObjectId(file.donorBlobSha, "Donor blob SHA");
+    if (
+      donorCommitSha.length !== objectIdLength
+      || donorBlobSha.length !== objectIdLength
+    ) {
+      throw new RangeError("Repository source transition object-ID widths must match");
+    }
     result.push(Object.freeze({
       path,
-      donorCommitSha: admitObjectId(file.donorCommitSha, "Donor commit SHA"),
-      donorBlobSha: admitObjectId(file.donorBlobSha, "Donor blob SHA"),
+      donorCommitSha,
+      donorBlobSha,
     }));
   }
   return result;
@@ -233,6 +267,22 @@ function admitArrayLength(
   return length;
 }
 
+function admitRepository(value: unknown): string {
+  if (typeof value !== "string" || value !== value.trim().toLowerCase()) {
+    throw new RangeError("Repository source transition repository is invalid");
+  }
+  let normalized: string;
+  try {
+    normalized = normalizeGitHubRepository(value);
+  } catch {
+    throw new RangeError("Repository source transition repository is invalid");
+  }
+  if (normalized !== value || !/^[^/]+\/[^/]+$/u.test(value)) {
+    throw new RangeError("Repository source transition repository is invalid");
+  }
+  return normalized;
+}
+
 function admitObjectId(value: unknown, label: string): string {
   if (typeof value !== "string" || !objectIdPattern.test(value)) {
     throw new RangeError(`${label} is invalid`);
@@ -256,16 +306,26 @@ function admitBranch(value: unknown): string {
     typeof value !== "string"
     || Buffer.byteLength(value, "utf8") > maximumBranchBytes
     || value.length === 0
+    || value === "@"
+    || value.startsWith("-")
     || unsafeTextPattern.test(value)
-    || /[ ~^:?*\\[\]\\]/u.test(value)
+    || forbiddenRefCharacters.some((character) => value.includes(character))
     || value.startsWith("/")
     || value.endsWith("/")
-    || value.startsWith(".")
     || value.endsWith(".")
-    || value.endsWith(".lock")
     || value.includes("..")
     || value.includes("//")
     || value.includes("@{")
+  ) {
+    throw new RangeError("Repository source transition target branch is invalid");
+  }
+  const segments = value.split("/");
+  if (
+    segments.some((segment) =>
+      segment.length === 0
+      || segment.startsWith(".")
+      || segment.endsWith(".lock")
+    )
   ) {
     throw new RangeError("Repository source transition target branch is invalid");
   }
@@ -286,7 +346,14 @@ function admitPath(value: unknown): string {
     throw new RangeError("Repository source transition path is invalid");
   }
   const segments = value.split("/");
-  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+  if (
+    segments.some((segment) =>
+      segment.length === 0
+      || segment === "."
+      || segment === ".."
+      || segment.toLowerCase() === ".git"
+    )
+  ) {
     throw new RangeError("Repository source transition path is invalid");
   }
   if (value === ".github/workflows" || value.startsWith(".github/workflows/")) {
