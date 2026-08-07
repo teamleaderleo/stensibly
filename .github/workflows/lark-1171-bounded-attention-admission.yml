@@ -1,0 +1,255 @@
+name: Lark 1171 bounded attention admission
+
+on:
+  push:
+    branches:
+      - cinder/1153-causal-attention
+    paths:
+      - .github/workflows/lark-1171-bounded-attention-admission.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lark-1171-bounded-attention-admission
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cinder/1153-causal-attention
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source and focused control
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/orchestrator-attention-thread.ts)" = "36be2446c29852ecd8011fd0fecb6c829fa921df"
+          test "$(git rev-parse HEAD:test/orchestrator-attention-thread.test.ts)" = "9cafd57066dc1ef096864661926064bc83366cb7"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Bound caller admission without key enumeration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/orchestrator-attention-thread.ts")
+          text = source.read_text()
+
+          top_old = '''  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+          try {
+            descriptors = Object.getOwnPropertyDescriptors(input);
+          } catch {
+            throw new Error("Orchestrator attention observations could not be inspected");
+          }
+          const keys = Reflect.ownKeys(descriptors);
+          if (keys.length !== length + 1 || !keys.includes("length")) {
+            throw new Error("Orchestrator attention observations must be dense and undecorated");
+          }
+
+          const byId = new Map<string, OrchestratorActivityObservation>();
+          for (let index = 0; index < length; index += 1) {
+            const descriptor = descriptors[String(index)];
+            if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+              throw new Error(
+                "Orchestrator attention observations must contain enumerable data entries",
+              );
+            }
+            const observation = admitObservation(descriptor.value);
+          '''
+          top_new = '''  const byId = new Map<string, OrchestratorActivityObservation>();
+          for (let index = 0; index < length; index += 1) {
+            const observation = admitObservation(
+              callerDataValue(
+                input as object,
+                String(index),
+                "Orchestrator attention observations",
+              ),
+            );
+          '''
+          if text.count(top_old) != 1:
+              raise SystemExit("top observation admission anchor moved")
+          text = text.replace(top_old, top_new, 1)
+
+          record_start = text.index('function snapshotExactRecord(')
+          record_end = text.index('function snapshotDenseArray(', record_start)
+          record_new = '''function snapshotExactRecord(
+            value: unknown,
+            keys: readonly string[],
+            label: string,
+          ): Record<string, unknown> {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw new Error(`${label} must be an object`);
+            }
+            let prototype: object | null;
+            try {
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw new Error(`${label} could not be inspected`);
+            }
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new Error(`${label} must use a plain or null prototype`);
+            }
+            const result = Object.create(null) as Record<string, unknown>;
+            for (const key of keys) {
+              result[key] = callerDataValue(value, key, label);
+            }
+            return result;
+          }
+
+          '''
+          text = text[:record_start] + record_new + text[record_end:]
+
+          array_start = text.index('function snapshotDenseArray(')
+          array_end = text.index('function observationLineageKey(', array_start)
+          array_new = '''function snapshotDenseArray(
+            value: unknown,
+            maximumLength: number,
+            label: string,
+          ): unknown[] {
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray && value !== null ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray && value !== null
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw new Error(`${label} could not be inspected`);
+            }
+            if (!isArray || prototype !== Array.prototype) {
+              throw new Error(`${label} must be an ordinary array`);
+            }
+            const length = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof length !== "number"
+              || !Number.isSafeInteger(length)
+              || length < 0
+              || length > maximumLength
+            ) {
+              throw new RangeError(`${label} exceeds its entry limit`);
+            }
+            const result: unknown[] = [];
+            for (let index = 0; index < length; index += 1) {
+              result.push(callerDataValue(value, String(index), label));
+            }
+            return result;
+          }
+
+          function callerDataValue(
+            value: object,
+            key: PropertyKey,
+            label: string,
+          ): unknown {
+            try {
+              const descriptor = Object.getOwnPropertyDescriptor(value, key);
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new Error(`${label} fields must be enumerable data properties`);
+              }
+              return descriptor.value;
+            } catch (error) {
+              if (
+                error instanceof Error
+                && error.message === `${label} fields must be enumerable data properties`
+              ) {
+                throw error;
+              }
+              throw new Error(`${label} could not be inspected`);
+            }
+          }
+
+          '''
+          text = text[:array_start] + array_new + text[array_end:]
+          source.write_text(text)
+
+          test_path = Path("test/orchestrator-attention-thread.test.ts")
+          test_text = test_path.read_text()
+          old_test = '''  test("rejects decorated arrays and custom observation prototypes", () => {
+            const decorated = [ambiguousReceipt()] as OrchestratorActivityObservation[] & {
+              note?: string;
+            };
+            decorated.note = "must not survive";
+            expect(() => compileOrchestratorAttentionProjection(decorated))
+              .toThrow("dense and undecorated");
+
+            const custom = Object.assign(
+              Object.create({ inherited: true }),
+              ambiguousReceipt(),
+            );
+            expect(() => compileOrchestratorAttentionProjection([custom]))
+              .toThrow("plain or null prototype");
+          });
+          '''
+          new_test = '''  test("ignores caller decorations without key enumeration and rejects custom prototypes", () => {
+            const decorated = [ambiguousReceipt()] as OrchestratorActivityObservation[] & {
+              note?: string;
+            };
+            decorated.note = "must not survive";
+            let ownKeysCalls = 0;
+            const hostile = new Proxy(decorated, {
+              ownKeys() {
+                ownKeysCalls += 1;
+                throw new Error("caller keys must remain unreachable");
+              },
+            });
+            const projection = compileOrchestratorAttentionProjection(hostile);
+            expect(projection.observationCount).toBe(1);
+            expect(ownKeysCalls).toBe(0);
+
+            const observation = { ...ambiguousReceipt(), decoration: "discard" };
+            let observationOwnKeysCalls = 0;
+            const hostileObservation = new Proxy(observation, {
+              ownKeys() {
+                observationOwnKeysCalls += 1;
+                throw new Error("observation keys must remain unreachable");
+              },
+            });
+            expect(compileOrchestratorAttentionProjection([hostileObservation]).observationCount)
+              .toBe(1);
+            expect(observationOwnKeysCalls).toBe(0);
+
+            const custom = Object.assign(
+              Object.create({ inherited: true }),
+              ambiguousReceipt(),
+            );
+            expect(() => compileOrchestratorAttentionProjection([custom]))
+              .toThrow("plain or null prototype");
+          });
+          '''
+          if test_text.count(old_test) != 1:
+              raise SystemExit("decorated-array control anchor moved")
+          test_path.write_text(test_text.replace(old_test, new_test, 1))
+          PY
+          git diff --check
+
+      - name: Validate exact repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/orchestrator-attention-thread.test.ts
+
+      - name: Publish workflow-free repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lark-1171-bounded-attention-admission.yml
+          git add src/orchestrator-attention-thread.ts test/orchestrator-attention-thread.test.ts
+          git diff --cached --check
+          git config user.name "Lark"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound orchestrator attention caller admission"
+          git push origin HEAD:cinder/1153-causal-attention
