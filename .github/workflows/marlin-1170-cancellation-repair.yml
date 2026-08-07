@@ -1,0 +1,109 @@
+name: Marlin 1170 cancellation inspection repair
+
+on:
+  push:
+    branches:
+      - juniper/1163-total-response-lifetime
+    paths:
+      - .github/workflows/marlin-1170-cancellation-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: marlin-1170-cancellation-inspection-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-total-response-lifetime
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact repair lease
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          SOURCE_PARENT: c7bc01d8a4cf81ae41ab6b1578a68ca572b09fce
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          test "$(git rev-parse HEAD^)" = "${SOURCE_PARENT}"
+          test "$(git rev-parse HEAD^:src/github-provider-bounded-response.ts)" = "541409cd7de3b370b083d1b2df76dc8610a11d0e"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply internal-slot-only cancellation settlement
+        shell: bash
+        env:
+          CONTROL_SHA: a40a348cebc57415adfed1e2b0fdf80c6e776d12
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${CONTROL_SHA}"
+          git show "${CONTROL_SHA}":test/github-provider-bounded-response-cancellation-inspection.test.ts \
+            > test/github-provider-bounded-response-cancellation-inspection.test.ts
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-provider-bounded-response.ts")
+          source = path.read_text()
+          old = '''function suppressCancellation(value: unknown): void {
+            if (
+              value !== null
+              && (typeof value === "object" || typeof value === "function")
+              && "then" in value
+            ) {
+              void Promise.resolve(value).catch(() => undefined);
+            }
+          }
+          '''
+          new = '''function suppressCancellation(value: unknown): void {
+            if (!isObjectLike(value)) return;
+            try {
+              void Promise.prototype.then.call(
+                value as Promise<unknown>,
+                undefined,
+                () => undefined,
+              );
+            } catch {
+              // Foreign thenables are ignored without property inspection.
+            }
+          }
+          '''
+          if source.count(old) != 1:
+              raise SystemExit("suppressCancellation anchor moved")
+          path.write_text(source.replace(old, new, 1))
+          PY
+          git rm .github/workflows/marlin-1170-cancellation-repair.yml
+          git add src/github-provider-bounded-response.ts \
+            test/github-provider-bounded-response-cancellation-inspection.test.ts
+          git diff --cached --check
+
+      - name: Validate bounded response repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-response-lifetime.test.ts \
+            test/github-provider-bounded-response-cancellation-inspection.test.ts
+
+      - name: Publish workflow-free repair
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "Marlin"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Avoid foreign thenable inspection during cancellation"
+          git fetch origin refs/heads/juniper/1163-total-response-lifetime:refs/remotes/origin/juniper/1163-total-response-lifetime
+          test "$(git rev-parse refs/remotes/origin/juniper/1163-total-response-lifetime)" = "${EXPECTED_HEAD}"
+          git push --force-with-lease=refs/heads/juniper/1163-total-response-lifetime:${EXPECTED_HEAD} \
+            origin HEAD:refs/heads/juniper/1163-total-response-lifetime
