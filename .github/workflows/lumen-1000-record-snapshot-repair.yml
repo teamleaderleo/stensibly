@@ -32,9 +32,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "4ddc1d13bd5d4ea93d265544263ce95ad828dce6"
+          test "$(git rev-parse HEAD^)" = "ebf2e3f60f1fd8e5eece3ae713c7b0ac52a5952d"
           test "$(git rev-parse HEAD:src/github-observation-merkle-checkpoint.ts)" = "d903fe6a50cbfa9097ddb4fb54405ac002d5272b"
           test "$(git rev-parse HEAD:docs/github-observation-merkle-checkpoints.md)" = "bd04265be8f6f14314c2bf2ad86ad78cf3ea31fd"
+          test "$(git rev-parse HEAD:test/github-observation-merkle-checkpoint.test.ts)" = "f8b516bf1f5429c8d86af013dfd8946915ac90a0"
+          test "$(git rev-parse HEAD:test/github-observation-merkle-checkpoint-admission.test.ts)" = "de67224e5e2187b9e1cf2104d567d6beb40ebf2d"
 
       - name: Import exact red control
         shell: bash
@@ -44,7 +46,7 @@ jobs:
           test "$(git rev-parse FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts)" = "d494b4e242dd3235a005ef4414a6f3d4904efdc3"
           git show FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts > test/github-observation-merkle-checkpoint-record-key-budget.test.ts
 
-      - name: Bound fixed-record caller inspection
+      - name: Bound fixed-record caller inspection and align controls
         shell: bash
         run: |
           set -euo pipefail
@@ -60,14 +62,19 @@ jobs:
             keys: K,
             label: string,
           ): DataRecord {
-            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+            if (value === null || typeof value !== "object") {
               throw new TypeError(`${label} must be an object`);
             }
+            let isArray: boolean;
             let prototype: object | null;
             try {
+              isArray = Array.isArray(value);
               prototype = Object.getPrototypeOf(value);
             } catch {
               throw new TypeError(`${label} could not be inspected`);
+            }
+            if (isArray) {
+              throw new TypeError(`${label} must be an object`);
             }
             if (prototype !== Object.prototype && prototype !== null) {
               throw new TypeError(`${label} must use a plain prototype`);
@@ -108,6 +115,77 @@ jobs:
           if docs.count(old) != 1:
               raise SystemExit("Merkle record-admission documentation anchor moved")
           docs_path.write_text(docs.replace(old, new, 1))
+
+          main_test_path = Path("test/github-observation-merkle-checkpoint.test.ts")
+          main_test = main_test_path.read_text()
+          old = '''    decorated.extra = true;
+            expect(() => checkpoint(decorated)).toThrow("unsupported fields");
+          '''
+          new = '''    decorated.extra = true;
+            const decoratedCheckpoint = checkpoint(decorated);
+            expect(decoratedCheckpoint.treeSize).toBe(1);
+          '''
+          if main_test.count(old) != 1:
+              raise SystemExit("decorated array expectation anchor moved")
+          main_test_path.write_text(main_test.replace(old, new, 1))
+
+          admission_path = Path("test/github-observation-merkle-checkpoint-admission.test.ts")
+          admission = admission_path.read_text()
+          old = '''  test("rejects hidden checkpoint fields without reading accessors", () => {
+            let getterCalls = 0;
+            const checkpoint = compileGitHubObservationMerkleCheckpointV1({
+              version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
+              ledgerId,
+              compilerId,
+              createdAt: "2026-08-03T01:12:00Z",
+              leaves: [],
+            });
+            const hostile = Object.defineProperty({ ...checkpoint }, "hidden", {
+              enumerable: false,
+              get() {
+                getterCalls += 1;
+                return "private";
+              },
+            });
+
+            expect(() => createGitHubObservationConsistencyProofV1({
+              olderCheckpoint: hostile,
+              newerCheckpoint: checkpoint,
+              newerLeaves: [],
+            })).toThrow("unknown fields");
+            expect(getterCalls).toBe(0);
+          });
+          '''
+          new = '''  test("discards hidden checkpoint decorations without reading accessors", () => {
+            let getterCalls = 0;
+            const checkpoint = compileGitHubObservationMerkleCheckpointV1({
+              version: GITHUB_OBSERVATION_MERKLE_CHECKPOINT_V1,
+              ledgerId,
+              compilerId,
+              createdAt: "2026-08-03T01:12:00Z",
+              leaves: [],
+            });
+            const hostile = Object.defineProperty({ ...checkpoint }, "hidden", {
+              enumerable: false,
+              get() {
+                getterCalls += 1;
+                return "private";
+              },
+            });
+
+            const proof = createGitHubObservationConsistencyProofV1({
+              olderCheckpoint: hostile,
+              newerCheckpoint: checkpoint,
+              newerLeaves: [],
+            });
+            expect(proof.olderTreeSize).toBe(0);
+            expect(proof.newerTreeSize).toBe(0);
+            expect(getterCalls).toBe(0);
+          });
+          '''
+          if admission.count(old) != 1:
+              raise SystemExit("hidden checkpoint decoration expectation anchor moved")
+          admission_path.write_text(admission.replace(old, new, 1))
           PY
           git diff --check
 
@@ -131,13 +209,17 @@ jobs:
           git add \
             src/github-observation-merkle-checkpoint.ts \
             docs/github-observation-merkle-checkpoints.md \
-            test/github-observation-merkle-checkpoint-record-key-budget.test.ts
+            test/github-observation-merkle-checkpoint-record-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint.test.ts \
+            test/github-observation-merkle-checkpoint-admission.test.ts
           git diff --cached --check
           test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
             docs/github-observation-merkle-checkpoints.md \
             src/github-observation-merkle-checkpoint.ts \
-            test/github-observation-merkle-checkpoint-record-key-budget.test.ts | sort)"
-          git config user.name "Lumen"
+            test/github-observation-merkle-checkpoint-admission.test.ts \
+            test/github-observation-merkle-checkpoint-record-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint.test.ts | sort)"
+          git config user.name "Junco"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Bound fixed-record Merkle input inspection"
           git fetch origin refs/heads/cicada/962-current-main-merkle-replay:refs/remotes/origin/cicada/962-current-main-merkle-replay
