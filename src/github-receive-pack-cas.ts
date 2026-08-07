@@ -63,7 +63,10 @@ export function admitGitReceivePackAdvertisement(
     const capabilityText = nul >= 0 ? line.slice(nul + 1) : null;
     if (firstRef) {
       if (capabilityText === null) throw invalidAdvertisement();
-      const admittedCapabilities = admitCapabilities(capabilityText);
+      const admittedCapabilities = admitCapabilities(
+        capabilityText,
+        invalidAdvertisement,
+      );
       capabilities = Object.freeze(admittedCapabilities);
       const objectFormatCapabilities = admittedCapabilities.filter((entry) =>
         entry.startsWith("object-format=")
@@ -120,7 +123,10 @@ export function buildGitReceivePackCasRequest(
   ) {
     throw invalidRequest();
   }
-  const capabilities = admitCapabilityList(input.advertisedCapabilities);
+  const capabilities = admitCapabilityList(
+    input.advertisedCapabilities,
+    invalidRequest,
+  );
   if (!capabilities.includes("report-status")) throw invalidRequest();
   const objectFormatCapabilities = capabilities.filter((entry) =>
     entry.startsWith("object-format=")
@@ -238,13 +244,16 @@ function decodeAscii(bytes: Uint8Array, failure: () => Error): string {
   return String.fromCharCode(...bytes);
 }
 
-function admitCapabilities(value: string): string[] {
+function admitCapabilities(value: string, failure: () => Error): string[] {
   if (value.length === 0) return [];
-  return admitCapabilityList(value.split(" "));
+  return admitCapabilityList(value.split(" "), failure);
 }
 
-function admitCapabilityList(value: readonly string[]): string[] {
-  if (!Array.isArray(value) || value.length > 128) throw invalidRequest();
+function admitCapabilityList(
+  value: readonly string[],
+  failure: () => Error,
+): string[] {
+  if (!Array.isArray(value) || value.length > 128) throw failure();
   const result: string[] = [];
   const seen = new Set<string>();
   for (const capability of value) {
@@ -253,7 +262,7 @@ function admitCapabilityList(value: readonly string[]): string[] {
       || !capabilityPattern.test(capability)
       || seen.has(capability)
     ) {
-      throw invalidRequest();
+      throw failure();
     }
     seen.add(capability);
     result.push(capability);
