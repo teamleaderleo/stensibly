@@ -4,11 +4,14 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-Current `main` defines **37** public MCP tools with manifest fingerprint:
+Current `main` defines **37** public MCP tools with two release fingerprints:
 
 ```text
-sha256:a503c88468a85884ee10b72e0a3d6df47afa8eba95dfe599e9c1c48f59874b70
+full ChatGPT tool contract: sha256:9da895533a888fc9acc041988ace72e08acd85038aee7e20204a2a3c0fb9f834
+names-only diagnostic:       sha256:a503c88468a85884ee10b72e0a3d6df47afa8eba95dfe599e9c1c48f59874b70
 ```
+
+The full-contract fingerprint covers public tool names, descriptions, annotations, and input schemas. It is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse tool-surface identity.
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
 
@@ -160,6 +163,7 @@ Remove credentials, cookies, OAuth codes, tokens, and private project payloads b
 `docs/chatgpt-app-actions.json` is the current ChatGPT action release receipt.
 
 - it tracks the current public manifest only;
+- its full-contract fingerprint must change when a public tool name, description, annotation, or input schema changes;
 - any public tool or schema change requires refresh, rescan, or recreation before dogfood;
 - historical ChatGPT action sets are outside the support target;
 - the complete latest-manifest journey must pass after refresh;
