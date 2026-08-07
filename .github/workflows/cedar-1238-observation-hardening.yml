@@ -28,30 +28,40 @@ jobs:
       - name: Verify exact source and controls
         shell: bash
         env:
+          EXPECTED_HEAD: ${{ github.sha }}
           MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
-          PARENT: 13b9f7e90ee80e8168cf306f7bd4cdbd150c4189
+          PARENT: e08caf4fe7c7149d1a2fc6fb466154cad33382fb
           HOSTED_CONTROL: c13c23cbf3c868966d482b8f9da7db3b0cbb2d70
           BACKEND_CONTROL: cb9cafc61aea16627335622983db3d389a2f3e5f
           SECRET_CONTROL: e4ad63a6f7d0151a37551972883e9e962f4d2cab
+          ERROR_CONTROL: 6f03a7acd3b88f1b94aa3f2f1ac5598e458a459d
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$PARENT"
-          git fetch --no-tags origin "$MAIN" "$HOSTED_CONTROL" "$BACKEND_CONTROL" "$SECRET_CONTROL"
+          git fetch --no-tags origin \
+            "$MAIN" \
+            "$HOSTED_CONTROL" \
+            "$BACKEND_CONTROL" \
+            "$SECRET_CONTROL" \
+            "$ERROR_CONTROL"
           test "$(git rev-parse $MAIN:src/github-repository-observation-admission.ts)" = "c3c45309b12e6d362b523125a6424c505e2cd7e4"
           test "$(git rev-parse $MAIN:src/github-repository-observation-convex.ts)" = "21cde09afaf55544d8e09d183138b4610a4aea70"
           test "$(git rev-parse $PARENT:test/github-repository-observation-envelope-boundary.test.ts)" = "a42cb247be39d02f93899a66932ee6f20baf5baa"
           test "$(git rev-parse $HOSTED_CONTROL:test/github-repository-observation-hosted-input-boundary.test.ts)" = "fec3ca848460161bdb891503494eac483ef13dbd"
           test "$(git rev-parse $BACKEND_CONTROL:test/github-repository-observation-convex-ownkeys-control.test.ts)" = "cd8a90bcb9b2dc71144a7f95359183ce39db5484"
           test "$(git rev-parse $SECRET_CONTROL:test/github-repository-observation-convex-secret.test.ts)" = "7eeb394712f2b7a22ca72d5c308c0f1dd6cc18b1"
+          test "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)" = "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)"
 
       - name: Build complete workflow-free observation packet
         shell: bash
         env:
           MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
-          PARENT: 13b9f7e90ee80e8168cf306f7bd4cdbd150c4189
+          PARENT: e08caf4fe7c7149d1a2fc6fb466154cad33382fb
           HOSTED_CONTROL: c13c23cbf3c868966d482b8f9da7db3b0cbb2d70
           BACKEND_CONTROL: cb9cafc61aea16627335622983db3d389a2f3e5f
           SECRET_CONTROL: e4ad63a6f7d0151a37551972883e9e962f4d2cab
+          ERROR_CONTROL: 6f03a7acd3b88f1b94aa3f2f1ac5598e458a459d
         run: |
           set -euo pipefail
           git reset --hard "$MAIN"
@@ -63,6 +73,8 @@ jobs:
             > test/github-repository-observation-convex-ownkeys-control.test.ts
           git show "$SECRET_CONTROL":test/github-repository-observation-convex-secret.test.ts \
             > test/github-repository-observation-convex-secret.test.ts
+          git show "$ERROR_CONTROL":test/github-repository-observation-convex-error-boundary.test.ts \
+            > test/github-repository-observation-convex-error-boundary.test.ts
 
           python3 - <<'PY'
           from pathlib import Path
@@ -171,6 +183,17 @@ jobs:
           convex_path = Path("src/github-repository-observation-convex.ts")
           convex = convex_path.read_text()
 
+          import_old = '''  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+  snapshotBoundedJson,
+} from "./github-repository-observation-admission.js";'''
+          import_new = '''  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+} from "./github-repository-observation-admission.js";'''
+          if convex.count(import_old) != 1:
+              raise SystemExit(f"Convex bounded-JSON import anchor moved: {convex.count(import_old)}")
+          convex = convex.replace(import_old, import_new, 1)
+
           old = '''  readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
@@ -194,8 +217,19 @@ jobs:
           if convex.count(old) != 1:
               raise SystemExit(f"service field anchor moved: {convex.count(old)}")
           convex = convex.replace(old, new, 1)
-          convex = convex.replace("await this.client.mutation(ingestRef, this.args({", "await this.#client.mutation(ingestRef, this.#args({")
-          convex = convex.replace("await this.client.query(listRecentRef, this.args({", "await this.#client.query(listRecentRef, this.#args({")
+
+          old = "await this.client.mutation(ingestRef, this.args({"
+          new = "await this.#client.mutation(ingestRef, this.#args({"
+          if convex.count(old) != 1:
+              raise SystemExit(f"mutation dispatch anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          old = "await this.client.query(listRecentRef, this.args({"
+          new = "await this.#client.query(listRecentRef, this.#args({"
+          if convex.count(old) != 1:
+              raise SystemExit(f"query dispatch anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
           old = '''  private args(input: Record<string, unknown>): Record<string, unknown> {
     return {
       ...input,
@@ -347,7 +381,72 @@ function admitStoredRecord(value: unknown): ConvexObservationRecord {
 }
 
 '''
-          convex_path.write_text(convex[:start] + replacement + convex[end:])
+          convex = convex[:start] + replacement + convex[end:]
+
+          old = '''function mapStorageError(error: unknown): Error {
+  if (error instanceof GitHubRepositoryObservationConflictError) return error;
+  if (error instanceof GitHubRepositoryObservationStorageError) return error;
+  const message = ownDataErrorMessage(error);
+'''
+          new = '''function mapStorageError(error: unknown): Error {
+  try {
+    if (error instanceof GitHubRepositoryObservationConflictError) return error;
+    if (error instanceof GitHubRepositoryObservationStorageError) return error;
+  } catch {
+    return new GitHubRepositoryObservationStorageError();
+  }
+  const message = ownDataErrorMessage(error);
+'''
+          if convex.count(old) != 1:
+              raise SystemExit(f"storage error classification anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          old = '''function ownDataErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : "";
+}
+'''
+          new = '''function ownDataErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  } catch {
+    return "";
+  }
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : "";
+}
+'''
+          if convex.count(old) != 1:
+              raise SystemExit(f"storage error message anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          legacy_helpers = '''function hasExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean {
+  const actualKeys = Object.keys(value).sort(codeUnitCompare);
+  const expected = [...expectedKeys].sort(codeUnitCompare);
+  return actualKeys.length === expected.length
+    && actualKeys.every((key, index) => key === expected[index]);
+}
+
+function codeUnitCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+'''
+          if convex.count(legacy_helpers) != 1:
+              raise SystemExit(f"legacy Convex helper anchor moved: {convex.count(legacy_helpers)}")
+          convex_path.write_text(convex.replace(legacy_helpers, "", 1))
           PY
 
           git add \
@@ -356,9 +455,10 @@ function admitStoredRecord(value: unknown): ConvexObservationRecord {
             test/github-repository-observation-envelope-boundary.test.ts \
             test/github-repository-observation-hosted-input-boundary.test.ts \
             test/github-repository-observation-convex-ownkeys-control.test.ts \
-            test/github-repository-observation-convex-secret.test.ts
+            test/github-repository-observation-convex-secret.test.ts \
+            test/github-repository-observation-convex-error-boundary.test.ts
           git diff --cached --check
-          test "$(git diff --cached --name-only | wc -l)" -eq 6
+          test "$(git diff --cached --name-only | wc -l)" -eq 7
           test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 0
 
       - uses: oven-sh/setup-bun@v2
