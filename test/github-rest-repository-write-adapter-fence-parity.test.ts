@@ -82,7 +82,13 @@ describe("GitHub repository-write adapter fence parity", () => {
           return Response.json({ sha: parentTree64, url: treeUrl(parentTree64), tree: [], truncated: false });
         }
         if (method === "POST" && url === graphqlUrl()) {
-          if (isQuery(body)) return Response.json({ data: { repository: { id: repositoryId } } });
+          if (isQuery(body)) {
+            return Response.json({
+              data: {
+                repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+              },
+            });
+          }
           if (isMutation(body)) {
             expect(body).toEqual({
               query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
