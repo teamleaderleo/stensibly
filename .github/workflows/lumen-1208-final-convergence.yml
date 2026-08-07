@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact current carrier
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          CARRIER_PARENT: f904b5eca9ed7c17b7e87e4cbc5fd7218aeb9729
+          CARRIER_PARENT: 30509151f076c5dd6b84ebf5d4df503124d12b56
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
@@ -38,6 +38,7 @@ jobs:
           test "$(git rev-parse HEAD^)" = "$CARRIER_PARENT"
           test "$(git rev-parse HEAD^:src/github-rest-repository-write-atomic-publication.ts)" = "0cfe937f238e7018d3fbb30d99c9cab78c35c820"
           test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
+          test "$(git rev-parse HEAD^:test/github-update-refs-cas-repository-identity.test.ts)" = "bf04ce83f03150fbba500ab48a13feb4942410dc"
           test ! -f .github/workflows/lark-1208-final-cas-convergence.yml
           test ! -f .github/workflows/oriole-1208-required-provider-fields.yml
           test ! -f .github/workflows/vireo-1208-cas-provenance-required-fields.yml
@@ -152,6 +153,57 @@ jobs:
           if source.count(old) != 1:
               raise SystemExit(f"provider-url repository fixture anchor moved: {source.count(old)}")
           provider_url.write_text(source.replace(old, new, 1))
+
+          repository_identity = Path("test/github-update-refs-cas-repository-identity.test.ts")
+          repository_identity.write_text('''import { expect, test } from "bun:test";
+import {
+  admitGitHubRepositoryNodeIdResponse,
+  buildGitHubRepositoryNodeIdRequest,
+} from "../src/github-update-refs-cas.ts";
+
+const repositoryFullName = "teamleaderleo/stensibly";
+const apiBaseUrl = "https://api.github.com";
+
+function lookup() {
+  return buildGitHubRepositoryNodeIdRequest(apiBaseUrl, repositoryFullName);
+}
+
+test("rejects substituted provider repository identity without retaining it", () => {
+  let caught: unknown;
+  try {
+    admitGitHubRepositoryNodeIdResponse({
+      data: {
+        repository: {
+          id: "R_kgDOSubstitutedRepository",
+          nameWithOwner: "teamleaderleo/other-repository",
+        },
+      },
+    }, lookup());
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message)
+    .toBe("GitHub updateRefs GraphQL response is invalid");
+  expect(JSON.stringify(caught)).not.toContain("other-repository");
+});
+
+test("admits provider case spelling only after canonical repository normalization", () => {
+  expect(admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        id: "R_kgDOCanonicalRepository",
+        nameWithOwner: "TeamLeaderLeo/Stensibly",
+      },
+    },
+  }, lookup())).toEqual({
+    graphqlUrl: "https://api.github.com/graphql",
+    repositoryFullName,
+    repositoryId: "R_kgDOCanonicalRepository",
+  });
+});
+''')
           PY
           git diff --check
 
@@ -170,6 +222,7 @@ jobs:
             test/github-update-refs-cas-mutation-identity.test.ts \
             test/github-update-refs-cas-node-id.test.ts \
             test/github-update-refs-cas-provider-endpoint-binding.test.ts \
+            test/github-update-refs-cas-repository-identity.test.ts \
             test/github-rest-repository-write-atomic-publication.test.ts \
             test/github-rest-repository-write-atomic-required-fields.test.ts \
             test/github-rest-repository-write-atomic-record-ownkeys.test.ts \
@@ -201,7 +254,8 @@ jobs:
             test/github-update-refs-cas-lookup-endpoint-provenance.test.ts \
             test/github-update-refs-cas-mutation-identity.test.ts \
             test/github-update-refs-cas-node-id.test.ts \
-            test/github-update-refs-cas-provider-endpoint-binding.test.ts
+            test/github-update-refs-cas-provider-endpoint-binding.test.ts \
+            test/github-update-refs-cas-repository-identity.test.ts
           git diff --cached --check
           git config user.name "Lumen"
           git config user.email "actions@users.noreply.github.com"
