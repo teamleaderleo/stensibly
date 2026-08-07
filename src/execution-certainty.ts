@@ -1,4 +1,5 @@
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 
 export const EXECUTION_CERTAINTY_SCHEMA_VERSION = 1 as const;
 export const EXECUTION_CERTAINTY_STATES = [
@@ -159,8 +160,6 @@ const preDispatchFailures = new Set<ExecutionLocalFailureClass>([
   "generation_mismatch",
 ]);
 
-const realisticCredentialPattern =
-  /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/u;
 const retainedProviderIdentityPattern =
   /^(?:provider-result:)?github:(?:issue|pull-request|workflow-run|job|result|artifact|commit):[A-Za-z0-9][A-Za-z0-9._@#-]*$/u;
 
@@ -720,7 +719,7 @@ function boundedSlug(value: unknown, label: string, maximum: number): string {
     value !== value.trim() ||
     value !== value.toLowerCase() ||
     !/^[a-z0-9][a-z0-9_-]*$/.test(value) ||
-    realisticCredentialPattern.test(value)
+    containsRealisticRetainedCredential(value)
   ) {
     throw new Error(`${label} must be a bounded lowercase slug`);
   }
@@ -739,7 +738,7 @@ function boundedIdentifier(
     value !== value.trim() ||
     (value.includes(":") && !retainedProviderIdentityPattern.test(value)) ||
     !/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/.test(value) ||
-    realisticCredentialPattern.test(value)
+    containsRealisticRetainedCredential(value)
   ) {
     throw new Error(`${label} is invalid`);
   }
