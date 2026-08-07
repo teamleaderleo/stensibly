@@ -7,11 +7,13 @@ export const repositorySourceTransitionOperations = Object.freeze([
 
 export type RepositorySourceTransitionOperation =
   typeof repositorySourceTransitionOperations[number];
+export type RepositorySourceTransitionFileMode = "100644" | "100755";
 
 export interface RepositorySourceTransitionFileInput {
   path: string;
   donorCommitSha: string;
   donorBlobSha: string;
+  donorMode: RepositorySourceTransitionFileMode;
 }
 
 export interface RepositorySourceTransitionPlanInput {
@@ -29,6 +31,7 @@ export interface RepositorySourceTransitionFile {
   path: string;
   donorCommitSha: string;
   donorBlobSha: string;
+  donorMode: RepositorySourceTransitionFileMode;
 }
 
 export interface RepositorySourceTransitionPlan {
@@ -45,6 +48,7 @@ export interface RepositorySourceTransitionPlan {
   changedPathFence: string;
   planFingerprint: string;
   requiresWorkflowFreeFinalHead: true;
+  requiresNonDefaultTargetBranch: true;
   allowsArbitraryCommands: false;
   grantsAuthority: false;
 }
@@ -81,6 +85,7 @@ const fileKeys = Object.freeze([
   "path",
   "donorCommitSha",
   "donorBlobSha",
+  "donorMode",
 ] as const);
 
 /**
@@ -144,6 +149,7 @@ export function compileRepositorySourceTransitionPlan(
     expectedChangedPaths,
     changedPathFence,
     requiresWorkflowFreeFinalHead: true as const,
+    requiresNonDefaultTargetBranch: true as const,
     allowsArbitraryCommands: false as const,
     grantsAuthority: false as const,
   };
@@ -194,6 +200,7 @@ function snapshotFiles(
       path,
       donorCommitSha,
       donorBlobSha,
+      donorMode: admitDonorMode(file.donorMode),
     }));
   }
   return result;
@@ -290,6 +297,13 @@ function admitObjectId(value: unknown, label: string): string {
   return value;
 }
 
+function admitDonorMode(value: unknown): RepositorySourceTransitionFileMode {
+  if (value !== "100644" && value !== "100755") {
+    throw new RangeError("Repository source transition donor mode is invalid");
+  }
+  return value;
+}
+
 function admitValidationProfile(value: unknown): string {
   if (
     typeof value !== "string"
@@ -307,6 +321,8 @@ function admitBranch(value: unknown): string {
     || Buffer.byteLength(value, "utf8") > maximumBranchBytes
     || value.length === 0
     || value === "@"
+    || value === "main"
+    || value.startsWith("refs/")
     || value.startsWith("-")
     || unsafeTextPattern.test(value)
     || forbiddenRefCharacters.some((character) => value.includes(character))
