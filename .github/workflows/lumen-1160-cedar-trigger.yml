@@ -30,7 +30,7 @@ jobs:
           EXPECTED_HEAD: ${{ github.sha }}
           HEAD_REF: lumen/1146-execution-recipes
           CEDAR_BLOB: 734ceacb0e68e5b84c9bedac2761d642abaf51f5
-          LUMEN_REPAIR_BLOB: 6b04a4c8b4fe7fe16936e15cdb3bf53c0ed03c60
+          LUMEN_REPAIR_BLOB: c8c94a58119aa52a10e58a3ffdf90ec335e02a43
         shell: bash
         run: |
           set -euo pipefail
