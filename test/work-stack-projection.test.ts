@@ -217,8 +217,34 @@ describe("work-stack projection", () => {
 
     const decorated = [record(1)] as WorkStackRecordInput[] & { note?: string };
     decorated.note = "decoration";
-    expect(() => compileWorkStackProjection(input(decorated)))
-      .toThrow("records must contain only dense array entries");
+    let arrayOwnKeysCalls = 0;
+    const hostileArray = new Proxy(decorated, {
+      ownKeys() {
+        arrayOwnKeysCalls += 1;
+        throw new Error("caller array keys must remain unreachable");
+      },
+    });
+    expect(compileWorkStackProjection(input(hostileArray)).counts.available).toBe(1);
+    expect(arrayOwnKeysCalls).toBe(0);
+
+    const stableRecord = record(2);
+    let recordGets = 0;
+    let recordOwnKeysCalls = 0;
+    const hostileRecord = new Proxy(stableRecord, {
+      get(target, key, receiver) {
+        recordGets += 1;
+        if (key === "title") return "Substituted title";
+        return Reflect.get(target, key, receiver);
+      },
+      ownKeys() {
+        recordOwnKeysCalls += 1;
+        throw new Error("caller record keys must remain unreachable");
+      },
+    });
+    const detachedProjection = compileWorkStackProjection(input([hostileRecord]));
+    expect(detachedProjection.warmSummaries[0]?.title).toBe("Item 2");
+    expect(recordGets).toBe(0);
+    expect(recordOwnKeysCalls).toBe(0);
 
     expect(() => compileWorkStackProjection(input([
       record(1, { links: [

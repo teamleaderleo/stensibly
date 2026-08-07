@@ -6,52 +6,74 @@ const credentialPatterns = Object.freeze([
   /(?:^|[^A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/-]{20,}={0,2}(?=$|[\s,;])/i,
 ]);
 
-export function requirePlainObject(
+export function snapshotPlainObject(
   value: unknown,
   keys: readonly string[],
   label: string,
-): asserts value is Record<string, unknown> {
-  if (
-    value === null
-    || typeof value !== "object"
-    || Object.getPrototypeOf(value) !== Object.prototype
-  ) {
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError(`${label} must be a plain object`);
   }
-  const ownKeys = Reflect.ownKeys(value);
-  if (ownKeys.some((key) => typeof key !== "string")) {
-    throw new TypeError(`${label} contains symbol fields`);
+  let prototype: object | null;
+  try {
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
   }
-  const actual = ownKeys as string[];
-  if (actual.length !== keys.length || keys.some((key) => !actual.includes(key))) {
-    throw new TypeError(`${label} has an invalid field set`);
+  if (prototype !== Object.prototype) {
+    throw new TypeError(`${label} must be a plain object`);
   }
-  for (const key of actual) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+  const result = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
+    }
+    if (!descriptor) {
+      throw new TypeError(`${label} has an invalid field set`);
+    }
+    if (!("value" in descriptor) || !descriptor.enumerable) {
       throw new TypeError(`${label} fields must be enumerable data properties`);
     }
+    result[key] = descriptor.value;
   }
+  return result;
 }
 
-export function denseDataArray<T>(value: T[], max: number, label: string): T[] {
+export function denseDataArray<T>(value: unknown, max: number, label: string): T[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be a bounded ordinary array`);
+  }
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
   if (
-    !Array.isArray(value)
-    || Object.getPrototypeOf(value) !== Array.prototype
-    || value.length > max
+    prototype !== Array.prototype
+    || typeof length !== "number"
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > max
   ) {
     throw new TypeError(`${label} must be a bounded ordinary array`);
   }
-  const keys = Reflect.ownKeys(value);
-  if (keys.length !== value.length + 1 || keys[keys.length - 1] !== "length") {
-    throw new TypeError(`${label} must contain only dense array entries`);
-  }
   const result: T[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    if (keys[index] !== String(index)) {
-      throw new TypeError(`${label} must be dense and undecorated`);
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
     }
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
       throw new TypeError(`${label} entries must be enumerable data properties`);
     }
