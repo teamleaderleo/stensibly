@@ -1,0 +1,208 @@
+name: Cedar 1160 final recipe publisher
+
+on:
+  push:
+    branches:
+      - lumen/1146-execution-recipes
+    paths:
+      - .github/workflows/cedar-1160-final-publisher.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1160-final-recipe-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1146-execution-recipes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify blocked source and repair carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/execution-recipe.ts)" = "aee287e6a6c83327312e0ea2f9c0fe9a216a9b64"
+          test "$(git rev-parse HEAD:test/execution-recipe.test.ts)" = "c62525d8345dee56d9f178b4621d70116d9f58f8"
+          test "$(git rev-parse HEAD:test/execution-recipe-boundary.test.ts)" = "cf641ac8cd2102e828238eef2015c7511adbc1d6"
+          test "$(git rev-parse HEAD:test/execution-recipe-input-inspection.test.ts)" = "b6374e943a5a33e92c7c16633699cb2d0350e133"
+          test -f .github/workflows/lumen-1160-bounded-repair.yml
+          git cat-file -e e78ae196c31cc8ba9416bb8d8a050a98cb61a32a^{commit}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply reviewed bounded repair verbatim
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          text = Path('.github/workflows/lumen-1160-bounded-repair.yml').read_text()
+          marker = '      - name: Apply descriptor-only caller snapshot and checkpoint repair\n'
+          start = text.index(marker)
+          run_marker = '        run: |\n'
+          start = text.index(run_marker, start) + len(run_marker)
+          end = text.index('\n      - name: Validate focused repair', start)
+          script = textwrap.dedent(text[start:end])
+          Path('/tmp/lumen-1160-apply.sh').write_text(script)
+          PY
+          bash /tmp/lumen-1160-apply.sh
+
+      - name: Add decoration and nested enumeration reversals
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/execution-recipe-input-inspection.test.ts')
+          text = path.read_text()
+          addition = r'''
+
+  test("ignores nested decorations that reuse other recipe field names", () => {
+    const recipe = structuredClone(exampleExecutionRecipes()[0]!) as ExecutionRecipe;
+    Object.defineProperty(recipe.parameterSchema[0]!, "title", {
+      value: "caller decoration",
+      enumerable: true,
+    });
+    Object.defineProperty(recipe.orderedPhases[0]!, "maximum", {
+      value: 99,
+      enumerable: true,
+    });
+
+    expect(() => compileExecutionRecipe(recipe)).not.toThrow();
+  });
+
+  test("does not enumerate nested arrays or declared parameter maps", () => {
+    const recipe = structuredClone(exampleExecutionRecipes()[0]!) as ExecutionRecipe;
+    let nestedOwnKeys = 0;
+    recipe.parameterSchema = new Proxy(recipe.parameterSchema, {
+      ownKeys() {
+        nestedOwnKeys += 1;
+        throw new Error("nested array ownKeys must remain unreachable");
+      },
+    });
+    expect(() => compileExecutionRecipe(recipe)).not.toThrow();
+    expect(nestedOwnKeys).toBe(0);
+
+    const cleanRecipe = structuredClone(exampleExecutionRecipes()[0]!) as ExecutionRecipe;
+    let parameterOwnKeys = 0;
+    const parameters = new Proxy({ sourcePacketId: "packet:1" }, {
+      ownKeys() {
+        parameterOwnKeys += 1;
+        throw new Error("parameter ownKeys must remain unreachable");
+      },
+    });
+    expect(() => instantiateExecutionRecipe({
+      recipe: cleanRecipe,
+      project: "stensibly",
+      projectProfile: "repository-maintenance",
+      repository: "teamleaderleo/stensibly",
+      baseRevision: "a".repeat(40),
+      workGeneration: 1,
+      policyRevision: "policy:1",
+      runnerProfile: "runner:1",
+      authorityGeneration: 1,
+      parameters,
+    })).not.toThrow();
+    expect(parameterOwnKeys).toBe(0);
+  });
+'''
+          marker = '\n});\n'
+          if text.count(marker) != 1:
+              raise SystemExit('inspection suite terminator moved')
+          if 'ignores nested decorations that reuse other recipe field names' not in text:
+              text = text.replace(marker, addition + marker, 1)
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Align undeclared parameter decoration semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/execution-recipe.test.ts')
+          text = path.read_text()
+          old = '''    expect(() => instantiateExecutionRecipe({
+      ...instantiation(),
+      parameters: {
+        extra: true,
+        retryFailedChecks: true,
+        sourcePacketId: "packet:42",
+      },
+    } as unknown as ReturnType<typeof instantiation>)).toThrow(
+      "Execution recipe parameters has an invalid field set",
+    );'''
+          new = '''    const baseline = instantiateExecutionRecipe(instantiation());
+    const decorated = instantiateExecutionRecipe({
+      ...instantiation(),
+      parameters: {
+        extra: true,
+        retryFailedChecks: true,
+        sourcePacketId: "packet:42",
+      },
+    } as unknown as ReturnType<typeof instantiation>);
+    expect(decorated.parameters).toEqual(baseline.parameters);
+    expect(decorated.planFingerprint).toBe(baseline.planFingerprint);'''
+          if text.count(old) != 1:
+              raise SystemExit('extra-parameter assertion moved')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+
+      - name: Validate final recipe packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/execution-recipe.test.ts \
+            test/execution-recipe-boundary.test.ts \
+            test/execution-recipe-input-inspection.test.ts
+
+      - name: Publish one workflow-free current-main commit
+        shell: bash
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          CARRIER_SHA: ${{ github.sha }}
+          HEAD_REF: lumen/1146-execution-recipes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/recipe-final/src /tmp/recipe-final/test
+          cp src/execution-recipe.ts /tmp/recipe-final/src/
+          cp test/execution-recipe.test.ts /tmp/recipe-final/test/
+          cp test/execution-recipe-boundary.test.ts /tmp/recipe-final/test/
+          cp test/execution-recipe-input-inspection.test.ts /tmp/recipe-final/test/
+
+          git reset --hard "$MAIN"
+          cp /tmp/recipe-final/src/execution-recipe.ts src/
+          cp /tmp/recipe-final/test/* test/
+          git add \
+            src/execution-recipe.ts \
+            test/execution-recipe.test.ts \
+            test/execution-recipe-boundary.test.ts \
+            test/execution-recipe-input-inspection.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 4
+          test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 0
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound reusable execution recipe inputs"
+
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"

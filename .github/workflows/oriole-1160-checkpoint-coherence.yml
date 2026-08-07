@@ -1,0 +1,443 @@
+name: Oriole 1160 checkpoint recovery coherence
+
+on:
+  push:
+    branches:
+      - lumen/1146-execution-recipes
+    paths:
+      - .github/workflows/oriole-1160-checkpoint-coherence.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oriole-1160-checkpoint-coherence
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1146-execution-recipes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source and controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/execution-recipe.ts)" = "aee287e6a6c83327312e0ea2f9c0fe9a216a9b64"
+          test "$(git rev-parse HEAD:test/execution-recipe.test.ts)" = "c62525d8345dee56d9f178b4621d70116d9f58f8"
+          test "$(git rev-parse HEAD:test/execution-recipe-boundary.test.ts)" = "cf641ac8cd2102e828238eef2015c7511adbc1d6"
+          test -f test/execution-recipe-input-inspection.test.ts
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Repair bounded inspection and checkpoint coherence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/execution-recipe.ts")
+          text = source.read_text()
+
+          constants_anchor = '''const maximumInputObjects = 20_000;
+          const maximumArrayLength = 256;
+          '''
+          constants_replacement = '''const recipeInputFieldVocabulary = [
+            "recipeId",
+            "version",
+            "outcomeClass",
+            "description",
+            "parameterSchema",
+            "acceptedProjectProfiles",
+            "requiredCapabilities",
+            "requiredInputs",
+            "orderedPhases",
+            "checks",
+            "checkpointPolicy",
+            "stopConditions",
+            "approvalPredicates",
+            "budgetEnvelope",
+            "allowedArtifacts",
+            "continuationPolicy",
+            "recoveryPolicy",
+            "name",
+            "kind",
+            "required",
+            "minimum",
+            "maximum",
+            "allowedValues",
+            "id",
+            "title",
+            "requiredChecks",
+            "checkpoint",
+            "maxWallMinutes",
+            "maxSteps",
+            "maxCostMicros",
+          ] as const;
+          const maximumInputObjects = 20_000;
+          const maximumArrayLength = 256;
+          '''
+          if text.count(constants_anchor) != 1:
+              raise SystemExit("input constants anchor moved")
+          text = text.replace(constants_anchor, constants_replacement, 1)
+
+          compile_anchor = '''  const detached = detachInputGraph(value);
+          const recipe = admitRecipe(detached);
+          '''
+          compile_replacement = '''  const detached = detachRecipeInput(value);
+          const recipe = admitRecipe(detached);
+          '''
+          if text.count(compile_anchor) != 1:
+              raise SystemExit("compile detachment anchor moved")
+          text = text.replace(compile_anchor, compile_replacement, 1)
+
+          instantiate_anchor = '''  const detached = detachInputGraph(value);
+          requirePlainObject(
+          '''
+          instantiate_replacement = '''  const detached = detachInstantiationInput(value);
+          requirePlainObject(
+          '''
+          if text.count(instantiate_anchor) != 1:
+              raise SystemExit("instantiate detachment anchor moved")
+          text = text.replace(instantiate_anchor, instantiate_replacement, 1)
+
+          start = text.index('function detachInputGraph(value: unknown): unknown {')
+          end = text.index('function arrayLength(value: unknown[]): number {', start)
+          replacement = r'''interface DetachContext {
+            readonly seen: Map<object, unknown>;
+            inspected: number;
+          }
+
+          function detachRecipeInput(
+            value: unknown,
+            context: DetachContext = { seen: new Map(), inspected: 0 },
+          ): ExecutionRecipe {
+            const detached = detachRecipeNode(value, context);
+            if (
+              detached === null
+              || typeof detached !== "object"
+              || Array.isArray(detached)
+              || !Object.hasOwn(detached, "recipeId")
+            ) {
+              throw inspectionError();
+            }
+            return detached as ExecutionRecipe;
+          }
+
+          function detachRecipeNode(
+            current: unknown,
+            context: DetachContext,
+          ): unknown {
+            if (current === null || typeof current !== "object") return current;
+            const prior = context.seen.get(current);
+            if (prior !== undefined) return prior;
+            noteInspectedObject(context);
+
+            if (Array.isArray(current)) {
+              requireCallerPrototype(current, Array.prototype);
+              const length = arrayLength(current);
+              if (length > maximumArrayLength) {
+                throw new TypeError("Execution recipe input inspection exceeded its limit");
+              }
+              const result = new Array<unknown>(length);
+              context.seen.set(current, result);
+              for (let index = 0; index < length; index += 1) {
+                result[index] = detachRecipeNode(
+                  descriptorValue(current, String(index)),
+                  context,
+                );
+              }
+              return result;
+            }
+
+            requireCallerPrototype(current, Object.prototype);
+            const result: Record<string, unknown> = {};
+            context.seen.set(current, result);
+            for (const key of recipeInputFieldVocabulary) {
+              const descriptor = optionalDescriptor(current, key);
+              if (!descriptor) continue;
+              Object.defineProperty(result, key, {
+                value: detachRecipeNode(descriptor.value, context),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+            }
+            return result;
+          }
+
+          function detachInstantiationInput(
+            value: unknown,
+          ): InstantiateExecutionRecipeInput {
+            const context: DetachContext = { seen: new Map(), inspected: 0 };
+            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+              throw inspectionError();
+            }
+            noteInspectedObject(context);
+            requireCallerPrototype(value, Object.prototype);
+            const record = value as object;
+            const recipe = detachRecipeInput(descriptorValue(record, "recipe"), context);
+            const admittedRecipe = admitRecipe(recipe);
+            const parameters = detachDeclaredParameters(
+              descriptorValue(record, "parameters"),
+              admittedRecipe.parameterSchema,
+              context,
+            );
+            return {
+              recipe,
+              project: descriptorValue(record, "project") as string,
+              projectProfile: descriptorValue(record, "projectProfile") as string,
+              repository: descriptorValue(record, "repository") as string,
+              baseRevision: descriptorValue(record, "baseRevision") as string,
+              workGeneration: descriptorValue(record, "workGeneration") as number,
+              policyRevision: descriptorValue(record, "policyRevision") as string,
+              runnerProfile: descriptorValue(record, "runnerProfile") as string,
+              authorityGeneration: descriptorValue(record, "authorityGeneration") as number,
+              parameters,
+            };
+          }
+
+          function detachDeclaredParameters(
+            value: unknown,
+            schema: readonly ExecutionRecipeParameter[],
+            context: DetachContext,
+          ): Record<string, unknown> {
+            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+              throw inspectionError();
+            }
+            noteInspectedObject(context);
+            requireCallerPrototype(value, Object.prototype);
+            const result: Record<string, unknown> = {};
+            for (const parameter of schema) {
+              Object.defineProperty(result, parameter.name, {
+                value: descriptorValue(value, parameter.name),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+            }
+            return result;
+          }
+
+          function noteInspectedObject(context: DetachContext): void {
+            context.inspected += 1;
+            if (context.inspected > maximumInputObjects) {
+              throw new TypeError("Execution recipe input inspection exceeded its limit");
+            }
+          }
+
+          function requireCallerPrototype(
+            value: object,
+            expected: object,
+          ): void {
+            try {
+              if (Object.getPrototypeOf(value) !== expected) throw inspectionError();
+            } catch (error) {
+              if (isInspectionError(error)) throw error;
+              throw inspectionError();
+            }
+          }
+
+          function optionalDescriptor(
+            value: object,
+            key: PropertyKey,
+          ): { value: unknown } | null {
+            try {
+              const descriptor = Object.getOwnPropertyDescriptor(value, key);
+              if (!descriptor) return null;
+              if (!("value" in descriptor) || !descriptor.enumerable) {
+                throw inspectionError();
+              }
+              return { value: descriptor.value };
+            } catch (error) {
+              if (isInspectionError(error)) throw error;
+              throw inspectionError();
+            }
+          }
+
+          '''
+          text = text[:start] + replacement + text[end:]
+
+          checks_anchor = '''  const checks = identityArray(
+            dataValue(value, "checks"),
+            64,
+            "Execution recipe checks",
+            false,
+          );
+          return {
+          '''
+          checks_replacement = '''  const checks = identityArray(
+            dataValue(value, "checks"),
+            64,
+            "Execution recipe checks",
+            false,
+          );
+          const phases = admitPhases(
+            dataValue(value, "orderedPhases"),
+            capabilities,
+            checks,
+          );
+          const checkpointPolicy = enumValue(
+            dataValue(value, "checkpointPolicy"),
+            checkpointPolicySet,
+            "Execution recipe checkpoint policy",
+          );
+          const recoveryPolicy = enumValue(
+            dataValue(value, "recoveryPolicy"),
+            recoveryPolicySet,
+            "Execution recipe recovery policy",
+          );
+          assertCheckpointRecoveryCoherence(
+            phases,
+            checkpointPolicy,
+            recoveryPolicy,
+          );
+          return {
+          '''
+          if text.count(checks_anchor) != 1:
+              raise SystemExit("recipe checks anchor moved")
+          text = text.replace(checks_anchor, checks_replacement, 1)
+
+          phases_anchor = '''    orderedPhases: admitPhases(
+              dataValue(value, "orderedPhases"),
+              capabilities,
+              checks,
+            ),
+          '''
+          if text.count(phases_anchor) != 1:
+              raise SystemExit("recipe phase admission anchor moved")
+          text = text.replace(phases_anchor, "    orderedPhases: phases,\n", 1)
+
+          checkpoint_anchor = '''    checkpointPolicy: enumValue(
+              dataValue(value, "checkpointPolicy"),
+              checkpointPolicySet,
+              "Execution recipe checkpoint policy",
+            ),
+          '''
+          if text.count(checkpoint_anchor) != 1:
+              raise SystemExit("checkpoint policy anchor moved")
+          text = text.replace(checkpoint_anchor, "    checkpointPolicy,\n", 1)
+
+          recovery_anchor = '''    recoveryPolicy: enumValue(
+              dataValue(value, "recoveryPolicy"),
+              recoveryPolicySet,
+              "Execution recipe recovery policy",
+            ),
+          '''
+          if text.count(recovery_anchor) != 1:
+              raise SystemExit("recovery policy anchor moved")
+          text = text.replace(recovery_anchor, "    recoveryPolicy,\n", 1)
+
+          helper_anchor = '''function admitBudget(value: unknown): ExecutionRecipeBudgetEnvelope {
+          '''
+          helper = '''function assertCheckpointRecoveryCoherence(
+            phases: readonly ExecutionRecipePhase[],
+            checkpointPolicy: ExecutionRecipeCheckpointPolicy,
+            recoveryPolicy: ExecutionRecipeRecoveryPolicy,
+          ): void {
+            const checkpointCount = phases.filter((phase) => phase.checkpoint).length;
+            if (checkpointPolicy === "none" && checkpointCount !== 0) {
+              throw new RangeError(
+                "Execution recipe none checkpoint policy cannot mark checkpoint phases",
+              );
+            }
+            if (checkpointPolicy === "phase" && checkpointCount === 0) {
+              throw new RangeError(
+                "Execution recipe phase checkpoint policy requires a checkpoint phase",
+              );
+            }
+            if (
+              recoveryPolicy === "resume_checkpoint"
+              && (checkpointPolicy === "none" || checkpointCount === 0)
+            ) {
+              throw new RangeError(
+                "Execution recipe checkpoint recovery requires an admitted checkpoint phase",
+              );
+            }
+          }
+
+          function admitBudget(value: unknown): ExecutionRecipeBudgetEnvelope {
+          '''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit("checkpoint helper insertion anchor moved")
+          source.write_text(text.replace(helper_anchor, helper, 1))
+
+          test_path = Path("test/execution-recipe.test.ts")
+          test_text = test_path.read_text()
+          marker = '''  test("rejects credential retention, undeclared phase references, and unbounded versions", () => {
+          '''
+          addition = '''  test("enforces checkpoint and recovery coherence", () => {
+            const noneWithPhase = recipe();
+            noneWithPhase.checkpointPolicy = "none";
+            noneWithPhase.recoveryPolicy = "restart_phase";
+            expect(() => compileExecutionRecipe(noneWithPhase)).toThrow(
+              "none checkpoint policy cannot mark checkpoint phases",
+            );
+
+            const phaseWithoutCheckpoint = recipe();
+            phaseWithoutCheckpoint.orderedPhases = phaseWithoutCheckpoint.orderedPhases.map(
+              (phase) => ({ ...phase, checkpoint: false }),
+            );
+            phaseWithoutCheckpoint.recoveryPolicy = "restart_phase";
+            expect(() => compileExecutionRecipe(phaseWithoutCheckpoint)).toThrow(
+              "phase checkpoint policy requires a checkpoint phase",
+            );
+
+            const resumeWithoutCheckpoint = recipe();
+            resumeWithoutCheckpoint.checkpointPolicy = "manual";
+            resumeWithoutCheckpoint.orderedPhases = resumeWithoutCheckpoint.orderedPhases.map(
+              (phase) => ({ ...phase, checkpoint: false }),
+            );
+            expect(() => compileExecutionRecipe(resumeWithoutCheckpoint)).toThrow(
+              "checkpoint recovery requires an admitted checkpoint phase",
+            );
+
+            const validNone = recipe();
+            validNone.checkpointPolicy = "none";
+            validNone.recoveryPolicy = "restart_phase";
+            validNone.orderedPhases = validNone.orderedPhases.map(
+              (phase) => ({ ...phase, checkpoint: false }),
+            );
+            expect(() => compileExecutionRecipe(validNone)).not.toThrow();
+
+            const validManual = recipe();
+            validManual.checkpointPolicy = "manual";
+            expect(() => compileExecutionRecipe(validManual)).not.toThrow();
+          });
+
+          '''
+          if marker not in test_text or "enforces checkpoint and recovery coherence" in test_text:
+              raise SystemExit("checkpoint coherence control anchor moved")
+          test_path.write_text(test_text.replace(marker, addition + marker, 1))
+          PY
+          git diff --check
+
+      - name: Validate exact repair and bounded input contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/execution-recipe.test.ts \
+            test/execution-recipe-boundary.test.ts \
+            test/execution-recipe-input-inspection.test.ts
+
+      - name: Publish workflow-free repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/oriole-1160-checkpoint-coherence.yml
+          git add src/execution-recipe.ts test/execution-recipe.test.ts
+          git diff --cached --check
+          git config user.name "Oriole"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound execution recipe input inspection"
+          git push origin HEAD:lumen/1146-execution-recipes
