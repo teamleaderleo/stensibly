@@ -1,0 +1,1 @@
+Temporary exact-branch lease marker. Public set-write replay waits for the workflow-free #968 RequestInit snapshot repair head. This file has no integration authority and must not survive the final public packet.
