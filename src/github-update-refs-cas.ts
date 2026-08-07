@@ -131,6 +131,9 @@ export function admitGitHubUpdateRefsCasResponse(
 }
 
 export function githubGraphqlUrl(apiBaseUrl: string): URL {
+  if (typeof apiBaseUrl !== "string") {
+    throw new RangeError("GitHub API base URL is invalid");
+  }
   let url: URL;
   try {
     url = new URL(apiBaseUrl);
@@ -154,7 +157,7 @@ export function githubGraphqlUrl(apiBaseUrl: string): URL {
 }
 
 function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || inputIsArray(value)) {
     throw invalidCasInput();
   }
   return Object.freeze({
@@ -214,7 +217,7 @@ function admitNodeId(value: unknown): string {
 }
 
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || responseIsArray(value)) {
     throw invalidGraphqlResponse();
   }
   let prototype: object | null;
@@ -258,7 +261,7 @@ function dataDescriptor(
 }
 
 function denseArray(value: unknown, maximumLength: number): unknown[] {
-  if (!Array.isArray(value)) throw invalidGraphqlResponse();
+  if (!responseIsArray(value)) throw invalidGraphqlResponse();
   let prototype: object | null;
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
@@ -286,6 +289,22 @@ function denseArray(value: unknown, maximumLength: number): unknown[] {
     result.push(descriptor.value);
   }
   return result;
+}
+
+function inputIsArray(value: object): boolean {
+  try {
+    return Array.isArray(value);
+  } catch {
+    throw invalidCasInput();
+  }
+}
+
+function responseIsArray(value: object): boolean {
+  try {
+    return Array.isArray(value);
+  } catch {
+    throw invalidGraphqlResponse();
+  }
 }
 
 function invalidCasInput(): RangeError {
