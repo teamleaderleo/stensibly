@@ -140,13 +140,21 @@ describe("Git receive-pack exact ref CAS protocol", () => {
     )).toThrow("Git receive-pack advertisement is invalid");
   });
 
-  test("accepts only exact successful report-status for the target ref", () => {
+  test("accepts only ordered exact successful report-status for the target ref", () => {
     const success = packets([
       "unpack ok\n",
       `ok refs/heads/${targetRef}\n`,
       null,
     ]);
     expect(() => admitGitReceivePackCasReport(success, targetRef)).not.toThrow();
+
+    const reversed = packets([
+      `ok refs/heads/${targetRef}\n`,
+      "unpack ok\n",
+      null,
+    ]);
+    expect(() => admitGitReceivePackCasReport(reversed, targetRef))
+      .toThrow("Git receive-pack CAS report is invalid");
 
     const stale = packets([
       "unpack ok\n",
