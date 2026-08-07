@@ -16,6 +16,7 @@ import {
 } from "./verify-hosted.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -42,11 +43,13 @@ export async function verifyHostedToolContract(
       method: "POST",
       headers: {
         Accept: "application/json, text/event-stream",
+        "Accept-Encoding": "identity",
         Authorization: `Bearer ${options.token}`,
         "Content-Type": "application/json",
         "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
         Origin: options.origin,
       },
+      redirect: "error",
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
@@ -54,7 +57,7 @@ export async function verifyHostedToolContract(
         params: {},
       }),
     }, timeoutMs);
-    const body = await readJson(response);
+    const body = await readBoundedJson(response, timeoutMs);
     expectStatus(response, 200);
 
     const tools = isRecord(body)
@@ -188,23 +191,152 @@ async function request(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetchImpl(input, { ...init, signal: controller.signal });
-  } catch (error) {
+  } catch {
     if (controller.signal.aborted) {
-      throw new Error(`Request timed out after ${timeoutMs}ms`);
+      throw timeoutError(timeoutMs);
     }
-    throw error;
+    throw new Error("MCP tools/list request failed");
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return null;
+async function readBoundedJson(response: Response, timeoutMs: number): Promise<unknown> {
+  let declaredLength: number | null;
+  try {
+    declaredLength = admitContentLength(response.headers.get("content-length"));
+  } catch (error) {
+    await cancelResponseBody(response);
+    throw error;
+  }
+  if (declaredLength !== null && declaredLength > MAXIMUM_RESPONSE_BYTES) {
+    await cancelResponseBody(response);
+    throw new Error("MCP tools/list response exceeded 1 MiB");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    if (declaredLength !== null && declaredLength !== 0) {
+      throw new Error("MCP tools/list response length did not match its declaration");
+    }
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const result = await readWithDeadline(reader, controller.signal, timeoutMs);
+      if (result.done) break;
+      if (!(result.value instanceof Uint8Array)) {
+        await cancelReader(reader);
+        throw new Error("MCP tools/list returned an invalid byte stream");
+      }
+      totalBytes += result.value.byteLength;
+      if (totalBytes > MAXIMUM_RESPONSE_BYTES) {
+        await cancelReader(reader);
+        throw new Error("MCP tools/list response exceeded 1 MiB");
+      }
+      chunks.push(result.value.slice());
+    }
+  } finally {
+    clearTimeout(timer);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A cancelled or failed stream can keep a pending read until cancellation settles.
+    }
+  }
+
+  if (declaredLength !== null && declaredLength !== totalBytes) {
+    throw new Error("MCP tools/list response length did not match its declaration");
+  }
+  if (totalBytes === 0) return null;
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("MCP tools/list returned invalid UTF-8");
+  }
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    return null;
+    throw new Error("MCP tools/list returned invalid JSON");
+  }
+}
+
+async function readWithDeadline(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+  timeoutMs: number,
+) {
+  if (signal.aborted) {
+    await cancelReader(reader);
+    throw timeoutError(timeoutMs);
+  }
+
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      void cancelReader(reader);
+      reject(timeoutError(timeoutMs));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([
+      reader.read().catch(async () => {
+        await cancelReader(reader);
+        if (signal.aborted) throw timeoutError(timeoutMs);
+        throw new Error("MCP tools/list response stream failed");
+      }),
+      aborted,
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function timeoutError(timeoutMs: number): Error {
+  return new Error(`Request timed out after ${timeoutMs}ms`);
+}
+
+function admitContentLength(value: string | null): number | null {
+  if (value === null) return null;
+  if (!/^(?:0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error("MCP tools/list returned an invalid Content-Length");
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length)) {
+    throw new Error("MCP tools/list returned an invalid Content-Length");
+  }
+  return length;
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  if (!response.body || response.body.locked) return;
+  try {
+    await response.body.cancel();
+  } catch {
+    // Cancellation is best-effort after a fixed verifier decision.
+  }
+}
+
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // Cancellation is best-effort after a fixed verifier decision.
   }
 }
 
