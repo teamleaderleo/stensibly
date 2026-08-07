@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  GitHubUpdateRefsCasStaleRefError,
   admitGitHubRepositoryNodeIdResponse,
   admitGitHubUpdateRefsCasResponse,
   buildGitHubRepositoryNodeIdRequest,
@@ -116,30 +115,17 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     }, clientMutationId)).toThrow("GitHub updateRefs GraphQL response is invalid");
   });
 
-  test("classifies one standards-compliant stale-ref error without retaining prose", () => {
+  test("keeps all GraphQL mutation errors generic without provider prose", () => {
     const clientMutationId = sha1Request().clientMutationId;
-    let error: unknown;
-    try {
-      admitGitHubUpdateRefsCasResponse({
+    const values = [
+      {
         data: { updateRefs: null },
         errors: [{
           message: "provider stale ref detail must never be echoed",
           type: "STALE_REF",
           path: ["updateRefs"],
         }],
-      }, clientMutationId);
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(GitHubUpdateRefsCasStaleRefError);
-    expect((error as Error).message)
-      .toBe("GitHub repository write exact old ref changed before publication");
-    expect(JSON.stringify(error)).not.toContain("provider stale ref detail");
-  });
-
-  test("keeps malformed, multiple, and non-stale GraphQL errors generic", () => {
-    const clientMutationId = sha1Request().clientMutationId;
-    const values = [
+      },
       {
         data: { updateRefs: null },
         errors: [{ message: "other", type: "OTHER" }],
@@ -151,18 +137,17 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
           { message: "other", type: "OTHER" },
         ],
       },
-      {
-        data: { updateRefs: {} },
-        errors: [{ message: "stale", type: "STALE_REF" }],
-      },
-      {
-        data: { updateRefs: null },
-        errors: [{ type: "STALE_REF" }],
-      },
     ];
     for (const value of values) {
-      expect(() => admitGitHubUpdateRefsCasResponse(value, clientMutationId))
-        .toThrow("GitHub could not publish repository ref");
+      let caught: unknown;
+      try {
+        admitGitHubUpdateRefsCasResponse(value, clientMutationId);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe("GitHub could not publish repository ref");
+      expect(JSON.stringify(caught)).not.toContain("provider stale ref detail");
     }
   });
 
@@ -202,6 +187,15 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     expect(admitGitHubRepositoryNodeIdResponse(envelope)).toBe(repositoryId);
     expect(ownKeysCalls).toBe(0);
     expect(getCalls).toBe(0);
+  });
+
+  test("normalizes a revoked GraphQL envelope", () => {
+    const revoked = Proxy.revocable({
+      data: { repository: { id: repositoryId } },
+    }, {});
+    revoked.revoke();
+    expect(() => admitGitHubRepositoryNodeIdResponse(revoked.proxy))
+      .toThrow("GitHub updateRefs GraphQL response is invalid");
   });
 
   test("rejects credentialed, queried, or fragmented API bases", () => {
