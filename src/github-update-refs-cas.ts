@@ -10,6 +10,10 @@ export interface GitHubGraphqlRequest {
   body: Readonly<Record<string, unknown>>;
 }
 
+export interface GitHubUpdateRefsCasRequest extends GitHubGraphqlRequest {
+  clientMutationId: string;
+}
+
 export interface GitHubUpdateRefsCasInput {
   apiBaseUrl: string;
   repositoryFullName: string;
@@ -68,7 +72,7 @@ export function admitGitHubRepositoryNodeIdResponse(value: unknown): string {
 
 export function buildGitHubUpdateRefsCasRequest(
   input: GitHubUpdateRefsCasInput,
-): GitHubGraphqlRequest {
+): GitHubUpdateRefsCasRequest {
   const snapshot = snapshotCasInput(input);
   const repositoryFullName = admitGitHubRepositoryFullName(snapshot.repositoryFullName);
   const repositoryId = admitNodeId(snapshot.repositoryId);
@@ -96,6 +100,7 @@ export function buildGitHubUpdateRefsCasRequest(
         }),
       }),
     }),
+    clientMutationId,
   });
 }
 
