@@ -67,7 +67,7 @@ export async function verifyHostedToolContract(
     }
 
     const contracts = tools.map((tool, index) => readToolContract(tool, index));
-    const manifest = createMcpReleaseManifest(contracts);
+    const manifest = compileManifest(response, contracts);
     if (manifest.tools.length !== snapshot.toolCount) {
       throw responseError(
         response,
@@ -168,6 +168,14 @@ function readToolContract(value: unknown, index: number): McpToolContract {
       : { annotations: value.annotations as Record<string, unknown> }),
     inputSchema: value.inputSchema,
   };
+}
+
+function compileManifest(response: Response, contracts: McpToolContract[]) {
+  try {
+    return createMcpReleaseManifest(contracts);
+  } catch {
+    throw responseError(response, "MCP tools/list contract is invalid");
+  }
 }
 
 async function request(
