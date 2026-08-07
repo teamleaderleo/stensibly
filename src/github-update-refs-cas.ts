@@ -40,6 +40,7 @@ const repositoryNodeIdQuery =
 const updateRefsMutation =
   "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }";
 const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
+const providerRepositoryPattern = /^[\x20-\x7e]{1,200}$/u;
 const clientMutationIdPattern = /^stensibly-write-[a-f0-9]{64}$/u;
 
 export function buildGitHubRepositoryNodeIdRequest(
@@ -71,7 +72,7 @@ export function admitGitHubRepositoryNodeIdResponse(
   }
   const data = record(requiredDataProperty(envelope, "data"));
   const repository = record(requiredDataProperty(data, "repository"));
-  const repositoryFullName = admitGitHubRepositoryFullName(
+  const repositoryFullName = admitProviderRepositoryFullName(
     requiredDataProperty(repository, "nameWithOwner"),
   );
   if (repositoryFullName !== expectedRepository) {
@@ -244,6 +245,21 @@ function casInputValue(value: object, key: string): unknown {
     throw invalidCasInput();
   }
   return descriptor.value;
+}
+
+function admitProviderRepositoryFullName(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value !== value.trim()
+    || !providerRepositoryPattern.test(value)
+  ) {
+    throw invalidGraphqlResponse();
+  }
+  try {
+    return admitGitHubRepositoryFullName(value.toLowerCase());
+  } catch {
+    throw invalidGraphqlResponse();
+  }
 }
 
 function admitNodeId(value: unknown): string {

@@ -48,12 +48,17 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       .toBe("https://github.example.com/custom/api/graphql");
   });
 
-  test("binds repository node identity to the exact provider repository", () => {
-    const admitted = admitGitHubRepositoryNodeIdResponse({
-      data: { repository: { id: repositoryId, nameWithOwner: repositoryFullName } },
-    }, repositoryFullName);
-    expect(admitted).toEqual(repository);
-    expect(Object.isFrozen(admitted)).toBe(true);
+  test("binds repository node identity to the exact canonical provider repository", () => {
+    for (const nameWithOwner of [
+      repositoryFullName,
+      "TeamLeaderLeo/Stensibly",
+    ]) {
+      const admitted = admitGitHubRepositoryNodeIdResponse({
+        data: { repository: { id: repositoryId, nameWithOwner } },
+      }, repositoryFullName);
+      expect(admitted).toEqual(repository);
+      expect(Object.isFrozen(admitted)).toBe(true);
+    }
 
     expect(() => admitGitHubRepositoryNodeIdResponse({
       data: {
