@@ -1,0 +1,251 @@
+name: Cinder 1201 final exact CAS convergence
+
+on:
+  push:
+    branches:
+      - juniper/1163-updaterefs-cas-core
+    paths:
+      - .github/workflows/cinder-1201-final-convergence.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1201-final-exact-cas
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-updaterefs-cas-core
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify serialized parent
+        env:
+          EXPECTED_PARENT: 62fc55ada3b2ee9d8a1a902d34828f4d8e7be1dd
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git rev-parse HEAD:src/github-update-refs-cas.ts)" = "a58dc0c891bda18b2c7667716b3a1ee7a14746ee"
+          test -f .github/workflows/cinder-1201-cas-response-identity.yml
+          test -f .github/workflows/morrow-1201-cas-core-repair.yml
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Import strongest reviewed CAS repair
+        env:
+          REPAIR_HEAD: 3cd2adf6a4b8c9cfab5040aa413f800535903d77
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$REPAIR_HEAD"
+          test "$(git rev-parse "$REPAIR_HEAD":src/github-update-refs-cas.ts)" = "8de82a0d41669b00982e40be1b90b4e55e9faec3"
+          test "$(git rev-parse "$REPAIR_HEAD":test/github-update-refs-cas.test.ts)" = "fcbb2a7d35781ad6142bc15853f35537a23e9f9d"
+          test "$(git rev-parse "$REPAIR_HEAD":test/github-update-refs-cas-api-base-security.test.ts)" = "6ba574c80bc36be8ac4a44c45907979f1cf9258b"
+          test "$(git rev-parse "$REPAIR_HEAD":test/github-update-refs-cas-mutation-identity.test.ts)" = "7cbda28752294dedda1d9ae5ff0821819d559fc2"
+          git show "$REPAIR_HEAD":src/github-update-refs-cas.ts > src/github-update-refs-cas.ts
+          git show "$REPAIR_HEAD":test/github-update-refs-cas.test.ts > test/github-update-refs-cas.test.ts
+          git show "$REPAIR_HEAD":test/github-update-refs-cas-api-base-security.test.ts > test/github-update-refs-cas-api-base-security.test.ts
+          git show "$REPAIR_HEAD":test/github-update-refs-cas-mutation-identity.test.ts > test/github-update-refs-cas-mutation-identity.test.ts
+
+      - name: Keep unproven provider errors generic and normalize revoked inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-update-refs-cas.ts")
+          source = source_path.read_text()
+
+          class_start = source.index('export class GitHubUpdateRefsCasStaleRefError')
+          class_end = source.index('const repositoryNodeIdQuery', class_start)
+          source = source[:class_start] + source[class_end:]
+          source = source.replace('const maximumGraphqlErrors = 4;\n', '', 1)
+
+          old_errors = '''  if (errors !== undefined) {
+            if (isExactStaleRefResponse(envelope, errors)) {
+              throw new GitHubUpdateRefsCasStaleRefError();
+            }
+            throw new Error("GitHub could not publish repository ref");
+          }
+          '''
+          new_errors = '''  if (errors !== undefined) {
+            throw new Error("GitHub could not publish repository ref");
+          }
+          '''
+          if source.count(old_errors) != 1:
+              raise SystemExit("GraphQL mutation error anchor moved")
+          source = source.replace(old_errors, new_errors, 1)
+
+          stale_start = source.index('function isExactStaleRefResponse(')
+          stale_end = source.index('function admitNodeId(', stale_start)
+          source = source[:stale_start] + source[stale_end:]
+
+          old_snapshot = '''function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw invalidCasInput();
+            }
+            return Object.freeze({'''
+          new_snapshot = '''function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
+            if (!value || typeof value !== "object") {
+              throw invalidCasInput();
+            }
+            try {
+              if (Array.isArray(value)) throw invalidCasInput();
+            } catch (error) {
+              if (error instanceof RangeError && error.message === invalidCasInput().message) {
+                throw error;
+              }
+              throw invalidCasInput();
+            }
+            return Object.freeze({'''
+          if source.count(old_snapshot) != 1:
+              raise SystemExit("CAS input inspection anchor moved")
+          source = source.replace(old_snapshot, new_snapshot, 1)
+
+          old_record = '''function record(value: unknown): Record<string, unknown> {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw invalidGraphqlResponse();
+            }
+            let prototype: object | null;
+            try {
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw invalidGraphqlResponse();
+            }
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw invalidGraphqlResponse();
+            }'''
+          new_record = '''function record(value: unknown): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw invalidGraphqlResponse();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw invalidGraphqlResponse();
+            }
+            if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+              throw invalidGraphqlResponse();
+            }'''
+          if source.count(old_record) != 1:
+              raise SystemExit("GraphQL record inspection anchor moved")
+          source = source.replace(old_record, new_record, 1)
+
+          dense_start = source.index('function denseArray(')
+          dense_end = source.index('function invalidCasInput(', dense_start)
+          source = source[:dense_start] + source[dense_end:]
+          source_path.write_text(source)
+
+          test_path = Path("test/github-update-refs-cas.test.ts")
+          tests = test_path.read_text()
+          tests = tests.replace('  GitHubUpdateRefsCasStaleRefError,\n', '', 1)
+          stale_test_start = tests.index('  test("classifies one standards-compliant stale-ref error without retaining prose"')
+          fixed_record_start = tests.index('  test("does not invoke caller ownKeys or getters for admitted fixed records"', stale_test_start)
+          generic = '''  test("keeps every GraphQL mutation error generic without retaining provider prose", () => {
+            const clientMutationId = sha1Request().clientMutationId;
+            const values = [
+              {
+                data: { updateRefs: null },
+                errors: [{
+                  message: "provider stale ref detail must never be echoed",
+                  type: "STALE_REF",
+                  path: ["updateRefs"],
+                }],
+              },
+              {
+                data: { updateRefs: null },
+                errors: [{ message: "other", type: "OTHER" }],
+              },
+              {
+                data: { updateRefs: null },
+                errors: [
+                  { message: "stale", type: "STALE_REF" },
+                  { message: "other", type: "OTHER" },
+                ],
+              },
+            ];
+            for (const value of values) {
+              let caught: unknown;
+              try {
+                admitGitHubUpdateRefsCasResponse(value, clientMutationId);
+              } catch (error) {
+                caught = error;
+              }
+              expect(caught).toBeInstanceOf(Error);
+              expect((caught as Error).message).toBe("GitHub could not publish repository ref");
+              expect(JSON.stringify(caught)).not.toContain("provider stale ref detail");
+            }
+          });
+
+          '''
+          tests = tests[:stale_test_start] + generic + tests[fixed_record_start:]
+          test_path.write_text(tests)
+
+          inspection_path = Path("test/github-update-refs-cas-input-inspection.test.ts")
+          inspection = inspection_path.read_text()
+          old_identity = '        clientMutationId: `stensibly-write-${baseInput.newHeadSha.slice(0, 16)}`,\n'
+          new_identity = '        clientMutationId: expect.stringMatching(/^stensibly-write-[a-f0-9]{64}$/),\n'
+          if inspection.count(old_identity) != 1:
+              raise SystemExit("input-inspection mutation identity anchor moved")
+          inspection = inspection.replace(old_identity, new_identity, 1)
+          inspection += '''
+
+test("normalizes a revoked CAS input to the fixed admission error", () => {
+  const revoked = Proxy.revocable(baseInput, {});
+  revoked.revoke();
+  expect(() => buildGitHubUpdateRefsCasRequest(revoked.proxy))
+    .toThrow("GitHub updateRefs CAS input is invalid");
+});
+'''
+          inspection_path.write_text(inspection)
+          PY
+          git diff --check
+
+      - name: Validate converged CAS contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-node-id.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts
+
+      - name: Publish one workflow-free CAS core
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm \
+            .github/workflows/cinder-1201-cas-response-identity.yml \
+            .github/workflows/morrow-1201-cas-core-repair.yml \
+            .github/workflows/cinder-1201-final-convergence.yml
+          git add \
+            src/github-update-refs-cas.ts \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Converge exact updateRefs CAS contract"
+          git fetch origin refs/heads/juniper/1163-updaterefs-cas-core:refs/remotes/origin/juniper/1163-updaterefs-cas-core
+          test "$(git rev-parse refs/remotes/origin/juniper/1163-updaterefs-cas-core)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/juniper/1163-updaterefs-cas-core:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/juniper/1163-updaterefs-cas-core
