@@ -16,6 +16,17 @@ const sha1Commit = "b".repeat(40);
 const sha256Parent = "c".repeat(64);
 const sha256Commit = "d".repeat(64);
 
+function sha1Request() {
+  return buildGitHubUpdateRefsCasRequest({
+    apiBaseUrl: "https://api.github.com",
+    repositoryFullName,
+    repositoryId,
+    targetRef,
+    expectedHeadSha: sha1Parent,
+    newHeadSha: sha1Commit,
+  });
+}
+
 describe("GitHub updateRefs exact-old-ref CAS", () => {
   test("builds exact github.com repository node query", () => {
     const request = buildGitHubRepositoryNodeIdRequest(
@@ -54,15 +65,9 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
-    const request = buildGitHubUpdateRefsCasRequest({
-      apiBaseUrl: "https://api.github.com",
-      repositoryFullName,
-      repositoryId,
-      targetRef,
-      expectedHeadSha: sha1Parent,
-      newHeadSha: sha1Commit,
-    });
+    const request = sha1Request();
     expect(request.url.href).toBe("https://api.github.com/graphql");
+    expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
     expect(request.body).toEqual({
       query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
       variables: {
@@ -74,7 +79,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
             afterOid: sha1Commit,
             force: false,
           }],
-          clientMutationId: `stensibly-write-${sha1Commit.slice(0, 16)}`,
+          clientMutationId: request.clientMutationId,
         },
       },
     });
@@ -101,18 +106,18 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("admits only the exact successful client mutation identity", () => {
-    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    const clientMutationId = sha1Request().clientMutationId;
     expect(admitGitHubUpdateRefsCasResponse({
       data: { updateRefs: { clientMutationId } },
     }, clientMutationId)).toEqual({ clientMutationId });
 
     expect(() => admitGitHubUpdateRefsCasResponse({
-      data: { updateRefs: { clientMutationId: "stensibly-write-0000000000000000" } },
+      data: { updateRefs: { clientMutationId: `stensibly-write-${"0".repeat(64)}` } },
     }, clientMutationId)).toThrow("GitHub updateRefs GraphQL response is invalid");
   });
 
   test("classifies one standards-compliant stale-ref error without retaining prose", () => {
-    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    const clientMutationId = sha1Request().clientMutationId;
     let error: unknown;
     try {
       admitGitHubUpdateRefsCasResponse({
@@ -133,7 +138,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("keeps malformed, multiple, and non-stale GraphQL errors generic", () => {
-    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    const clientMutationId = sha1Request().clientMutationId;
     const values = [
       {
         data: { updateRefs: null },
