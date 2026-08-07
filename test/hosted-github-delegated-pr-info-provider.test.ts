@@ -213,6 +213,7 @@ function fakeLedger(): WorkLedger & ProjectAttachmentLedger {
 function providerEnv(): Record<string, string> {
   return {
     STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",
+    STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "false",
     STENSIBLY_GITHUB_APP_ID: "12345",
     STENSIBLY_GITHUB_APP_PRIVATE_KEY: privateKey,
     STENSIBLY_GITHUB_INSTALLATION_ID: "98765",

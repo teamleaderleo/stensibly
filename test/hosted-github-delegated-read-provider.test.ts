@@ -255,14 +255,14 @@ describe("private hosted GitHub delegated reads", () => {
     expect(externalCalls).toBe(0);
   });
 
-  test("stays disabled by default and fails closed on partial or malformed enablement", () => {
-    const ledger = fakeLedger();
-    expect(
-      mountHostedGitHubDelegatedReadProviderFromEnv(ledger, providerEnv(false)),
-    ).toBe(ledger);
-    expect("callGitHubDelegatedRead" in ledger).toBe(false);
+  test("defaults configured provider on and fails closed on partial or malformed enablement", () => {
+    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      fakeLedger(),
+      providerEnv(false),
+    );
+    expect(typeof mounted.callGitHubDelegatedRead).toBe("function");
     expect(hostedGitHubDelegatedReadProviderConfigured(providerEnv(false)))
-      .toBe(false);
+      .toBe(true);
 
     const explicitlyDisabled = providerEnv();
     explicitlyDisabled.STENSIBLY_GITHUB_DELEGATED_READS_ENABLED = "false";
@@ -330,6 +330,7 @@ function providerEnv(enabled = true): Record<string, string> {
     ...(enabled
       ? { STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true" }
       : {}),
+    STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "false",
     STENSIBLY_GITHUB_APP_ID: "12345",
     STENSIBLY_GITHUB_APP_PRIVATE_KEY: privateKey,
     STENSIBLY_GITHUB_INSTALLATION_ID: "98765",
