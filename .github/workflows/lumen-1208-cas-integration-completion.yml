@@ -1,0 +1,358 @@
+name: Lumen 1208 CAS integration completion
+
+on:
+  push:
+    branches:
+      - lumen/1208-cas-integration-completion
+    paths:
+      - .github/workflows/lumen-1208-cas-integration-completion.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1208-cas-integration-completion
+  cancel-in-progress: false
+
+jobs:
+  complete:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1208-cas-integration-completion
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact integration carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "4d811802d6df1e1433904fbdee4e6f5c6e4ac410"
+          test "$(git rev-parse HEAD:src/github-update-refs-cas.ts)" = "a58dc0c891bda18b2c7667716b3a1ee7a14746ee"
+          test "$(git rev-parse HEAD:src/github-rest-repository-write-atomic-publication.ts)" = "dace75741348e3d7883fa11bc490bcc515274169"
+          test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-publication.test.ts)" = "5e88c397d4aaae29deb4efef5d346f9b9f11aa5b"
+          test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-mode-preservation.test.ts)" = "e53d5f9c0b07aa214a2a3ee301a3604d41320134"
+          test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-ancestor-regression.test.ts)" = "45c90088a2d3a5726459688132b6a217529d014e"
+
+      - name: Import exact accepted CAS repairs and small-tree control
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin 3cd2adf6a4b8c9cfab5040aa413f800535903d77 701fa8691c63342c12bd7252c506a8db26723253
+          git show 3cd2adf6a4b8c9cfab5040aa413f800535903d77:src/github-update-refs-cas.ts > src/github-update-refs-cas.ts
+          git show 3cd2adf6a4b8c9cfab5040aa413f800535903d77:test/github-update-refs-cas.test.ts > test/github-update-refs-cas.test.ts
+          git show 3cd2adf6a4b8c9cfab5040aa413f800535903d77:test/github-update-refs-cas-api-base-security.test.ts > test/github-update-refs-cas-api-base-security.test.ts
+          git show 3cd2adf6a4b8c9cfab5040aa413f800535903d77:test/github-update-refs-cas-mutation-identity.test.ts > test/github-update-refs-cas-mutation-identity.test.ts
+          git show 701fa8691c63342c12bd7252c506a8db26723253:test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts > test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts
+          test "$(git hash-object src/github-update-refs-cas.ts)" = "8de82a0d41669b00982e40be1b90b4e55e9faec3"
+          test "$(git hash-object test/github-update-refs-cas.test.ts)" = "fcbb2a7d35781ad6142bc15853f35537a23e9f9d"
+          test "$(git hash-object test/github-update-refs-cas-api-base-security.test.ts)" = "6ba574c80bc36be8ac4a44c45907979f1cf9258b"
+          test "$(git hash-object test/github-update-refs-cas-mutation-identity.test.ts)" = "7cbda28752294dedda1d9ae5ff0821819d559fc2"
+          test "$(git hash-object test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
+
+      - name: Complete generic CAS and zero-ownKeys integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cas_path = Path("src/github-update-refs-cas.ts")
+          cas = cas_path.read_text()
+          class_start = cas.index("export class GitHubUpdateRefsCasStaleRefError")
+          class_end = cas.index("const repositoryNodeIdQuery", class_start)
+          cas = cas[:class_start] + cas[class_end:]
+          cas = cas.replace("const maximumGraphqlErrors = 4;\n", "", 1)
+          old_errors = '''  const errors = optionalDataProperty(envelope, "errors");
+          if (errors !== undefined) {
+            if (isExactStaleRefResponse(envelope, errors)) {
+              throw new GitHubUpdateRefsCasStaleRefError();
+            }
+            throw new Error("GitHub could not publish repository ref");
+          }
+          '''
+          new_errors = '''  const errors = optionalDataProperty(envelope, "errors");
+          if (errors !== undefined) {
+            throw new Error("GitHub could not publish repository ref");
+          }
+          '''
+          if cas.count(old_errors) != 1:
+            raise SystemExit("CAS error anchor changed")
+          cas = cas.replace(old_errors, new_errors, 1)
+          stale_start = cas.index("function isExactStaleRefResponse(")
+          stale_end = cas.index("function admitNodeId(", stale_start)
+          cas = cas[:stale_start] + cas[stale_end:]
+          dense_start = cas.index("function denseArray(")
+          dense_end = cas.index("function invalidCasInput(", dense_start)
+          cas = cas[:dense_start] + cas[dense_end:]
+          cas_path.write_text(cas)
+
+          cas_test_path = Path("test/github-update-refs-cas.test.ts")
+          cas_test = cas_test_path.read_text()
+          cas_test = cas_test.replace("  GitHubUpdateRefsCasStaleRefError,\n", "", 1)
+          test_start = cas_test.index('  test("classifies one standards-compliant stale-ref error without retaining prose"')
+          test_end = cas_test.index('  test("keeps malformed, multiple, and non-stale GraphQL errors generic"', test_start)
+          replacement = '''  test("keeps provider GraphQL errors generic and non-echoing", () => {
+            const clientMutationId = sha1Request().clientMutationId;
+            let error: unknown;
+            try {
+              admitGitHubUpdateRefsCasResponse({
+                data: { updateRefs: null },
+                errors: [{
+                  message: "provider ref detail must never be echoed",
+                  type: "STALE_REF",
+                  path: ["updateRefs"],
+                }],
+              }, clientMutationId);
+            } catch (caught) {
+              error = caught;
+            }
+            expect(error).toBeInstanceOf(Error);
+            expect((error as Error).message)
+              .toBe("GitHub could not publish repository ref");
+            expect(JSON.stringify(error)).not.toContain("provider ref detail");
+          });
+
+          '''
+          cas_test = cas_test[:test_start] + replacement + cas_test[test_end:]
+          cas_test_path.write_text(cas_test)
+
+          atomic_path = Path("src/github-rest-repository-write-atomic-publication.ts")
+          atomic = atomic_path.read_text()
+          array_start = atomic.index("function exactArray(")
+          array_end = atomic.index("function exactRecord(", array_start)
+          array_replacement = '''function exactArray(
+            value: unknown,
+            label: string,
+            maximumLength: number,
+          ): unknown[] {
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            if (!isArray || prototype !== Array.prototype) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof lengthValue !== "number"
+              || !Number.isSafeInteger(lengthValue)
+              || lengthValue < 0
+              || lengthValue > maximumLength
+            ) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const result: unknown[] = [];
+            for (let index = 0; index < lengthValue; index += 1) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              } catch {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          '''
+          atomic = atomic[:array_start] + array_replacement + atomic[array_end:]
+          atomic_path.write_text(atomic)
+
+          def add_builder_import(text: str) -> str:
+            marker = 'import { SqliteGitHubRepositoryWriteStore } from "../src/github-repository-write-store.ts";\n'
+            if marker in text:
+              return text.replace(marker, marker + 'import { buildGitHubUpdateRefsCasRequest } from "../src/github-update-refs-cas.ts";\n', 1)
+            marker = '} from "../src/github-rest-repository-write-adapter.ts";\n'
+            if marker in text:
+              return text.replace(marker, marker + 'import { buildGitHubUpdateRefsCasRequest } from "../src/github-update-refs-cas.ts";\n', 1)
+            raise SystemExit("test import anchor changed")
+
+          publication_path = Path("test/github-rest-repository-write-atomic-publication.test.ts")
+          publication = add_builder_import(publication_path.read_text())
+          publication = publication.replace(
+            '''          return Response.json({
+                      data: { updateRefs: null },
+                      errors: [{ message: "provider stale ref", type: "STALE_REF" }],
+                    });''',
+            '''          return Response.json({
+                      data: { updateRefs: null },
+                      errors: [{ message: "provider publication rejected" }],
+                    });''',
+            1,
+          )
+          body_start = publication.index("function updateRefsBody(): unknown {")
+          response_end = publication.index("function tokenProvider(", body_start)
+          body_helpers = '''function updateRefsRequest() {
+            return buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl,
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: parentSha,
+              newHeadSha: nextCommitSha,
+            });
+          }
+
+          function updateRefsBody(): unknown {
+            return updateRefsRequest().body;
+          }
+
+          function updateRefsResponse(): Response {
+            return Response.json({
+              data: {
+                updateRefs: {
+                  clientMutationId: updateRefsRequest().clientMutationId,
+                },
+              },
+            }, {
+              status: 200,
+              headers: { "x-github-request-id": "REQ-ATOMIC-PUBLISH" },
+            });
+          }
+
+          '''
+          publication = publication[:body_start] + body_helpers + publication[response_end:]
+          publication_path.write_text(publication)
+
+          mode_path = Path("test/github-rest-repository-write-atomic-mode-preservation.test.ts")
+          mode = add_builder_import(mode_path.read_text())
+          mode = mode.replace(
+            'clientMutationId: `stensibly-write-${nextCommitSha.slice(0, 16)}`,',
+            'clientMutationId: updateRefsRequest().clientMutationId,',
+            1,
+          )
+          mode_body_start = mode.index("function updateRefsBody(): unknown {")
+          mode_token_start = mode.index("function tokenProvider(", mode_body_start)
+          mode_helpers = '''function updateRefsRequest() {
+            return buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl,
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: parentSha,
+              newHeadSha: nextCommitSha,
+            });
+          }
+
+          function updateRefsBody(): unknown {
+            return updateRefsRequest().body;
+          }
+
+          '''
+          mode = mode[:mode_body_start] + mode_helpers + mode[mode_token_start:]
+          mode_path.write_text(mode)
+
+          ancestor_path = Path("test/github-rest-repository-write-atomic-ancestor-regression.test.ts")
+          ancestor = add_builder_import(ancestor_path.read_text())
+          input_start = ancestor.index("            expect(body.variables?.input).toEqual({")
+          input_end = ancestor.index("            if (providerCurrentHead !== expectedParentSha)", input_start)
+          ancestor = ancestor[:input_start] + '            expect(body).toEqual(updateRefsRequest().body);\n' + ancestor[input_end:]
+          ancestor = ancestor.replace(
+            '''              return Response.json({
+                        data: { updateRefs: null },
+                        errors: [{
+                          message: "provider stale ref detail",
+                          type: "STALE_REF",
+                        }],
+                      });''',
+            '''              return Response.json({
+                        data: { updateRefs: null },
+                        errors: [{ message: "provider ref changed" }],
+                      });''',
+            1,
+          )
+          ancestor = ancestor.replace(
+            'clientMutationId: `stensibly-write-${nextCommitSha.slice(0, 16)}`,',
+            'clientMutationId: updateRefsRequest().clientMutationId,',
+            1,
+          )
+          ancestor = ancestor.replace(
+            '"GitHub repository write exact old ref changed before publication",',
+            '"GitHub could not publish repository ref",',
+            1,
+          )
+          helper_anchor = "function tokenProvider(): GitHubRepositoryWriteTokenProvider {"
+          helper_index = ancestor.index(helper_anchor)
+          ancestor_helper = '''function updateRefsRequest() {
+            return buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl,
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: expectedParentSha,
+              newHeadSha: nextCommitSha,
+            });
+          }
+
+          '''
+          ancestor = ancestor[:helper_index] + ancestor_helper + ancestor[helper_index:]
+          ancestor_path.write_text(ancestor)
+          PY
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate completed exact-CAS packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-update-refs-cas*.test.ts \
+            test/github-rest-repository-write-atomic*.test.ts \
+            test/github-rest-repository-write-adapter*.test.ts
+
+      - name: Publish workflow-free completion child
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lumen-1208-cas-integration-completion.yml
+          git add \
+            src/github-update-refs-cas.ts \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts \
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-rest-repository-write-atomic-publication.ts \
+            src/github-update-refs-cas.ts \
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts \
+            test/github-update-refs-cas.test.ts | sort)"
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Complete exact updateRefs CAS integration"
+          git fetch origin refs/heads/lumen/1208-cas-integration-completion:refs/remotes/origin/lumen/1208-cas-integration-completion
+          test "$(git rev-parse refs/remotes/origin/lumen/1208-cas-integration-completion)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/lumen/1208-cas-integration-completion:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1208-cas-integration-completion
