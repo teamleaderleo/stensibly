@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: lark-1208-final-cas-convergence
+  group: lark-1208-final-exact-cas-convergence
   cancel-in-progress: false
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact source lease
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          SOURCE_PARENT: a8351873642cedf5e63bf1fe9af69d3658a2dbbd
+          SOURCE_PARENT: e8746de6d06242f2c48d95f04151775074346fef
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
@@ -40,6 +40,8 @@ jobs:
           test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
           test "$(git rev-parse HEAD^:test/github-update-refs-cas-hostile-response.test.ts)" = "ed0a37f08c5ecb6cc05bceb55c5e5d07d805719d"
           test "$(git rev-parse HEAD^:test/github-rest-repository-write-provider-url-spelling.test.ts)" = "1492d933ae6ef60c461cdde464fbef5bff63a352"
+          test "$(git rev-parse HEAD^:test/github-rest-repository-write-repository-node-provenance.test.ts)" = "2998805971cdeb74f489d10a183ea8bbb93a87ec"
+          test -f .github/workflows/lumen-1208-final-convergence.yml
           git fetch --no-tags origin "${CAS_REPAIR}" "${REQUIRED_FIELDS_CONTROL}"
           test "$(git rev-parse ${CAS_REPAIR}:src/github-update-refs-cas.ts)" = "d3e3b9fd6e35c2fa57480da2ec587a6074a9e61d"
           test "$(git rev-parse ${REQUIRED_FIELDS_CONTROL}:test/github-rest-repository-write-atomic-required-fields.test.ts)" = "9b0f0a23ec2b9296a66b46506bdb7b16724967e6"
@@ -174,6 +176,7 @@ jobs:
             test/github-rest-repository-write-atomic-tree-prelimit.test.ts \
             test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
             test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-repository-node-provenance.test.ts \
             test/github-rest-repository-write-adapter.test.ts \
             test/github-rest-repository-write-adapter-fence-parity.test.ts \
             test/github-rest-repository-write-provider-url-spelling.test.ts
@@ -184,7 +187,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/lark-1208-final-cas-convergence.yml
+          git rm \
+            .github/workflows/lark-1208-final-cas-convergence.yml \
+            .github/workflows/lumen-1208-final-convergence.yml
           git add \
             src/github-rest-repository-write-atomic-publication.ts \
             src/github-update-refs-cas.ts \
@@ -199,7 +204,7 @@ jobs:
             test/github-update-refs-cas-node-id.test.ts \
             test/github-update-refs-cas-provider-endpoint-binding.test.ts
           git diff --cached --check
-          git config user.name "Lark"
+          git config user.name "Kite"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Finalize exact-CAS provenance and provider evidence"
           git fetch origin refs/heads/juniper/1163-updaterefs-cas-integration:refs/remotes/origin/juniper/1163-updaterefs-cas-integration
