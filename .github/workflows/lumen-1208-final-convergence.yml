@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact current carrier
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          CARRIER_PARENT: 737f2c894069e1fea86c52d21dfaea57b77c4bc4
+          CARRIER_PARENT: 023eaa321e336cc0ad79393bebc18565f83324d4
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
@@ -39,7 +39,7 @@ jobs:
           test "$(git rev-parse HEAD^:src/github-rest-repository-write-atomic-publication.ts)" = "0cfe937f238e7018d3fbb30d99c9cab78c35c820"
           test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
           test "$(git rev-parse HEAD^:test/github-update-refs-cas-repository-identity.test.ts)" = "bf04ce83f03150fbba500ab48a13feb4942410dc"
-          test "$(git rev-parse HEAD^:.github/workflows/lumen-1208-retarget-bootstrap.yml)" = "19a8a80edeaac6691ba4c253cbbb2de4fc24b968"
+          test ! -f .github/workflows/lumen-1208-retarget-bootstrap.yml
           test ! -f .github/workflows/lark-1208-final-cas-convergence.yml
           test ! -f .github/workflows/oriole-1208-required-provider-fields.yml
           test ! -f .github/workflows/vireo-1208-cas-provenance-required-fields.yml
@@ -78,7 +78,6 @@ jobs:
 
           path = Path("src/github-rest-repository-write-atomic-publication.ts")
           text = path.read_text()
-
           old = '''    url: request.url,
               body: request.body as Record<string, unknown>,
               operation,
@@ -183,7 +182,6 @@ test("rejects substituted provider repository identity without retaining it", ()
   } catch (error) {
     caught = error;
   }
-
   expect(caught).toBeInstanceOf(Error);
   expect((caught as Error).message)
     .toBe("GitHub updateRefs GraphQL response is invalid");
@@ -242,9 +240,7 @@ test("admits provider case spelling only after canonical repository normalizatio
         shell: bash
         run: |
           set -euo pipefail
-          git rm \
-            .github/workflows/lumen-1208-final-convergence.yml \
-            .github/workflows/lumen-1208-retarget-bootstrap.yml
+          git rm .github/workflows/lumen-1208-final-convergence.yml
           git add \
             src/github-rest-repository-write-atomic-publication.ts \
             src/github-update-refs-cas.ts \
