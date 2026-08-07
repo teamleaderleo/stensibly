@@ -11,6 +11,7 @@ interface ChatGptAppActionSnapshot {
   manifestVersion: number;
   toolCount: number;
   toolManifestFingerprint: string;
+  toolContractFingerprint: string;
   tools: string[];
   releasePolicy: string;
   requiredAdminActionAfterAnyManifestChange: string;
@@ -29,10 +30,11 @@ describe("ChatGPT app action snapshot", () => {
   test("tracks only the current manifest and requires a host refresh after drift", () => {
     const snapshot = readSnapshot();
 
-    expect(snapshot.snapshotVersion).toBe(4);
+    expect(snapshot.snapshotVersion).toBe(5);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
     expect(snapshot.toolCount).toBe(MCP_TOOL_NAMES.length);
     expect(snapshot.toolManifestFingerprint).toBe(MCP_TOOL_MANIFEST_FINGERPRINT);
+    expect(snapshot.toolContractFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(snapshot.tools).toEqual([...MCP_TOOL_NAMES]);
     expect(snapshot.releasePolicy).toBe("latest_manifest_only");
     expect(snapshot.requiredAdminActionAfterAnyManifestChange).toBe(
@@ -49,6 +51,7 @@ describe("ChatGPT app action snapshot", () => {
 
     expect(recovery).toContain(String(snapshot.toolCount));
     expect(recovery).toContain(snapshot.toolManifestFingerprint);
+    expect(recovery).toContain(snapshot.toolContractFingerprint);
     expect(recovery).toContain("latest manifest only");
     expect(recovery).toContain("GitHub read → Stensibly read → GitHub read");
     expect(recovery).toContain("before network dispatch");
