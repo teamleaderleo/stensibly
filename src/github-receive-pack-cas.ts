@@ -27,7 +27,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 const maximumAdvertisementBytes = 64 * 1024;
 const maximumReportBytes = 16 * 1024;
 const maximumPacketCount = 512;
-const capabilityPattern = /^[a-z0-9][a-z0-9_.=-]{0,127}$/u;
+const capabilityPattern = /^[\x21-\x7e]{1,128}$/u;
 
 export function admitGitReceivePackAdvertisement(
   bytes: Uint8Array,
@@ -48,7 +48,7 @@ export function admitGitReceivePackAdvertisement(
 
   let firstRef = true;
   let advertisedHead: string | null = null;
-  let capabilities: readonly string[] | null = null;
+  let retainedCapabilities: readonly string[] | null = null;
   let objectFormat: GitReceivePackObjectFormat = "sha1";
   const fullTargetRef = `refs/heads/${branch}`;
 
@@ -63,12 +63,11 @@ export function admitGitReceivePackAdvertisement(
     const capabilityText = nul >= 0 ? line.slice(nul + 1) : null;
     if (firstRef) {
       if (capabilityText === null) throw invalidAdvertisement();
-      const admittedCapabilities = admitCapabilities(
+      const advertisedCapabilities = admitCapabilities(
         capabilityText,
         invalidAdvertisement,
       );
-      capabilities = Object.freeze(admittedCapabilities);
-      const objectFormatCapabilities = admittedCapabilities.filter((entry) =>
+      const objectFormatCapabilities = advertisedCapabilities.filter((entry) =>
         entry.startsWith("object-format=")
       );
       if (objectFormatCapabilities.length > 1) throw invalidAdvertisement();
@@ -78,6 +77,13 @@ export function admitGitReceivePackAdvertisement(
         else if (advertisedFormat === "object-format=sha256") objectFormat = "sha256";
         else throw invalidAdvertisement();
       }
+      if (!advertisedCapabilities.includes("report-status")) {
+        throw invalidAdvertisement();
+      }
+      retainedCapabilities = Object.freeze([
+        "report-status",
+        ...(advertisedFormat === undefined ? [] : [advertisedFormat]),
+      ]);
       firstRef = false;
     } else if (capabilityText !== null) {
       throw invalidAdvertisement();
@@ -85,7 +91,12 @@ export function admitGitReceivePackAdvertisement(
 
     const match = /^(\S+) (refs\/[^\s]+)$/u.exec(refText);
     if (!match) throw invalidAdvertisement();
-    const oid = admitGitObjectId(match[1]);
+    let oid: string;
+    try {
+      oid = admitGitObjectId(match[1]);
+    } catch {
+      throw invalidAdvertisement();
+    }
     if (oid.length !== objectIdLength(objectFormat)) throw invalidAdvertisement();
     if (match[2] === fullTargetRef) {
       if (advertisedHead !== null) throw invalidAdvertisement();
@@ -95,8 +106,7 @@ export function admitGitReceivePackAdvertisement(
 
   if (
     firstRef
-    || capabilities === null
-    || !capabilities.includes("report-status")
+    || retainedCapabilities === null
     || advertisedHead !== expected
     || expected.length !== objectIdLength(objectFormat)
   ) {
@@ -105,7 +115,7 @@ export function admitGitReceivePackAdvertisement(
 
   return Object.freeze({
     objectFormat,
-    capabilities,
+    capabilities: retainedCapabilities,
     targetRef: branch,
     targetHeadSha: advertisedHead,
   });
