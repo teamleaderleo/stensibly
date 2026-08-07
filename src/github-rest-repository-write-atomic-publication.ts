@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import type { GitHubRepositoryWritePayload } from "./github-repository-write-provider-service.js";
 import {
+  admitGitHubRepositoryNodeIdResponse,
+  admitGitHubUpdateRefsCasResponse,
+  buildGitHubRepositoryNodeIdRequest,
+  buildGitHubUpdateRefsCasRequest,
+} from "./github-update-refs-cas.js";
+import {
   admitGitObjectId,
   sameGitObjectFormat,
 } from "./github-repository-write-admission.js";
@@ -57,6 +63,7 @@ export async function publishGitHubRepositoryWriteAtomically(
     repositoryRoot,
     parentTreeSha,
   );
+  const repositoryId = await readRepositoryNodeId(input);
   const nextBlobSha = input.payload.operation === "delete_file"
     ? null
     : await createBlob(input, repositoryRoot);
@@ -78,7 +85,29 @@ export async function publishGitHubRepositoryWriteAtomically(
     repositoryRoot,
     nextTreeSha,
   );
-  return await publishRef(input, repositoryRoot, nextCommitSha);
+  return await publishRef(input, repositoryId, nextCommitSha);
+}
+
+async function readRepositoryNodeId(
+  input: GitHubAtomicRepositoryWriteDependencies,
+): Promise<string> {
+  const operation = "read repository node identity";
+  const request = buildGitHubRepositoryNodeIdRequest(
+    input.apiBaseUrl,
+    input.repositoryFullName,
+  );
+  const response = await input.request({
+    repositoryFullName: input.repositoryFullName,
+    access: "read",
+    method: "POST",
+    url: request.url,
+    body: request.body as Record<string, unknown>,
+    operation,
+  });
+  requireStatus(input, response, 200, operation);
+  return admitGitHubRepositoryNodeIdResponse(
+    await input.readJson(response, operation),
+  );
 }
 
 async function readParentTreeSha(
@@ -310,37 +339,33 @@ async function createCommit(
 
 async function publishRef(
   input: GitHubAtomicRepositoryWriteDependencies,
-  repositoryRoot: string,
+  repositoryId: string,
   commitSha: string,
 ): Promise<GitHubAtomicRepositoryWriteResult> {
   const operation = "publish repository ref";
+  const request = buildGitHubUpdateRefsCasRequest({
+    apiBaseUrl: input.apiBaseUrl,
+    repositoryFullName: input.repositoryFullName,
+    repositoryId,
+    targetRef: input.targetRef,
+    expectedHeadSha: input.expectedParentSha,
+    newHeadSha: commitSha,
+  });
   const response = await input.request({
     repositoryFullName: input.repositoryFullName,
     access: "write",
-    method: "PATCH",
-    url: updateRefUrl(repositoryRoot, input.targetRef),
-    body: { sha: commitSha, force: false },
+    method: "POST",
+    url: request.url,
+    body: request.body as Record<string, unknown>,
     operation,
   });
   requireStatus(input, response, 200, operation);
-  const record = exactRecord(await input.readJson(response, operation), operation);
-  if (record.ref !== `refs/heads/${input.targetRef}`) {
-    throw invalidResponse("GitHub published ref identity changed");
-  }
-  const object = exactRecord(record.object, "GitHub published ref object");
-  if (
-    object.type !== "commit"
-    || objectId(object.sha, "GitHub published ref commit SHA") !== commitSha
-  ) {
-    throw invalidResponse("GitHub published ref commit changed");
-  }
-  assertExactUrl(
-    object.url,
-    commitUrl(repositoryRoot, commitSha),
-    "GitHub published ref commit URL",
-  );
   const providerRequestId = input.admitRequestId(
     response.headers.get("x-github-request-id"),
+  );
+  admitGitHubUpdateRefsCasResponse(
+    await input.readJson(response, operation),
+    request.clientMutationId,
   );
   return Object.freeze({
     commitSha,
@@ -526,14 +551,6 @@ function blobUrl(repositoryRoot: string, sha: string): URL {
 
 function blobCollectionUrl(repositoryRoot: string): URL {
   return new URL(`${repositoryRoot}/git/blobs`);
-}
-
-function updateRefUrl(repositoryRoot: string, targetRef: string): URL {
-  return new URL(`${repositoryRoot}/git/refs/heads/${encodePath(targetRef)}`);
-}
-
-function encodePath(value: string): string {
-  return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
 function invalidResponse(message: string): Error {
