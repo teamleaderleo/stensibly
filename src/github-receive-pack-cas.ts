@@ -200,7 +200,13 @@ export function admitGitReceivePackCasReport(
 }
 
 function snapshotRequest(value: unknown): BuildGitReceivePackCasRequestInput {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
+    throw invalidRequest();
+  }
+  try {
+    if (Array.isArray(value)) throw invalidRequest();
+  } catch (error) {
+    if (isInvalidRequest(error)) throw error;
     throw invalidRequest();
   }
   const objectFormat = requestStringProperty(value, "objectFormat");
@@ -330,15 +336,18 @@ function admitCapabilityList(
   value: unknown,
   failure: () => Error,
 ): string[] {
-  if (!Array.isArray(value)) throw failure();
+  if (!value || typeof value !== "object") throw failure();
+  let isArray: boolean;
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
+    isArray = Array.isArray(value);
     lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
   } catch {
     throw failure();
   }
   if (
-    !lengthDescriptor
+    !isArray
+    || !lengthDescriptor
     || !("value" in lengthDescriptor)
     || !Number.isSafeInteger(lengthDescriptor.value)
     || lengthDescriptor.value < 0
@@ -386,6 +395,11 @@ function concatBytes(...values: readonly Uint8Array[]): Uint8Array {
     offset += value.byteLength;
   }
   return result;
+}
+
+function isInvalidRequest(error: unknown): error is RangeError {
+  return error instanceof RangeError
+    && error.message === "Git receive-pack CAS request is invalid";
 }
 
 function invalidAdvertisement(): RangeError {
