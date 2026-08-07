@@ -1,0 +1,311 @@
+name: Cinder 1201 CAS response identity repair
+
+on:
+  push:
+    branches:
+      - juniper/1163-updaterefs-cas-core
+    paths:
+      - .github/workflows/cinder-1201-cas-response-identity.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1201-cas-response-identity
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-updaterefs-cas-core
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Verify exact source lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "18278c060c5c3e5c5a333f1d57ea691d7204286d"
+          test "$(git rev-parse HEAD:src/github-update-refs-cas.ts)" = "a58dc0c891bda18b2c7667716b3a1ee7a14746ee"
+          test "$(git rev-parse HEAD:test/github-update-refs-cas.test.ts)" = "b56d44d10349743a53d862115e609dd400cc0f70"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Bind success identity and keep unproven errors generic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-update-refs-cas.ts")
+          source = source_path.read_text()
+
+          import_anchor = '''import {
+            admitGitHubBranchRef,
+            admitGitHubRepositoryFullName,
+            admitGitObjectId,
+            sameGitObjectFormat,
+          } from "./github-repository-write-admission.js";
+          '''
+          import_replacement = '''import { sha256, stableJson } from "./canonical-json.js";
+          import {
+            admitGitHubBranchRef,
+            admitGitHubRepositoryFullName,
+            admitGitObjectId,
+            sameGitObjectFormat,
+          } from "./github-repository-write-admission.js";
+          '''
+          if source.count(import_anchor) != 1:
+              raise SystemExit("CAS import anchor moved")
+          source = source.replace(import_anchor, import_replacement, 1)
+
+          class_start = source.index('export class GitHubUpdateRefsCasStaleRefError')
+          class_end = source.index('const repositoryNodeIdQuery', class_start)
+          source = source[:class_start] + source[class_end:]
+          source = source.replace('const maximumGraphqlErrors = 4;\n', '', 1)
+
+          old_identity = '''  const clientMutationId = `stensibly-write-${newHeadSha.slice(0, 16)}`;
+          return Object.freeze({
+            url: githubGraphqlUrl(snapshot.apiBaseUrl),
+          '''
+          new_identity = '''  const graphqlUrl = githubGraphqlUrl(snapshot.apiBaseUrl);
+          const requestFingerprint = sha256(stableJson({
+            providerUrl: graphqlUrl.href,
+            repositoryFullName,
+            repositoryId,
+            targetRef,
+            expectedHeadSha,
+            newHeadSha,
+          }));
+          const clientMutationId = `stensibly-write-${requestFingerprint.slice("sha256:".length)}`;
+          return Object.freeze({
+            url: graphqlUrl,
+          '''
+          if source.count(old_identity) != 1:
+              raise SystemExit("client mutation identity anchor moved")
+          source = source.replace(old_identity, new_identity, 1)
+
+          source = source.replace(
+              '!/^stensibly-write-[a-f0-9]{16}$/u.test(expectedClientMutationId)',
+              '!/^stensibly-write-[a-f0-9]{64}$/u.test(expectedClientMutationId)',
+              1,
+          )
+
+          old_errors = '''  if (errors !== undefined) {
+            if (isExactStaleRefResponse(envelope, errors)) {
+              throw new GitHubUpdateRefsCasStaleRefError();
+            }
+            throw new Error("GitHub could not publish repository ref");
+          }
+          '''
+          new_errors = '''  if (errors !== undefined) {
+            throw new Error("GitHub could not publish repository ref");
+          }
+          '''
+          if source.count(old_errors) != 1:
+              raise SystemExit("GraphQL error anchor moved")
+          source = source.replace(old_errors, new_errors, 1)
+
+          stale_start = source.index('function isExactStaleRefResponse(')
+          stale_end = source.index('function admitNodeId(', stale_start)
+          source = source[:stale_start] + source[stale_end:]
+
+          dense_start = source.index('function denseArray(')
+          dense_end = source.index('function invalidCasInput(', dense_start)
+          source = source[:dense_start] + source[dense_end:]
+          source_path.write_text(source)
+
+          test_path = Path("test/github-update-refs-cas.test.ts")
+          text = test_path.read_text()
+          text = text.replace('  GitHubUpdateRefsCasStaleRefError,\n', '', 1)
+
+          old_request = '''  test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
+            const request = buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl: "https://api.github.com",
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: sha1Parent,
+              newHeadSha: sha1Commit,
+            });
+            expect(request.url.href).toBe("https://api.github.com/graphql");
+            expect(request.body).toEqual({
+              query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
+              variables: {
+                input: {
+                  repositoryId,
+                  refUpdates: [{
+                    name: `refs/heads/${targetRef}`,
+                    beforeOid: sha1Parent,
+                    afterOid: sha1Commit,
+                    force: false,
+                  }],
+                  clientMutationId: `stensibly-write-${sha1Commit.slice(0, 16)}`,
+                },
+              },
+            });
+          });
+          '''
+          new_request = '''  test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
+            const request = buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl: "https://api.github.com",
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: sha1Parent,
+              newHeadSha: sha1Commit,
+            });
+            expect(request.url.href).toBe("https://api.github.com/graphql");
+            expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
+            expect(request.body).toEqual({
+              query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
+              variables: {
+                input: {
+                  repositoryId,
+                  refUpdates: [{
+                    name: `refs/heads/${targetRef}`,
+                    beforeOid: sha1Parent,
+                    afterOid: sha1Commit,
+                    force: false,
+                  }],
+                  clientMutationId: request.clientMutationId,
+                },
+              },
+            });
+          });
+          '''
+          if text.count(old_request) != 1:
+              raise SystemExit("SHA-1 request control anchor moved")
+          text = text.replace(old_request, new_request, 1)
+
+          old_success = '''  test("admits only the exact successful client mutation identity", () => {
+            const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+            expect(admitGitHubUpdateRefsCasResponse({
+              data: { updateRefs: { clientMutationId } },
+            }, clientMutationId)).toEqual({ clientMutationId });
+
+            expect(() => admitGitHubUpdateRefsCasResponse({
+              data: { updateRefs: { clientMutationId: "stensibly-write-0000000000000000" } },
+            }, clientMutationId)).toThrow("GitHub updateRefs GraphQL response is invalid");
+          });
+          '''
+          new_success = '''  test("binds success identity to the complete exact CAS request", () => {
+            const request = buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl: "https://api.github.com",
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: sha1Parent,
+              newHeadSha: sha1Commit,
+            });
+            const clientMutationId = request.clientMutationId;
+            expect(admitGitHubUpdateRefsCasResponse({
+              data: { updateRefs: { clientMutationId } },
+            }, clientMutationId)).toEqual({ clientMutationId });
+
+            expect(() => admitGitHubUpdateRefsCasResponse({
+              data: { updateRefs: { clientMutationId: `stensibly-write-${"0".repeat(64)}` } },
+            }, clientMutationId)).toThrow("GitHub updateRefs GraphQL response is invalid");
+
+            const differentRef = buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl: "https://api.github.com",
+              repositoryFullName,
+              repositoryId,
+              targetRef: "feature/other-cas",
+              expectedHeadSha: sha1Parent,
+              newHeadSha: sha1Commit,
+            });
+            const differentParent = buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl: "https://api.github.com",
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: "e".repeat(40),
+              newHeadSha: sha1Commit,
+            });
+            expect(differentRef.clientMutationId).not.toBe(clientMutationId);
+            expect(differentParent.clientMutationId).not.toBe(clientMutationId);
+          });
+          '''
+          if text.count(old_success) != 1:
+              raise SystemExit("success identity control anchor moved")
+          text = text.replace(old_success, new_success, 1)
+
+          stale_start = text.index('  test("classifies one standards-compliant stale-ref error without retaining prose"')
+          stale_end = text.index('  test("does not invoke caller ownKeys or getters for admitted fixed records"', stale_start)
+          generic_tests = '''  test("keeps all GraphQL mutation errors generic without provider prose", () => {
+            const request = buildGitHubUpdateRefsCasRequest({
+              apiBaseUrl: "https://api.github.com",
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha: sha1Parent,
+              newHeadSha: sha1Commit,
+            });
+            const values = [
+              {
+                data: { updateRefs: null },
+                errors: [{
+                  message: "provider stale ref detail must never be echoed",
+                  type: "STALE_REF",
+                  path: ["updateRefs"],
+                }],
+              },
+              {
+                data: { updateRefs: null },
+                errors: [{ message: "other", type: "OTHER" }],
+              },
+              {
+                data: { updateRefs: null },
+                errors: [
+                  { message: "stale", type: "STALE_REF" },
+                  { message: "other", type: "OTHER" },
+                ],
+              },
+            ];
+            for (const value of values) {
+              let caught: unknown;
+              try {
+                admitGitHubUpdateRefsCasResponse(value, request.clientMutationId);
+              } catch (error) {
+                caught = error;
+              }
+              expect(caught).toBeInstanceOf(Error);
+              expect((caught as Error).message).toBe("GitHub could not publish repository ref");
+              expect(JSON.stringify(caught)).not.toContain("provider stale ref detail");
+            }
+          });
+
+          '''
+          text = text[:stale_start] + generic_tests + text[stale_end:]
+          test_path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Validate exact CAS contract repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-node-id.test.ts
+
+      - name: Publish workflow-free repaired head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cinder-1201-cas-response-identity.yml
+          git add src/github-update-refs-cas.ts test/github-update-refs-cas.test.ts
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bind updateRefs CAS response identity"
+          git push origin HEAD:juniper/1163-updaterefs-cas-core
