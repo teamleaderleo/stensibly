@@ -69,4 +69,35 @@ describe("Git receive-pack CAS caller input inspection", () => {
     )).toThrow("Git receive-pack CAS request is invalid");
     expect(targetRefReads).toBe(0);
   });
+
+  test("normalizes a revoked request envelope", () => {
+    const { proxy, revoke } = Proxy.revocable({
+      objectFormat: "sha1" as const,
+      advertisedCapabilities: ["report-status"],
+      targetRef,
+      expectedHeadSha,
+      newHeadSha,
+    }, {});
+    revoke();
+
+    expect(() => buildGitReceivePackCasRequest(
+      proxy as RequestInput,
+    )).toThrow("Git receive-pack CAS request is invalid");
+  });
+
+  test("normalizes a revoked capability array", () => {
+    const revoked = Proxy.revocable(["report-status"], {});
+    const input = {
+      objectFormat: "sha1" as const,
+      advertisedCapabilities: revoked.proxy,
+      targetRef,
+      expectedHeadSha,
+      newHeadSha,
+    };
+    revoked.revoke();
+
+    expect(() => buildGitReceivePackCasRequest(
+      input as unknown as RequestInput,
+    )).toThrow("Git receive-pack CAS request is invalid");
+  });
 });
