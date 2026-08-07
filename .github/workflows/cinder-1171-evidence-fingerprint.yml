@@ -1,0 +1,138 @@
+name: Cinder 1171 complete evidence fingerprint repair
+
+on:
+  push:
+    branches:
+      - cinder/1153-causal-attention
+    paths:
+      - .github/workflows/cinder-1171-evidence-fingerprint.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1171-complete-evidence-fingerprint
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cinder/1153-causal-attention
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier ancestry
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "396a24a5434be1ad2a0bfe218722836a4add2c45"
+
+      - name: Bind thread identity to complete evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/orchestrator-attention-thread.ts")
+          source = path.read_text()
+
+          source = source.replace(
+              '  evidenceCount: number;\n  supportingObservationIds: readonly string[];\n  contradictionCount: number;\n  contradictingObservationIds: readonly string[];',
+              '  evidenceCount: number;\n  supportingEvidenceFingerprint: string;\n  supportingObservationIds: readonly string[];\n  contradictionCount: number;\n  contradictingEvidenceFingerprint: string;\n  contradictingObservationIds: readonly string[];',
+              1,
+          )
+
+          before = '''  const attentionClass = strongestAttentionClass(supports);
+          const payload = {
+          '''
+          after = '''  const attentionClass = strongestAttentionClass(supports);
+          const supportingEvidenceIds = supports.map((entry) => entry.observationId);
+          const contradictingEvidenceIds = contradictions.map(
+            (entry) => entry.observationId,
+          );
+          const payload = {
+          '''
+          if source.count(before) != 1:
+              raise SystemExit("attention payload anchor changed")
+          source = source.replace(before, after, 1)
+
+          source = source.replace(
+              '''    evidenceCount: supports.length,
+              supportingObservationIds: compactEvidenceIds(supports),
+              contradictionCount: contradictions.length,
+              contradictingObservationIds: compactEvidenceIds(contradictions),''',
+              '''    evidenceCount: supports.length,
+              supportingEvidenceFingerprint: evidenceFingerprint(supportingEvidenceIds),
+              supportingObservationIds: compactEvidenceIds(supportingEvidenceIds),
+              contradictionCount: contradictions.length,
+              contradictingEvidenceFingerprint: evidenceFingerprint(contradictingEvidenceIds),
+              contradictingObservationIds: compactEvidenceIds(contradictingEvidenceIds),''',
+              1,
+          )
+
+          before = '''function compactEvidenceIds(
+            observations: readonly OrchestratorActivityObservation[],
+          ): readonly string[] {
+            const ids = observations.map((entry) => entry.observationId);
+            if (ids.length <= maximumRetainedEvidenceIds) return Object.freeze(ids);
+            const half = maximumRetainedEvidenceIds / 2;
+            return Object.freeze([
+              ...ids.slice(0, half),
+              ...ids.slice(ids.length - half),
+            ]);
+          }'''
+          after = '''function evidenceFingerprint(ids: readonly string[]): string {
+            return sha256(stableJson(ids));
+          }
+
+          function compactEvidenceIds(ids: readonly string[]): readonly string[] {
+            if (ids.length <= maximumRetainedEvidenceIds) return Object.freeze([...ids]);
+            const half = maximumRetainedEvidenceIds / 2;
+            return Object.freeze([
+              ...ids.slice(0, half),
+              ...ids.slice(ids.length - half),
+            ]);
+          }'''
+          if source.count(before) != 1:
+              raise SystemExit("evidence compaction anchor changed")
+          source = source.replace(before, after, 1)
+          path.write_text(source)
+          PY
+
+          git diff --check
+          test "$(git diff --name-only)" = "src/orchestrator-attention-thread.ts"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate focused attention projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/orchestrator-attention-thread.test.ts test/orchestrator-attention-thread-evidence-fingerprint.test.ts
+
+      - name: Publish workflow-free repaired head
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/cinder-1171-evidence-fingerprint.yml
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/orchestrator-attention-thread.ts .github/workflows/cinder-1171-evidence-fingerprint.yml
+          git diff --cached --check
+          git commit -m "Bind attention fingerprints to complete evidence"
+          git fetch origin refs/heads/cinder/1153-causal-attention:refs/remotes/origin/cinder/1153-causal-attention
+          test "$(git rev-parse refs/remotes/origin/cinder/1153-causal-attention)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cinder/1153-causal-attention:$EXPECTED_HEAD origin HEAD:refs/heads/cinder/1153-causal-attention
