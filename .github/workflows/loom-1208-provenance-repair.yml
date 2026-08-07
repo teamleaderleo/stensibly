@@ -1,0 +1,134 @@
+name: Loom 1208 repository provenance fixture convergence
+
+on:
+  push:
+    branches:
+      - loom/1208-provenance-integration-repair
+    paths:
+      - .github/workflows/loom-1208-provenance-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: loom-1208-provenance-fixture-convergence
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: loom/1208-provenance-integration-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact repaired source parent
+        shell: bash
+        env:
+          EXPECTED_PARENT: 10fc32f511c72fc082279cd89362849f6c784b06
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git rev-parse HEAD:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
+          test "$(git rev-parse HEAD:src/github-rest-repository-write-atomic-publication.ts)" = "0cfe937f238e7018d3fbb30d99c9cab78c35c820"
+
+      - name: Import final CAS focused controls and repair atomic fixtures
+        shell: bash
+        env:
+          CAS_HEAD: dcbffc705dda3fad50acee4fae24569af2fc701e
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$CAS_HEAD"
+          test "$(git rev-parse "$CAS_HEAD":src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
+          for path in \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-node-id.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts \
+            test/github-update-refs-cas-repository-identity.test.ts; do
+            git show "$CAS_HEAD:$path" > "$path"
+          done
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          fixture_paths = [
+              "test/github-rest-repository-write-adapter-fence-parity.test.ts",
+              "test/github-rest-repository-write-adapter.test.ts",
+              "test/github-rest-repository-write-atomic-ancestor-regression.test.ts",
+              "test/github-rest-repository-write-atomic-mode-preservation.test.ts",
+              "test/github-rest-repository-write-atomic-publication.test.ts",
+              "test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts",
+              "test/github-rest-repository-write-atomic-tree-prelimit.test.ts",
+              "test/github-rest-repository-write-provider-url-spelling.test.ts",
+          ]
+          changed = 0
+          for name in fixture_paths:
+              p = Path(name)
+              before = p.read_text()
+              after = before.replace(
+                  'repository(owner: $owner, name: $name) { id }',
+                  'repository(owner: $owner, name: $name) { id nameWithOwner }',
+              )
+              after = re.sub(
+                  r'repository:\s*\{\s*id:\s*repositoryId\s*\}',
+                  'repository: { id: repositoryId, nameWithOwner: repositoryFullName }',
+                  after,
+              )
+              if after != before:
+                  changed += 1
+                  p.write_text(after)
+          if changed == 0:
+              raise SystemExit("no stale repository-node fixtures were found")
+          PY
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate provenance-safe exact CAS packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-node-id.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts \
+            test/github-update-refs-cas-repository-identity.test.ts \
+            test/github-update-refs-cas-hostile-response.test.ts \
+            test/github-rest-repository-write-adapter.test.ts \
+            test/github-rest-repository-write-adapter-fence-parity.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts \
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+
+      - name: Publish workflow-free fixture convergence child
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: loom/1208-provenance-integration-repair
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/loom-1208-provenance-repair.yml
+          git add test/github-update-refs-cas*.test.ts test/github-rest-repository-write*.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 0
+          git config user.name "Loom"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Align exact-CAS fixtures with bound repository identity"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
