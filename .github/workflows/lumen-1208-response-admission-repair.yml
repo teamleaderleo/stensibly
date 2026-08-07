@@ -1,0 +1,235 @@
+name: Lumen 1208 response admission repair
+
+on:
+  push:
+    branches:
+      - lumen/1208-response-admission-repair
+    paths:
+      - .github/workflows/lumen-1208-response-admission-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1208-response-admission-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1208-response-admission-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact parent and atomic source
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "e209e08615dd4e063e65fedd1cd9dcab12d68ebb"
+          test "$(git rev-parse HEAD:src/github-rest-repository-write-atomic-publication.ts)" = "dace75741348e3d7883fa11bc490bcc515274169"
+
+      - name: Import exact reversing controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin 701fa8691c63342c12bd7252c506a8db26723253 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae
+          git show 701fa8691c63342c12bd7252c506a8db26723253:test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts > test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts
+          git show 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae:test/github-rest-repository-write-atomic-record-ownkeys.test.ts > test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+          test "$(git hash-object test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
+          test "$(git hash-object test/github-rest-repository-write-atomic-record-ownkeys.test.ts)" = "5d3178d67dc500b75199668484fa1ea392cc2d78"
+
+      - name: Bound arrays and fixed provider records by direct descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-rest-repository-write-atomic-publication.ts")
+          source = path.read_text()
+
+          replacements = [
+            (
+              'const record = exactRecord(await input.readJson(response, operation), operation);\n  const sha = objectId(record.sha, "GitHub expected parent commit SHA");',
+              'const record = exactRecord(\n    await input.readJson(response, operation),\n    operation,\n    ["sha", "url", "tree"],\n  );\n  const sha = objectId(record.sha, "GitHub expected parent commit SHA");',
+            ),
+            (
+              'const tree = exactRecord(record.tree, "GitHub expected parent tree");\n  const treeSha = objectId(tree.sha, "GitHub expected parent tree SHA");',
+              'const tree = exactRecord(\n    record.tree,\n    "GitHub expected parent tree",\n    ["sha", "url"],\n  );\n  const treeSha = objectId(tree.sha, "GitHub expected parent tree SHA");',
+            ),
+            (
+              'const record = exactRecord(await input.readJson(response, operation), operation);\n  if (objectId(record.sha, "GitHub expected parent tree response SHA") !== parentTreeSha) {',
+              'const record = exactRecord(\n    await input.readJson(response, operation),\n    operation,\n    ["sha", "url", "truncated", "tree"],\n  );\n  if (objectId(record.sha, "GitHub expected parent tree response SHA") !== parentTreeSha) {',
+            ),
+            (
+              'const entry = exactRecord(value, "GitHub expected parent tree entry");',
+              'const entry = exactRecord(\n      value,\n      "GitHub expected parent tree entry",\n      ["path", "mode", "type", "sha", "url"],\n    );',
+            ),
+            (
+              'const record = exactRecord(await input.readJson(response, operation), operation);\n  const sha = objectId(record.sha, "GitHub repository blob SHA");',
+              'const record = exactRecord(\n    await input.readJson(response, operation),\n    operation,\n    ["sha", "url"],\n  );\n  const sha = objectId(record.sha, "GitHub repository blob SHA");',
+            ),
+            (
+              'const record = exactRecord(await input.readJson(response, operation), operation);\n  const sha = objectId(record.sha, "GitHub repository tree SHA");',
+              'const record = exactRecord(\n    await input.readJson(response, operation),\n    operation,\n    ["sha", "url", "truncated"],\n  );\n  const sha = objectId(record.sha, "GitHub repository tree SHA");',
+            ),
+            (
+              'const record = exactRecord(await input.readJson(response, operation), operation);\n  const sha = objectId(record.sha, "GitHub repository commit SHA");',
+              'const record = exactRecord(\n    await input.readJson(response, operation),\n    operation,\n    ["sha", "url", "tree", "parents"],\n  );\n  const sha = objectId(record.sha, "GitHub repository commit SHA");',
+            ),
+            (
+              'const tree = exactRecord(record.tree, "GitHub repository commit tree");',
+              'const tree = exactRecord(\n    record.tree,\n    "GitHub repository commit tree",\n    ["sha", "url"],\n  );',
+            ),
+            (
+              'const record = exactRecord(entry, "GitHub repository commit parent");',
+              'const record = exactRecord(\n        entry,\n        "GitHub repository commit parent",\n        ["sha"],\n      );',
+            ),
+          ]
+          for old, new in replacements:
+            if source.count(old) != 1:
+              raise SystemExit(f"record call anchor changed: {old[:80]}")
+            source = source.replace(old, new, 1)
+
+          array_start = source.index("function exactArray(")
+          record_start = source.index("function exactRecord(", array_start)
+          array_replacement = '''function exactArray(
+            value: unknown,
+            label: string,
+            maximumLength: number,
+          ): unknown[] {
+            if (!value || typeof value !== "object") {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            if (!isArray || prototype !== Array.prototype) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof lengthValue !== "number"
+              || !Number.isSafeInteger(lengthValue)
+              || lengthValue < 0
+              || lengthValue > maximumLength
+            ) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const result: unknown[] = [];
+            for (let index = 0; index < lengthValue; index += 1) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              } catch {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          '''
+          source = source[:array_start] + array_replacement + source[record_start:]
+
+          record_start = source.index("function exactRecord(")
+          object_id_start = source.index("function objectId(", record_start)
+          record_replacement = '''function exactRecord(
+            value: unknown,
+            label: string,
+            keys: readonly string[],
+          ): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw invalidResponse(`${label} was malformed`);
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? null : Object.getPrototypeOf(value);
+            } catch {
+              throw invalidResponse(`${label} was malformed`);
+            }
+            if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+              throw invalidResponse(`${label} was malformed`);
+            }
+            const result = Object.create(null) as Record<string, unknown>;
+            for (const key of keys) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw invalidResponse(`${label} was malformed`);
+              }
+              if (!descriptor) continue;
+              if (!descriptor.enumerable || !("value" in descriptor)) {
+                throw invalidResponse(`${label} was malformed`);
+              }
+              result[key] = descriptor.value;
+            }
+            return result;
+          }
+
+          '''
+          source = source[:record_start] + record_replacement + source[object_id_start:]
+          path.write_text(source)
+          PY
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate atomic response admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-atomic*.test.ts \
+            test/github-rest-repository-write-adapter*.test.ts \
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/github-update-refs-cas*.test.ts
+
+      - name: Publish workflow-free repair
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lumen-1208-response-admission-repair.yml
+          git add \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts \
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts | sort)"
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound atomic provider response admission"
+          git fetch origin refs/heads/lumen/1208-response-admission-repair:refs/remotes/origin/lumen/1208-response-admission-repair
+          test "$(git rev-parse refs/remotes/origin/lumen/1208-response-admission-repair)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/lumen/1208-response-admission-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1208-response-admission-repair
