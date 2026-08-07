@@ -1,4 +1,4 @@
-name: Lumen 1000 fixed-record snapshot repair
+name: Junco 1000 current-main Merkle convergence
 
 on:
   push:
@@ -11,13 +11,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: lumen-1000-record-snapshot-repair
+  group: junco-1000-current-main-merkle-convergence
   cancel-in-progress: false
 
 jobs:
   repair:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,28 +25,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact carrier ancestry and source
+      - name: Verify exact source packet and current main
         env:
-          EXPECTED_HEAD: ${{ github.sha }}
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "ebf2e3f60f1fd8e5eece3ae713c7b0ac52a5952d"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$MAIN"
+          test "$(git rev-parse HEAD:src/github-observation-merkle-checkpoint-base.ts)" = "a0bd3b0c26b53bcaacf8848c6ba8b6cc4cb74489"
           test "$(git rev-parse HEAD:src/github-observation-merkle-checkpoint.ts)" = "d903fe6a50cbfa9097ddb4fb54405ac002d5272b"
           test "$(git rev-parse HEAD:docs/github-observation-merkle-checkpoints.md)" = "bd04265be8f6f14314c2bf2ad86ad78cf3ea31fd"
           test "$(git rev-parse HEAD:test/github-observation-merkle-checkpoint.test.ts)" = "f8b516bf1f5429c8d86af013dfd8946915ac90a0"
           test "$(git rev-parse HEAD:test/github-observation-merkle-checkpoint-admission.test.ts)" = "de67224e5e2187b9e1cf2104d567d6beb40ebf2d"
+          test "$(git rev-parse "$MAIN":scripts/verify-runtime-parity.mjs)" = "f87c6a8fe6a91c81bfbc43c5eda58dcfb54b30f3"
 
-      - name: Import exact red control
+      - name: Import exact fixed-record red control
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin 029346edcfad01bfbe310d24533f7549118cf0d5
           test "$(git rev-parse FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts)" = "d494b4e242dd3235a005ef4414a6f3d4904efdc3"
-          git show FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts > test/github-observation-merkle-checkpoint-record-key-budget.test.ts
+          git show FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts \
+            > test/github-observation-merkle-checkpoint-record-key-budget.test.ts
 
-      - name: Bound fixed-record caller inspection and align controls
+      - name: Bound fixed-record admission and align controls
         shell: bash
         run: |
           set -euo pipefail
@@ -104,16 +107,16 @@ jobs:
           docs_path = Path("docs/github-observation-merkle-checkpoints.md")
           docs = docs_path.read_text()
           old = (
-              "Leaf and proof records still require exact enumerable data fields, "
-              "and accessors are rejected without getter execution."
+            "Leaf and proof records still require exact enumerable data fields, "
+            "and accessors are rejected without getter execution."
           )
           new = (
-              "Record inputs copy only their declared enumerable data fields and discard "
-              "caller decorations without key enumeration; missing fields and accessors "
-              "are rejected without getter execution."
+            "Record inputs copy only their declared enumerable data fields and discard "
+            "caller decorations without key enumeration; missing fields and accessors "
+            "are rejected without getter execution."
           )
           if docs.count(old) != 1:
-              raise SystemExit("Merkle record-admission documentation anchor moved")
+            raise SystemExit("Merkle record-admission documentation anchor moved")
           docs_path.write_text(docs.replace(old, new, 1))
 
           main_test_path = Path("test/github-observation-merkle-checkpoint.test.ts")
@@ -126,7 +129,7 @@ jobs:
             expect(decoratedCheckpoint.treeSize).toBe(1);
           '''
           if main_test.count(old) != 1:
-              raise SystemExit("decorated array expectation anchor moved")
+            raise SystemExit("decorated array expectation anchor moved")
           main_test_path.write_text(main_test.replace(old, new, 1))
 
           admission_path = Path("test/github-observation-merkle-checkpoint-admission.test.ts")
@@ -184,14 +187,14 @@ jobs:
           });
           '''
           if admission.count(old) != 1:
-              raise SystemExit("hidden checkpoint decoration expectation anchor moved")
+            raise SystemExit("hidden checkpoint decoration expectation anchor moved")
           admission_path.write_text(admission.replace(old, new, 1))
           PY
           git diff --check
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Validate exact repair
+      - name: Validate repaired Merkle packet
         shell: bash
         run: |
           set -euo pipefail
@@ -199,29 +202,144 @@ jobs:
           bun run typecheck
           bun test test/github-observation-merkle*.test.ts
 
-      - name: Publish workflow-free repair
-        env:
-          EXPECTED_HEAD: ${{ github.sha }}
+      - name: Publish workflow-free packet on current main
         shell: bash
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          CARRIER_SHA: ${{ github.sha }}
+          HEAD_REF: cicada/962-current-main-merkle-replay
         run: |
           set -euo pipefail
-          git rm .github/workflows/lumen-1000-record-snapshot-repair.yml
+          mkdir -p /tmp/merkle/docs /tmp/merkle/src /tmp/merkle/test/runtime /tmp/merkle/test
+          cp docs/github-observation-merkle-checkpoints.md /tmp/merkle/docs/
+          cp src/github-observation-merkle-checkpoint-base.ts /tmp/merkle/src/
+          cp src/github-observation-merkle-checkpoint.ts /tmp/merkle/src/
+          cp test/github-observation-merkle-checkpoint*.test.ts /tmp/merkle/test/
+          cp test/runtime/observation-merkle-vector.ts /tmp/merkle/test/runtime/
+
+          git reset --hard "$MAIN"
+          cp /tmp/merkle/docs/* docs/
+          cp /tmp/merkle/src/* src/
+          cp /tmp/merkle/test/*.test.ts test/
+          cp /tmp/merkle/test/runtime/* test/runtime/
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/verify-runtime-parity.mjs")
+          text = path.read_text()
+          run_anchor = '''  if (code !== 0) {
+            throw new Error(`${command} ${args.join(" ")} exited with code ${code}`);
+          }
+          }
+
+          async function findWorkerdBinary()'''
+          additions = '''  if (code !== 0) {
+            throw new Error(`${command} ${args.join(" ")} exited with code ${code}`);
+          }
+          }
+
+          async function capture(command, args) {
+            const child = spawn(command, args, {
+              cwd: repositoryRoot,
+              env: process.env,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            let stdout = "";
+            let stderr = "";
+            child.stdout.setEncoding("utf8");
+            child.stderr.setEncoding("utf8");
+            child.stdout.on("data", (chunk) => { stdout += chunk; });
+            child.stderr.on("data", (chunk) => { stderr += chunk; });
+            const code = await new Promise((resolveExit, rejectExit) => {
+              child.once("error", rejectExit);
+              child.once("exit", resolveExit);
+            });
+            if (code !== 0) {
+              throw new Error(`${command} ${args.join(" ")} exited with code ${code}\\n${stderr}`);
+            }
+            return stdout.trim();
+          }
+
+          async function verifyObservationMerkleParity() {
+            const temporaryDirectory = await mkdtemp(
+              join(tmpdir(), "stensibly-merkle-parity-"),
+            );
+            const bundle = join(temporaryDirectory, "observation-merkle-vector.mjs");
+            try {
+              await run("bun", [
+                "build",
+                "./test/runtime/observation-merkle-vector.ts",
+                "--target=node",
+                "--format=esm",
+                `--outfile=${bundle}`,
+              ]);
+              const bunVector = await capture("bun", [bundle]);
+              const nodeVector = await capture("node", [bundle]);
+              if (bunVector !== nodeVector) {
+                throw new Error(
+                  `Observation Merkle vectors diverged across Bun and Node\\nBun: ${bunVector}\\nNode: ${nodeVector}`,
+                );
+              }
+              console.log(bunVector);
+            } finally {
+              await rm(temporaryDirectory, { recursive: true, force: true });
+            }
+          }
+
+          async function findWorkerdBinary()'''
+          if text.count(run_anchor) != 1:
+            raise SystemExit("current-main runtime run anchor moved")
+          text = text.replace(run_anchor, additions, 1)
+
+          main_anchor = '''  await run("node", [
+            "test/runtime/run-fetch-receiver-matrix.mjs",
+            "server-runtime",
+          ]);
+
+          const workerdBinary = await findWorkerdBinary();'''
+          main_replacement = '''  await run("node", [
+            "test/runtime/run-fetch-receiver-matrix.mjs",
+            "server-runtime",
+          ]);
+
+          console.log("== Observation Merkle vector parity ==");
+          await verifyObservationMerkleParity();
+
+          const workerdBinary = await findWorkerdBinary();'''
+          if text.count(main_anchor) != 1:
+            raise SystemExit("current-main runtime main anchor moved")
+          path.write_text(text.replace(main_anchor, main_replacement, 1))
+          PY
+
           git add \
-            src/github-observation-merkle-checkpoint.ts \
             docs/github-observation-merkle-checkpoints.md \
-            test/github-observation-merkle-checkpoint-record-key-budget.test.ts \
-            test/github-observation-merkle-checkpoint.test.ts \
-            test/github-observation-merkle-checkpoint-admission.test.ts
-          git diff --cached --check
-          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
-            docs/github-observation-merkle-checkpoints.md \
+            scripts/verify-runtime-parity.mjs \
+            src/github-observation-merkle-checkpoint-base.ts \
             src/github-observation-merkle-checkpoint.ts \
             test/github-observation-merkle-checkpoint-admission.test.ts \
+            test/github-observation-merkle-checkpoint-array-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint-array-prelimit.test.ts \
+            test/github-observation-merkle-checkpoint-credentials.test.ts \
+            test/github-observation-merkle-checkpoint-import-boundary.test.ts \
+            test/github-observation-merkle-checkpoint-matrix.test.ts \
             test/github-observation-merkle-checkpoint-record-key-budget.test.ts \
-            test/github-observation-merkle-checkpoint.test.ts | sort)"
+            test/github-observation-merkle-checkpoint-retained-reference-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-route-prefix-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-item-view-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-patch-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-schemeless-route-privacy.test.ts \
+            test/github-observation-merkle-checkpoint-single-snapshot.test.ts \
+            test/github-observation-merkle-checkpoint.test.ts \
+            test/runtime/observation-merkle-vector.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 19
+          test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 0
           git config user.name "Junco"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Bound fixed-record Merkle input inspection"
-          git fetch origin refs/heads/cicada/962-current-main-merkle-replay:refs/remotes/origin/cicada/962-current-main-merkle-replay
-          test "$(git rev-parse refs/remotes/origin/cicada/962-current-main-merkle-replay)" = "$EXPECTED_HEAD"
-          git push --force-with-lease=refs/heads/cicada/962-current-main-merkle-replay:$EXPECTED_HEAD origin HEAD:refs/heads/cicada/962-current-main-merkle-replay
+          git commit -m "Replay bounded observation Merkle proofs on current main"
+
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
