@@ -33,7 +33,8 @@ jobs:
           CARRIER_BLOB: 0f37424b051a6736ade141eefc288e94971a0424
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "a9027a1314a18c14ad7e145331bf94bfece2a085"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "e28c36f095aabf96beb2a6cf63b9400d3e20e4c6"
           test "$(git rev-parse HEAD:.github/workflows/cedar-1238-observation-hardening.yml)" = "$CARRIER_BLOB"
           python3 - <<'PY'
           from pathlib import Path
@@ -41,56 +42,54 @@ jobs:
           path = Path('.github/workflows/cedar-1238-observation-hardening.yml')
           text = path.read_text()
 
-          old = '''          convex_path = Path("src/github-repository-observation-convex.ts")
-          convex = convex_path.read_text()
-
-          old = '''
-          new = '''          convex_path = Path("src/github-repository-observation-convex.ts")
-          convex = convex_path.read_text()
-          import_old = '''  admitGitHubRepositoryObservationEnvelope,
-  admitHostedGitHubRepositoryObservationInput,
-  snapshotBoundedJson,
-} from "./github-repository-observation-admission.js";'''
-          import_new = '''  admitGitHubRepositoryObservationEnvelope,
-  admitHostedGitHubRepositoryObservationInput,
-} from "./github-repository-observation-admission.js";'''
+          marker = '          convex = convex_path.read_text()\n\n'
+          insertion = """          convex = convex_path.read_text()
+          import_old = (
+              '  admitGitHubRepositoryObservationEnvelope,\\n'
+              '  admitHostedGitHubRepositoryObservationInput,\\n'
+              '  snapshotBoundedJson,\\n'
+              '} from \"./github-repository-observation-admission.js\";'
+          )
+          import_new = (
+              '  admitGitHubRepositoryObservationEnvelope,\\n'
+              '  admitHostedGitHubRepositoryObservationInput,\\n'
+              '} from \"./github-repository-observation-admission.js\";'
+          )
           if convex.count(import_old) != 1:
-              raise SystemExit(f"Convex bounded-JSON import anchor moved: {convex.count(import_old)}")
+              raise SystemExit(f\"Convex bounded-JSON import anchor moved: {convex.count(import_old)}\")
           convex = convex.replace(import_old, import_new, 1)
 
-          old = '''
-          if text.count(old) != 1:
-              raise SystemExit(f"carrier Convex setup anchor moved: {text.count(old)}")
-          text = text.replace(old, new, 1)
+"""
+          if text.count(marker) != 1:
+              raise SystemExit(f'carrier Convex setup anchor moved: {text.count(marker)}')
+          text = text.replace(marker, insertion, 1)
 
-          old = '''          convex_path.write_text(convex[:start] + replacement + convex[end:])
-'''
-          new = '''          convex = convex[:start] + replacement + convex[end:]
-          legacy_helpers = '''function hasExactKeys(
-  value: Record<string, unknown>,
-  expectedKeys: readonly string[],
-): boolean {
-  const actualKeys = Object.keys(value).sort(codeUnitCompare);
-  const expected = [...expectedKeys].sort(codeUnitCompare);
-  return actualKeys.length === expected.length
-    && actualKeys.every((key, index) => key === expected[index]);
-}
-
-function codeUnitCompare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-'''
+          old_write = '          convex_path.write_text(convex[:start] + replacement + convex[end:])\n'
+          new_write = """          convex = convex[:start] + replacement + convex[end:]
+          legacy_helpers = (
+              'function hasExactKeys(\\n'
+              '  value: Record<string, unknown>,\\n'
+              '  expectedKeys: readonly string[],\\n'
+              '): boolean {\\n'
+              '  const actualKeys = Object.keys(value).sort(codeUnitCompare);\\n'
+              '  const expected = [...expectedKeys].sort(codeUnitCompare);\\n'
+              '  return actualKeys.length === expected.length\\n'
+              '    && actualKeys.every((key, index) => key === expected[index]);\\n'
+              '}\\n\\n'
+              'function codeUnitCompare(left: string, right: string): number {\\n'
+              '  return left < right ? -1 : left > right ? 1 : 0;\\n'
+              '}\\n\\n'
+              'function isRecord(value: unknown): value is Record<string, unknown> {\\n'
+              '  return Boolean(value) && typeof value === \"object\" && !Array.isArray(value);\\n'
+              '}\\n'
+          )
           if convex.count(legacy_helpers) != 1:
-              raise SystemExit(f"legacy Convex helper anchor moved: {convex.count(legacy_helpers)}")
-          convex_path.write_text(convex.replace(legacy_helpers, "", 1))
-'''
-          if text.count(old) != 1:
-              raise SystemExit(f"carrier Convex write anchor moved: {text.count(old)}")
-          path.write_text(text.replace(old, new, 1))
+              raise SystemExit(f\"legacy Convex helper anchor moved: {convex.count(legacy_helpers)}\")
+          convex_path.write_text(convex.replace(legacy_helpers, \"\", 1))
+"""
+          if text.count(old_write) != 1:
+              raise SystemExit(f'carrier Convex write anchor moved: {text.count(old_write)}')
+          path.write_text(text.replace(old_write, new_write, 1))
           PY
           git rm .github/workflows/cedar-1245-carrier-cleanup-bootstrap.yml
           git add .github/workflows/cedar-1238-observation-hardening.yml
