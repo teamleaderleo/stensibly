@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact current carrier
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          CARRIER_PARENT: 92e961304b9f12ccc0bb087731a2d840057d48a7
+          CARRIER_PARENT: f904b5eca9ed7c17b7e87e4cbc5fd7218aeb9729
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
@@ -38,7 +38,7 @@ jobs:
           test "$(git rev-parse HEAD^)" = "$CARRIER_PARENT"
           test "$(git rev-parse HEAD^:src/github-rest-repository-write-atomic-publication.ts)" = "0cfe937f238e7018d3fbb30d99c9cab78c35c820"
           test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
-          test -f .github/workflows/lark-1208-final-cas-convergence.yml
+          test ! -f .github/workflows/lark-1208-final-cas-convergence.yml
           test ! -f .github/workflows/oriole-1208-required-provider-fields.yml
           test ! -f .github/workflows/vireo-1208-cas-provenance-required-fields.yml
           git fetch --no-tags origin "$CAS_REPAIR" "$REQUIRED_FIELDS_CONTROL"
@@ -188,9 +188,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm \
-            .github/workflows/lark-1208-final-cas-convergence.yml \
-            .github/workflows/lumen-1208-final-convergence.yml
+          git rm .github/workflows/lumen-1208-final-convergence.yml
           git add \
             src/github-rest-repository-write-atomic-publication.ts \
             src/github-update-refs-cas.ts \
