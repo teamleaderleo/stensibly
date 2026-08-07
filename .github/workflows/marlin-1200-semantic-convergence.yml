@@ -29,7 +29,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          CARRIER_PARENT: f17e727a410ef8d7cc070c2c6f5f9f81b5e12b6a
+          CARRIER_PARENT: 58a8a29ce07f5772456884af09fa0ddc6753e98b
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
@@ -101,6 +101,21 @@ jobs:
   "effectPolicyChanged",
   "projectResolutionChanged",''',
               "category registry",
+          )
+          replace_once(
+              '''  const currentRegistry = compileMcpCapabilityPolicyRegistry(detached.currentPolicies);
+  const candidateRegistry = compileMcpCapabilityPolicyRegistry(detached.candidatePolicies);
+  const currentByTool = new Map(''',
+              '''  const currentRegistry = compileMcpCapabilityPolicyRegistry(detached.currentPolicies);
+  const candidateRegistry = compileMcpCapabilityPolicyRegistry(detached.candidatePolicies);
+  if (
+    currentRevision === candidateRevision
+    && currentRegistry.fingerprint !== candidateRegistry.fingerprint
+  ) {
+    throw new TypeError("Capability policy revision conflicts with compiled policy content");
+  }
+  const currentByTool = new Map(''',
+              "revision fingerprint coherence",
           )
 
           old_counts = '''  const omittedCounts = Object.fromEntries(
@@ -305,7 +320,28 @@ jobs:
   });'''
           if tests.count(old_test) != 1:
               raise SystemExit("unknown evidence test anchor moved")
-          test_path.write_text(tests.replace(old_test, new_test, 1))
+          tests = tests.replace(old_test, new_test, 1)
+
+          revision_test_anchor = '''  test("binds simulation to exact policy revisions and accepted time", () => {'''
+          revision_test = '''  test("rejects one exact revision naming contradictory compiled policy content", () => {
+    const value = simulationInput(
+      [readPolicy("survey_workspace")],
+      [readPolicy("survey_workspace", "hidden")],
+      [subject("subject:read", "survey_workspace")],
+    );
+    value.currentPolicyRevision = "policy:same";
+    value.candidatePolicyRevision = "policy:same";
+
+    expect(() => simulateMcpCapabilityPolicyChange(value)).toThrow(
+      "Capability policy revision conflicts with compiled policy content",
+    );
+  });
+
+'''
+          if tests.count(revision_test_anchor) != 1:
+              raise SystemExit("revision coherence test anchor moved")
+          tests = tests.replace(revision_test_anchor, revision_test + revision_test_anchor, 1)
+          test_path.write_text(tests)
           PY
 
           git diff --check
