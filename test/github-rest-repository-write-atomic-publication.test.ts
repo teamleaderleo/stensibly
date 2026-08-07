@@ -236,7 +236,11 @@ function adapter(
       }
       if (method === "POST" && url === graphqlUrl()) {
         if (isRepositoryNodeQuery(body)) {
-          return Response.json({ data: { repository: { id: repositoryId } } });
+          return Response.json({
+            data: {
+              repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+            },
+          });
         }
         if (isUpdateRefsMutation(body)) {
           expect(body).toEqual(expectedUpdateRefsBody());
@@ -296,7 +300,7 @@ function isUpdateRefsMutation(body: unknown): boolean {
 }
 function repositoryNodeQueryBody(): unknown {
   return {
-    query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }",
+    query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id nameWithOwner } }",
     variables: { owner: "teamleaderleo", name: "stensibly" },
   };
 }
