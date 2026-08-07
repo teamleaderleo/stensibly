@@ -4,6 +4,7 @@ import {
 } from "../src/github-rest-repository-write-adapter.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
+const repositoryId = "R_kgDOProviderUrlSpelling";
 const targetRef = "main";
 const parentSha = "1".repeat(40);
 const commitSha = "2".repeat(40);
@@ -72,6 +73,9 @@ async function writeResult(providerCommitUrl: string) {
   const adapter = adapterFor(async (input, init) => {
     const method = init?.method ?? "GET";
     const url = String(input);
+    const body = init?.body === undefined
+      ? null
+      : JSON.parse(String(init.body)) as unknown;
 
     if (method === "GET" && url === commitUrl(parentSha)) {
       return Response.json({
@@ -91,6 +95,23 @@ async function writeResult(providerCommitUrl: string) {
         tree: [],
         truncated: false,
       });
+    }
+    if (method === "POST" && url === graphqlUrl()) {
+      if (isRepositoryNodeQuery(body)) {
+        return Response.json({ data: { repository: { id: repositoryId } } });
+      }
+      if (isUpdateRefsMutation(body)) {
+        return Response.json({
+          data: {
+            updateRefs: {
+              clientMutationId: `stensibly-write-${commitSha.slice(0, 16)}`,
+            },
+          },
+        }, {
+          status: 200,
+          headers: { "x-github-request-id": "REQ-PROVIDER-URL" },
+        });
+      }
     }
     if (method === "POST" && url === blobCollectionUrl()) {
       return Response.json({
@@ -117,17 +138,9 @@ async function writeResult(providerCommitUrl: string) {
         url: providerCommitUrl,
       }, { status: 201 });
     }
-    if (method === "PATCH" && url === updateRefUrl()) {
-      return Response.json({
-        ref: `refs/heads/${targetRef}`,
-        object: {
-          type: "commit",
-          sha: commitSha,
-          url: canonicalCommitUrl,
-        },
-      }, {
-        status: 200,
-        headers: { "x-github-request-id": "REQ-PROVIDER-URL" },
+    if (method === "PATCH") {
+      return Response.json({ message: "REST ref PATCH is forbidden" }, {
+        status: 500,
       });
     }
     return Response.json({ message: "unexpected atomic request" }, {
@@ -149,6 +162,20 @@ async function writeResult(providerCommitUrl: string) {
   });
 }
 
+function isRepositoryNodeQuery(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith(
+      "query StensiblyRepositoryNodeId",
+    );
+}
+
+function isUpdateRefsMutation(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith(
+      "mutation StensiblyUpdateRefs",
+    );
+}
+
 function adapterFor(
   fetchImplementation: FetchImplementation,
 ): GitHubRestRepositoryWriteAdapter {
@@ -167,6 +194,10 @@ function adapterFor(
 
 function repositoryUrl(): string {
   return `https://api.github.com/repos/${repositoryFullName}`;
+}
+
+function graphqlUrl(): string {
+  return "https://api.github.com/graphql";
 }
 
 function commitUrl(sha: string): string {
@@ -195,8 +226,4 @@ function treeUrl(sha: string): string {
 
 function recursiveTreeUrl(sha: string): string {
   return `${treeUrl(sha)}?recursive=1`;
-}
-
-function updateRefUrl(): string {
-  return `${repositoryUrl()}/git/refs/heads/${targetRef}`;
 }
