@@ -29,7 +29,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          STALE_CARRIER: ecba873543a49d31aaef64d4be28a09a2ca719e8
+          STALE_CARRIER: 98506fce0b8d9f6a647d647bb8f21c903df125ae
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
@@ -43,6 +43,7 @@ jobs:
           SOURCE_SHA: 5f44f1ff1f4525f2ff2128cd89b388b2c0e9c9c4
           CREDENTIAL_TEST_SHA: d6a0dc415c44fce6bc50276ea8dd1a9ec5fc2b70
           ROUTE_TEST_SHA: 6f0e1ec0a04bb33fe128745ab7ca718c9f4e03e7
+          REVOKED_TEST_SHA: 2ff1f6b6efd9916d85431c8e920d90a9a6de689c
           CURRENT_MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
         run: |
           set -euo pipefail
@@ -58,6 +59,7 @@ jobs:
             test/github-outbound-text-preflight-final-credential-policy.test.ts
             test/github-outbound-text-preflight-import-boundary.test.ts
             test/github-outbound-text-preflight-percent-encoded-continuation.test.ts
+            test/github-outbound-text-preflight-revoked-input.test.ts
             test/github-outbound-text-preflight-single-snapshot.test.ts
             test/github-outbound-text-preflight-unicode-symbol-boundary.test.ts
             test/github-outbound-text-preflight-url-normalization-bypass.test.ts
@@ -68,6 +70,7 @@ jobs:
             "${SOURCE_SHA}" \
             "${CREDENTIAL_TEST_SHA}" \
             "${ROUTE_TEST_SHA}" \
+            "${REVOKED_TEST_SHA}" \
             main
           test "$(git rev-parse origin/main)" = "${CURRENT_MAIN}"
 
@@ -89,6 +92,9 @@ jobs:
             > test/github-outbound-text-preflight-final-credential-policy.test.ts
           git show "${ROUTE_TEST_SHA}":test/github-outbound-text-preflight-encoded-invalid-identity.test.ts \
             > test/github-outbound-text-preflight-encoded-invalid-identity.test.ts
+          test "$(git rev-parse ${REVOKED_TEST_SHA}:test/github-outbound-text-preflight-revoked-input.test.ts)" = "dc17670a68f2505e37026bfaae567039ae47f38e"
+          git show "${REVOKED_TEST_SHA}":test/github-outbound-text-preflight-revoked-input.test.ts \
+            > test/github-outbound-text-preflight-revoked-input.test.ts
 
           python3 - <<'PY'
           from pathlib import Path
@@ -277,6 +283,110 @@ jobs:
               parse_prefix + 'function parseNormalizedRoute(pathname: string): Readonly<{\n',
               'route prefix parser',
           )
+
+          record_start = wrapper.index('function snapshotExactRecord')
+          record_end = wrapper.index('function snapshotDenseDataArray', record_start)
+          record_repair = '''function snapshotExactRecord<const K extends readonly string[]>(
+  value: unknown,
+  keys: K,
+  label: string,
+): DataRecord {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be an object`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? null : Object.getPrototypeOf(value);
+    descriptors = isArray ? {} : Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  if (isArray) throw new TypeError(`${label} must be an object`);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must use a plain prototype`);
+  }
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (ownKeys.some((key) =>
+    typeof key !== "string" || !(keys as readonly string[]).includes(key)
+  )) {
+    throw new TypeError(`${label} contains unknown fields`);
+  }
+  if (ownKeys.length !== keys.length) {
+    throw new TypeError(`${label} is missing required fields`);
+  }
+  const output = Object.create(null) as DataRecord;
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} fields must be enumerable data properties`);
+    }
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
+'''
+          wrapper = wrapper[:record_start] + record_repair + wrapper[record_end:]
+
+          array_start = wrapper.index('function snapshotDenseDataArray')
+          array_end = wrapper.index('function detectNormalizedDirectReferences', array_start)
+          array_repair = '''function snapshotDenseDataArray(
+  value: unknown,
+  label: string,
+  maximum: number,
+): readonly unknown[] {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be an array`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  if (!isArray) throw new TypeError(`${label} must be an array`);
+  if (prototype !== Array.prototype) {
+    throw new TypeError(`${label} must use Array.prototype`);
+  }
+  if (
+    !lengthDescriptor
+    || !("value" in lengthDescriptor)
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0
+  ) {
+    throw new TypeError(`${label} must contain only dense data entries`);
+  }
+  const length = lengthDescriptor.value as number;
+  if (length > maximum) {
+    throw new RangeError(`${label} accepts at most ${maximum} entries`);
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} must contain only dense data entries`);
+    }
+    entries.push(descriptor.value);
+  }
+  return Object.freeze(entries);
+}
+
+'''
+          wrapper = wrapper[:array_start] + array_repair + wrapper[array_end:]
           wrapper_path.write_text(wrapper)
 
           test_path = Path('test/github-outbound-text-preflight.test.ts')
