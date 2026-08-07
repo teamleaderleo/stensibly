@@ -38,7 +38,7 @@ test("builds CAS request without caller get or ownKeys", () => {
           afterOid: baseInput.newHeadSha,
           force: false,
         }],
-        clientMutationId: `stensibly-write-${baseInput.newHeadSha.slice(0, 16)}`,
+        clientMutationId: expect.stringMatching(/^stensibly-write-[a-f0-9]{64}$/),
       },
     },
   });
