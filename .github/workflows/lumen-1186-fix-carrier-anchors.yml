@@ -30,33 +30,42 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "668c348537cbd6c335dd9c7ca4cae963db8966b7"
+          test "$(git rev-parse HEAD^)" = "849b63e01eabdfb36f94a77a204fc9a96282648c"
           test "$(git rev-parse HEAD:.github/workflows/lumen-1163-updaterefs-cas-repair.yml)" = "da5a36937752762b3707c18319f3d5c80f5d6d94"
 
-      - name: Keep GraphQL errors generic and bound tree inspection
+      - name: Keep GraphQL errors generic and finalize bounded tree inspection
+        env:
+          FIX_CARRIER_HEAD: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import os
           from pathlib import Path
 
           path = Path(".github/workflows/lumen-1163-updaterefs-cas-repair.yml")
           text = path.read_text()
+
+          old_parent = 'test "$(git rev-parse HEAD^)" = "9cc1db62dfb93037c9d118dcbf3032a7763489dc"'
+          new_parent = f'test "$(git rev-parse HEAD^)" = "{os.environ["FIX_CARRIER_HEAD"]}"'
+          if text.count(old_parent) != 1:
+              raise SystemExit("CAS carrier parent anchor moved")
+          text = text.replace(old_parent, new_parent, 1)
 
           generic = '''            if (envelope.errors !== undefined) {
               throw new Error("GitHub could not publish repository ref");
             }
 '''
           if text.count(generic) != 1:
-            raise SystemExit("generic GraphQL execution-error boundary moved")
+              raise SystemExit("generic GraphQL execution-error boundary moved")
 
           stale_fixture = 'errors: [{ type: "STALE_REF" }],'
           generic_fixture = (
-            'errors: [{ message: "provider rejected the exact ref update", '
-            'type: "REF_UPDATE_REJECTED" }],'
+              'errors: [{ message: "provider rejected the exact ref update", '
+              'type: "REF_UPDATE_REJECTED" }],'
           )
           if text.count(stale_fixture) != 1:
-            raise SystemExit("GraphQL failure fixture anchor moved")
+              raise SystemExit("GraphQL failure fixture anchor moved")
           text = text.replace(stale_fixture, generic_fixture, 1)
 
           old_array = """          exact_array = '''function exactArray(
@@ -155,17 +164,55 @@ jobs:
 
           '''"""
           if text.count(old_array) != 1:
-            raise SystemExit("bounded tree array template anchor moved")
+              raise SystemExit("bounded tree array template anchor moved")
           text = text.replace(old_array, new_array, 1)
+
+          old_imports = '''          git fetch origin 0e2a20051cf6cbf3567338677281e5656244480f 44afb68e2cc795a5bb41cfd76a40ba4183c48092
+          test "$(git rev-parse 0e2a20051cf6cbf3567338677281e5656244480f:test/github-rest-repository-write-atomic-ancestor-regression.test.ts)" = "6e394668c3eec83f2ea61239edbe34ae19de0977"
+          test "$(git rev-parse 44afb68e2cc795a5bb41cfd76a40ba4183c48092:test/github-rest-repository-write-atomic-tree-prelimit.test.ts)" = "312623c57a4e15bf9a0a585baebb4e5df0690bde"
+          git show 0e2a20051cf6cbf3567338677281e5656244480f:test/github-rest-repository-write-atomic-ancestor-regression.test.ts > test/github-rest-repository-write-atomic-ancestor-regression.test.ts
+          git show 44afb68e2cc795a5bb41cfd76a40ba4183c48092:test/github-rest-repository-write-atomic-tree-prelimit.test.ts > test/github-rest-repository-write-atomic-tree-prelimit.test.ts'''
+          new_imports = '''          git fetch origin 0e2a20051cf6cbf3567338677281e5656244480f 44afb68e2cc795a5bb41cfd76a40ba4183c48092 701fa8691c63342c12bd7252c506a8db26723253
+          test "$(git rev-parse 0e2a20051cf6cbf3567338677281e5656244480f:test/github-rest-repository-write-atomic-ancestor-regression.test.ts)" = "6e394668c3eec83f2ea61239edbe34ae19de0977"
+          test "$(git rev-parse 44afb68e2cc795a5bb41cfd76a40ba4183c48092:test/github-rest-repository-write-atomic-tree-prelimit.test.ts)" = "312623c57a4e15bf9a0a585baebb4e5df0690bde"
+          test "$(git rev-parse 701fa8691c63342c12bd7252c506a8db26723253:test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
+          git show 0e2a20051cf6cbf3567338677281e5656244480f:test/github-rest-repository-write-atomic-ancestor-regression.test.ts > test/github-rest-repository-write-atomic-ancestor-regression.test.ts
+          git show 44afb68e2cc795a5bb41cfd76a40ba4183c48092:test/github-rest-repository-write-atomic-tree-prelimit.test.ts > test/github-rest-repository-write-atomic-tree-prelimit.test.ts
+          git show 701fa8691c63342c12bd7252c506a8db26723253:test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts > test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts'''
+          if text.count(old_imports) != 1:
+              raise SystemExit("red-control import block moved")
+          text = text.replace(old_imports, new_imports, 1)
+
+          old_validation = '''            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \\
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts \\
+            test/github-rest-repository-write-adapter.test.ts'''
+          new_validation = '''            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \\
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts \\
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \\
+            test/github-rest-repository-write-adapter.test.ts'''
+          if text.count(old_validation) != 1:
+              raise SystemExit("focused validation block moved")
+          text = text.replace(old_validation, new_validation, 1)
+
+          old_publish = '''            test/github-rest-repository-write-atomic-publication.test.ts \\
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \\
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts'''
+          new_publish = '''            test/github-rest-repository-write-atomic-publication.test.ts \\
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \\
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts \\
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts'''
+          if text.count(old_publish) != 2:
+              raise SystemExit(f"publish fence anchors moved: {text.count(old_publish)}")
+          text = text.replace(old_publish, new_publish)
 
           path.write_text(text)
           PY
           git rm .github/workflows/lumen-1186-fix-carrier-anchors.yml
           git add .github/workflows/lumen-1163-updaterefs-cas-repair.yml
           git diff --cached --check
-          git config user.name "Junco"
+          git config user.name "Lark"
           git config user.email "actions@users.noreply.github.com"
           git commit -m "Finalize bounded updateRefs carrier"
           git fetch origin refs/heads/lumen/1163-updaterefs-cas-repair:refs/remotes/origin/lumen/1163-updaterefs-cas-repair
-          test "$(git rev-parse refs/remotes/origin/lumen/1163-updaterefs-cas-repair)" = "$EXPECTED_HEAD"
-          git push --force-with-lease=refs/heads/lumen/1163-updaterefs-cas-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1163-updaterefs-cas-repair
+          test "$(git rev-parse refs/remotes/origin/lumen/1163-updaterefs-cas-repair)" = "$FIX_CARRIER_HEAD"
+          git push --force-with-lease=refs/heads/lumen/1163-updaterefs-cas-repair:$FIX_CARRIER_HEAD origin HEAD:refs/heads/lumen/1163-updaterefs-cas-repair
