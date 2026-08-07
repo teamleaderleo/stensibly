@@ -87,7 +87,7 @@ function snapshotHostBindingInput(
     budget,
   );
   const observationDescriptor = optionalDataDescriptor(record, "classObservations");
-  return observationDescriptor
+  return observationDescriptor && observationDescriptor.value !== undefined
     ? {
         toolSurface,
         classObservations: snapshotClassObservations(
@@ -362,9 +362,7 @@ function optionalDataDescriptor(
     throw inspectionError();
   }
   if (!descriptor) return undefined;
-  if (!("value" in descriptor) || descriptor.enumerable !== true) {
-    throw inspectionError();
-  }
+  if (!("value" in descriptor) || !descriptor.enumerable) throw inspectionError();
   return descriptor as PropertyDescriptor & { value: unknown };
 }
 
@@ -374,7 +372,7 @@ function inspectionError(): RangeError {
   );
 }
 
-function isInspectionError(error: unknown): error is RangeError {
+function isInspectionError(error: unknown): boolean {
   return error instanceof RangeError
     && error.message === "Effective tool-surface host-binding input inspection failed";
 }
