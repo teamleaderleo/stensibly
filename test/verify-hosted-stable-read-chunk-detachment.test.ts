@@ -54,4 +54,40 @@ describe("hosted stable-read chunk detachment", () => {
       detail: "MCP survey_workspace returned invalid JSON",
     });
   });
+
+  test("does not wait for stalled body cleanup after a fixed rejection", async () => {
+    let markCancelStarted!: () => void;
+    const cancelStarted = new Promise<void>((resolve) => {
+      markCancelStarted = resolve;
+    });
+    const neverSettles = new Promise<void>(() => {});
+    const fetchImpl: FetchLike = async () =>
+      new Response(new ReadableStream<Uint8Array>({
+        cancel() {
+          markCancelStarted();
+          return neverSettles;
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-length": "01",
+          "x-request-id": "stable-read-cleanup-stall",
+        },
+      });
+
+    const verification = verifyHostedStableRead(options, fetchImpl);
+    await cancelStarted;
+    const stillPending = Symbol("still-pending");
+    const result = await Promise.race([
+      verification,
+      Promise.resolve(stillPending),
+    ]);
+
+    expect(result).not.toBe(stillPending);
+    expect(result).toEqual({
+      name: "remote MCP stable read",
+      ok: false,
+      detail: "MCP survey_workspace returned an invalid Content-Length",
+    });
+  });
 });
