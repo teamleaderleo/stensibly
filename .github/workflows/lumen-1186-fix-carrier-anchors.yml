@@ -1,0 +1,91 @@
+name: Lumen 1186 fix carrier anchors
+
+on:
+  push:
+    branches:
+      - lumen/1163-updaterefs-cas-repair
+    paths:
+      - .github/workflows/lumen-1186-fix-carrier-anchors.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1186-fix-carrier-anchors
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1163-updaterefs-cas-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact live carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "88351a727c59a5474f33315ad9224bdc4b9b0f03"
+          test "$(git rev-parse HEAD:.github/workflows/lumen-1163-updaterefs-cas-repair.yml)" = "da5a36937752762b3707c18319f3d5c80f5d6d94"
+
+      - name: Correct exact Python source anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/lumen-1163-updaterefs-cas-repair.yml")
+          text = path.read_text()
+          replacements = [
+            (
+              '''        publicationResponse() {
+                  publicationCalls += 1;
+                  return Response.json({ message: "Reference update failed" }, {
+                    status: 422,
+                  });
+                },
+          ''',
+              '''        publicationResponse() {
+          publicationCalls += 1;
+          return Response.json({ message: "Reference update failed" }, {
+            status: 422,
+          });
+        },
+''',
+            ),
+            (
+              '''        publicationResponse() {
+                  publicationCalls += 1;
+                  return refResponse();
+                },
+          ''',
+              '''        publicationResponse() {
+          publicationCalls += 1;
+          return refResponse();
+        },
+''',
+            ),
+          ]
+          for old, new in replacements:
+            if text.count(old) != 1:
+              raise SystemExit("expected carrier callback anchor moved")
+            text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          git rm .github/workflows/lumen-1186-fix-carrier-anchors.yml
+          git diff --cached --check
+          git add .github/workflows/lumen-1163-updaterefs-cas-repair.yml
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Fix atomic CAS carrier source anchors"
+          git fetch origin refs/heads/lumen/1163-updaterefs-cas-repair:refs/remotes/origin/lumen/1163-updaterefs-cas-repair
+          test "$(git rev-parse refs/remotes/origin/lumen/1163-updaterefs-cas-repair)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/lumen/1163-updaterefs-cas-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1163-updaterefs-cas-repair
