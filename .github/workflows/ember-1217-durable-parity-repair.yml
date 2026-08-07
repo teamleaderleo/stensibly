@@ -1,0 +1,684 @@
+name: Ember 1217 durable activity parity repair
+
+on:
+  push:
+    branches:
+      - cedar/1149-durable-activity-ingestion
+    paths:
+      - .github/workflows/ember-1217-durable-parity-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ember-1217-durable-parity-repair
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1149-durable-activity-ingestion
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier lease
+        shell: bash
+        env:
+          SOURCE_HEAD: a3baa13a9e02160567834ba9a8f554e48ace2e72
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$SOURCE_HEAD"
+          test "$(git rev-parse ${SOURCE_HEAD}:.github/workflows/cedar-1149-durable-activity-store.yml)" = "c1b654da752513cc8729588b40e91e5f7c5edce7"
+          test "$(git rev-parse ${SOURCE_HEAD}:.github/workflows/cinder-1217-convex-response-boundary.yml)" = "7f00edb0778912974901641dca663a2510424fee"
+          test "$(git rev-parse ${MAIN}:src/orchestrator-activity-ingestion.ts)" = "41108c1ed41ffc60fcc5bbe1fb42a42334f9963b"
+          test "$(git rev-parse ${MAIN}:test/orchestrator-activity-ingestion.test.ts)" = "b58a614e08f5ddf99feee08e3108cf2c7bbb9600"
+          test "$(git rev-parse ${MAIN}:convex/schema.ts)" = "c05c38c9f019dd982cf18fdef08280cf3e7b51b3"
+
+      - name: Repair Cedar source builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/cedar-1149-durable-activity-store.yml')
+          text = path.read_text()
+
+          def replace_once(value: str, old: str, new: str, label: str) -> str:
+              count = value.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one anchor, found {count}")
+              return value.replace(old, new, 1)
+
+          # Preserve merged read-side credential admission in the refactored in-memory store.
+          start = text.index("          cat > src/orchestrator-activity-ingestion.ts <<'EOF'")
+          end = text.index("\n          EOF", start)
+          section = text[start:end]
+          section = replace_once(
+              section,
+              '          import { stableJson } from "./canonical-json.js";\n',
+              '          import { stableJson } from "./canonical-json.js";\n'
+              '          import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";\n',
+              'in-memory credential import',
+          )
+          section = replace_once(
+              section,
+              '''          function scopeSlug(value: unknown, label: string): string {
+            if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }
+
+          function identifier(value: unknown, label: string): string {
+            if (typeof value !== "string" || !identifierPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }''',
+              '''          function scopeSlug(value: unknown, label: string): string {
+            if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+            return value;
+          }
+
+          function identifier(value: unknown, label: string): string {
+            if (typeof value !== "string" || !identifierPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+            return value;
+          }''',
+              'in-memory read identity admission',
+          )
+          text = text[:start] + section + text[end:]
+
+          # Bound untrusted Convex adapter results and preserve credential-safe lookup identity.
+          start = text.index("          cat > src/orchestrator-activity-convex-store.ts <<'EOF'")
+          end = text.index("\n          EOF", start)
+          section = text[start:end]
+          section = replace_once(
+              section,
+              '          import { makeFunctionReference } from "convex/server";\n',
+              '          import { makeFunctionReference } from "convex/server";\n'
+              '          import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";\n',
+              'adapter credential import',
+          )
+          section = replace_once(
+              section,
+              '''              const raw = await this.client.query(getReceiptRef, this.args({
+                project: exactSlug(project, "Project"),
+                deliveryId: exactText(deliveryId, "Delivery ID", 240),
+              }));
+              if (raw === null) return null;
+              const receipt = parseReceipt(raw);
+              if (
+                receipt.workspace !== exactWorkspace
+                || receipt.project !== project
+                || receipt.deliveryId !== deliveryId
+              ) {''',
+              '''              const exactProject = exactSlug(project, "Project");
+              const exactDeliveryId = exactIdentifier(deliveryId, "Delivery ID");
+              const raw = await this.client.query(getReceiptRef, this.args({
+                project: exactProject,
+                deliveryId: exactDeliveryId,
+              }));
+              if (raw === null) return null;
+              const receipt = parseReceipt(raw);
+              if (
+                receipt.workspace !== exactWorkspace
+                || receipt.project !== exactProject
+                || receipt.deliveryId !== exactDeliveryId
+              ) {''',
+              'adapter receipt lookup admission',
+          )
+          section = replace_once(
+              section,
+              '''              if (!Array.isArray(raw) || raw.length > 4_096) {
+                throw new OrchestratorActivityStorageError();
+              }
+              const observations = raw.map(parseObservation);''',
+              '''              const values = exactDataArray(raw, 4_096);
+              const observations = values.map(parseObservation);''',
+              'adapter list response admission',
+          )
+          record_start = section.index('          function exactDataRecord(\n')
+          slug_start = section.index('          function exactSlug(', record_start)
+          response_helpers = '''          function exactDataArray(
+            value: unknown,
+            maximum: number,
+          ): unknown[] {
+            if (!value || typeof value !== "object") {
+              throw new OrchestratorActivityStorageError();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+            const length = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              !isArray
+              || prototype !== Array.prototype
+              || !lengthDescriptor
+              || lengthDescriptor.enumerable
+              || typeof length !== "number"
+              || !Number.isSafeInteger(length)
+              || length < 0
+              || length > maximum
+            ) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: unknown[] = [];
+            for (let index = 0; index < length; index += 1) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              } catch {
+                throw new OrchestratorActivityStorageError();
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          function exactDataRecord(
+            value: unknown,
+            keys: readonly string[],
+          ): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw new OrchestratorActivityStorageError();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? null : Object.getPrototypeOf(value);
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+            if (isArray || prototype !== Object.prototype) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: Record<string, unknown> = {};
+            for (const key of keys) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new OrchestratorActivityStorageError();
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result[key] = descriptor.value;
+            }
+            return result;
+          }
+
+'''
+          section = section[:record_start] + response_helpers + section[slug_start:]
+          section = replace_once(
+              section,
+              '''          function exactSlug(value: string, label: string): string {
+            const result = exactText(value, label, 80);
+            if (result !== result.toLowerCase() || !/^[a-z0-9][a-z0-9-_]*$/.test(result)) {
+              throw new RangeError(`${label} must be a lowercase slug`);
+            }
+            return result;
+          }
+
+          function exactText(value: string, label: string, maximum: number): string {
+            if (
+              typeof value !== "string"
+              || value.length === 0
+              || value.length > maximum
+              || value.trim() !== value
+            ) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return value;
+          }''',
+              '''          const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,239}$/u;
+
+          function exactSlug(value: unknown, label: string): string {
+            const result = exactText(value, label, 80);
+            if (result !== result.toLowerCase() || !/^[a-z0-9][a-z0-9-_]*$/.test(result)) {
+              throw new RangeError(`${label} must be a lowercase slug`);
+            }
+            if (containsRealisticRetainedCredential(result)) {
+              throw new RangeError(`${label} cannot contain credential material`);
+            }
+            return result;
+          }
+
+          function exactIdentifier(value: unknown, label: string): string {
+            const result = exactText(value, label, 240);
+            if (!identifierPattern.test(result)) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(result)) {
+              throw new RangeError(`${label} cannot contain credential material`);
+            }
+            return result;
+          }
+
+          function exactText(value: unknown, label: string, maximum: number): string {
+            if (
+              typeof value !== "string"
+              || value.length === 0
+              || value.length > maximum
+              || value.trim() !== value
+            ) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return value;
+          }''',
+              'adapter identity helpers',
+          )
+          text = text[:start] + section + text[end:]
+
+          # Persist first-ingestion order, not provider time, as the durable list order.
+          text = replace_once(
+              text,
+              '''    observationJson: v.string(),
+    observedAt: v.number(),
+  })
+    .index("by_project_observation", ["projectId", "observationId"])
+    .index("by_project_source", ["projectId", "sourceClass", "sourceId"])
+    .index("by_project_observed", ["projectId", "observedAt", "observationId"]),''',
+              '''    observationJson: v.string(),
+    observedAt: v.number(),
+    appendOrder: v.number(),
+  })
+    .index("by_project_observation", ["projectId", "observationId"])
+    .index("by_project_source", ["projectId", "sourceClass", "sourceId"])
+    .index("by_project_append", ["projectId", "appendOrder", "observationId"]),''',
+              'schema append-order index',
+          )
+
+          start = text.index("          cat > convex/orchestratorActivity.ts <<'EOF'")
+          end = text.index("\n          EOF", start)
+          section = text[start:end]
+          section = replace_once(
+              section,
+              '          import { v } from "convex/values";\n',
+              '          import { v } from "convex/values";\n'
+              '          import { containsRealisticRetainedCredential } from "../src/github-retained-credential-policy";\n',
+              'convex credential import',
+          )
+          section = replace_once(
+              section,
+              '''              if (observationAppended) {
+                await ctx.db.insert("orchestratorActivityObservations", {
+                  workspaceId: scope.workspaceId,
+                  projectId: scope.projectId,
+                  observationId: canonicalObservation.observationId,
+                  observationFingerprint: canonicalObservation.observationFingerprint,
+                  sourceClass: canonicalObservation.sourceClass,
+                  sourceId: canonicalObservation.sourceId,
+                  observationJson: canonicalOrchestratorActivityObservationJson(
+                    canonicalObservation,
+                  ),
+                  observedAt: Date.parse(canonicalObservation.observedAt),
+                });
+              }''',
+              '''              if (observationAppended) {
+                const previousObservation = await ctx.db
+                  .query("orchestratorActivityObservations")
+                  .withIndex("by_project_append", (q) =>
+                    q.eq("projectId", scope.projectId)
+                  )
+                  .order("desc")
+                  .first();
+                const previousAppendOrder = previousObservation?.appendOrder ?? 0;
+                if (
+                  !Number.isSafeInteger(previousAppendOrder)
+                  || previousAppendOrder < 0
+                  || previousAppendOrder >= Number.MAX_SAFE_INTEGER
+                ) {
+                  throw new Error("ORCHESTRATOR_ACTIVITY_APPEND_ORDER_INVALID");
+                }
+                await ctx.db.insert("orchestratorActivityObservations", {
+                  workspaceId: scope.workspaceId,
+                  projectId: scope.projectId,
+                  observationId: canonicalObservation.observationId,
+                  observationFingerprint: canonicalObservation.observationFingerprint,
+                  sourceClass: canonicalObservation.sourceClass,
+                  sourceId: canonicalObservation.sourceId,
+                  observationJson: canonicalOrchestratorActivityObservationJson(
+                    canonicalObservation,
+                  ),
+                  observedAt: Date.parse(canonicalObservation.observedAt),
+                  appendOrder: previousAppendOrder + 1,
+                });
+              }''',
+              'transactional append order',
+          )
+          section = replace_once(
+              section,
+              '''                .withIndex("by_project_observed", (q) =>
+                  q.eq("projectId", scope.projectId)
+                )
+                .order("asc")
+                .take(maximumListedObservations + 1);
+              if (rows.length > maximumListedObservations) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_LIST_LIMIT_EXCEEDED");
+              }
+              return rows.map((row) => canonicalOrchestratorActivityObservationJson(
+                admitStoredObservation(row, scope),
+              ));''',
+              '''                .withIndex("by_project_append", (q) =>
+                  q.eq("projectId", scope.projectId)
+                )
+                .order("asc")
+                .take(maximumListedObservations + 1);
+              if (rows.length > maximumListedObservations) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_LIST_LIMIT_EXCEEDED");
+              }
+              if (rows.some((row, index) => row.appendOrder !== index + 1)) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_APPEND_ORDER_INVALID");
+              }
+              return rows.map((row) => canonicalOrchestratorActivityObservationJson(
+                admitStoredObservation(row, scope),
+              ));''',
+              'durable append listing',
+          )
+          section = replace_once(
+              section,
+              '''              observationJson: string;
+              observedAt: number;
+            },''',
+              '''              observationJson: string;
+              observedAt: number;
+              appendOrder: number;
+            },''',
+              'stored observation append field',
+          )
+          section = replace_once(
+              section,
+              '''              || row.sourceId !== observation.sourceId
+              || row.observedAt !== Date.parse(observation.observedAt)
+            ) {''',
+              '''              || row.sourceId !== observation.sourceId
+              || row.observedAt !== Date.parse(observation.observedAt)
+              || !Number.isSafeInteger(row.appendOrder)
+              || row.appendOrder < 1
+            ) {''',
+              'stored append-order admission',
+          )
+          section = replace_once(
+              section,
+              '''          function boundedDeliveryId(value: string): string {
+            if (
+              typeof value !== "string"
+              || value.length === 0
+              || value.length > 240
+              || value.trim() !== value
+            ) {
+              throw new RangeError("Orchestrator activity delivery ID is invalid");
+            }
+            return value;
+          }''',
+              '''          const deliveryIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,239}$/u;
+
+          function boundedDeliveryId(value: string): string {
+            if (
+              typeof value !== "string"
+              || !deliveryIdPattern.test(value)
+              || containsRealisticRetainedCredential(value)
+            ) {
+              throw new RangeError("Orchestrator activity delivery ID is invalid");
+            }
+            return value;
+          }''',
+              'convex delivery lookup admission',
+          )
+          text = text[:start] + section + text[end:]
+
+          # Extend adapter reversals: hostile backend shapes plus credential-safe zero-query lookup.
+          start = text.index("          cat > test/orchestrator-activity-convex-store.test.ts <<'EOF'")
+          end = text.index("\n          EOF", start)
+          section = text[start:end]
+          anchor = '''            test("rejects backend observation substitution and foreign workspace", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const changed = admitOrchestratorActivityIngestion(delivery({
+                deliveryId: "delivery_other",
+                observation: observation({ sourceId: "ghop_other" }),
+              }));
+              client.mutationResult = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  changed.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              await expect(store.ingest(input)).rejects.toBeInstanceOf(
+                OrchestratorActivityStorageError,
+              );
+              await expect(store.ingest(delivery({
+                observation: observation({ workspace: "other" }),
+              }))).rejects.toThrow("outside the configured store");
+            });'''
+          extra = anchor + '''
+
+            test("does not enumerate or get backend mutation result fields", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const base = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(admitted.observation),
+                replayed: false,
+                observationAppended: true,
+              };
+              let getCalls = 0;
+              let ownKeysCalls = 0;
+              client.mutationResult = new Proxy(base, {
+                get() {
+                  getCalls += 1;
+                  throw new Error("backend get must remain unreachable");
+                },
+                ownKeys() {
+                  ownKeysCalls += 1;
+                  throw new Error("backend ownKeys must remain unreachable");
+                },
+              });
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              await expect(store.ingest(input)).resolves.toMatchObject({
+                replayed: false,
+                observationAppended: true,
+              });
+              expect(getCalls).toBe(0);
+              expect(ownKeysCalls).toBe(0);
+            });
+
+            test("bounds backend observation arrays before caller methods or keys", async () => {
+              const client = new FakeClient();
+              const admitted = admitOrchestratorActivityIngestion(delivery());
+              const base = [canonicalOrchestratorActivityObservationJson(admitted.observation)];
+              let getCalls = 0;
+              let ownKeysCalls = 0;
+              client.queryResult = new Proxy(base, {
+                get() {
+                  getCalls += 1;
+                  throw new Error("backend array get must remain unreachable");
+                },
+                ownKeys() {
+                  ownKeysCalls += 1;
+                  throw new Error("backend array ownKeys must remain unreachable");
+                },
+              });
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              await expect(store.listObservations("default", "stensibly"))
+                .resolves.toEqual([admitted.observation]);
+              expect(getCalls).toBe(0);
+              expect(ownKeysCalls).toBe(0);
+            });
+
+            test("rejects credential-shaped receipt lookup before backend query", async () => {
+              const client = new FakeClient();
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              const credentialLike = `delivery_${["stn", "svc"].join(".")}_${"a".repeat(12)}`;
+              await expect(store.getReceipt("default", "stensibly", credentialLike))
+                .rejects.toThrow("cannot contain credential material");
+              expect(client.queries).toHaveLength(0);
+            });'''
+          section = replace_once(section, anchor, extra, 'adapter focused reversals')
+          text = text[:start] + section + text[end:]
+
+          # Pin restart-stable first-ingestion order against the merged in-memory reference.
+          start = text.index("          cat > convex/orchestratorActivity.test.ts <<'EOF'")
+          end = text.index("\n          EOF", start)
+          section = text[start:end]
+          section = replace_once(
+              section,
+              '          import type { ConvexCaller } from "../src/convex-ledger";\n',
+              '          import type { ConvexCaller } from "../src/convex-ledger";\n'
+              '          import { InMemoryOrchestratorActivityIngestionStore } from "../src/orchestrator-activity-ingestion";\n',
+              'convex parity import',
+          )
+          anchor = '''            test("survives reconnect and preserves exactly-once delivery semantics", async () => {
+              const t = convexTest(schema, modules);
+              await seedProject(t, "stensibly");
+              const firstStore = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              const first = await firstStore.ingest(delivery());
+              expect(first.replayed).toBe(false);
+              expect(first.observationAppended).toBe(true);
+
+              const secondStore = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              const replay = await secondStore.ingest(delivery({
+                acceptedAt: "2026-08-05T16:25:00.000Z",
+              }));
+              expect(replay.replayed).toBe(true);
+              expect(replay.observationAppended).toBe(false);
+              expect(replay.receipt).toEqual(first.receipt);
+              expect(await secondStore.getReceipt(
+                "default",
+                "stensibly",
+                "delivery_1149_1",
+              )).toEqual(first.receipt);
+              expect(await secondStore.listObservations("default", "stensibly"))
+                .toEqual([first.observation]);
+            });'''
+          extra = anchor + '''
+
+            test("preserves first-ingestion order when provider time regresses", async () => {
+              const t = convexTest(schema, modules);
+              await seedProject(t, "stensibly");
+              const reference = new InMemoryOrchestratorActivityIngestionStore();
+              const first = delivery({
+                deliveryId: "delivery_newer_first",
+                deliveryFingerprint: `sha256:${"7".repeat(64)}`,
+                acceptedAt: "2026-08-05T16:31:00.000Z",
+                observation: observation({
+                  sourceId: "ghop_newer_first",
+                  observedAt: "2026-08-05T16:30:00.000Z",
+                }),
+              });
+              const second = delivery({
+                deliveryId: "delivery_older_second",
+                deliveryFingerprint: `sha256:${"8".repeat(64)}`,
+                acceptedAt: "2026-08-05T16:32:00.000Z",
+                observation: observation({
+                  sourceId: "ghop_older_second",
+                  observedAt: "2026-08-05T16:00:00.000Z",
+                }),
+              });
+              reference.ingest(first);
+              reference.ingest(second);
+
+              const durable = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              await durable.ingest(first);
+              await durable.ingest(second);
+              const reconnected = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              expect((await reconnected.listObservations("default", "stensibly"))
+                .map((entry) => entry.sourceId))
+                .toEqual(reference.listObservations("default", "stensibly")
+                  .map((entry) => entry.sourceId));
+              expect(reference.listObservations("default", "stensibly")
+                .map((entry) => entry.sourceId))
+                .toEqual(["ghop_newer_first", "ghop_older_second"]);
+            });'''
+          section = replace_once(section, anchor, extra, 'durable append-order reversal')
+          text = text[:start] + section + text[end:]
+
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Publish one corrected Cedar carrier from current main
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          HEAD_REF: cedar/1149-durable-activity-ingestion
+        run: |
+          set -euo pipefail
+          cp .github/workflows/cedar-1149-durable-activity-store.yml /tmp/cedar-1149-durable-activity-store.yml
+          git reset --hard "$MAIN"
+          mkdir -p .github/workflows
+          cp /tmp/cedar-1149-durable-activity-store.yml .github/workflows/cedar-1149-durable-activity-store.yml
+          git add .github/workflows/cedar-1149-durable-activity-store.yml
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = ".github/workflows/cedar-1149-durable-activity-store.yml"
+          git config user.name "Ember"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Converge durable activity parity repairs"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
