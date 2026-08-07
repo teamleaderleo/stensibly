@@ -128,7 +128,13 @@ function instance(recorded: RequestRecord[], parentMode: string, parentType = "b
         });
       }
       if (method === "POST" && url === graphqlUrl()) {
-        if (isQuery(body)) return Response.json({ data: { repository: { id: repositoryId } } });
+        if (isQuery(body)) {
+          return Response.json({
+            data: {
+              repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+            },
+          });
+        }
         if (isMutation(body)) {
           expect(body).toEqual(expectedMutationBody());
           return Response.json({ data: { updateRefs: { clientMutationId: mutationId(body) } } }, {
