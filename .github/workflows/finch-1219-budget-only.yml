@@ -1,0 +1,99 @@
+name: Finch 1219 budget-only convergence
+
+on:
+  push:
+    branches:
+      - lumen/1195-tool-class-observation
+    paths:
+      - .github/workflows/finch-1219-budget-only.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finch-1219-budget-only-convergence
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1195-tool-class-observation
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact settled source
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          SOURCE_PARENT: 0773c117249e13f2a0807465242a7a56a3c7355c
+          BUDGET_CONTROL: f045d11794af52347c26f75c12a9999b9f39e644
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_PARENT"
+          test "$(git rev-parse ${SOURCE_PARENT}:src/effective-tool-surface-host-binding.ts)" = "a0645346484710d1fddcdfd29034ecdd052a1fcb"
+          test ! -e test/effective-tool-surface-host-binding-wrapper-surface-fingerprint.test.ts
+          git fetch --no-tags origin "$BUDGET_CONTROL"
+          test "$(git rev-parse ${BUDGET_CONTROL}:test/effective-tool-surface-host-binding-input-budget-red-control.test.ts)" = "5ed7843689c113fa6427630d7afb5ae907963394"
+
+      - name: Preserve inherited v1 legal ceilings
+        shell: bash
+        env:
+          BUDGET_CONTROL: f045d11794af52347c26f75c12a9999b9f39e644
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("src/effective-tool-surface-host-binding.ts")
+          text = path.read_text()
+          old = "const maximumInputObjects = 10_000;"
+          new = '''// The inherited v1 legal maximum visits 11,026 caller objects at the
+// closed per-list ceilings. Keep one bounded defense-in-depth ceiling above it.
+const maximumInputObjects = 12_000;'''
+          if text.count(old) != 1:
+              raise SystemExit(f"input budget anchor moved: {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git show "$BUDGET_CONTROL":test/effective-tool-surface-host-binding-input-budget-red-control.test.ts \
+            > test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate settled host-binding contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/effective-tool-surface-host-binding.test.ts \
+            test/effective-tool-surface-host-binding-boundary.test.ts \
+            test/effective-tool-surface-host-binding-provenance.test.ts \
+            test/effective-tool-surface-host-binding-reconcile-boundary.test.ts \
+            test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+
+      - name: Publish workflow-free source
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: lumen/1195-tool-class-observation
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/finch-1219-budget-only.yml
+          git add \
+            src/effective-tool-surface-host-binding.ts \
+            test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 1
+          git config user.name "Finch"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Preserve host-binding v1 input ceilings"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
