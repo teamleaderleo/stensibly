@@ -1,0 +1,87 @@
+name: Cinder 1168 preserve delegated read coverage
+
+on:
+  push:
+    branches:
+      - cedar/1141-default-on-delegated-reads
+    paths:
+      - .github/workflows/cinder-1168-preserve-actions-coverage.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1168-preserve-delegated-read-coverage
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1141-default-on-delegated-reads
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact repair source
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$EXPECTED_HEAD" = "4d197bfa88f9cd1577fa708ccba77d042031aa81"
+          test "$(git rev-parse origin/main)" = "6e01c25ab7fb2036f347b2de6ce8ba34e1a8db3c"
+
+      - name: Restore Actions coverage with explicit job-detail kill switch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show origin/main:test/hosted-github-actions-delegated-read-provider.test.ts > test/hosted-github-actions-delegated-read-provider.test.ts
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("test/hosted-github-actions-delegated-read-provider.test.ts")
+          text = path.read_text()
+          anchor = '    STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",\n'
+          replacement = anchor + '    STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "false",\n'
+          if text.count(anchor) != 1:
+              raise SystemExit("providerEnv anchor changed")
+          path.write_text(text.replace(anchor, replacement, 1))
+          PY
+          git diff --check
+          test "$(git diff --name-only)" = "test/hosted-github-actions-delegated-read-provider.test.ts"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate default-on reads without weakening inherited coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/exact-boolean-env.test.ts \
+            test/hosted-github-delegated-read-default-enable.test.ts \
+            test/hosted-github-delegated-read-provider.test.ts \
+            test/hosted-github-actions-delegated-read-provider.test.ts
+
+      - name: Publish workflow-free repaired head
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/cinder-1168-preserve-actions-coverage.yml
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            test/hosted-github-actions-delegated-read-provider.test.ts \
+            .github/workflows/cinder-1168-preserve-actions-coverage.yml
+          git diff --cached --check
+          git commit -m "Preserve delegated read coverage under default-on policy"
+          git fetch origin refs/heads/cedar/1141-default-on-delegated-reads:refs/remotes/origin/cedar/1141-default-on-delegated-reads
+          test "$(git rev-parse refs/remotes/origin/cedar/1141-default-on-delegated-reads)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cedar/1141-default-on-delegated-reads:$EXPECTED_HEAD origin HEAD:refs/heads/cedar/1141-default-on-delegated-reads
