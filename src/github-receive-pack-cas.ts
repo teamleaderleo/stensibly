@@ -40,8 +40,8 @@ export function admitGitReceivePackAdvertisement(
   const branch = admitGitHubBranchRef(targetRef);
   const expected = admitGitObjectId(expectedHeadSha);
   const packets = parsePacketLines(bytes, maximumPacketCount, invalidAdvertisement);
-  if (packets.length < 3) throw invalidAdvertisement();
-  if (decodePacket(packets[0]) !== "# service=git-receive-pack\n") {
+  if (packets.length < 4 || packets.at(-1) !== null) throw invalidAdvertisement();
+  if (decodePacket(packets[0], invalidAdvertisement) !== "# service=git-receive-pack\n") {
     throw invalidAdvertisement();
   }
   if (packets[1] !== null) throw invalidAdvertisement();
@@ -52,9 +52,10 @@ export function admitGitReceivePackAdvertisement(
   let objectFormat: GitReceivePackObjectFormat = "sha1";
   const fullTargetRef = `refs/heads/${branch}`;
 
-  for (const packet of packets.slice(2)) {
-    if (packet === null) break;
-    const text = decodePacket(packet);
+  for (let index = 2; index < packets.length - 1; index += 1) {
+    const packet = packets[index];
+    if (packet === null) throw invalidAdvertisement();
+    const text = decodePacket(packet, invalidAdvertisement);
     if (!text.endsWith("\n")) throw invalidAdvertisement();
     const line = text.slice(0, -1);
     const nul = line.indexOf("\0");
@@ -64,9 +65,11 @@ export function admitGitReceivePackAdvertisement(
       if (capabilityText === null) throw invalidAdvertisement();
       const admittedCapabilities = admitCapabilities(capabilityText);
       capabilities = Object.freeze(admittedCapabilities);
-      const advertisedFormat = admittedCapabilities.find((entry) =>
+      const objectFormatCapabilities = admittedCapabilities.filter((entry) =>
         entry.startsWith("object-format=")
       );
+      if (objectFormatCapabilities.length > 1) throw invalidAdvertisement();
+      const advertisedFormat = objectFormatCapabilities[0];
       if (advertisedFormat !== undefined) {
         if (advertisedFormat === "object-format=sha1") objectFormat = "sha1";
         else if (advertisedFormat === "object-format=sha256") objectFormat = "sha256";
@@ -119,9 +122,11 @@ export function buildGitReceivePackCasRequest(
   }
   const capabilities = admitCapabilityList(input.advertisedCapabilities);
   if (!capabilities.includes("report-status")) throw invalidRequest();
-  const advertisedObjectFormat = capabilities.find((entry) =>
+  const objectFormatCapabilities = capabilities.filter((entry) =>
     entry.startsWith("object-format=")
   );
+  if (objectFormatCapabilities.length > 1) throw invalidRequest();
+  const advertisedObjectFormat = objectFormatCapabilities[0];
   if (
     input.objectFormat === "sha256"
       ? advertisedObjectFormat !== "object-format=sha256"
@@ -149,11 +154,13 @@ export function admitGitReceivePackCasReport(
   const branch = admitGitHubBranchRef(targetRef);
   const fullTargetRef = `refs/heads/${branch}`;
   const packets = parsePacketLines(bytes, maximumPacketCount, invalidReport);
+  if (packets.length < 3 || packets.at(-1) !== null) throw invalidReport();
   let unpackOk = false;
   let targetOk = false;
-  for (const packet of packets) {
-    if (packet === null) continue;
-    const line = decodePacket(packet);
+  for (let index = 0; index < packets.length - 1; index += 1) {
+    const packet = packets[index];
+    if (packet === null) throw invalidReport();
+    const line = decodePacket(packet, invalidReport);
     if (!line.endsWith("\n")) throw invalidReport();
     const text = line.slice(0, -1);
     if (text === "unpack ok") {
@@ -165,14 +172,6 @@ export function admitGitReceivePackCasReport(
       if (targetOk) throw invalidReport();
       targetOk = true;
       continue;
-    }
-    if (
-      text.startsWith("unpack ")
-      || text.startsWith("ng ")
-      || text.startsWith("ERR ")
-      || text.startsWith("ok ")
-    ) {
-      throw invalidReport();
     }
     throw invalidReport();
   }
@@ -224,11 +223,11 @@ function parsePacketLines(
   return Object.freeze(packets);
 }
 
-function decodePacket(bytes: Uint8Array): string {
+function decodePacket(bytes: Uint8Array, failure: () => Error): string {
   try {
     return decoder.decode(bytes);
   } catch {
-    throw invalidAdvertisement();
+    throw failure();
   }
 }
 
