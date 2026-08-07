@@ -5,6 +5,7 @@ import {
   usage,
   verifyHosted,
 } from "./verify-hosted.js";
+import { verifyHostedStableRead } from "./verify-hosted-stable-read.js";
 import { verifyHostedToolContract } from "./verify-hosted-tool-contract.js";
 
 try {
@@ -14,6 +15,7 @@ try {
   } else if (parsed.options) {
     const results = await verifyHosted(parsed.options);
     results.push(await verifyHostedToolContract(parsed.options));
+    results.push(await verifyHostedStableRead(parsed.options));
     console.log(formatResults(results));
     if (results.some((result) => !result.ok)) process.exitCode = 1;
   }
