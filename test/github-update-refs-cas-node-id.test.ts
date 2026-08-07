@@ -8,21 +8,21 @@ const repositoryFullName = "teamleaderleo/stensibly";
 const opaqueNodeId = "R_kgDOAtomic/Repository+legacy=";
 
 function repositoryIdentity() {
-  return Object.freeze({
-    repositoryFullName,
-    repositoryId: opaqueNodeId,
-  });
-}
-
-test("admits a bounded opaque node ID only with its exact provider repository", () => {
-  expect(admitGitHubRepositoryNodeIdResponse({
+  return admitGitHubRepositoryNodeIdResponse({
     data: {
       repository: {
         id: opaqueNodeId,
         nameWithOwner: repositoryFullName,
       },
     },
-  }, repositoryFullName)).toEqual(repositoryIdentity());
+  }, repositoryFullName);
+}
+
+test("admits a bounded opaque node ID only with its exact provider repository", () => {
+  expect(repositoryIdentity()).toEqual({
+    repositoryFullName,
+    repositoryId: opaqueNodeId,
+  });
 
   expect(buildGitHubUpdateRefsCasRequest({
     apiBaseUrl: "https://api.github.com",
