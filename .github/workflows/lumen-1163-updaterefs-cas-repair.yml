@@ -1,0 +1,638 @@
+name: Lumen 1163 updateRefs CAS repair
+
+on:
+  push:
+    branches:
+      - lumen/1163-updaterefs-cas-repair
+    paths:
+      - .github/workflows/lumen-1163-updaterefs-cas-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1163-updaterefs-cas-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1163-updaterefs-cas-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact parent and source blobs
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "9cc1db62dfb93037c9d118dcbf3032a7763489dc"
+          test "$(git rev-parse HEAD:src/github-rest-repository-write-atomic-publication.ts)" = "ac3bc8a2ec65b8254920689b76d361bfff1fc815"
+          test "$(git rev-parse HEAD:test/github-rest-repository-write-atomic-publication.test.ts)" = "9c55483d70da59ac49d2ac1f80a7e27c44ef65e0"
+
+      - name: Import exact accepted red controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin 0e2a20051cf6cbf3567338677281e5656244480f 44afb68e2cc795a5bb41cfd76a40ba4183c48092
+          test "$(git rev-parse 0e2a20051cf6cbf3567338677281e5656244480f:test/github-rest-repository-write-atomic-ancestor-regression.test.ts)" = "6e394668c3eec83f2ea61239edbe34ae19de0977"
+          test "$(git rev-parse 44afb68e2cc795a5bb41cfd76a40ba4183c48092:test/github-rest-repository-write-atomic-tree-prelimit.test.ts)" = "312623c57a4e15bf9a0a585baebb4e5df0690bde"
+          git show 0e2a20051cf6cbf3567338677281e5656244480f:test/github-rest-repository-write-atomic-ancestor-regression.test.ts > test/github-rest-repository-write-atomic-ancestor-regression.test.ts
+          git show 44afb68e2cc795a5bb41cfd76a40ba4183c48092:test/github-rest-repository-write-atomic-tree-prelimit.test.ts > test/github-rest-repository-write-atomic-tree-prelimit.test.ts
+
+      - name: Apply exact-old-ref CAS and bounded tree admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/github-rest-repository-write-atomic-publication.ts")
+          source = path.read_text()
+
+          anchor = '''const unsupportedParentModeError =
+            "GitHub repository write parent file mode is unsupported";
+          '''
+          addition = anchor + '''const repositoryNodeIdQuery =
+            "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }";
+          const updateRefsMutation =
+            "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }";
+          '''
+          if source.count(anchor) != 1:
+            raise SystemExit("atomic publication constant anchor moved")
+          source = source.replace(anchor, addition, 1)
+
+          anchor = '''  const parentEntry = await readParentTreeEntry(
+            input,
+            repositoryRoot,
+            parentTreeSha,
+          );
+          const nextBlobSha = input.payload.operation === "delete_file"
+          '''
+          replacement = '''  const parentEntry = await readParentTreeEntry(
+            input,
+            repositoryRoot,
+            parentTreeSha,
+          );
+          const repositoryNodeId = await readRepositoryNodeId(input);
+          const nextBlobSha = input.payload.operation === "delete_file"
+          '''
+          if source.count(anchor) != 1:
+            raise SystemExit("parent-tree anchor moved")
+          source = source.replace(anchor, replacement, 1)
+
+          old = "  return await publishRef(input, repositoryRoot, nextCommitSha);"
+          new = "  return await publishRef(input, repositoryNodeId, nextCommitSha);"
+          if source.count(old) != 1:
+            raise SystemExit("publish call anchor moved")
+          source = source.replace(old, new, 1)
+
+          insert_at = source.index("async function createBlob(")
+          read_repository = '''async function readRepositoryNodeId(
+            input: GitHubAtomicRepositoryWriteDependencies,
+          ): Promise<string> {
+            const operation = "read repository node identity";
+            const [owner, repository] = repositoryParts(input.repositoryFullName);
+            const response = await input.request({
+              repositoryFullName: input.repositoryFullName,
+              access: "read",
+              method: "POST",
+              url: graphqlUrl(input.apiBaseUrl),
+              body: {
+                query: repositoryNodeIdQuery,
+                variables: { owner, name: repository },
+              },
+              operation,
+            });
+            requireStatus(input, response, 200, operation);
+            const envelope = exactRecord(
+              await input.readJson(response, operation),
+              "GitHub repository GraphQL response",
+            );
+            if (envelope.errors !== undefined) {
+              throw new Error("GitHub could not read repository node identity");
+            }
+            const data = exactRecord(
+              envelope.data,
+              "GitHub repository GraphQL data",
+            );
+            const repositoryRecord = exactRecord(
+              data.repository,
+              "GitHub repository GraphQL repository",
+            );
+            return providerNodeId(repositoryRecord.id);
+          }
+
+          '''
+          source = source[:insert_at] + read_repository + source[insert_at:]
+
+          start = source.index("async function publishRef(")
+          end = source.index("function requireStatus(", start)
+          publish = '''async function publishRef(
+            input: GitHubAtomicRepositoryWriteDependencies,
+            repositoryId: string,
+            commitSha: string,
+          ): Promise<GitHubAtomicRepositoryWriteResult> {
+            const operation = "publish repository ref";
+            const clientMutationId = `stensibly-write-${commitSha.slice(0, 16)}`;
+            const response = await input.request({
+              repositoryFullName: input.repositoryFullName,
+              access: "write",
+              method: "POST",
+              url: graphqlUrl(input.apiBaseUrl),
+              body: {
+                query: updateRefsMutation,
+                variables: {
+                  input: {
+                    repositoryId,
+                    refUpdates: [{
+                      name: `refs/heads/${input.targetRef}`,
+                      beforeOid: input.expectedParentSha,
+                      afterOid: commitSha,
+                      force: false,
+                    }],
+                    clientMutationId,
+                  },
+                },
+              },
+              operation,
+            });
+            requireStatus(input, response, 200, operation);
+            const envelope = exactRecord(
+              await input.readJson(response, operation),
+              "GitHub updateRefs GraphQL response",
+            );
+            if (envelope.errors !== undefined) {
+              throw new Error("GitHub could not publish repository ref");
+            }
+            const data = exactRecord(
+              envelope.data,
+              "GitHub updateRefs GraphQL data",
+            );
+            const updateRefs = exactRecord(
+              data.updateRefs,
+              "GitHub updateRefs GraphQL result",
+            );
+            if (updateRefs.clientMutationId !== clientMutationId) {
+              throw invalidResponse("GitHub published ref mutation identity changed");
+            }
+            const providerRequestId = input.admitRequestId(
+              response.headers.get("x-github-request-id"),
+            );
+            return Object.freeze({
+              commitSha,
+              ...(providerRequestId ? { providerRequestId } : {}),
+              targetRef: input.targetRef,
+              parentSha: input.expectedParentSha,
+            });
+          }
+
+          '''
+          source = source[:start] + publish + source[end:]
+
+          start = source.index("function exactArray(")
+          end = source.index("function exactRecord(", start)
+          exact_array = '''function exactArray(
+            value: unknown,
+            label: string,
+            maximumLength: number,
+          ): unknown[] {
+            if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof lengthValue !== "number"
+              || !Number.isSafeInteger(lengthValue)
+              || lengthValue < 0
+              || lengthValue > maximumLength
+            ) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const length = lengthValue;
+            if (Object.getOwnPropertySymbols(value).length !== 0) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const result: unknown[] = [];
+            for (const key of Object.keys(descriptors)) {
+              if (key === "length") continue;
+              if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              const index = Number(key);
+              if (!Number.isSafeInteger(index) || index >= length || String(index) !== key) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+            }
+            for (let index = 0; index < length; index += 1) {
+              const descriptor = descriptors[String(index)];
+              if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          '''
+          source = source[:start] + exact_array + source[end:]
+
+          helper_anchor = "function repositoryUrl(apiBaseUrl: string, repositoryFullName: string): string {"
+          helper_index = source.index(helper_anchor)
+          helpers = '''function graphqlUrl(apiBaseUrl: string): URL {
+            const url = new URL(apiBaseUrl);
+            const pathname = url.pathname.replace(/\\/+$/u, "");
+            url.pathname = pathname === "/api/v3"
+              ? "/api/graphql"
+              : `${pathname}/graphql`.replace(/\\/{2,}/gu, "/");
+            return url;
+          }
+
+          function repositoryParts(repositoryFullName: string): [string, string] {
+            const [owner, repository] = repositoryFullName.split("/");
+            if (!owner || !repository) {
+              throw new RangeError("Use a GitHub owner/repository identifier");
+            }
+            return [owner, repository];
+          }
+
+          function providerNodeId(value: unknown): string {
+            if (
+              typeof value !== "string"
+              || !/^[A-Za-z0-9_=-]{1,256}$/u.test(value)
+            ) {
+              throw invalidResponse("GitHub repository node ID was invalid");
+            }
+            return value;
+          }
+
+          '''
+          source = source[:helper_index] + helpers + source[helper_index:]
+
+          old = '''function repositoryUrl(apiBaseUrl: string, repositoryFullName: string): string {
+            const [owner, repository] = repositoryFullName.split("/");
+            if (!owner || !repository) {
+              throw new RangeError("Use a GitHub owner/repository identifier");
+            }
+            return `${apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+          }
+          '''
+          new = '''function repositoryUrl(apiBaseUrl: string, repositoryFullName: string): string {
+            const [owner, repository] = repositoryParts(repositoryFullName);
+            return `${apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+          }
+          '''
+          if source.count(old) != 1:
+            raise SystemExit("repository URL anchor moved")
+          source = source.replace(old, new, 1)
+
+          obsolete = '''function updateRefUrl(repositoryRoot: string, targetRef: string): URL {
+            return new URL(`${repositoryRoot}/git/refs/heads/${encodePath(targetRef)}`);
+          }
+
+          function encodePath(value: string): string {
+            return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+          }
+
+          '''
+          if source.count(obsolete) != 1:
+            raise SystemExit("obsolete REST ref helper anchor moved")
+          source = source.replace(obsolete, "", 1)
+          path.write_text(source)
+          PY
+          git diff --check
+
+      - name: Update atomic publication proof for GraphQL CAS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/github-rest-repository-write-atomic-publication.test.ts")
+          text = path.read_text()
+          text = text.replace(
+            'const apiBaseUrl = "https://api.github.test";\n',
+            'const apiBaseUrl = "https://api.github.test";\nconst repositoryNodeId = "R_kgDOAtomicRepository";\n',
+            1,
+          )
+          text = text.replace(
+            'test("constructs one direct-child commit and publishes it with force false", async () => {',
+            'test("constructs one direct-child commit and publishes it through exact old-head CAS", async () => {',
+            1,
+          )
+
+          start = text.index("    expect(recorded).toEqual([")
+          end = text.index("    expect(tokenCalls).toEqual([", start)
+          expected = '''    expect(recorded).toEqual([
+            {
+              method: "GET",
+              url: commitUrl(parentSha),
+              body: null,
+              authorization: "Bearer contents-read-token",
+            },
+            {
+              method: "GET",
+              url: recursiveTreeUrl(parentTreeSha),
+              body: null,
+              authorization: "Bearer contents-read-token",
+            },
+            {
+              method: "POST",
+              url: graphqlUrl(),
+              body: {
+                query: expect.stringContaining("repository(owner: $owner, name: $name)"),
+                variables: { owner: "teamleaderleo", name: "stensibly" },
+              },
+              authorization: "Bearer contents-read-token",
+            },
+            {
+              method: "POST",
+              url: blobCollectionUrl(),
+              body: {
+                content: Buffer.from("atomic content\\n", "utf8").toString("base64"),
+                encoding: "base64",
+              },
+              authorization: "Bearer contents-write-token",
+            },
+            {
+              method: "POST",
+              url: treeCollectionUrl(),
+              body: {
+                base_tree: parentTreeSha,
+                tree: [{
+                  path,
+                  mode: "100644",
+                  type: "blob",
+                  sha: nextBlobSha,
+                }],
+              },
+              authorization: "Bearer contents-write-token",
+            },
+            {
+              method: "POST",
+              url: commitCollectionUrl(),
+              body: {
+                message: "Create atomic file",
+                tree: nextTreeSha,
+                parents: [parentSha],
+              },
+              authorization: "Bearer contents-write-token",
+            },
+            {
+              method: "POST",
+              url: graphqlUrl(),
+              body: {
+                query: expect.stringContaining("updateRefs(input: $input)"),
+                variables: {
+                  input: {
+                    repositoryId: repositoryNodeId,
+                    refUpdates: [{
+                      name: `refs/heads/${targetRef}`,
+                      beforeOid: parentSha,
+                      afterOid: nextCommitSha,
+                      force: false,
+                    }],
+                    clientMutationId: expect.any(String),
+                  },
+                },
+              },
+              authorization: "Bearer contents-write-token",
+            },
+          ]);
+          '''
+          text = text[:start] + expected + text[end:]
+
+          old_tokens = '''    expect(tokenCalls).toEqual([
+            "read",
+            "read",
+            "write",
+            "write",
+            "write",
+            "write",
+          ]);
+          '''
+          new_tokens = '''    expect(tokenCalls).toEqual([
+            "read",
+            "read",
+            "read",
+            "write",
+            "write",
+            "write",
+            "write",
+          ]);
+          '''
+          if text.count(old_tokens) != 1:
+            raise SystemExit("token-call assertion moved")
+          text = text.replace(old_tokens, new_tokens, 1)
+
+          start = text.index("    expect(recorded.at(-1)).toMatchObject({")
+          end = text.index("  });\n\n  test(\"keeps the lane", start)
+          tail = '''    const publication = recorded.at(-1);
+            expect(publication).toMatchObject({
+              method: "POST",
+              url: graphqlUrl(),
+              authorization: "Bearer contents-write-token",
+            });
+            expect(publication?.body).toMatchObject({
+              variables: {
+                input: {
+                  repositoryId: repositoryNodeId,
+                  refUpdates: [{
+                    name: `refs/heads/${targetRef}`,
+                    beforeOid: parentSha,
+                    afterOid: nextCommitSha,
+                    force: false,
+                  }],
+                },
+              },
+            });
+          });
+
+          test("keeps the lane'''
+          text = text[:start] + tail + text[end + len('  });\n\n  test("keeps the lane'):]
+
+          old_race = '''        publicationResponse() {
+                  publicationCalls += 1;
+                  return Response.json({ message: "Reference update failed" }, {
+                    status: 422,
+                  });
+                },
+          '''
+          new_race = '''        publicationResponse(body) {
+                  publicationCalls += 1;
+                  expect(body).toMatchObject({
+                    variables: {
+                      input: {
+                        repositoryId: repositoryNodeId,
+                        refUpdates: [{
+                          name: `refs/heads/${targetRef}`,
+                          beforeOid: parentSha,
+                          afterOid: nextCommitSha,
+                          force: false,
+                        }],
+                      },
+                    },
+                  });
+                  return Response.json({
+                    data: { updateRefs: null },
+                    errors: [{ type: "STALE_REF" }],
+                  });
+                },
+          '''
+          if text.count(old_race) != 1:
+            raise SystemExit("race publication callback moved")
+          text = text.replace(old_race, new_race, 1)
+
+          old_filter = '''    expect(recorded.filter((request) => request.method === "PATCH")).toEqual([
+            expect.objectContaining({
+              url: updateRefUrl(),
+              body: { sha: nextCommitSha, force: false },
+            }),
+          ]);
+          '''
+          if text.count(old_filter) != 1:
+            raise SystemExit("PATCH-count assertion moved")
+          text = text.replace(
+            old_filter,
+            '    expect(recorded.filter(isUpdateRefsRequest)).toHaveLength(1);\n',
+            1,
+          )
+
+          text = text.replace(
+            '  publicationResponse?: () => Response;\n',
+            '  publicationResponse?: (body: unknown) => Response;\n',
+            1,
+          )
+
+          insert = '''    if (method === "POST" && url === graphqlUrl()) {
+              const query = typeof (body as { query?: unknown } | null)?.query === "string"
+                ? (body as { query: string }).query
+                : "";
+              if (query.includes("repository(owner:")) {
+                return Response.json({
+                  data: { repository: { id: repositoryNodeId } },
+                });
+              }
+              if (query.includes("updateRefs")) {
+                return input.publicationResponse?.(body) ?? graphQlResponse(body);
+              }
+            }
+          '''
+          marker = '    if (method === "POST" && url === blobCollectionUrl()) {'
+          if text.count(marker) != 1:
+            raise SystemExit("atomic fetcher insertion anchor moved")
+          text = text.replace(marker, insert + marker, 1)
+
+          old_patch = '''    if (method === "PATCH" && url === updateRefUrl()) {
+              return input.publicationResponse?.() ?? refResponse();
+            }
+          '''
+          if text.count(old_patch) != 1:
+            raise SystemExit("old PATCH mock moved")
+          text = text.replace(old_patch, "", 1)
+
+          old_callback = '''        publicationResponse() {
+                  publicationCalls += 1;
+                  return refResponse();
+                },
+          '''
+          new_callback = '''        publicationResponse(body) {
+                  publicationCalls += 1;
+                  return graphQlResponse(body);
+                },
+          '''
+          if text.count(old_callback) != 1:
+            raise SystemExit("successful publication callback moved")
+          text = text.replace(old_callback, new_callback, 1)
+
+          start = text.index("function refResponse(): Response {")
+          end = text.index("function tokenProvider(", start)
+          response_helper = '''function graphQlResponse(body: unknown): Response {
+            const clientMutationId = (
+              body as {
+                variables?: { input?: { clientMutationId?: unknown } };
+              }
+            ).variables?.input?.clientMutationId;
+            return Response.json({
+              data: { updateRefs: { clientMutationId } },
+            }, {
+              status: 200,
+              headers: { "x-github-request-id": "REQ-ATOMIC-PUBLISH" },
+            });
+          }
+
+          function isUpdateRefsRequest(request: RecordedRequest): boolean {
+            if (request.method !== "POST" || request.url !== graphqlUrl()) return false;
+            const query = (request.body as { query?: unknown } | null)?.query;
+            return typeof query === "string" && query.includes("updateRefs");
+          }
+
+          '''
+          text = text[:start] + response_helper + text[end:]
+
+          old_url = '''function updateRefUrl(): string {
+            return `${repositoryUrl()}/git/refs/heads/${targetRef}`;
+          }
+
+          '''
+          if text.count(old_url) != 1:
+            raise SystemExit("test updateRefUrl helper moved")
+          text = text.replace(
+            old_url,
+            'function graphqlUrl(): string {\n  return `${apiBaseUrl}/graphql`;\n}\n\n',
+            1,
+          )
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate exact repair and absorbed controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-mode-preservation.test.ts \
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts \
+            test/github-rest-repository-write-adapter.test.ts
+
+      - name: Publish workflow-free child
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lumen-1163-updaterefs-cas-repair.yml
+          git add \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            src/github-rest-repository-write-atomic-publication.ts \
+            test/github-rest-repository-write-atomic-publication.test.ts \
+            test/github-rest-repository-write-atomic-ancestor-regression.test.ts \
+            test/github-rest-repository-write-atomic-tree-prelimit.test.ts | sort)"
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bind atomic repository publication to exact old ref"
+          git fetch origin refs/heads/lumen/1163-updaterefs-cas-repair:refs/remotes/origin/lumen/1163-updaterefs-cas-repair
+          test "$(git rev-parse refs/remotes/origin/lumen/1163-updaterefs-cas-repair)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/lumen/1163-updaterefs-cas-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1163-updaterefs-cas-repair
