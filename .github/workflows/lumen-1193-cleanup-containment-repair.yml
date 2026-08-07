@@ -1,0 +1,110 @@
+name: Lumen 1193 stable-read cleanup containment
+
+on:
+  push:
+    branches:
+      - lumen/1193-cleanup-containment-repair
+    paths:
+      - .github/workflows/lumen-1193-cleanup-containment-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1193-cleanup-containment-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1193-cleanup-containment-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact parent and source
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          PARENT: 8326fbc8a7971010e152a4c5ddf786880c84b2f4
+          CONTROL: 0c0a386512bfa256b8aeacb4beba284ca4c61130
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$PARENT"
+          test "$(git rev-parse HEAD:src/verify-hosted-stable-read.ts)" = "39e3fe9ac203e0cae6f2889b30ef5b677b1ae6af"
+          git fetch --no-tags origin "$CONTROL"
+          test "$(git rev-parse ${CONTROL}:test/verify-hosted-stable-read-cleanup-metadata.test.ts)" = "31b37dab49fb809859760996ad854bc15bb88959"
+
+      - name: Import control and contain cleanup metadata
+        env:
+          CONTROL: 0c0a386512bfa256b8aeacb4beba284ca4c61130
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "${CONTROL}:test/verify-hosted-stable-read-cleanup-metadata.test.ts" \
+            > test/verify-hosted-stable-read-cleanup-metadata.test.ts
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("src/verify-hosted-stable-read.ts")
+          text = path.read_text()
+          old = '''async function cancelResponseBody(response: Response): Promise<void> {
+            if (!response.body || response.body.locked) return;
+            try {
+              await response.body.cancel();
+            } catch {
+              // Cancellation is best-effort after a fixed verifier decision.
+            }
+          }'''
+          new = '''async function cancelResponseBody(response: Response): Promise<void> {
+            try {
+              const body = response.body;
+              if (!body || body.locked) return;
+              await body.cancel();
+            } catch {
+              // Cancellation is best-effort after a fixed verifier decision.
+            }
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit("stable-read cleanup helper anchor moved")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate stable-read cleanup repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/verify-hosted-stable-read.test.ts \
+            test/verify-hosted-stable-read-protocol-boundaries.test.ts \
+            test/verify-hosted-stable-read-chunk-detachment.test.ts \
+            test/verify-hosted-stable-read-proxy-byte-control.test.ts \
+            test/verify-hosted-stable-read-cleanup-metadata.test.ts
+
+      - name: Publish workflow-free repair
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: lumen/1193-cleanup-containment-repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lumen-1193-cleanup-containment-repair.yml
+          git add \
+            src/verify-hosted-stable-read.ts \
+            test/verify-hosted-stable-read-cleanup-metadata.test.ts
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Contain stable-read cleanup metadata"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
