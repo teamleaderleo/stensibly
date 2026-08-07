@@ -7,6 +7,7 @@ import {
 
 const apiBaseUrl = "https://api.github.test";
 const repositoryFullName = "teamleaderleo/stensibly";
+const repositoryId = "R_kgDOAncestorRegression";
 const targetRef = "topic/ancestor-regression";
 const path = "docs/ancestor-regression.md";
 const ancestorSha = "1".repeat(40);
@@ -18,9 +19,10 @@ const content = "exact-parent publication\n";
 const nextBlobSha = gitBlobSha(content);
 
 describe("atomic repository publication ancestor regression", () => {
-  test("does not accept a provider fast-forward after the observed branch regresses to an ancestor", async () => {
+  test("rejects publication when the observed branch regresses to an ancestor", async () => {
     let providerCurrentHead = expectedParentSha;
     let patchCalls = 0;
+    let updateRefsCalls = 0;
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider(),
       apiBaseUrl,
@@ -48,6 +50,62 @@ describe("atomic repository publication ancestor regression", () => {
             tree: [],
             truncated: false,
           });
+        }
+        if (method === "POST" && url === graphqlUrl()) {
+          const body = JSON.parse(String(init?.body)) as {
+            query?: unknown;
+            variables?: {
+              input?: {
+                repositoryId?: unknown;
+                refUpdates?: Array<{
+                  name?: unknown;
+                  beforeOid?: unknown;
+                  afterOid?: unknown;
+                  force?: unknown;
+                }>;
+                clientMutationId?: unknown;
+              };
+            };
+          };
+          if (
+            typeof body.query === "string"
+            && body.query.startsWith("query StensiblyRepositoryNodeId")
+          ) {
+            return Response.json({ data: { repository: { id: repositoryId } } });
+          }
+          if (
+            typeof body.query === "string"
+            && body.query.startsWith("mutation StensiblyUpdateRefs")
+          ) {
+            updateRefsCalls += 1;
+            expect(body.variables?.input).toEqual({
+              repositoryId,
+              refUpdates: [{
+                name: `refs/heads/${targetRef}`,
+                beforeOid: expectedParentSha,
+                afterOid: nextCommitSha,
+                force: false,
+              }],
+              clientMutationId: `stensibly-write-${nextCommitSha.slice(0, 16)}`,
+            });
+            if (providerCurrentHead !== expectedParentSha) {
+              return Response.json({
+                data: { updateRefs: null },
+                errors: [{
+                  message: "provider stale ref detail",
+                  type: "STALE_REF",
+                }],
+              });
+            }
+            providerCurrentHead = nextCommitSha;
+            return Response.json({
+              data: {
+                updateRefs: {
+                  clientMutationId: `stensibly-write-${nextCommitSha.slice(0, 16)}`,
+                },
+              },
+            });
+          }
         }
         if (method === "POST" && url === blobCollectionUrl()) {
           return Response.json({
@@ -77,20 +135,10 @@ describe("atomic repository publication ancestor regression", () => {
             }],
           }, { status: 201 });
         }
-        if (method === "PATCH" && url === updateRefUrl()) {
+        if (method === "PATCH") {
           patchCalls += 1;
-          const body = JSON.parse(String(init?.body)) as {
-            sha?: unknown;
-            force?: unknown;
-          };
-          expect(body).toEqual({ sha: nextCommitSha, force: false });
-
-          if (providerCurrentHead === ancestorSha) {
-            providerCurrentHead = nextCommitSha;
-            return refResponse(nextCommitSha, 200);
-          }
-          return Response.json({ message: "Reference update failed" }, {
-            status: 422,
+          return Response.json({ message: "REST ref PATCH is forbidden" }, {
+            status: 500,
           });
         }
         return Response.json({ message: "unexpected request" }, { status: 500 });
@@ -116,9 +164,12 @@ describe("atomic repository publication ancestor regression", () => {
         message: "Prove exact-parent publication",
       },
       idempotencyKey: "ancestor-regression-1",
-    })).rejects.toThrow();
+    })).rejects.toThrow(
+      "GitHub repository write exact old ref changed before publication",
+    );
 
-    expect(patchCalls).toBeLessThanOrEqual(1);
+    expect(updateRefsCalls).toBe(1);
+    expect(patchCalls).toBe(0);
     expect(providerCurrentHead).toBe(ancestorSha);
   });
 });
@@ -157,12 +208,12 @@ function repositoryUrl(): string {
   return `${apiBaseUrl}/repos/${repositoryFullName}`;
 }
 
-function readRefUrl(): string {
-  return `${repositoryUrl()}/git/ref/heads/${targetRef}`;
+function graphqlUrl(): string {
+  return `${apiBaseUrl}/graphql`;
 }
 
-function updateRefUrl(): string {
-  return `${repositoryUrl()}/git/refs/heads/${targetRef}`;
+function readRefUrl(): string {
+  return `${repositoryUrl()}/git/ref/heads/${targetRef}`;
 }
 
 function commitUrl(sha: string): string {
