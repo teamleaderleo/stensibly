@@ -1,4 +1,4 @@
-name: Oriole 1219 v1 input-budget compatibility
+name: Oriole 1219 host-binding contract convergence
 
 on:
   push:
@@ -11,13 +11,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: oriole-1219-input-budget-compatibility
+  group: oriole-1219-host-binding-convergence
   cancel-in-progress: false
 
 jobs:
   repair:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
@@ -28,24 +28,26 @@ jobs:
       - name: Verify exact source lease
         shell: bash
         env:
-          SOURCE_BLOB: a0645346484710d1fddcdfd29034ecdd052a1fcb
+          PUBLIC_BLOB: a0645346484710d1fddcdfd29034ecdd052a1fcb
+          BASE_BLOB: 8ae36ab3e21b88a941edb5230842d1d09f189b48
           RED_CONTROL_SHA: f045d11794af52347c26f75c12a9999b9f39e644
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD:src/effective-tool-surface-host-binding.ts)" = "$SOURCE_BLOB"
+          test "$(git rev-parse HEAD:src/effective-tool-surface-host-binding.ts)" = "$PUBLIC_BLOB"
+          test "$(git rev-parse HEAD:src/effective-tool-surface-host-binding-base.ts)" = "$BASE_BLOB"
           git fetch --no-tags origin "$RED_CONTROL_SHA"
           git show "$RED_CONTROL_SHA":test/effective-tool-surface-host-binding-input-budget-red-control.test.ts \
             > /tmp/effective-tool-surface-host-binding-input-budget-red-control.test.ts
 
-      - name: Preserve inherited v1 legal ceilings
+      - name: Preserve v1 ceilings and bind host evidence into effective identity
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("src/effective-tool-surface-host-binding.ts")
-          text = path.read_text()
+          public_path = Path("src/effective-tool-surface-host-binding.ts")
+          public = public_path.read_text()
           old = "const maximumInputObjects = 10_000;"
           new = '''// The inherited v1 legal maximum can visit 11,026 caller objects:
 // envelope/tool-surface/classes + five class records + catalogue/executable/
@@ -53,17 +55,82 @@ jobs:
 // array and 1,000 requirement records + recovery-actions + observations.
 // Keep one bounded defense-in-depth ceiling above that exact inherited graph.
 const maximumInputObjects = 12_000;'''
-          if text.count(old) != 1:
-              raise SystemExit(f"input-object budget anchor moved: {text.count(old)}")
-          path.write_text(text.replace(old, new, 1))
+          if public.count(old) != 1:
+              raise SystemExit(f"input-object budget anchor moved: {public.count(old)}")
+          public_path.write_text(public.replace(old, new, 1))
+
+          base_path = Path("src/effective-tool-surface-host-binding-base.ts")
+          base = base_path.read_text()
+
+          old = '''  const toolSurface = buildEffectiveToolSurfaceSnapshot(input.toolSurface);
+  const classObservations = {} as Record<'''
+          new = '''  const capabilityToolSurface = buildEffectiveToolSurfaceSnapshot(input.toolSurface);
+  const classObservations = {} as Record<'''
+          if base.count(old) != 1:
+              raise SystemExit(f"tool-surface build anchor moved: {base.count(old)}")
+          base = base.replace(old, new, 1)
+
+          old = '''    const classSnapshot = toolSurface.classes[className];'''
+          new = '''    const classSnapshot = capabilityToolSurface.classes[className];'''
+          if base.count(old) != 1:
+              raise SystemExit(f"class-snapshot anchor moved: {base.count(old)}")
+          base = base.replace(old, new, 1)
+
+          old = '''  const snapshotFingerprint = sha256(stableJson({
+    toolSurfaceSnapshotFingerprint: toolSurface.snapshotFingerprint,
+    hostBindingFingerprint,
+  }));'''
+          new = '''  const effectiveSurfaceFingerprint = sha256(stableJson({
+    capabilitySurfaceFingerprint: capabilityToolSurface.surfaceFingerprint,
+    hostBindingFingerprint,
+  }));
+  const toolSurface = Object.freeze({
+    ...capabilityToolSurface,
+    surfaceFingerprint: effectiveSurfaceFingerprint,
+    snapshotFingerprint: sha256(stableJson({
+      capabilitySnapshotFingerprint: capabilityToolSurface.snapshotFingerprint,
+      surfaceFingerprint: effectiveSurfaceFingerprint,
+    })),
+  });
+  const snapshotFingerprint = sha256(stableJson({
+    toolSurfaceSnapshotFingerprint: toolSurface.snapshotFingerprint,
+    hostBindingFingerprint,
+  }));'''
+          if base.count(old) != 1:
+              raise SystemExit(f"host-aware fingerprint anchor moved: {base.count(old)}")
+          base_path.write_text(base.replace(old, new, 1))
+
+          test_path = Path("test/effective-tool-surface-host-binding.test.ts")
+          tests = test_path.read_text()
+          old = '''    expect(previous.toolSurface.surfaceFingerprint).toBe(current.toolSurface.surfaceFingerprint);'''
+          new = '''    expect(previous.toolSurface.surfaceFingerprint).not.toBe(current.toolSurface.surfaceFingerprint);
+    expect(previous.toolSurface.snapshotFingerprint).not.toBe(current.toolSurface.snapshotFingerprint);'''
+          if tests.count(old) != 1:
+              raise SystemExit(f"live transition fingerprint assertion moved: {tests.count(old)}")
+          test_path.write_text(tests.replace(old, new, 1))
+
+          provenance_path = Path("test/effective-tool-surface-host-binding-provenance.test.ts")
+          provenance = provenance_path.read_text()
+          old = '''  expect(previous.toolSurface.surfaceFingerprint)
+    .toBe(current.toolSurface.surfaceFingerprint);
+  expect(previous.toolSurface.snapshotFingerprint)
+    .toBe(current.toolSurface.snapshotFingerprint);'''
+          new = '''  expect(previous.toolSurface.surfaceFingerprint)
+    .not.toBe(current.toolSurface.surfaceFingerprint);
+  expect(previous.toolSurface.snapshotFingerprint)
+    .not.toBe(current.toolSurface.snapshotFingerprint);'''
+          if provenance.count(old) != 1:
+              raise SystemExit(f"provenance fingerprint assertion moved: {provenance.count(old)}")
+          provenance_path.write_text(provenance.replace(old, new, 1))
           PY
+
           cp /tmp/effective-tool-surface-host-binding-input-budget-red-control.test.ts \
             test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
           git diff --check
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Validate compatibility and hardened boundary
+      - name: Validate complete host-binding contract
         shell: bash
         run: |
           set -euo pipefail
@@ -76,7 +143,7 @@ const maximumInputObjects = 12_000;'''
             test/effective-tool-surface-host-binding-reconcile-boundary.test.ts \
             test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
 
-      - name: Publish workflow-free compatibility repair
+      - name: Publish workflow-free converged source
         shell: bash
         env:
           CARRIER_SHA: ${{ github.sha }}
@@ -84,13 +151,16 @@ const maximumInputObjects = 12_000;'''
         run: |
           set -euo pipefail
           git add \
+            src/effective-tool-surface-host-binding-base.ts \
             src/effective-tool-surface-host-binding.ts \
+            test/effective-tool-surface-host-binding.test.ts \
+            test/effective-tool-surface-host-binding-provenance.test.ts \
             test/effective-tool-surface-host-binding-input-budget-red-control.test.ts
           git rm .github/workflows/oriole-1219-input-budget-compat.yml
           git diff --cached --check
           git config user.name "Oriole"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Preserve host-binding v1 input ceilings"
+          git commit -m "Bind host observations into effective surface identity"
           git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
           test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
           git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" \
