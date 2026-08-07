@@ -1,0 +1,468 @@
+name: Oriole 1217 durable activity boundary convergence
+
+on:
+  push:
+    branches:
+      - cedar/1149-durable-activity-ingestion
+    paths:
+      - .github/workflows/oriole-1217-durable-boundary-convergence.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oriole-1217-durable-boundary-convergence
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1149-durable-activity-ingestion
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier lease
+        shell: bash
+        env:
+          EXPECTED_PARENT: a3baa13a9e02160567834ba9a8f554e48ace2e72
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          CEDAR_BLOB: c1b654da752513cc8729588b40e91e5f7c5edce7
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git rev-parse HEAD:.github/workflows/cedar-1149-durable-activity-store.yml)" = "$CEDAR_BLOB"
+          test -f .github/workflows/cinder-1217-convex-response-boundary.yml
+          test "$(git rev-parse ${MAIN}:src/orchestrator-activity-ingestion.ts)" = "41108c1ed41ffc60fcc5bbe1fb42a42334f9963b"
+
+      - name: Converge response and lookup privacy boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/cedar-1149-durable-activity-store.yml')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              text = text.replace(old, new, 1)
+
+          # Preserve merged #1152 lookup credential screening in the in-memory store.
+          replace_once(
+              '''          import { stableJson } from "./canonical-json.js";
+          import {
+            admitOrchestratorActivityIngestion,''',
+              '''          import { stableJson } from "./canonical-json.js";
+          import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
+          import {
+            admitOrchestratorActivityIngestion,''',
+              'in-memory privacy import',
+          )
+          replace_once(
+              '''          function scopeSlug(value: unknown, label: string): string {
+            if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }
+
+          function identifier(value: unknown, label: string): string {
+            if (typeof value !== "string" || !identifierPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }''',
+              '''          function scopeSlug(value: unknown, label: string): string {
+            if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+            return value;
+          }
+
+          function identifier(value: unknown, label: string): string {
+            if (typeof value !== "string" || !identifierPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+            return value;
+          }''',
+              'in-memory lookup screening',
+          )
+
+          # Screen Convex client lookup identities before any backend query.
+          replace_once(
+              '''          import { makeFunctionReference } from "convex/server";
+          import type { ConvexCaller } from "./convex-ledger.js";''',
+              '''          import { makeFunctionReference } from "convex/server";
+          import type { ConvexCaller } from "./convex-ledger.js";
+          import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";''',
+              'convex client privacy import',
+          )
+          replace_once(
+              '''                project: exactSlug(project, "Project"),
+                deliveryId: exactText(deliveryId, "Delivery ID", 240),''',
+              '''                project: exactSlug(project, "Project"),
+                deliveryId: exactLookupText(deliveryId, "Delivery ID", 240),''',
+              'convex client delivery lookup',
+          )
+          replace_once(
+              '''          function exactSlug(value: string, label: string): string {
+            const result = exactText(value, label, 80);
+            if (result !== result.toLowerCase() || !/^[a-z0-9][a-z0-9-_]*$/.test(result)) {
+              throw new RangeError(`${label} must be a lowercase slug`);
+            }
+            return result;
+          }
+
+          function exactText(value: string, label: string, maximum: number): string {''',
+              '''          function exactSlug(value: string, label: string): string {
+            const result = exactLookupText(value, label, 80);
+            if (result !== result.toLowerCase() || !/^[a-z0-9][a-z0-9-_]*$/.test(result)) {
+              throw new RangeError(`${label} must be a lowercase slug`);
+            }
+            return result;
+          }
+
+          function exactLookupText(value: string, label: string, maximum: number): string {
+            const result = exactText(value, label, maximum);
+            if (containsRealisticRetainedCredential(result)) {
+              throw new RangeError(`${label} cannot contain credential material`);
+            }
+            return result;
+          }
+
+          function exactText(value: string, label: string, maximum: number): string {''',
+              'convex client lookup helper',
+          )
+
+          # Replace hostile backend reflection / iteration with closed direct descriptors.
+          replace_once(
+              '''              if (!Array.isArray(raw) || raw.length > 4_096) {
+                throw new OrchestratorActivityStorageError();
+              }
+              const observations = raw.map(parseObservation);''',
+              '''              const values = exactDataArray(raw, 4_096);
+              const observations = values.map(parseObservation);''',
+              'list backend response admission',
+          )
+          start = text.index('          function exactDataRecord(\n')
+          end = text.index('          function exactSlug(', start)
+          replacement = '''          function exactDataArray(
+            value: unknown,
+            maximum: number,
+          ): unknown[] {
+            if (!value || typeof value !== "object") {
+              throw new OrchestratorActivityStorageError();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+            const length = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              !isArray
+              || prototype !== Array.prototype
+              || !lengthDescriptor
+              || lengthDescriptor.enumerable
+              || typeof length !== "number"
+              || !Number.isSafeInteger(length)
+              || length < 0
+              || length > maximum
+            ) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: unknown[] = new Array(length);
+            for (let index = 0; index < length; index += 1) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              } catch {
+                throw new OrchestratorActivityStorageError();
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result[index] = descriptor.value;
+            }
+            return result;
+          }
+
+          function exactDataRecord(
+            value: unknown,
+            keys: readonly string[],
+          ): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw new OrchestratorActivityStorageError();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? null : Object.getPrototypeOf(value);
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+            if (isArray || prototype !== Object.prototype) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: Record<string, unknown> = {};
+            for (const key of keys) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new OrchestratorActivityStorageError();
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result[key] = descriptor.value;
+            }
+            return result;
+          }
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          # Screen server-side lookup identities before workspace/project/database access.
+          replace_once(
+              '''          import { v } from "convex/values";
+          import {
+            canonicalOrchestratorActivityIngestionReceiptJson,''',
+              '''          import { v } from "convex/values";
+          import { containsRealisticRetainedCredential } from "../src/github-retained-credential-policy";
+          import {
+            canonicalOrchestratorActivityIngestionReceiptJson,''',
+              'convex server privacy import',
+          )
+          replace_once(
+              '''              const scope = await resolveProject(
+                ctx,
+                args.workspace,
+                args.project,
+                false,
+              );
+              if (!scope) return null;
+              const row = await ctx.db''',
+              '''              const deliveryId = boundedDeliveryId(args.deliveryId);
+              const scope = await resolveProject(
+                ctx,
+                args.workspace,
+                args.project,
+                false,
+              );
+              if (!scope) return null;
+              const row = await ctx.db''',
+              'server delivery screening order',
+          )
+          replace_once(
+              '''                    .eq("deliveryId", boundedDeliveryId(args.deliveryId))''',
+              '''                    .eq("deliveryId", deliveryId)''',
+              'server admitted delivery reuse',
+          )
+          replace_once(
+              '''            const workspaceSlug = normalizeWorkspace(workspaceInput);
+            const workspace = await findWorkspace(ctx, workspaceSlug);''',
+              '''            const workspaceSlug = normalizeWorkspace(workspaceInput);
+            rejectLookupCredential(workspaceSlug, "Workspace");
+            const projectSlug = assertSlug(projectInput, "Project");
+            rejectLookupCredential(projectSlug, "Project");
+            const workspace = await findWorkspace(ctx, workspaceSlug);''',
+              'server scope screening before lookup',
+          )
+          replace_once(
+              '''            const projectSlug = assertSlug(projectInput, "Project");
+            const project = await findProject(ctx, workspace._id, projectSlug);''',
+              '''            const project = await findProject(ctx, workspace._id, projectSlug);''',
+              'server duplicate project admission removal',
+          )
+          replace_once(
+              '''            return value;
+          }
+          EOF
+          sed -i 's/^          //' convex/orchestratorActivity.ts''',
+              '''            rejectLookupCredential(value, "Delivery ID");
+            return value;
+          }
+
+          function rejectLookupCredential(value: string, label: string): void {
+            if (containsRealisticRetainedCredential(value)) {
+              throw new RangeError(`Orchestrator activity ${label.toLowerCase()} contains credential material`);
+            }
+          }
+          EOF
+          sed -i 's/^          //' convex/orchestratorActivity.ts''',
+              'server credential helper',
+          )
+
+          # Strengthen adapter tests for both fixed backend admission and lookup privacy.
+          anchor = '''            test("rejects backend observation substitution and foreign workspace", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const changed = admitOrchestratorActivityIngestion(delivery({
+                deliveryId: "delivery_other",
+                observation: observation({ sourceId: "ghop_other" }),
+              }));
+              client.mutationResult = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  changed.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              await expect(store.ingest(input)).rejects.toBeInstanceOf(
+                OrchestratorActivityStorageError,
+              );
+              await expect(store.ingest(delivery({
+                observation: observation({ workspace: "other" }),
+              }))).rejects.toThrow("outside the configured store");
+            });
+'''
+          extra = anchor + '''
+
+            test("does not enumerate or get backend mutation result fields", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const base = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  admitted.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              let getCalls = 0;
+              let ownKeysCalls = 0;
+              client.mutationResult = new Proxy(base, {
+                get() {
+                  getCalls += 1;
+                  throw new Error("backend get must remain unreachable");
+                },
+                ownKeys() {
+                  ownKeysCalls += 1;
+                  throw new Error("backend ownKeys must remain unreachable");
+                },
+              });
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+
+              await expect(store.ingest(input)).resolves.toMatchObject({
+                replayed: false,
+                observationAppended: true,
+              });
+              expect(getCalls).toBe(0);
+              expect(ownKeysCalls).toBe(0);
+            });
+
+            test("bounds backend observation arrays before caller methods or keys", async () => {
+              const client = new FakeClient();
+              const admitted = admitOrchestratorActivityIngestion(delivery());
+              const base = [canonicalOrchestratorActivityObservationJson(
+                admitted.observation,
+              )];
+              let getCalls = 0;
+              let ownKeysCalls = 0;
+              client.queryResult = new Proxy(base, {
+                get() {
+                  getCalls += 1;
+                  throw new Error("backend array get must remain unreachable");
+                },
+                ownKeys() {
+                  ownKeysCalls += 1;
+                  throw new Error("backend array ownKeys must remain unreachable");
+                },
+              });
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+
+              await expect(store.listObservations("default", "stensibly"))
+                .resolves.toEqual([admitted.observation]);
+              expect(getCalls).toBe(0);
+              expect(ownKeysCalls).toBe(0);
+            });
+
+            test("rejects credential-shaped lookup identities before Convex queries", async () => {
+              const client = new FakeClient();
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              const credentialDelivery = `delivery_stn.svc_${"a".repeat(12)}`;
+              await expect(store.getReceipt(
+                "default",
+                "stensibly",
+                credentialDelivery,
+              )).rejects.toThrow("credential material");
+              await expect(store.listObservations(
+                "default",
+                `project_stn.tok_${"a".repeat(12)}`,
+              )).rejects.toThrow("credential material");
+              expect(client.queries).toEqual([]);
+            });
+'''
+          if text.count(anchor) != 1:
+              raise SystemExit("adapter test anchor moved")
+          text = text.replace(anchor, extra, 1)
+
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Publish one corrected Cedar source-builder
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          HEAD_REF: cedar/1149-durable-activity-ingestion
+        run: |
+          set -euo pipefail
+          cp .github/workflows/cedar-1149-durable-activity-store.yml /tmp/cedar-1149-durable-activity-store.yml
+          git reset --hard "$MAIN"
+          mkdir -p .github/workflows
+          cp /tmp/cedar-1149-durable-activity-store.yml .github/workflows/cedar-1149-durable-activity-store.yml
+          git add .github/workflows/cedar-1149-durable-activity-store.yml
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = ".github/workflows/cedar-1149-durable-activity-store.yml"
+          git config user.name "Oriole"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Converge durable activity admission boundaries"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
