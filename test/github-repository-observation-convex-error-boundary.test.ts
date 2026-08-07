@@ -80,4 +80,15 @@ describe("repository observation Convex backend error admission", () => {
     });
     await expectFixedStorageError(hostile);
   });
+
+  test("does not return a backend object that spoofs the local storage-error prototype", async () => {
+    const hostile = Object.create(
+      GitHubRepositoryObservationStorageError.prototype,
+    ) as Record<string, unknown>;
+    Object.defineProperty(hostile, "backendSecret", {
+      value: "backend hostile prose from spoofed local error",
+      enumerable: true,
+    });
+    await expectFixedStorageError(hostile);
+  });
 });
