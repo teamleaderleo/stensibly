@@ -1,0 +1,261 @@
+name: Morrow 1201 exact CAS core repair
+
+on:
+  push:
+    branches:
+      - juniper/1163-updaterefs-cas-core
+    paths:
+      - .github/workflows/morrow-1201-cas-core-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: morrow-1201-cas-core-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-updaterefs-cas-core
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "18278c060c5c3e5c5a333f1d57ea691d7204286d"
+          test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "a58dc0c891bda18b2c7667716b3a1ee7a14746ee"
+          test "$(git rev-parse HEAD^:test/github-update-refs-cas.test.ts)" = "b56d44d10349743a53d862115e609dd400cc0f70"
+          test "$(git rev-parse HEAD^:test/github-update-refs-cas-input-inspection.test.ts)" = "b089da43298ac0bdbe798bab7c6839d0ceab1ff3"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Repair transport, mutation identity, and revoked inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-update-refs-cas.ts")
+          source = source_path.read_text()
+
+          import_anchor = '''} from "./github-repository-write-admission.js";\n'''
+          import_add = '''} from "./github-repository-write-admission.js";\nimport { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";\n'''
+          if source.count(import_anchor) != 1:
+            raise SystemExit("unexpected import anchor")
+          source = source.replace(import_anchor, import_add, 1)
+
+          old_id = '''  const clientMutationId = `stensibly-write-${newHeadSha.slice(0, 16)}`;'''
+          new_id = '''  const objectFormat = expectedHeadSha.length === 40 ? "sha1" : "sha256";
+            const mutationFingerprint = fingerprintCanonicalRequest({
+              version: 1,
+              operation: "github.update_refs.cas",
+              repositoryFullName,
+              repositoryId,
+              targetRef,
+              expectedHeadSha,
+              newHeadSha,
+              objectFormat,
+            });
+            const clientMutationId = `stensibly-write-${mutationFingerprint.slice("sha256:".length)}`;'''
+          if source.count(old_id) != 1:
+            raise SystemExit("unexpected mutation-id anchor")
+          source = source.replace(old_id, new_id, 1)
+          source = source.replace(
+            '!/^stensibly-write-[a-f0-9]{16}$/u.test(expectedClientMutationId)',
+            '!/^stensibly-write-[a-f0-9]{64}$/u.test(expectedClientMutationId)',
+            1,
+          )
+
+          old_protocol = '''  if (
+            (url.protocol !== "https:" && url.protocol !== "http:")
+            || url.username !== ""
+            || url.password !== ""
+            || url.search !== ""
+            || url.hash !== ""
+          ) {'''
+          new_protocol = '''  const secure = url.protocol === "https:";
+            const localHttp = url.protocol === "http:" && url.hostname === "localhost";
+            if (
+              (!secure && !localHttp)
+              || url.username !== ""
+              || url.password !== ""
+              || url.search !== ""
+              || url.hash !== ""
+            ) {'''
+          if source.count(old_protocol) != 1:
+            raise SystemExit("unexpected API-base anchor")
+          source = source.replace(old_protocol, new_protocol, 1)
+
+          old_snapshot = '''function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw invalidCasInput();
+            }
+            return Object.freeze({'''
+          new_snapshot = '''function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
+            if (!value || typeof value !== "object") {
+              throw invalidCasInput();
+            }
+            try {
+              if (Array.isArray(value)) throw invalidCasInput();
+            } catch (error) {
+              if (error instanceof RangeError && error.message === invalidCasInput().message) throw error;
+              throw invalidCasInput();
+            }
+            return Object.freeze({'''
+          if source.count(old_snapshot) != 1:
+            raise SystemExit("unexpected snapshot anchor")
+          source = source.replace(old_snapshot, new_snapshot, 1)
+
+          old_record = '''function record(value: unknown): Record<string, unknown> {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw invalidGraphqlResponse();
+            }
+            let prototype: object | null;
+            try {
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw invalidGraphqlResponse();
+            }
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw invalidGraphqlResponse();
+            }'''
+          new_record = '''function record(value: unknown): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw invalidGraphqlResponse();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw invalidGraphqlResponse();
+            }
+            if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+              throw invalidGraphqlResponse();
+            }'''
+          if source.count(old_record) != 1:
+            raise SystemExit("unexpected record anchor")
+          source = source.replace(old_record, new_record, 1)
+
+          old_dense = '''function denseArray(value: unknown, maximumLength: number): unknown[] {
+            if (!Array.isArray(value)) throw invalidGraphqlResponse();
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              prototype = Object.getPrototypeOf(value);
+              lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            } catch {
+              throw invalidGraphqlResponse();
+            }
+            if (prototype !== Array.prototype) throw invalidGraphqlResponse();'''
+          new_dense = '''function denseArray(value: unknown, maximumLength: number): unknown[] {
+            if (!value || typeof value !== "object") throw invalidGraphqlResponse();
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = Object.getPrototypeOf(value);
+              lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            } catch {
+              throw invalidGraphqlResponse();
+            }
+            if (!isArray || prototype !== Array.prototype) throw invalidGraphqlResponse();'''
+          if source.count(old_dense) != 1:
+            raise SystemExit("unexpected dense-array anchor")
+          source = source.replace(old_dense, new_dense, 1)
+          source_path.write_text(source)
+
+          test_path = Path("test/github-update-refs-cas.test.ts")
+          tests = test_path.read_text()
+          tests = tests.replace(
+            'clientMutationId: `stensibly-write-${sha1Commit.slice(0, 16)}`',
+            'clientMutationId: request.clientMutationId',
+            1,
+          )
+          tests = tests.replace(
+            'const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;',
+            'const clientMutationId = `stensibly-write-${"e".repeat(64)}`;',
+          )
+          tests = tests.replace(
+            'clientMutationId: "stensibly-write-0000000000000000"',
+            'clientMutationId: `stensibly-write-${"0".repeat(64)}`',
+            1,
+          )
+          if "normalizes a revoked GraphQL envelope" not in tests:
+            tests += r'''
+
+test("normalizes a revoked GraphQL envelope", () => {
+  const revoked = Proxy.revocable({ data: { repository: { id: repositoryId } } }, {});
+  revoked.revoke();
+  expect(() => admitGitHubRepositoryNodeIdResponse(revoked.proxy))
+    .toThrow("GitHub updateRefs GraphQL response is invalid");
+});
+'''
+          test_path.write_text(tests)
+
+          inspection_path = Path("test/github-update-refs-cas-input-inspection.test.ts")
+          inspection = inspection_path.read_text()
+          inspection = inspection.replace(
+            'clientMutationId: `stensibly-write-${baseInput.newHeadSha.slice(0, 16)}`',
+            'clientMutationId: expect.stringMatching(/^stensibly-write-[a-f0-9]{64}$/)',
+            1,
+          )
+          if "normalizes a revoked CAS input" not in inspection:
+            inspection += r'''
+
+test("normalizes a revoked CAS input", () => {
+  const revoked = Proxy.revocable(baseInput, {});
+  revoked.revoke();
+  expect(() => buildGitHubUpdateRefsCasRequest(revoked.proxy))
+    .toThrow("GitHub updateRefs CAS input is invalid");
+});
+'''
+          inspection_path.write_text(inspection)
+          PY
+
+          git fetch origin \
+            e45589d7a12d38d23a36fe8e60bda7b155dadcd8 \
+            611f367c5fc312bc1868fb6a27b029c5c3abb696
+          git show e45589d7a12d38d23a36fe8e60bda7b155dadcd8:test/github-update-refs-cas-api-base-security.test.ts > test/github-update-refs-cas-api-base-security.test.ts
+          git show 611f367c5fc312bc1868fb6a27b029c5c3abb696:test/github-update-refs-cas-mutation-identity.test.ts > test/github-update-refs-cas-mutation-identity.test.ts
+          git diff --check
+
+      - name: Validate repaired CAS contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-node-id.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts
+
+      - name: Publish workflow-free repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/morrow-1201-cas-core-repair.yml
+          git add \
+            src/github-update-refs-cas.ts \
+            test/github-update-refs-cas.test.ts \
+            test/github-update-refs-cas-input-inspection.test.ts \
+            test/github-update-refs-cas-api-base-security.test.ts \
+            test/github-update-refs-cas-mutation-identity.test.ts
+          git diff --cached --check
+          git config user.name "Morrow"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Harden exact updateRefs CAS contract"
+          git push origin HEAD:juniper/1163-updaterefs-cas-core
