@@ -6,6 +6,7 @@ import {
 } from "../src/github-rest-repository-write-adapter.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
+const repositoryId = "R_kgDOAtomicMode";
 const targetRef = "topic/atomic-mode";
 const path = "tool.sh";
 const parentSha = "1".repeat(40);
@@ -83,6 +84,11 @@ describe("atomic repository file mode preservation", () => {
     });
     expect(recorded).toContainEqual({
       method: "POST",
+      url: graphqlUrl(),
+      body: repositoryNodeQueryBody(),
+    });
+    expect(recorded).toContainEqual({
+      method: "POST",
       url: treeCollectionUrl(),
       body: {
         base_tree: parentTreeSha,
@@ -97,12 +103,18 @@ describe("atomic repository file mode preservation", () => {
     expect(recorded.filter((request) =>
       request.method === "POST" && request.url === blobCollectionUrl()
     )).toHaveLength(expectsBlobWrite ? 1 : 0);
+    expect(recorded.at(-1)).toMatchObject({
+      method: "POST",
+      url: graphqlUrl(),
+      body: updateRefsBody(),
+    });
+    expect(recorded.some((request) => request.method === "PATCH")).toBe(false);
   });
 
   test.each([
     { mode: "120000", type: "blob" },
     { mode: "160000", type: "commit" },
-  ])("rejects unsupported parent mode $mode before publication", async ({
+  ])("rejects unsupported parent mode $mode before repository lookup or publication", async ({
     mode,
     type,
   }) => {
@@ -180,6 +192,23 @@ function atomicModeFetcher(input: {
         truncated: false,
       });
     }
+    if (method === "POST" && url === graphqlUrl()) {
+      if (isRepositoryNodeQuery(body)) {
+        return Response.json({ data: { repository: { id: repositoryId } } });
+      }
+      if (isUpdateRefsMutation(body)) {
+        return Response.json({
+          data: {
+            updateRefs: {
+              clientMutationId: `stensibly-write-${nextCommitSha.slice(0, 16)}`,
+            },
+          },
+        }, {
+          status: 200,
+          headers: { "x-github-request-id": "REQ-ATOMIC-MODE" },
+        });
+      }
+    }
     if (
       input.expectsBlobWrite
       && method === "POST"
@@ -206,21 +235,47 @@ function atomicModeFetcher(input: {
         url: commitUrl(nextCommitSha),
       }, { status: 201 });
     }
-    if (method === "PATCH" && url === updateRefUrl()) {
-      return Response.json({
-        ref: `refs/heads/${targetRef}`,
-        object: {
-          type: "commit",
-          sha: nextCommitSha,
-          url: commitUrl(nextCommitSha),
-        },
-      }, {
-        status: 200,
-        headers: { "x-github-request-id": "REQ-ATOMIC-MODE" },
-      });
-    }
     return Response.json({ message: "unexpected request" }, { status: 500 });
   }) as unknown as typeof fetch;
+}
+
+function isRepositoryNodeQuery(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith(
+      "query StensiblyRepositoryNodeId",
+    );
+}
+
+function isUpdateRefsMutation(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith(
+      "mutation StensiblyUpdateRefs",
+    );
+}
+
+function repositoryNodeQueryBody(): unknown {
+  return {
+    query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }",
+    variables: { owner: "teamleaderleo", name: "stensibly" },
+  };
+}
+
+function updateRefsBody(): unknown {
+  return {
+    query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
+    variables: {
+      input: {
+        repositoryId,
+        refUpdates: [{
+          name: `refs/heads/${targetRef}`,
+          beforeOid: parentSha,
+          afterOid: nextCommitSha,
+          force: false,
+        }],
+        clientMutationId: `stensibly-write-${nextCommitSha.slice(0, 16)}`,
+      },
+    },
+  };
 }
 
 function tokenProvider(): GitHubRepositoryWriteTokenProvider {
@@ -244,6 +299,10 @@ function gitBlobSha(content: string): string {
 
 function repositoryUrl(): string {
   return `${apiBaseUrl}/repos/${repositoryFullName}`;
+}
+
+function graphqlUrl(): string {
+  return `${apiBaseUrl}/graphql`;
 }
 
 function commitUrl(sha: string): string {
@@ -272,8 +331,4 @@ function blobUrl(sha: string): string {
 
 function blobCollectionUrl(): string {
   return `${repositoryUrl()}/git/blobs`;
-}
-
-function updateRefUrl(): string {
-  return `${repositoryUrl()}/git/refs/heads/${targetRef}`;
 }
