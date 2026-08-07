@@ -1,0 +1,104 @@
+name: Cedar 1245 carrier cleanup bootstrap
+
+on:
+  push:
+    branches:
+      - cedar/1238-observation-hardening-convergence
+    paths:
+      - .github/workflows/cedar-1245-carrier-cleanup-bootstrap.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1245-carrier-cleanup-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1238-observation-hardening-convergence
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Patch exact carrier cleanup
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: cedar/1238-observation-hardening-convergence
+          CARRIER_BLOB: 0f37424b051a6736ade141eefc288e94971a0424
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "a9027a1314a18c14ad7e145331bf94bfece2a085"
+          test "$(git rev-parse HEAD:.github/workflows/cedar-1238-observation-hardening.yml)" = "$CARRIER_BLOB"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/cedar-1238-observation-hardening.yml')
+          text = path.read_text()
+
+          old = '''          convex_path = Path("src/github-repository-observation-convex.ts")
+          convex = convex_path.read_text()
+
+          old = '''
+          new = '''          convex_path = Path("src/github-repository-observation-convex.ts")
+          convex = convex_path.read_text()
+          import_old = '''  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+  snapshotBoundedJson,
+} from "./github-repository-observation-admission.js";'''
+          import_new = '''  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+} from "./github-repository-observation-admission.js";'''
+          if convex.count(import_old) != 1:
+              raise SystemExit(f"Convex bounded-JSON import anchor moved: {convex.count(import_old)}")
+          convex = convex.replace(import_old, import_new, 1)
+
+          old = '''
+          if text.count(old) != 1:
+              raise SystemExit(f"carrier Convex setup anchor moved: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          old = '''          convex_path.write_text(convex[:start] + replacement + convex[end:])
+'''
+          new = '''          convex = convex[:start] + replacement + convex[end:]
+          legacy_helpers = '''function hasExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean {
+  const actualKeys = Object.keys(value).sort(codeUnitCompare);
+  const expected = [...expectedKeys].sort(codeUnitCompare);
+  return actualKeys.length === expected.length
+    && actualKeys.every((key, index) => key === expected[index]);
+}
+
+function codeUnitCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+'''
+          if convex.count(legacy_helpers) != 1:
+              raise SystemExit(f"legacy Convex helper anchor moved: {convex.count(legacy_helpers)}")
+          convex_path.write_text(convex.replace(legacy_helpers, "", 1))
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f"carrier Convex write anchor moved: {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git rm .github/workflows/cedar-1245-carrier-cleanup-bootstrap.yml
+          git add .github/workflows/cedar-1238-observation-hardening.yml
+          git diff --cached --check
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Tighten observation convergence cleanup"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
