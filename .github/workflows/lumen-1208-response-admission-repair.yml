@@ -32,20 +32,26 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "e209e08615dd4e063e65fedd1cd9dcab12d68ebb"
+          test "$(git rev-parse HEAD^)" = "b4283bf56805de3276f16dec3a107b1d91abd756"
+          test "$(git rev-parse HEAD^^)" = "e209e08615dd4e063e65fedd1cd9dcab12d68ebb"
           test "$(git rev-parse HEAD:src/github-rest-repository-write-atomic-publication.ts)" = "dace75741348e3d7883fa11bc490bcc515274169"
 
       - name: Import exact reversing controls
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin 701fa8691c63342c12bd7252c506a8db26723253 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae
+          git fetch origin \
+            701fa8691c63342c12bd7252c506a8db26723253 \
+            8c6c21e1e1b5ead689976920e6446d4b06d2f8ae \
+            68d620992a2359a482e2c7f3c627ab2bb0fd49c4
           git show 701fa8691c63342c12bd7252c506a8db26723253:test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts > test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts
           git show 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae:test/github-rest-repository-write-atomic-record-ownkeys.test.ts > test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+          git show 68d620992a2359a482e2c7f3c627ab2bb0fd49c4:test/github-rest-repository-write-atomic-required-fields.test.ts > test/github-rest-repository-write-atomic-required-fields.test.ts
           test "$(git hash-object test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
           test "$(git hash-object test/github-rest-repository-write-atomic-record-ownkeys.test.ts)" = "5d3178d67dc500b75199668484fa1ea392cc2d78"
+          test "$(git hash-object test/github-rest-repository-write-atomic-required-fields.test.ts)" = "9b0f0a23ec2b9296a66b46506bdb7b16724967e6"
 
-      - name: Bound arrays and fixed provider records by direct descriptors
+      - name: Bound arrays and complete fixed provider records by direct descriptors
         shell: bash
         run: |
           set -euo pipefail
@@ -182,8 +188,7 @@ jobs:
               } catch {
                 throw invalidResponse(`${label} was malformed`);
               }
-              if (!descriptor) continue;
-              if (!descriptor.enumerable || !("value" in descriptor)) {
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
                 throw invalidResponse(`${label} was malformed`);
               }
               result[key] = descriptor.value;
@@ -221,15 +226,17 @@ jobs:
           git add \
             src/github-rest-repository-write-atomic-publication.ts \
             test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \
-            test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts \
+            test/github-rest-repository-write-atomic-required-fields.test.ts
           git diff --cached --check
           test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
             src/github-rest-repository-write-atomic-publication.ts \
             test/github-rest-repository-write-atomic-record-ownkeys.test.ts \
+            test/github-rest-repository-write-atomic-required-fields.test.ts \
             test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts | sort)"
           git config user.name "Lumen"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Bound atomic provider response admission"
+          git commit -m "Bound complete atomic provider response admission"
           git fetch origin refs/heads/lumen/1208-response-admission-repair:refs/remotes/origin/lumen/1208-response-admission-repair
           test "$(git rev-parse refs/remotes/origin/lumen/1208-response-admission-repair)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/lumen/1208-response-admission-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1208-response-admission-repair
