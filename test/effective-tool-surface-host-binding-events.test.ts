@@ -203,6 +203,7 @@ describe("durable effective tool-surface host-binding events", () => {
       expect(serialized).not.toContain("stensibly.get_brief");
       expect(serialized).not.toContain("Private capability name");
       expect(serialized).not.toContain("private-workspace");
+      expect(serialized).not.toContain("provenanceDigest");
       expect(serialized).not.toContain("secret-thread-reference");
     } finally {
       store.close();
