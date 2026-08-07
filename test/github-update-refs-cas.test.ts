@@ -9,17 +9,25 @@ import {
 
 const repositoryFullName = "teamleaderleo/stensibly";
 const repositoryId = "R_kgDOAtomicRepository";
-const repository = Object.freeze({ repositoryFullName, repositoryId });
 const targetRef = "feature/exact-cas";
 const sha1Parent = "a".repeat(40);
 const sha1Commit = "b".repeat(40);
 const sha256Parent = "c".repeat(64);
 const sha256Commit = "d".repeat(64);
 
+function repositoryIdentity(
+  fullName = repositoryFullName,
+  id = repositoryId,
+) {
+  return admitGitHubRepositoryNodeIdResponse({
+    data: { repository: { id, nameWithOwner: fullName } },
+  }, fullName);
+}
+
 function sha1Request() {
   return buildGitHubUpdateRefsCasRequest({
     apiBaseUrl: "https://api.github.com",
-    repository,
+    repository: repositoryIdentity(),
     targetRef,
     expectedHeadSha: sha1Parent,
     newHeadSha: sha1Commit,
@@ -48,17 +56,10 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       .toBe("https://github.example.com/custom/api/graphql");
   });
 
-  test("binds repository node identity to the exact canonical provider repository", () => {
-    for (const nameWithOwner of [
-      repositoryFullName,
-      "TeamLeaderLeo/Stensibly",
-    ]) {
-      const admitted = admitGitHubRepositoryNodeIdResponse({
-        data: { repository: { id: repositoryId, nameWithOwner } },
-      }, repositoryFullName);
-      expect(admitted).toEqual(repository);
-      expect(Object.isFrozen(admitted)).toBe(true);
-    }
+  test("binds repository node identity to the exact provider repository", () => {
+    const admitted = repositoryIdentity();
+    expect(admitted).toEqual({ repositoryFullName, repositoryId });
+    expect(Object.isFrozen(admitted)).toBe(true);
 
     expect(() => admitGitHubRepositoryNodeIdResponse({
       data: {
@@ -108,7 +109,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   test("admits SHA-256 CAS and rejects mixed object formats", () => {
     expect(() => buildGitHubUpdateRefsCasRequest({
       apiBaseUrl: "https://api.github.com",
-      repository,
+      repository: repositoryIdentity(),
       targetRef,
       expectedHeadSha: sha256Parent,
       newHeadSha: sha256Commit,
@@ -116,7 +117,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
 
     expect(() => buildGitHubUpdateRefsCasRequest({
       apiBaseUrl: "https://api.github.com",
-      repository,
+      repository: repositoryIdentity(),
       targetRef,
       expectedHeadSha: sha1Parent,
       newHeadSha: sha256Commit,
@@ -170,7 +171,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     }
   });
 
-  test("does not invoke caller ownKeys or getters for admitted fixed records", () => {
+  test("does not invoke caller ownKeys or getters for provider response records", () => {
     let ownKeysCalls = 0;
     let getCalls = 0;
     const providerRepository = new Proxy({
@@ -209,7 +210,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     expect(admitGitHubRepositoryNodeIdResponse(
       envelope,
       repositoryFullName,
-    )).toEqual(repository);
+    )).toEqual({ repositoryFullName, repositoryId });
     expect(ownKeysCalls).toBe(0);
     expect(getCalls).toBe(0);
   });

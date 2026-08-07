@@ -7,22 +7,25 @@ import {
 const repositoryFullName = "teamleaderleo/stensibly";
 const opaqueNodeId = "R_kgDOAtomic/Repository+legacy=";
 
-function repositoryIdentity() {
-  return Object.freeze({
-    repositoryFullName,
-    repositoryId: opaqueNodeId,
-  });
+function repositoryIdentity(
+  fullName = repositoryFullName,
+  id = opaqueNodeId,
+) {
+  return admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        id,
+        nameWithOwner: fullName,
+      },
+    },
+  }, fullName);
 }
 
 test("admits a bounded opaque node ID only with its exact provider repository", () => {
-  expect(admitGitHubRepositoryNodeIdResponse({
-    data: {
-      repository: {
-        id: opaqueNodeId,
-        nameWithOwner: repositoryFullName,
-      },
-    },
-  }, repositoryFullName)).toEqual(repositoryIdentity());
+  expect(repositoryIdentity()).toEqual({
+    repositoryFullName,
+    repositoryId: opaqueNodeId,
+  });
 
   expect(buildGitHubUpdateRefsCasRequest({
     apiBaseUrl: "https://api.github.com",
@@ -30,11 +33,11 @@ test("admits a bounded opaque node ID only with its exact provider repository", 
     targetRef: "feature/exact-cas",
     expectedHeadSha: "a".repeat(40),
     newHeadSha: "b".repeat(40),
-  }).body).toEqual(expect.objectContaining({
+  }).body).toMatchObject({
     variables: {
-      input: expect.objectContaining({ repositoryId: opaqueNodeId }),
+      input: { repositoryId: opaqueNodeId },
     },
-  }));
+  });
 });
 
 test("rejects repository substitution, whitespace, and overlong node IDs", () => {
