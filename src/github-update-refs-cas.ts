@@ -37,7 +37,7 @@ const repositoryNodeIdQuery =
   "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }";
 const updateRefsMutation =
   "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }";
-const nodeIdPattern = /^[A-Za-z0-9_=-]{1,256}$/u;
+const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
 const maximumGraphqlErrors = 4;
 
 export function buildGitHubRepositoryNodeIdRequest(
