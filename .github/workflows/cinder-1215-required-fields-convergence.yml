@@ -1,0 +1,124 @@
+name: Cinder 1215 required-field convergence
+
+on:
+  push:
+    branches:
+      - lumen/1208-response-admission-repair
+    paths:
+      - .github/workflows/cinder-1215-required-fields-convergence.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1215-required-field-convergence
+  cancel-in-progress: false
+
+jobs:
+  repair-carrier:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1208-response-admission-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier lease
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "b4283bf56805de3276f16dec3a107b1d91abd756"
+          test "$(git rev-parse HEAD:.github/workflows/lumen-1208-response-admission-repair.yml)" = "728f6631d4739c79b74d77afc32cd7a3bf0690f7"
+
+      - name: Tighten the existing response-admission carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/lumen-1208-response-admission-repair.yml")
+          text = path.read_text()
+
+          old = 'git fetch origin 701fa8691c63342c12bd7252c506a8db26723253 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae'
+          new = 'git fetch origin 701fa8691c63342c12bd7252c506a8db26723253 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae 68d620992a2359a482e2c7f3c627ab2bb0fd49c4'
+          if text.count(old) != 1:
+            raise SystemExit("reversing-control fetch anchor moved")
+          text = text.replace(old, new, 1)
+
+          old = '''          git show 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae:test/github-rest-repository-write-atomic-record-ownkeys.test.ts > test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+          test "$(git hash-object test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
+          test "$(git hash-object test/github-rest-repository-write-atomic-record-ownkeys.test.ts)" = "5d3178d67dc500b75199668484fa1ea392cc2d78"
+'''
+          new = '''          git show 8c6c21e1e1b5ead689976920e6446d4b06d2f8ae:test/github-rest-repository-write-atomic-record-ownkeys.test.ts > test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+          git show 68d620992a2359a482e2c7f3c627ab2bb0fd49c4:test/github-rest-repository-write-atomic-required-fields.test.ts > test/github-rest-repository-write-atomic-required-fields.test.ts
+          test "$(git hash-object test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts)" = "56984c6b78cc9b98b640802613c3b1e552507780"
+          test "$(git hash-object test/github-rest-repository-write-atomic-record-ownkeys.test.ts)" = "5d3178d67dc500b75199668484fa1ea392cc2d78"
+          test "$(git hash-object test/github-rest-repository-write-atomic-required-fields.test.ts)" = "9b0f0a23ec2b9296a66b46506bdb7b16724967e6"
+'''
+          if text.count(old) != 1:
+            raise SystemExit("reversing-control import anchor moved")
+          text = text.replace(old, new, 1)
+
+          old = '''              if (!descriptor) continue;
+              if (!descriptor.enumerable || !("value" in descriptor)) {
+                throw invalidResponse(`${label} was malformed`);
+              }
+'''
+          new = '''              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw invalidResponse(`${label} was malformed`);
+              }
+'''
+          if text.count(old) != 1:
+            raise SystemExit("required-field admission anchor moved")
+          text = text.replace(old, new, 1)
+
+          old = '''            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \\
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts
+'''
+          new = '''            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts \\
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts \\
+            test/github-rest-repository-write-atomic-required-fields.test.ts
+'''
+          if text.count(old) != 1:
+            raise SystemExit("publish add-list anchor moved")
+          text = text.replace(old, new, 1)
+
+          old = '''            src/github-rest-repository-write-atomic-publication.ts \\
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts \\
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts | sort)"
+'''
+          new = '''            src/github-rest-repository-write-atomic-publication.ts \\
+            test/github-rest-repository-write-atomic-record-ownkeys.test.ts \\
+            test/github-rest-repository-write-atomic-required-fields.test.ts \\
+            test/github-rest-repository-write-atomic-small-tree-ownkeys.test.ts | sort)"
+'''
+          if text.count(old) != 1:
+            raise SystemExit("publish fence anchor moved")
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Publish corrected carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cinder-1215-required-fields-convergence.yml
+          git add .github/workflows/lumen-1208-response-admission-repair.yml
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Require declared atomic response fields"
+          git fetch origin refs/heads/lumen/1208-response-admission-repair:refs/remotes/origin/lumen/1208-response-admission-repair
+          test "$(git rev-parse refs/remotes/origin/lumen/1208-response-admission-repair)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/lumen/1208-response-admission-repair:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/lumen/1208-response-admission-repair
