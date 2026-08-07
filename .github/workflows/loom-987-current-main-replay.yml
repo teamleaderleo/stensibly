@@ -29,7 +29,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          STALE_CARRIER: 354f42b1ff4a04bc14a1d41bb348fc24753f9a91
+          STALE_CARRIER: ecba873543a49d31aaef64d4be28a09a2ca719e8
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
@@ -43,7 +43,7 @@ jobs:
           SOURCE_SHA: 5f44f1ff1f4525f2ff2128cd89b388b2c0e9c9c4
           CREDENTIAL_TEST_SHA: d6a0dc415c44fce6bc50276ea8dd1a9ec5fc2b70
           ROUTE_TEST_SHA: 6f0e1ec0a04bb33fe128745ab7ca718c9f4e03e7
-          CURRENT_MAIN: 6e01c25ab7fb2036f347b2de6ce8ba34e1a8db3c
+          CURRENT_MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
         run: |
           set -euo pipefail
           files=(
