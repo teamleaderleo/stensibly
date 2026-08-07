@@ -28,18 +28,18 @@ jobs:
       - name: Verify exact current carrier
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          SOURCE_PARENT: f293741dc76eb1f11279829b4f1474c2a958a89e
+          CARRIER_PARENT: a8351873642cedf5e63bf1fe9af69d3658a2dbbd
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "$SOURCE_PARENT"
+          test "$(git rev-parse HEAD^)" = "$CARRIER_PARENT"
           test "$(git rev-parse HEAD^:src/github-rest-repository-write-atomic-publication.ts)" = "0cfe937f238e7018d3fbb30d99c9cab78c35c820"
           test "$(git rev-parse HEAD^:src/github-update-refs-cas.ts)" = "f47484d6bfd56dae99cce6d2a0b0e3f1a0ef8144"
-          test -f .github/workflows/oriole-1208-required-provider-fields.yml
-          test -f .github/workflows/vireo-1208-cas-provenance-required-fields.yml
+          test ! -f .github/workflows/oriole-1208-required-provider-fields.yml
+          test ! -f .github/workflows/vireo-1208-cas-provenance-required-fields.yml
           git fetch --no-tags origin "$CAS_REPAIR" "$REQUIRED_FIELDS_CONTROL"
           test "$(git rev-parse ${CAS_REPAIR}:src/github-update-refs-cas.ts)" = "d3e3b9fd6e35c2fa57480da2ec587a6074a9e61d"
           test "$(git rev-parse ${REQUIRED_FIELDS_CONTROL}:test/github-rest-repository-write-atomic-required-fields.test.ts)" = "9b0f0a23ec2b9296a66b46506bdb7b16724967e6"
@@ -203,10 +203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm \
-            .github/workflows/lumen-1208-final-convergence.yml \
-            .github/workflows/oriole-1208-required-provider-fields.yml \
-            .github/workflows/vireo-1208-cas-provenance-required-fields.yml
+          git rm .github/workflows/lumen-1208-final-convergence.yml
           git add \
             src/github-rest-repository-write-atomic-publication.ts \
             src/github-update-refs-cas.ts \
