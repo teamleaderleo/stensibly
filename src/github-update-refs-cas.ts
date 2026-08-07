@@ -31,23 +31,12 @@ export interface GitHubUpdateRefsCasResult {
   clientMutationId: string;
 }
 
-export class GitHubUpdateRefsCasStaleRefError extends Error {
-  readonly code = "github_update_refs_stale_ref" as const;
-
-  constructor() {
-    super("GitHub repository write exact old ref changed before publication");
-    this.name = "GitHubUpdateRefsCasStaleRefError";
-    Object.freeze(this);
-  }
-}
-
 const repositoryNodeIdQuery =
   "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }";
 const updateRefsMutation =
   "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }";
 const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
 const clientMutationIdPattern = /^stensibly-write-[a-f0-9]{64}$/u;
-const maximumGraphqlErrors = 4;
 
 export function buildGitHubRepositoryNodeIdRequest(
   apiBaseUrl: string,
@@ -129,11 +118,7 @@ export function admitGitHubUpdateRefsCasResponse(
     throw invalidGraphqlResponse();
   }
   const envelope = record(value);
-  const errors = optionalDataProperty(envelope, "errors");
-  if (errors !== undefined) {
-    if (isExactStaleRefResponse(envelope, errors)) {
-      throw new GitHubUpdateRefsCasStaleRefError();
-    }
+  if (optionalDataProperty(envelope, "errors") !== undefined) {
     throw new Error("GitHub could not publish repository ref");
   }
   const data = record(requiredDataProperty(envelope, "data"));
@@ -182,7 +167,15 @@ function mutationIdentity(value: Readonly<{
 }
 
 function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
+    throw invalidCasInput();
+  }
+  try {
+    if (Array.isArray(value)) throw invalidCasInput();
+  } catch (error) {
+    if (error instanceof RangeError && error.message === invalidCasInput().message) {
+      throw error;
+    }
     throw invalidCasInput();
   }
   return Object.freeze({
@@ -213,27 +206,6 @@ function casInputString(value: object, key: string): string {
   return descriptor.value;
 }
 
-function isExactStaleRefResponse(
-  envelope: Record<string, unknown>,
-  errorsValue: unknown,
-): boolean {
-  try {
-    const errors = denseArray(errorsValue, maximumGraphqlErrors);
-    if (errors.length !== 1) return false;
-    const error = record(errors[0]);
-    if (
-      typeof optionalDataProperty(error, "message") !== "string"
-      || optionalDataProperty(error, "type") !== "STALE_REF"
-    ) {
-      return false;
-    }
-    const data = record(requiredDataProperty(envelope, "data"));
-    return requiredDataProperty(data, "updateRefs") === null;
-  } catch {
-    return false;
-  }
-}
-
 function admitNodeId(value: unknown): string {
   if (typeof value !== "string" || !nodeIdPattern.test(value)) {
     throw invalidGraphqlResponse();
@@ -242,16 +214,18 @@ function admitNodeId(value: unknown): string {
 }
 
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
     throw invalidGraphqlResponse();
   }
+  let isArray: boolean;
   let prototype: object | null;
   try {
+    isArray = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
   } catch {
     throw invalidGraphqlResponse();
   }
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
     throw invalidGraphqlResponse();
   }
   return value as Record<string, unknown>;
@@ -283,37 +257,6 @@ function dataDescriptor(
     throw invalidGraphqlResponse();
   }
   return descriptor as PropertyDescriptor & { value: unknown };
-}
-
-function denseArray(value: unknown, maximumLength: number): unknown[] {
-  if (!Array.isArray(value)) throw invalidGraphqlResponse();
-  let prototype: object | null;
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    prototype = Object.getPrototypeOf(value);
-    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
-  } catch {
-    throw invalidGraphqlResponse();
-  }
-  if (prototype !== Array.prototype) throw invalidGraphqlResponse();
-  const lengthValue = lengthDescriptor && "value" in lengthDescriptor
-    ? lengthDescriptor.value
-    : undefined;
-  if (
-    typeof lengthValue !== "number"
-    || !Number.isSafeInteger(lengthValue)
-    || lengthValue < 0
-    || lengthValue > maximumLength
-  ) {
-    throw invalidGraphqlResponse();
-  }
-  const result: unknown[] = [];
-  for (let index = 0; index < lengthValue; index += 1) {
-    const descriptor = dataDescriptor(value, String(index));
-    if (!descriptor) throw invalidGraphqlResponse();
-    result.push(descriptor.value);
-  }
-  return result;
 }
 
 function invalidCasInput(): RangeError {
