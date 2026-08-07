@@ -28,30 +28,43 @@ jobs:
       - name: Verify exact finalizer lease
         shell: bash
         env:
-          EXPECTED_PARENT: 57fd284fb664def9a07042cb93d16475bd972689
+          EXPECTED_HEAD: ${{ github.sha }}
+          EXPECTED_PARENT: 98f41a69468f2210cba7b6b6695538f31d540d9a
           FINALIZER_BLOB: d63ce2ec007349ee4a6b8a9ba4181d1b2bb9c57b
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
           test "$(git rev-parse HEAD:.github/workflows/lumen-1208-final-convergence.yml)" = "$FINALIZER_BLOB"
           test "$(git rev-parse HEAD:test/github-rest-repository-write-repository-node-provenance.test.ts)" = "2998805971cdeb74f489d10a183ea8bbb93a87ec"
 
-      - name: Add repository provenance control to focused finalizer gates
+      - name: Retarget and strengthen sole finalizer
         shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import os
           from pathlib import Path
+
           path = Path('.github/workflows/lumen-1208-final-convergence.yml')
           text = path.read_text()
-          old = '''            test/github-rest-repository-write-adapter-fence-parity.test.ts \\
+
+          old_parent = '          CARRIER_PARENT: 023eaa321e336cc0ad79393bebc18565f83324d4\n'
+          new_parent = f'          CARRIER_PARENT: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old_parent) != 1:
+              raise SystemExit(f'finalizer parent anchor moved: {text.count(old_parent)}')
+          text = text.replace(old_parent, new_parent, 1)
+
+          old_tests = '''            test/github-rest-repository-write-adapter-fence-parity.test.ts \\
             test/github-rest-repository-write-provider-url-spelling.test.ts'''
-          new = '''            test/github-rest-repository-write-adapter-fence-parity.test.ts \\
+          new_tests = '''            test/github-rest-repository-write-adapter-fence-parity.test.ts \\
             test/github-rest-repository-write-provider-url-spelling.test.ts \\
             test/github-rest-repository-write-repository-node-provenance.test.ts'''
-          if text.count(old) != 1:
-            raise SystemExit(f'focused finalizer test fence moved: {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+          if text.count(old_tests) != 1:
+              raise SystemExit(f'focused finalizer test fence moved: {text.count(old_tests)}')
+          path.write_text(text.replace(old_tests, new_tests, 1))
           PY
           git diff --check
 
@@ -67,7 +80,7 @@ jobs:
           git diff --cached --check
           git config user.name "Cinder"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Run repository provenance in exact-CAS finalizer"
+          git commit -m "Retarget exact-CAS finalizer to validation head"
           git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
           test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
           git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
