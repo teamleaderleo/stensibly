@@ -1,10 +1,4 @@
-const credentialPatterns = Object.freeze([
-  /(?:^|[^A-Za-z0-9])stn\.tok_[A-Za-z0-9._-]{20,}(?=$|[^A-Za-z0-9._-])/i,
-  /(?:^|[^A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?=$|[^A-Za-z0-9_])/i,
-  /(?:^|[^A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?=$|[^A-Za-z0-9])/i,
-  /(?:^|[^A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_-]{20,}(?=$|[^A-Za-z0-9_-])/i,
-  /(?:^|[^A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/-]{20,}={0,2}(?=$|[\s,;])/i,
-]);
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 
 export function requirePlainObject(
   value: unknown,
@@ -76,7 +70,7 @@ export function boundedIdentity(value: unknown, label: string): string {
   ) {
     throw new TypeError(`${label} is invalid`);
   }
-  if (containsCredentialShape(value)) {
+  if (containsRealisticRetainedCredential(value)) {
     throw new TypeError(`${label} contains credential-shaped text`);
   }
   return value;
@@ -96,7 +90,7 @@ export function boundedText(
   ) {
     throw new TypeError(`${label} is invalid`);
   }
-  if (containsCredentialShape(value)) {
+  if (containsRealisticRetainedCredential(value)) {
     throw new TypeError(`${label} contains credential-shaped text`);
   }
   return value;
@@ -173,8 +167,4 @@ export function assertCanonicalJsonByteBudget(
   if (canonicalJsonUtf8Length(value) > maxBytes) {
     throw new RangeError(`${label} exceeds the ${maxBytes}-byte output limit`);
   }
-}
-
-function containsCredentialShape(value: string): boolean {
-  return credentialPatterns.some((pattern) => pattern.test(value));
 }
