@@ -12,6 +12,36 @@ const targetRef = "feature/exact-cas";
 const expectedHeadSha = "a".repeat(40);
 const newHeadSha = "b".repeat(40);
 
+type BoundRepository = Readonly<{
+  repositoryFullName: string;
+  repositoryId: string;
+}>;
+
+const admitBoundRepository = admitGitHubRepositoryNodeIdResponse as unknown as (
+  value: unknown,
+  expectedRepositoryFullName: string,
+) => BoundRepository;
+
+const buildBoundCas = buildGitHubUpdateRefsCasRequest as unknown as (
+  input: Omit<
+    GitHubUpdateRefsCasInput,
+    "repositoryFullName" | "repositoryId"
+  > & {
+    repository: BoundRepository;
+  },
+) => unknown;
+
+function providerBoundRepository(): BoundRepository {
+  return admitBoundRepository({
+    data: {
+      repository: {
+        id: repositoryId,
+        nameWithOwner: repositoryFullName,
+      },
+    },
+  }, repositoryFullName);
+}
+
 test("binds the repository node lookup receipt to the requested canonical repository", () => {
   const request = buildGitHubRepositoryNodeIdRequest(
     "https://api.github.com",
@@ -19,22 +49,7 @@ test("binds the repository node lookup receipt to the requested canonical reposi
   );
   expect(String(request.body.query)).toContain("nameWithOwner");
 
-  const admitBoundRepository = admitGitHubRepositoryNodeIdResponse as unknown as (
-    value: unknown,
-    expectedRepositoryFullName: string,
-  ) => Readonly<{
-    repositoryFullName: string;
-    repositoryId: string;
-  }>;
-
-  expect(admitBoundRepository({
-    data: {
-      repository: {
-        id: repositoryId,
-        nameWithOwner: repositoryFullName,
-      },
-    },
-  }, repositoryFullName)).toEqual({
+  expect(providerBoundRepository()).toEqual({
     repositoryFullName,
     repositoryId,
   });
@@ -49,24 +64,27 @@ test("binds the repository node lookup receipt to the requested canonical reposi
   }, repositoryFullName)).toThrow();
 });
 
-test("builds CAS only from a repository-bound lookup receipt", () => {
-  const buildBoundCas = buildGitHubUpdateRefsCasRequest as unknown as (
-    input: Omit<
-      GitHubUpdateRefsCasInput,
-      "repositoryFullName" | "repositoryId"
-    > & {
-      repository: Readonly<{
-        repositoryFullName: string;
-        repositoryId: string;
-      }>;
-    },
-  ) => unknown;
-
+test("builds CAS from the exact provider-admitted repository receipt", () => {
   expect(() => buildBoundCas({
     apiBaseUrl: "https://api.github.com",
-    repository: Object.freeze({ repositoryFullName, repositoryId }),
+    repository: providerBoundRepository(),
     targetRef,
     expectedHeadSha,
     newHeadSha,
   })).not.toThrow();
+});
+
+test("rejects a caller-fabricated lookalike repository receipt", () => {
+  const forged = Object.freeze({
+    repositoryFullName,
+    repositoryId,
+  });
+
+  expect(() => buildBoundCas({
+    apiBaseUrl: "https://api.github.com",
+    repository: forged,
+    targetRef,
+    expectedHeadSha,
+    newHeadSha,
+  })).toThrow();
 });
