@@ -1,0 +1,57 @@
+name: Lumen 987 Loom retarget bootstrap
+
+on:
+  push:
+    branches:
+      - lumen/971-unicode-symbol-repair
+    paths:
+      - .github/workflows/lumen-987-loom-retarget-bootstrap.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-987-loom-retarget-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/971-unicode-symbol-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Retarget complete Loom replay carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: lumen/971-unicode-symbol-repair
+          LOOM_BLOB: 491fd85860e89b0ad00afc0e335d147690a14060
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD:.github/workflows/loom-987-current-main-replay.yml)" = "$LOOM_BLOB"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('.github/workflows/loom-987-current-main-replay.yml')
+          text = path.read_text()
+          old = '          STALE_CARRIER: ecba873543a49d31aaef64d4be28a09a2ca719e8\n'
+          new = f'          STALE_CARRIER: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'Loom stale-carrier anchor moved: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git rm .github/workflows/lumen-987-loom-retarget-bootstrap.yml
+          git add .github/workflows/loom-987-current-main-replay.yml
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bind outbound replay carrier to bootstrap head"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" origin "HEAD:refs/heads/${HEAD_REF}"
