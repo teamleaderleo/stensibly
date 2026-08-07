@@ -15,10 +15,15 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 describe("Git receive-pack exact ref CAS protocol", () => {
-  test("admits exact SHA-1 advertisement and rejects changed advertised head", () => {
+  test("admits exact SHA-1 advertisement and minimizes retained capabilities", () => {
     const advertisement = receivePackAdvertisement({
       head: sha1Parent,
-      capabilities: ["report-status", "delete-refs"],
+      capabilities: [
+        "report-status",
+        "delete-refs",
+        "agent=git/2.50.1",
+        "session-id=github.com:session/123",
+      ],
     });
     expect(admitGitReceivePackAdvertisement(
       advertisement,
@@ -26,7 +31,7 @@ describe("Git receive-pack exact ref CAS protocol", () => {
       sha1Parent,
     )).toEqual({
       objectFormat: "sha1",
-      capabilities: ["report-status", "delete-refs"],
+      capabilities: ["report-status"],
       targetRef,
       targetHeadSha: sha1Parent,
     });
@@ -41,7 +46,11 @@ describe("Git receive-pack exact ref CAS protocol", () => {
   test("admits SHA-256 object-format negotiation", () => {
     const advertisement = receivePackAdvertisement({
       head: sha256Parent,
-      capabilities: ["report-status", "object-format=sha256"],
+      capabilities: [
+        "report-status",
+        "object-format=sha256",
+        "agent=git/2.50.1",
+      ],
     });
     expect(admitGitReceivePackAdvertisement(
       advertisement,
@@ -58,7 +67,7 @@ describe("Git receive-pack exact ref CAS protocol", () => {
   test("builds SHA-1 update command with a valid empty pack", () => {
     const request = buildGitReceivePackCasRequest({
       objectFormat: "sha1",
-      advertisedCapabilities: ["report-status", "delete-refs"],
+      advertisedCapabilities: ["report-status", "delete-refs", "agent=git/2.50.1"],
       targetRef,
       expectedHeadSha: sha1Parent,
       newHeadSha: sha1Commit,
@@ -81,7 +90,11 @@ describe("Git receive-pack exact ref CAS protocol", () => {
   test("builds SHA-256 update command with object-format and SHA-256 empty pack", () => {
     const request = buildGitReceivePackCasRequest({
       objectFormat: "sha256",
-      advertisedCapabilities: ["report-status", "object-format=sha256"],
+      advertisedCapabilities: [
+        "report-status",
+        "object-format=sha256",
+        "agent=git/2.50.1",
+      ],
       targetRef,
       expectedHeadSha: sha256Parent,
       newHeadSha: sha256Commit,
@@ -193,7 +206,7 @@ describe("Git receive-pack exact ref CAS protocol", () => {
   test("keeps malformed capability diagnostics scoped to advertisement admission", () => {
     const malformed = receivePackAdvertisement({
       head: sha1Parent,
-      capabilities: ["report-status", "BAD"],
+      capabilities: ["report-status", "bad\tcapability"],
     });
     expect(() => admitGitReceivePackAdvertisement(malformed, targetRef, sha1Parent))
       .toThrow("Git receive-pack advertisement is invalid");
