@@ -1,0 +1,213 @@
+import { describe, expect, test } from "bun:test";
+import {
+  GitHubUpdateRefsCasStaleRefError,
+  admitGitHubRepositoryNodeIdResponse,
+  admitGitHubUpdateRefsCasResponse,
+  buildGitHubRepositoryNodeIdRequest,
+  buildGitHubUpdateRefsCasRequest,
+  githubGraphqlUrl,
+} from "../src/github-update-refs-cas.ts";
+
+const repositoryFullName = "teamleaderleo/stensibly";
+const repositoryId = "R_kgDOAtomicRepository";
+const targetRef = "feature/exact-cas";
+const sha1Parent = "a".repeat(40);
+const sha1Commit = "b".repeat(40);
+const sha256Parent = "c".repeat(64);
+const sha256Commit = "d".repeat(64);
+
+describe("GitHub updateRefs exact-old-ref CAS", () => {
+  test("builds exact github.com repository node query", () => {
+    const request = buildGitHubRepositoryNodeIdRequest(
+      "https://api.github.com",
+      repositoryFullName,
+    );
+    expect(request.url.href).toBe("https://api.github.com/graphql");
+    expect(request.body).toEqual({
+      query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }",
+      variables: { owner: "teamleaderleo", name: "stensibly" },
+    });
+    expect(Object.isFrozen(request)).toBe(true);
+    expect(Object.isFrozen(request.body)).toBe(true);
+  });
+
+  test("maps GHES REST API base to GraphQL endpoint", () => {
+    expect(githubGraphqlUrl("https://github.example.com/api/v3").href)
+      .toBe("https://github.example.com/api/graphql");
+    expect(githubGraphqlUrl("https://github.example.com/custom/api").href)
+      .toBe("https://github.example.com/custom/api/graphql");
+  });
+
+  test("admits exact repository node identity and rejects GraphQL errors", () => {
+    expect(admitGitHubRepositoryNodeIdResponse({
+      data: { repository: { id: repositoryId } },
+    })).toBe(repositoryId);
+
+    expect(() => admitGitHubRepositoryNodeIdResponse({
+      data: { repository: { id: repositoryId } },
+      errors: [{ message: "provider detail" }],
+    })).toThrow("GitHub could not read repository node identity");
+
+    expect(() => admitGitHubRepositoryNodeIdResponse({
+      data: { repository: { id: "bad node id with spaces" } },
+    })).toThrow("GitHub updateRefs GraphQL response is invalid");
+  });
+
+  test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
+    const request = buildGitHubUpdateRefsCasRequest({
+      apiBaseUrl: "https://api.github.com",
+      repositoryFullName,
+      repositoryId,
+      targetRef,
+      expectedHeadSha: sha1Parent,
+      newHeadSha: sha1Commit,
+    });
+    expect(request.url.href).toBe("https://api.github.com/graphql");
+    expect(request.clientMutationId).toBe(`stensibly-write-${sha1Commit.slice(0, 16)}`);
+    expect(request.body).toEqual({
+      query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
+      variables: {
+        input: {
+          repositoryId,
+          refUpdates: [{
+            name: `refs/heads/${targetRef}`,
+            beforeOid: sha1Parent,
+            afterOid: sha1Commit,
+            force: false,
+          }],
+          clientMutationId: `stensibly-write-${sha1Commit.slice(0, 16)}`,
+        },
+      },
+    });
+  });
+
+  test("admits SHA-256 CAS and rejects mixed object formats", () => {
+    expect(() => buildGitHubUpdateRefsCasRequest({
+      apiBaseUrl: "https://api.github.com",
+      repositoryFullName,
+      repositoryId,
+      targetRef,
+      expectedHeadSha: sha256Parent,
+      newHeadSha: sha256Commit,
+    })).not.toThrow();
+
+    expect(() => buildGitHubUpdateRefsCasRequest({
+      apiBaseUrl: "https://api.github.com",
+      repositoryFullName,
+      repositoryId,
+      targetRef,
+      expectedHeadSha: sha1Parent,
+      newHeadSha: sha256Commit,
+    })).toThrow("GitHub updateRefs object format is invalid");
+  });
+
+  test("admits only the exact successful client mutation identity", () => {
+    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    expect(admitGitHubUpdateRefsCasResponse({
+      data: { updateRefs: { clientMutationId } },
+    }, clientMutationId)).toEqual({ clientMutationId });
+
+    expect(() => admitGitHubUpdateRefsCasResponse({
+      data: { updateRefs: { clientMutationId: "stensibly-write-0000000000000000" } },
+    }, clientMutationId)).toThrow("GitHub updateRefs GraphQL response is invalid");
+  });
+
+  test("classifies one standards-compliant stale-ref error without retaining prose", () => {
+    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    let error: unknown;
+    try {
+      admitGitHubUpdateRefsCasResponse({
+        data: { updateRefs: null },
+        errors: [{
+          message: "provider stale ref detail must never be echoed",
+          type: "STALE_REF",
+          path: ["updateRefs"],
+        }],
+      }, clientMutationId);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(GitHubUpdateRefsCasStaleRefError);
+    expect((error as Error).message)
+      .toBe("GitHub repository write exact old ref changed before publication");
+    expect(JSON.stringify(error)).not.toContain("provider stale ref detail");
+  });
+
+  test("keeps malformed, multiple, and non-stale GraphQL errors generic", () => {
+    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    const values = [
+      {
+        data: { updateRefs: null },
+        errors: [{ message: "other", type: "OTHER" }],
+      },
+      {
+        data: { updateRefs: null },
+        errors: [
+          { message: "stale", type: "STALE_REF" },
+          { message: "other", type: "OTHER" },
+        ],
+      },
+      {
+        data: { updateRefs: {} },
+        errors: [{ message: "stale", type: "STALE_REF" }],
+      },
+      {
+        data: { updateRefs: null },
+        errors: [{ type: "STALE_REF" }],
+      },
+    ];
+    for (const value of values) {
+      expect(() => admitGitHubUpdateRefsCasResponse(value, clientMutationId))
+        .toThrow("GitHub could not publish repository ref");
+    }
+  });
+
+  test("does not invoke caller ownKeys or getters for admitted fixed records", () => {
+    let ownKeysCalls = 0;
+    let getCalls = 0;
+    const repository = new Proxy({ id: repositoryId }, {
+      ownKeys() {
+        ownKeysCalls += 1;
+        throw new Error("ownKeys must not run");
+      },
+      get() {
+        getCalls += 1;
+        throw new Error("get must not run");
+      },
+    });
+    const data = new Proxy({ repository }, {
+      ownKeys() {
+        ownKeysCalls += 1;
+        throw new Error("ownKeys must not run");
+      },
+      get() {
+        getCalls += 1;
+        throw new Error("get must not run");
+      },
+    });
+    const envelope = new Proxy({ data }, {
+      ownKeys() {
+        ownKeysCalls += 1;
+        throw new Error("ownKeys must not run");
+      },
+      get() {
+        getCalls += 1;
+        throw new Error("get must not run");
+      },
+    });
+    expect(admitGitHubRepositoryNodeIdResponse(envelope)).toBe(repositoryId);
+    expect(ownKeysCalls).toBe(0);
+    expect(getCalls).toBe(0);
+  });
+
+  test("rejects credentialed, queried, or fragmented API bases", () => {
+    for (const value of [
+      "https://user:secret@api.github.com",
+      "https://api.github.com?token=secret",
+      "https://api.github.com/#secret",
+      "ftp://api.github.com",
+    ]) {
+      expect(() => githubGraphqlUrl(value)).toThrow("GitHub API base URL is invalid");
+    }
+  });
+});
