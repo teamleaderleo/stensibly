@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact source lease
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          SOURCE_PARENT: e8746de6d06242f2c48d95f04151775074346fef
+          SOURCE_PARENT: 92e961304b9f12ccc0bb087731a2d840057d48a7
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
