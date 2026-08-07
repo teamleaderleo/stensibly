@@ -5,6 +5,7 @@ import {
 } from "../src/github-rest-repository-write-adapter.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
+const repositoryId = "R_kgDOSha256Parity";
 const sha40 = "a".repeat(40);
 const parent64 = "b".repeat(64);
 const commit64 = "c".repeat(64);
@@ -79,7 +80,7 @@ describe("GitHub repository-write adapter fence parity", () => {
     }
   });
 
-  test("admits one coherent 64-hex object format for canonical reads and writes", async () => {
+  test("admits one coherent 64-hex object format for canonical reads and exact-CAS writes", async () => {
     const requests: Array<{ method: string; url: string }> = [];
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: {
@@ -93,6 +94,9 @@ describe("GitHub repository-write adapter fence parity", () => {
       fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
         const method = init?.method ?? "GET";
         const url = String(input);
+        const body = init?.body === undefined
+          ? null
+          : JSON.parse(String(init.body)) as unknown;
         requests.push({ method, url });
 
         if (method === "GET" && url === commitUrl(commit64)) {
@@ -121,6 +125,38 @@ describe("GitHub repository-write adapter fence parity", () => {
             truncated: false,
           });
         }
+        if (method === "POST" && url === graphqlUrl()) {
+          if (isRepositoryNodeQuery(body)) {
+            return Response.json({ data: { repository: { id: repositoryId } } });
+          }
+          if (isUpdateRefsMutation(body)) {
+            expect(body).toEqual({
+              query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
+              variables: {
+                input: {
+                  repositoryId,
+                  refUpdates: [{
+                    name: "refs/heads/topic/review",
+                    beforeOid: parent64,
+                    afterOid: commit64,
+                    force: false,
+                  }],
+                  clientMutationId: `stensibly-write-${commit64.slice(0, 16)}`,
+                },
+              },
+            });
+            return Response.json({
+              data: {
+                updateRefs: {
+                  clientMutationId: `stensibly-write-${commit64.slice(0, 16)}`,
+                },
+              },
+            }, {
+              status: 200,
+              headers: { "x-github-request-id": "REQ-SHA256-WRITE" },
+            });
+          }
+        }
         if (method === "POST" && url === blobCollectionUrl()) {
           return Response.json({
             sha: blob64,
@@ -146,17 +182,9 @@ describe("GitHub repository-write adapter fence parity", () => {
             url: commitUrl(commit64),
           }, { status: 201 });
         }
-        if (method === "PATCH" && url === updateRefUrl("topic/review")) {
-          return Response.json({
-            ref: "refs/heads/topic/review",
-            object: {
-              type: "commit",
-              sha: commit64,
-              url: commitUrl(commit64),
-            },
-          }, {
-            status: 200,
-            headers: { "x-github-request-id": "REQ-SHA256-WRITE" },
+        if (method === "PATCH") {
+          return Response.json({ message: "REST ref PATCH is forbidden" }, {
+            status: 500,
           });
         }
         return Response.json({ message: "unexpected request" }, { status: 500 });
@@ -191,16 +219,35 @@ describe("GitHub repository-write adapter fence parity", () => {
       { method: "GET", url: commitUrl(commit64) },
       { method: "GET", url: commitUrl(parent64) },
       { method: "GET", url: recursiveTreeUrl(parentTree64) },
+      { method: "POST", url: graphqlUrl() },
       { method: "POST", url: blobCollectionUrl() },
       { method: "POST", url: treeCollectionUrl() },
       { method: "POST", url: commitCollectionUrl() },
-      { method: "PATCH", url: updateRefUrl("topic/review") },
+      { method: "POST", url: graphqlUrl() },
     ]);
   });
 });
 
+function isRepositoryNodeQuery(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith(
+      "query StensiblyRepositoryNodeId",
+    );
+}
+
+function isUpdateRefsMutation(body: unknown): boolean {
+  return typeof (body as { query?: unknown })?.query === "string"
+    && String((body as { query: string }).query).startsWith(
+      "mutation StensiblyUpdateRefs",
+    );
+}
+
 function repositoryUrl(): string {
   return `https://api.github.com/repos/${repositoryFullName}`;
+}
+
+function graphqlUrl(): string {
+  return "https://api.github.com/graphql";
 }
 
 function commitUrl(sha: string): string {
@@ -229,10 +276,6 @@ function treeUrl(sha: string): string {
 
 function recursiveTreeUrl(sha: string): string {
   return `${treeUrl(sha)}?recursive=1`;
-}
-
-function updateRefUrl(targetRef: string): string {
-  return `${repositoryUrl()}/git/refs/heads/${targetRef}`;
 }
 
 function gitBlobSha256(content: string): string {
