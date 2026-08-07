@@ -1,0 +1,78 @@
+name: Tern 1168 inherited delegated read controls
+
+on:
+  push:
+    branches:
+      - cedar/1141-default-on-delegated-reads
+    paths:
+      - .github/workflows/tern-1168-inherited-delegated-read-controls.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tern-1168-inherited-delegated-read-controls
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1141-default-on-delegated-reads
+          fetch-depth: 2
+
+      - name: Verify exact inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/exact-boolean-env.ts)" = "aea389f600afdb67747dea5d414f3a4606d7533b"
+          test "$(git rev-parse HEAD:test/exact-boolean-env.test.ts)" = "7f0512d4d7084b3a93b8018e5e482815d59a8719"
+          test "$(git rev-parse HEAD:test/hosted-github-delegated-read-default-enable.test.ts)" = "5660decc86a903f70c7a0d5068b146429becd4f1"
+          test "$(git rev-parse HEAD:test/hosted-github-delegated-read-provider.test.ts)" = "08141b1a4621de4690709843a40a2748603eb202"
+          test "$(git rev-parse HEAD:test/hosted-github-actions-delegated-read-provider.test.ts)" = "e277709f525890fedf16474838d4e4c6e983322c"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Make metadata-only Actions fixture explicit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("test/hosted-github-actions-delegated-read-provider.test.ts")
+          text = path.read_text()
+          anchor = '''  return {\n    STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",\n    STENSIBLY_GITHUB_APP_ID: "12345",\n'''
+          replacement = '''  return {\n    STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",\n    STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "false",\n    STENSIBLY_GITHUB_APP_ID: "12345",\n'''
+          if text.count(anchor) != 1:
+              raise SystemExit("Actions metadata fixture anchor moved")
+          path.write_text(text.replace(anchor, replacement, 1))
+          PY
+          git diff --check
+
+      - name: Validate repaired inherited controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/exact-boolean-env.test.ts \
+            test/hosted-github-delegated-read-default-enable.test.ts \
+            test/hosted-github-delegated-read-provider.test.ts \
+            test/hosted-github-actions-delegated-read-provider.test.ts
+
+      - name: Publish workflow-free head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/tern-1168-inherited-delegated-read-controls.yml
+          git add test/hosted-github-actions-delegated-read-provider.test.ts
+          git diff --cached --check
+          git config user.name "Tern"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Align inherited delegated read controls"
+          git push origin HEAD:cedar/1141-default-on-delegated-reads
