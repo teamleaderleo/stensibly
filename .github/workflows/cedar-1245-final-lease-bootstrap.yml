@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Bind exact final carrier parent and control blob
+      - name: Bind exact final carrier parent and strengthened error control
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "720aa03756edf8cc4657d85e0db723b324aad075"
+          test "$(git rev-parse HEAD^)" = "b76d0502969f73de469fbb9caf4fd334b832a61b"
           test "$(git rev-parse HEAD:.github/workflows/cedar-1238-observation-hardening.yml)" = "$CARRIER_BLOB"
           python3 - <<'PY'
           import os
@@ -49,11 +49,29 @@ jobs:
               raise SystemExit(f'carrier parent anchors moved: {text.count(old_parent)}')
           text = text.replace(old_parent, new_parent)
 
+          old_error_ref = '          ERROR_CONTROL: 6f03a7acd3b88f1b94aa3f2f1ac5598e458a459d\n'
+          new_error_ref = '          ERROR_CONTROL: 0618d50624474dbe487e62b0763e2944bf357058\n'
+          if text.count(old_error_ref) != 2:
+              raise SystemExit(f'error-control ref anchors moved: {text.count(old_error_ref)}')
+          text = text.replace(old_error_ref, new_error_ref)
+
           old_control = '          test "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)" = "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)"\n'
-          new_control = '          test "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)" = "29bb21b998492f8168350d43ee0f727ca20a684b"\n'
+          new_control = '          test "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)" = "ff39709374d198fdc5793b4e61dbd69e2cc06c82"\n'
           if text.count(old_control) != 1:
               raise SystemExit(f'error-control lease anchor moved: {text.count(old_control)}')
-          path.write_text(text.replace(old_control, new_control, 1))
+          text = text.replace(old_control, new_control, 1)
+
+          old_map = '''    if (error instanceof GitHubRepositoryObservationConflictError) return error;
+    if (error instanceof GitHubRepositoryObservationStorageError) return error;'''
+          new_map = '''    if (error instanceof GitHubRepositoryObservationConflictError) {
+      return new GitHubRepositoryObservationConflictError();
+    }
+    if (error instanceof GitHubRepositoryObservationStorageError) {
+      return new GitHubRepositoryObservationStorageError();
+    }'''
+          if text.count(old_map) != 1:
+              raise SystemExit(f'fixed error rematerialization anchor moved: {text.count(old_map)}')
+          path.write_text(text.replace(old_map, new_map, 1))
           PY
           git rm .github/workflows/cedar-1245-final-lease-bootstrap.yml
           git add .github/workflows/cedar-1238-observation-hardening.yml
