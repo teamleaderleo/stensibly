@@ -1,4 +1,4 @@
-name: Marlin 1200 policy simulation semantic convergence
+name: Marlin 1200 complete policy simulation convergence
 
 on:
   push:
@@ -25,20 +25,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact repair lease
+      - name: Verify exact serialized lease
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          SOURCE_PARENT: fc7aeeac615e9088583e349117083976dde7074a
+          CARRIER_PARENT: f17e727a410ef8d7cc070c2c6f5f9f81b5e12b6a
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
-          test "$(git rev-parse HEAD^)" = "${SOURCE_PARENT}"
-          test "$(git rev-parse HEAD^:src/mcp-capability-policy-simulation-base.ts)" = "d55dfc6277cfa9ebf966dce4aad443b2f996379d"
+          test "$(git rev-parse HEAD^)" = "${CARRIER_PARENT}"
+          test "$(git rev-parse HEAD:src/mcp-capability-policy-simulation-base.ts)" = "d55dfc6277cfa9ebf966dce4aad443b2f996379d"
+          test -f .github/workflows/cinder-1200-unknown-classification.yml
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Apply complete simulation semantics
+      - name: Apply all accepted simulation repairs
         shell: bash
         env:
           SEMANTIC_CONTROL_SHA: 2ad3e0b1cf96aa2436e4e8d90871ea1d5ce2ebab
@@ -66,177 +67,250 @@ jobs:
 
           replace_once(
               '''  currentApprovalPolicy: string | null;
-          candidateApprovalPolicy: string | null;
-          currentProjectResolution: Readonly<McpCapabilityProjectResolution> | null;''',
+  candidateApprovalPolicy: string | null;
+  currentProjectResolution: Readonly<McpCapabilityProjectResolution> | null;''',
               '''  currentApprovalPolicy: string | null;
-          candidateApprovalPolicy: string | null;
-          currentReceiptPolicy: string | null;
-          candidateReceiptPolicy: string | null;
-          currentReconciliationPolicy: string | null;
-          candidateReconciliationPolicy: string | null;
-          currentProjectResolution: Readonly<McpCapabilityProjectResolution> | null;''',
+  candidateApprovalPolicy: string | null;
+  currentReceiptPolicy: string | null;
+  candidateReceiptPolicy: string | null;
+  currentReconciliationPolicy: string | null;
+  candidateReconciliationPolicy: string | null;
+  currentProjectResolution: Readonly<McpCapabilityProjectResolution> | null;''',
               "difference effect fields",
           )
-
           replace_once(
               '''  | "riskChanged"
-          | "projectResolutionChanged"''',
+  | "projectResolutionChanged"''',
               '''  | "riskChanged"
-          | "effectPolicyChanged"
-          | "projectResolutionChanged"''',
+  | "effectPolicyChanged"
+  | "projectResolutionChanged"''',
               "category union",
           )
           replace_once(
               '''  riskChanged: readonly McpPolicySimulationDifference[];
-          projectResolutionChanged: readonly McpPolicySimulationDifference[];''',
+  projectResolutionChanged: readonly McpPolicySimulationDifference[];''',
               '''  riskChanged: readonly McpPolicySimulationDifference[];
-          effectPolicyChanged: readonly McpPolicySimulationDifference[];
-          projectResolutionChanged: readonly McpPolicySimulationDifference[];''',
+  effectPolicyChanged: readonly McpPolicySimulationDifference[];
+  projectResolutionChanged: readonly McpPolicySimulationDifference[];''',
               "simulation effect bucket",
           )
           replace_once(
               '''  "riskChanged",
-          "projectResolutionChanged",''',
+  "projectResolutionChanged",''',
               '''  "riskChanged",
-          "effectPolicyChanged",
-          "projectResolutionChanged",''',
+  "effectPolicyChanged",
+  "projectResolutionChanged",''',
               "category registry",
           )
 
           old_counts = '''  const omittedCounts = Object.fromEntries(
-            categories.map((category) => [
-              category,
-              Math.max(0, buckets[category].length - limit),
-            ]),
-          ) as Record<McpPolicySimulationCategory | "sourceReferences", number>;
-          const visible = Object.fromEntries(
-            categories.map((category) => [
-              category,
-              buckets[category].sort(compareDifferences).slice(0, limit),
-            ]),
-          ) as Record<McpPolicySimulationCategory, McpPolicySimulationDifference[]>;
+    categories.map((category) => [
+      category,
+      Math.max(0, buckets[category].length - limit),
+    ]),
+  ) as Record<McpPolicySimulationCategory | "sourceReferences", number>;
+  const visible = Object.fromEntries(
+    categories.map((category) => [
+      category,
+      buckets[category].sort(compareDifferences).slice(0, limit),
+    ]),
+  ) as Record<McpPolicySimulationCategory, McpPolicySimulationDifference[]>;
 
-          const references = new Set<string>();
-          for (const category of categories) {
-            for (const difference of visible[category]) {
-              for (const reference of difference.sourceReferences) references.add(reference);
-            }
-          }
-          const orderedReferences = [...references].sort(compareCodeUnits);
-          omittedCounts.sourceReferences = Math.max(
-            0,
-            orderedReferences.length - maximumReferences,
-          );'''
+  const references = new Set<string>();
+  for (const category of categories) {
+    for (const difference of visible[category]) {
+      for (const reference of difference.sourceReferences) references.add(reference);
+    }
+  }
+  const orderedReferences = [...references].sort(compareCodeUnits);
+  omittedCounts.sourceReferences = Math.max(
+    0,
+    orderedReferences.length - maximumReferences,
+  );'''
           new_counts = '''  const references = new Set<string>();
-          for (const category of categories) {
-            for (const difference of buckets[category]) {
-              for (const reference of difference.sourceReferences) references.add(reference);
-            }
-          }
-          const orderedReferences = [...references].sort(compareCodeUnits);
-          const omittedCounts = Object.fromEntries(
-            categories.map((category) => [
-              category,
-              Math.max(0, buckets[category].length - limit),
-            ]),
-          ) as Record<McpPolicySimulationCategory | "sourceReferences", number>;
-          omittedCounts.sourceReferences = Math.max(
-            0,
-            orderedReferences.length - maximumReferences,
-          );
-          const visible = Object.fromEntries(
-            categories.map((category) => [
-              category,
-              buckets[category].sort(compareDifferences).slice(0, limit),
-            ]),
-          ) as Record<McpPolicySimulationCategory, McpPolicySimulationDifference[]>;'''
+  for (const category of categories) {
+    for (const difference of buckets[category]) {
+      for (const reference of difference.sourceReferences) references.add(reference);
+    }
+  }
+  const orderedReferences = [...references].sort(compareCodeUnits);
+  const omittedCounts = Object.fromEntries(
+    categories.map((category) => [
+      category,
+      Math.max(0, buckets[category].length - limit),
+    ]),
+  ) as Record<McpPolicySimulationCategory | "sourceReferences", number>;
+  omittedCounts.sourceReferences = Math.max(
+    0,
+    orderedReferences.length - maximumReferences,
+  );
+  const visible = Object.fromEntries(
+    categories.map((category) => [
+      category,
+      buckets[category].sort(compareDifferences).slice(0, limit),
+    ]),
+  ) as Record<McpPolicySimulationCategory, McpPolicySimulationDifference[]>;'''
           replace_once(old_counts, new_counts, "complete source-reference accounting")
 
           replace_once(
               '''    riskChanged: visible.riskChanged,
-            projectResolutionChanged: visible.projectResolutionChanged,''',
+    projectResolutionChanged: visible.projectResolutionChanged,''',
               '''    riskChanged: visible.riskChanged,
-            effectPolicyChanged: visible.effectPolicyChanged,
-            projectResolutionChanged: visible.projectResolutionChanged,''',
+    effectPolicyChanged: visible.effectPolicyChanged,
+    projectResolutionChanged: visible.projectResolutionChanged,''',
               "unsigned effect bucket",
           )
           replace_once(
               '''    ["riskChanged", "Risk changed"],
-            ["projectResolutionChanged", "Project resolution changed"],''',
+    ["projectResolutionChanged", "Project resolution changed"],''',
               '''    ["riskChanged", "Risk changed"],
-            ["effectPolicyChanged", "Receipt or reconciliation policy changed"],
-            ["projectResolutionChanged", "Project resolution changed"],''',
+    ["effectPolicyChanged", "Receipt or reconciliation policy changed"],
+    ["projectResolutionChanged", "Project resolution changed"],''',
               "markdown effect heading",
           )
-
           replace_once(
               '''    currentApprovalPolicy: current?.approvalPolicy ?? null,
-            candidateApprovalPolicy: candidate?.approvalPolicy ?? null,
-            currentProjectResolution: current ? { ...current.projectResolution } : null,''',
+    candidateApprovalPolicy: candidate?.approvalPolicy ?? null,
+    currentProjectResolution: current ? { ...current.projectResolution } : null,''',
               '''    currentApprovalPolicy: current?.approvalPolicy ?? null,
-            candidateApprovalPolicy: candidate?.approvalPolicy ?? null,
-            currentReceiptPolicy: current?.receiptPolicy ?? null,
-            candidateReceiptPolicy: candidate?.receiptPolicy ?? null,
-            currentReconciliationPolicy: current?.reconciliationPolicy ?? null,
-            candidateReconciliationPolicy: candidate?.reconciliationPolicy ?? null,
-            currentProjectResolution: current ? { ...current.projectResolution } : null,''',
+    candidateApprovalPolicy: candidate?.approvalPolicy ?? null,
+    currentReceiptPolicy: current?.receiptPolicy ?? null,
+    candidateReceiptPolicy: candidate?.receiptPolicy ?? null,
+    currentReconciliationPolicy: current?.reconciliationPolicy ?? null,
+    candidateReconciliationPolicy: candidate?.reconciliationPolicy ?? null,
+    currentProjectResolution: current ? { ...current.projectResolution } : null,''',
               "difference effect values",
           )
           replace_once(
               '''  if (current!.riskClass !== candidate!.riskClass) {
-            return "The candidate changes the policy consequence class.";
-          }
-          if (current!.defaultExposure !== candidate!.defaultExposure) {''',
+    return "The candidate changes the policy consequence class.";
+  }
+  if (current!.defaultExposure !== candidate!.defaultExposure) {''',
               '''  if (current!.riskClass !== candidate!.riskClass) {
-            return "The candidate changes the policy consequence class.";
-          }
-          if (
-            current!.receiptPolicy !== candidate!.receiptPolicy
-            || current!.reconciliationPolicy !== candidate!.reconciliationPolicy
-          ) {
-            return "The candidate changes receipt or reconciliation policy.";
-          }
-          if (current!.defaultExposure !== candidate!.defaultExposure) {''',
+    return "The candidate changes the policy consequence class.";
+  }
+  if (
+    current!.receiptPolicy !== candidate!.receiptPolicy
+    || current!.reconciliationPolicy !== candidate!.reconciliationPolicy
+  ) {
+    return "The candidate changes receipt or reconciliation policy.";
+  }
+  if (current!.defaultExposure !== candidate!.defaultExposure) {''',
               "decisive effect reason",
           )
-
+          replace_once(
+              '''  if (difference.currentDecision === "unknown" || difference.candidateDecision === "unknown") {
+    buckets.unknown.push(difference);
+    changed = true;
+  } else {''',
+              '''  if (difference.currentDecision === "unknown" || difference.candidateDecision === "unknown") {
+    buckets.unknown.push(difference);
+    return true;
+  } else {''',
+              "exclusive unknown classification",
+          )
           replace_once(
               '''      difference.currentDecision === "denied_by_policy"
-              && difference.candidateDecision === "allowed_by_policy"''',
+      && difference.candidateDecision === "allowed_by_policy"''',
               '''      difference.currentDecision !== "allowed_by_policy"
-              && difference.candidateDecision === "allowed_by_policy"''',
+      && difference.candidateDecision === "allowed_by_policy"''',
               "approval-removal widening",
           )
           replace_once(
               '''  if (difference.currentRiskClass !== difference.candidateRiskClass) {
-            buckets.riskChanged.push(difference);
-            changed = true;
-          }
-          if (
-            stableJson(difference.currentProjectResolution)''',
+    buckets.riskChanged.push(difference);
+    changed = true;
+  }
+  if (
+    stableJson(difference.currentProjectResolution)''',
               '''  if (difference.currentRiskClass !== difference.candidateRiskClass) {
-            buckets.riskChanged.push(difference);
-            changed = true;
-          }
-          if (
-            difference.currentReceiptPolicy !== difference.candidateReceiptPolicy
-            || difference.currentReconciliationPolicy
-              !== difference.candidateReconciliationPolicy
-          ) {
-            buckets.effectPolicyChanged.push(difference);
-            changed = true;
-          }
-          if (
-            stableJson(difference.currentProjectResolution)''',
+    buckets.riskChanged.push(difference);
+    changed = true;
+  }
+  if (
+    difference.currentReceiptPolicy !== difference.candidateReceiptPolicy
+    || difference.currentReconciliationPolicy
+      !== difference.candidateReconciliationPolicy
+  ) {
+    buckets.effectPolicyChanged.push(difference);
+    changed = true;
+  }
+  if (
+    stableJson(difference.currentProjectResolution)''',
               "effect-policy classification",
           )
 
           path.write_text(source)
+
+          test_path = Path("test/mcp-capability-policy-simulation.test.ts")
+          tests = test_path.read_text()
+          old_test = '''  test("marks stale and unavailable evidence unknown instead of optimistic", () => {
+    const policies = [writePolicy("github_create_issue")];
+    const result = simulateMcpCapabilityPolicyChange(simulationInput(
+      policies,
+      policies,
+      [
+        subject("subject:stale", "github_create_issue", {
+          sourceFreshness: "stale",
+        }),
+        subject("subject:missing", "github_create_issue", {
+          sourceFreshness: "unavailable",
+        }),
+      ],
+    ));
+
+    expect(result.unknown).toHaveLength(2);
+    expect(result.unknown.every((entry) => entry.currentDecision === "unknown")).toBe(true);
+    expect(result.unknown.every((entry) => entry.candidateDecision === "unknown")).toBe(true);
+  });'''
+          new_test = '''  test("keeps stale and unavailable evidence exclusively unknown", () => {
+    const current = [writePolicy("github_create_issue", {
+      risk: "bounded_write",
+      exposure: "core",
+      approval: "none",
+      resolution: { kind: "project_argument", argument: "project" },
+    })];
+    const candidate = [writePolicy("github_create_issue", {
+      risk: "consequential",
+      exposure: "hidden",
+      approval: "tool_managed",
+      resolution: { kind: "item_argument", argument: "id" },
+    })];
+    const result = simulateMcpCapabilityPolicyChange(simulationInput(
+      current,
+      candidate,
+      [
+        subject("subject:stale", "github_create_issue", {
+          activeWork: true,
+          sourceFreshness: "stale",
+        }),
+        subject("subject:missing", "github_create_issue", {
+          activeWork: true,
+          sourceFreshness: "unavailable",
+        }),
+      ],
+    ));
+
+    expect(result.unknown).toHaveLength(2);
+    expect(result.unknown.every((entry) => entry.currentDecision === "unknown")).toBe(true);
+    expect(result.unknown.every((entry) => entry.candidateDecision === "unknown")).toBe(true);
+    expect(result.newlyAllowed).toEqual([]);
+    expect(result.newlyDenied).toEqual([]);
+    expect(result.approvalChanged).toEqual([]);
+    expect(result.exposureChanged).toEqual([]);
+    expect(result.riskChanged).toEqual([]);
+    expect(result.effectPolicyChanged).toEqual([]);
+    expect(result.projectResolutionChanged).toEqual([]);
+    expect(result.activeWorkAffected).toEqual([]);
+  });'''
+          if tests.count(old_test) != 1:
+              raise SystemExit("unknown evidence test anchor moved")
+          test_path.write_text(tests.replace(old_test, new_test, 1))
           PY
 
           git diff --check
 
-      - name: Validate focused simulator repairs
+      - name: Validate complete simulator repair
         shell: bash
         run: |
           set -euo pipefail
@@ -248,15 +322,18 @@ jobs:
             test/mcp-capability-policy-simulation-semantic-red-control.test.ts \
             test/mcp-capability-policy-simulation-approval-widening.test.ts
 
-      - name: Publish workflow-free repaired head
+      - name: Publish one workflow-free repaired head
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git rm .github/workflows/marlin-1200-semantic-convergence.yml
+          git rm \
+            .github/workflows/cinder-1200-unknown-classification.yml \
+            .github/workflows/marlin-1200-semantic-convergence.yml
           git add \
             src/mcp-capability-policy-simulation-base.ts \
+            test/mcp-capability-policy-simulation.test.ts \
             test/mcp-capability-policy-simulation-semantic-red-control.test.ts \
             test/mcp-capability-policy-simulation-approval-widening.test.ts
           git diff --cached --check
