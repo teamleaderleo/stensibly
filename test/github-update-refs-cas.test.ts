@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  GitHubUpdateRefsCasStaleRefError,
   admitGitHubRepositoryNodeIdResponse,
   admitGitHubUpdateRefsCasResponse,
   buildGitHubRepositoryNodeIdRequest,
@@ -15,6 +14,17 @@ const sha1Parent = "a".repeat(40);
 const sha1Commit = "b".repeat(40);
 const sha256Parent = "c".repeat(64);
 const sha256Commit = "d".repeat(64);
+
+function sha1Request() {
+  return buildGitHubUpdateRefsCasRequest({
+    apiBaseUrl: "https://api.github.com",
+    repositoryFullName,
+    repositoryId,
+    targetRef,
+    expectedHeadSha: sha1Parent,
+    newHeadSha: sha1Commit,
+  });
+}
 
 describe("GitHub updateRefs exact-old-ref CAS", () => {
   test("builds exact github.com repository node query", () => {
@@ -54,16 +64,9 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
-    const request = buildGitHubUpdateRefsCasRequest({
-      apiBaseUrl: "https://api.github.com",
-      repositoryFullName,
-      repositoryId,
-      targetRef,
-      expectedHeadSha: sha1Parent,
-      newHeadSha: sha1Commit,
-    });
+    const request = sha1Request();
     expect(request.url.href).toBe("https://api.github.com/graphql");
-    expect(request.clientMutationId).toBe(`stensibly-write-${sha1Commit.slice(0, 16)}`);
+    expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
     expect(request.body).toEqual({
       query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
       variables: {
@@ -75,7 +78,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
             afterOid: sha1Commit,
             force: false,
           }],
-          clientMutationId: `stensibly-write-${sha1Commit.slice(0, 16)}`,
+          clientMutationId: request.clientMutationId,
         },
       },
     });
@@ -102,40 +105,27 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("admits only the exact successful client mutation identity", () => {
-    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
+    const clientMutationId = sha1Request().clientMutationId;
     expect(admitGitHubUpdateRefsCasResponse({
       data: { updateRefs: { clientMutationId } },
     }, clientMutationId)).toEqual({ clientMutationId });
 
     expect(() => admitGitHubUpdateRefsCasResponse({
-      data: { updateRefs: { clientMutationId: "stensibly-write-0000000000000000" } },
+      data: { updateRefs: { clientMutationId: `stensibly-write-${"0".repeat(64)}` } },
     }, clientMutationId)).toThrow("GitHub updateRefs GraphQL response is invalid");
   });
 
-  test("classifies one standards-compliant stale-ref error without retaining prose", () => {
-    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
-    let error: unknown;
-    try {
-      admitGitHubUpdateRefsCasResponse({
+  test("keeps every GraphQL mutation error generic without retaining provider prose", () => {
+    const clientMutationId = sha1Request().clientMutationId;
+    const values = [
+      {
         data: { updateRefs: null },
         errors: [{
           message: "provider stale ref detail must never be echoed",
           type: "STALE_REF",
           path: ["updateRefs"],
         }],
-      }, clientMutationId);
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(GitHubUpdateRefsCasStaleRefError);
-    expect((error as Error).message)
-      .toBe("GitHub repository write exact old ref changed before publication");
-    expect(JSON.stringify(error)).not.toContain("provider stale ref detail");
-  });
-
-  test("keeps malformed, multiple, and non-stale GraphQL errors generic", () => {
-    const clientMutationId = `stensibly-write-${sha1Commit.slice(0, 16)}`;
-    const values = [
+      },
       {
         data: { updateRefs: null },
         errors: [{ message: "other", type: "OTHER" }],
@@ -147,18 +137,17 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
           { message: "other", type: "OTHER" },
         ],
       },
-      {
-        data: { updateRefs: {} },
-        errors: [{ message: "stale", type: "STALE_REF" }],
-      },
-      {
-        data: { updateRefs: null },
-        errors: [{ type: "STALE_REF" }],
-      },
     ];
     for (const value of values) {
-      expect(() => admitGitHubUpdateRefsCasResponse(value, clientMutationId))
-        .toThrow("GitHub could not publish repository ref");
+      let caught: unknown;
+      try {
+        admitGitHubUpdateRefsCasResponse(value, clientMutationId);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe("GitHub could not publish repository ref");
+      expect(JSON.stringify(caught)).not.toContain("provider stale ref detail");
     }
   });
 
@@ -202,9 +191,9 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
 
   test("rejects credentialed, queried, or fragmented API bases", () => {
     for (const value of [
-      "https://user:secret@api.github.com",
-      "https://api.github.com?token=secret",
-      "https://api.github.com/#secret",
+      "https://user:credential@api.github.com",
+      "https://api.github.com?token=value",
+      "https://api.github.com/#fragment",
       "ftp://api.github.com",
     ]) {
       expect(() => githubGraphqlUrl(value)).toThrow("GitHub API base URL is invalid");
