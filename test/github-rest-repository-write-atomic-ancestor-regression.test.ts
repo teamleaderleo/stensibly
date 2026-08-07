@@ -49,7 +49,11 @@ test("exact-old-ref CAS does not publish after ancestor regression", async () =>
       if (method === "POST" && url === graphqlUrl()) {
         const query = (body as { query?: unknown })?.query;
         if (typeof query === "string" && query.startsWith("query StensiblyRepositoryNodeId")) {
-          return Response.json({ data: { repository: { id: repositoryId } } });
+          return Response.json({
+            data: {
+              repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+            },
+          });
         }
         if (typeof query === "string" && query.startsWith("mutation StensiblyUpdateRefs")) {
           updateRefsCalls += 1;
