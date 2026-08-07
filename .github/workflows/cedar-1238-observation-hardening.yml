@@ -1,0 +1,489 @@
+name: Cedar repository observation hardening convergence
+
+on:
+  push:
+    branches:
+      - cedar/1238-observation-hardening-convergence
+    paths:
+      - .github/workflows/cedar-1238-observation-hardening.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1238-observation-hardening-convergence
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1238-observation-hardening-convergence
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source and controls
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          PARENT: e08caf4fe7c7149d1a2fc6fb466154cad33382fb
+          HOSTED_CONTROL: c13c23cbf3c868966d482b8f9da7db3b0cbb2d70
+          BACKEND_CONTROL: cb9cafc61aea16627335622983db3d389a2f3e5f
+          SECRET_CONTROL: e4ad63a6f7d0151a37551972883e9e962f4d2cab
+          ERROR_CONTROL: 6f03a7acd3b88f1b94aa3f2f1ac5598e458a459d
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$PARENT"
+          git fetch --no-tags origin \
+            "$MAIN" \
+            "$HOSTED_CONTROL" \
+            "$BACKEND_CONTROL" \
+            "$SECRET_CONTROL" \
+            "$ERROR_CONTROL"
+          test "$(git rev-parse $MAIN:src/github-repository-observation-admission.ts)" = "c3c45309b12e6d362b523125a6424c505e2cd7e4"
+          test "$(git rev-parse $MAIN:src/github-repository-observation-convex.ts)" = "21cde09afaf55544d8e09d183138b4610a4aea70"
+          test "$(git rev-parse $PARENT:test/github-repository-observation-envelope-boundary.test.ts)" = "a42cb247be39d02f93899a66932ee6f20baf5baa"
+          test "$(git rev-parse $HOSTED_CONTROL:test/github-repository-observation-hosted-input-boundary.test.ts)" = "fec3ca848460161bdb891503494eac483ef13dbd"
+          test "$(git rev-parse $BACKEND_CONTROL:test/github-repository-observation-convex-ownkeys-control.test.ts)" = "cd8a90bcb9b2dc71144a7f95359183ce39db5484"
+          test "$(git rev-parse $SECRET_CONTROL:test/github-repository-observation-convex-secret.test.ts)" = "7eeb394712f2b7a22ca72d5c308c0f1dd6cc18b1"
+          test "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)" = "$(git rev-parse $ERROR_CONTROL:test/github-repository-observation-convex-error-boundary.test.ts)"
+
+      - name: Build complete workflow-free observation packet
+        shell: bash
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          PARENT: e08caf4fe7c7149d1a2fc6fb466154cad33382fb
+          HOSTED_CONTROL: c13c23cbf3c868966d482b8f9da7db3b0cbb2d70
+          BACKEND_CONTROL: cb9cafc61aea16627335622983db3d389a2f3e5f
+          SECRET_CONTROL: e4ad63a6f7d0151a37551972883e9e962f4d2cab
+          ERROR_CONTROL: 6f03a7acd3b88f1b94aa3f2f1ac5598e458a459d
+        run: |
+          set -euo pipefail
+          git reset --hard "$MAIN"
+          git show "$PARENT":test/github-repository-observation-envelope-boundary.test.ts \
+            > test/github-repository-observation-envelope-boundary.test.ts
+          git show "$HOSTED_CONTROL":test/github-repository-observation-hosted-input-boundary.test.ts \
+            > test/github-repository-observation-hosted-input-boundary.test.ts
+          git show "$BACKEND_CONTROL":test/github-repository-observation-convex-ownkeys-control.test.ts \
+            > test/github-repository-observation-convex-ownkeys-control.test.ts
+          git show "$SECRET_CONTROL":test/github-repository-observation-convex-secret.test.ts \
+            > test/github-repository-observation-convex-secret.test.ts
+          git show "$ERROR_CONTROL":test/github-repository-observation-convex-error-boundary.test.ts \
+            > test/github-repository-observation-convex-error-boundary.test.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          admission_path = Path("src/github-repository-observation-admission.ts")
+          admission = admission_path.read_text()
+
+          old = '''  const snapshot = snapshotBoundedJson(
+    value,
+    "GitHub repository observation input",
+  );
+  if (!isRecord(snapshot) || !hasExactKeys(snapshot, hostedInputKeys)) {
+    throw new RangeError(
+      "GitHub repository observation input has noncanonical fields",
+    );
+  }
+'''
+          new = '''  const snapshot = snapshotClosedRecord(
+    value,
+    hostedInputKeys,
+    "GitHub repository observation input",
+  );
+'''
+          if admission.count(old) != 1:
+              raise SystemExit(f"hosted input anchor moved: {admission.count(old)}")
+          admission = admission.replace(old, new, 1)
+
+          old = '''  const observation = snapshot.observation;
+  if (!isRecord(observation)) {
+'''
+          new = '''  const observation = snapshotBoundedJson(
+    snapshot.observation,
+    "GitHub repository observation",
+  );
+  if (!isRecord(observation)) {
+'''
+          if admission.count(old) != 1:
+              raise SystemExit(f"nested observation anchor moved: {admission.count(old)}")
+          admission = admission.replace(old, new, 1)
+
+          old = '''  const snapshot = snapshotBoundedJson(
+    value,
+    "GitHub repository observation envelope",
+  );
+  if (!isRecord(snapshot) || !hasExactKeys(snapshot, envelopeKeys)) {
+    throw new RangeError(
+      "GitHub repository observation envelope has noncanonical fields",
+    );
+  }
+'''
+          new = '''  const snapshot = snapshotClosedRecord(
+    value,
+    envelopeKeys,
+    "GitHub repository observation envelope",
+  );
+'''
+          if admission.count(old) != 1:
+              raise SystemExit(f"durable envelope anchor moved: {admission.count(old)}")
+          admission = admission.replace(old, new, 1)
+
+          anchor = '''export function snapshotBoundedJson(
+  value: unknown,
+  label: string,
+): BoundedJsonValue {
+'''
+          helper = '''function snapshotClosedRecord(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? null : Object.getPrototypeOf(value);
+  } catch {
+    throw new RangeError(`${label} could not be inspected`);
+  }
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new RangeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new RangeError(`${label}.${key} must be an enumerable data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
+'''
+          if admission.count(anchor) != 1:
+              raise SystemExit(f"bounded JSON export anchor moved: {admission.count(anchor)}")
+          admission_path.write_text(admission.replace(anchor, helper + anchor, 1))
+
+          convex_path = Path("src/github-repository-observation-convex.ts")
+          convex = convex_path.read_text()
+
+          import_old = '''  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+  snapshotBoundedJson,
+} from "./github-repository-observation-admission.js";'''
+          import_new = '''  admitGitHubRepositoryObservationEnvelope,
+  admitHostedGitHubRepositoryObservationInput,
+} from "./github-repository-observation-admission.js";'''
+          if convex.count(import_old) != 1:
+              raise SystemExit(f"Convex bounded-JSON import anchor moved: {convex.count(import_old)}")
+          convex = convex.replace(import_old, import_new, 1)
+
+          old = '''  readonly client: ConvexCaller;
+  readonly serviceSecret: string;
+  readonly workspace: string;
+
+  constructor(options: ConvexGitHubRepositoryObservationServiceOptions) {
+    this.client = options.client;
+    this.serviceSecret = required(options.serviceSecret, "Convex service secret");
+    this.workspace = normalizeWorkspace(options.workspace ?? "default");
+  }
+'''
+          new = '''  readonly #client: ConvexCaller;
+  readonly #serviceSecret: string;
+  readonly #workspace: string;
+
+  constructor(options: ConvexGitHubRepositoryObservationServiceOptions) {
+    this.#client = options.client;
+    this.#serviceSecret = required(options.serviceSecret, "Convex service secret");
+    this.#workspace = normalizeWorkspace(options.workspace ?? "default");
+  }
+'''
+          if convex.count(old) != 1:
+              raise SystemExit(f"service field anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          old = "await this.client.mutation(ingestRef, this.args({"
+          new = "await this.#client.mutation(ingestRef, this.#args({"
+          if convex.count(old) != 1:
+              raise SystemExit(f"mutation dispatch anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          old = "await this.client.query(listRecentRef, this.args({"
+          new = "await this.#client.query(listRecentRef, this.#args({"
+          if convex.count(old) != 1:
+              raise SystemExit(f"query dispatch anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          old = '''  private args(input: Record<string, unknown>): Record<string, unknown> {
+    return {
+      ...input,
+      serviceSecret: this.serviceSecret,
+      workspace: this.workspace,
+    };
+  }
+'''
+          new = '''  #args(input: Record<string, unknown>): Record<string, unknown> {
+    return {
+      ...input,
+      serviceSecret: this.#serviceSecret,
+      workspace: this.#workspace,
+    };
+  }
+'''
+          if convex.count(old) != 1:
+              raise SystemExit(f"argument builder anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          start = convex.index("function admitMutationResult(")
+          end = convex.index("function validateStoredRecord(", start)
+          replacement = '''function exactDataRecord(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? null : Object.getPrototypeOf(value);
+  } catch {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  const result = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new GitHubRepositoryObservationStorageError();
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new GitHubRepositoryObservationStorageError();
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function exactDataArray(value: unknown, maximum: number): unknown[] {
+  if (!value || typeof value !== "object") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
+  } catch {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !isArray
+    || prototype !== Array.prototype
+    || !lengthDescriptor
+    || lengthDescriptor.enumerable
+    || typeof length !== "number"
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > maximum
+  ) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  const result: unknown[] = new Array(length);
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new GitHubRepositoryObservationStorageError();
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new GitHubRepositoryObservationStorageError();
+    }
+    result[index] = descriptor.value;
+  }
+  return result;
+}
+
+function admitMutationResult(value: unknown): {
+  duplicate: boolean;
+  record: ConvexObservationRecord;
+} {
+  const snapshot = exactDataRecord(value, mutationResultKeys);
+  if (typeof snapshot.duplicate !== "boolean") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return {
+    duplicate: snapshot.duplicate,
+    record: admitStoredRecord(snapshot.record),
+  };
+}
+
+function admitStoredRows(value: unknown, limit: number): ConvexObservationRecord[] {
+  return exactDataArray(value, limit).map(admitStoredRecord);
+}
+
+function admitStoredRecord(value: unknown): ConvexObservationRecord {
+  const snapshot = exactDataRecord(value, storedRecordKeys);
+  const actor = snapshot.actor === null
+    ? null
+    : storageString(snapshot.actor);
+  const sourceTimeSource = snapshot.sourceTimeSource;
+  if (sourceTimeSource !== "provider" && sourceTimeSource !== "received") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return {
+    id: storageString(snapshot.id),
+    observationId: storageString(snapshot.observationId),
+    deliveryId: storageString(snapshot.deliveryId),
+    payloadDigest: storageString(snapshot.payloadDigest),
+    semanticFingerprint: storageString(snapshot.semanticFingerprint),
+    eventType: storageString(snapshot.eventType),
+    action: storageString(snapshot.action),
+    repository: storageString(snapshot.repository),
+    actor,
+    subjectKind: storageString(snapshot.subjectKind),
+    subjectExternalId: storageString(snapshot.subjectExternalId),
+    sourceTime: storageTimestamp(snapshot.sourceTime),
+    sourceTimeSource,
+    receivedAt: storageTimestamp(snapshot.receivedAt),
+    observationJson: storageString(snapshot.observationJson),
+    createdAt: storageTimestamp(snapshot.createdAt),
+  };
+}
+
+'''
+          convex = convex[:start] + replacement + convex[end:]
+
+          old = '''function mapStorageError(error: unknown): Error {
+  if (error instanceof GitHubRepositoryObservationConflictError) return error;
+  if (error instanceof GitHubRepositoryObservationStorageError) return error;
+  const message = ownDataErrorMessage(error);
+'''
+          new = '''function mapStorageError(error: unknown): Error {
+  try {
+    if (error instanceof GitHubRepositoryObservationConflictError) return error;
+    if (error instanceof GitHubRepositoryObservationStorageError) return error;
+  } catch {
+    return new GitHubRepositoryObservationStorageError();
+  }
+  const message = ownDataErrorMessage(error);
+'''
+          if convex.count(old) != 1:
+              raise SystemExit(f"storage error classification anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          old = '''function ownDataErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : "";
+}
+'''
+          new = '''function ownDataErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  } catch {
+    return "";
+  }
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : "";
+}
+'''
+          if convex.count(old) != 1:
+              raise SystemExit(f"storage error message anchor moved: {convex.count(old)}")
+          convex = convex.replace(old, new, 1)
+
+          legacy_helpers = '''function hasExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean {
+  const actualKeys = Object.keys(value).sort(codeUnitCompare);
+  const expected = [...expectedKeys].sort(codeUnitCompare);
+  return actualKeys.length === expected.length
+    && actualKeys.every((key, index) => key === expected[index]);
+}
+
+function codeUnitCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+'''
+          if convex.count(legacy_helpers) != 1:
+              raise SystemExit(f"legacy Convex helper anchor moved: {convex.count(legacy_helpers)}")
+          convex_path.write_text(convex.replace(legacy_helpers, "", 1))
+          PY
+
+          git add \
+            src/github-repository-observation-admission.ts \
+            src/github-repository-observation-convex.ts \
+            test/github-repository-observation-envelope-boundary.test.ts \
+            test/github-repository-observation-hosted-input-boundary.test.ts \
+            test/github-repository-observation-convex-ownkeys-control.test.ts \
+            test/github-repository-observation-convex-secret.test.ts \
+            test/github-repository-observation-convex-error-boundary.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 7
+          test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate complete repository observation packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-repository-observation*.test.ts
+
+      - name: Publish workflow-free current-main source
+        shell: bash
+        env:
+          CARRIER_SHA: ${{ github.sha }}
+          HEAD_REF: cedar/1238-observation-hardening-convergence
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+        run: |
+          set -euo pipefail
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound repository observation admission and credentials"
+          test "$(git rev-parse HEAD^)" = "$MAIN"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"

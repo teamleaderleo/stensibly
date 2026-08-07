@@ -1,0 +1,110 @@
+name: Cedar 1245 carrier cleanup bootstrap
+
+on:
+  push:
+    branches:
+      - cedar/1238-observation-hardening-convergence
+    paths:
+      - .github/workflows/cedar-1245-carrier-cleanup-bootstrap.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1245-carrier-cleanup-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1238-observation-hardening-convergence
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Patch exact carrier cleanup and parent lease
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: cedar/1238-observation-hardening-convergence
+          CARRIER_BLOB: 0f37424b051a6736ade141eefc288e94971a0424
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "61db1575a79d52c2b952dc05a55ca2441593fd4f"
+          test "$(git rev-parse HEAD:.github/workflows/cedar-1238-observation-hardening.yml)" = "$CARRIER_BLOB"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path('.github/workflows/cedar-1238-observation-hardening.yml')
+          text = path.read_text()
+
+          old_parent = '          PARENT: 13b9f7e90ee80e8168cf306f7bd4cdbd150c4189\n'
+          new_parent = f'          PARENT: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old_parent) != 2:
+              raise SystemExit(f'carrier parent lease anchors moved: {text.count(old_parent)}')
+          text = text.replace(old_parent, new_parent)
+
+          marker = '          convex = convex_path.read_text()\n\n'
+          insertion = """          convex = convex_path.read_text()
+          import_old = (
+              '  admitGitHubRepositoryObservationEnvelope,\\n'
+              '  admitHostedGitHubRepositoryObservationInput,\\n'
+              '  snapshotBoundedJson,\\n'
+              '} from \"./github-repository-observation-admission.js\";'
+          )
+          import_new = (
+              '  admitGitHubRepositoryObservationEnvelope,\\n'
+              '  admitHostedGitHubRepositoryObservationInput,\\n'
+              '} from \"./github-repository-observation-admission.js\";'
+          )
+          if convex.count(import_old) != 1:
+              raise SystemExit(f\"Convex bounded-JSON import anchor moved: {convex.count(import_old)}\")
+          convex = convex.replace(import_old, import_new, 1)
+
+"""
+          if text.count(marker) != 1:
+              raise SystemExit(f'carrier Convex setup anchor moved: {text.count(marker)}')
+          text = text.replace(marker, insertion, 1)
+
+          old_write = '          convex_path.write_text(convex[:start] + replacement + convex[end:])\n'
+          new_write = """          convex = convex[:start] + replacement + convex[end:]
+          legacy_helpers = (
+              'function hasExactKeys(\\n'
+              '  value: Record<string, unknown>,\\n'
+              '  expectedKeys: readonly string[],\\n'
+              '): boolean {\\n'
+              '  const actualKeys = Object.keys(value).sort(codeUnitCompare);\\n'
+              '  const expected = [...expectedKeys].sort(codeUnitCompare);\\n'
+              '  return actualKeys.length === expected.length\\n'
+              '    && actualKeys.every((key, index) => key === expected[index]);\\n'
+              '}\\n\\n'
+              'function codeUnitCompare(left: string, right: string): number {\\n'
+              '  return left < right ? -1 : left > right ? 1 : 0;\\n'
+              '}\\n\\n'
+              'function isRecord(value: unknown): value is Record<string, unknown> {\\n'
+              '  return Boolean(value) && typeof value === \"object\" && !Array.isArray(value);\\n'
+              '}\\n'
+          )
+          if convex.count(legacy_helpers) != 1:
+              raise SystemExit(f\"legacy Convex helper anchor moved: {convex.count(legacy_helpers)}\")
+          convex_path.write_text(convex.replace(legacy_helpers, \"\", 1))
+"""
+          if text.count(old_write) != 1:
+              raise SystemExit(f'carrier Convex write anchor moved: {text.count(old_write)}')
+          path.write_text(text.replace(old_write, new_write, 1))
+          PY
+          git rm .github/workflows/cedar-1245-carrier-cleanup-bootstrap.yml
+          git add .github/workflows/cedar-1238-observation-hardening.yml
+          git diff --cached --check
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Tighten observation convergence cleanup"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
