@@ -1,0 +1,269 @@
+name: Cinder 1217 Convex response boundary repair
+
+on:
+  push:
+    branches:
+      - cedar/1149-durable-activity-ingestion
+    paths:
+      - .github/workflows/cinder-1217-convex-response-boundary.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1217-convex-response-boundary
+  cancel-in-progress: false
+
+jobs:
+  repair-carrier:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1149-durable-activity-ingestion
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier lease
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "5be8539b201444f1d841f4c036208327d4ef4257"
+          test "$(git rev-parse HEAD:.github/workflows/cedar-1149-durable-activity-store.yml)" = "c1b654da752513cc8729588b40e91e5f7c5edce7"
+
+      - name: Tighten the durable adapter carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/cedar-1149-durable-activity-store.yml")
+          text = path.read_text()
+
+          old = '''              if (!Array.isArray(raw) || raw.length > 4_096) {
+                throw new OrchestratorActivityStorageError();
+              }
+              const observations = raw.map(parseObservation);
+'''
+          new = '''              const values = exactDataArray(raw, 4_096);
+              const observations = values.map(parseObservation);
+'''
+          if text.count(old) != 1:
+              raise SystemExit("list response admission anchor moved")
+          text = text.replace(old, new, 1)
+
+          start = text.index('          function exactDataRecord(\n')
+          end = text.index('          function exactSlug(', start)
+          replacement = '''          function exactDataArray(
+            value: unknown,
+            maximum: number,
+          ): unknown[] {
+            if (!value || typeof value !== "object") {
+              throw new OrchestratorActivityStorageError();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+            const length = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              !isArray
+              || prototype !== Array.prototype
+              || !lengthDescriptor
+              || lengthDescriptor.enumerable
+              || typeof length !== "number"
+              || !Number.isSafeInteger(length)
+              || length < 0
+              || length > maximum
+            ) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: unknown[] = [];
+            for (let index = 0; index < length; index += 1) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              } catch {
+                throw new OrchestratorActivityStorageError();
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          function exactDataRecord(
+            value: unknown,
+            keys: readonly string[],
+          ): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw new OrchestratorActivityStorageError();
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray ? null : Object.getPrototypeOf(value);
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+            if (isArray || prototype !== Object.prototype) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: Record<string, unknown> = {};
+            for (const key of keys) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new OrchestratorActivityStorageError();
+              }
+              if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result[key] = descriptor.value;
+            }
+            return result;
+          }
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          anchor = '''            test("rejects backend observation substitution and foreign workspace", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const changed = admitOrchestratorActivityIngestion(delivery({
+                deliveryId: "delivery_other",
+                observation: observation({ sourceId: "ghop_other" }),
+              }));
+              client.mutationResult = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  changed.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              await expect(store.ingest(input)).rejects.toBeInstanceOf(
+                OrchestratorActivityStorageError,
+              );
+              await expect(store.ingest(delivery({
+                observation: observation({ workspace: "other" }),
+              }))).rejects.toThrow("outside the configured store");
+            });
+'''
+          extra = anchor + '''
+
+            test("does not enumerate or get backend mutation result fields", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const base = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  admitted.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              let getCalls = 0;
+              let ownKeysCalls = 0;
+              client.mutationResult = new Proxy(base, {
+                get() {
+                  getCalls += 1;
+                  throw new Error("backend get must remain unreachable");
+                },
+                ownKeys() {
+                  ownKeysCalls += 1;
+                  throw new Error("backend ownKeys must remain unreachable");
+                },
+              });
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+
+              await expect(store.ingest(input)).resolves.toMatchObject({
+                replayed: false,
+                observationAppended: true,
+              });
+              expect(getCalls).toBe(0);
+              expect(ownKeysCalls).toBe(0);
+            });
+
+            test("bounds backend observation arrays before caller methods or keys", async () => {
+              const client = new FakeClient();
+              const admitted = admitOrchestratorActivityIngestion(delivery());
+              const base = [canonicalOrchestratorActivityObservationJson(
+                admitted.observation,
+              )];
+              let getCalls = 0;
+              let ownKeysCalls = 0;
+              client.queryResult = new Proxy(base, {
+                get() {
+                  getCalls += 1;
+                  throw new Error("backend array get must remain unreachable");
+                },
+                ownKeys() {
+                  ownKeysCalls += 1;
+                  throw new Error("backend array ownKeys must remain unreachable");
+                },
+              });
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+
+              await expect(store.listObservations("default", "stensibly"))
+                .resolves.toEqual([admitted.observation]);
+              expect(getCalls).toBe(0);
+              expect(ownKeysCalls).toBe(0);
+            });
+'''
+          if text.count(anchor) != 1:
+              raise SystemExit("adapter test anchor moved")
+          text = text.replace(anchor, extra, 1)
+          path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Publish corrected source carrier
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cinder-1217-convex-response-boundary.yml
+          git add .github/workflows/cedar-1149-durable-activity-store.yml
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound durable activity backend responses"
+          git fetch origin refs/heads/cedar/1149-durable-activity-ingestion:refs/remotes/origin/cedar/1149-durable-activity-ingestion
+          test "$(git rev-parse refs/remotes/origin/cedar/1149-durable-activity-ingestion)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cedar/1149-durable-activity-ingestion:$EXPECTED_HEAD \
+            origin HEAD:refs/heads/cedar/1149-durable-activity-ingestion
