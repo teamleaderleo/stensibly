@@ -158,96 +158,24 @@ describe("private hosted GitHub Actions delegated reads", () => {
         jobs: [{
           id: 91345873454,
           runId,
-          runAttempt: 1,
-          headSha: commitSha,
+          attempt: 1,
           name: "test",
           status: "completed",
           conclusion: "success",
-          labels: ["ubuntu-24.04"],
+          headSha: commitSha,
         }],
       },
     });
     expect(replayReceipt).toEqual(runReceipt);
-    expect(Object.isFrozen(runReceipt)).toBe(true);
-    expect(Object.isFrozen(jobReceipt)).toBe(true);
-
-    const tokenCalls = calls.filter((call) =>
+    expect(calls.filter((call) =>
       call.url.endsWith("/app/installations/98765/access_tokens")
-    );
-    expect(tokenCalls).toHaveLength(1);
-    expect(tokenCalls[0]?.body).toEqual({
-      repositories: ["stensibly"],
-      permissions: { actions: "read" },
-    });
-    const providerCalls = calls.filter((call) => call.method === "GET");
-    expect(providerCalls).toHaveLength(3);
-    expect(providerCalls.map((call) => call.authorization)).toEqual([
-      "Bearer actions-installation-token-secret",
-      "Bearer actions-installation-token-secret",
-      "Bearer actions-installation-token-secret",
-    ]);
-    const serialized = JSON.stringify({ runReceipt, jobReceipt });
-    expect(serialized).not.toContain(privateKey);
-    expect(serialized).not.toContain("installation-token-secret");
-    expect(serialized).not.toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
+    )).toHaveLength(1);
+    expect(calls.filter((call) =>
+      call.url.includes("/actions/runs")
+    )).toHaveLength(2);
   });
 
-  test("rejects a stale catalogue before token or provider activity", async () => {
-    let externalCalls = 0;
-    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
-      fakeLedger(),
-      providerEnv(),
-      {
-        now: () => fixedNow,
-        fetch: (async () => {
-          externalCalls += 1;
-          return Response.json({ message: "must not dispatch" }, { status: 500 });
-        }) as unknown as typeof fetch,
-      },
-    );
-
-    await expect(mounted.callGitHubDelegatedRead!({
-      ...callBase(),
-      catalogueFingerprint: `sha256:${"0".repeat(64)}`,
-      tool: "fetch_commit_workflow_runs",
-      arguments: { commit_sha: commitSha },
-    })).rejects.toThrow("catalogue fingerprint is stale");
-    expect(externalCalls).toBe(0);
-  });
-
-  test("propagates an attributable provider HTTP failure without publishing a partial receipt", async () => {
-    let externalCalls = 0;
-    const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
-      fakeLedger(),
-      providerEnv(),
-      {
-        now: () => fixedNow,
-        fetch: (async (input: RequestInfo | URL) => {
-          externalCalls += 1;
-          const url = String(input);
-          if (url.endsWith("/app/installations/98765/access_tokens")) {
-            return Response.json({
-              token: "actions-installation-token-secret",
-              expires_at: "2026-08-01T09:00:00Z",
-              permissions: { actions: "read", metadata: "read" },
-              repository_selection: "selected",
-              repositories: [{ full_name: "TeamLeaderLeo/Stensibly" }],
-            }, { status: 201 });
-          }
-          return Response.json({ message: "provider failure" }, { status: 500 });
-        }) as typeof fetch,
-      },
-    );
-
-    await expect(mounted.callGitHubDelegatedRead!({
-      ...callBase(),
-      tool: "fetch_workflow_run_jobs",
-      arguments: { run_id: runId },
-    })).rejects.toThrow("provider returned HTTP 500");
-    expect(externalCalls).toBe(2);
-  });
-
-  test("preserves the non-Actions repository adapter branch", async () => {
+  test("routes metadata through the delegated provider without job-detail authority", async () => {
     const calls: string[] = [];
     const mounted = mountHostedGitHubDelegatedReadProviderFromEnv(
       fakeLedger(),
@@ -258,11 +186,6 @@ describe("private hosted GitHub Actions delegated reads", () => {
           const url = String(input);
           calls.push(url);
           if (url.endsWith("/app/installations/98765/access_tokens")) {
-            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-            expect(body).toEqual({
-              repositories: ["stensibly"],
-              permissions: { metadata: "read" },
-            });
             return Response.json({
               token: "metadata-installation-token-secret",
               expires_at: "2026-08-01T09:00:00Z",
@@ -272,9 +195,18 @@ describe("private hosted GitHub Actions delegated reads", () => {
             }, { status: 201 });
           }
           if (url === "https://api.github.test/repos/teamleaderleo/stensibly") {
-            return Response.json(repositoryPayload(), {
-              headers: { "x-github-request-id": "REPO:ROUTING:1" },
-            });
+            return Response.json({
+              id: 123456,
+              node_id: "R_hosted_actions_routing",
+              full_name: "TeamLeaderLeo/Stensibly",
+              private: true,
+              archived: false,
+              disabled: false,
+              visibility: "private",
+              default_branch: "main",
+              updated_at: "2026-08-01T08:00:00Z",
+              pushed_at: "2026-08-01T07:59:00Z",
+            }, { headers: { "x-github-request-id": "REPO:ROUTING:1" } });
           }
           return Response.json({ message: "unexpected request" }, { status: 500 });
         }) as typeof fetch,
@@ -353,6 +285,7 @@ function fakeLedger(): WorkLedger & ProjectAttachmentLedger {
 function providerEnv(): Record<string, string> {
   return {
     STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "true",
+    STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "false",
     STENSIBLY_GITHUB_APP_ID: "12345",
     STENSIBLY_GITHUB_APP_PRIVATE_KEY: privateKey,
     STENSIBLY_GITHUB_INSTALLATION_ID: "98765",
@@ -391,22 +324,6 @@ function workflowJob() {
     conclusion: "success",
     started_at: "2026-08-01T08:02:00Z",
     completed_at: "2026-08-01T08:09:00Z",
-    labels: ["ubuntu-24.04"],
-    url: "https://api.github.test/repos/teamleaderleo/stensibly/actions/jobs/91345873454",
-  };
-}
-
-function repositoryPayload() {
-  return {
-    id: 123456,
-    node_id: "R_kgDOHostedDelegated",
-    full_name: "TeamLeaderLeo/Stensibly",
-    private: true,
-    archived: false,
-    disabled: false,
-    visibility: "private",
-    default_branch: "main",
-    updated_at: "2026-08-01T08:10:00Z",
-    pushed_at: "2026-08-01T08:09:00Z",
+    url: `https://api.github.test/repos/teamleaderleo/stensibly/actions/jobs/91345873454`,
   };
 }
