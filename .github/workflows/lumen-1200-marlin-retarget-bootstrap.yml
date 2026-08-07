@@ -1,0 +1,58 @@
+name: Lumen 1200 Marlin retarget bootstrap
+
+on:
+  push:
+    branches:
+      - lumen/1147-mcp-policy-simulation
+    paths:
+      - .github/workflows/lumen-1200-marlin-retarget-bootstrap.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1200-marlin-retarget-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1147-mcp-policy-simulation
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Retarget complete Marlin convergence carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: lumen/1147-mcp-policy-simulation
+          MARLIN_BLOB: 83e63c229a038ea5cb92aeeb3f54560b7373e88b
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD:.github/workflows/marlin-1200-semantic-convergence.yml)" = "$MARLIN_BLOB"
+          test -f .github/workflows/cinder-1200-unknown-classification.yml
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('.github/workflows/marlin-1200-semantic-convergence.yml')
+          text = path.read_text()
+          old = '          CARRIER_PARENT: 58a8a29ce07f5772456884af09fa0ddc6753e98b\n'
+          new = f'          CARRIER_PARENT: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'Marlin carrier parent anchor moved: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git rm .github/workflows/lumen-1200-marlin-retarget-bootstrap.yml
+          git add .github/workflows/marlin-1200-semantic-convergence.yml
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bind policy simulation carrier to bootstrap head"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" origin "HEAD:refs/heads/${HEAD_REF}"
