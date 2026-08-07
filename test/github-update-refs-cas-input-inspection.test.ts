@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { buildGitHubUpdateRefsCasRequest } from "../src/github-update-refs-cas.ts";
+import {
+  buildGitHubUpdateRefsCasRequest,
+  githubGraphqlUrl,
+} from "../src/github-update-refs-cas.ts";
 
 const baseInput = {
   apiBaseUrl: "https://api.github.com",
@@ -57,4 +60,24 @@ test("rejects accessor-backed CAS fields without invoking getters", () => {
   expect(() => buildGitHubUpdateRefsCasRequest(input as never))
     .toThrow("GitHub updateRefs CAS input is invalid");
   expect(getterCalls).toBe(0);
+});
+
+test("normalizes revoked CAS request proxies", () => {
+  const revocable = Proxy.revocable({ ...baseInput }, {});
+  revocable.revoke();
+  expect(() => buildGitHubUpdateRefsCasRequest(revocable.proxy as never))
+    .toThrow("GitHub updateRefs CAS input is invalid");
+});
+
+test("rejects non-string API bases without conversion hooks", () => {
+  let conversionCalls = 0;
+  const hostile = {
+    toString() {
+      conversionCalls += 1;
+      throw new Error("must not convert");
+    },
+  };
+  expect(() => githubGraphqlUrl(hostile as never))
+    .toThrow("GitHub API base URL is invalid");
+  expect(conversionCalls).toBe(0);
 });
