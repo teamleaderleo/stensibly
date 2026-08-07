@@ -1,0 +1,147 @@
+name: Finch 1000 revoked array retarget
+
+on:
+  push:
+    branches:
+      - cicada/962-current-main-merkle-replay
+    paths:
+      - .github/workflows/finch-1000-revoked-array-retarget.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finch-1000-revoked-array-retarget
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/962-current-main-merkle-replay
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Add revoked-array control to sole Junco publisher
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: cicada/962-current-main-merkle-replay
+          SOURCE_PARENT: f6ee7c51344ed4fad25046fd09a010fd5e69fdc1
+          JUNCO_BLOB: c94c070c7a568f640185d74527fc13df48a28e4e
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_PARENT"
+          test "$(git rev-parse HEAD:.github/workflows/lumen-1000-record-snapshot-repair.yml)" = "$JUNCO_BLOB"
+          test -f .github/workflows/lumen-1000-junco-trigger.yml
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/lumen-1000-record-snapshot-repair.yml')
+          text = path.read_text()
+          setup_anchor = '      - uses: oven-sh/setup-bun@v2\n'
+          repair_step = r"""      - name: Normalize revoked Merkle arrays and absorb exact control
+        shell: bash
+        env:
+          CONTROL_SHA: b98bfef25ef9036b7ba0c2c70547b61319725936
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$CONTROL_SHA"
+          test "$(git rev-parse $CONTROL_SHA:test/github-observation-merkle-checkpoint-revoked-array.test.ts)" = "bb66cb33ddba804608b24b3f6365dffd01dea608"
+          git show "$CONTROL_SHA":test/github-observation-merkle-checkpoint-revoked-array.test.ts \
+            > test/github-observation-merkle-checkpoint-revoked-array.test.ts
+
+          python3 - <<'PY2'
+          from pathlib import Path
+
+          source_path = Path("src/github-observation-merkle-checkpoint.ts")
+          source = source_path.read_text()
+          start = source.index("function snapshotArray(")
+          end = source.index("function preflightCompileInput(", start)
+          replacement = '''function snapshotArray(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+): unknown[] {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be an ordinary array`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  if (!isArray || prototype !== Array.prototype) {
+    throw new TypeError(`${label} must be an ordinary array`);
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < minimum || length > maximum) {
+    throw new RangeError(`${label} length is outside the accepted range`);
+  }
+  const result: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} must contain dense enumerable data properties`);
+    }
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
+'''
+          source_path.write_text(source[:start] + replacement + source[end:])
+          PY2
+          git diff --check
+
+"""
+          if text.count(setup_anchor) != 1:
+              raise SystemExit(f'Junco setup anchor moved: {text.count(setup_anchor)}')
+          text = text.replace(setup_anchor, repair_step + setup_anchor, 1)
+
+          old_add = '            test/github-observation-merkle-checkpoint-record-key-budget.test.ts \\\n'
+          new_add = old_add + '            test/github-observation-merkle-checkpoint-revoked-array.test.ts \\\n'
+          if text.count(old_add) != 1:
+              raise SystemExit(f'Junco test-add anchor moved: {text.count(old_add)}')
+          text = text.replace(old_add, new_add, 1)
+
+          old_count = '          test "$(git diff --cached --name-only | wc -l)" -eq 19\n'
+          new_count = '          test "$(git diff --cached --name-only | wc -l)" -eq 20\n'
+          if text.count(old_count) != 1:
+              raise SystemExit(f'Junco file-count anchor moved: {text.count(old_count)}')
+          text = text.replace(old_count, new_count, 1)
+          path.write_text(text)
+          PY
+
+          git rm -f \
+            .github/workflows/finch-1000-revoked-array-retarget.yml \
+            .github/workflows/lumen-1000-junco-trigger.yml
+          git add .github/workflows/lumen-1000-record-snapshot-repair.yml
+          git diff --cached --check
+          git config user.name "Finch"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Retarget Merkle revoked array boundary"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
