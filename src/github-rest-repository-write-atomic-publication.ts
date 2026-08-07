@@ -381,10 +381,6 @@ function exactArray(
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
     throw invalidResponse(`${label} were malformed`);
   }
-  if (Object.getOwnPropertySymbols(value).length !== 0) {
-    throw invalidResponse(`${label} were malformed`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
   const lengthDescriptor = Object.getOwnPropertyDescriptor(
     value,
     "length",
@@ -401,6 +397,10 @@ function exactArray(
     throw invalidResponse(`${label} were malformed`);
   }
   const length = lengthValue;
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw invalidResponse(`${label} were malformed`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
   const result: unknown[] = [];
   for (const key of Object.keys(descriptors)) {
     if (key === "length") continue;
