@@ -142,4 +142,32 @@ describe("hosted MCP full-contract verification", () => {
       detail: "MCP tools/list tool 1 has an invalid input schema",
     });
   });
+
+  test("normalizes manifest-compiler failures without echoing hostile tool identity", async () => {
+    const hostileName = "secret://github/private-provider-reference";
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          tools: [{
+            name: hostileName,
+            inputSchema: { type: "object", properties: {} },
+          }],
+        },
+      }, 200, contractHeaders("tool-contract-hostile-name"));
+
+    const result = await verifyHostedToolContract({
+      endpoint: "https://api.stensibly.com",
+      token,
+      origin: "https://www.stensibly.com",
+    }, fetchImpl);
+
+    expect(result).toEqual({
+      name: "remote MCP tool contract",
+      ok: false,
+      detail: "MCP tools/list contract is invalid; requestId=tool-contract-hostile-name",
+    });
+    expect(result.detail).not.toContain(hostileName);
+  });
 });
