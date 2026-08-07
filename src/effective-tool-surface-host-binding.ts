@@ -34,7 +34,9 @@ const maximumCapabilitiesPerClass = 1_000;
 const maximumRequiredCapabilities = 1_000;
 const maximumRecoveryActions = 6;
 const maximumProvenanceEntries = 16;
-const maximumInputObjects = 10_000;
+// The inherited v1 legal maximum visits 11,026 caller objects at the
+// closed per-list ceilings. Keep one bounded defense-in-depth ceiling above it.
+const maximumInputObjects = 12_000;
 const admittedHostBindingSnapshots = new WeakSet<object>();
 
 interface InputBudget {
