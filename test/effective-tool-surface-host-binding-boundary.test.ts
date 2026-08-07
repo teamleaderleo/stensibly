@@ -79,6 +79,37 @@ describe("effective tool-surface host-binding caller admission", () => {
     expect(ownKeysCalls).toBe(0);
   });
 
+  test("derives capability bytes and legacy class presence from one detached class view", () => {
+    let getCalls = 0;
+    let ownKeysCalls = 0;
+    const value = input();
+    const classes = new Proxy(value.toolSurface.classes as Record<string, ToolSurfaceClassInput>, {
+      get(_target, property, receiver) {
+        getCalls += 1;
+        if (property === "app_connector") return undefined;
+        return Reflect.get(_target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysCalls += 1;
+        throw new Error("class ownKeys must remain unreachable");
+      },
+    });
+    Object.defineProperty(value.toolSurface, "classes", {
+      value: classes,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    delete value.classObservations;
+
+    const result = buildEffectiveToolSurfaceHostBindingSnapshot(value);
+
+    expect(result.toolSurface.classes.app_connector.executable).toEqual([]);
+    expect(result.classObservations.app_connector.observation).toBe("present");
+    expect(getCalls).toBe(0);
+    expect(ownKeysCalls).toBe(0);
+  });
+
   test("normalizes revoked top-level, tool-surface, class, and capability inputs", () => {
     const top = Proxy.revocable(input(), {});
     top.revoke();
