@@ -1,0 +1,66 @@
+name: Lumen 1171 rearm finalizer
+
+on:
+  push:
+    branches:
+      - cinder/1153-causal-attention
+    paths:
+      - .github/workflows/lumen-1171-rearm-finalizer.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1171-rearm-finalizer
+  cancel-in-progress: false
+
+jobs:
+  rearm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cinder/1153-causal-attention
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact live carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "a70718763170acc6662be40b273b08b622f4ed11"
+          test "$(git rev-parse HEAD:src/orchestrator-attention-thread.ts)" = "36be2446c29852ecd8011fd0fecb6c829fa921df"
+          test "$(git rev-parse HEAD:test/orchestrator-attention-thread.test.ts)" = "9cafd57066dc1ef096864661926064bc83366cb7"
+          test "$(git rev-parse HEAD:test/orchestrator-attention-thread-evidence-fingerprint.test.ts)" = "ad58bf78d60ed3ed5b290740d0e0116f590328e6"
+
+      - name: Bind semantic finalizer to this exact carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(".github/workflows/lark-1171-semantic-finalizer.yml")
+          text = path.read_text()
+          old = 'test "$(git rev-parse HEAD^)" = "e69fa4f43b66261804ffa9d1a7e0f849c17be42b"'
+          new = f'test "$(git rev-parse HEAD^)" = "{os.environ["EXPECTED_HEAD"]}"'
+          if text.count(old) != 1:
+              raise SystemExit("semantic finalizer predecessor lease moved")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git rm .github/workflows/lumen-1171-rearm-finalizer.yml
+          git diff --cached --check
+          git add .github/workflows/lark-1171-semantic-finalizer.yml
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Rearm final causal-attention repair"
+          git fetch origin refs/heads/cinder/1153-causal-attention:refs/remotes/origin/cinder/1153-causal-attention
+          test "$(git rev-parse refs/remotes/origin/cinder/1153-causal-attention)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cinder/1153-causal-attention:$EXPECTED_HEAD origin HEAD:refs/heads/cinder/1153-causal-attention
