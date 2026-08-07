@@ -122,7 +122,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bun run worker:deploy
 
-      - name: Verify Worker fallback bearer compatibility
+      - name: Verify Worker fallback hosted API and MCP verification
         env:
           STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
           STENSIBLY_PROJECT: ${{ inputs.project }}
@@ -138,7 +138,7 @@ jobs:
           done
           exit 1
 
-      - name: Verify official endpoint bearer compatibility
+      - name: Verify official endpoint hosted API and MCP verification
         env:
           STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
           STENSIBLY_PROJECT: ${{ inputs.project }}
@@ -194,6 +194,6 @@ jobs:
             echo "- Worker fallback: https://stensibly-api.leoli-082000.workers.dev"
             echo "- Official endpoint: https://api.stensibly.com"
             echo "- Declared OAuth state: \`$OAUTH_EXPECTATION\`"
-            echo "- Legacy bearer verification: passed on both origins"
+            echo "- Hosted API + MCP verification: passed on both origins"
             echo "- Public auth/OAuth verification: passed on both origins"
           } >> "$GITHUB_STEP_SUMMARY"
