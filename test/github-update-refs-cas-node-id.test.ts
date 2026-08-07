@@ -9,19 +9,13 @@ const apiBaseUrl = "https://api.github.com";
 const repositoryFullName = "teamleaderleo/stensibly";
 const opaqueNodeId = "R_kgDOAtomic/Repository+legacy=";
 
-test("admits a bounded opaque node ID inside its exact provider receipt", () => {
-  const request = buildGitHubRepositoryNodeIdRequest(
-    apiBaseUrl,
-    repositoryFullName,
-  );
+test("admits a bounded opaque node ID inside its exact lookup context", () => {
+  const lookup = buildGitHubRepositoryNodeIdRequest(apiBaseUrl, repositoryFullName);
   const repository = admitGitHubRepositoryNodeIdResponse({
     data: {
-      repository: {
-        id: opaqueNodeId,
-        nameWithOwner: repositoryFullName,
-      },
+      repository: { id: opaqueNodeId, nameWithOwner: repositoryFullName },
     },
-  }, repositoryFullName, request.url.href);
+  }, lookup);
 
   expect(repository).toEqual({
     graphqlUrl: "https://api.github.com/graphql",
@@ -34,38 +28,21 @@ test("admits a bounded opaque node ID inside its exact provider receipt", () => 
     expectedHeadSha: "a".repeat(40),
     newHeadSha: "b".repeat(40),
   }).body).toEqual(expect.objectContaining({
-    variables: {
-      input: expect.objectContaining({ repositoryId: opaqueNodeId }),
-    },
+    variables: { input: expect.objectContaining({ repositoryId: opaqueNodeId }) },
   }));
 });
 
 test("rejects repository substitution, whitespace, and overlong node IDs", () => {
-  const request = buildGitHubRepositoryNodeIdRequest(
-    apiBaseUrl,
-    repositoryFullName,
-  );
+  const lookup = buildGitHubRepositoryNodeIdRequest(apiBaseUrl, repositoryFullName);
   expect(() => admitGitHubRepositoryNodeIdResponse({
     data: {
-      repository: {
-        id: opaqueNodeId,
-        nameWithOwner: "teamleaderleo/other",
-      },
+      repository: { id: opaqueNodeId, nameWithOwner: "teamleaderleo/other" },
     },
-  }, repositoryFullName, request.url.href)).toThrow(
-    "GitHub updateRefs GraphQL response is invalid",
-  );
+  }, lookup)).toThrow("GitHub updateRefs GraphQL response is invalid");
 
   for (const id of ["node id", "x".repeat(257)]) {
     expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: {
-        repository: {
-          id,
-          nameWithOwner: repositoryFullName,
-        },
-      },
-    }, repositoryFullName, request.url.href)).toThrow(
-      "GitHub updateRefs GraphQL response is invalid",
-    );
+      data: { repository: { id, nameWithOwner: repositoryFullName } },
+    }, lookup)).toThrow("GitHub updateRefs GraphQL response is invalid");
   }
 });

@@ -10,7 +10,7 @@ import {
 } from "./github-repository-write-admission.js";
 
 export interface GitHubGraphqlRequest {
-  url: URL;
+  url: string;
   body: Readonly<Record<string, unknown>>;
 }
 
@@ -35,6 +35,11 @@ export interface GitHubUpdateRefsCasResult {
   clientMutationId: string;
 }
 
+interface GitHubRepositoryLookupContext {
+  graphqlUrl: string;
+  repositoryFullName: string;
+}
+
 const repositoryNodeIdQuery =
   "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id nameWithOwner } }";
 const updateRefsMutation =
@@ -42,6 +47,7 @@ const updateRefsMutation =
 const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
 const providerRepositoryPattern = /^[\x20-\x7e]{1,200}$/u;
 const clientMutationIdPattern = /^stensibly-write-[a-f0-9]{64}$/u;
+const admittedRepositoryLookups = new WeakMap<object, Readonly<GitHubRepositoryLookupContext>>();
 const admittedRepositoryIdentities = new WeakSet<object>();
 
 export function buildGitHubRepositoryNodeIdRequest(
@@ -51,29 +57,26 @@ export function buildGitHubRepositoryNodeIdRequest(
   const repository = admitGitHubRepositoryFullName(repositoryFullName);
   const [owner, name] = repository.split("/");
   if (!owner || !name) throw invalidGraphqlResponse();
-  return Object.freeze({
-    url: githubGraphqlUrl(apiBaseUrl),
+  const graphqlUrl = githubGraphqlUrl(apiBaseUrl).href;
+  const request = Object.freeze({
+    url: graphqlUrl,
     body: Object.freeze({
       query: repositoryNodeIdQuery,
       variables: Object.freeze({ owner, name }),
     }),
   });
+  admittedRepositoryLookups.set(request, Object.freeze({
+    graphqlUrl,
+    repositoryFullName: repository,
+  }));
+  return request;
 }
 
 export function admitGitHubRepositoryNodeIdResponse(
   value: unknown,
-  expectedRepositoryFullName: string,
-  expectedGraphqlUrl: string,
+  lookup: GitHubGraphqlRequest,
 ): Readonly<GitHubRepositoryNodeIdentity> {
-  let graphqlUrl: string;
-  try {
-    graphqlUrl = admittedGraphqlEndpoint(expectedGraphqlUrl).href;
-  } catch {
-    throw invalidGraphqlResponse();
-  }
-  const expectedRepository = admitGitHubRepositoryFullName(
-    expectedRepositoryFullName,
-  );
+  const context = repositoryLookupContext(lookup);
   const envelope = record(value);
   if (optionalDataProperty(envelope, "errors") !== undefined) {
     throw new Error("GitHub could not read repository node identity");
@@ -83,11 +86,11 @@ export function admitGitHubRepositoryNodeIdResponse(
   const repositoryFullName = admitProviderRepositoryFullName(
     requiredDataProperty(repository, "nameWithOwner"),
   );
-  if (repositoryFullName !== expectedRepository) {
+  if (repositoryFullName !== context.repositoryFullName) {
     throw invalidGraphqlResponse();
   }
   const identity = Object.freeze({
-    graphqlUrl,
+    graphqlUrl: context.graphqlUrl,
     repositoryFullName,
     repositoryId: admitNodeId(requiredDataProperty(repository, "id")),
   });
@@ -99,7 +102,7 @@ export function buildGitHubUpdateRefsCasRequest(
   input: GitHubUpdateRefsCasInput,
 ): GitHubUpdateRefsCasRequest {
   const snapshot = snapshotCasInput(input);
-  const url = admittedGraphqlEndpoint(snapshot.repository.graphqlUrl);
+  const graphqlUrl = admittedGraphqlEndpoint(snapshot.repository.graphqlUrl).href;
   const repositoryFullName = admitGitHubRepositoryFullName(
     snapshot.repository.repositoryFullName,
   );
@@ -111,7 +114,7 @@ export function buildGitHubUpdateRefsCasRequest(
     throw new RangeError("GitHub updateRefs object format is invalid");
   }
   const clientMutationId = mutationIdentity({
-    apiUrl: url.href,
+    apiUrl: graphqlUrl,
     repositoryFullName,
     repositoryId,
     targetRef,
@@ -120,7 +123,7 @@ export function buildGitHubUpdateRefsCasRequest(
     objectIdLength: expectedHeadSha.length,
   });
   return Object.freeze({
-    url,
+    url: graphqlUrl,
     body: Object.freeze({
       query: updateRefsMutation,
       variables: Object.freeze({
@@ -187,6 +190,15 @@ export function githubGraphqlUrl(apiBaseUrl: string): URL {
     ? "/api/graphql"
     : `${pathname}/graphql`.replace(/\/{2,}/gu, "/");
   return url;
+}
+
+function repositoryLookupContext(value: unknown): Readonly<GitHubRepositoryLookupContext> {
+  if (value === null || typeof value !== "object") {
+    throw invalidGraphqlResponse();
+  }
+  const context = admittedRepositoryLookups.get(value);
+  if (!context) throw invalidGraphqlResponse();
+  return context;
 }
 
 function admittedGraphqlEndpoint(value: unknown): URL {

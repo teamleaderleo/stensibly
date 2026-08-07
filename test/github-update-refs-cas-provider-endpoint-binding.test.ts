@@ -2,75 +2,47 @@ import { expect, test } from "bun:test";
 import {
   admitGitHubRepositoryNodeIdResponse,
   buildGitHubRepositoryNodeIdRequest,
-  buildGitHubUpdateRefsCasRequest,
-  githubGraphqlUrl,
-  type GitHubUpdateRefsCasInput,
 } from "../src/github-update-refs-cas.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
-const repositoryId = "R_kgDOProviderScopedRepository";
-const graphqlUrl = "https://github-a.example/api/graphql";
-const targetRef = "feature/exact-cas";
-const expectedHeadSha = "a".repeat(40);
-const newHeadSha = "b".repeat(40);
+const repositoryId = "R_kgDOAtomicRepository";
+const response = {
+  data: {
+    repository: { id: repositoryId, nameWithOwner: repositoryFullName },
+  },
+};
 
-test("binds repository node identity to the exact GraphQL endpoint", () => {
-  const request = buildGitHubRepositoryNodeIdRequest(
-    "https://github-a.example/api/v3",
+test("repository response admission derives endpoint only from exact lookup context", () => {
+  const lookup = buildGitHubRepositoryNodeIdRequest(
+    "https://api.github.com",
     repositoryFullName,
   );
-  expect(request.url.href).toBe(graphqlUrl);
-
-  const admitBoundRepository = admitGitHubRepositoryNodeIdResponse as unknown as (
-    value: unknown,
-    expectedRepositoryFullName: string,
-    expectedGraphqlUrl: string,
-  ) => Readonly<{
-    graphqlUrl: string;
-    repositoryFullName: string;
-    repositoryId: string;
-  }>;
-
-  const repository = admitBoundRepository({
-    data: {
-      repository: {
-        id: repositoryId,
-        nameWithOwner: repositoryFullName,
-      },
-    },
-  }, repositoryFullName, graphqlUrl);
-
+  const repository = admitGitHubRepositoryNodeIdResponse(response, lookup);
   expect(repository).toEqual({
-    graphqlUrl,
+    graphqlUrl: "https://api.github.com/graphql",
     repositoryFullName,
     repositoryId,
   });
 
-  const buildBoundCas = buildGitHubUpdateRefsCasRequest as unknown as (
-    input: Omit<GitHubUpdateRefsCasInput, "apiBaseUrl" | "repository"> & {
-      repository: typeof repository;
-    },
-  ) => ReturnType<typeof buildGitHubUpdateRefsCasRequest>;
-
-  const mutation = buildBoundCas({
-    repository,
-    targetRef,
-    expectedHeadSha,
-    newHeadSha,
-  });
-  expect(mutation.url.href).toBe(graphqlUrl);
+  const legacyAdmit = admitGitHubRepositoryNodeIdResponse as unknown as (
+    value: unknown,
+    lookup: unknown,
+    repository?: unknown,
+  ) => unknown;
+  expect(() => legacyAdmit(
+    response,
+    "https://github.example.com/api/graphql",
+    repositoryFullName,
+  )).toThrow("GitHub updateRefs GraphQL response is invalid");
 });
 
-test("rejects non-string API bases without conversion hooks", () => {
-  let conversionCalls = 0;
-  const hostile = {
-    toString() {
-      conversionCalls += 1;
-      throw new Error("must not convert caller API base");
-    },
-  };
-
-  expect(() => githubGraphqlUrl(hostile as never))
-    .toThrow("GitHub API base URL is invalid");
-  expect(conversionCalls).toBe(0);
+test("structural lookup lookalikes cannot relabel provider endpoint", () => {
+  const lookup = buildGitHubRepositoryNodeIdRequest(
+    "https://api.github.com",
+    repositoryFullName,
+  );
+  expect(() => admitGitHubRepositoryNodeIdResponse(
+    response,
+    { ...lookup },
+  )).toThrow("GitHub updateRefs GraphQL response is invalid");
 });

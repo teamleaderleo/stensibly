@@ -14,18 +14,15 @@ const baseInput = {
 };
 
 function admittedRepository() {
-  const request = buildGitHubRepositoryNodeIdRequest(
+  const lookup = buildGitHubRepositoryNodeIdRequest(
     "https://api.github.com",
     repositoryFullName,
   );
   return admitGitHubRepositoryNodeIdResponse({
     data: {
-      repository: {
-        id: repositoryId,
-        nameWithOwner: repositoryFullName,
-      },
+      repository: { id: repositoryId, nameWithOwner: repositoryFullName },
     },
-  }, repositoryFullName, request.url.href);
+  }, lookup);
 }
 
 test("builds CAS request without top-level caller get or ownKeys", () => {
@@ -44,7 +41,7 @@ test("builds CAS request without top-level caller get or ownKeys", () => {
   });
 
   const request = buildGitHubUpdateRefsCasRequest(input);
-  expect(request.url.href).toBe(repository.graphqlUrl);
+  expect(request.url).toBe(repository.graphqlUrl);
   expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
   expect(getCalls).toBe(0);
   expect(ownKeysCalls).toBe(0);

@@ -10,15 +10,12 @@ function admittedRepository(
   repositoryFullName: string,
   repositoryId: string,
 ) {
-  const request = buildGitHubRepositoryNodeIdRequest(apiBaseUrl, repositoryFullName);
+  const lookup = buildGitHubRepositoryNodeIdRequest(apiBaseUrl, repositoryFullName);
   return admitGitHubRepositoryNodeIdResponse({
     data: {
-      repository: {
-        id: repositoryId,
-        nameWithOwner: repositoryFullName,
-      },
+      repository: { id: repositoryId, nameWithOwner: repositoryFullName },
     },
-  }, repositoryFullName, request.url.href);
+  }, lookup);
 }
 
 const base = {
@@ -62,10 +59,7 @@ describe("GitHub updateRefs CAS mutation identity", () => {
       },
       { ...base, targetRef: "topic/other" },
       { ...base, expectedHeadSha: "3".repeat(40) },
-      {
-        ...base,
-        newHeadSha: "abcdef0123456789" + "4".repeat(24),
-      },
+      { ...base, newHeadSha: "abcdef0123456789" + "4".repeat(24) },
     ];
 
     for (const variant of variants) {
@@ -80,7 +74,6 @@ describe("GitHub updateRefs CAS mutation identity", () => {
       ...base,
       newHeadSha: "abcdef0123456789" + "5".repeat(24),
     }).clientMutationId;
-
     expect(second).not.toBe(first);
   });
 });
