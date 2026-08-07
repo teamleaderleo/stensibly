@@ -1,4 +1,8 @@
 import {
+  sha256,
+  stableJson,
+} from "./canonical-json.js";
+import {
   admitGitHubBranchRef,
   admitGitHubRepositoryFullName,
   admitGitObjectId,
@@ -27,22 +31,12 @@ export interface GitHubUpdateRefsCasResult {
   clientMutationId: string;
 }
 
-export class GitHubUpdateRefsCasStaleRefError extends Error {
-  readonly code = "github_update_refs_stale_ref" as const;
-
-  constructor() {
-    super("GitHub repository write exact old ref changed before publication");
-    this.name = "GitHubUpdateRefsCasStaleRefError";
-    Object.freeze(this);
-  }
-}
-
 const repositoryNodeIdQuery =
   "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }";
 const updateRefsMutation =
   "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }";
 const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
-const maximumGraphqlErrors = 4;
+const clientMutationIdPattern = /^stensibly-write-[a-f0-9]{64}$/u;
 
 export function buildGitHubRepositoryNodeIdRequest(
   apiBaseUrl: string,
@@ -74,6 +68,7 @@ export function buildGitHubUpdateRefsCasRequest(
   input: GitHubUpdateRefsCasInput,
 ): GitHubUpdateRefsCasRequest {
   const snapshot = snapshotCasInput(input);
+  const url = githubGraphqlUrl(snapshot.apiBaseUrl);
   const repositoryFullName = admitGitHubRepositoryFullName(snapshot.repositoryFullName);
   const repositoryId = admitNodeId(snapshot.repositoryId);
   const targetRef = admitGitHubBranchRef(snapshot.targetRef);
@@ -82,9 +77,17 @@ export function buildGitHubUpdateRefsCasRequest(
   if (!sameGitObjectFormat(expectedHeadSha, newHeadSha)) {
     throw new RangeError("GitHub updateRefs object format is invalid");
   }
-  const clientMutationId = `stensibly-write-${newHeadSha.slice(0, 16)}`;
+  const clientMutationId = mutationIdentity({
+    apiUrl: url.href,
+    repositoryFullName,
+    repositoryId,
+    targetRef,
+    expectedHeadSha,
+    newHeadSha,
+    objectIdLength: expectedHeadSha.length,
+  });
   return Object.freeze({
-    url: githubGraphqlUrl(snapshot.apiBaseUrl),
+    url,
     body: Object.freeze({
       query: updateRefsMutation,
       variables: Object.freeze({
@@ -110,16 +113,12 @@ export function admitGitHubUpdateRefsCasResponse(
 ): GitHubUpdateRefsCasResult {
   if (
     typeof expectedClientMutationId !== "string"
-    || !/^stensibly-write-[a-f0-9]{16}$/u.test(expectedClientMutationId)
+    || !clientMutationIdPattern.test(expectedClientMutationId)
   ) {
     throw invalidGraphqlResponse();
   }
   const envelope = record(value);
-  const errors = optionalDataProperty(envelope, "errors");
-  if (errors !== undefined) {
-    if (isExactStaleRefResponse(envelope, errors)) {
-      throw new GitHubUpdateRefsCasStaleRefError();
-    }
+  if (optionalDataProperty(envelope, "errors") !== undefined) {
     throw new Error("GitHub could not publish repository ref");
   }
   const data = record(requiredDataProperty(envelope, "data"));
@@ -140,8 +139,9 @@ export function githubGraphqlUrl(apiBaseUrl: string): URL {
   } catch {
     throw new RangeError("GitHub API base URL is invalid");
   }
+  const localhostHttp = url.protocol === "http:" && url.hostname === "localhost";
   if (
-    (url.protocol !== "https:" && url.protocol !== "http:")
+    (url.protocol !== "https:" && !localhostHttp)
     || url.username !== ""
     || url.password !== ""
     || url.search !== ""
@@ -154,6 +154,19 @@ export function githubGraphqlUrl(apiBaseUrl: string): URL {
     ? "/api/graphql"
     : `${pathname}/graphql`.replace(/\/{2,}/gu, "/");
   return url;
+}
+
+function mutationIdentity(value: Readonly<{
+  apiUrl: string;
+  repositoryFullName: string;
+  repositoryId: string;
+  targetRef: string;
+  expectedHeadSha: string;
+  newHeadSha: string;
+  objectIdLength: number;
+}>): string {
+  const digest = sha256(stableJson(value)).slice("sha256:".length);
+  return `stensibly-write-${digest}`;
 }
 
 function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
@@ -186,27 +199,6 @@ function casInputString(value: object, key: string): string {
     throw invalidCasInput();
   }
   return descriptor.value;
-}
-
-function isExactStaleRefResponse(
-  envelope: Record<string, unknown>,
-  errorsValue: unknown,
-): boolean {
-  try {
-    const errors = denseArray(errorsValue, maximumGraphqlErrors);
-    if (errors.length !== 1) return false;
-    const error = record(errors[0]);
-    if (
-      typeof optionalDataProperty(error, "message") !== "string"
-      || optionalDataProperty(error, "type") !== "STALE_REF"
-    ) {
-      return false;
-    }
-    const data = record(requiredDataProperty(envelope, "data"));
-    return requiredDataProperty(data, "updateRefs") === null;
-  } catch {
-    return false;
-  }
 }
 
 function admitNodeId(value: unknown): string {
@@ -258,37 +250,6 @@ function dataDescriptor(
     throw invalidGraphqlResponse();
   }
   return descriptor as PropertyDescriptor & { value: unknown };
-}
-
-function denseArray(value: unknown, maximumLength: number): unknown[] {
-  if (!responseIsArray(value)) throw invalidGraphqlResponse();
-  let prototype: object | null;
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    prototype = Object.getPrototypeOf(value);
-    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
-  } catch {
-    throw invalidGraphqlResponse();
-  }
-  if (prototype !== Array.prototype) throw invalidGraphqlResponse();
-  const lengthValue = lengthDescriptor && "value" in lengthDescriptor
-    ? lengthDescriptor.value
-    : undefined;
-  if (
-    typeof lengthValue !== "number"
-    || !Number.isSafeInteger(lengthValue)
-    || lengthValue < 0
-    || lengthValue > maximumLength
-  ) {
-    throw invalidGraphqlResponse();
-  }
-  const result: unknown[] = [];
-  for (let index = 0; index < lengthValue; index += 1) {
-    const descriptor = dataDescriptor(value, String(index));
-    if (!descriptor) throw invalidGraphqlResponse();
-    result.push(descriptor.value);
-  }
-  return result;
 }
 
 function inputIsArray(value: object): boolean {
