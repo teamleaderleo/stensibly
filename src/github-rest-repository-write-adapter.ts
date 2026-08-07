@@ -1,4 +1,10 @@
 import type { GitHubInstallationToken } from "./github-app-installation-token.js";
+import {
+  discardGitHubProviderResponse,
+  GitHubProviderResponseReadError,
+  readBoundedGitHubProviderResponseText,
+  withGitHubProviderResponseDeadline,
+} from "./github-provider-bounded-response.js";
 import type {
   GitHubRepositoryWritePayload,
   GitHubRepositoryWriteProviderAdapter,
@@ -25,6 +31,7 @@ export interface GitHubRestRepositoryWriteAdapterOptions {
   tokenProvider: GitHubRepositoryWriteTokenProvider;
   apiBaseUrl?: string;
   fetch?: typeof fetch;
+  responseDeadlineMs?: number;
 }
 
 interface ProviderWriteResult {
@@ -36,7 +43,6 @@ interface ProviderWriteResult {
 
 const githubApiVersion = "2022-11-28";
 const maximumResponseBytes = 512 * 1024;
-const maximumResponseChunks = 4_096;
 const requestIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const credentialShapedPattern =
   /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{16,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
@@ -45,9 +51,8 @@ const credentialShapedPattern =
  * Native transport for the durable repository-write provider service.
  *
  * This adapter constructs one direct-child commit from an immutable parent and
- * publishes it through a non-forced ref update. It does not choose authority,
- * reserve idempotency, retry ambiguous writes, or release the repository/ref
- * lane; those semantics remain service-owned.
+ * publishes it through a non-forced ref update. Every provider response uses
+ * one total fetch/body deadline from the shared GitHub response boundary.
  */
 export class GitHubRestRepositoryWriteAdapter
   implements GitHubRepositoryWriteProviderAdapter
@@ -61,7 +66,10 @@ export class GitHubRestRepositoryWriteAdapter
     this.#apiBaseUrl = normalizedApiBaseUrl(
       options.apiBaseUrl ?? "https://api.github.com",
     );
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = withGitHubProviderResponseDeadline(
+      options.fetch ?? globalThis.fetch,
+      options.responseDeadlineMs,
+    );
   }
 
   async getRefHead(input: {
@@ -78,7 +86,7 @@ export class GitHubRestRepositoryWriteAdapter
       operation: "read target ref",
     });
     if (response.status === 404) {
-      discardResponse(response);
+      discardGitHubProviderResponse(response);
       return null;
     }
     requireOk(response, "read target ref");
@@ -169,7 +177,7 @@ export class GitHubRestRepositoryWriteAdapter
       payload: input.payload,
       request: (request) => this.#request(request),
       readJson,
-      discardResponse,
+      discardResponse: discardGitHubProviderResponse,
       admitRequestId: admittedRequestId,
     });
   }
@@ -207,122 +215,46 @@ export class GitHubRestRepositoryWriteAdapter
 
 function requireOk(response: Response, operation: string): void {
   if (response.ok) return;
-  discardResponse(response);
+  discardGitHubProviderResponse(response);
   throw new Error(`GitHub could not ${operation} (HTTP ${response.status})`);
 }
 
 async function readJson(response: Response, operation: string): Promise<unknown> {
-  const text = await readBoundedText(response, operation);
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
+      discardGitHubProviderResponse(response);
+      throw invalidResponse(`GitHub ${operation} response length was invalid`);
+    }
+    const declaredBytes = Number(declared);
+    if (
+      !Number.isSafeInteger(declaredBytes)
+      || declaredBytes > maximumResponseBytes
+    ) {
+      discardGitHubProviderResponse(response);
+      throw invalidResponse(
+        `GitHub ${operation} response exceeded its byte limit`,
+      );
+    }
+  }
+  let text: string;
+  try {
+    text = await readBoundedGitHubProviderResponseText(
+      response,
+      maximumResponseBytes,
+    );
+  } catch (error) {
+    if (error instanceof GitHubProviderResponseReadError) {
+      throw invalidResponse(
+        `GitHub ${operation} response could not be read within its bounds`,
+      );
+    }
+    throw error;
+  }
   try {
     return JSON.parse(text) as unknown;
   } catch {
     throw invalidResponse(`GitHub ${operation} response was not valid JSON`);
-  }
-}
-
-async function readBoundedText(
-  response: Response,
-  operation: string,
-): Promise<string> {
-  const declared = response.headers.get("content-length");
-  if (declared !== null) {
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
-      discardResponse(response);
-      throw invalidResponse(`GitHub ${operation} response length was invalid`);
-    }
-    const declaredBytes = Number(declared);
-    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > maximumResponseBytes) {
-      discardResponse(response);
-      throw invalidResponse(`GitHub ${operation} response exceeded its byte limit`);
-    }
-  }
-  if (response.body === null) return "";
-
-  let reader: ReadableStreamDefaultReader<Uint8Array>;
-  try {
-    reader = response.body.getReader();
-  } catch {
-    discardResponse(response);
-    throw invalidResponse(`GitHub ${operation} response could not be read`);
-  }
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  let totalChunks = 0;
-  let failed = false;
-  try {
-    while (true) {
-      let next: Awaited<ReturnType<typeof reader.read>>;
-      try {
-        next = await reader.read();
-      } catch {
-        failed = true;
-        cancelReader(reader);
-        throw invalidResponse(`GitHub ${operation} response could not be read`);
-      }
-      if (next.done) break;
-      totalChunks += 1;
-      if (totalChunks > maximumResponseChunks || !(next.value instanceof Uint8Array)) {
-        failed = true;
-        cancelReader(reader);
-        throw invalidResponse(`GitHub ${operation} response exceeded its work limit`);
-      }
-      const nextTotal = totalBytes + next.value.byteLength;
-      if (!Number.isSafeInteger(nextTotal) || nextTotal > maximumResponseBytes) {
-        failed = true;
-        cancelReader(reader);
-        throw invalidResponse(`GitHub ${operation} response exceeded its byte limit`);
-      }
-      const copy = new Uint8Array(next.value.byteLength);
-      Uint8Array.prototype.set.call(copy, next.value);
-      chunks.push(copy);
-      totalBytes = nextTotal;
-    }
-  } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      if (!failed) {
-        throw invalidResponse(`GitHub ${operation} response could not be released`);
-      }
-    }
-  }
-
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw invalidResponse(`GitHub ${operation} response was not valid UTF-8`);
-  }
-}
-
-function discardResponse(response: Response): void {
-  try {
-    suppressCancellation(response.body?.cancel());
-  } catch {
-    // The fixed status/admission error remains authoritative.
-  }
-}
-
-function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
-  try {
-    suppressCancellation(reader.cancel());
-  } catch {
-    // The fixed bounded-reader error remains authoritative.
-  }
-}
-
-function suppressCancellation(value: unknown): void {
-  if (
-    value !== null
-    && (typeof value === "object" || typeof value === "function")
-    && "then" in value
-  ) {
-    void Promise.resolve(value).catch(() => undefined);
   }
 }
 
