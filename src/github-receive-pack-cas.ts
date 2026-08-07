@@ -41,7 +41,12 @@ export function admitGitReceivePackAdvertisement(
   const expected = admitGitObjectId(expectedHeadSha);
   const packets = parsePacketLines(bytes, maximumPacketCount, invalidAdvertisement);
   if (packets.length < 4 || packets.at(-1) !== null) throw invalidAdvertisement();
-  if (decodePacket(packets[0], invalidAdvertisement) !== "# service=git-receive-pack\n") {
+  const servicePacket = packets[0];
+  if (
+    servicePacket === undefined
+    || servicePacket === null
+    || decodePacket(servicePacket, invalidAdvertisement) !== "# service=git-receive-pack\n"
+  ) {
     throw invalidAdvertisement();
   }
   if (packets[1] !== null) throw invalidAdvertisement();
@@ -54,7 +59,7 @@ export function admitGitReceivePackAdvertisement(
 
   for (let index = 2; index < packets.length - 1; index += 1) {
     const packet = packets[index];
-    if (packet === null) throw invalidAdvertisement();
+    if (packet === undefined || packet === null) throw invalidAdvertisement();
     const text = decodePacket(packet, invalidAdvertisement);
     if (!text.endsWith("\n")) throw invalidAdvertisement();
     const line = text.slice(0, -1);
@@ -175,7 +180,7 @@ export function admitGitReceivePackCasReport(
   let targetOk = false;
   for (let index = 0; index < packets.length - 1; index += 1) {
     const packet = packets[index];
-    if (packet === null) throw invalidReport();
+    if (packet === undefined || packet === null) throw invalidReport();
     const line = decodePacket(packet, invalidReport);
     if (!line.endsWith("\n")) throw invalidReport();
     const text = line.slice(0, -1);
