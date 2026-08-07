@@ -1,9 +1,7 @@
 name: Lumen 1186 classify stale-ref conflicts
 
 on:
-  push:
-    branches:
-      - lumen/1163-updaterefs-cas-repair
+  pull_request:
     paths:
       - .github/workflows/lumen-1186-fix-carrier-anchors.yml
 
@@ -27,12 +25,12 @@ jobs:
 
       - name: Verify exact live carrier
         env:
-          EXPECTED_HEAD: ${{ github.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "1d398b152dde5a2ca81d152a5fd5e050b36c3c8c"
+          test "$(git rev-parse HEAD^)" = "97b61e788cf673c146c2e0494a4c6aa3e1a26105"
           test "$(git rev-parse HEAD:.github/workflows/lumen-1163-updaterefs-cas-repair.yml)" = "da5a36937752762b3707c18319f3d5c80f5d6d94"
 
       - name: Classify standards-compliant stale-ref GraphQL conflicts
