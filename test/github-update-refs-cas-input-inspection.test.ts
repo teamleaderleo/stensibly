@@ -24,7 +24,9 @@ test("builds CAS request without caller get or ownKeys", () => {
     },
   });
 
-  expect(buildGitHubUpdateRefsCasRequest(input).body).toEqual({
+  const request = buildGitHubUpdateRefsCasRequest(input);
+  expect(request.clientMutationId).toMatch(/^stensibly-write-[a-f0-9]{64}$/);
+  expect(request.body).toEqual({
     query: "mutation StensiblyUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
     variables: {
       input: {
@@ -35,7 +37,7 @@ test("builds CAS request without caller get or ownKeys", () => {
           afterOid: baseInput.newHeadSha,
           force: false,
         }],
-        clientMutationId: `stensibly-write-${baseInput.newHeadSha.slice(0, 16)}`,
+        clientMutationId: request.clientMutationId,
       },
     },
   });
@@ -57,4 +59,11 @@ test("rejects accessor-backed CAS fields without invoking getters", () => {
   expect(() => buildGitHubUpdateRefsCasRequest(input as never))
     .toThrow("GitHub updateRefs CAS input is invalid");
   expect(getterCalls).toBe(0);
+});
+
+test("normalizes a revoked CAS input", () => {
+  const revoked = Proxy.revocable(baseInput, {});
+  revoked.revoke();
+  expect(() => buildGitHubUpdateRefsCasRequest(revoked.proxy))
+    .toThrow("GitHub updateRefs CAS input is invalid");
 });
