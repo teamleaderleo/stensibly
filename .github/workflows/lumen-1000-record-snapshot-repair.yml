@@ -1,0 +1,145 @@
+name: Lumen 1000 fixed-record snapshot repair
+
+on:
+  push:
+    branches:
+      - cicada/962-current-main-merkle-replay
+    paths:
+      - .github/workflows/lumen-1000-record-snapshot-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1000-record-snapshot-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cicada/962-current-main-merkle-replay
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact carrier ancestry and source
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "4ddc1d13bd5d4ea93d265544263ce95ad828dce6"
+          test "$(git rev-parse HEAD:src/github-observation-merkle-checkpoint.ts)" = "d903fe6a50cbfa9097ddb4fb54405ac002d5272b"
+          test "$(git rev-parse HEAD:docs/github-observation-merkle-checkpoints.md)" = "bd04265be8f6f14314c2bf2ad86ad78cf3ea31fd"
+
+      - name: Import exact red control
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin 029346edcfad01bfbe310d24533f7549118cf0d5
+          test "$(git rev-parse FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts)" = "d494b4e242dd3235a005ef4414a6f3d4904efdc3"
+          git show FETCH_HEAD:test/github-observation-merkle-checkpoint-record-key-budget.test.ts > test/github-observation-merkle-checkpoint-record-key-budget.test.ts
+
+      - name: Bound fixed-record caller inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-observation-merkle-checkpoint.ts")
+          source = source_path.read_text()
+          start = source.index("function snapshotRecord")
+          end = source.index("function snapshotArray", start)
+          replacement = '''function snapshotRecord<const K extends readonly string[]>(
+            value: unknown,
+            keys: K,
+            label: string,
+          ): DataRecord {
+            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+              throw new TypeError(`${label} must be an object`);
+            }
+            let prototype: object | null;
+            try {
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw new TypeError(`${label} could not be inspected`);
+            }
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new TypeError(`${label} must use a plain prototype`);
+            }
+            const result = Object.create(null) as DataRecord;
+            for (const key of keys) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new TypeError(`${label} could not be inspected`);
+              }
+              if (!descriptor) {
+                throw new TypeError(`${label} is missing required fields`);
+              }
+              if (!("value" in descriptor) || descriptor.enumerable !== true) {
+                throw new TypeError(`${label} fields must be enumerable data properties`);
+              }
+              result[key] = descriptor.value;
+            }
+            return result;
+          }
+
+          '''
+          source_path.write_text(source[:start] + replacement + source[end:])
+
+          docs_path = Path("docs/github-observation-merkle-checkpoints.md")
+          docs = docs_path.read_text()
+          old = (
+              "Leaf and proof records still require exact enumerable data fields, "
+              "and accessors are rejected without getter execution."
+          )
+          new = (
+              "Record inputs copy only their declared enumerable data fields and discard "
+              "caller decorations without key enumeration; missing fields and accessors "
+              "are rejected without getter execution."
+          )
+          if docs.count(old) != 1:
+              raise SystemExit("Merkle record-admission documentation anchor moved")
+          docs_path.write_text(docs.replace(old, new, 1))
+          PY
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate exact repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test test/github-observation-merkle*.test.ts
+
+      - name: Publish workflow-free repair
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/lumen-1000-record-snapshot-repair.yml
+          git add \
+            src/github-observation-merkle-checkpoint.ts \
+            docs/github-observation-merkle-checkpoints.md \
+            test/github-observation-merkle-checkpoint-record-key-budget.test.ts
+          git diff --cached --check
+          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
+            docs/github-observation-merkle-checkpoints.md \
+            src/github-observation-merkle-checkpoint.ts \
+            test/github-observation-merkle-checkpoint-record-key-budget.test.ts | sort)"
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bound fixed-record Merkle input inspection"
+          git fetch origin refs/heads/cicada/962-current-main-merkle-replay:refs/remotes/origin/cicada/962-current-main-merkle-replay
+          test "$(git rev-parse refs/remotes/origin/cicada/962-current-main-merkle-replay)" = "$EXPECTED_HEAD"
+          git push --force-with-lease=refs/heads/cicada/962-current-main-merkle-replay:$EXPECTED_HEAD origin HEAD:refs/heads/cicada/962-current-main-merkle-replay
