@@ -5,6 +5,7 @@ import {
   admitGitHubUpdateRefsCasResponse,
   buildGitHubRepositoryNodeIdRequest,
   buildGitHubUpdateRefsCasRequest,
+  type GitHubRepositoryNodeIdentity,
 } from "./github-update-refs-cas.js";
 import {
   admitGitObjectId,
@@ -63,7 +64,7 @@ export async function publishGitHubRepositoryWriteAtomically(
     repositoryRoot,
     parentTreeSha,
   );
-  const repositoryId = await readRepositoryNodeId(input);
+  const repository = await readRepositoryNodeIdentity(input);
   const nextBlobSha = input.payload.operation === "delete_file"
     ? null
     : await createBlob(input, repositoryRoot);
@@ -85,12 +86,12 @@ export async function publishGitHubRepositoryWriteAtomically(
     repositoryRoot,
     nextTreeSha,
   );
-  return await publishRef(input, repositoryId, nextCommitSha);
+  return await publishRef(input, repository, nextCommitSha);
 }
 
-async function readRepositoryNodeId(
+async function readRepositoryNodeIdentity(
   input: GitHubAtomicRepositoryWriteDependencies,
-): Promise<string> {
+): Promise<Readonly<GitHubRepositoryNodeIdentity>> {
   const operation = "read repository node identity";
   const request = buildGitHubRepositoryNodeIdRequest(
     input.apiBaseUrl,
@@ -107,6 +108,8 @@ async function readRepositoryNodeId(
   requireStatus(input, response, 200, operation);
   return admitGitHubRepositoryNodeIdResponse(
     await input.readJson(response, operation),
+    input.repositoryFullName,
+    request.url.href,
   );
 }
 
@@ -123,7 +126,11 @@ async function readParentTreeSha(
     operation,
   });
   requireStatus(input, response, 200, operation);
-  const record = exactRecord(await input.readJson(response, operation), operation);
+  const record = exactRecord(
+    await input.readJson(response, operation),
+    operation,
+    ["sha", "url", "tree"],
+  );
   const sha = objectId(record.sha, "GitHub expected parent commit SHA");
   if (sha !== input.expectedParentSha) {
     throw invalidResponse("GitHub expected parent commit identity changed");
@@ -133,7 +140,11 @@ async function readParentTreeSha(
     commitUrl(repositoryRoot, input.expectedParentSha),
     "GitHub expected parent commit URL",
   );
-  const tree = exactRecord(record.tree, "GitHub expected parent tree");
+  const tree = exactRecord(
+    record.tree,
+    "GitHub expected parent tree",
+    ["sha", "url"],
+  );
   const treeSha = objectId(tree.sha, "GitHub expected parent tree SHA");
   if (!sameGitObjectFormat(input.expectedParentSha, treeSha)) {
     throw invalidResponse("GitHub expected parent tree mixed object formats");
@@ -160,7 +171,11 @@ async function readParentTreeEntry(
     operation,
   });
   requireStatus(input, response, 200, operation);
-  const record = exactRecord(await input.readJson(response, operation), operation);
+  const record = exactRecord(
+    await input.readJson(response, operation),
+    operation,
+    ["sha", "url", "truncated", "tree"],
+  );
   if (objectId(record.sha, "GitHub expected parent tree response SHA") !== parentTreeSha) {
     throw invalidResponse("GitHub expected parent tree identity changed");
   }
@@ -179,7 +194,11 @@ async function readParentTreeEntry(
   );
   const matches: Record<string, unknown>[] = [];
   for (const value of entries) {
-    const entry = exactRecord(value, "GitHub expected parent tree entry");
+    const entry = exactRecord(
+      value,
+      "GitHub expected parent tree entry",
+      ["path", "mode", "type", "sha", "url"],
+    );
     if (entry.path === input.path) matches.push(entry);
   }
   if (input.payload.operation === "create_file") {
@@ -235,7 +254,11 @@ async function createBlob(
     operation,
   });
   requireStatus(input, response, 201, operation);
-  const record = exactRecord(await input.readJson(response, operation), operation);
+  const record = exactRecord(
+    await input.readJson(response, operation),
+    operation,
+    ["sha", "url"],
+  );
   const sha = objectId(record.sha, "GitHub repository blob SHA");
   if (
     !sameGitObjectFormat(input.expectedParentSha, sha)
@@ -276,7 +299,11 @@ async function createTree(
     operation,
   });
   requireStatus(input, response, 201, operation);
-  const record = exactRecord(await input.readJson(response, operation), operation);
+  const record = exactRecord(
+    await input.readJson(response, operation),
+    operation,
+    ["sha", "url", "truncated"],
+  );
   const sha = objectId(record.sha, "GitHub repository tree SHA");
   if (!sameGitObjectFormat(input.expectedParentSha, sha)) {
     throw invalidResponse("GitHub repository tree mixed object formats");
@@ -311,7 +338,11 @@ async function createCommit(
     operation,
   });
   requireStatus(input, response, 201, operation);
-  const record = exactRecord(await input.readJson(response, operation), operation);
+  const record = exactRecord(
+    await input.readJson(response, operation),
+    operation,
+    ["sha", "url", "tree", "parents"],
+  );
   const sha = objectId(record.sha, "GitHub repository commit SHA");
   if (!sameGitObjectFormat(input.expectedParentSha, treeSha, sha)) {
     throw invalidResponse("GitHub repository commit mixed object formats");
@@ -321,7 +352,11 @@ async function createCommit(
     commitUrl(repositoryRoot, sha),
     "GitHub repository commit URL",
   );
-  const tree = exactRecord(record.tree, "GitHub repository commit tree");
+  const tree = exactRecord(
+    record.tree,
+    "GitHub repository commit tree",
+    ["sha", "url"],
+  );
   if (objectId(tree.sha, "GitHub repository commit tree SHA") !== treeSha) {
     throw invalidResponse("GitHub repository commit tree changed");
   }
@@ -339,14 +374,12 @@ async function createCommit(
 
 async function publishRef(
   input: GitHubAtomicRepositoryWriteDependencies,
-  repositoryId: string,
+  repository: Readonly<GitHubRepositoryNodeIdentity>,
   commitSha: string,
 ): Promise<GitHubAtomicRepositoryWriteResult> {
   const operation = "publish repository ref";
   const request = buildGitHubUpdateRefsCasRequest({
-    apiBaseUrl: input.apiBaseUrl,
-    repositoryFullName: input.repositoryFullName,
-    repositoryId,
+    repository,
     targetRef: input.targetRef,
     expectedHeadSha: input.expectedParentSha,
     newHeadSha: commitSha,
@@ -392,7 +425,11 @@ function requireStatus(
 function exactParents(value: unknown): string[] {
   return exactArray(value, "GitHub repository commit parents", 16).map(
     (entry) => {
-      const record = exactRecord(entry, "GitHub repository commit parent");
+      const record = exactRecord(
+        entry,
+        "GitHub repository commit parent",
+        ["sha"],
+      );
       return objectId(record.sha, "GitHub repository commit parent SHA");
     },
   );
@@ -403,13 +440,16 @@ function exactArray(
   label: string,
   maximumLength: number,
 ): unknown[] {
+  if (!value || typeof value !== "object") {
+    throw invalidResponse(`${label} were malformed`);
+  }
   let isArray: boolean;
   let prototype: object | null;
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
     isArray = Array.isArray(value);
-    prototype = isArray && value !== null ? Object.getPrototypeOf(value) : null;
-    lengthDescriptor = isArray && value !== null
+    prototype = isArray ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray
       ? Object.getOwnPropertyDescriptor(value, "length")
       : undefined;
   } catch {
@@ -445,21 +485,34 @@ function exactArray(
   return result;
 }
 
-function exactRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function exactRecord(
+  value: unknown,
+  label: string,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
     throw invalidResponse(`${label} was malformed`);
   }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? null : Object.getPrototypeOf(value);
+  } catch {
     throw invalidResponse(`${label} was malformed`);
   }
-  if (Object.getOwnPropertySymbols(value).length !== 0) {
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
     throw invalidResponse(`${label} was malformed`);
   }
   const result = Object.create(null) as Record<string, unknown>;
-  for (const [key, descriptor] of Object.entries(
-    Object.getOwnPropertyDescriptors(value),
-  )) {
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw invalidResponse(`${label} was malformed`);
+    }
+    if (!descriptor) continue;
     if (!descriptor.enumerable || !("value" in descriptor)) {
       throw invalidResponse(`${label} was malformed`);
     }
