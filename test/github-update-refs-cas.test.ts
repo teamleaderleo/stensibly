@@ -15,11 +15,20 @@ const sha1Commit = "b".repeat(40);
 const sha256Parent = "c".repeat(64);
 const sha256Commit = "d".repeat(64);
 
+function repositoryIdentity(
+  apiBaseUrl = "https://api.github.com",
+  fullName = repositoryFullName,
+  id = repositoryId,
+) {
+  const request = buildGitHubRepositoryNodeIdRequest(apiBaseUrl, fullName);
+  return admitGitHubRepositoryNodeIdResponse({
+    data: { repository: { id, nameWithOwner: fullName } },
+  }, fullName, request.url.href);
+}
+
 function sha1Request() {
   return buildGitHubUpdateRefsCasRequest({
-    apiBaseUrl: "https://api.github.com",
-    repositoryFullName,
-    repositoryId,
+    repository: repositoryIdentity(),
     targetRef,
     expectedHeadSha: sha1Parent,
     newHeadSha: sha1Commit,
@@ -34,7 +43,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
     );
     expect(request.url.href).toBe("https://api.github.com/graphql");
     expect(request.body).toEqual({
-      query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }",
+      query: "query StensiblyRepositoryNodeId($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id nameWithOwner } }",
       variables: { owner: "teamleaderleo", name: "stensibly" },
     });
     expect(Object.isFrozen(request)).toBe(true);
@@ -48,19 +57,39 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
       .toBe("https://github.example.com/custom/api/graphql");
   });
 
-  test("admits exact repository node identity and rejects GraphQL errors", () => {
-    expect(admitGitHubRepositoryNodeIdResponse({
-      data: { repository: { id: repositoryId } },
-    })).toBe(repositoryId);
+  test("admits exact endpoint-bound repository identity and rejects provider substitution", () => {
+    const request = buildGitHubRepositoryNodeIdRequest(
+      "https://api.github.com",
+      repositoryFullName,
+    );
+    const identity = admitGitHubRepositoryNodeIdResponse({
+      data: { repository: { id: repositoryId, nameWithOwner: repositoryFullName } },
+    }, repositoryFullName, request.url.href);
+    expect(identity).toEqual({
+      graphqlUrl: "https://api.github.com/graphql",
+      repositoryFullName,
+      repositoryId,
+    });
+    expect(Object.isFrozen(identity)).toBe(true);
 
     expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: { repository: { id: repositoryId } },
+      data: { repository: { id: repositoryId, nameWithOwner: repositoryFullName } },
       errors: [{ message: "provider detail" }],
-    })).toThrow("GitHub could not read repository node identity");
+    }, repositoryFullName, request.url.href)).toThrow(
+      "GitHub could not read repository node identity",
+    );
 
     expect(() => admitGitHubRepositoryNodeIdResponse({
-      data: { repository: { id: "bad node id with spaces" } },
-    })).toThrow("GitHub updateRefs GraphQL response is invalid");
+      data: { repository: { id: repositoryId, nameWithOwner: "teamleaderleo/other" } },
+    }, repositoryFullName, request.url.href)).toThrow(
+      "GitHub updateRefs GraphQL response is invalid",
+    );
+
+    expect(() => admitGitHubRepositoryNodeIdResponse({
+      data: { repository: { id: "bad node id with spaces", nameWithOwner: repositoryFullName } },
+    }, repositoryFullName, request.url.href)).toThrow(
+      "GitHub updateRefs GraphQL response is invalid",
+    );
   });
 
   test("builds exact SHA-1 updateRefs compare-and-swap request", () => {
@@ -85,19 +114,16 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   });
 
   test("admits SHA-256 CAS and rejects mixed object formats", () => {
+    const repository = repositoryIdentity();
     expect(() => buildGitHubUpdateRefsCasRequest({
-      apiBaseUrl: "https://api.github.com",
-      repositoryFullName,
-      repositoryId,
+      repository,
       targetRef,
       expectedHeadSha: sha256Parent,
       newHeadSha: sha256Commit,
     })).not.toThrow();
 
     expect(() => buildGitHubUpdateRefsCasRequest({
-      apiBaseUrl: "https://api.github.com",
-      repositoryFullName,
-      repositoryId,
+      repository,
       targetRef,
       expectedHeadSha: sha1Parent,
       newHeadSha: sha256Commit,
@@ -117,7 +143,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
 
   test("keeps every GraphQL mutation error generic without retaining provider prose", () => {
     const clientMutationId = sha1Request().clientMutationId;
-    const values = [
+    for (const value of [
       {
         data: { updateRefs: null },
         errors: [{
@@ -137,8 +163,7 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
           { message: "other", type: "OTHER" },
         ],
       },
-    ];
-    for (const value of values) {
+    ]) {
       let caught: unknown;
       try {
         admitGitHubUpdateRefsCasResponse(value, clientMutationId);
@@ -154,7 +179,10 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
   test("does not invoke caller ownKeys or getters for admitted fixed records", () => {
     let ownKeysCalls = 0;
     let getCalls = 0;
-    const repository = new Proxy({ id: repositoryId }, {
+    const repository = new Proxy({
+      id: repositoryId,
+      nameWithOwner: repositoryFullName,
+    }, {
       ownKeys() {
         ownKeysCalls += 1;
         throw new Error("ownKeys must not run");
@@ -184,7 +212,15 @@ describe("GitHub updateRefs exact-old-ref CAS", () => {
         throw new Error("get must not run");
       },
     });
-    expect(admitGitHubRepositoryNodeIdResponse(envelope)).toBe(repositoryId);
+    const request = buildGitHubRepositoryNodeIdRequest(
+      "https://api.github.com",
+      repositoryFullName,
+    );
+    expect(admitGitHubRepositoryNodeIdResponse(
+      envelope,
+      repositoryFullName,
+      request.url.href,
+    )).toEqual(expect.objectContaining({ repositoryId }));
     expect(ownKeysCalls).toBe(0);
     expect(getCalls).toBe(0);
   });
