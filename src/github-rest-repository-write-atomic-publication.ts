@@ -403,13 +403,21 @@ function exactArray(
   label: string,
   maximumLength: number,
 ): unknown[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray && value !== null ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray && value !== null
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
+  } catch {
     throw invalidResponse(`${label} were malformed`);
   }
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(
-    value,
-    "length",
-  );
+  if (!isArray || prototype !== Array.prototype) {
+    throw invalidResponse(`${label} were malformed`);
+  }
   const lengthValue = lengthDescriptor && "value" in lengthDescriptor
     ? lengthDescriptor.value
     : undefined;
@@ -421,24 +429,14 @@ function exactArray(
   ) {
     throw invalidResponse(`${label} were malformed`);
   }
-  const length = lengthValue;
-  if (Object.getOwnPropertySymbols(value).length !== 0) {
-    throw invalidResponse(`${label} were malformed`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
   const result: unknown[] = [];
-  for (const key of Object.keys(descriptors)) {
-    if (key === "length") continue;
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+  for (let index = 0; index < lengthValue; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
       throw invalidResponse(`${label} were malformed`);
     }
-    const index = Number(key);
-    if (!Number.isSafeInteger(index) || index >= length || String(index) !== key) {
-      throw invalidResponse(`${label} were malformed`);
-    }
-  }
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = descriptors[String(index)];
     if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
       throw invalidResponse(`${label} were malformed`);
     }
