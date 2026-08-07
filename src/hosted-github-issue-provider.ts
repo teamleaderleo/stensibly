@@ -1,3 +1,4 @@
+import { captureDataMethod } from "./captured-data-method.js";
 import {
   GitHubAppInstallationTokenMinter,
 } from "./github-app-installation-token.js";
@@ -319,9 +320,9 @@ class ReadOnlyGitHubProviderReceiptStore implements GitHubProviderReceiptStore {
 }
 
 function durableReceiptStore(value: unknown): GitHubProviderReceiptStore {
-  const reserve = captureMethod(value, "reserveGitHubProviderReceipt");
-  const update = captureMethod(value, "updateGitHubProviderReceipt");
-  const get = captureMethod(value, "getGitHubProviderReceipt");
+  const reserve = captureDataMethod(value, "reserveGitHubProviderReceipt");
+  const update = captureDataMethod(value, "updateGitHubProviderReceipt");
+  const get = captureDataMethod(value, "getGitHubProviderReceipt");
   if (!reserve || !update || !get) {
     throw new Error(
       "Hosted GitHub issue writes require the durable provider receipt store",
@@ -332,25 +333,6 @@ function durableReceiptStore(value: unknown): GitHubProviderReceiptStore {
     updateGitHubProviderReceipt: update as GitHubProviderReceiptStore["updateGitHubProviderReceipt"],
     getGitHubProviderReceipt: get as GitHubProviderReceiptStore["getGitHubProviderReceipt"],
   });
-}
-
-function captureMethod(
-  value: unknown,
-  name: string,
-): ((...args: unknown[]) => unknown) | null {
-  if (!value || typeof value !== "object") return null;
-  let current: object | null = value;
-  while (current && current !== Object.prototype) {
-    const descriptor = Object.getOwnPropertyDescriptor(current, name);
-    if (descriptor) {
-      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
-        return null;
-      }
-      return (...args: unknown[]) => Reflect.apply(descriptor.value, value, args);
-    }
-    current = Object.getPrototypeOf(current) as object | null;
-  }
-  return null;
 }
 
 function canonicalHostedReadService(
