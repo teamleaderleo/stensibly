@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact source and control
+      - name: Verify exact source and controls
         shell: bash
         run: |
           set -euo pipefail
@@ -36,7 +36,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Enforce checkpoint and recovery coherence
+      - name: Repair bounded inspection and checkpoint coherence
         shell: bash
         run: |
           set -euo pipefail
@@ -45,6 +45,226 @@ jobs:
 
           source = Path("src/execution-recipe.ts")
           text = source.read_text()
+
+          constants_anchor = '''const maximumInputObjects = 20_000;
+          const maximumArrayLength = 256;
+          '''
+          constants_replacement = '''const recipeInputFieldVocabulary = [
+            "recipeId",
+            "version",
+            "outcomeClass",
+            "description",
+            "parameterSchema",
+            "acceptedProjectProfiles",
+            "requiredCapabilities",
+            "requiredInputs",
+            "orderedPhases",
+            "checks",
+            "checkpointPolicy",
+            "stopConditions",
+            "approvalPredicates",
+            "budgetEnvelope",
+            "allowedArtifacts",
+            "continuationPolicy",
+            "recoveryPolicy",
+            "name",
+            "kind",
+            "required",
+            "minimum",
+            "maximum",
+            "allowedValues",
+            "id",
+            "title",
+            "requiredChecks",
+            "checkpoint",
+            "maxWallMinutes",
+            "maxSteps",
+            "maxCostMicros",
+          ] as const;
+          const maximumInputObjects = 20_000;
+          const maximumArrayLength = 256;
+          '''
+          if text.count(constants_anchor) != 1:
+              raise SystemExit("input constants anchor moved")
+          text = text.replace(constants_anchor, constants_replacement, 1)
+
+          compile_anchor = '''  const detached = detachInputGraph(value);
+          const recipe = admitRecipe(detached);
+          '''
+          compile_replacement = '''  const detached = detachRecipeInput(value);
+          const recipe = admitRecipe(detached);
+          '''
+          if text.count(compile_anchor) != 1:
+              raise SystemExit("compile detachment anchor moved")
+          text = text.replace(compile_anchor, compile_replacement, 1)
+
+          instantiate_anchor = '''  const detached = detachInputGraph(value);
+          requirePlainObject(
+          '''
+          instantiate_replacement = '''  const detached = detachInstantiationInput(value);
+          requirePlainObject(
+          '''
+          if text.count(instantiate_anchor) != 1:
+              raise SystemExit("instantiate detachment anchor moved")
+          text = text.replace(instantiate_anchor, instantiate_replacement, 1)
+
+          start = text.index('function detachInputGraph(value: unknown): unknown {')
+          end = text.index('function arrayLength(value: unknown[]): number {', start)
+          replacement = r'''interface DetachContext {
+            readonly seen: Map<object, unknown>;
+            inspected: number;
+          }
+
+          function detachRecipeInput(
+            value: unknown,
+            context: DetachContext = { seen: new Map(), inspected: 0 },
+          ): ExecutionRecipe {
+            const detached = detachRecipeNode(value, context);
+            if (
+              detached === null
+              || typeof detached !== "object"
+              || Array.isArray(detached)
+              || !Object.hasOwn(detached, "recipeId")
+            ) {
+              throw inspectionError();
+            }
+            return detached as ExecutionRecipe;
+          }
+
+          function detachRecipeNode(
+            current: unknown,
+            context: DetachContext,
+          ): unknown {
+            if (current === null || typeof current !== "object") return current;
+            const prior = context.seen.get(current);
+            if (prior !== undefined) return prior;
+            noteInspectedObject(context);
+
+            if (Array.isArray(current)) {
+              requireCallerPrototype(current, Array.prototype);
+              const length = arrayLength(current);
+              if (length > maximumArrayLength) {
+                throw new TypeError("Execution recipe input inspection exceeded its limit");
+              }
+              const result = new Array<unknown>(length);
+              context.seen.set(current, result);
+              for (let index = 0; index < length; index += 1) {
+                result[index] = detachRecipeNode(
+                  descriptorValue(current, String(index)),
+                  context,
+                );
+              }
+              return result;
+            }
+
+            requireCallerPrototype(current, Object.prototype);
+            const result: Record<string, unknown> = {};
+            context.seen.set(current, result);
+            for (const key of recipeInputFieldVocabulary) {
+              const descriptor = optionalDescriptor(current, key);
+              if (!descriptor) continue;
+              Object.defineProperty(result, key, {
+                value: detachRecipeNode(descriptor.value, context),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+            }
+            return result;
+          }
+
+          function detachInstantiationInput(
+            value: unknown,
+          ): InstantiateExecutionRecipeInput {
+            const context: DetachContext = { seen: new Map(), inspected: 0 };
+            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+              throw inspectionError();
+            }
+            noteInspectedObject(context);
+            requireCallerPrototype(value, Object.prototype);
+            const record = value as object;
+            const recipe = detachRecipeInput(descriptorValue(record, "recipe"), context);
+            const admittedRecipe = admitRecipe(recipe);
+            const parameters = detachDeclaredParameters(
+              descriptorValue(record, "parameters"),
+              admittedRecipe.parameterSchema,
+              context,
+            );
+            return {
+              recipe,
+              project: descriptorValue(record, "project") as string,
+              projectProfile: descriptorValue(record, "projectProfile") as string,
+              repository: descriptorValue(record, "repository") as string,
+              baseRevision: descriptorValue(record, "baseRevision") as string,
+              workGeneration: descriptorValue(record, "workGeneration") as number,
+              policyRevision: descriptorValue(record, "policyRevision") as string,
+              runnerProfile: descriptorValue(record, "runnerProfile") as string,
+              authorityGeneration: descriptorValue(record, "authorityGeneration") as number,
+              parameters,
+            };
+          }
+
+          function detachDeclaredParameters(
+            value: unknown,
+            schema: readonly ExecutionRecipeParameter[],
+            context: DetachContext,
+          ): Record<string, unknown> {
+            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+              throw inspectionError();
+            }
+            noteInspectedObject(context);
+            requireCallerPrototype(value, Object.prototype);
+            const result: Record<string, unknown> = {};
+            for (const parameter of schema) {
+              Object.defineProperty(result, parameter.name, {
+                value: descriptorValue(value, parameter.name),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+            }
+            return result;
+          }
+
+          function noteInspectedObject(context: DetachContext): void {
+            context.inspected += 1;
+            if (context.inspected > maximumInputObjects) {
+              throw new TypeError("Execution recipe input inspection exceeded its limit");
+            }
+          }
+
+          function requireCallerPrototype(
+            value: object,
+            expected: object,
+          ): void {
+            try {
+              if (Object.getPrototypeOf(value) !== expected) throw inspectionError();
+            } catch (error) {
+              if (isInspectionError(error)) throw error;
+              throw inspectionError();
+            }
+          }
+
+          function optionalDescriptor(
+            value: object,
+            key: PropertyKey,
+          ): { value: unknown } | null {
+            try {
+              const descriptor = Object.getOwnPropertyDescriptor(value, key);
+              if (!descriptor) return null;
+              if (!("value" in descriptor) || !descriptor.enumerable) {
+                throw inspectionError();
+              }
+              return { value: descriptor.value };
+            } catch (error) {
+              if (isInspectionError(error)) throw error;
+              throw inspectionError();
+            }
+          }
+
+          '''
+          text = text[:start] + replacement + text[end:]
+
           checks_anchor = '''  const checks = identityArray(
             dataValue(value, "checks"),
             64,
@@ -219,5 +439,5 @@ jobs:
           git diff --cached --check
           git config user.name "Oriole"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Enforce execution recipe checkpoint coherence"
+          git commit -m "Bound execution recipe input inspection"
           git push origin HEAD:lumen/1146-execution-recipes
