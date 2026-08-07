@@ -1,0 +1,1654 @@
+name: Cedar 1149 durable activity ingestion
+
+on:
+  push:
+    branches:
+      - cedar/1149-durable-activity-ingestion
+    paths:
+      - .github/workflows/cedar-1149-durable-activity-store.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1149-durable-activity-store
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cedar/1149-durable-activity-ingestion
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify current-main source lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "e78ae196c31cc8ba9416bb8d8a050a98cb61a32a"
+          test "$(git rev-parse HEAD^:src/orchestrator-activity-ingestion.ts)" = "41108c1ed41ffc60fcc5bbe1fb42a42334f9963b"
+          test "$(git rev-parse HEAD^:src/orchestrator-activity-observation.ts)" = "0bace79d9c863df16990371fc0257fb276447a43"
+          test "$(git rev-parse HEAD^:convex/schema.ts)" = "c05c38c9f019dd982cf18fdef08280cf3e7b51b3"
+
+      - name: Add shared ingestion contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/orchestrator-activity-ingestion-contract.ts <<'EOF'
+          import { sha256, stableJson } from "./canonical-json.js";
+          import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
+          import {
+            compileOrchestratorActivityObservation,
+            ORCHESTRATOR_ACTIVITY_SOURCE_CLASSES,
+            type OrchestratorActivityObservation,
+            type OrchestratorActivitySourceClass,
+          } from "./orchestrator-activity-observation.js";
+
+          export interface OrchestratorActivityIngestionInput {
+            deliveryId: string;
+            deliveryFingerprint: string;
+            acceptedAt: string;
+            observation: unknown;
+          }
+
+          export interface OrchestratorActivityIngestionReceipt {
+            schemaVersion: 1;
+            receiptId: string;
+            workspace: string;
+            project: string;
+            deliveryId: string;
+            deliveryFingerprint: string;
+            requestFingerprint: string;
+            observationId: string;
+            observationFingerprint: string;
+            sourceClass: OrchestratorActivitySourceClass;
+            sourceId: string;
+            acceptedAt: string;
+          }
+
+          export interface OrchestratorActivityIngestionResult {
+            receipt: OrchestratorActivityIngestionReceipt;
+            observation: OrchestratorActivityObservation;
+            replayed: boolean;
+            observationAppended: boolean;
+          }
+
+          export interface AdmittedOrchestratorActivityIngestion {
+            deliveryId: string;
+            deliveryFingerprint: string;
+            acceptedAt: string;
+            observation: OrchestratorActivityObservation;
+            requestFingerprint: string;
+          }
+
+          const requiredInputFields = [
+            "deliveryId",
+            "deliveryFingerprint",
+            "acceptedAt",
+            "observation",
+          ] as const;
+          const receiptFields = [
+            "schemaVersion",
+            "receiptId",
+            "workspace",
+            "project",
+            "deliveryId",
+            "deliveryFingerprint",
+            "requestFingerprint",
+            "observationId",
+            "observationFingerprint",
+            "sourceClass",
+            "sourceId",
+            "acceptedAt",
+          ] as const;
+          const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,239}$/u;
+          const scopeSlugPattern = /^[a-z0-9][a-z0-9_\-]{0,79}$/u;
+          const sha256Pattern = /^sha256:[a-f0-9]{64}$/u;
+          const receiptIdPattern = /^oair_[a-f0-9]{32}$/u;
+          const maximumCanonicalBytes = 256 * 1024;
+
+          export function admitOrchestratorActivityIngestion(
+            input: unknown,
+          ): AdmittedOrchestratorActivityIngestion {
+            const record = exactInputRecord(input);
+            const deliveryId = identifier(record.deliveryId, "delivery ID");
+            const deliveryFingerprint = fingerprint(
+              record.deliveryFingerprint,
+              "delivery fingerprint",
+            );
+            const acceptedAt = canonicalTimestamp(record.acceptedAt, "accepted time");
+            const observation = compileOrchestratorActivityObservation(record.observation);
+            if (acceptedAt < observation.observedAt) {
+              throw new Error("Accepted time cannot precede observed time");
+            }
+            const requestFingerprint = sha256(stableJson({
+              workspace: observation.workspace,
+              project: observation.project,
+              deliveryId,
+              deliveryFingerprint,
+              observationFingerprint: observation.observationFingerprint,
+            }));
+            return Object.freeze({
+              deliveryId,
+              deliveryFingerprint,
+              acceptedAt,
+              observation,
+              requestFingerprint,
+            });
+          }
+
+          export function createOrchestratorActivityIngestionReceipt(
+            admitted: AdmittedOrchestratorActivityIngestion,
+            observation: OrchestratorActivityObservation = admitted.observation,
+          ): OrchestratorActivityIngestionReceipt {
+            if (
+              observation.workspace !== admitted.observation.workspace
+              || observation.project !== admitted.observation.project
+              || observation.observationFingerprint
+                !== admitted.observation.observationFingerprint
+              || observation.sourceClass !== admitted.observation.sourceClass
+              || observation.sourceId !== admitted.observation.sourceId
+              || admitted.acceptedAt < observation.observedAt
+            ) {
+              throw new Error("Orchestrator activity canonical observation mismatch");
+            }
+            const payload = {
+              schemaVersion: 1 as const,
+              workspace: observation.workspace,
+              project: observation.project,
+              deliveryId: admitted.deliveryId,
+              deliveryFingerprint: admitted.deliveryFingerprint,
+              requestFingerprint: admitted.requestFingerprint,
+              observationId: observation.observationId,
+              observationFingerprint: observation.observationFingerprint,
+              sourceClass: observation.sourceClass,
+              sourceId: observation.sourceId,
+              acceptedAt: admitted.acceptedAt,
+            };
+            return Object.freeze({
+              ...payload,
+              receiptId: receiptIdFor(payload),
+            });
+          }
+
+          export function canonicalOrchestratorActivityIngestionJson(
+            input: unknown,
+          ): string {
+            const admitted = admitOrchestratorActivityIngestion(input);
+            return boundedCanonicalJson({
+              deliveryId: admitted.deliveryId,
+              deliveryFingerprint: admitted.deliveryFingerprint,
+              acceptedAt: admitted.acceptedAt,
+              observation: admitted.observation,
+            }, "Orchestrator activity ingestion");
+          }
+
+          export function parseCanonicalOrchestratorActivityIngestionJson(
+            value: unknown,
+          ): AdmittedOrchestratorActivityIngestion {
+            const parsed = parseCanonicalJson(value, "Orchestrator activity ingestion");
+            const admitted = admitOrchestratorActivityIngestion(parsed);
+            if (canonicalOrchestratorActivityIngestionJson(admitted) !== value) {
+              throw new Error("Orchestrator activity ingestion JSON is not canonical");
+            }
+            return admitted;
+          }
+
+          export function canonicalOrchestratorActivityObservationJson(
+            value: OrchestratorActivityObservation,
+          ): string {
+            const admitted = parseCanonicalOrchestratorActivityObservationJson(
+              boundedCanonicalJson(value, "Orchestrator activity observation"),
+            );
+            return stableJson(admitted);
+          }
+
+          export function parseCanonicalOrchestratorActivityObservationJson(
+            value: unknown,
+          ): OrchestratorActivityObservation {
+            const parsed = parseCanonicalJson(value, "Orchestrator activity observation");
+            const record = plainRecord(parsed, "Orchestrator activity observation");
+            const attention = plainRecord(record.attention, "Orchestrator activity attention");
+            const input: Record<string, unknown> = {
+              workspace: record.workspace,
+              project: record.project,
+              actorId: record.actorId,
+              sourceClass: record.sourceClass,
+              sourceId: record.sourceId,
+              sourceFingerprint: record.sourceFingerprint,
+              observedAt: record.observedAt,
+              activityClass: record.activityClass,
+              activityState: record.activityState,
+              relatedEvidenceIds: record.relatedEvidenceIds,
+            };
+            copyOptionalStored(input, "workItemId", record.workItemId);
+            copyOptionalStored(input, "attemptId", record.attemptId);
+            copyOptionalStored(input, "runId", record.runId);
+            copyOptionalStored(
+              input,
+              "responsibilityGeneration",
+              record.responsibilityGeneration,
+            );
+            copyOptionalStored(
+              input,
+              "causalPredecessorId",
+              record.causalPredecessorId,
+            );
+            copyOptionalStored(input, "provider", record.provider);
+            copyOptionalStored(
+              input,
+              "providerLifecycle",
+              record.providerLifecycle,
+            );
+            input.attentionLevel = attention.level;
+            copyOptionalStored(
+              input,
+              "attentionReasonCode",
+              attention.reasonCode,
+            );
+            copyOptionalStored(input, "nextAction", attention.nextAction);
+            const admitted = compileOrchestratorActivityObservation(input);
+            if (stableJson(admitted) !== value) {
+              throw new Error("Orchestrator activity observation JSON is not canonical");
+            }
+            return admitted;
+          }
+
+          export function canonicalOrchestratorActivityIngestionReceiptJson(
+            receipt: OrchestratorActivityIngestionReceipt,
+          ): string {
+            return stableJson(admitReceipt(receipt));
+          }
+
+          export function parseCanonicalOrchestratorActivityIngestionReceiptJson(
+            value: unknown,
+          ): OrchestratorActivityIngestionReceipt {
+            const parsed = parseCanonicalJson(
+              value,
+              "Orchestrator activity ingestion receipt",
+            );
+            const admitted = admitReceipt(parsed);
+            if (stableJson(admitted) !== value) {
+              throw new Error("Orchestrator activity ingestion receipt JSON is not canonical");
+            }
+            return admitted;
+          }
+
+          function admitReceipt(value: unknown): OrchestratorActivityIngestionReceipt {
+            const record = exactOwnedRecord(
+              value,
+              receiptFields,
+              "Orchestrator activity ingestion receipt",
+            );
+            if (record.schemaVersion !== 1) {
+              throw new Error("Orchestrator activity ingestion receipt version is invalid");
+            }
+            const workspace = scopeSlug(record.workspace, "workspace");
+            const project = scopeSlug(record.project, "project");
+            const deliveryId = identifier(record.deliveryId, "delivery ID");
+            const deliveryFingerprint = fingerprint(
+              record.deliveryFingerprint,
+              "delivery fingerprint",
+            );
+            const requestFingerprint = fingerprint(
+              record.requestFingerprint,
+              "request fingerprint",
+            );
+            const observationId = identifier(record.observationId, "observation ID");
+            const observationFingerprint = fingerprint(
+              record.observationFingerprint,
+              "observation fingerprint",
+            );
+            const sourceClass = closedSourceClass(record.sourceClass);
+            const sourceId = identifier(record.sourceId, "source ID");
+            const acceptedAt = canonicalTimestamp(record.acceptedAt, "accepted time");
+            const payload = {
+              schemaVersion: 1 as const,
+              workspace,
+              project,
+              deliveryId,
+              deliveryFingerprint,
+              requestFingerprint,
+              observationId,
+              observationFingerprint,
+              sourceClass,
+              sourceId,
+              acceptedAt,
+            };
+            const receiptId = record.receiptId;
+            if (
+              typeof receiptId !== "string"
+              || !receiptIdPattern.test(receiptId)
+              || receiptId !== receiptIdFor(payload)
+            ) {
+              throw new Error("Orchestrator activity ingestion receipt ID is invalid");
+            }
+            return Object.freeze({ ...payload, receiptId });
+          }
+
+          function receiptIdFor(payload: object): string {
+            return `oair_${sha256(stableJson(payload)).slice("sha256:".length, 39)}`;
+          }
+
+          function exactInputRecord(value: unknown): Record<string, unknown> {
+            if (!value || typeof value !== "object") {
+              throw new Error("Orchestrator activity ingestion input must be an object");
+            }
+            let isArray: boolean;
+            let prototype: object | null;
+            try {
+              isArray = Array.isArray(value);
+              prototype = Object.getPrototypeOf(value);
+            } catch {
+              throw new Error("Orchestrator activity ingestion input could not be inspected");
+            }
+            if (isArray) {
+              throw new Error("Orchestrator activity ingestion input must be an object");
+            }
+            if (prototype !== Object.prototype && prototype !== null) {
+              throw new Error(
+                "Orchestrator activity ingestion input must use a plain or null prototype",
+              );
+            }
+            const record = Object.create(null) as Record<string, unknown>;
+            for (const key of requiredInputFields) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, key);
+              } catch {
+                throw new Error("Orchestrator activity ingestion input could not be inspected");
+              }
+              if (!descriptor) {
+                throw new Error(`Orchestrator activity ingestion is missing field ${key}`);
+              }
+              if (!descriptor.enumerable || !("value" in descriptor)) {
+                throw new Error(
+                  `Orchestrator activity ingestion field ${key} must be an enumerable data property`,
+                );
+              }
+              record[key] = descriptor.value;
+            }
+            return record;
+          }
+
+          function exactOwnedRecord(
+            value: unknown,
+            expectedKeys: readonly string[],
+            label: string,
+          ): Record<string, unknown> {
+            const record = plainRecord(value, label);
+            const keys = Object.keys(record).sort();
+            const expected = [...expectedKeys].sort();
+            if (
+              keys.length !== expected.length
+              || keys.some((key, index) => key !== expected[index])
+            ) {
+              throw new Error(`${label} fields are invalid`);
+            }
+            return record;
+          }
+
+          function plainRecord(value: unknown, label: string): Record<string, unknown> {
+            if (
+              !value
+              || typeof value !== "object"
+              || Array.isArray(value)
+              || Object.getPrototypeOf(value) !== Object.prototype
+            ) {
+              throw new Error(`${label} must be a plain object`);
+            }
+            return value as Record<string, unknown>;
+          }
+
+          function parseCanonicalJson(value: unknown, label: string): unknown {
+            if (
+              typeof value !== "string"
+              || value.length === 0
+              || value.length > maximumCanonicalBytes
+            ) {
+              throw new Error(`${label} JSON is invalid`);
+            }
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(value);
+            } catch {
+              throw new Error(`${label} JSON is invalid`);
+            }
+            if (stableJson(parsed) !== value) {
+              throw new Error(`${label} JSON is not canonical`);
+            }
+            return parsed;
+          }
+
+          function boundedCanonicalJson(value: unknown, label: string): string {
+            const json = stableJson(value);
+            if (json.length > maximumCanonicalBytes) {
+              throw new Error(`${label} JSON exceeds its byte budget`);
+            }
+            return json;
+          }
+
+          function copyOptionalStored(
+            target: Record<string, unknown>,
+            key: string,
+            value: unknown,
+          ): void {
+            if (value !== null && value !== undefined) target[key] = value;
+          }
+
+          function scopeSlug(value: unknown, label: string): string {
+            if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+            return value;
+          }
+
+          function identifier(value: unknown, label: string): string {
+            if (typeof value !== "string" || !identifierPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            if (containsRealisticRetainedCredential(value)) {
+              throw new Error(`${label} cannot contain credential material`);
+            }
+            return value;
+          }
+
+          function fingerprint(value: unknown, label: string): string {
+            if (typeof value !== "string" || !sha256Pattern.test(value)) {
+              throw new Error(`${label} must be an exact SHA-256 fingerprint`);
+            }
+            return value;
+          }
+
+          function canonicalTimestamp(value: unknown, label: string): string {
+            if (typeof value !== "string") {
+              throw new Error(`${label} must be a canonical timestamp`);
+            }
+            let canonical: string;
+            try {
+              canonical = new Date(value).toISOString();
+            } catch {
+              throw new Error(`${label} must be a canonical timestamp`);
+            }
+            if (canonical !== value) {
+              throw new Error(`${label} must be a canonical timestamp`);
+            }
+            return canonical;
+          }
+
+          function closedSourceClass(value: unknown): OrchestratorActivitySourceClass {
+            if (
+              typeof value !== "string"
+              || !ORCHESTRATOR_ACTIVITY_SOURCE_CLASSES.includes(
+                value as OrchestratorActivitySourceClass,
+              )
+            ) {
+              throw new Error("source class is invalid");
+            }
+            return value as OrchestratorActivitySourceClass;
+          }
+          EOF
+          sed -i 's/^          //' src/orchestrator-activity-ingestion-contract.ts
+
+      - name: Refactor in-memory store onto shared contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/orchestrator-activity-ingestion.ts <<'EOF'
+          import { stableJson } from "./canonical-json.js";
+          import {
+            admitOrchestratorActivityIngestion,
+            createOrchestratorActivityIngestionReceipt,
+            type OrchestratorActivityIngestionInput,
+            type OrchestratorActivityIngestionReceipt,
+            type OrchestratorActivityIngestionResult,
+          } from "./orchestrator-activity-ingestion-contract.js";
+          import type { OrchestratorActivityObservation } from "./orchestrator-activity-observation.js";
+
+          export type {
+            OrchestratorActivityIngestionInput,
+            OrchestratorActivityIngestionReceipt,
+            OrchestratorActivityIngestionResult,
+          } from "./orchestrator-activity-ingestion-contract.js";
+
+          interface StoredDelivery {
+            requestFingerprint: string;
+            receipt: OrchestratorActivityIngestionReceipt;
+            observation: OrchestratorActivityObservation;
+          }
+
+          /**
+           * Reference exactly-once ingestion store for automatic orchestrator activity.
+           * Durable adapters must preserve these replay/conflict semantics.
+           */
+          export class InMemoryOrchestratorActivityIngestionStore {
+            readonly #deliveries = new Map<string, StoredDelivery>();
+            readonly #observations = new Map<string, OrchestratorActivityObservation>();
+            readonly #sourceObservations = new Map<string, OrchestratorActivityObservation>();
+
+            ingest(input: OrchestratorActivityIngestionInput | unknown): OrchestratorActivityIngestionResult {
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const observation = admitted.observation;
+              const deliveryKey = stableJson([
+                observation.workspace,
+                observation.project,
+                admitted.deliveryId,
+              ]);
+              const existingDelivery = this.#deliveries.get(deliveryKey);
+              if (existingDelivery) {
+                if (existingDelivery.requestFingerprint !== admitted.requestFingerprint) {
+                  throw new Error("Orchestrator activity delivery identity conflict");
+                }
+                return Object.freeze({
+                  receipt: existingDelivery.receipt,
+                  observation: existingDelivery.observation,
+                  replayed: true,
+                  observationAppended: false,
+                });
+              }
+
+              const sourceKey = stableJson([
+                observation.workspace,
+                observation.project,
+                observation.sourceClass,
+                observation.sourceId,
+              ]);
+              const existingSource = this.#sourceObservations.get(sourceKey);
+              if (
+                existingSource
+                && existingSource.observationFingerprint !== observation.observationFingerprint
+              ) {
+                throw new Error("Orchestrator activity source identity conflict");
+              }
+              const existingObservation = this.#observations.get(observation.observationId);
+              const canonicalObservation = existingObservation ?? existingSource ?? observation;
+              if (
+                canonicalObservation.observationFingerprint
+                  !== observation.observationFingerprint
+              ) {
+                throw new Error("Orchestrator activity observation identity conflict");
+              }
+
+              const receipt = createOrchestratorActivityIngestionReceipt(
+                admitted,
+                canonicalObservation,
+              );
+              this.#deliveries.set(deliveryKey, Object.freeze({
+                requestFingerprint: admitted.requestFingerprint,
+                receipt,
+                observation: canonicalObservation,
+              }));
+              this.#sourceObservations.set(sourceKey, canonicalObservation);
+              const observationAppended = !existingObservation && !existingSource;
+              if (observationAppended) {
+                this.#observations.set(
+                  canonicalObservation.observationId,
+                  canonicalObservation,
+                );
+              }
+              return Object.freeze({
+                receipt,
+                observation: canonicalObservation,
+                replayed: false,
+                observationAppended,
+              });
+            }
+
+            getReceipt(
+              workspace: unknown,
+              project: unknown,
+              deliveryId: unknown,
+            ): OrchestratorActivityIngestionReceipt | null {
+              const admittedWorkspace = scopeSlug(workspace, "workspace");
+              const admittedProject = scopeSlug(project, "project");
+              const admittedDeliveryId = identifier(deliveryId, "delivery ID");
+              return this.#deliveries.get(stableJson([
+                admittedWorkspace,
+                admittedProject,
+                admittedDeliveryId,
+              ]))?.receipt ?? null;
+            }
+
+            listObservations(
+              workspace: unknown,
+              project: unknown,
+            ): readonly OrchestratorActivityObservation[] {
+              const admittedWorkspace = scopeSlug(workspace, "workspace");
+              const admittedProject = scopeSlug(project, "project");
+              return Object.freeze([...this.#observations.values()].filter(
+                (observation) => observation.workspace === admittedWorkspace
+                  && observation.project === admittedProject,
+              ));
+            }
+
+            get deliveryCount(): number {
+              return this.#deliveries.size;
+            }
+
+            get observationCount(): number {
+              return this.#observations.size;
+            }
+          }
+
+          const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,239}$/u;
+          const scopeSlugPattern = /^[a-z0-9][a-z0-9_\-]{0,79}$/u;
+
+          function scopeSlug(value: unknown, label: string): string {
+            if (typeof value !== "string" || !scopeSlugPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }
+
+          function identifier(value: unknown, label: string): string {
+            if (typeof value !== "string" || !identifierPattern.test(value)) {
+              throw new Error(`${label} is invalid`);
+            }
+            return value;
+          }
+          EOF
+          sed -i 's/^          //' src/orchestrator-activity-ingestion.ts
+
+      - name: Add Convex durable adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/orchestrator-activity-convex-store.ts <<'EOF'
+          import { makeFunctionReference } from "convex/server";
+          import type { ConvexCaller } from "./convex-ledger.js";
+          import {
+            admitOrchestratorActivityIngestion,
+            canonicalOrchestratorActivityIngestionJson,
+            parseCanonicalOrchestratorActivityIngestionReceiptJson,
+            parseCanonicalOrchestratorActivityObservationJson,
+            type OrchestratorActivityIngestionReceipt,
+            type OrchestratorActivityIngestionResult,
+          } from "./orchestrator-activity-ingestion-contract.js";
+          import type { OrchestratorActivityObservation } from "./orchestrator-activity-observation.js";
+
+          const ingestRef = makeFunctionReference<"mutation">("orchestratorActivity:ingest");
+          const getReceiptRef = makeFunctionReference<"query">("orchestratorActivity:getReceipt");
+          const listRef = makeFunctionReference<"query">("orchestratorActivity:listObservations");
+          const resultKeys = [
+            "receiptJson",
+            "observationJson",
+            "replayed",
+            "observationAppended",
+          ] as const;
+
+          export interface ConvexOrchestratorActivityIngestionStoreOptions {
+            client: ConvexCaller;
+            serviceSecret: string;
+            workspace?: string;
+          }
+
+          export class ConvexOrchestratorActivityIngestionStore {
+            readonly client: ConvexCaller;
+            readonly serviceSecret: string;
+            readonly workspace: string;
+
+            constructor(options: ConvexOrchestratorActivityIngestionStoreOptions) {
+              this.client = options.client;
+              this.serviceSecret = exactText(options.serviceSecret, "Convex service secret", 1_000);
+              this.workspace = exactSlug(options.workspace ?? "default", "Workspace");
+            }
+
+            async ingest(input: unknown): Promise<OrchestratorActivityIngestionResult> {
+              const admitted = admitOrchestratorActivityIngestion(input);
+              if (admitted.observation.workspace !== this.workspace) {
+                throw new RangeError("Orchestrator activity workspace is outside the configured store");
+              }
+              const raw = await this.client.mutation(ingestRef, this.args({
+                ingestionJson: canonicalOrchestratorActivityIngestionJson(admitted),
+              }));
+              const record = exactDataRecord(raw, resultKeys);
+              if (
+                typeof record.replayed !== "boolean"
+                || typeof record.observationAppended !== "boolean"
+              ) {
+                throw new OrchestratorActivityStorageError();
+              }
+              const observation = parseObservation(record.observationJson);
+              const receipt = parseReceipt(record.receiptJson);
+              if (
+                observation.workspace !== admitted.observation.workspace
+                || observation.project !== admitted.observation.project
+                || observation.observationId !== admitted.observation.observationId
+                || observation.observationFingerprint
+                  !== admitted.observation.observationFingerprint
+                || receipt.workspace !== observation.workspace
+                || receipt.project !== observation.project
+                || receipt.deliveryId !== admitted.deliveryId
+                || receipt.deliveryFingerprint !== admitted.deliveryFingerprint
+                || receipt.requestFingerprint !== admitted.requestFingerprint
+                || receipt.observationId !== observation.observationId
+                || receipt.observationFingerprint !== observation.observationFingerprint
+                || receipt.sourceClass !== observation.sourceClass
+                || receipt.sourceId !== observation.sourceId
+                || receipt.acceptedAt < observation.observedAt
+                || (!record.replayed && receipt.acceptedAt !== admitted.acceptedAt)
+              ) {
+                throw new OrchestratorActivityStorageError();
+              }
+              return Object.freeze({
+                receipt,
+                observation,
+                replayed: record.replayed,
+                observationAppended: record.observationAppended,
+              });
+            }
+
+            async getReceipt(
+              workspace: string,
+              project: string,
+              deliveryId: string,
+            ): Promise<OrchestratorActivityIngestionReceipt | null> {
+              const exactWorkspace = exactSlug(workspace, "Workspace");
+              if (exactWorkspace !== this.workspace) {
+                throw new RangeError("Orchestrator activity workspace is outside the configured store");
+              }
+              const raw = await this.client.query(getReceiptRef, this.args({
+                project: exactSlug(project, "Project"),
+                deliveryId: exactText(deliveryId, "Delivery ID", 240),
+              }));
+              if (raw === null) return null;
+              const receipt = parseReceipt(raw);
+              if (
+                receipt.workspace !== exactWorkspace
+                || receipt.project !== project
+                || receipt.deliveryId !== deliveryId
+              ) {
+                throw new OrchestratorActivityStorageError();
+              }
+              return receipt;
+            }
+
+            async listObservations(
+              workspace: string,
+              project: string,
+            ): Promise<readonly OrchestratorActivityObservation[]> {
+              const exactWorkspace = exactSlug(workspace, "Workspace");
+              const exactProject = exactSlug(project, "Project");
+              if (exactWorkspace !== this.workspace) {
+                throw new RangeError("Orchestrator activity workspace is outside the configured store");
+              }
+              const raw = await this.client.query(listRef, this.args({
+                project: exactProject,
+              }));
+              if (!Array.isArray(raw) || raw.length > 4_096) {
+                throw new OrchestratorActivityStorageError();
+              }
+              const observations = raw.map(parseObservation);
+              if (observations.some((entry) =>
+                entry.workspace !== exactWorkspace || entry.project !== exactProject
+              )) {
+                throw new OrchestratorActivityStorageError();
+              }
+              return Object.freeze(observations);
+            }
+
+            private args(input: Record<string, unknown>): Record<string, unknown> {
+              return {
+                ...input,
+                serviceSecret: this.serviceSecret,
+                workspace: this.workspace,
+              };
+            }
+          }
+
+          export class OrchestratorActivityStorageError extends Error {
+            readonly code = "orchestrator_activity_storage_failed";
+            constructor() {
+              super("Orchestrator activity storage failed");
+              this.name = "OrchestratorActivityStorageError";
+            }
+          }
+
+          function parseObservation(value: unknown): OrchestratorActivityObservation {
+            try {
+              return parseCanonicalOrchestratorActivityObservationJson(value);
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+          }
+
+          function parseReceipt(value: unknown): OrchestratorActivityIngestionReceipt {
+            try {
+              return parseCanonicalOrchestratorActivityIngestionReceiptJson(value);
+            } catch {
+              throw new OrchestratorActivityStorageError();
+            }
+          }
+
+          function exactDataRecord(
+            value: unknown,
+            keys: readonly string[],
+          ): Record<string, unknown> {
+            if (
+              !value
+              || typeof value !== "object"
+              || Array.isArray(value)
+              || Object.getPrototypeOf(value) !== Object.prototype
+            ) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const actual = Object.keys(descriptors).sort();
+            const expected = [...keys].sort();
+            if (
+              Object.getOwnPropertySymbols(descriptors).length !== 0
+              || actual.length !== expected.length
+              || actual.some((key, index) => key !== expected[index])
+            ) {
+              throw new OrchestratorActivityStorageError();
+            }
+            const result: Record<string, unknown> = {};
+            for (const key of expected) {
+              const descriptor = descriptors[key];
+              if (!descriptor?.enumerable || !("value" in descriptor)) {
+                throw new OrchestratorActivityStorageError();
+              }
+              result[key] = descriptor.value;
+            }
+            return result;
+          }
+
+          function exactSlug(value: string, label: string): string {
+            const result = exactText(value, label, 80);
+            if (result !== result.toLowerCase() || !/^[a-z0-9][a-z0-9-_]*$/.test(result)) {
+              throw new RangeError(`${label} must be a lowercase slug`);
+            }
+            return result;
+          }
+
+          function exactText(value: string, label: string, maximum: number): string {
+            if (
+              typeof value !== "string"
+              || value.length === 0
+              || value.length > maximum
+              || value.trim() !== value
+            ) {
+              throw new RangeError(`${label} is invalid`);
+            }
+            return value;
+          }
+          EOF
+          sed -i 's/^          //' src/orchestrator-activity-convex-store.ts
+
+      - name: Add Convex tables and transactional functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('convex/schema.ts')
+          text = path.read_text()
+          marker = '\n\n  githubRepositoryWriteReceipts: defineTable({'
+          insertion = r'''
+
+  orchestratorActivityObservations: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    observationId: v.string(),
+    observationFingerprint: v.string(),
+    sourceClass: v.string(),
+    sourceId: v.string(),
+    observationJson: v.string(),
+    observedAt: v.number(),
+  })
+    .index("by_project_observation", ["projectId", "observationId"])
+    .index("by_project_source", ["projectId", "sourceClass", "sourceId"])
+    .index("by_project_observed", ["projectId", "observedAt", "observationId"]),
+
+  orchestratorActivityDeliveries: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    deliveryId: v.string(),
+    deliveryFingerprint: v.string(),
+    requestFingerprint: v.string(),
+    receiptId: v.string(),
+    receiptJson: v.string(),
+    observationId: v.string(),
+    observationFingerprint: v.string(),
+    acceptedAt: v.number(),
+  })
+    .index("by_project_delivery", ["projectId", "deliveryId"])
+    .index("by_project_receipt", ["projectId", "receiptId"]),
+'''
+          if text.count(marker) != 1:
+            raise SystemExit('schema insertion anchor moved')
+          path.write_text(text.replace(marker, insertion + marker, 1))
+          PY
+
+          cat > convex/orchestratorActivity.ts <<'EOF'
+          import { v } from "convex/values";
+          import {
+            canonicalOrchestratorActivityIngestionReceiptJson,
+            canonicalOrchestratorActivityObservationJson,
+            createOrchestratorActivityIngestionReceipt,
+            parseCanonicalOrchestratorActivityIngestionJson,
+            parseCanonicalOrchestratorActivityIngestionReceiptJson,
+            parseCanonicalOrchestratorActivityObservationJson,
+          } from "../src/orchestrator-activity-ingestion-contract";
+          import {
+            assertSlug,
+            findProject,
+            findWorkspace,
+            normalizeWorkspace,
+            requireServiceSecret,
+            type ProjectId,
+            type QueryContext,
+            type WorkspaceId,
+          } from "./lib/domain";
+          import { mutation, query } from "./lib/server";
+          import { serviceArgs } from "./lib/validators";
+
+          const ingestionResult = v.object({
+            receiptJson: v.string(),
+            observationJson: v.string(),
+            replayed: v.boolean(),
+            observationAppended: v.boolean(),
+          });
+          const maximumListedObservations = 4_096;
+
+          interface ResolvedProject {
+            workspaceId: WorkspaceId;
+            projectId: ProjectId;
+            workspaceSlug: string;
+            projectSlug: string;
+          }
+
+          export const ingest = mutation({
+            args: {
+              ...serviceArgs,
+              ingestionJson: v.string(),
+            },
+            returns: ingestionResult,
+            handler: async (ctx, args) => {
+              requireServiceSecret(args.serviceSecret);
+              const admitted = parseCanonicalOrchestratorActivityIngestionJson(
+                args.ingestionJson,
+              );
+              const scope = await resolveProject(
+                ctx,
+                args.workspace,
+                admitted.observation.project,
+              );
+              if (admitted.observation.workspace !== scope.workspaceSlug) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_WORKSPACE_MISMATCH");
+              }
+
+              const currentDelivery = await ctx.db
+                .query("orchestratorActivityDeliveries")
+                .withIndex("by_project_delivery", (q) =>
+                  q.eq("projectId", scope.projectId)
+                    .eq("deliveryId", admitted.deliveryId)
+                )
+                .unique();
+              if (currentDelivery) {
+                const stored = admitStoredDelivery(
+                  currentDelivery,
+                  scope,
+                );
+                if (stored.receipt.requestFingerprint !== admitted.requestFingerprint) {
+                  throw new Error("ORCHESTRATOR_ACTIVITY_DELIVERY_IDENTITY_CONFLICT");
+                }
+                const observationRow = await ctx.db
+                  .query("orchestratorActivityObservations")
+                  .withIndex("by_project_observation", (q) =>
+                    q.eq("projectId", scope.projectId)
+                      .eq("observationId", stored.receipt.observationId)
+                  )
+                  .unique();
+                if (!observationRow) {
+                  throw new Error("ORCHESTRATOR_ACTIVITY_OBSERVATION_MISSING");
+                }
+                const observation = admitStoredObservation(observationRow, scope);
+                if (
+                  observation.observationFingerprint
+                    !== stored.receipt.observationFingerprint
+                ) {
+                  throw new Error("ORCHESTRATOR_ACTIVITY_STORED_ROW_INVALID");
+                }
+                return {
+                  receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(
+                    stored.receipt,
+                  ),
+                  observationJson: canonicalOrchestratorActivityObservationJson(
+                    observation,
+                  ),
+                  replayed: true,
+                  observationAppended: false,
+                };
+              }
+
+              const sourceRow = await ctx.db
+                .query("orchestratorActivityObservations")
+                .withIndex("by_project_source", (q) =>
+                  q.eq("projectId", scope.projectId)
+                    .eq("sourceClass", admitted.observation.sourceClass)
+                    .eq("sourceId", admitted.observation.sourceId)
+                )
+                .unique();
+              const observationRow = await ctx.db
+                .query("orchestratorActivityObservations")
+                .withIndex("by_project_observation", (q) =>
+                  q.eq("projectId", scope.projectId)
+                    .eq("observationId", admitted.observation.observationId)
+                )
+                .unique();
+
+              const sourceObservation = sourceRow
+                ? admitStoredObservation(sourceRow, scope)
+                : null;
+              if (
+                sourceObservation
+                && sourceObservation.observationFingerprint
+                  !== admitted.observation.observationFingerprint
+              ) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_SOURCE_IDENTITY_CONFLICT");
+              }
+              const identityObservation = observationRow
+                ? admitStoredObservation(observationRow, scope)
+                : null;
+              if (
+                identityObservation
+                && identityObservation.observationFingerprint
+                  !== admitted.observation.observationFingerprint
+              ) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_OBSERVATION_IDENTITY_CONFLICT");
+              }
+              if (
+                sourceObservation
+                && identityObservation
+                && sourceObservation.observationId !== identityObservation.observationId
+              ) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_STORED_ROW_INVALID");
+              }
+              const canonicalObservation = identityObservation
+                ?? sourceObservation
+                ?? admitted.observation;
+              const observationAppended = !identityObservation && !sourceObservation;
+              if (observationAppended) {
+                await ctx.db.insert("orchestratorActivityObservations", {
+                  workspaceId: scope.workspaceId,
+                  projectId: scope.projectId,
+                  observationId: canonicalObservation.observationId,
+                  observationFingerprint: canonicalObservation.observationFingerprint,
+                  sourceClass: canonicalObservation.sourceClass,
+                  sourceId: canonicalObservation.sourceId,
+                  observationJson: canonicalOrchestratorActivityObservationJson(
+                    canonicalObservation,
+                  ),
+                  observedAt: Date.parse(canonicalObservation.observedAt),
+                });
+              }
+
+              const receipt = createOrchestratorActivityIngestionReceipt(
+                admitted,
+                canonicalObservation,
+              );
+              await ctx.db.insert("orchestratorActivityDeliveries", {
+                workspaceId: scope.workspaceId,
+                projectId: scope.projectId,
+                deliveryId: receipt.deliveryId,
+                deliveryFingerprint: receipt.deliveryFingerprint,
+                requestFingerprint: receipt.requestFingerprint,
+                receiptId: receipt.receiptId,
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationId: receipt.observationId,
+                observationFingerprint: receipt.observationFingerprint,
+                acceptedAt: Date.parse(receipt.acceptedAt),
+              });
+              return {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  canonicalObservation,
+                ),
+                replayed: false,
+                observationAppended,
+              };
+            },
+          });
+
+          export const getReceipt = query({
+            args: {
+              ...serviceArgs,
+              project: v.string(),
+              deliveryId: v.string(),
+            },
+            returns: v.union(v.string(), v.null()),
+            handler: async (ctx, args) => {
+              requireServiceSecret(args.serviceSecret);
+              const scope = await resolveProject(
+                ctx,
+                args.workspace,
+                args.project,
+                false,
+              );
+              if (!scope) return null;
+              const row = await ctx.db
+                .query("orchestratorActivityDeliveries")
+                .withIndex("by_project_delivery", (q) =>
+                  q.eq("projectId", scope.projectId)
+                    .eq("deliveryId", boundedDeliveryId(args.deliveryId))
+                )
+                .unique();
+              return row
+                ? canonicalOrchestratorActivityIngestionReceiptJson(
+                  admitStoredDelivery(row, scope).receipt,
+                )
+                : null;
+            },
+          });
+
+          export const listObservations = query({
+            args: {
+              ...serviceArgs,
+              project: v.string(),
+            },
+            returns: v.array(v.string()),
+            handler: async (ctx, args) => {
+              requireServiceSecret(args.serviceSecret);
+              const scope = await resolveProject(
+                ctx,
+                args.workspace,
+                args.project,
+                false,
+              );
+              if (!scope) return [];
+              const rows = await ctx.db
+                .query("orchestratorActivityObservations")
+                .withIndex("by_project_observed", (q) =>
+                  q.eq("projectId", scope.projectId)
+                )
+                .order("asc")
+                .take(maximumListedObservations + 1);
+              if (rows.length > maximumListedObservations) {
+                throw new Error("ORCHESTRATOR_ACTIVITY_LIST_LIMIT_EXCEEDED");
+              }
+              return rows.map((row) => canonicalOrchestratorActivityObservationJson(
+                admitStoredObservation(row, scope),
+              ));
+            },
+          });
+
+          function admitStoredObservation(
+            row: {
+              workspaceId: unknown;
+              projectId: unknown;
+              observationId: string;
+              observationFingerprint: string;
+              sourceClass: string;
+              sourceId: string;
+              observationJson: string;
+              observedAt: number;
+            },
+            scope: ResolvedProject,
+          ) {
+            const observation = parseCanonicalOrchestratorActivityObservationJson(
+              row.observationJson,
+            );
+            if (
+              row.workspaceId !== scope.workspaceId
+              || row.projectId !== scope.projectId
+              || observation.workspace !== scope.workspaceSlug
+              || observation.project !== scope.projectSlug
+              || row.observationId !== observation.observationId
+              || row.observationFingerprint !== observation.observationFingerprint
+              || row.sourceClass !== observation.sourceClass
+              || row.sourceId !== observation.sourceId
+              || row.observedAt !== Date.parse(observation.observedAt)
+            ) {
+              throw new Error("ORCHESTRATOR_ACTIVITY_STORED_ROW_INVALID");
+            }
+            return observation;
+          }
+
+          function admitStoredDelivery(
+            row: {
+              workspaceId: unknown;
+              projectId: unknown;
+              deliveryId: string;
+              deliveryFingerprint: string;
+              requestFingerprint: string;
+              receiptId: string;
+              receiptJson: string;
+              observationId: string;
+              observationFingerprint: string;
+              acceptedAt: number;
+            },
+            scope: ResolvedProject,
+          ) {
+            const receipt = parseCanonicalOrchestratorActivityIngestionReceiptJson(
+              row.receiptJson,
+            );
+            if (
+              row.workspaceId !== scope.workspaceId
+              || row.projectId !== scope.projectId
+              || receipt.workspace !== scope.workspaceSlug
+              || receipt.project !== scope.projectSlug
+              || row.deliveryId !== receipt.deliveryId
+              || row.deliveryFingerprint !== receipt.deliveryFingerprint
+              || row.requestFingerprint !== receipt.requestFingerprint
+              || row.receiptId !== receipt.receiptId
+              || row.observationId !== receipt.observationId
+              || row.observationFingerprint !== receipt.observationFingerprint
+              || row.acceptedAt !== Date.parse(receipt.acceptedAt)
+            ) {
+              throw new Error("ORCHESTRATOR_ACTIVITY_STORED_ROW_INVALID");
+            }
+            return { receipt };
+          }
+
+          async function resolveProject(
+            ctx: QueryContext,
+            workspaceInput: string | undefined,
+            projectInput: string,
+            required?: true,
+          ): Promise<ResolvedProject>;
+          async function resolveProject(
+            ctx: QueryContext,
+            workspaceInput: string | undefined,
+            projectInput: string,
+            required: false,
+          ): Promise<ResolvedProject | null>;
+          async function resolveProject(
+            ctx: QueryContext,
+            workspaceInput: string | undefined,
+            projectInput: string,
+            required = true,
+          ): Promise<ResolvedProject | null> {
+            const workspaceSlug = normalizeWorkspace(workspaceInput);
+            const workspace = await findWorkspace(ctx, workspaceSlug);
+            if (!workspace) {
+              if (!required) return null;
+              throw new Error("ORCHESTRATOR_ACTIVITY_WORKSPACE_NOT_FOUND");
+            }
+            const projectSlug = assertSlug(projectInput, "Project");
+            const project = await findProject(ctx, workspace._id, projectSlug);
+            if (!project) {
+              if (!required) return null;
+              throw new Error("ORCHESTRATOR_ACTIVITY_PROJECT_NOT_FOUND");
+            }
+            return {
+              workspaceId: workspace._id,
+              projectId: project._id,
+              workspaceSlug,
+              projectSlug,
+            };
+          }
+
+          function boundedDeliveryId(value: string): string {
+            if (
+              typeof value !== "string"
+              || value.length === 0
+              || value.length > 240
+              || value.trim() !== value
+            ) {
+              throw new RangeError("Orchestrator activity delivery ID is invalid");
+            }
+            return value;
+          }
+          EOF
+          sed -i 's/^          //' convex/orchestratorActivity.ts
+
+      - name: Add adapter and durable parity tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > test/orchestrator-activity-convex-store.test.ts <<'EOF'
+          import { describe, expect, test } from "bun:test";
+          import type { FunctionReference } from "convex/server";
+          import type { ConvexCaller } from "../src/convex-ledger.ts";
+          import {
+            admitOrchestratorActivityIngestion,
+            canonicalOrchestratorActivityIngestionJson,
+            canonicalOrchestratorActivityIngestionReceiptJson,
+            canonicalOrchestratorActivityObservationJson,
+            createOrchestratorActivityIngestionReceipt,
+          } from "../src/orchestrator-activity-ingestion-contract.ts";
+          import {
+            ConvexOrchestratorActivityIngestionStore,
+            OrchestratorActivityStorageError,
+          } from "../src/orchestrator-activity-convex-store.ts";
+
+          class FakeClient implements ConvexCaller {
+            mutationResult: unknown;
+            queryResult: unknown;
+            mutations: Array<Record<string, unknown>> = [];
+            queries: Array<Record<string, unknown>> = [];
+            async mutation(
+              _ref: FunctionReference<"mutation">,
+              args: Record<string, unknown>,
+            ): Promise<unknown> {
+              this.mutations.push(args);
+              return this.mutationResult;
+            }
+            async query(
+              _ref: FunctionReference<"query">,
+              args: Record<string, unknown>,
+            ): Promise<unknown> {
+              this.queries.push(args);
+              return this.queryResult;
+            }
+          }
+
+          describe("Convex orchestrator activity ingestion adapter", () => {
+            test("binds canonical durable response to the admitted delivery", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              client.mutationResult = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  admitted.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+
+              await expect(store.ingest(input)).resolves.toMatchObject({
+                replayed: false,
+                observationAppended: true,
+                receipt,
+              });
+              expect(client.mutations[0]).toEqual({
+                ingestionJson: canonicalOrchestratorActivityIngestionJson(input),
+                serviceSecret: "service-secret",
+                workspace: "default",
+              });
+            });
+
+            test("rejects backend observation substitution and foreign workspace", async () => {
+              const client = new FakeClient();
+              const input = delivery();
+              const admitted = admitOrchestratorActivityIngestion(input);
+              const receipt = createOrchestratorActivityIngestionReceipt(admitted);
+              const changed = admitOrchestratorActivityIngestion(delivery({
+                deliveryId: "delivery_other",
+                observation: observation({ sourceId: "ghop_other" }),
+              }));
+              client.mutationResult = {
+                receiptJson: canonicalOrchestratorActivityIngestionReceiptJson(receipt),
+                observationJson: canonicalOrchestratorActivityObservationJson(
+                  changed.observation,
+                ),
+                replayed: false,
+                observationAppended: true,
+              };
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client,
+                serviceSecret: "service-secret",
+              });
+              await expect(store.ingest(input)).rejects.toBeInstanceOf(
+                OrchestratorActivityStorageError,
+              );
+              await expect(store.ingest(delivery({
+                observation: observation({ workspace: "other" }),
+              }))).rejects.toThrow("outside the configured store");
+            });
+          });
+
+          function observation(overrides: Record<string, unknown> = {}) {
+            return {
+              workspace: "default",
+              project: "stensibly",
+              actorId: "actor_cedar",
+              sourceClass: "provider_receipt",
+              sourceId: "ghop_1149_1",
+              sourceFingerprint: `sha256:${"d".repeat(64)}`,
+              observedAt: "2026-08-05T16:20:00.000Z",
+              activityClass: "provider_effect",
+              activityState: "succeeded",
+              workItemId: "issue:1149",
+              attemptId: "attempt_1",
+              provider: "github",
+              providerLifecycle: "verified",
+              ...overrides,
+            };
+          }
+
+          function delivery(overrides: Record<string, unknown> = {}) {
+            return {
+              deliveryId: "delivery_1149_1",
+              deliveryFingerprint: `sha256:${"c".repeat(64)}`,
+              acceptedAt: "2026-08-05T16:20:01.000Z",
+              observation: observation(),
+              ...overrides,
+            };
+          }
+          EOF
+          sed -i 's/^          //' test/orchestrator-activity-convex-store.test.ts
+
+          cat > convex/orchestratorActivity.test.ts <<'EOF'
+          import { convexTest } from "convex-test";
+          import { beforeEach, describe, expect, test, vi } from "vitest";
+          import type { ConvexCaller } from "../src/convex-ledger";
+          import {
+            ConvexOrchestratorActivityIngestionStore,
+          } from "../src/orchestrator-activity-convex-store";
+          import schema from "./schema";
+          import { modules } from "./test.setup";
+
+          const serviceSecret = "orchestrator-activity-service-secret";
+
+          beforeEach(() => {
+            vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
+          });
+
+          describe("durable orchestrator activity ingestion", () => {
+            test("survives reconnect and preserves exactly-once delivery semantics", async () => {
+              const t = convexTest(schema, modules);
+              await seedProject(t, "stensibly");
+              const firstStore = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              const first = await firstStore.ingest(delivery());
+              expect(first.replayed).toBe(false);
+              expect(first.observationAppended).toBe(true);
+
+              const secondStore = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              const replay = await secondStore.ingest(delivery({
+                acceptedAt: "2026-08-05T16:25:00.000Z",
+              }));
+              expect(replay.replayed).toBe(true);
+              expect(replay.observationAppended).toBe(false);
+              expect(replay.receipt).toEqual(first.receipt);
+              expect(await secondStore.getReceipt(
+                "default",
+                "stensibly",
+                "delivery_1149_1",
+              )).toEqual(first.receipt);
+              expect(await secondStore.listObservations("default", "stensibly"))
+                .toEqual([first.observation]);
+            });
+
+            test("deduplicates semantic observations and rejects changed identities", async () => {
+              const t = convexTest(schema, modules);
+              await seedProject(t, "stensibly");
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              const first = await store.ingest(delivery());
+              const duplicate = await store.ingest(delivery({
+                deliveryId: "delivery_1149_2",
+                deliveryFingerprint: `sha256:${"f".repeat(64)}`,
+                acceptedAt: "2026-08-05T16:21:00.000Z",
+              }));
+              expect(duplicate.replayed).toBe(false);
+              expect(duplicate.observationAppended).toBe(false);
+              expect(duplicate.observation).toEqual(first.observation);
+
+              await expect(store.ingest(delivery({
+                deliveryFingerprint: `sha256:${"e".repeat(64)}`,
+              }))).rejects.toThrow("DELIVERY_IDENTITY_CONFLICT");
+              await expect(store.ingest(delivery({
+                deliveryId: "delivery_1149_3",
+                deliveryFingerprint: `sha256:${"1".repeat(64)}`,
+                observation: observation({
+                  activityClass: "reconciliation_required",
+                  activityState: "ambiguous",
+                  providerLifecycle: "pending_reconciliation",
+                  attentionLevel: "review",
+                  attentionReasonCode: "provider_outcome_ambiguous",
+                  nextAction: "reconcile_exact_operation",
+                }),
+              }))).rejects.toThrow("SOURCE_IDENTITY_CONFLICT");
+            });
+
+            test("fails closed on corrupted durable observation bytes", async () => {
+              const t = convexTest(schema, modules);
+              await seedProject(t, "stensibly");
+              const store = new ConvexOrchestratorActivityIngestionStore({
+                client: convexCaller(t),
+                serviceSecret,
+              });
+              await store.ingest(delivery());
+              await t.run(async (ctx: any) => {
+                const rows = await ctx.db.query("orchestratorActivityObservations").collect();
+                await ctx.db.patch(rows[0]._id, {
+                  observationJson: "{}",
+                });
+              });
+              await expect(store.listObservations("default", "stensibly"))
+                .rejects.toThrow();
+            });
+          });
+
+          function observation(overrides: Record<string, unknown> = {}) {
+            return {
+              workspace: "default",
+              project: "stensibly",
+              actorId: "actor_cedar",
+              sourceClass: "provider_receipt",
+              sourceId: "ghop_1149_1",
+              sourceFingerprint: `sha256:${"d".repeat(64)}`,
+              observedAt: "2026-08-05T16:20:00.000Z",
+              activityClass: "provider_effect",
+              activityState: "succeeded",
+              workItemId: "issue:1149",
+              attemptId: "attempt_1",
+              provider: "github",
+              providerLifecycle: "verified",
+              ...overrides,
+            };
+          }
+
+          function delivery(overrides: Record<string, unknown> = {}) {
+            return {
+              deliveryId: "delivery_1149_1",
+              deliveryFingerprint: `sha256:${"c".repeat(64)}`,
+              acceptedAt: "2026-08-05T16:20:01.000Z",
+              observation: observation(),
+              ...overrides,
+            };
+          }
+
+          function convexCaller(t: ReturnType<typeof convexTest>): ConvexCaller {
+            return {
+              query: async (reference, args) => await t.query(reference, args),
+              mutation: async (reference, args) => await t.mutation(reference, args),
+            };
+          }
+
+          async function seedProject(
+            t: ReturnType<typeof convexTest>,
+            slug: string,
+          ): Promise<void> {
+            await t.run(async (ctx: any) => {
+              const workspace = await ctx.db
+                .query("workspaces")
+                .withIndex("by_slug", (q: any) => q.eq("slug", "default"))
+                .unique();
+              const workspaceId = workspace?._id ?? await ctx.db.insert("workspaces", {
+                externalId: "ws_default",
+                slug: "default",
+                name: "Default",
+                createdAt: 1,
+                updatedAt: 1,
+              });
+              const existing = await ctx.db
+                .query("projects")
+                .withIndex("by_workspace_slug", (q: any) =>
+                  q.eq("workspaceId", workspaceId).eq("slug", slug)
+                )
+                .unique();
+              if (!existing) {
+                await ctx.db.insert("projects", {
+                  workspaceId,
+                  externalId: `project_${slug}`,
+                  slug,
+                  name: slug,
+                  createdAt: 1,
+                  updatedAt: 1,
+                });
+              }
+            });
+          }
+          EOF
+          sed -i 's/^          //' convex/orchestratorActivity.test.ts
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate durable activity slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/orchestrator-activity-ingestion.test.ts \
+            test/orchestrator-activity-convex-store.test.ts
+          bunx vitest run convex/orchestratorActivity.test.ts
+          git diff --check
+
+      - name: Publish one workflow-free current-main commit
+        shell: bash
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          CARRIER_SHA: ${{ github.sha }}
+          HEAD_REF: cedar/1149-durable-activity-ingestion
+        run: |
+          set -euo pipefail
+          rm .github/workflows/cedar-1149-durable-activity-store.yml
+          git reset --mixed "$MAIN"
+          mapfile -t changed < <(git status --short | sed -E 's/^.. //' | sort)
+          test "${#changed[@]}" -eq 7
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^\.github/' || true)" -eq 0
+          for path in \
+            convex/orchestratorActivity.test.ts \
+            convex/orchestratorActivity.ts \
+            convex/schema.ts \
+            src/orchestrator-activity-convex-store.ts \
+            src/orchestrator-activity-ingestion-contract.ts \
+            src/orchestrator-activity-ingestion.ts \
+            test/orchestrator-activity-convex-store.test.ts; do
+            printf '%s\n' "${changed[@]}" | grep -qx "$path"
+          done
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git add convex src test
+          git diff --cached --check
+          git commit -m "Persist orchestrator activity ingestion in Convex"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
