@@ -255,14 +255,15 @@ describe("private hosted GitHub delegated reads", () => {
     expect(externalCalls).toBe(0);
   });
 
-  test("stays disabled by default and fails closed on partial or malformed enablement", () => {
+  test("defaults on with complete configuration and fails closed on partial or malformed enablement", () => {
     const ledger = fakeLedger();
-    expect(
-      mountHostedGitHubDelegatedReadProviderFromEnv(ledger, providerEnv(false)),
-    ).toBe(ledger);
-    expect("callGitHubDelegatedRead" in ledger).toBe(false);
+    const defaulted = mountHostedGitHubDelegatedReadProviderFromEnv(
+      ledger,
+      providerEnv(false),
+    );
+    expect(typeof defaulted.callGitHubDelegatedRead).toBe("function");
     expect(hostedGitHubDelegatedReadProviderConfigured(providerEnv(false)))
-      .toBe(false);
+      .toBe(true);
 
     const explicitlyDisabled = providerEnv();
     explicitlyDisabled.STENSIBLY_GITHUB_DELEGATED_READS_ENABLED = "false";
