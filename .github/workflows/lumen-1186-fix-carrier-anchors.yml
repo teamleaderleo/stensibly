@@ -32,10 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "fcc336ee0c0a49a59fe085f6990adf204351b984"
+          test "$(git rev-parse HEAD^)" = "1d398b152dde5a2ca81d152a5fd5e050b36c3c8c"
           test "$(git rev-parse HEAD:.github/workflows/lumen-1163-updaterefs-cas-repair.yml)" = "da5a36937752762b3707c18319f3d5c80f5d6d94"
 
-      - name: Classify only exact stale-ref GraphQL conflicts
+      - name: Classify standards-compliant stale-ref GraphQL conflicts
         shell: bash
         run: |
           set -euo pipefail
@@ -60,8 +60,7 @@ jobs:
         const error = exactRecord(errors[0]);
         const data = exactRecord(envelope.data);
         staleRef =
-          Object.keys(envelope).length === 2
-          && Object.keys(error).length === 1
+          typeof error.message === "string"
           && error.type === "STALE_REF"
           && Object.keys(data).length === 1
           && data.updateRefs === null;
@@ -79,14 +78,22 @@ jobs:
 '''
           if text.count(old) != 1:
             raise SystemExit("GraphQL errors admission anchor moved")
-          path.write_text(text.replace(old, new, 1))
+          text = text.replace(old, new, 1)
+
+          stale_fixture = 'errors: [{ type: "STALE_REF" }],'
+          compliant_fixture = 'errors: [{ message: "provider stale ref detail", type: "STALE_REF" }],'
+          if text.count(stale_fixture) != 1:
+            raise SystemExit("stale-ref GraphQL fixture anchor moved")
+          text = text.replace(stale_fixture, compliant_fixture, 1)
+
+          path.write_text(text)
           PY
           git rm .github/workflows/lumen-1186-fix-carrier-anchors.yml
           git add .github/workflows/lumen-1163-updaterefs-cas-repair.yml
           git diff --cached --check
-          git config user.name "Juniper"
+          git config user.name "Junco"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Classify exact stale-ref GraphQL conflicts"
+          git commit -m "Admit standards-compliant stale-ref GraphQL errors"
           git fetch origin refs/heads/lumen/1163-updaterefs-cas-repair:refs/remotes/origin/lumen/1163-updaterefs-cas-repair
           test "$(git rev-parse refs/remotes/origin/lumen/1163-updaterefs-cas-repair)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/lumen/1163-updaterefs-cas-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1163-updaterefs-cas-repair
