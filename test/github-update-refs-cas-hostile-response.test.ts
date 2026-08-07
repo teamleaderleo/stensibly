@@ -2,17 +2,31 @@ import { expect, test } from "bun:test";
 import {
   admitGitHubRepositoryNodeIdResponse,
   admitGitHubUpdateRefsCasResponse,
+  buildGitHubRepositoryNodeIdRequest,
 } from "../src/github-update-refs-cas.ts";
 
+const repositoryFullName = "teamleaderleo/stensibly";
 const clientMutationId = `stensibly-write-${"b".repeat(64)}`;
+const repositoryRequest = buildGitHubRepositoryNodeIdRequest(
+  "https://api.github.com",
+  repositoryFullName,
+);
 
 test("normalizes revoked repository-node response proxies", () => {
   const revocable = Proxy.revocable({
-    data: { repository: { id: "R_kgDORepository" } },
+    data: {
+      repository: {
+        id: "R_kgDORepository",
+        nameWithOwner: repositoryFullName,
+      },
+    },
   }, {});
   revocable.revoke();
-  expect(() => admitGitHubRepositoryNodeIdResponse(revocable.proxy))
-    .toThrow("GitHub updateRefs GraphQL response is invalid");
+  expect(() => admitGitHubRepositoryNodeIdResponse(
+    revocable.proxy,
+    repositoryFullName,
+    repositoryRequest.url.href,
+  )).toThrow("GitHub updateRefs GraphQL response is invalid");
 });
 
 test("normalizes revoked updateRefs response proxies", () => {
