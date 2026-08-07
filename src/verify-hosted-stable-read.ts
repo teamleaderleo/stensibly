@@ -391,9 +391,10 @@ function timeoutError(timeoutMs: number): Error {
 }
 
 async function cancelResponseBody(response: Response): Promise<void> {
-  if (!response.body || response.body.locked) return;
   try {
-    await response.body.cancel();
+    const body = response.body;
+    if (!body || body.locked) return;
+    await body.cancel();
   } catch {
     // Cancellation is best-effort after a fixed verifier decision.
   }
