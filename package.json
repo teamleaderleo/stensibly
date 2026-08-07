@@ -13,7 +13,7 @@
     "attach": "bun src/project-attach-cli.ts",
     "callsigns": "bun src/callsigns.ts",
     "callsign-catalog": "bun src/callsign-catalog-cli.ts",
-    "verify:hosted": "bun src/verify-hosted.ts",
+    "verify:hosted": "bun src/verify-hosted-cli.ts",
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
     "verify:dashboard": "bun src/verify-dashboard.ts",
