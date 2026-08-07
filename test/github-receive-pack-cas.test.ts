@@ -96,7 +96,7 @@ describe("Git receive-pack exact ref CAS protocol", () => {
     );
   });
 
-  test("rejects object-format mismatch before request construction", () => {
+  test("rejects object-format mismatch and duplicate object-format capabilities", () => {
     expect(() => buildGitReceivePackCasRequest({
       objectFormat: "sha256",
       advertisedCapabilities: ["report-status", "object-format=sha256"],
@@ -112,6 +112,19 @@ describe("Git receive-pack exact ref CAS protocol", () => {
       expectedHeadSha: sha256Parent,
       newHeadSha: sha256Commit,
     })).toThrow("Git receive-pack CAS request is invalid");
+
+    expect(() => admitGitReceivePackAdvertisement(
+      receivePackAdvertisement({
+        head: sha256Parent,
+        capabilities: [
+          "report-status",
+          "object-format=sha1",
+          "object-format=sha256",
+        ],
+      }),
+      targetRef,
+      sha256Parent,
+    )).toThrow("Git receive-pack advertisement is invalid");
   });
 
   test("accepts only exact successful report-status for the target ref", () => {
@@ -139,6 +152,30 @@ describe("Git receive-pack exact ref CAS protocol", () => {
       .toThrow("Git receive-pack CAS report is invalid");
   });
 
+  test("rejects trailing advertisement/report packets after flush", () => {
+    const trailingAdvertisement = packets([
+      "# service=git-receive-pack\n",
+      null,
+      `${sha1Parent} refs/heads/${targetRef}\0report-status\n`,
+      null,
+      `${sha1Parent} refs/heads/ignored\n`,
+    ]);
+    expect(() => admitGitReceivePackAdvertisement(
+      trailingAdvertisement,
+      targetRef,
+      sha1Parent,
+    )).toThrow("Git receive-pack advertisement is invalid");
+
+    const trailingReport = packets([
+      "unpack ok\n",
+      `ok refs/heads/${targetRef}\n`,
+      null,
+      "unpack ok\n",
+    ]);
+    expect(() => admitGitReceivePackCasReport(trailingReport, targetRef))
+      .toThrow("Git receive-pack CAS report is invalid");
+  });
+
   test("rejects missing report-status and malformed pkt-line framing", () => {
     expect(() => admitGitReceivePackAdvertisement(
       receivePackAdvertisement({ head: sha1Parent, capabilities: ["delete-refs"] }),
@@ -151,6 +188,15 @@ describe("Git receive-pack exact ref CAS protocol", () => {
       targetRef,
       sha1Parent,
     )).toThrow("Git receive-pack advertisement is invalid");
+  });
+
+  test("keeps malformed capability diagnostics scoped to advertisement admission", () => {
+    const malformed = receivePackAdvertisement({
+      head: sha1Parent,
+      capabilities: ["report-status", "BAD"],
+    });
+    expect(() => admitGitReceivePackAdvertisement(malformed, targetRef, sha1Parent))
+      .toThrow("Git receive-pack advertisement is invalid");
   });
 
   test("rejects oversized advertisement and report before packet iteration", () => {
