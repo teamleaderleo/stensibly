@@ -4,7 +4,7 @@ import {
   admitGitHubUpdateRefsCasResponse,
 } from "../src/github-update-refs-cas.ts";
 
-const clientMutationId = "stensibly-write-bbbbbbbbbbbbbbbb";
+const clientMutationId = `stensibly-write-${"b".repeat(64)}`;
 
 test("normalizes revoked repository-node response proxies", () => {
   const revocable = Proxy.revocable({
