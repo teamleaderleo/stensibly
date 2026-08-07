@@ -1,0 +1,222 @@
+name: Cedar 968 current-main replay
+
+on:
+  push:
+    branches:
+      - juniper/525-private-label-assignee-writes
+    paths:
+      - .github/workflows/cedar-968-current-main-replay.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-968-current-main-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/525-private-label-assignee-writes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source and overlap fence
+        env:
+          SOURCE: d366b0160355c03ecb8732a857721a3b10a5254d
+          OLD_BASE: dfb6b61dfbb1f895d9dc4dec4b58c3093dcd96b3
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          PREVIOUS_CARRIER: a09d4bc1194991067422193ea78e10c448170f2f
+          REPAIR_CARRIER: de36f66b6698cce2cf022349757278aa237fb905
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PREVIOUS_CARRIER"
+          test "$(git rev-parse "$SOURCE^")" = "$OLD_BASE"
+          git fetch --no-tags origin "$MAIN"
+          test "$(git rev-parse FETCH_HEAD)" = "$MAIN"
+          git diff --name-only "$OLD_BASE" "$SOURCE" | sort > /tmp/private-files
+          git diff --name-only "$OLD_BASE" "$MAIN" | sort > /tmp/main-files
+          comm -12 /tmp/private-files /tmp/main-files > /tmp/overlap
+          test "$(cat /tmp/overlap)" = $'src/github-provider-validation.ts\nsrc/hosted-github-issue-provider.ts'
+          test "$(wc -l < /tmp/private-files)" -eq 39
+          git show "$REPAIR_CARRIER:.github/workflows/lumen-968-init-snapshot-repair.yml" > /tmp/lumen-968.yml
+
+      - name: Build current-main private packet
+        env:
+          SOURCE: d366b0160355c03ecb8732a857721a3b10a5254d
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+        shell: bash
+        run: |
+          set -euo pipefail
+          git reset --hard "$MAIN"
+          git checkout "$SOURCE" -- $(cat /tmp/private-files)
+          git checkout "$MAIN" -- \
+            src/github-provider-validation.ts \
+            src/hosted-github-issue-provider.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          validation = Path("src/github-provider-validation.ts")
+          text = validation.read_text()
+          text = replace_once(
+              text,
+              '''export function boundedText(\n  value: string,\n  label: string,\n  maximum: number,\n): string {''',
+              '''export function boundedText(\n  value: unknown,\n  label: string,\n  maximum: number,\n): string {''',
+              "boundedText type widening",
+          )
+          validation.write_text(text)
+
+          hosted = Path("src/hosted-github-issue-provider.ts")
+          text = hosted.read_text()
+          text = replace_once(
+              text,
+              '''} from "./github-issue-provider-mcp.js";\nimport type {''',
+              '''} from "./github-issue-provider-mcp.js";\nimport {\n  withGitHubIssueProviderSetWriteService,\n  type GitHubIssueProviderSetWriteService,\n} from "./github-issue-provider-set-write-service.js";\nimport type {''',
+              "set-write service import",
+          )
+          text = replace_once(
+              text,
+              '''import { GitHubRestIssueWriteAdapter } from "./github-rest-issue-write-adapter.js";''',
+              '''import { GitHubRestIssueSetWriteAdapter } from "./github-rest-issue-set-write-adapter.js";''',
+              "set-write adapter import",
+          )
+          text = replace_once(
+              text,
+              '''const initialWriteOperations = new Set<GitHubIssueProviderOperation>([\n  "github_create_issue",\n  "github_update_issue",\n  "github_add_issue_comment",\n]);''',
+              '''const writeOperations = new Set<GitHubIssueProviderOperation>([\n  "github_create_issue",\n  "github_update_issue",\n  "github_add_issue_comment",\n  "github_add_issue_labels",\n  "github_remove_issue_label",\n  "github_add_issue_assignees",\n  "github_remove_issue_assignees",\n]);''',
+              "write operation registry",
+          )
+          text = replace_once(
+              text,
+              ''' * configuration exists. A separate exact flag mounts an independent write\n * service only when the ledger also exposes the durable hosted receipt contract.''',
+              ''' * configuration exists. A separate exact flag mounts independent write\n * services only when the ledger also exposes the durable hosted receipt\n * contract.''',
+              "mount documentation",
+          )
+          text = replace_once(
+              text,
+              '''  & Partial<GitHubIssueProviderReadService>\n  & Partial<GitHubIssueProviderWriteService> {''',
+              '''  & Partial<GitHubIssueProviderReadService>\n  & Partial<GitHubIssueProviderWriteService>\n  & Partial<GitHubIssueProviderSetWriteService> {''',
+              "mount return type",
+          )
+          text = replace_once(
+              text,
+              '''    adapter: new GitHubRestIssueWriteAdapter(adapterOptions),''',
+              '''    adapter: new GitHubRestIssueSetWriteAdapter(adapterOptions),''',
+              "write adapter construction",
+          )
+          text = replace_once(
+              text,
+              '''  return withGitHubIssueProviderWriteService(\n    mountedReads,\n    canonicalHostedWriteService(writeService),\n  );''',
+              '''  const mountedInitialWrites = withGitHubIssueProviderWriteService(\n    mountedReads,\n    canonicalHostedWriteService(writeService),\n  );\n  return withGitHubIssueProviderSetWriteService(\n    mountedInitialWrites,\n    canonicalHostedSetWriteService(writeService),\n  );''',
+              "set-write composition",
+          )
+          text = replace_once(
+              text,
+              '''      && initialWriteOperations.has(input.operation)''',
+              '''      && writeOperations.has(input.operation)''',
+              "write authority registry",
+          )
+          text = replace_once(
+              text,
+              '''        ? "Hosted GitHub label and assignee writes remain unavailable"''',
+              '''        ? "Hosted GitHub provider operation is unavailable"''',
+              "enabled write denial",
+          )
+          marker = '''function canonicalRequest<T extends GitHubProviderRequestContext>(input: T): T {'''
+          helper = '''function canonicalHostedSetWriteService(\n  service: GitHubIssueProviderSetWriteService,\n): GitHubIssueProviderSetWriteService {\n  return {\n    addIssueLabels: (input) => service.addIssueLabels(canonicalRequest(input)),\n    removeIssueLabel: (input) => service.removeIssueLabel(canonicalRequest(input)),\n    addIssueAssignees: (input) =>\n      service.addIssueAssignees(canonicalRequest(input)),\n    removeIssueAssignees: (input) =>\n      service.removeIssueAssignees(canonicalRequest(input)),\n  };\n}\n\n'''
+          text = replace_once(text, marker, helper + marker, "set-write canonicalizer")
+          if 'import { captureDataMethod } from "./captured-data-method.js";' not in text:
+              raise SystemExit("current-main captureDataMethod import was lost")
+          if "function captureMethod(" in text:
+              raise SystemExit("obsolete local captureMethod was reintroduced")
+          hosted.write_text(text)
+          PY
+
+      - name: Apply final RequestInit snapshot repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+          text = Path('/tmp/lumen-968.yml').read_text()
+          python_marker = (
+              "      - name: Apply one-pass RequestInit snapshot repair\n"
+              "        shell: python\n"
+              "        run: |\n"
+          )
+          start = text.index(python_marker) + len(python_marker)
+          end = text.index('\n      - name: Add exact getter and method-snapshot controls', start)
+          Path('/tmp/repair.py').write_text(textwrap.dedent(text[start:end]))
+          shell_marker = (
+              "      - name: Add exact getter and method-snapshot controls\n"
+              "        shell: bash\n"
+              "        run: |\n"
+          )
+          start = text.index(shell_marker) + len(shell_marker)
+          end = text.index('\n      - name: Verify repaired private packet', start)
+          Path('/tmp/add-control.sh').write_text(textwrap.dedent(text[start:end]))
+          PY
+          python3 /tmp/repair.py
+          bash /tmp/add-control.sh
+          git diff --check
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate current-main private packet
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$MAIN" | sort)
+          test "${#changed[@]}" -eq 40
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^src/')" -eq 10
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^test/')" -eq 30
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^\.github/')" -eq 0
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/hosted-github-issue-provider.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/github-provider-validation.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'test/github-provider-bounded-response-init-single-snapshot.test.ts'
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/hosted-github-issue-set-write-provider.test.ts \
+            test/hosted-github-issue-set-write-boundaries.test.ts \
+            test/github-rest-issue-set-write-assignee-limit.test.ts \
+            test/github-rest-issue-set-write-request-id.test.ts \
+            test/github-rest-issue-set-write-stream-bound.test.ts \
+            test/github-issue-provider-call-local-readback.test.ts \
+            test/github-issue-provider-request-id-retention.test.ts \
+            test/github-provider-bounded-response-init-single-snapshot.test.ts \
+            test/github-provider-bounded-response-signal-setup-cleanup.test.ts \
+            test/captured-data-method.test.ts \
+            test/canonical-json.test.ts
+
+      - name: Publish workflow-free current-main packet
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          CARRIER_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git add src test
+          git commit -m "Consolidate private GitHub issue mutation settlement"
+          test "$(git rev-parse HEAD^)" = "$MAIN"
+          git fetch origin refs/heads/juniper/525-private-label-assignee-writes:refs/remotes/origin/juniper/525-private-label-assignee-writes
+          test "$(git rev-parse refs/remotes/origin/juniper/525-private-label-assignee-writes)" = "$CARRIER_SHA"
+          git push --force-with-lease=refs/heads/juniper/525-private-label-assignee-writes:$CARRIER_SHA \
+            origin HEAD:refs/heads/juniper/525-private-label-assignee-writes
