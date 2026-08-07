@@ -1,0 +1,74 @@
+name: Cinder 1208 finalizer validation fence
+
+on:
+  push:
+    branches:
+      - juniper/1163-updaterefs-cas-integration
+    paths:
+      - .github/workflows/cinder-1208-finalizer-validation-fence.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1208-finalizer-validation-fence
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/1163-updaterefs-cas-integration
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact finalizer lease
+        shell: bash
+        env:
+          EXPECTED_PARENT: 57fd284fb664def9a07042cb93d16475bd972689
+          FINALIZER_BLOB: d63ce2ec007349ee4a6b8a9ba4181d1b2bb9c57b
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git rev-parse HEAD:.github/workflows/lumen-1208-final-convergence.yml)" = "$FINALIZER_BLOB"
+          test "$(git rev-parse HEAD:test/github-rest-repository-write-repository-node-provenance.test.ts)" = "2998805971cdeb74f489d10a183ea8bbb93a87ec"
+
+      - name: Add repository provenance control to focused finalizer gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/lumen-1208-final-convergence.yml')
+          text = path.read_text()
+          old = '''            test/github-rest-repository-write-adapter-fence-parity.test.ts \\
+            test/github-rest-repository-write-provider-url-spelling.test.ts'''
+          new = '''            test/github-rest-repository-write-adapter-fence-parity.test.ts \\
+            test/github-rest-repository-write-provider-url-spelling.test.ts \\
+            test/github-rest-repository-write-repository-node-provenance.test.ts'''
+          if text.count(old) != 1:
+            raise SystemExit(f'focused finalizer test fence moved: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+
+      - name: Publish corrected sole finalizer
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: juniper/1163-updaterefs-cas-integration
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cinder-1208-finalizer-validation-fence.yml
+          git add .github/workflows/lumen-1208-final-convergence.yml
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Run repository provenance in exact-CAS finalizer"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${HEAD_REF}"
