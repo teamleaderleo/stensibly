@@ -42,6 +42,7 @@ const updateRefsMutation =
 const nodeIdPattern = /^[\x21-\x7e]{1,256}$/u;
 const providerRepositoryPattern = /^[\x20-\x7e]{1,200}$/u;
 const clientMutationIdPattern = /^stensibly-write-[a-f0-9]{64}$/u;
+const admittedRepositoryIdentities = new WeakSet<object>();
 
 export function buildGitHubRepositoryNodeIdRequest(
   apiBaseUrl: string,
@@ -78,10 +79,12 @@ export function admitGitHubRepositoryNodeIdResponse(
   if (repositoryFullName !== expectedRepository) {
     throw invalidGraphqlResponse();
   }
-  return Object.freeze({
+  const identity = Object.freeze({
     repositoryFullName,
     repositoryId: admitNodeId(requiredDataProperty(repository, "id")),
   });
+  admittedRepositoryIdentities.add(identity);
+  return identity;
 }
 
 export function buildGitHubUpdateRefsCasRequest(
@@ -204,6 +207,13 @@ function snapshotCasInput(value: unknown): GitHubUpdateRefsCasInput {
 function snapshotRepositoryIdentity(
   value: unknown,
 ): GitHubRepositoryNodeIdentity {
+  if (
+    value === null
+    || typeof value !== "object"
+    || !admittedRepositoryIdentities.has(value)
+  ) {
+    throw invalidCasInput();
+  }
   const record = casInputRecord(value);
   return Object.freeze({
     repositoryFullName: casInputString(record, "repositoryFullName"),
