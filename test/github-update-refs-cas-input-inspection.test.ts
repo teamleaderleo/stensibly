@@ -1,34 +1,41 @@
 import { expect, test } from "bun:test";
-import { buildGitHubUpdateRefsCasRequest } from "../src/github-update-refs-cas.ts";
+import {
+  admitGitHubRepositoryNodeIdResponse,
+  buildGitHubUpdateRefsCasRequest,
+} from "../src/github-update-refs-cas.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
 const repositoryId = "R_kgDOAtomicRepository";
-const baseRepository = {
-  repositoryFullName,
-  repositoryId,
-};
-const baseInput = {
-  apiBaseUrl: "https://api.github.com",
-  repository: baseRepository,
-  targetRef: "feature/exact-cas",
-  expectedHeadSha: "a".repeat(40),
-  newHeadSha: "b".repeat(40),
-};
+const targetRef = "feature/exact-cas";
+const expectedHeadSha = "a".repeat(40);
+const newHeadSha = "b".repeat(40);
+
+function repositoryIdentity() {
+  return admitGitHubRepositoryNodeIdResponse({
+    data: {
+      repository: {
+        repositoryFullName,
+        id: repositoryId,
+        nameWithOwner: repositoryFullName,
+      },
+    },
+  }, repositoryFullName);
+}
+
+function baseInput() {
+  return {
+    apiBaseUrl: "https://api.github.com",
+    repository: repositoryIdentity(),
+    targetRef,
+    expectedHeadSha,
+    newHeadSha,
+  };
+}
 
 test("builds CAS request without caller get or ownKeys", () => {
   let getCalls = 0;
   let ownKeysCalls = 0;
-  const repository = new Proxy(baseRepository, {
-    get() {
-      getCalls += 1;
-      throw new Error("repository get must not run");
-    },
-    ownKeys() {
-      ownKeysCalls += 1;
-      throw new Error("repository ownKeys must not run");
-    },
-  });
-  const input = new Proxy({ ...baseInput, repository }, {
+  const input = new Proxy(baseInput(), {
     get() {
       getCalls += 1;
       throw new Error("caller get must not run");
@@ -47,9 +54,9 @@ test("builds CAS request without caller get or ownKeys", () => {
       input: {
         repositoryId,
         refUpdates: [{
-          name: `refs/heads/${baseInput.targetRef}`,
-          beforeOid: baseInput.expectedHeadSha,
-          afterOid: baseInput.newHeadSha,
+          name: `refs/heads/${targetRef}`,
+          beforeOid: expectedHeadSha,
+          afterOid: newHeadSha,
           force: false,
         }],
         clientMutationId: request.clientMutationId,
@@ -60,9 +67,11 @@ test("builds CAS request without caller get or ownKeys", () => {
   expect(ownKeysCalls).toBe(0);
 });
 
-test("rejects accessor-backed repository identity without invoking getters", () => {
+test("rejects accessor-backed fabricated repository identity without invoking getters", () => {
   let getterCalls = 0;
-  const repository = { ...baseRepository } as Record<string, unknown>;
+  const repository = {
+    repositoryFullName,
+  } as Record<string, unknown>;
   Object.defineProperty(repository, "repositoryId", {
     enumerable: true,
     get() {
@@ -72,22 +81,25 @@ test("rejects accessor-backed repository identity without invoking getters", () 
   });
 
   expect(() => buildGitHubUpdateRefsCasRequest({
-    ...baseInput,
+    ...baseInput(),
     repository: repository as never,
   })).toThrow("GitHub updateRefs CAS input is invalid");
   expect(getterCalls).toBe(0);
 });
 
-test("normalizes revoked top-level and repository inputs", () => {
-  const revokedInput = Proxy.revocable(baseInput, {});
+test("normalizes revoked top-level and rejects revoked lookalike repository inputs", () => {
+  const revokedInput = Proxy.revocable(baseInput(), {});
   revokedInput.revoke();
   expect(() => buildGitHubUpdateRefsCasRequest(revokedInput.proxy))
     .toThrow("GitHub updateRefs CAS input is invalid");
 
-  const revokedRepository = Proxy.revocable(baseRepository, {});
+  const revokedRepository = Proxy.revocable({
+    repositoryFullName,
+    repositoryId,
+  }, {});
   revokedRepository.revoke();
   expect(() => buildGitHubUpdateRefsCasRequest({
-    ...baseInput,
-    repository: revokedRepository.proxy,
+    ...baseInput(),
+    repository: revokedRepository.proxy as never,
   })).toThrow("GitHub updateRefs CAS input is invalid");
 });
