@@ -137,6 +137,7 @@ export function buildEffectiveToolSurfaceHostBindingSnapshot(
         observation: entry.observation,
         catalogueDigest: entry.catalogueDigest,
         executableDigest: entry.executableDigest,
+        provenance: entry.provenance,
       };
     }),
   ));
@@ -185,7 +186,8 @@ export function reconcileEffectiveToolSurfaceHostBinding(
   const unobservedClasses = effectiveToolSurfaceClasses.filter((className) =>
     current.classObservations[className].observation === "unobserved"
   );
-  const hostBindingChanged = classObservationChanges.length > 0;
+  const hostBindingChanged = previous !== undefined
+    && previous.hostBindingFingerprint !== current.hostBindingFingerprint;
 
   let state = base.state;
   if (state === "healthy" && hostBindingChanged) state = "changed";
