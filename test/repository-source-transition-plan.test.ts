@@ -8,6 +8,14 @@ const donorCommit = "c".repeat(40);
 const firstBlob = "d".repeat(40);
 const secondBlob = "e".repeat(40);
 
+function transitionFile(
+  path: string,
+  donorBlobSha: string,
+  donorMode: "100644" | "100755" = "100644",
+) {
+  return { path, donorCommitSha: donorCommit, donorBlobSha, donorMode } as const;
+}
+
 function validPlan() {
   return {
     version: 1,
@@ -17,16 +25,8 @@ function validPlan() {
     expectedTargetHead: targetHead,
     expectedSourceBase: sourceBase,
     files: [
-      {
-        path: "test/example.test.ts",
-        donorCommitSha: donorCommit,
-        donorBlobSha: secondBlob,
-      },
-      {
-        path: "src/example.ts",
-        donorCommitSha: donorCommit,
-        donorBlobSha: firstBlob,
-      },
+      transitionFile("test/example.test.ts", secondBlob),
+      transitionFile("src/example.ts", firstBlob, "100755"),
     ],
     validationProfile: "typescript_and_focused_tests",
   } as const;
@@ -47,12 +47,13 @@ describe("repository source transition plan", () => {
       validationProfile: "typescript_and_focused_tests",
       expectedChangedPaths: ["src/example.ts", "test/example.test.ts"],
       requiresWorkflowFreeFinalHead: true,
+      requiresNonDefaultTargetBranch: true,
       allowsArbitraryCommands: false,
       grantsAuthority: false,
     });
-    expect(plan.files.map((entry) => entry.path)).toEqual([
-      "src/example.ts",
-      "test/example.test.ts",
+    expect(plan.files).toMatchObject([
+      { path: "src/example.ts", donorMode: "100755" },
+      { path: "test/example.test.ts", donorMode: "100644" },
     ]);
     expect(plan.changedPathFence).toBe(sha256(stableJson([
       "src/example.ts",
@@ -87,16 +88,16 @@ describe("repository source transition plan", () => {
 
     expect(() => compileRepositorySourceTransitionPlan({
       ...validPlan(),
-      files: [{
-        path: ".github/workflows/temporary-carrier.yml",
-        donorCommitSha: donorCommit,
-        donorBlobSha: firstBlob,
-      }],
+      files: [transitionFile(
+        ".github/workflows/temporary-carrier.yml",
+        firstBlob,
+      )],
     })).toThrow("final paths must be workflow-free");
   });
 
   test.each([
     ".git/config",
+    ".GIT/config",
     "src/../secret.ts",
     "/src/example.ts",
     "src/example.ts/",
@@ -105,11 +106,13 @@ describe("repository source transition plan", () => {
   ])("rejects unsafe replay path %s", (path) => {
     expect(() => compileRepositorySourceTransitionPlan({
       ...validPlan(),
-      files: [{ path, donorCommitSha: donorCommit, donorBlobSha: firstBlob }],
+      files: [transitionFile(path, firstBlob)],
     })).toThrow("path is invalid");
   });
 
   test.each([
+    "main",
+    "refs/heads/topic",
     "-repair",
     "@",
     ".hidden/repair",
@@ -121,7 +124,7 @@ describe("repository source transition plan", () => {
     "topic repair",
     "topic:repair",
     "topic\\repair",
-  ])("rejects invalid target branch %s", (targetBranch) => {
+  ])("rejects invalid or direct-default target branch %s", (targetBranch) => {
     expect(() => compileRepositorySourceTransitionPlan({
       ...validPlan(),
       targetBranch,
@@ -142,27 +145,46 @@ describe("repository source transition plan", () => {
     expect(() => compileRepositorySourceTransitionPlan({
       ...validPlan(),
       files: [{
-        path: "src/example.ts",
+        ...transitionFile("src/example.ts", "d".repeat(64)),
         donorCommitSha: "c".repeat(64),
-        donorBlobSha: "d".repeat(64),
       }],
     })).toThrow("object-ID widths must match");
   });
+
+  test("supports a coherent SHA-256 repository object format", () => {
+    const plan = compileRepositorySourceTransitionPlan({
+      ...validPlan(),
+      expectedTargetHead: "a".repeat(64),
+      expectedSourceBase: "b".repeat(64),
+      files: [{
+        ...transitionFile("src/example.ts", "d".repeat(64), "100644"),
+        donorCommitSha: "c".repeat(64),
+      }],
+    });
+    expect(plan.objectIdLength).toBe(64);
+  });
+
+  test.each(["120000", "160000", "040000", "100600"])(
+    "rejects unsafe or unsupported donor mode %s",
+    (donorMode) => {
+      expect(() => compileRepositorySourceTransitionPlan({
+        ...validPlan(),
+        files: [{
+          path: "src/example.ts",
+          donorCommitSha: donorCommit,
+          donorBlobSha: firstBlob,
+          donorMode,
+        }],
+      })).toThrow("donor mode is invalid");
+    },
+  );
 
   test("rejects duplicate final paths", () => {
     expect(() => compileRepositorySourceTransitionPlan({
       ...validPlan(),
       files: [
-        {
-          path: "src/example.ts",
-          donorCommitSha: donorCommit,
-          donorBlobSha: firstBlob,
-        },
-        {
-          path: "src/example.ts",
-          donorCommitSha: donorCommit,
-          donorBlobSha: secondBlob,
-        },
+        transitionFile("src/example.ts", firstBlob),
+        transitionFile("src/example.ts", secondBlob),
       ],
     })).toThrow("file paths must be unique");
   });
@@ -247,6 +269,7 @@ describe("repository source transition plan", () => {
       path: "src/example.ts",
       donorCommitSha: donorCommit,
       donorBlobSha: firstBlob,
+      donorMode: "100644",
     });
     const input = Object.assign(Object.create(null), {
       ...validPlan(),
