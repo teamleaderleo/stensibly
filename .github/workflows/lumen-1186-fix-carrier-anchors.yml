@@ -1,4 +1,4 @@
-name: Lumen 1186 keep GraphQL CAS errors generic
+name: Lumen 1186 finalize bounded updateRefs carrier
 
 on:
   pull_request:
@@ -30,10 +30,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "97b61e788cf673c146c2e0494a4c6aa3e1a26105"
+          test "$(git rev-parse HEAD^)" = "9903bab097a43ccd180aab34e0d21ff8ffb1eae2"
           test "$(git rev-parse HEAD:.github/workflows/lumen-1163-updaterefs-cas-repair.yml)" = "da5a36937752762b3707c18319f3d5c80f5d6d94"
 
-      - name: Keep GraphQL execution errors generic and standards-compliant
+      - name: Keep GraphQL errors generic and bound tree inspection
         shell: bash
         run: |
           set -euo pipefail
@@ -52,12 +52,111 @@ jobs:
 
           stale_fixture = 'errors: [{ type: "STALE_REF" }],'
           generic_fixture = (
-              'errors: [{ message: "provider rejected the exact ref update", '
-              'type: "REF_UPDATE_REJECTED" }],'
+            'errors: [{ message: "provider rejected the exact ref update", '
+            'type: "REF_UPDATE_REJECTED" }],'
           )
           if text.count(stale_fixture) != 1:
-              raise SystemExit("GraphQL failure fixture anchor moved")
+            raise SystemExit("GraphQL failure fixture anchor moved")
           text = text.replace(stale_fixture, generic_fixture, 1)
+
+          old_array = '''          exact_array = '''function exactArray(
+            value: unknown,
+            label: string,
+            maximumLength: number,
+          ): unknown[] {
+            if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+            const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof lengthValue !== "number"
+              || !Number.isSafeInteger(lengthValue)
+              || lengthValue < 0
+              || lengthValue > maximumLength
+            ) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const length = lengthValue;
+            if (Object.getOwnPropertySymbols(value).length !== 0) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const result: unknown[] = [];
+            for (const key of Object.keys(descriptors)) {
+              if (key === "length") continue;
+              if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              const index = Number(key);
+              if (!Number.isSafeInteger(index) || index >= length || String(index) !== key) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+            }
+            for (let index = 0; index < length; index += 1) {
+              const descriptor = descriptors[String(index)];
+              if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          ''''''
+          new_array = '''          exact_array = '''function exactArray(
+            value: unknown,
+            label: string,
+            maximumLength: number,
+          ): unknown[] {
+            let isArray: boolean;
+            let prototype: object | null;
+            let lengthDescriptor: PropertyDescriptor | undefined;
+            try {
+              isArray = Array.isArray(value);
+              prototype = isArray && value !== null ? Object.getPrototypeOf(value) : null;
+              lengthDescriptor = isArray && value !== null
+                ? Object.getOwnPropertyDescriptor(value, "length")
+                : undefined;
+            } catch {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            if (!isArray || prototype !== Array.prototype) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+              ? lengthDescriptor.value
+              : undefined;
+            if (
+              typeof lengthValue !== "number"
+              || !Number.isSafeInteger(lengthValue)
+              || lengthValue < 0
+              || lengthValue > maximumLength
+            ) {
+              throw invalidResponse(`${label} were malformed`);
+            }
+            const result: unknown[] = [];
+            for (let index = 0; index < lengthValue; index += 1) {
+              let descriptor: PropertyDescriptor | undefined;
+              try {
+                descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+              } catch {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) {
+                throw invalidResponse(`${label} were malformed`);
+              }
+              result.push(descriptor.value);
+            }
+            return result;
+          }
+
+          ''''''
+          if text.count(old_array) != 1:
+            raise SystemExit("bounded tree array template anchor moved")
+          text = text.replace(old_array, new_array, 1)
 
           path.write_text(text)
           PY
@@ -66,7 +165,7 @@ jobs:
           git diff --cached --check
           git config user.name "Junco"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "Keep updateRefs execution errors generic"
+          git commit -m "Finalize bounded updateRefs carrier"
           git fetch origin refs/heads/lumen/1163-updaterefs-cas-repair:refs/remotes/origin/lumen/1163-updaterefs-cas-repair
           test "$(git rev-parse refs/remotes/origin/lumen/1163-updaterefs-cas-repair)" = "$EXPECTED_HEAD"
           git push --force-with-lease=refs/heads/lumen/1163-updaterefs-cas-repair:$EXPECTED_HEAD origin HEAD:refs/heads/lumen/1163-updaterefs-cas-repair
