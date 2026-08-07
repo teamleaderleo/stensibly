@@ -63,7 +63,7 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).not.toContain("inputs.issuer");
   });
 
-  test("deploys once and verifies bearer and public OAuth state on both origins", () => {
+  test("deploys once and verifies hosted API, MCP, and public OAuth state on both origins", () => {
     expect(workflow.match(/bun run worker:deploy/g)).toHaveLength(1);
     expect(workflow).toContain("https://stensibly-api.leoli-082000.workers.dev");
     expect(workflow).toContain("https://api.stensibly.com");
@@ -71,11 +71,13 @@ describe("production Worker deployment workflow", () => {
     expect(workflow.match(/bun run verify:oauth/g)).toHaveLength(2);
     expect(workflow).toContain('--expect "$OAUTH_EXPECTATION"');
     expect(workflow.match(/for attempt in 1 2 3/g)).toHaveLength(4);
+    expect(workflow).toContain("Verify Worker fallback hosted API and MCP verification");
+    expect(workflow).toContain("Verify official endpoint hosted API and MCP verification");
 
-    const finalBearer = workflow.indexOf("Verify official endpoint bearer compatibility");
+    const finalHosted = workflow.indexOf("Verify official endpoint hosted API and MCP verification");
     const firstOAuth = workflow.indexOf("Verify Worker fallback public OAuth state");
-    expect(finalBearer).toBeGreaterThan(-1);
-    expect(firstOAuth).toBeGreaterThan(finalBearer);
+    expect(finalHosted).toBeGreaterThan(-1);
+    expect(firstOAuth).toBeGreaterThan(finalHosted);
   });
 
   test("records the declared state only after every verification gate", () => {
@@ -84,7 +86,13 @@ describe("production Worker deployment workflow", () => {
     expect(officialOAuth).toBeGreaterThan(-1);
     expect(summary).toBeGreaterThan(officialOAuth);
     expect(workflow).toContain("Declared OAuth state");
-    expect(workflow).toContain("Legacy bearer verification: passed on both origins");
+    expect(workflow).toContain(
+      "Hosted API + MCP verification: passed on both origins",
+    );
+    expect(workflow).not.toContain("Legacy bearer verification: passed on both origins");
+    expect(workflow).not.toContain(
+      "Hosted API + full MCP tool-contract verification: passed on both origins",
+    );
     expect(workflow).toContain("Public auth/OAuth verification: passed on both origins");
   });
 });
