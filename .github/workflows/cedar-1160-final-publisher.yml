@@ -126,6 +126,42 @@ jobs:
           PY
           git diff --check
 
+      - name: Align undeclared parameter decoration semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('test/execution-recipe.test.ts')
+          text = path.read_text()
+          old = '''    expect(() => instantiateExecutionRecipe({
+      ...instantiation(),
+      parameters: {
+        extra: true,
+        retryFailedChecks: true,
+        sourcePacketId: "packet:42",
+      },
+    } as unknown as ReturnType<typeof instantiation>)).toThrow(
+      "Execution recipe parameters has an invalid field set",
+    );'''
+          new = '''    const baseline = instantiateExecutionRecipe(instantiation());
+    const decorated = instantiateExecutionRecipe({
+      ...instantiation(),
+      parameters: {
+        extra: true,
+        retryFailedChecks: true,
+        sourcePacketId: "packet:42",
+      },
+    } as unknown as ReturnType<typeof instantiation>);
+    expect(decorated.parameters).toEqual(baseline.parameters);
+    expect(decorated.planFingerprint).toBe(baseline.planFingerprint);'''
+          if text.count(old) != 1:
+              raise SystemExit('extra-parameter assertion moved')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+
       - name: Validate final recipe packet
         shell: bash
         run: |
