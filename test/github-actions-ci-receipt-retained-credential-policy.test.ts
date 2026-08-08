@@ -100,8 +100,10 @@ describe("GitHub Actions CI receipt shared retained credential policy", () => {
   });
 
   test("rejects realistic Stensibly credentials in repository identity", () => {
-    const input = bundle();
-    input.repository = `teamleaderleo/stn.svc_${"c".repeat(12)}`;
+    const input = {
+      ...bundle(),
+      repository: `teamleaderleo/stn.svc_${"c".repeat(12)}`,
+    };
 
     expect(() => compile(input)).toThrow("GitHub Actions repository is invalid");
   });
@@ -118,9 +120,9 @@ describe("GitHub Actions CI receipt shared retained credential policy", () => {
   });
 
   test("retains a benign Stensibly-like repository below the shared threshold", () => {
-    const input = bundle();
-    input.repository = `teamleaderleo/stn.tok_${"d".repeat(11)}`;
+    const repository = `teamleaderleo/stn.tok_${"d".repeat(11)}`;
+    const input = { ...bundle(), repository };
 
-    expect(compile(input).repository).toBe(input.repository);
+    expect(compile(input).repository).toBe(repository);
   });
 });
