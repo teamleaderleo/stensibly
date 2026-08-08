@@ -124,6 +124,44 @@ describe("Vercel AI SDK runner adapter", () => {
     expect(model.doGenerateCalls).toHaveLength(2);
   });
 
+  test("fails closed when an executable tool has no Stensibly authorization hook", async () => {
+    let executed = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () =>
+        toolCallResult("probeTool", "call-unbound", { value: "blocked" }),
+    });
+    const agent = new ToolLoopAgent({
+      id: "stensibly-tool-unbound",
+      model,
+      tools: {
+        probeTool: tool({
+          inputSchema: z.object({ value: z.string() }),
+          execute: async ({ value }) => {
+            executed += 1;
+            return value;
+          },
+        }),
+      },
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agent,
+      checkpointStore: new InMemoryCheckpointStore(),
+    });
+    await adapter.inspectCapabilities(startProbe());
+
+    const observations = await collect(adapter.start(startCommand()));
+
+    expect(executed).toBe(0);
+    expect(observations.at(-1)?.type).toBe("failure_observed");
+    expect(
+      observations.some(
+        (entry) =>
+          entry.type === "failure_observed"
+          && entry.message.includes("tool authorization is required"),
+      ),
+    ).toBe(true);
+  });
+
   test("a rejected tool authorization prevents the local tool effect", async () => {
     let executed = 0;
     const model = new MockLanguageModelV4({
@@ -163,6 +201,43 @@ describe("Vercel AI SDK runner adapter", () => {
           && entry.message.includes("tool authorization rejected"),
       ),
     ).toBe(true);
+  });
+
+  test("reports configured tools without execute functions as catalogue-only", async () => {
+    const agent = new ToolLoopAgent({
+      id: "stensibly-catalogue-only",
+      model: new MockLanguageModelV4({
+        doGenerate: async () => textResult("reply"),
+      }),
+      tools: {
+        reviewOnly: tool({
+          inputSchema: z.object({ value: z.string() }),
+          outputSchema: z.string(),
+        }),
+      },
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agent,
+      checkpointStore: new InMemoryCheckpointStore(),
+    });
+    const capabilityProbe = parseRunnerCapabilityProbeV1({
+      ...startProbe(),
+      probeId: "probe-catalogue-only",
+      requiredCapabilities: [{ class: "host_dynamic", id: "reviewOnly" }],
+    });
+
+    const snapshot = await adapter.inspectCapabilities(capabilityProbe);
+
+    expect(
+      snapshot.classes.host_dynamic.catalogueCapabilities.map((entry) => entry.id),
+    ).toEqual(["reviewOnly"]);
+    expect(snapshot.classes.host_dynamic.executableCapabilities).toEqual([]);
+    expect(snapshot.missingRequiredCapabilities).toEqual([
+      { class: "host_dynamic", id: "reviewOnly" },
+    ]);
+    expect(snapshot.catalogueOnlyRequiredCapabilities).toEqual([
+      { class: "host_dynamic", id: "reviewOnly" },
+    ]);
   });
 
   test("pins the adapter profile to the reviewed AI SDK package version", () => {
