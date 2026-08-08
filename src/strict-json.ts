@@ -348,7 +348,7 @@ export function parseStrictJson(
   if (typeof text !== "string") {
     fail(settings, "INVALID_JSON", "JSON input must be a string.");
   }
-  if (Buffer.byteLength(text, "utf8") > settings.maxBytes) {
+  if (new TextEncoder().encode(text).byteLength > settings.maxBytes) {
     fail(
       settings,
       "TOO_LARGE",
