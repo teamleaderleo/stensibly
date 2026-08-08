@@ -4,6 +4,100 @@
 **Source:** direct operator instruction, 2026-07-29  
 **Scope:** `teamleaderleo/stensibly` and its operator-controlled hosted environments
 
+```stensibly
+{
+  "version": 1,
+  "project": "stensibly",
+  "repositories": [
+    "teamleaderleo/stensibly"
+  ],
+  "runnerProfiles": [
+    "codex-default"
+  ],
+  "concurrency": {
+    "project": 8,
+    "global": 8
+  },
+  "autonomousActions": [
+    "inspect",
+    "propose",
+    "record_progress",
+    "attach_artifact",
+    "create_branch",
+    "commit",
+    "push",
+    "create_draft_pr",
+    "review",
+    "merge",
+    "deploy",
+    "configure_internal_dogfood",
+    "oauth_journey",
+    "bounded_test_write",
+    "provider_read",
+    "provider_write",
+    "fix_forward",
+    "rollback"
+  ],
+  "approvalRequired": [
+    "material_spend",
+    "external_publication",
+    "external_contact",
+    "access_widening",
+    "secret_exposure",
+    "destructive_non_test_data",
+    "irreversible_migration",
+    "legal_effect",
+    "financial_effect"
+  ],
+  "checks": [
+    "bun run typecheck",
+    "bun run test",
+    "bun run test:convex",
+    "bun run worker:check"
+  ],
+  "tags": [
+    "internal-dogfood",
+    "convex",
+    "cloudflare",
+    "mcp",
+    "github"
+  ],
+  "relatedProjects": []
+}
+```
+
+## Goal
+
+Deliver Stensibly as the durable coordination and product layer for a one-person,
+many-agent studio, and finish W01 through a real hosted ChatGPT OAuth
+read/write/refresh/reconnect journey.
+
+## Boundaries
+
+Keep autonomous work inside `teamleaderleo/stensibly` and its operator-controlled
+internal-dogfood environments. The standing grant covers reviewed, reversible
+repository, deployment, configuration, OAuth, provider, and bounded test-data work.
+Fresh operator approval remains required for material spend, external publication or
+contact, access widening beyond the operator and participating agents, secret
+exposure, destructive non-test data changes, irreversible migrations without
+recovery, and legal or financial effects outside the project.
+
+## Evidence and handoff expectations
+
+Record exact commits, pull requests, checks, deployments, Worker version IDs,
+provider receipts, live dogfood results, failures, recovery points, and the next
+executable action. Outcomes and verification must survive the chat that produced
+them; do not stop at a proposal or pull request while an authorised completion step
+remains.
+
+## Escalation
+
+Escalate only when the next necessary effect crosses the standing internal-dogfood
+grant, when a destructive or irreversible consequence lacks recovery, when protected
+credentials cannot remain inside their execution surface, or when an operator choice
+would materially change the product direction. Concrete failures inside the grant
+should be diagnosed and fixed forward or rolled back with durable evidence.
+
 ## Project context
 
 Stensibly is currently an internal one-person, many-agent studio. It has no external
