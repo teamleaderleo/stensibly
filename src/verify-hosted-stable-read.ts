@@ -1,13 +1,9 @@
-import { readFileSync } from "node:fs";
 import {
-  MCP_TOOL_COUNT_HEADER,
-  MCP_TOOL_MANIFEST_FINGERPRINT,
-  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
-} from "./mcp-diagnostics.js";
-import {
-  createMcpReleaseManifest,
-  type McpToolContract,
-} from "./mcp-release-manifest.js";
+  PROCESSING_STAGE_HEADER,
+  WORKER_VERSION_CREATED_AT_HEADER,
+  WORKER_VERSION_ID_HEADER,
+  WORKER_VERSION_TAG_HEADER,
+} from "./worker-observability.js";
 import { parseStrictJson } from "./strict-json.js";
 import {
   redactSecrets,
@@ -18,12 +14,14 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
+const MAXIMUM_SURVEY_TEXT_BYTES = 512 * 1024;
 const MAXIMUM_RESPONSE_CHUNKS = 4096;
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const DIAGNOSTIC_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
-const SNAPSHOT_PATH = new URL("../docs/chatgpt-app-actions.json", import.meta.url);
-const RESPONSE_METADATA_ERROR = "MCP tools/list response metadata was unavailable";
+const RESPONSE_BYTE_LIMIT = Symbol("response-byte-limit");
+const RESPONSE_METADATA_ERROR = "MCP survey_workspace response metadata was unavailable";
 const responseStatusGetter = Object.getOwnPropertyDescriptor(
   Response.prototype,
   "status",
@@ -34,18 +32,12 @@ const responseHeadersGetter = Object.getOwnPropertyDescriptor(
 )?.get;
 const headersGet = Headers.prototype.get;
 
-interface ChatGptAppContractSnapshot {
-  snapshotVersion: number;
-  toolCount: number;
-  toolContractFingerprint: string;
-}
-
 interface ResponseMetadata {
   status: number;
   headers: Headers;
 }
 
-export async function verifyHostedToolContract(
+export async function verifyHostedStableRead(
   options: VerifyHostedOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<CheckResult> {
@@ -55,7 +47,6 @@ export async function verifyHostedToolContract(
       throw new Error("timeoutMs must be an integer between 100 and 60000");
     }
 
-    const snapshot = readSnapshot();
     const response = await request(fetchImpl, new URL("/mcp", `${options.endpoint}/`), {
       method: "POST",
       headers: {
@@ -69,9 +60,16 @@ export async function verifyHostedToolContract(
       redirect: "error",
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 2,
-        method: "tools/list",
-        params: {},
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "survey_workspace",
+          arguments: {
+            ...(options.project ? { project: options.project } : {}),
+            limit: 1,
+            expiringWithinSeconds: 900,
+          },
+        },
       }),
     }, timeoutMs);
     let metadata: ResponseMetadata;
@@ -86,136 +84,102 @@ export async function verifyHostedToolContract(
     }
     expectStatus(metadata, 200);
     const body = await readBoundedJson(response, metadata, timeoutMs);
-    const tools = readToolsListTools(metadata, body);
-
-    const contracts = tools.map((tool, index) => readToolContract(tool, index));
-    const manifest = compileManifest(metadata, contracts);
-    if (manifest.tools.length !== snapshot.toolCount) {
-      throw responseError(
-        metadata,
-        `Expected ChatGPT tool count ${snapshot.toolCount}; received ${manifest.tools.length}`,
-      );
-    }
-    if (manifest.digest !== snapshot.toolContractFingerprint) {
-      throw responseError(
-        metadata,
-        `Expected ChatGPT tool contract ${snapshot.toolContractFingerprint}; received ${manifest.digest}`,
-      );
-    }
-
-    const coarseFingerprint = readHeader(
-      metadata,
-      MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
-    )?.trim();
-    if (coarseFingerprint !== MCP_TOOL_MANIFEST_FINGERPRINT) {
-      throw responseError(
-        metadata,
-        `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${MCP_TOOL_MANIFEST_FINGERPRINT}; received ${coarseFingerprint || "missing"}`,
-      );
-    }
-    const count = readHeader(metadata, MCP_TOOL_COUNT_HEADER)?.trim();
-    if (count !== String(snapshot.toolCount)) {
-      throw responseError(
-        metadata,
-        `Expected ${MCP_TOOL_COUNT_HEADER}=${snapshot.toolCount}; received ${count || "missing"}`,
-      );
-    }
+    const receipt = requireWorkerReceipt(metadata);
+    const survey = readSurvey(body, options.project);
 
     return {
-      name: "remote MCP tool contract",
+      name: "remote MCP stable read",
       ok: true,
-      detail: `200 tools=${snapshot.toolCount} snapshot=v${snapshot.snapshotVersion} contract=${manifest.digest}`,
+      detail: [
+        "200",
+        `survey=${survey.fingerprint}`,
+        `items=${survey.total}`,
+        ...(options.project ? [`project=${options.project}`] : []),
+        `workerVersion=${receipt.workerVersionId}`,
+        `requestId=${receipt.requestId}`,
+      ].join(" "),
     };
   } catch (error) {
     return {
-      name: "remote MCP tool contract",
+      name: "remote MCP stable read",
       ok: false,
       detail: redactSecrets(error, options.token),
     };
   }
 }
 
-function readSnapshot(): ChatGptAppContractSnapshot {
+function readSurvey(
+  body: unknown,
+  expectedProject: string | undefined,
+): Readonly<{ fingerprint: string; total: number }> {
+  if (
+    !isRecord(body)
+    || body.jsonrpc !== "2.0"
+    || body.id !== 3
+    || body.error !== undefined
+  ) {
+    throw new Error("MCP survey_workspace returned an invalid JSON-RPC envelope");
+  }
+  const result = isRecord(body.result) ? body.result : null;
+  if (
+    !result
+    || (result.isError !== undefined && result.isError !== false)
+    || !Array.isArray(result.content)
+  ) {
+    throw new Error("Expected a successful MCP survey_workspace result");
+  }
+  if (result.content.length !== 1 || !isRecord(result.content[0])) {
+    throw new Error("MCP survey_workspace returned an invalid content envelope");
+  }
+  const block = result.content[0];
+  if (block.type !== "text" || typeof block.text !== "string") {
+    throw new Error("MCP survey_workspace returned an invalid text result");
+  }
+  if (Buffer.byteLength(block.text, "utf8") > MAXIMUM_SURVEY_TEXT_BYTES) {
+    throw new Error("MCP survey_workspace text exceeded 512 KiB");
+  }
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8")) as unknown;
+    parsed = parseStrictJson(block.text, {
+      maxBytes: MAXIMUM_SURVEY_TEXT_BYTES,
+      maxDepth: 128,
+      maxStringLength: MAXIMUM_SURVEY_TEXT_BYTES,
+      maxObjectKeys: 100_000,
+      maxArrayLength: 100_000,
+      prefix: "MCP_SURVEY_JSON",
+    });
   } catch {
-    throw new Error("ChatGPT app action snapshot is unreadable");
+    throw new Error("MCP survey_workspace returned invalid JSON text");
   }
-  if (!isRecord(parsed)) {
-    throw new Error("ChatGPT app action snapshot is invalid");
+  if (!isRecord(parsed) || parsed.version !== 1) {
+    throw new Error("MCP survey_workspace returned an invalid survey version");
   }
-
-  const snapshotVersion = parsed.snapshotVersion;
-  const toolCount = parsed.toolCount;
-  const toolContractFingerprint = parsed.toolContractFingerprint;
-  if (!Number.isInteger(snapshotVersion) || (snapshotVersion as number) < 1) {
-    throw new Error("ChatGPT app action snapshot version is invalid");
+  if (typeof parsed.generatedAt !== "string" || !isCanonicalTimestamp(parsed.generatedAt)) {
+    throw new Error("MCP survey_workspace returned an invalid generated time");
   }
-  if (!Number.isInteger(toolCount) || (toolCount as number) < 0) {
-    throw new Error("ChatGPT app action snapshot tool count is invalid");
+  if (typeof parsed.fingerprint !== "string" || !SHA256_PATTERN.test(parsed.fingerprint)) {
+    throw new Error("MCP survey_workspace returned an invalid fingerprint");
   }
-  if (typeof toolContractFingerprint !== "string" || !SHA256_PATTERN.test(toolContractFingerprint)) {
-    throw new Error("ChatGPT app action snapshot contract fingerprint is invalid");
+  if (!isRecord(parsed.scope)) {
+    throw new Error("MCP survey_workspace returned an invalid scope");
   }
-
-  return {
-    snapshotVersion: snapshotVersion as number,
-    toolCount: toolCount as number,
-    toolContractFingerprint,
-  };
-}
-
-function readToolsListTools(metadata: ResponseMetadata, value: unknown): unknown[] {
-  if (
-    !isRecord(value)
-    || value.jsonrpc !== "2.0"
-    || value.id !== 2
-    || value.error !== undefined
-    || !isRecord(value.result)
-    || !Array.isArray(value.result.tools)
-  ) {
-    throw responseError(
-      metadata,
-      "Expected matching MCP tools/list JSON-RPC response",
-    );
+  const project = parsed.scope.project;
+  if (project !== (expectedProject ?? null)) {
+    throw new Error("MCP survey_workspace scope did not match the requested project");
   }
-  return value.result.tools;
-}
-
-function readToolContract(value: unknown, index: number): McpToolContract {
-  if (!isRecord(value)) {
-    throw new Error(`MCP tools/list tool ${index + 1} is invalid`);
+  if (!isRecord(parsed.counts)) {
+    throw new Error("MCP survey_workspace returned invalid counts");
   }
-  if (typeof value.name !== "string") {
-    throw new Error(`MCP tools/list tool ${index + 1} has an invalid name`);
-  }
-  if (!isRecord(value.inputSchema)) {
-    throw new Error(`MCP tools/list tool ${index + 1} has an invalid input schema`);
-  }
-  if (value.description !== undefined && typeof value.description !== "string") {
-    throw new Error(`MCP tools/list tool ${index + 1} has an invalid description`);
-  }
-  if (value.annotations !== undefined && !isRecord(value.annotations)) {
-    throw new Error(`MCP tools/list tool ${index + 1} has invalid annotations`);
+  const total = parsed.counts.total;
+  if (!Number.isSafeInteger(total) || (total as number) < 0) {
+    throw new Error("MCP survey_workspace returned an invalid total count");
   }
 
-  return {
-    name: value.name,
-    ...(value.description === undefined ? {} : { description: value.description as string }),
-    ...(value.annotations === undefined
-      ? {}
-      : { annotations: value.annotations as Record<string, unknown> }),
-    inputSchema: value.inputSchema,
-  };
-}
-
-function compileManifest(metadata: ResponseMetadata, contracts: McpToolContract[]) {
-  try {
-    return createMcpReleaseManifest(contracts);
-  } catch {
-    throw responseError(metadata, "MCP tools/list contract is invalid");
-  }
+  return Object.freeze({
+    fingerprint: parsed.fingerprint,
+    total: total as number,
+  });
 }
 
 async function request(
@@ -229,10 +193,8 @@ async function request(
   try {
     return await fetchImpl(input, { ...init, signal: controller.signal });
   } catch {
-    if (controller.signal.aborted) {
-      throw timeoutError(timeoutMs);
-    }
-    throw new Error("MCP tools/list request failed");
+    if (controller.signal.aborted) throw timeoutError(timeoutMs);
+    throw new Error("MCP survey_workspace request failed");
   } finally {
     clearTimeout(timer);
   }
@@ -289,13 +251,13 @@ async function readBoundedJson(
   }
   if (declaredLength !== null && declaredLength > MAXIMUM_RESPONSE_BYTES) {
     void cancelResponseBody(response);
-    throw new Error("MCP tools/list response exceeded 1 MiB");
+    throw new Error("MCP survey_workspace response exceeded 1 MiB");
   }
 
   const reader = acquireResponseReader(response);
   if (!reader) {
     if (declaredLength !== null && declaredLength !== 0) {
-      throw new Error("MCP tools/list response length did not match its declaration");
+      throw new Error("MCP survey_workspace response length did not match its declaration");
     }
     return null;
   }
@@ -304,17 +266,15 @@ async function readBoundedJson(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  let deliveredChunks = 0;
+  let chunkCount = 0;
   try {
     while (true) {
       const result = await readWithDeadline(reader, controller.signal, timeoutMs);
       if (result.done) break;
-      deliveredChunks += 1;
-      if (deliveredChunks > MAXIMUM_RESPONSE_CHUNKS) {
+      chunkCount += 1;
+      if (chunkCount > MAXIMUM_RESPONSE_CHUNKS) {
         void cancelReader(reader);
-        throw new Error(
-          `MCP tools/list response exceeded ${MAXIMUM_RESPONSE_CHUNKS} chunks`,
-        );
+        throw new Error("MCP survey_workspace response exceeded 4096 chunks");
       }
       let detached: Uint8Array;
       try {
@@ -335,7 +295,7 @@ async function readBoundedJson(
   }
 
   if (declaredLength !== null && declaredLength !== totalBytes) {
-    throw new Error("MCP tools/list response length did not match its declaration");
+    throw new Error("MCP survey_workspace response length did not match its declaration");
   }
   if (totalBytes === 0) return null;
 
@@ -350,7 +310,7 @@ async function readBoundedJson(
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new Error("MCP tools/list returned invalid UTF-8");
+    throw new Error("MCP survey_workspace returned invalid UTF-8");
   }
   try {
     return parseStrictJson(text, {
@@ -359,10 +319,10 @@ async function readBoundedJson(
       maxStringLength: MAXIMUM_RESPONSE_BYTES,
       maxObjectKeys: 100_000,
       maxArrayLength: 100_000,
-      prefix: "MCP_TOOL_CONTRACT_JSON",
+      prefix: "MCP_SURVEY_ENVELOPE_JSON",
     });
   } catch {
-    throw new Error("MCP tools/list returned invalid JSON");
+    throw new Error("MCP survey_workspace returned invalid JSON");
   }
 }
 
@@ -373,17 +333,15 @@ function acquireResponseReader(
   try {
     body = response.body;
   } catch {
-    throw new Error("MCP tools/list response body could not be inspected");
+    throw new Error("MCP survey_workspace response stream was unavailable");
   }
   if (!body) return null;
   try {
     return ReadableStream.prototype.getReader.call(body) as ReadableStreamDefaultReader<Uint8Array>;
   } catch {
-    throw new Error("MCP tools/list response body could not be inspected");
+    throw new Error("MCP survey_workspace response stream was unavailable");
   }
 }
-
-const RESPONSE_BYTE_LIMIT = Symbol("response-byte-limit");
 
 function detachResponseChunk(
   value: unknown,
@@ -397,9 +355,9 @@ function detachResponseChunk(
     });
   } catch (error) {
     if (error === RESPONSE_BYTE_LIMIT) {
-      throw new Error("MCP tools/list response exceeded 1 MiB");
+      throw new Error("MCP survey_workspace response exceeded 1 MiB");
     }
-    throw new Error("MCP tools/list returned an invalid byte stream");
+    throw new Error("MCP survey_workspace returned an invalid byte stream");
   }
   return new Uint8Array(bytes);
 }
@@ -427,7 +385,7 @@ async function readWithDeadline(
       readFromReader(reader).catch(() => {
         void cancelReader(reader);
         if (signal.aborted) throw timeoutError(timeoutMs);
-        throw new Error("MCP tools/list response stream failed");
+        throw new Error("MCP survey_workspace response stream failed");
       }),
       aborted,
     ]);
@@ -444,7 +402,7 @@ function readFromReader(
       ReadableStreamReadResult<Uint8Array>
     >;
   } catch {
-    return Promise.reject(new Error("MCP tools/list response stream failed"));
+    return Promise.reject(new Error("MCP survey_workspace response stream failed"));
   }
 }
 
@@ -456,38 +414,34 @@ function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): voi
   }
 }
 
-function timeoutError(timeoutMs: number): Error {
-  return new Error(`Request timed out after ${timeoutMs}ms`);
-}
+function requireWorkerReceipt(metadata: ResponseMetadata): Readonly<{
+  workerVersionId: string;
+  requestId: string;
+}> {
+  const stage = readHeader(metadata, PROCESSING_STAGE_HEADER)?.trim();
+  if (stage !== "response_produced") {
+    throw responseError(
+      metadata,
+      `Expected ${PROCESSING_STAGE_HEADER}=response_produced`,
+    );
+  }
 
-function admitContentLength(value: string | null): number | null {
-  if (value === null) return null;
-  if (!/^(?:0|[1-9][0-9]*)$/.test(value)) {
-    throw new Error("MCP tools/list returned an invalid Content-Length");
+  const workerVersionId = readHeader(metadata, WORKER_VERSION_ID_HEADER)?.trim();
+  if (!workerVersionId || !DIAGNOSTIC_VALUE_PATTERN.test(workerVersionId)) {
+    throw responseError(metadata, `Expected a bounded ${WORKER_VERSION_ID_HEADER}`);
   }
-  const length = Number(value);
-  if (!Number.isSafeInteger(length)) {
-    throw new Error("MCP tools/list returned an invalid Content-Length");
+  for (const header of [WORKER_VERSION_TAG_HEADER, WORKER_VERSION_CREATED_AT_HEADER]) {
+    const value = readHeader(metadata, header)?.trim();
+    if (value && !DIAGNOSTIC_VALUE_PATTERN.test(value)) {
+      throw responseError(metadata, `Received malformed ${header}`);
+    }
   }
-  return length;
-}
 
-async function cancelResponseBody(response: Response): Promise<void> {
-  try {
-    const body = response.body;
-    if (!body || body.locked) return;
-    await body.cancel();
-  } catch {
-    // Cancellation is best-effort after a fixed verifier decision.
+  const requestId = readHeader(metadata, "x-request-id")?.trim();
+  if (!requestId || !REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error("Expected a bounded x-request-id on MCP survey_workspace");
   }
-}
-
-async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
-  try {
-    await ReadableStreamDefaultReader.prototype.cancel.call(reader);
-  } catch {
-    // Cancellation is best-effort after a fixed verifier decision.
-  }
+  return Object.freeze({ workerVersionId, requestId });
 }
 
 function expectStatus(metadata: ResponseMetadata, expected: number): void {
@@ -506,6 +460,48 @@ function responseError(metadata: ResponseMetadata, message: string): Error {
       ? `${message}; requestId=${requestId}`
       : message,
   );
+}
+
+function admitContentLength(value: string | null): number | null {
+  if (value === null) return null;
+  if (!/^(?:0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error("MCP survey_workspace returned an invalid Content-Length");
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length)) {
+    throw new Error("MCP survey_workspace returned an invalid Content-Length");
+  }
+  return length;
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+
+function timeoutError(timeoutMs: number): Error {
+  return new Error(`Request timed out after ${timeoutMs}ms`);
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    const body = response.body;
+    if (!body || body.locked) return;
+    await body.cancel();
+  } catch {
+    // Cancellation is best-effort after a fixed verifier decision.
+  }
+}
+
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await ReadableStreamDefaultReader.prototype.cancel.call(reader);
+  } catch {
+    // Cancellation is best-effort after a fixed verifier decision.
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
