@@ -21,6 +21,21 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DIAGNOSTIC_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const RESPONSE_BYTE_LIMIT = Symbol("response-byte-limit");
+const RESPONSE_METADATA_ERROR = "MCP survey_workspace response metadata was unavailable";
+const responseStatusGetter = Object.getOwnPropertyDescriptor(
+  Response.prototype,
+  "status",
+)?.get;
+const responseHeadersGetter = Object.getOwnPropertyDescriptor(
+  Response.prototype,
+  "headers",
+)?.get;
+const headersGet = Headers.prototype.get;
+
+interface ResponseMetadata {
+  status: number;
+  headers: Headers;
+}
 
 export async function verifyHostedStableRead(
   options: VerifyHostedOptions,
@@ -57,12 +72,19 @@ export async function verifyHostedStableRead(
         },
       }),
     }, timeoutMs);
-    if (response.status !== 200) {
+    let metadata: ResponseMetadata;
+    try {
+      metadata = readResponseMetadata(response);
+    } catch (error) {
+      void cancelResponseBody(response);
+      throw error;
+    }
+    if (metadata.status !== 200) {
       void cancelResponseBody(response);
     }
-    expectStatus(response, 200);
-    const body = await readBoundedJson(response, timeoutMs);
-    const receipt = requireWorkerReceipt(response);
+    expectStatus(metadata, 200);
+    const body = await readBoundedJson(response, metadata, timeoutMs);
+    const receipt = requireWorkerReceipt(metadata);
     const survey = readSurvey(body, options.project);
 
     return {
@@ -178,10 +200,51 @@ async function request(
   }
 }
 
-async function readBoundedJson(response: Response, timeoutMs: number): Promise<unknown> {
+function readResponseMetadata(response: Response): ResponseMetadata {
+  try {
+    const statusDescriptor = Object.getOwnPropertyDescriptor(response, "status");
+    const headersDescriptor = Object.getOwnPropertyDescriptor(response, "headers");
+    const status = statusDescriptor === undefined
+      ? responseStatusGetter?.call(response)
+      : "value" in statusDescriptor
+      ? statusDescriptor.value
+      : undefined;
+    const headers = headersDescriptor === undefined
+      ? responseHeadersGetter?.call(response)
+      : "value" in headersDescriptor
+      ? headersDescriptor.value
+      : undefined;
+    if (
+      !Number.isInteger(status)
+      || (status as number) < 0
+      || (status as number) > 999
+      || !headers
+    ) {
+      throw new Error(RESPONSE_METADATA_ERROR);
+    }
+    headersGet.call(headers, "x-stensibly-metadata-probe");
+    return { status: status as number, headers: headers as Headers };
+  } catch {
+    throw new Error(RESPONSE_METADATA_ERROR);
+  }
+}
+
+function readHeader(metadata: ResponseMetadata, name: string): string | null {
+  try {
+    return headersGet.call(metadata.headers, name);
+  } catch {
+    throw new Error(RESPONSE_METADATA_ERROR);
+  }
+}
+
+async function readBoundedJson(
+  response: Response,
+  metadata: ResponseMetadata,
+  timeoutMs: number,
+): Promise<unknown> {
   let declaredLength: number | null;
   try {
-    declaredLength = admitContentLength(response.headers.get("content-length"));
+    declaredLength = admitContentLength(readHeader(metadata, "content-length"));
   } catch (error) {
     void cancelResponseBody(response);
     throw error;
@@ -351,47 +414,47 @@ function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): voi
   }
 }
 
-function requireWorkerReceipt(response: Response): Readonly<{
+function requireWorkerReceipt(metadata: ResponseMetadata): Readonly<{
   workerVersionId: string;
   requestId: string;
 }> {
-  const stage = response.headers.get(PROCESSING_STAGE_HEADER)?.trim();
+  const stage = readHeader(metadata, PROCESSING_STAGE_HEADER)?.trim();
   if (stage !== "response_produced") {
     throw responseError(
-      response,
+      metadata,
       `Expected ${PROCESSING_STAGE_HEADER}=response_produced`,
     );
   }
 
-  const workerVersionId = response.headers.get(WORKER_VERSION_ID_HEADER)?.trim();
+  const workerVersionId = readHeader(metadata, WORKER_VERSION_ID_HEADER)?.trim();
   if (!workerVersionId || !DIAGNOSTIC_VALUE_PATTERN.test(workerVersionId)) {
-    throw responseError(response, `Expected a bounded ${WORKER_VERSION_ID_HEADER}`);
+    throw responseError(metadata, `Expected a bounded ${WORKER_VERSION_ID_HEADER}`);
   }
   for (const header of [WORKER_VERSION_TAG_HEADER, WORKER_VERSION_CREATED_AT_HEADER]) {
-    const value = response.headers.get(header)?.trim();
+    const value = readHeader(metadata, header)?.trim();
     if (value && !DIAGNOSTIC_VALUE_PATTERN.test(value)) {
-      throw responseError(response, `Received malformed ${header}`);
+      throw responseError(metadata, `Received malformed ${header}`);
     }
   }
 
-  const requestId = response.headers.get("x-request-id")?.trim();
+  const requestId = readHeader(metadata, "x-request-id")?.trim();
   if (!requestId || !REQUEST_ID_PATTERN.test(requestId)) {
     throw new Error("Expected a bounded x-request-id on MCP survey_workspace");
   }
   return Object.freeze({ workerVersionId, requestId });
 }
 
-function expectStatus(response: Response, expected: number): void {
-  if (response.status !== expected) {
+function expectStatus(metadata: ResponseMetadata, expected: number): void {
+  if (metadata.status !== expected) {
     throw responseError(
-      response,
-      `Expected HTTP ${expected}; received HTTP ${response.status}`,
+      metadata,
+      `Expected HTTP ${expected}; received HTTP ${metadata.status}`,
     );
   }
 }
 
-function responseError(response: Response, message: string): Error {
-  const requestId = response.headers.get("x-request-id")?.trim();
+function responseError(metadata: ResponseMetadata, message: string): Error {
+  const requestId = readHeader(metadata, "x-request-id")?.trim();
   return new Error(
     requestId && REQUEST_ID_PATTERN.test(requestId)
       ? `${message}; requestId=${requestId}`
