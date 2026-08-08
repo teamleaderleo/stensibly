@@ -22,6 +22,12 @@ export interface AuthorizationPrincipal {
 
 export interface TokenPrincipal extends AuthorizationPrincipal {
   tokenId: string;
+  /** Stable authorization identity when the presented credential rotates. */
+  authorizationId?: string;
+}
+
+export function principalAuthorizationId(principal: TokenPrincipal): string {
+  return principal.authorizationId ?? principal.tokenId;
 }
 
 export function principalHasScope(

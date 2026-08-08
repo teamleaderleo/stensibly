@@ -16,6 +16,7 @@ import type { WorkLedger } from "./ledger.js";
 import type { McpRequestContext } from "./mcp-context.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import {
+  principalAuthorizationId,
   principalCanAccessProject,
   principalHasScope,
 } from "./token-contracts.js";
@@ -301,7 +302,7 @@ function delegatedPrincipal(
       "Guarded GitHub delegated reads are outside this principal's project scope",
     );
   }
-  const actorId = `api-token:${principal.tokenId}`;
+  const actorId = `api-token:${principalAuthorizationId(principal)}`;
   return { actorId, clientId: `mcp:${actorId}` };
 }
 

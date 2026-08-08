@@ -71,8 +71,16 @@ export async function verifyAccessToken(
   const scopes = parseAccessScopes(payload.scope);
   const projects = parseProjectsClaim(payload.projects);
   if (!scopes || projects === undefined) return null;
+  const authorizationId = `oauth_grant_${await sha256Base64Url(JSON.stringify({
+    issuer: options.issuer,
+    resource: options.resource,
+    workspace: options.workspace,
+    accountId: payload.sub,
+    clientId: payload.client_id,
+  }))}`;
   return {
     tokenId: payload.jti,
+    authorizationId,
     name: payload.name,
     scopes,
     projects,
