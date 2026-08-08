@@ -365,12 +365,15 @@ function requireInputObject(value: unknown, budget: SnapshotBudget): void {
     throw new TypeError("Project delta input inspection failed");
   }
   noteObject(budget, "Project delta input inspection exceeded its limit");
+  let isArray: boolean;
+  let prototype: object | null;
   try {
-    if (Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
-      throw new TypeError("Project delta input inspection failed");
-    }
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta input inspection failed")) throw error;
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError("Project delta input inspection failed");
+  }
+  if (isArray || prototype !== Object.prototype) {
     throw new TypeError("Project delta input inspection failed");
   }
 }
@@ -380,12 +383,15 @@ function requireInputArray(value: unknown, budget: SnapshotBudget): void {
     throw new TypeError("Project delta input inspection failed");
   }
   noteObject(budget, "Project delta input inspection exceeded its limit");
+  let isArray: boolean;
+  let prototype: object | null;
   try {
-    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
-      throw new TypeError("Project delta input inspection failed");
-    }
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta input inspection failed")) throw error;
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError("Project delta input inspection failed");
+  }
+  if (!isArray || prototype !== Array.prototype) {
     throw new TypeError("Project delta input inspection failed");
   }
 }
@@ -395,12 +401,15 @@ function requireBriefObject(value: unknown, budget: SnapshotBudget): void {
     throw new TypeError("Project delta brief inspection failed");
   }
   noteObject(budget, "Project delta brief inspection exceeded its limit");
+  let isArray: boolean;
+  let prototype: object | null;
   try {
-    if (Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
-      throw new TypeError("Project delta brief inspection failed");
-    }
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta brief inspection failed")) throw error;
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  if (isArray || prototype !== Object.prototype) {
     throw new TypeError("Project delta brief inspection failed");
   }
 }
@@ -410,12 +419,15 @@ function requireBriefArray(value: unknown, budget: SnapshotBudget): void {
     throw new TypeError("Project delta brief inspection failed");
   }
   noteObject(budget, "Project delta brief inspection exceeded its limit");
+  let isArray: boolean;
+  let prototype: object | null;
   try {
-    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
-      throw new TypeError("Project delta brief inspection failed");
-    }
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta brief inspection failed")) throw error;
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  if (!isArray || prototype !== Array.prototype) {
     throw new TypeError("Project delta brief inspection failed");
   }
 }
@@ -426,106 +438,85 @@ function noteObject(budget: SnapshotBudget, message: string): void {
 }
 
 function inputEnvelopeValue(value: object, key: string): unknown {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor) throw new TypeError("Project delta input inspection failed");
-    if (!("value" in descriptor) || !descriptor.enumerable) {
-      throw new TypeError(
-        "Project delta input fields must be enumerable data properties",
-      );
-    }
-    return descriptor.value;
-  } catch (error) {
-    if (
-      isFixedInspectionError(error, "Project delta input inspection failed")
-      || isFixedInspectionError(
-        error,
-        "Project delta input fields must be enumerable data properties",
-      )
-    ) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
     throw new TypeError("Project delta input inspection failed");
   }
+  if (!descriptor) throw new TypeError("Project delta input inspection failed");
+  if (!("value" in descriptor) || !descriptor.enumerable) {
+    throw new TypeError(
+      "Project delta input fields must be enumerable data properties",
+    );
+  }
+  return descriptor.value;
 }
 
 function inputArrayLength(value: unknown[]): number {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, "length");
-    if (
-      !descriptor
-      || !("value" in descriptor)
-      || descriptor.enumerable
-      || !Number.isSafeInteger(descriptor.value)
-      || descriptor.value < 0
-    ) {
-      throw new TypeError("Project delta input inspection failed");
-    }
-    return descriptor.value as number;
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta input inspection failed")) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
     throw new TypeError("Project delta input inspection failed");
   }
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || descriptor.enumerable
+    || !Number.isSafeInteger(descriptor.value)
+    || descriptor.value < 0
+  ) {
+    throw new TypeError("Project delta input inspection failed");
+  }
+  return descriptor.value as number;
 }
 
 function inputDataDescriptorValue(value: object, key: PropertyKey): unknown {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
-      throw new TypeError(
-        "Project delta input fields must be enumerable data properties",
-      );
-    }
-    return descriptor.value;
-  } catch (error) {
-    if (
-      isFixedInspectionError(
-        error,
-        "Project delta input fields must be enumerable data properties",
-      )
-    ) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
     throw new TypeError("Project delta input inspection failed");
   }
+  if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+    throw new TypeError(
+      "Project delta input fields must be enumerable data properties",
+    );
+  }
+  return descriptor.value;
 }
 
 function briefArrayLength(value: unknown[]): number {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, "length");
-    if (
-      !descriptor
-      || !("value" in descriptor)
-      || descriptor.enumerable
-      || !Number.isSafeInteger(descriptor.value)
-      || descriptor.value < 0
-    ) {
-      throw new TypeError("Project delta brief inspection failed");
-    }
-    return descriptor.value as number;
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta brief inspection failed")) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
     throw new TypeError("Project delta brief inspection failed");
   }
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || descriptor.enumerable
+    || !Number.isSafeInteger(descriptor.value)
+    || descriptor.value < 0
+  ) {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  return descriptor.value as number;
 }
 
 function briefDataDescriptorValue(value: object, key: PropertyKey): unknown {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
-      throw new TypeError("Project delta brief inspection failed");
-    }
-    return descriptor.value;
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta brief inspection failed")) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
     throw new TypeError("Project delta brief inspection failed");
   }
+  if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  return descriptor.value;
 }
 
 function assertRetainedCredentialFree(value: unknown): void {
@@ -592,20 +583,14 @@ function inspectObject(value: object, message: string): {
 }
 
 function outputDataDescriptorValue(value: object, key: PropertyKey): unknown {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
-      throw new TypeError("Project delta brief inspection failed");
-    }
-    return descriptor.value;
-  } catch (error) {
-    if (isFixedInspectionError(error, "Project delta brief inspection failed")) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
     throw new TypeError("Project delta brief inspection failed");
   }
-}
-
-function isFixedInspectionError(error: unknown, message: string): error is TypeError {
-  return error instanceof TypeError && error.message === message;
+  if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+    throw new TypeError("Project delta brief inspection failed");
+  }
+  return descriptor.value;
 }
