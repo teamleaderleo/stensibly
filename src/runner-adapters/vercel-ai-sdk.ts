@@ -30,13 +30,20 @@ export const VERCEL_AI_SDK_ADAPTER_VERSION = "0.1.0";
 export const VERCEL_AI_SDK_PROFILE_ID = "tool-loop-agent";
 export const VERCEL_AI_SDK_PROFILE_VERSION = `ai@${VERCEL_AI_SDK_PACKAGE_VERSION}`;
 
+const credentialShapedTextPattern =
+  /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/giu;
+const unsafeTextPattern =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/gu;
+
 type AnyAgent = Agent<never, any, any, any>;
 
 export interface VercelAISDKCheckpointRecordV1 {
   externalId: string;
+  adapterVersion: string;
   runId: string;
   runGeneration: number;
   profileId: string;
+  profileVersion: string;
   createdAt: string;
   messages: readonly unknown[];
 }
@@ -147,17 +154,18 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
       });
 
       const reference = checkpointReference(command);
-      const messages = [
-        { role: "user", content: command.context.intent.objective },
-        ...arrayValue(result.responseMessages),
-      ];
       await this.#checkpointStore.saveCheckpoint({
         externalId: requiredExternalId(reference),
+        adapterVersion: VERCEL_AI_SDK_ADAPTER_VERSION,
         runId: command.runId,
         runGeneration: command.runGeneration,
         profileId: command.profileId,
+        profileVersion: command.profileVersion,
         createdAt: reference.createdAt,
-        messages,
+        messages: [
+          { role: "user", content: command.context.intent.objective },
+          ...arrayValue(result.responseMessages),
+        ],
       });
       this.#latestCheckpoints.set(runKey(command), reference);
 
@@ -189,13 +197,16 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     if (checkpointRef === null || checkpointRef.kind !== "checkpoint") {
       throw new RangeError("AI SDK resume requires a checkpoint reference");
     }
+    assertCheckpointReferenceBinding(checkpointRef, command);
     const externalId = requiredExternalId(checkpointRef);
     const checkpoint = await this.#checkpointStore.loadCheckpoint(externalId);
     if (
       checkpoint === null
+      || checkpoint.adapterVersion !== VERCEL_AI_SDK_ADAPTER_VERSION
       || checkpoint.runId !== command.runId
       || checkpoint.runGeneration !== command.runGeneration
       || checkpoint.profileId !== command.profileId
+      || checkpoint.profileVersion !== command.profileVersion
     ) {
       throw new RangeError("AI SDK checkpoint does not match the current run binding");
     }
@@ -226,9 +237,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
       });
       yield observation(command, "completion_proposed", 6, {
         outcome: "AI SDK ToolLoopAgent completed the resumed bounded objective.",
-        executionActual: {
-          toolCalls: arrayLength(result.toolCalls),
-        },
+        executionActual: { toolCalls: arrayLength(result.toolCalls) },
       });
     } catch (error) {
       yield observation(command, "failure_observed", 7, {
@@ -283,7 +292,13 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     return await this.#agent.generate({
       ...input,
       onToolExecutionStart: async (event: unknown) => {
-        await this.#authorizeToolExecution?.({ command, event });
+        try {
+          await this.#authorizeToolExecution?.({ command, event });
+        } catch {
+          throw new Error(
+            "Stensibly tool authorization rejected the AI SDK tool proposal",
+          );
+        }
       },
     } as any);
   }
@@ -373,6 +388,18 @@ function checkpointReference(
   });
 }
 
+function assertCheckpointReferenceBinding(
+  reference: RunnerExternalReferenceV1,
+  command: RunnerResumeCommandV1,
+): void {
+  if (
+    reference.adapterId !== VERCEL_AI_SDK_ADAPTER_ID
+    || reference.generation !== command.runGeneration
+  ) {
+    throw new RangeError("AI SDK checkpoint reference does not match the current run binding");
+  }
+}
+
 function observation(
   command: RunnerStartCommandV1 | RunnerResumeCommandV1,
   type: RunnerObservationV1["type"],
@@ -402,13 +429,11 @@ function observation(
 
 function usageFromResult(result: any) {
   const usage = result?.usage;
+  const inputTokens = tokenTotal(usage?.inputTokens);
+  const outputTokens = tokenTotal(usage?.outputTokens);
   return {
-    ...(tokenTotal(usage?.inputTokens) === undefined
-      ? {}
-      : { inputTokens: tokenTotal(usage?.inputTokens) }),
-    ...(tokenTotal(usage?.outputTokens) === undefined
-      ? {}
-      : { outputTokens: tokenTotal(usage?.outputTokens) }),
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
     toolCalls: arrayLength(result?.toolCalls),
     childAgents: 0,
   };
@@ -421,7 +446,8 @@ function tokenTotal(value: unknown): number | undefined {
     && typeof value === "object"
     && typeof (value as { total?: unknown }).total === "number"
   ) {
-    return (value as { total: number }).total;
+    const total = (value as { total: number }).total;
+    return Number.isFinite(total) && total >= 0 ? total : undefined;
   }
   return undefined;
 }
@@ -434,12 +460,12 @@ function arrayValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function runKey(command: {
+function runKey(input: {
   runId: string;
   runGeneration: number;
   leaseGeneration: number;
 }): string {
-  return `${command.runId}:${command.runGeneration}:${command.leaseGeneration}`;
+  return `${input.runId}:${input.runGeneration}:${input.leaseGeneration}`;
 }
 
 function controlKey(input: {
@@ -447,7 +473,7 @@ function controlKey(input: {
   runGeneration: number;
   leaseGeneration: number;
 }): string {
-  return `${input.runId}:${input.runGeneration}:${input.leaseGeneration}`;
+  return runKey(input);
 }
 
 function snapshotKey(runId: string, transition: string): string {
@@ -466,6 +492,12 @@ function offsetTimestamp(timestamp: string, seconds: number): string {
 }
 
 function safeErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "AI SDK generation failed";
-  return message.length <= 2_000 ? message : `${message.slice(0, 1_997)}...`;
+  const raw = error instanceof Error ? error.message : "AI SDK generation failed";
+  const sanitized = raw
+    .replace(credentialShapedTextPattern, "[redacted]")
+    .replace(unsafeTextPattern, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const message = sanitized.length > 0 ? sanitized : "AI SDK generation failed";
+  return message.length <= 512 ? message : `${message.slice(0, 509)}...`;
 }
