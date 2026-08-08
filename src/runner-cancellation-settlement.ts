@@ -1,3 +1,4 @@
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 import {
   AuthoritativeSettlementController,
@@ -58,7 +59,6 @@ const resultPolicyVersion = "runner-cancellation-settlement-v2";
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/u;
 const slugPattern = /^[a-z0-9][a-z0-9_-]*$/u;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/u;
-const realisticCredentialPattern = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/u;
 const externalReferenceKeys = [
   "version",
   "kind",
@@ -626,7 +626,7 @@ function boundedIdentifier(value: unknown, label: string, maximum: number): stri
     || value !== value.trim()
     || !identifierPattern.test(value)
     || unsafeTextPattern.test(value)
-    || realisticCredentialPattern.test(value)
+    || containsRealisticRetainedCredential(value)
   ) {
     throw new RangeError(`${label} is invalid`);
   }
@@ -642,7 +642,7 @@ function boundedSlug(value: unknown, label: string, maximum: number): string {
     || value !== value.toLowerCase()
     || !slugPattern.test(value)
     || unsafeTextPattern.test(value)
-    || realisticCredentialPattern.test(value)
+    || containsRealisticRetainedCredential(value)
   ) {
     throw new RangeError(`${label} must be a bounded lowercase slug`);
   }
@@ -656,7 +656,7 @@ function boundedText(value: unknown, label: string, maximum: number): string {
     || value.length > maximum
     || value !== value.trim()
     || unsafeTextPattern.test(value)
-    || realisticCredentialPattern.test(value)
+    || containsRealisticRetainedCredential(value)
   ) {
     throw new RangeError(`${label} is invalid`);
   }
