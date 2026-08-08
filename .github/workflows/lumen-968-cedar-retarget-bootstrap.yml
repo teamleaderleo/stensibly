@@ -1,0 +1,57 @@
+name: Lumen 968 Cedar retarget bootstrap
+
+on:
+  push:
+    branches:
+      - juniper/525-private-label-assignee-writes
+    paths:
+      - .github/workflows/lumen-968-cedar-retarget-bootstrap.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-968-cedar-retarget-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: juniper/525-private-label-assignee-writes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Retarget complete Cedar private replay carrier
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: juniper/525-private-label-assignee-writes
+          CEDAR_BLOB: 03034abd67180c4610a461cfc11f99e360f2c848
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD:.github/workflows/cedar-968-current-main-replay.yml)" = "$CEDAR_BLOB"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('.github/workflows/cedar-968-current-main-replay.yml')
+          text = path.read_text()
+          old = '          PREVIOUS_CARRIER: a09d4bc1194991067422193ea78e10c448170f2f\n'
+          new = f'          PREVIOUS_CARRIER: {os.environ["EXPECTED_HEAD"]}\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'Cedar previous-carrier anchor moved: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git rm .github/workflows/lumen-968-cedar-retarget-bootstrap.yml
+          git add .github/workflows/cedar-968-current-main-replay.yml
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Bind private issue-write replay to bootstrap head"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" origin "HEAD:refs/heads/${HEAD_REF}"
