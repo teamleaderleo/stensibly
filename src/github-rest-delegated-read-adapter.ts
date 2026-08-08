@@ -1,4 +1,5 @@
 import type { GitHubInstallationTokenProvider } from "./github-app-installation-token.js";
+import { receiverSafeFetch } from "./fetch-implementation.js";
 import type { GitHubDelegatedReadAdapter } from "./github-delegated-read.js";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
@@ -61,7 +62,7 @@ export class GitHubRestDelegatedReadAdapter
     this.#apiBaseUrl = normalizedApiBaseUrl(
       options.apiBaseUrl ?? "https://api.github.com",
     );
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = receiverSafeFetch(options.fetch);
     const maximumFileBytes = options.maximumFileBytes
       ?? defaultMaximumFileBytes;
     if (

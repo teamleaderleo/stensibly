@@ -1,4 +1,5 @@
 import type { GitHubIssueContextInput } from "./github-issue-context.js";
+import { receiverSafeFetch } from "./fetch-implementation.js";
 import type {
   GitHubIssueCommentInput,
   GitHubIssueProviderAdapter,
@@ -67,7 +68,7 @@ export class GitHubRestIssueWriteAdapter implements GitHubIssueProviderAdapter {
     this.#apiBaseUrl = normalizedApiBaseUrl(
       options.apiBaseUrl ?? "https://api.github.com",
     );
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = receiverSafeFetch(options.fetch);
   }
 
   listIssues(

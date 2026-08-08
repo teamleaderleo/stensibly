@@ -1,4 +1,5 @@
 import { createPrivateKey, sign, type KeyObject } from "node:crypto";
+import { receiverSafeFetch } from "./fetch-implementation.js";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 
@@ -129,7 +130,7 @@ export class GitHubAppInstallationTokenMinter
     this.#apiBaseUrl = normalizedApiBaseUrl(
       options.apiBaseUrl ?? "https://api.github.com",
     );
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = receiverSafeFetch(options.fetch);
     this.#now = options.now ?? Date.now;
     const refreshSkewSeconds = options.refreshSkewSeconds ?? 60;
     if (

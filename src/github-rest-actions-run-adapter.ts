@@ -1,4 +1,5 @@
 import type { GitHubInstallationTokenProvider } from "./github-app-installation-token.js";
+import { receiverSafeFetch } from "./fetch-implementation.js";
 import type { GitHubDelegatedReadAdapter } from "./github-delegated-read.js";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import {
@@ -52,7 +53,7 @@ export class GitHubRestActionsRunAdapter extends GitHubRestDelegatedReadAdapter 
     this.#credentialRef = credentialReference(options.credentialRef);
     this.#tokenProvider = options.tokenProvider;
     this.#apiBaseUrl = apiBaseUrl(options.apiBaseUrl ?? "https://api.github.com");
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = receiverSafeFetch(options.fetch);
   }
 
   override async callReadTool(

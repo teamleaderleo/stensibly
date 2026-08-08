@@ -1,6 +1,7 @@
 import type {
   GitHubInstallationTokenProvider,
 } from "./github-app-installation-token.js";
+import { receiverSafeFetch } from "./fetch-implementation.js";
 import type { GitHubDelegatedReadAdapter } from "./github-delegated-read.js";
 import {
   parseGitHubDelegatedReadArguments,
@@ -152,7 +153,7 @@ export class GitHubRestPullRequestReviewThreadAdapter
       options.apiBaseUrl ?? "https://api.github.com",
     );
     this.#graphqlUrl = graphqlEndpoint(this.#apiBaseUrl);
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = receiverSafeFetch(options.fetch);
   }
 
   override async callReadTool(
