@@ -3,6 +3,7 @@ import {
   admitHostedGitHubRepositoryObservationInput,
 } from "./github-repository-observation-admission.js";
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 import {
   normalizeGitHubRepository,
@@ -162,7 +163,6 @@ const providerRequestPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/u;
 const boundedIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,239}$/u;
 const unsafeTextPattern =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
-const realisticCredentialPattern = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/u;
 
 export function compileGitHubPullRequestReconciliationV1(
   value: unknown,
@@ -379,16 +379,16 @@ function parseProviderRead(value: unknown): ParsedProviderRead {
   }
 
   const receiptRepository = repositoryName(receipt.repositoryFullName);
-  text(receipt.project, "GitHub delegated project", 120);
-  text(receipt.actorId, "GitHub delegated actor ID", 120);
-  text(receipt.clientId, "GitHub delegated client ID", 240);
-  text(receipt.connectionId, "GitHub delegated connection ID", 240);
-  text(receipt.installationId, "GitHub delegated installation ID", 64);
+  credentialSafeText(receipt.project, "GitHub delegated project", 120);
+  credentialSafeText(receipt.actorId, "GitHub delegated actor ID", 120);
+  credentialSafeText(receipt.clientId, "GitHub delegated client ID", 240);
+  credentialSafeText(receipt.connectionId, "GitHub delegated connection ID", 240);
+  credentialSafeText(receipt.installationId, "GitHub delegated installation ID", 64);
   const bindingId = boundedIdentity(
     receipt.bindingId,
     "GitHub delegated binding ID",
   );
-  text(receipt.attachmentId, "GitHub delegated attachment ID", 240);
+  credentialSafeText(receipt.attachmentId, "GitHub delegated attachment ID", 240);
   fingerprint(
     receipt.attachmentSnapshotSha256,
     "GitHub delegated attachment fingerprint",
@@ -727,6 +727,18 @@ function text(value: unknown, label: string, maximum: number): string {
   return value;
 }
 
+function credentialSafeText(
+  value: unknown,
+  label: string,
+  maximum: number,
+): string {
+  const admitted = text(value, label, maximum);
+  if (containsRealisticRetainedCredential(admitted)) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return admitted;
+}
+
 function pattern(
   value: unknown,
   expected: RegExp,
@@ -749,7 +761,7 @@ function credentialSafePattern(
   label: string,
 ): string {
   const admitted = pattern(value, expected, label);
-  if (realisticCredentialPattern.test(admitted)) {
+  if (containsRealisticRetainedCredential(admitted)) {
     throw new RangeError(`${label} is invalid`);
   }
   return admitted;
