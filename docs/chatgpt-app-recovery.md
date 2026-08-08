@@ -4,14 +4,14 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-The hosted production composition defines **38** public MCP tools with two release fingerprints:
+The hosted production composition defines **40** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:b895a016a9d411d5819155dc355f6c71f7683019ba5be798e1cc7e68a9fdee75
-names-only diagnostic:       sha256:c613de39802426b6788c802ad6d1dd64600f361b1234dd591530bf6709a76836
+full ChatGPT tool contract: sha256:4df5185ea9981931151cf460f8155953cd7e526384317852133d4ce026f78a1c
+names-only diagnostic:       sha256:03efff06afd477909fa3885b1c5b10d1b856d6427f27aa14bccdc31fefa4163c
 ```
 
-The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 37 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
+The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 39 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
 
@@ -31,6 +31,8 @@ Keep a compact set of frequent Stensibly workflow tools and GitHub discovery too
 
 - use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
 - use `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` only with one explicit idempotency key per intended effect;
+- use `github_create_branch` only for an absent branch at one exact source commit, with one explicit idempotency key;
+- use `github_create_pull_request` only with exact expected head and base commit SHAs plus one explicit idempotency key;
 - reconcile an ambiguous or lost GitHub write through `get_github_provider_receipt` before retrying the exact request;
 - initial label and assignee changes remain outside the public GitHub write surface;
 - use host-native tool search or deferred loading when the host supports it;
