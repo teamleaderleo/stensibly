@@ -4,8 +4,13 @@ import type {
   EffectiveToolSurfaceSnapshotInput,
 } from "../effective-tool-surface.js";
 import {
+  bindRunnerCapabilityInspectionToCommandV1,
+  buildRunnerCapabilityInspectionV1,
+  requireRunnerCapabilityInspectionForCommandV1,
+  type RunnerCapabilityInspectionV1,
+} from "../runner-capability-binding.js";
+import {
   RUNNER_ADAPTER_V1,
-  buildRunnerCapabilitySnapshotV1,
   parseRunnerAdapterDescriptorV1,
   parseRunnerCapabilityProbeV1,
   parseRunnerExternalReferenceV1,
@@ -36,6 +41,11 @@ const unsafeTextPattern =
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/gu;
 
 type AnyAgent = Agent<never, any, any, any>;
+
+interface PendingCapabilityInspection {
+  probe: RunnerCapabilityProbeV1;
+  inspection: RunnerCapabilityInspectionV1;
+}
 
 export interface VercelAISDKCheckpointRecordV1 {
   externalId: string;
@@ -80,7 +90,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
   >;
   readonly #authorizeToolExecution?: VercelAISDKRunnerAdapterOptions["authorizeToolExecution"];
   readonly #descriptor: RunnerAdapterDescriptorV1;
-  readonly #snapshots = new Map<string, EffectiveToolSurfaceSnapshot>();
+  readonly #inspections = new Map<string, PendingCapabilityInspection>();
   readonly #latestCheckpoints = new Map<string, RunnerExternalReferenceV1>();
   readonly #activeAbortControllers = new Map<string, AbortController>();
 
@@ -124,18 +134,22 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     const probe = parseRunnerCapabilityProbeV1(value);
     this.#assertProbeBinding(probe);
     assertNoProviderExecutedTools(this.#agent);
-    const snapshot = buildRunnerCapabilitySnapshotV1(
+    const inspection = buildRunnerCapabilityInspectionV1(
+      this.#descriptor,
       probe,
       this.#capabilityClasses(probe, this.#agent),
     );
-    this.#snapshots.set(snapshotKey(probe.runId, probe.transition), snapshot);
-    return snapshot;
+    this.#inspections.set(inspectionKey(probe.runId, probe.transition), {
+      probe,
+      inspection,
+    });
+    return inspection.snapshot;
   }
 
   async *start(value: RunnerStartCommandV1): AsyncIterable<RunnerObservationV1> {
     const command = parseRunnerStartCommandV1(value);
     this.#assertCommandBinding(command);
-    const snapshot = this.#requiredSnapshot(command.runId, "new");
+    const snapshot = this.#requiredSnapshot(command, "new");
     const abortController = new AbortController();
     this.#activeAbortControllers.set(runKey(command), abortController);
 
@@ -193,7 +207,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
   async *resume(value: RunnerResumeCommandV1): AsyncIterable<RunnerObservationV1> {
     const command = parseRunnerResumeCommandV1(value);
     this.#assertCommandBinding(command);
-    const snapshot = this.#requiredSnapshot(command.runId, "resume");
+    const snapshot = this.#requiredSnapshot(command, "resume");
     const checkpointRef = command.checkpointRef ?? command.adapterResumeRef;
     if (checkpointRef === null || checkpointRef.kind !== "checkpoint") {
       throw new RangeError("AI SDK resume requires a checkpoint reference");
@@ -310,15 +324,42 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
   }
 
   #requiredSnapshot(
-    runId: string,
+    command: RunnerStartCommandV1 | RunnerResumeCommandV1,
     transition: "new" | "resume",
   ): EffectiveToolSurfaceSnapshot {
-    const snapshot = this.#snapshots.get(snapshotKey(runId, transition));
-    if (!snapshot) {
+    const key = inspectionKey(command.runId, transition);
+    const pending = this.#inspections.get(key);
+    if (!pending) {
       throw new RangeError(
         `AI SDK ${transition} requires a current capability inspection before execution`,
       );
     }
+
+    assertNoProviderExecutedTools(this.#agent);
+    const currentInspection = buildRunnerCapabilityInspectionV1(
+      this.#descriptor,
+      pending.probe,
+      this.#capabilityClasses(pending.probe, this.#agent),
+    );
+    if (
+      currentInspection.snapshot.surfaceFingerprint
+        !== pending.inspection.snapshot.surfaceFingerprint
+    ) {
+      this.#inspections.delete(key);
+      throw new RangeError(
+        "AI SDK capability surface changed after inspection and before execution",
+      );
+    }
+
+    const binding = bindRunnerCapabilityInspectionToCommandV1(
+      pending.inspection,
+      command,
+    );
+    const snapshot = requireRunnerCapabilityInspectionForCommandV1(
+      binding,
+      command,
+    );
+    this.#inspections.delete(key);
     return snapshot;
   }
 
@@ -516,7 +557,7 @@ function controlKey(input: {
   return runKey(input);
 }
 
-function snapshotKey(runId: string, transition: string): string {
+function inspectionKey(runId: string, transition: string): string {
   return `${runId}:${transition}`;
 }
 
