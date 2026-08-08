@@ -56,7 +56,8 @@ export interface GitHubAppInstallationTokenMinterOptions {
   installationId: string;
   accountLogin: string;
   privateKeyPem: string;
-  repositoryFullNames: string[];
+  repositoryFullNames?: string[];
+  authorizeRepository?: (repositoryFullName: string) => Promise<boolean>;
   apiBaseUrl?: string;
   fetch?: typeof fetch;
   now?: () => number;
@@ -96,7 +97,10 @@ export class GitHubAppInstallationTokenMinter
   readonly #installationId: string;
   readonly #accountLogin: string;
   readonly #privateKey: KeyObject;
-  readonly #repositories: Set<string>;
+  readonly #repositories: Set<string> | null;
+  readonly #authorizeRepository:
+    | ((repositoryFullName: string) => Promise<boolean>)
+    | null;
   readonly #apiBaseUrl: string;
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
@@ -110,15 +114,26 @@ export class GitHubAppInstallationTokenMinter
       "GitHub App installation ID",
     );
     this.#accountLogin = githubLogin(options.accountLogin);
-    this.#repositories = new Set(
-      options.repositoryFullNames.map((repository) =>
+    const repositoryFullNames = options.repositoryFullNames;
+    const authorizeRepository = options.authorizeRepository;
+    if (
+      (repositoryFullNames === undefined)
+      === (authorizeRepository === undefined)
+    ) {
+      throw new Error(
+        "GitHub App token minter requires exactly one repository authority",
+      );
+    }
+    this.#repositories = repositoryFullNames
+      ? new Set(repositoryFullNames.map((repository) =>
         normalizeGitHubRepository(repository).toLowerCase()
-      ),
-    );
-    if (!this.#repositories.size) {
+      ))
+      : null;
+    this.#authorizeRepository = authorizeRepository ?? null;
+    if (this.#repositories && !this.#repositories.size) {
       throw new Error("GitHub App token minter requires at least one repository");
     }
-    for (const repository of this.#repositories) {
+    for (const repository of this.#repositories ?? []) {
       const [owner] = repository.split("/");
       if (owner !== this.#accountLogin) {
         throw new Error(
@@ -150,11 +165,32 @@ export class GitHubAppInstallationTokenMinter
   ): Promise<GitHubInstallationToken> {
     const admitted = admitInstallationTokenRequest(input);
     const repositoryFullName = admitted.repositoryFullName;
-    if (!this.#repositories.has(repositoryFullName)) {
-      throw new GitHubProviderRejectedError(
-        "github_repository_outside_installation",
-        `GitHub App installation is not configured for ${repositoryFullName}`,
-      );
+    const [owner] = repositoryFullName.split("/");
+    if (owner !== this.#accountLogin) {
+      throw repositoryOutsideInstallation(repositoryFullName);
+    }
+    if (this.#repositories && !this.#repositories.has(repositoryFullName)) {
+      throw repositoryOutsideInstallation(repositoryFullName);
+    }
+    if (this.#authorizeRepository) {
+      let authorized: boolean;
+      try {
+        const decision = await this.#authorizeRepository(repositoryFullName);
+        if (decision !== true && decision !== false) {
+          throw new Error(
+            "GitHub repository authority returned a non-boolean decision",
+          );
+        }
+        authorized = decision;
+      } catch {
+        throw new GitHubProviderRejectedError(
+          "github_repository_authority_unavailable",
+          "GitHub repository authority could not be verified",
+        );
+      }
+      if (!authorized) {
+        throw repositoryOutsideInstallation(repositoryFullName);
+      }
     }
     const permission = admitted.permission;
     const cacheKey =
@@ -240,6 +276,15 @@ export class GitHubAppInstallationTokenMinter
     const signature = sign("RSA-SHA256", Buffer.from(unsigned), this.#privateKey);
     return `${unsigned}.${base64Url(signature)}`;
   }
+}
+
+function repositoryOutsideInstallation(
+  repositoryFullName: string,
+): GitHubProviderRejectedError {
+  return new GitHubProviderRejectedError(
+    "github_repository_outside_installation",
+    `GitHub App installation is not configured for ${repositoryFullName}`,
+  );
 }
 
 function admitInstallationTokenRequest(

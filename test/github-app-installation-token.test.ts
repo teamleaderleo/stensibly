@@ -87,6 +87,88 @@ describe("GitHub provider API base", () => {
 });
 
 describe("GitHub installation token permissions", () => {
+  test("requires exactly one static or dynamic repository authority", () => {
+    expect(() => new GitHubAppInstallationTokenMinter({
+      ...minterOptions("https://api.github.test"),
+      authorizeRepository: async () => true,
+    })).toThrow("requires exactly one repository authority");
+    const { repositoryFullNames: _repositories, ...withoutAuthority } =
+      minterOptions("https://api.github.test");
+    expect(() => new GitHubAppInstallationTokenMinter(withoutAuthority))
+      .toThrow("requires exactly one repository authority");
+  });
+
+  test("redacts a dynamic repository-authority backend failure before provider activity", async () => {
+    let mintCalls = 0;
+    const minter = new GitHubAppInstallationTokenMinter({
+      appId: "12345",
+      installationId: "98765",
+      accountLogin: "teamleaderleo",
+      privateKeyPem,
+      authorizeRepository: async () => {
+        throw new Error("backend echoed env://PRIVATE_AUTHORITY");
+      },
+      apiBaseUrl: "https://api.github.test",
+      fetch: (async () => {
+        mintCalls += 1;
+        return Response.json({});
+      }) as unknown as typeof fetch,
+    });
+
+    const error = await capturedError(() => minter.getInstallationToken({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issues: "read",
+    }));
+    expect(error).toMatchObject({
+      code: "github_repository_authority_unavailable",
+      message: "GitHub repository authority could not be verified",
+    });
+    expect(error.message).not.toContain("PRIVATE_AUTHORITY");
+    expect(mintCalls).toBe(0);
+  });
+
+  test("rechecks dynamic repository authority before using a cached token", async () => {
+    let authorized = true;
+    let authorityChecks = 0;
+    let mintCalls = 0;
+    const minter = new GitHubAppInstallationTokenMinter({
+      appId: "12345",
+      installationId: "98765",
+      accountLogin: "teamleaderleo",
+      privateKeyPem,
+      authorizeRepository: async () => {
+        authorityChecks += 1;
+        return authorized;
+      },
+      apiBaseUrl: "https://api.github.test",
+      now: () => Date.parse("2026-07-31T00:00:00.000Z"),
+      fetch: (async () => {
+        mintCalls += 1;
+        return Response.json({
+          token: "dynamically-authorized-token",
+          expires_at: "2026-07-31T01:00:00.000Z",
+          permissions: { issues: "read" },
+          repository_selection: "selected",
+          repositories: [{ full_name: "teamleaderleo/stensibly" }],
+        }, { status: 201 });
+      }) as unknown as typeof fetch,
+    });
+
+    await expect(minter.getInstallationToken({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issues: "read",
+    })).resolves.toMatchObject({ token: "dynamically-authorized-token" });
+    authorized = false;
+    await expect(minter.getInstallationToken({
+      repositoryFullName: "teamleaderleo/stensibly",
+      issues: "read",
+    })).rejects.toMatchObject({
+      code: "github_repository_outside_installation",
+    });
+    expect(authorityChecks).toBe(2);
+    expect(mintCalls).toBe(1);
+  });
+
   test("rejects invalid trusted clocks before cache or provider activity", async () => {
     for (const invalidNow of [Number.NaN, Number.POSITIVE_INFINITY]) {
       let mintCalls = 0;
