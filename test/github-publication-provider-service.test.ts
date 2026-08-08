@@ -4,12 +4,20 @@ import {
 } from "../src/github-provider-receipts.ts";
 import type {
   GitHubBranchResult,
+  GitHubProviderReceipt,
+  GitHubProviderReceiptStore,
   GitHubPublicationProviderAdapter,
   GitHubPullRequestResult,
+} from "../src/github-provider-contracts.ts";
+import {
+  GitHubProviderRejectedError,
+  githubPublicationProviderRejectionCodes,
+  type GitHubPublicationProviderRejectionCode,
 } from "../src/github-provider-contracts.ts";
 import { GitHubPublicationProviderService } from "../src/github-publication-provider-service.ts";
 import {
   canonicalBody,
+  githubPullRequestSourceRevision,
   sha256,
   stableJson,
 } from "../src/github-provider-validation.ts";
@@ -144,7 +152,7 @@ describe("GitHub publication provider service", () => {
     const adapter = new FakePublicationAdapter();
     adapter.branches.set("codex/stale", branchResult("codex/stale", headSha));
     const service = provider(adapter);
-    const result = await service.createPullRequest({
+    const input = {
       ...requestContext(),
       title: "Stale candidate",
       head: "codex/stale",
@@ -152,7 +160,8 @@ describe("GitHub publication provider service", () => {
       expectedHeadSha: baseSha,
       expectedBaseSha: baseSha,
       idempotencyKey: "publication-pr-stale",
-    });
+    };
+    const result = await service.createPullRequest(input);
     expect(result).toMatchObject({
       state: "stale",
       operation: "github_create_pull_request",
@@ -160,6 +169,8 @@ describe("GitHub publication provider service", () => {
       error: { code: "stale_provider_version", retry: "do_not_retry" },
       recovery: { nextAction: "refresh_and_retry_with_new_version" },
     });
+    expect(adapter.pullRequestWrites).toBe(0);
+    expect(await service.createPullRequest(input)).toEqual(result);
     expect(adapter.pullRequestWrites).toBe(0);
   });
 
@@ -225,9 +236,199 @@ describe("GitHub publication provider service", () => {
     expect(stableJson(receipt)).not.toContain("Body text must not survive");
     expect(adapter.pullRequestWrites).toBe(1);
   });
+
+  test("rejects a forged succeeded branch replay without redispatch", async () => {
+    const input = {
+      ...requestContext(),
+      branch: "codex/replay-branch",
+      fromCommitSha: baseSha,
+      idempotencyKey: "publication-branch-forged-replay",
+    };
+    const original = await provider(new FakePublicationAdapter()).createBranch(
+      input,
+    );
+    const forgedResult = branchResult(input.branch, headSha);
+    const forged = {
+      ...original,
+      result: forgedResult,
+      verification: {
+        ...original.verification,
+        sourceRevision: forgedResult.sourceRevision,
+      },
+    } satisfies GitHubProviderReceipt;
+    const replayAdapter = new FakePublicationAdapter();
+
+    await expect(provider(
+      replayAdapter,
+      new StaticReplayReceiptStore(forged),
+    ).createBranch(input)).rejects.toThrow(
+      "GitHub publication replay receipt is invalid",
+    );
+    expect(replayAdapter.branchWrites).toBe(0);
+  });
+
+  test("rejects forged PR result and lifecycle combinations without redispatch", async () => {
+    const sourceAdapter = new FakePublicationAdapter();
+    sourceAdapter.branches.set(
+      "codex/replay-pr",
+      branchResult("codex/replay-pr", headSha),
+    );
+    const input = {
+      ...requestContext(),
+      title: "Replay-bound candidate",
+      body: "Exact replay body",
+      head: "codex/replay-pr",
+      base: "main",
+      expectedHeadSha: headSha,
+      expectedBaseSha: baseSha,
+      draft: true,
+      idempotencyKey: "publication-pr-forged-replay",
+    };
+    const original = await provider(sourceAdapter).createPullRequest(input);
+    const originalResult = original.result as GitHubPullRequestResult;
+    const forgedResults = [
+      changedPullRequestResult(originalResult, {
+        title: "Substituted candidate",
+      }),
+      changedPullRequestResult(originalResult, { head: "codex/substituted" }),
+      changedPullRequestResult(originalResult, { base: "release" }),
+      changedPullRequestResult(originalResult, { headSha: "c".repeat(40) }),
+      changedPullRequestResult(originalResult, { baseSha: "d".repeat(40) }),
+      changedPullRequestResult(originalResult, {
+        bodyRevision: {
+          ...originalResult.bodyRevision,
+          sha256: sha256("substituted body"),
+        },
+      }),
+    ].map((changedResult) => ({
+      ...original,
+      result: changedResult,
+      verification: {
+        ...original.verification,
+        sourceRevision: changedResult.sourceRevision,
+      },
+    } satisfies GitHubProviderReceipt));
+    const incoherentPending = {
+      ...original,
+      state: "pending_reconciliation",
+      verification: {
+        state: "not_run",
+        checkedAt: null,
+        sourceRevision: null,
+      },
+      error: {
+        code: "ambiguous_provider_outcome",
+        message: "GitHub publication outcome requires exact reconciliation",
+        retry: "reconcile_before_retry",
+      },
+      recovery: { nextAction: "reconcile_exact_operation" },
+    } satisfies GitHubProviderReceipt;
+    const incoherentRejected = {
+      ...original,
+      state: "rejected",
+      result: null,
+      verification: {
+        state: "not_run",
+        checkedAt: null,
+        sourceRevision: null,
+      },
+      error: {
+        code: "github_provider_request_rejected",
+        message: "GitHub rejected create pull request",
+        retry: "do_not_retry",
+      },
+      recovery: {
+        nextAction: "inspect_authority_or_provider_rejection",
+      },
+    } satisfies GitHubProviderReceipt;
+    const unknownRejected = {
+      ...incoherentRejected,
+      providerRequestId: null,
+      error: {
+        ...incoherentRejected.error,
+        code: "github_unreviewed_rejection",
+      },
+    } satisfies GitHubProviderReceipt;
+    const expectedBranch = branchResult(input.head, input.expectedHeadSha);
+    const falseStale = {
+      ...original,
+      state: "stale",
+      providerRequestId: null,
+      result: expectedBranch,
+      verification: {
+        state: "failed",
+        checkedAt: fixedNow,
+        sourceRevision: expectedBranch.sourceRevision,
+      },
+      error: {
+        code: "stale_provider_version",
+        message: "GitHub pull request head changed before guarded publication",
+        retry: "do_not_retry",
+      },
+      recovery: { nextAction: "refresh_and_retry_with_new_version" },
+    } satisfies GitHubProviderReceipt;
+
+    for (const forged of [
+      ...forgedResults,
+      incoherentPending,
+      incoherentRejected,
+      unknownRejected,
+      falseStale,
+    ]) {
+      const replayAdapter = new FakePublicationAdapter();
+      await expect(provider(
+        replayAdapter,
+        new StaticReplayReceiptStore(forged),
+      ).createPullRequest(input)).rejects.toThrow(
+        "GitHub publication replay receipt is invalid",
+      );
+      expect(replayAdapter.pullRequestWrites).toBe(0);
+    }
+  });
+
+  test("replays durable credential, permission, and authority rejections exactly", async () => {
+    const representativeCodes = [
+      "github_credential_mint_failed",
+      "github_installation_permission_insufficient",
+      "github_repository_authority_unavailable",
+    ] as const satisfies readonly GitHubPublicationProviderRejectionCode[];
+    for (const code of representativeCodes) {
+      expect(githubPublicationProviderRejectionCodes).toContain(code);
+      const adapter = new FakePublicationAdapter();
+      adapter.branchRejection = {
+        code,
+        message: `Fixed ${code} test rejection`,
+      };
+      const service = provider(adapter);
+      const input = {
+        ...requestContext(),
+        branch: `codex/rejected-${code.replace(/^github_/u, "")}`,
+        fromCommitSha: baseSha,
+        idempotencyKey: `publication-rejected-${code}`,
+      };
+
+      const rejected = await service.createBranch(input);
+      expect(rejected).toMatchObject({
+        state: "rejected",
+        providerRequestId: null,
+        result: null,
+        verification: { state: "not_run" },
+        error: { code, retry: "do_not_retry" },
+        recovery: {
+          nextAction: "inspect_authority_or_provider_rejection",
+        },
+      });
+      expect(await service.createBranch(input)).toEqual(rejected);
+      expect(adapter.branchReads).toBe(1);
+      expect(adapter.branchWrites).toBe(0);
+    }
+  });
 });
 
-function provider(adapter: GitHubPublicationProviderAdapter) {
+function provider(
+  adapter: GitHubPublicationProviderAdapter,
+  receipts: GitHubProviderReceiptStore = new InMemoryGitHubProviderReceiptStore(),
+) {
   let receipt = 0;
   return new GitHubPublicationProviderService({
     projects: {
@@ -270,10 +471,48 @@ function provider(adapter: GitHubPublicationProviderAdapter) {
       }),
     },
     adapter,
-    receipts: new InMemoryGitHubProviderReceiptStore(),
+    receipts,
     now: () => fixedNow,
     idFactory: () => `ghop_publication_${++receipt}`,
   });
+}
+
+function changedPullRequestResult(
+  result: GitHubPullRequestResult,
+  changes: Partial<Omit<GitHubPullRequestResult, "sourceRevision">>,
+): GitHubPullRequestResult {
+  const { sourceRevision: _sourceRevision, ...retainedResult } = result;
+  const retained = {
+    ...retainedResult,
+    ...changes,
+  } satisfies Omit<GitHubPullRequestResult, "sourceRevision">;
+  return {
+    ...retained,
+    sourceRevision: githubPullRequestSourceRevision(retained),
+  };
+}
+
+class StaticReplayReceiptStore implements GitHubProviderReceiptStore {
+  readonly #receipt: GitHubProviderReceipt;
+
+  constructor(receipt: GitHubProviderReceipt) {
+    this.#receipt = structuredClone(receipt);
+  }
+
+  async reserveGitHubProviderReceipt() {
+    return {
+      outcome: "replay" as const,
+      receipt: structuredClone(this.#receipt),
+    };
+  }
+
+  async updateGitHubProviderReceipt(): Promise<GitHubProviderReceipt> {
+    throw new Error("forged replay must not update or dispatch");
+  }
+
+  async getGitHubProviderReceipt(): Promise<GitHubProviderReceipt> {
+    return structuredClone(this.#receipt);
+  }
 }
 
 function requestContext() {
@@ -291,11 +530,23 @@ class FakePublicationAdapter implements GitHubPublicationProviderAdapter {
   ]);
   readonly pullRequests = new Map<number, GitHubPullRequestResult>();
   branchWrites = 0;
+  branchReads = 0;
   pullRequestWrites = 0;
   ambiguousBranch = false;
   failPullRequestReadback = false;
+  branchRejection: {
+    code: GitHubPublicationProviderRejectionCode;
+    message: string;
+  } | null = null;
 
   async getBranch(input: { branch: string }): Promise<GitHubBranchResult | null> {
+    this.branchReads += 1;
+    if (this.branchRejection) {
+      throw new GitHubProviderRejectedError(
+        this.branchRejection.code,
+        this.branchRejection.message,
+      );
+    }
     return structuredClone(this.branches.get(input.branch) ?? null);
   }
 
@@ -394,6 +645,6 @@ function pullRequestResult(input: {
   };
   return {
     ...common,
-    sourceRevision: sha256(stableJson(common)),
+    sourceRevision: githubPullRequestSourceRevision(common),
   };
 }

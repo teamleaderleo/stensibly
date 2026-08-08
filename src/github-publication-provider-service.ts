@@ -7,6 +7,7 @@ import {
   GitHubProviderIdempotencyConflictError,
   GitHubProviderPendingReconciliationError,
   GitHubProviderRejectedError,
+  githubPublicationProviderRejectionCodes,
   type GitHubBranchResult,
   type GitHubProjectRepositoryBinding,
   type GitHubProviderAuthorityDecision,
@@ -20,6 +21,7 @@ import {
   type GitHubPublicationProviderOperation,
   type GitHubPullRequestResult,
 } from "./github-provider-contracts.js";
+import { admitGitHubProviderReceipt } from "./github-provider-receipt-admission.js";
 import {
   boundedBody,
   boundedText,
@@ -58,6 +60,28 @@ interface ResolvedScope {
   connection: GitHubProviderConnection;
   authority: GitHubProviderAuthorityDecision;
 }
+
+type PublicationReplayExpectation =
+  | {
+    operation: "github_create_branch";
+    branch: string;
+    fromCommitSha: string;
+  }
+  | {
+    operation: "github_create_pull_request";
+    title: string;
+    bodySha256: string;
+    bodyByteLength: number;
+    head: string;
+    base: string;
+    expectedHeadSha: string;
+    expectedBaseSha: string;
+    draft: boolean;
+  };
+
+const publicationProviderRejectionCodes = new Set<string>(
+  githubPublicationProviderRejectionCodes,
+);
 
 class GitHubPublicationStaleVersionError extends Error {
   readonly current: GitHubBranchResult;
@@ -123,6 +147,11 @@ export class GitHubPublicationProviderService {
       target: `${repositoryFullName}:refs/heads/${branch}`,
       idempotencyKey: input.idempotencyKey,
       parameters: { branch, fromCommitSha },
+      replay: {
+        operation: "github_create_branch",
+        branch,
+        fromCommitSha,
+      },
       execute: async (scope, key) => {
         const existing = await this.#adapter.getBranch({
           repositoryFullName: scope.repositoryFullName,
@@ -223,6 +252,18 @@ export class GitHubPublicationProviderService {
         expectedBaseSha,
         draft,
       },
+      replay: {
+        operation: "github_create_pull_request",
+        title,
+        bodySha256: sha256(canonicalBody(body ?? "")),
+        bodyByteLength: new TextEncoder().encode(canonicalBody(body ?? ""))
+          .byteLength,
+        head,
+        base,
+        expectedHeadSha,
+        expectedBaseSha,
+        draft,
+      },
       execute: async (scope, key) => {
         const [headBranch, baseBranch] = await Promise.all([
           this.#adapter.getBranch({
@@ -311,6 +352,7 @@ export class GitHubPublicationProviderService {
     target: string;
     idempotencyKey: string;
     parameters: unknown;
+    replay: PublicationReplayExpectation;
     execute: (
       scope: ResolvedScope,
       idempotencyKey: string,
@@ -380,10 +422,15 @@ export class GitHubPublicationProviderService {
       throw new GitHubProviderIdempotencyConflictError(reservation.receipt);
     }
     if (reservation.outcome === "replay") {
-      if (reservation.receipt.state === "pending_reconciliation") {
-        throw new GitHubProviderPendingReconciliationError(reservation.receipt);
+      const replay = admitPublicationReplayReceipt(
+        reservation.receipt,
+        reserved,
+        input.replay,
+      );
+      if (replay.state === "pending_reconciliation") {
+        throw new GitHubProviderPendingReconciliationError(replay);
       }
-      return reservation.receipt;
+      return replay;
     }
 
     try {
@@ -576,6 +623,225 @@ export class GitHubPublicationProviderService {
       authority,
     };
   }
+}
+
+function admitPublicationReplayReceipt(
+  value: GitHubProviderReceipt,
+  reserved: GitHubProviderReceipt,
+  expected: PublicationReplayExpectation,
+): GitHubProviderReceipt {
+  try {
+    const receipt = admitGitHubProviderReceipt(value);
+    assertReplayRequestIdentity(receipt, reserved);
+    assertReplayLifecycle(receipt, expected);
+    return receipt;
+  } catch {
+    throw new Error("GitHub publication replay receipt is invalid");
+  }
+}
+
+function assertReplayRequestIdentity(
+  receipt: GitHubProviderReceipt,
+  reserved: GitHubProviderReceipt,
+): void {
+  if (
+    receipt.version !== reserved.version
+    || receipt.project !== reserved.project
+    || receipt.provider !== reserved.provider
+    || receipt.repositoryFullName !== reserved.repositoryFullName
+    || receipt.operation !== reserved.operation
+    || receipt.target !== reserved.target
+    || receipt.actorId !== reserved.actorId
+    || receipt.clientId !== reserved.clientId
+    || receipt.connectionId !== reserved.connectionId
+    || receipt.installationId !== reserved.installationId
+    || receipt.bindingId !== reserved.bindingId
+    || receipt.attachmentId !== reserved.attachmentId
+    || receipt.attachmentSnapshotSha256
+      !== reserved.attachmentSnapshotSha256
+    || receipt.capabilityGrantId !== reserved.capabilityGrantId
+    || receipt.approvalId !== reserved.approvalId
+    || receipt.idempotencyKey !== reserved.idempotencyKey
+    || receipt.parametersSha256 !== reserved.parametersSha256
+    || receipt.attemptCount !== 1
+  ) {
+    throw new Error("GitHub publication replay request identity changed");
+  }
+}
+
+function assertReplayLifecycle(
+  receipt: GitHubProviderReceipt,
+  expected: PublicationReplayExpectation,
+): void {
+  const verification = receipt.verification;
+  switch (receipt.state) {
+    case "reserved":
+      throw new Error("GitHub publication replay remained reserved");
+    case "pending_reconciliation": {
+      const interrupted = receipt.result === null
+        && receipt.providerRequestId === null
+        && verification.state === "not_run"
+        && verification.checkedAt === null
+        && verification.sourceRevision === null
+        && receipt.error?.code
+          === "provider_dispatch_in_progress_or_interrupted"
+        && receipt.error.message
+          === "GitHub provider dispatch may still be in progress or may have been interrupted";
+      const ambiguousWithoutResult = receipt.result === null
+        && receipt.providerRequestId === null
+        && verification.state === "failed"
+        && verification.checkedAt !== null
+        && verification.sourceRevision === null
+        && receipt.error?.code === "ambiguous_provider_outcome"
+        && receipt.error.message
+          === "GitHub publication outcome requires exact reconciliation";
+      const ambiguousWithResult = receipt.result !== null
+        && receipt.providerRequestId !== null
+        && verification.state === "failed"
+        && verification.checkedAt !== null
+        && verification.sourceRevision === receipt.result.sourceRevision
+        && receipt.error?.code === "ambiguous_provider_outcome"
+        && receipt.error.message
+          === "GitHub publication outcome requires exact reconciliation";
+      if (
+        receipt.error?.retry !== "reconcile_before_retry"
+        || receipt.recovery.nextAction !== "reconcile_exact_operation"
+        || (!interrupted && !ambiguousWithoutResult && !ambiguousWithResult)
+      ) {
+        throw new Error("GitHub publication pending lifecycle is inconsistent");
+      }
+      if (receipt.result !== null) {
+        assertReplayResult(receipt.result, expected);
+      }
+      return;
+    }
+    case "rejected":
+      if (
+        receipt.result !== null
+        || receipt.providerRequestId !== null
+        || verification.state !== "not_run"
+        || verification.checkedAt !== null
+        || verification.sourceRevision !== null
+        || receipt.error === null
+        || !isPublicationRejectionCode(receipt.error.code, expected)
+        || receipt.error.retry !== "do_not_retry"
+        || receipt.recovery.nextAction
+          !== "inspect_authority_or_provider_rejection"
+      ) {
+        throw new Error("GitHub publication rejected lifecycle is inconsistent");
+      }
+      return;
+    case "stale":
+      if (
+        expected.operation !== "github_create_pull_request"
+        || !isBranchResult(receipt.result)
+        || receipt.providerRequestId !== null
+        || verification.state !== "failed"
+        || verification.checkedAt === null
+        || verification.sourceRevision !== receipt.result.sourceRevision
+        || receipt.error?.code !== "stale_provider_version"
+        || receipt.error.retry !== "do_not_retry"
+        || receipt.recovery.nextAction
+          !== "refresh_and_retry_with_new_version"
+      ) {
+        throw new Error("GitHub publication stale lifecycle is inconsistent");
+      }
+      assertStaleBranchResult(receipt.result, expected);
+      if (
+        receipt.error.message !== (receipt.result.name === expected.head
+          ? "GitHub pull request head changed before guarded publication"
+          : "GitHub pull request base changed before guarded publication")
+      ) {
+        throw new Error("GitHub publication stale error is inconsistent");
+      }
+      return;
+    case "succeeded":
+    case "reconciled":
+      if (
+        receipt.result === null
+        || (receipt.state === "succeeded" && receipt.providerRequestId === null)
+        || verification.state !== "passed"
+        || verification.checkedAt === null
+        || verification.sourceRevision !== receipt.result.sourceRevision
+        || receipt.error !== null
+        || receipt.recovery.nextAction !== "none"
+      ) {
+        throw new Error("GitHub publication settled lifecycle is inconsistent");
+      }
+      assertReplayResult(receipt.result, expected);
+      return;
+  }
+}
+
+function assertReplayResult(
+  result: NonNullable<GitHubProviderReceipt["result"]>,
+  expected: PublicationReplayExpectation,
+): void {
+  if (expected.operation === "github_create_branch") {
+    if (
+      !isBranchResult(result)
+      || result.name !== expected.branch
+      || result.ref !== `refs/heads/${expected.branch}`
+      || result.commitSha !== expected.fromCommitSha
+      || result.sourceRevision !== expected.fromCommitSha
+    ) {
+      throw new Error("GitHub publication branch replay changed result");
+    }
+    return;
+  }
+  if (
+    !isPullRequestResult(result)
+    || result.title !== expected.title
+    || result.head !== expected.head
+    || result.headSha !== expected.expectedHeadSha
+    || result.base !== expected.base
+    || result.baseSha !== expected.expectedBaseSha
+    || result.draft !== expected.draft
+    || result.state !== "open"
+    || result.bodyRevision.sha256 !== expected.bodySha256
+    || result.bodyRevision.byteLength !== expected.bodyByteLength
+    || result.containsBody !== false
+  ) {
+    throw new Error("GitHub publication pull request replay changed result");
+  }
+}
+
+function assertStaleBranchResult(
+  result: GitHubBranchResult,
+  expected: Extract<
+    PublicationReplayExpectation,
+    { operation: "github_create_pull_request" }
+  >,
+): void {
+  const staleHead = result.name === expected.head
+    && result.commitSha !== expected.expectedHeadSha;
+  const staleBase = result.name === expected.base
+    && result.commitSha !== expected.expectedBaseSha;
+  if (!staleHead && !staleBase) {
+    throw new Error("GitHub publication stale replay changed result");
+  }
+}
+
+function isPublicationRejectionCode(
+  code: string,
+  expected: PublicationReplayExpectation,
+): boolean {
+  if (publicationProviderRejectionCodes.has(code)) return true;
+  return expected.operation === "github_create_branch"
+    ? code === "github_branch_already_exists"
+    : code === "github_pull_request_branch_missing";
+}
+
+function isBranchResult(
+  value: GitHubProviderReceipt["result"],
+): value is GitHubBranchResult {
+  return value !== null && "kind" in value && value.kind === "branch";
+}
+
+function isPullRequestResult(
+  value: GitHubProviderReceipt["result"],
+): value is GitHubPullRequestResult {
+  return value !== null && "kind" in value && value.kind === "pull_request";
 }
 
 function branchName(value: string): string {

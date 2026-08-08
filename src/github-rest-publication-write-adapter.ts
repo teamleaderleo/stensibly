@@ -4,15 +4,18 @@ import type {
   GitHubPublicationProviderAdapter,
   GitHubPullRequestResult,
 } from "./github-provider-contracts.js";
-import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
+import {
+  GitHubProviderRejectedError,
+  githubPublicationProviderRejectionCode,
+} from "./github-provider-contracts.js";
 import type {
   GitHubInstallationTokenProvider,
 } from "./github-app-installation-token.js";
 import {
   canonicalBody,
+  githubPullRequestSourceRevision,
   normalizeGitHubRepository,
   sha256,
-  stableJson,
 } from "./github-provider-validation.js";
 
 export interface GitHubRestPublicationWriteAdapterOptions {
@@ -217,7 +220,7 @@ export class GitHubRestPublicationWriteAdapter
         throw new Error(`GitHub ${input.operation} outcome is ambiguous`);
       }
       throw new GitHubProviderRejectedError(
-        "github_provider_request_rejected",
+        githubPublicationProviderRejectionCode.providerRequestRejected,
         `GitHub rejected ${input.operation}`,
       );
     }
@@ -282,7 +285,7 @@ function mapPullRequest(
   if (Date.parse(updatedAt) < Date.parse(createdAt)) {
     throw new Error("GitHub pull request update preceded creation");
   }
-  const result = {
+  const retained = {
     kind: "pull_request" as const,
     number,
     providerNodeId: value.node_id === null || value.node_id === undefined
@@ -302,21 +305,12 @@ function mapPullRequest(
       byteLength: new TextEncoder().encode(canonicalBody(body)).byteLength,
       sha256: sha256(canonicalBody(body)),
     },
-    sourceRevision: sha256(stableJson({
-      number,
-      nodeId: value.node_id ?? null,
-      title: value.title,
-      body: canonicalBody(body),
-      head: head.ref,
-      headSha: head.sha,
-      base: base.ref,
-      baseSha: base.sha,
-      draft: value.draft,
-      state: value.state,
-      updatedAt,
-    })),
     containsBody: false as const,
-  } satisfies GitHubPullRequestResult;
+  } satisfies Omit<GitHubPullRequestResult, "sourceRevision">;
+  const result: GitHubPullRequestResult = {
+    ...retained,
+    sourceRevision: githubPullRequestSourceRevision(retained),
+  };
   return Object.freeze({
     ...result,
     bodyRevision: Object.freeze(result.bodyRevision),
@@ -342,17 +336,67 @@ async function boundedResponseText(
   operation: string,
 ): Promise<string> {
   const contentLength = response.headers.get("content-length");
-  if (contentLength && /^[0-9]+$/u.test(contentLength)) {
-    if (Number(contentLength) > maximumResponseBytes) {
+  if (contentLength !== null) {
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(contentLength)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`GitHub ${operation} response length was invalid`);
+    }
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared) || declared > maximumResponseBytes) {
       await response.body?.cancel().catch(() => undefined);
       throw new Error(`GitHub ${operation} response exceeded the byte limit`);
     }
   }
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > maximumResponseBytes) {
-    throw new Error(`GitHub ${operation} response exceeded the byte limit`);
+  if (!response.body) return "";
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = response.body.getReader();
+  } catch {
+    throw new Error(`GitHub ${operation} response could not be read`);
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let rejected = false;
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      if (!(item.value instanceof Uint8Array)) {
+        rejected = true;
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`GitHub ${operation} response was not a byte stream`);
+      }
+      total += item.value.byteLength;
+      if (total > maximumResponseBytes) {
+        rejected = true;
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`GitHub ${operation} response exceeded the byte limit`);
+      }
+      chunks.push(item.value.slice());
+    }
+  } catch (error) {
+    if (rejected) throw error;
+    throw new Error(`GitHub ${operation} response could not be read`);
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      if (!rejected) {
+        throw new Error(`GitHub ${operation} response could not be read`);
+      }
+    }
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`GitHub ${operation} response was not valid UTF-8`);
+  }
 }
 
 function normalizedApiBaseUrl(value: string): string {

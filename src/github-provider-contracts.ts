@@ -37,6 +37,31 @@ export const githubProviderOperations = [
   ...githubPublicationProviderOperations,
 ] as const satisfies readonly GitHubProviderOperation[];
 
+/** Fixed provider-layer rejection codes reachable from publication adapters. */
+export const githubPublicationProviderRejectionCode = Object.freeze({
+  appCredentialRejected: "github_app_credential_rejected",
+  credentialMintFailed: "github_credential_mint_failed",
+  installationAbsent: "github_installation_absent",
+  installationPermissionDenied: "github_installation_permission_denied",
+  installationPermissionInsufficient:
+    "github_installation_permission_insufficient",
+  installationRequestRejected: "github_installation_request_rejected",
+  providerInvalidResponse: "github_provider_invalid_response",
+  providerRequestRejected: "github_provider_request_rejected",
+  providerTemporarilyUnavailable: "github_provider_temporarily_unavailable",
+  repositoryAuthorityUnavailable: "github_repository_authority_unavailable",
+  repositoryOutsideInstallation: "github_repository_outside_installation",
+} as const);
+
+export type GitHubPublicationProviderRejectionCode =
+  typeof githubPublicationProviderRejectionCode[
+    keyof typeof githubPublicationProviderRejectionCode
+  ];
+
+export const githubPublicationProviderRejectionCodes = Object.freeze(
+  Object.values(githubPublicationProviderRejectionCode),
+) as readonly GitHubPublicationProviderRejectionCode[];
+
 export interface GitHubProviderRequestContext {
   project: string;
   repository: string;

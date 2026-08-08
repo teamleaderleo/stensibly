@@ -10,6 +10,7 @@ import {
   GitHubProviderBindingError,
   type GitHubIssueComment,
   type GitHubIssueCommentInput,
+  type GitHubPullRequestResult,
 } from "./github-provider-contracts.js";
 
 export { sha256, stableJson };
@@ -182,6 +183,12 @@ export function boundedBody(
 
 export function canonicalBody(value: string): string {
   return value.replace(/\r\n?/g, "\n");
+}
+
+export function githubPullRequestSourceRevision(
+  value: Omit<GitHubPullRequestResult, "sourceRevision">,
+): string {
+  return sha256(stableJson(value));
 }
 
 export function canonicalTimestamp(value: string, label: string): string {

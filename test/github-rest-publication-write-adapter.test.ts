@@ -162,6 +162,35 @@ describe("GitHub REST publication write adapter", () => {
       idempotencyKey: "branch-ambiguous",
     })).rejects.toThrow("outcome is ambiguous");
   });
+
+  test("cancels an undeclared response as soon as it crosses 512 KiB", async () => {
+    let produced = 0;
+    let cancelled = false;
+    const oversized = new GitHubRestPublicationWriteAdapter({
+      tokenProvider: {
+        getInstallationToken: async () => ({
+          token: "installation-publication-token-secret",
+          expiresAt: "2026-08-09T01:00:00.000Z",
+        }),
+      },
+      fetch: (async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          produced += 1;
+          controller.enqueue(new Uint8Array(128 * 1024));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }), { status: 200 })) as unknown as typeof fetch,
+    });
+
+    await expect(oversized.getBranch({
+      repositoryFullName: repository,
+      branch: "codex/oversized",
+    })).rejects.toThrow("exceeded the byte limit");
+    expect(produced).toBeLessThanOrEqual(6);
+    expect(cancelled).toBe(true);
+  });
 });
 
 function apiBranch(branch: string, sha: string) {

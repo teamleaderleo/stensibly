@@ -4,6 +4,8 @@ import {
   canonicalGitHubProviderReceiptJson,
   parseGitHubProviderReceiptJson,
 } from "../src/github-provider-receipt-admission.ts";
+import type { GitHubPullRequestResult } from "../src/github-provider-contracts.ts";
+import { githubPullRequestSourceRevision } from "../src/github-provider-validation.ts";
 
 describe("GitHub provider receipt admission", () => {
   test("round-trips one canonical deeply frozen receipt", () => {
@@ -106,6 +108,7 @@ describe("GitHub provider receipt admission", () => {
       canonicalGitHubProviderReceiptJson(branch),
     )).toEqual(branch);
 
+    const result = pullRequestResult();
     const pullRequest = admitGitHubProviderReceipt(receipt({
       operation: "github_create_pull_request",
       target:
@@ -113,11 +116,11 @@ describe("GitHub provider receipt admission", () => {
       state: "succeeded",
       updatedAt: "2026-08-02T00:00:01.000Z",
       providerRequestId: "PR:CREATE",
-      result: pullRequestResult(),
+      result,
       verification: {
         state: "passed",
         checkedAt: "2026-08-02T00:00:01.000Z",
-        sourceRevision: hash("f"),
+        sourceRevision: result.sourceRevision,
       },
     }));
     const json = canonicalGitHubProviderReceiptJson(pullRequest);
@@ -254,8 +257,8 @@ function branchResult(): Record<string, unknown> {
   };
 }
 
-function pullRequestResult(): Record<string, unknown> {
-  return {
+function pullRequestResult(): GitHubPullRequestResult {
+  const retained = {
     kind: "pull_request",
     number: 42,
     providerNodeId: "PR_kwDO_publication",
@@ -270,8 +273,11 @@ function pullRequestResult(): Record<string, unknown> {
     createdAt: "2026-08-02T00:00:00.000Z",
     updatedAt: "2026-08-02T00:00:01.000Z",
     bodyRevision: { byteLength: 15, sha256: hash("e") },
-    sourceRevision: hash("f"),
     containsBody: false,
+  } satisfies Omit<GitHubPullRequestResult, "sourceRevision">;
+  return {
+    ...retained,
+    sourceRevision: githubPullRequestSourceRevision(retained),
   };
 }
 

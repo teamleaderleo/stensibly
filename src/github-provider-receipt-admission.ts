@@ -14,6 +14,7 @@ import {
   canonicalJsonString,
   fingerprintExactText,
 } from "./idempotency-request-fingerprint.js";
+import { githubPullRequestSourceRevision } from "./github-provider-validation.js";
 import { parseStrictJson } from "./strict-json.js";
 
 const receiptKeys = [
@@ -440,7 +441,7 @@ function admitPullRequest(
   if (Date.parse(updatedAt) < Date.parse(createdAt)) {
     throw new RangeError("GitHub pull request update precedes creation");
   }
-  return {
+  const retained = {
     kind: "pull_request",
     number,
     providerNodeId: nullableText(
@@ -459,12 +460,13 @@ function admitPullRequest(
     createdAt,
     updatedAt,
     bodyRevision: admitBodyRevision(value.bodyRevision, false),
-    sourceRevision: exactHash(
-      value.sourceRevision,
-      "pull request source revision",
-    ),
     containsBody: false,
-  };
+  } satisfies Omit<GitHubPullRequestResult, "sourceRevision">;
+  const sourceRevision = githubPullRequestSourceRevision(retained);
+  if (value.sourceRevision !== sourceRevision) {
+    throw new RangeError("GitHub pull request source revision is invalid");
+  }
+  return { ...retained, sourceRevision };
 }
 
 function admitComment(
