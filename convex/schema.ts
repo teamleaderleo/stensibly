@@ -502,7 +502,48 @@ export default defineSchema({
   })
     .index("by_workspace_external", ["workspaceId", "externalId"])
     .index("by_item_status", ["itemId", "status", "createdAt"])
-    .index("by_project_status", ["projectId", "status", "updatedAt"]),
+    .index("by_project_status", ["projectId", "status", "updatedAt"])
+    .index("by_workspace_id_and_created_at", ["workspaceId", "createdAt"])
+    .index("by_workspace_id_and_status_and_created_at", [
+      "workspaceId",
+      "status",
+      "createdAt",
+    ])
+    .index("by_workspace_id_and_actor_external_id_and_created_at", [
+      "workspaceId",
+      "actorExternalId",
+      "createdAt",
+    ])
+    .index("by_item_id_and_created_at", ["itemId", "createdAt"])
+    .index("by_project_id_and_status_and_created_at", [
+      "projectId",
+      "status",
+      "createdAt",
+    ])
+    .index("by_workspace_id_and_status_and_next_retry_at", [
+      "workspaceId",
+      "status",
+      "nextRetryAt",
+    ])
+    .index("by_project_id_and_status_and_next_retry_at", [
+      "projectId",
+      "status",
+      "nextRetryAt",
+    ])
+    .index("by_workspace_id_and_status_and_lease_expires_at", [
+      "workspaceId",
+      "status",
+      "leaseExpiresAt",
+    ]),
+
+  runnerCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    idempotencyKey: v.string(),
+    operation: v.string(),
+    request: v.any(),
+    result: v.any(),
+    createdAt: v.number(),
+  }).index("by_workspace_id_and_idempotency_key", ["workspaceId", "idempotencyKey"]),
 
   dependencies: defineTable({
     workspaceId: v.id("workspaces"),

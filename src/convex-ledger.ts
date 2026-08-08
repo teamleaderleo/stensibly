@@ -46,6 +46,12 @@ import type {
   OperationReceiptInput,
   OperationReceiptLedger,
 } from "./operation-receipt-contracts.js";
+import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
+import type {
+  HeartbeatWorkRunInput,
+  ListWorkRunsInput,
+  TransitionWorkRunInput,
+} from "./runs.js";
 
 const HISTORY_CONTRACT_VERSION = 1;
 const ITEM_DETAIL_EVENT_LIMIT = 100;
@@ -97,7 +103,8 @@ export class ConvexWorkLedger implements
   CompletionContinuationLedger,
   ContinuationSupervisorLedger,
   OperationReceiptLedger,
-  GitHubProjectContextLedger
+  GitHubProjectContextLedger,
+  RunnerLedger
 {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -269,6 +276,41 @@ export class ConvexWorkLedger implements
       convexApi.continuationSupervisor.runPolicy,
       this.args(input),
     ) as Awaited<ReturnType<ContinuationSupervisorLedger["runContinuationSupervisorPolicy"]>>;
+  }
+
+  async claimRunnerWork(input: ClaimRunnerWorkInput) {
+    return await this.client.mutation(
+      convexApi.runnerRuns.claim,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerLedger["claimRunnerWork"]>>;
+  }
+
+  async getRun(id: string) {
+    return await this.client.mutation(
+      convexApi.runnerRuns.get,
+      this.args({ id }),
+    ) as Awaited<ReturnType<RunnerLedger["getRun"]>>;
+  }
+
+  async listRuns(input: ListWorkRunsInput = {}) {
+    return await this.client.mutation(
+      convexApi.runnerRuns.list,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerLedger["listRuns"]>>;
+  }
+
+  async heartbeatRun(input: HeartbeatWorkRunInput) {
+    return await this.client.mutation(
+      convexApi.runnerRuns.heartbeat,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerLedger["heartbeatRun"]>>;
+  }
+
+  async transitionRun(input: TransitionWorkRunInput) {
+    return await this.client.mutation(
+      convexApi.runnerRuns.transition,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerLedger["transitionRun"]>>;
   }
 
   private async getHostedItemDetail(id: string, now: number): Promise<HostedItemDetail> {
