@@ -167,8 +167,7 @@ export class ConvexGitHubProjectContextBindingReader
           isCurrent: true as const,
         },
       });
-    } catch (error) {
-      if (error instanceof GitHubProjectContextStorageError) throw error;
+    } catch {
       throw new GitHubProjectContextStorageError();
     }
   }
