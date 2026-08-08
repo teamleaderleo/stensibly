@@ -11,6 +11,7 @@ import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import type { McpRequestContext } from "./mcp-context.js";
 import {
+  principalAuthorizationId,
   principalCanAccessProject,
   principalHasScope,
 } from "./token-contracts.js";
@@ -353,7 +354,7 @@ function providerContext(
       "GitHub issue provider operation is outside this principal's project scope",
     );
   }
-  const tokenIdentity = `api-token:${principal.tokenId}`;
+  const tokenIdentity = `api-token:${principalAuthorizationId(principal)}`;
   return {
     project,
     repository,

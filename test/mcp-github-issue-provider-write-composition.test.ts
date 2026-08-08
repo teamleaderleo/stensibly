@@ -196,8 +196,8 @@ describe("GitHub issue provider write composition", () => {
       );
       expect(created).toMatchObject({
         operation: "github_create_issue",
-        actorId: "api-token:github-write-token",
-        clientId: "mcp:api-token:github-write-token",
+        actorId: "api-token:oauth-grant-stable",
+        clientId: "mcp:api-token:oauth-grant-stable",
         idempotencyKey: "public-create-1",
       });
       expect(calls[0]).toMatchObject({
@@ -208,8 +208,8 @@ describe("GitHub issue provider write composition", () => {
         body: "Bounded issue body",
         labels: ["area:github", "priority:high"],
         assignees: ["teamleaderleo", "cedar-bot"],
-        actorId: "api-token:github-write-token",
-        clientId: "mcp:api-token:github-write-token",
+        actorId: "api-token:oauth-grant-stable",
+        clientId: "mcp:api-token:oauth-grant-stable",
       });
 
       const createdWithoutMetadata = await call<GitHubProviderReceipt>(
@@ -230,8 +230,8 @@ describe("GitHub issue provider write composition", () => {
         title: "Create without initial metadata",
         labels: [],
         assignees: [],
-        actorId: "api-token:github-write-token",
-        clientId: "mcp:api-token:github-write-token",
+        actorId: "api-token:oauth-grant-stable",
+        clientId: "mcp:api-token:oauth-grant-stable",
       });
 
       const updated = await call<GitHubProviderReceipt>(
@@ -455,6 +455,7 @@ function context() {
 function writePrincipal(): TokenPrincipal {
   return {
     tokenId: "github-write-token",
+    authorizationId: "oauth-grant-stable",
     name: "GitHub write test",
     scopes: ["read", "write"],
     projects: [project],
