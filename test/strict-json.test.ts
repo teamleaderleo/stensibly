@@ -68,4 +68,13 @@ describe("strict JSON", () => {
     expect(() => parseStrictJson('{"value":"long"}', { maxBytes: 8 }))
       .toThrow("JSON input exceeds 8 bytes");
   });
+
+  test("enforces byte bounds by UTF-8 bytes without Node globals", () => {
+    const encoded = JSON.stringify("🙂");
+    expect(encoded.length).toBe(4);
+    expect(new TextEncoder().encode(encoded).byteLength).toBe(6);
+    expect(parseStrictJson(encoded, { maxBytes: 6 })).toBe("🙂");
+    expect(() => parseStrictJson(encoded, { maxBytes: 5 }))
+      .toThrow("JSON input exceeds 5 bytes");
+  });
 });
