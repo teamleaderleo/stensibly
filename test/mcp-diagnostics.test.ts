@@ -1,16 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
 import {
+  MCP_CORE_SERVER_VERSION,
+  MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
+  MCP_CORE_TOOL_MANIFEST_REVISION,
+  MCP_CORE_TOOL_NAMES,
   MCP_FAILURE_STAGE_HEADER,
   MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
   MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
-  MCP_TOOL_MANIFEST_REVISION,
   MCP_TOOL_NAMES,
   withMcpDiagnostics,
 } from "../src/mcp-diagnostics.ts";
 import { createServerApp } from "../src/server-app.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import { FAILURE_CATEGORY_HEADER } from "../src/worker-observability.ts";
 import {
@@ -18,6 +22,7 @@ import {
   mcpRequest,
   toolsListMessage,
 } from "./support/mcp-http.ts";
+import { withHostedGitHubDelegatedReadProvider } from "./support/hosted-mcp-ledger.ts";
 
 const diagnosticsClient = { clientName: "mcp-diagnostics-test" };
 
@@ -25,9 +30,13 @@ describe("MCP connector diagnostics", () => {
   test("publishes one stable manifest identity that matches initialize and tools/list", async () => {
     const store = new StensiblyStore(":memory:");
     try {
-      expect(MCP_TOOL_MANIFEST_REVISION).toMatch(/^[a-f0-9]{12}$/);
-      expect(MCP_SERVER_VERSION).toBe(`0.0.1+manifest.${MCP_TOOL_MANIFEST_REVISION}`);
-      expect(MCP_TOOL_MANIFEST_FINGERPRINT).toContain(MCP_TOOL_MANIFEST_REVISION);
+      expect(MCP_CORE_TOOL_MANIFEST_REVISION).toMatch(/^[a-f0-9]{12}$/);
+      expect(MCP_CORE_SERVER_VERSION).toBe(
+        `0.0.1+manifest.${MCP_CORE_TOOL_MANIFEST_REVISION}`,
+      );
+      expect(MCP_CORE_TOOL_MANIFEST_FINGERPRINT).toContain(
+        MCP_CORE_TOOL_MANIFEST_REVISION,
+      );
 
       const token = createApiToken(store, {
         name: "Manifest diagnostics reader",
@@ -41,15 +50,17 @@ describe("MCP connector diagnostics", () => {
       );
       expect(initialized.status).toBe(200);
       expect(initialized.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
-        MCP_TOOL_MANIFEST_FINGERPRINT,
+        MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
       );
-      expect(initialized.headers.get(MCP_TOOL_COUNT_HEADER)).toBe(String(MCP_TOOL_NAMES.length));
+      expect(initialized.headers.get(MCP_TOOL_COUNT_HEADER)).toBe(
+        String(MCP_CORE_TOOL_NAMES.length),
+      );
       const initializedPayload = await initialized.json() as {
         result?: { serverInfo?: { name?: unknown; version?: unknown } };
       };
       expect(initializedPayload.result?.serverInfo).toEqual({
         name: "stensibly",
-        version: MCP_SERVER_VERSION,
+        version: MCP_CORE_SERVER_VERSION,
       });
 
       const listed = await mcpRequest(app, token.token, toolsListMessage(2));
@@ -60,9 +71,9 @@ describe("MCP connector diagnostics", () => {
         .map((tool) => tool.name)
         .filter((name): name is string => typeof name === "string")
         .sort();
-      expect(names).toEqual([...MCP_TOOL_NAMES]);
+      expect(names).toEqual([...MCP_CORE_TOOL_NAMES]);
       expect(listed.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
-        MCP_TOOL_MANIFEST_FINGERPRINT,
+        MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
       );
     } finally {
       store.close();
@@ -92,7 +103,7 @@ describe("MCP connector diagnostics", () => {
       expect(response.status).toBe(500);
       expect(response.headers.get(MCP_FAILURE_STAGE_HEADER)).toBe("server_construction");
       expect(response.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
-        MCP_TOOL_MANIFEST_FINGERPRINT,
+        MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
       );
       const payload = await response.json() as {
         error?: { data?: Record<string, unknown> };
@@ -104,8 +115,8 @@ describe("MCP connector diagnostics", () => {
         retryable: true,
         reconciliation: "safe_to_retry",
         recommendedAction: "retry_with_same_request_id",
-        manifestFingerprint: MCP_TOOL_MANIFEST_FINGERPRINT,
-        manifestToolCount: MCP_TOOL_NAMES.length,
+        manifestFingerprint: MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
+        manifestToolCount: MCP_CORE_TOOL_NAMES.length,
         method: "initialize",
       });
     } finally {
@@ -141,6 +152,55 @@ describe("MCP connector diagnostics", () => {
       tool: "run_continuation_supervisor_policy",
       idempotencyKeyPresent: false,
     });
+  });
+
+  test("publishes the hosted manifest only when delegated GitHub dispatch is mounted", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const token = createApiToken(store, {
+        name: "Hosted manifest diagnostics reader",
+        scopes: ["read"],
+      });
+      const ledger = withHostedGitHubDelegatedReadProvider(new SqliteWorkLedger(store));
+      const app = createServerApp(store, { ledger });
+      const initialized = await mcpRequest(
+        app,
+        token.token,
+        initializeMessage(10, diagnosticsClient),
+      );
+      const initializedPayload = await initialized.json() as {
+        result?: { serverInfo?: { name?: unknown; version?: unknown } };
+      };
+      expect(initializedPayload.result?.serverInfo).toEqual({
+        name: "stensibly",
+        version: MCP_SERVER_VERSION,
+      });
+      expect(initialized.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
+        MCP_TOOL_MANIFEST_FINGERPRINT,
+      );
+      expect(initialized.headers.get(MCP_TOOL_COUNT_HEADER)).toBe(
+        String(MCP_TOOL_NAMES.length),
+      );
+
+      const listed = await mcpRequest(app, token.token, toolsListMessage(11));
+      const payload = await listed.json() as {
+        result?: { tools?: Array<{ name?: unknown }> };
+      };
+      const names = (payload.result?.tools ?? [])
+        .map((tool) => tool.name)
+        .filter((name): name is string => typeof name === "string")
+        .sort();
+      expect(names).toEqual([...MCP_TOOL_NAMES]);
+      expect(names).toContain("github_call_tool");
+      expect(listed.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
+        MCP_TOOL_MANIFEST_FINGERPRINT,
+      );
+      expect(listed.headers.get(MCP_TOOL_COUNT_HEADER)).toBe(
+        String(MCP_TOOL_NAMES.length),
+      );
+    } finally {
+      store.close();
+    }
   });
 });
 
@@ -234,8 +294,8 @@ describe("MCP gateway validation diagnostics", () => {
           retryable: false,
           reconciliation: "not_required",
           recommendedAction: "fix_request",
-          manifestFingerprint: MCP_TOOL_MANIFEST_FINGERPRINT,
-          manifestToolCount: MCP_TOOL_NAMES.length,
+          manifestFingerprint: MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
+          manifestToolCount: MCP_CORE_TOOL_NAMES.length,
           method: "initialize",
         });
       }

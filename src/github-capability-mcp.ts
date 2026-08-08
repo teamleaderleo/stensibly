@@ -183,6 +183,10 @@ export function registerGitHubCapabilityTools(
   );
 }
 
+export function hasGitHubDelegatedReadProvider(value: unknown): boolean {
+  return delegatedReadProvider(value) !== null;
+}
+
 function delegatedReadProvider(
   value: unknown,
 ): HostedGitHubDelegatedReadProvider | null {

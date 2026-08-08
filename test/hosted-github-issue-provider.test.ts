@@ -15,6 +15,7 @@ import {
 } from "../src/project-contract.ts";
 
 const repositoryFullName = "teamleaderleo/stensibly";
+const secondRepositoryFullName = "teamleaderleo/second-repository";
 const project = "oauth-dogfood";
 const fixedNow = Date.parse("2026-07-31T00:00:00.000Z");
 
@@ -38,19 +39,7 @@ const projectContext = {
   escalation: "Stop when the accepted repository binding changes.",
 };
 
-const snapshot = compileProjectContract(
-  renderProjectContract(projectContract, projectContext),
-);
-
-const attachment: ProjectAttachmentRecord = {
-  id: "attach_hosted_github",
-  project,
-  snapshot,
-  sourceRevision: "main@provider-read-test",
-  acceptedBy: "test",
-  authorityWidening: false,
-  acceptedAt: "2026-07-31T00:00:00.000Z",
-};
+const attachment = attachmentForRepositories([repositoryFullName]);
 
 const apiIssue = {
   number: 525,
@@ -247,6 +236,65 @@ describe("hosted GitHub issue provider", () => {
     expect(issueCalls).toBe(1);
   });
 
+  test("routes a second attached repository without a repository environment binding", async () => {
+    const privateKey = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    }).privateKey;
+    const tokenBodies: unknown[] = [];
+    const secondIssue = {
+      ...apiIssue,
+      repository_url:
+        "https://api.github.test/repos/teamleaderleo/second-repository",
+    };
+    const env = providerEnv(privateKey);
+    delete env.STENSIBLY_GITHUB_PROVIDER_REPOSITORY;
+    const mounted = mountHostedGitHubIssueProviderFromEnv(
+      fakeLedger(attachmentForRepositories([
+        repositoryFullName,
+        secondRepositoryFullName,
+      ])),
+      env,
+      {
+        now: () => fixedNow,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          if (url.endsWith("/app/installations/98765/access_tokens")) {
+            tokenBodies.push(JSON.parse(String(init?.body)) as unknown);
+            return Response.json({
+              token: "second-repository-token",
+              expires_at: "2026-07-31T01:00:00Z",
+              permissions: { issues: "read" },
+              repository_selection: "selected",
+              repositories: [{ full_name: secondRepositoryFullName }],
+            }, { status: 201 });
+          }
+          expect(url).toEndWith(
+            "/repos/teamleaderleo/second-repository/issues/525",
+          );
+          return Response.json(secondIssue);
+        }) as typeof fetch,
+      },
+    );
+
+    const issue = await mounted.getIssue!({
+      project,
+      repository: secondRepositoryFullName,
+      actorId: "api-token:test",
+      clientId: "mcp:api-token:test",
+      issueNumber: 525,
+    });
+
+    expect(issue.reference.externalId).toBe(
+      "github:teamleaderleo/second-repository#525",
+    );
+    expect(tokenBodies).toEqual([{
+      repositories: ["second-repository"],
+      permissions: { issues: "read" },
+    }]);
+  });
+
   test("rejects cross-repository provider results for every typed read", async () => {
     let providerCalls = 0;
     const foreignIssue = {
@@ -331,7 +379,7 @@ describe("hosted GitHub issue provider", () => {
     }
   });
 
-  test("rejects padded hosted repository and account identities before mounting", () => {
+  test("rejects padded hosted account identity before mounting", () => {
     const privateKey = generateKeyPairSync("rsa", {
       modulusLength: 2048,
       publicKeyEncoding: { type: "spki", format: "pem" },
@@ -339,14 +387,6 @@ describe("hosted GitHub issue provider", () => {
     }).privateKey;
 
     for (const [key, value] of [
-      [
-        "STENSIBLY_GITHUB_PROVIDER_REPOSITORY",
-        ` ${repositoryFullName}`,
-      ],
-      [
-        "STENSIBLY_GITHUB_PROVIDER_REPOSITORY",
-        `${repositoryFullName} `,
-      ],
       [
         "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
         " teamleaderleo",
@@ -392,17 +432,88 @@ describe("hosted GitHub issue provider", () => {
     })).rejects.toThrow("outside the accepted project attachment");
     expect(providerCalls).toBe(0);
   });
+
+  test("rejects wrong-project backend attachments before token or provider activity", async () => {
+    const privateKey = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    }).privateKey;
+
+    for (const record of [
+      attachmentForRepositories(
+        [repositoryFullName],
+        "wrong-project",
+        project,
+      ),
+      attachmentForRepositories(
+        [repositoryFullName],
+        project,
+        "wrong-project",
+      ),
+    ]) {
+      let providerCalls = 0;
+      const mounted = mountHostedGitHubIssueProviderFromEnv(
+        fakeLedger(record),
+        providerEnv(privateKey),
+        {
+          fetch: (async () => {
+            providerCalls += 1;
+            return Response.json(
+              { message: "must not mint or dispatch" },
+              { status: 500 },
+            );
+          }) as unknown as typeof fetch,
+          now: () => fixedNow,
+        },
+      );
+
+      await expect(mounted.getIssue!({
+        project,
+        repository: repositoryFullName,
+        actorId: "api-token:test",
+        clientId: "mcp:api-token:test",
+        issueNumber: 1,
+      })).rejects.toThrow("has no active GitHub provider binding");
+      expect(providerCalls).toBe(0);
+    }
+  });
 });
 
-function fakeLedger(): WorkLedger & ProjectAttachmentLedger {
+function fakeLedger(
+  record: ProjectAttachmentRecord = attachment,
+): WorkLedger & ProjectAttachmentLedger {
   return {
     async getProjectAttachment(requestedProject: string) {
-      return requestedProject === project ? attachment : null;
+      return requestedProject === project ? record : null;
     },
     async acceptProjectAttachment() {
       throw new Error("acceptProjectAttachment is outside this test");
     },
   } as unknown as WorkLedger & ProjectAttachmentLedger;
+}
+
+function attachmentForRepositories(
+  repositories: string[],
+  attachmentProject = project,
+  contractProject = project,
+): ProjectAttachmentRecord {
+  const snapshot = compileProjectContract(
+    renderProjectContract({
+      ...projectContract,
+      project: contractProject,
+      repositories,
+    }, projectContext),
+  );
+  return {
+    id: `attach_hosted_github_${repositories.length}`,
+    project: attachmentProject,
+    snapshot,
+    sourceRevision: "main@provider-read-test",
+    acceptedBy: "test",
+    authorityWidening: false,
+    acceptedAt: "2026-07-31T00:00:00.000Z",
+  };
 }
 
 function providerEnv(privateKey: string): Record<string, string> {

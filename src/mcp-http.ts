@@ -19,6 +19,7 @@ import {
 } from "./token-contracts.js";
 import {
   MCP_FAILURE_STAGE_HEADER,
+  mcpToolManifestForLedger,
   type McpFailureStage,
   withMcpDiagnostics,
 } from "./mcp-diagnostics.js";
@@ -48,7 +49,11 @@ export async function handleMcpHttpRequest(
 ): Promise<Response> {
   const diagnosticRequest = request.clone();
   const response = await handleMcpHttpRequestCore(request, options);
-  return await withMcpDiagnostics(diagnosticRequest, response);
+  return await withMcpDiagnostics(
+    diagnosticRequest,
+    response,
+    mcpToolManifestForLedger(options.ledger),
+  );
 }
 
 async function handleMcpHttpRequestCore(

@@ -11,27 +11,18 @@ import {
 } from "./github-issue-provider-mcp.js";
 import type {
   GitHubIssueProviderOperation,
-  GitHubProjectRepositoryBinding,
   GitHubProviderAuthority,
-  GitHubProviderBindingStore,
-  GitHubProviderConnection,
   GitHubProviderReceipt,
   GitHubProviderReceiptReservation,
   GitHubProviderReceiptStore,
   GitHubProviderRequestContext,
 } from "./github-provider-contracts.js";
-import {
-  normalizeGitHubRepository,
-  sha256,
-  stableJson,
-} from "./github-provider-validation.js";
+import { normalizeGitHubRepository } from "./github-provider-validation.js";
+import { HostedGitHubAttachmentBindingStore } from "./hosted-github-attachment-binding.js";
 import { GitHubRestIssueProviderAdapter } from "./github-rest-issue-adapter.js";
 import { GitHubRestIssueWriteAdapter } from "./github-rest-issue-write-adapter.js";
 import type { WorkLedger } from "./ledger.js";
-import {
-  projectAttachmentLedger,
-  type ProjectAttachmentLedger,
-} from "./project-attachment-ledger.js";
+import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 
 export interface HostedGitHubIssueProviderOverrides {
   fetch?: typeof fetch;
@@ -40,7 +31,6 @@ export interface HostedGitHubIssueProviderOverrides {
 
 interface HostedGitHubIssueProviderConfig {
   project: string;
-  repositoryFullName: string;
   appId: string;
   installationId: string;
   accountLogin: string;
@@ -82,17 +72,18 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     );
   }
   const now = overrides.now ?? Date.now;
-  const bindings = new AcceptedAttachmentGitHubBindingStore(
+  const bindings = new HostedGitHubAttachmentBindingStore(
     projects,
     config,
-    now,
+    new Date(now()).toISOString(),
   );
   const tokens = new GitHubAppInstallationTokenMinter({
     appId: config.appId,
     installationId: config.installationId,
     accountLogin: config.accountLogin,
     privateKeyPem: config.privateKeyPem,
-    repositoryFullNames: [config.repositoryFullName],
+    authorizeRepository: (repositoryFullName) =>
+      bindings.authorizesRepository(repositoryFullName),
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
     now,
@@ -149,7 +140,6 @@ function hostedGitHubIssueProviderConfig(
     "STENSIBLY_GITHUB_APP_PRIVATE_KEY",
     "STENSIBLY_GITHUB_INSTALLATION_ID",
     "STENSIBLY_GITHUB_PROVIDER_PROJECT",
-    "STENSIBLY_GITHUB_PROVIDER_REPOSITORY",
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
     "STENSIBLY_GITHUB_API_BASE_URL",
   ] as const;
@@ -169,9 +159,6 @@ function hostedGitHubIssueProviderConfig(
   const project = hostedProjectSlug(
     requiredEnv(env, "STENSIBLY_GITHUB_PROVIDER_PROJECT", false),
   );
-  const repositoryFullName = normalizeGitHubRepository(
-    exactAuthorityEnv(env, "STENSIBLY_GITHUB_PROVIDER_REPOSITORY"),
-  ).toLowerCase();
   const accountLogin = exactAuthorityEnv(
     env,
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
@@ -180,7 +167,6 @@ function hostedGitHubIssueProviderConfig(
     ?? "https://api.github.com";
   return {
     project,
-    repositoryFullName,
     appId,
     installationId,
     accountLogin,
@@ -189,67 +175,6 @@ function hostedGitHubIssueProviderConfig(
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
     issueWritesEnabled,
   };
-}
-
-class AcceptedAttachmentGitHubBindingStore implements GitHubProviderBindingStore {
-  readonly #projects: ProjectAttachmentLedger;
-  readonly #config: HostedGitHubIssueProviderConfig;
-  readonly #connection: GitHubProviderConnection;
-
-  constructor(
-    projects: ProjectAttachmentLedger,
-    config: HostedGitHubIssueProviderConfig,
-    now: () => number,
-  ) {
-    this.#projects = projects;
-    this.#config = config;
-    this.#connection = Object.freeze({
-      id: `ghconn_installation_${config.installationId}`,
-      provider: "github",
-      installationId: config.installationId,
-      accountLogin: config.accountLogin,
-      credentialRef: config.credentialRef,
-      status: "active",
-      repositoryFullNames: [config.repositoryFullName],
-      observedAt: new Date(now()).toISOString(),
-    });
-  }
-
-  async getGitHubProjectRepositoryBinding(
-    project: string,
-    repositoryFullName: string,
-  ): Promise<GitHubProjectRepositoryBinding | null> {
-    if (
-      project !== this.#config.project
-      || normalizeGitHubRepository(repositoryFullName).toLowerCase()
-        !== this.#config.repositoryFullName
-    ) return null;
-    const attachment = await this.#projects.getProjectAttachment(project);
-    if (!attachment) return null;
-    const digest = sha256(stableJson({
-      project,
-      repositoryFullName: this.#config.repositoryFullName,
-      connectionId: this.#connection.id,
-      attachmentId: attachment.id,
-      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
-    }));
-    return Object.freeze({
-      id: `ghbind_${digest.slice("sha256:".length, "sha256:".length + 24)}`,
-      project,
-      repositoryFullName: this.#config.repositoryFullName,
-      connectionId: this.#connection.id,
-      attachmentId: attachment.id,
-      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
-      status: "active",
-      acceptedAt: attachment.acceptedAt,
-    });
-  }
-
-  async getGitHubProviderConnection(
-    id: string,
-  ): Promise<GitHubProviderConnection | null> {
-    return id === this.#connection.id ? this.#connection : null;
-  }
 }
 
 class HostedGitHubAuthority implements GitHubProviderAuthority {
@@ -268,11 +193,7 @@ class HostedGitHubAuthority implements GitHubProviderAuthority {
     capabilityGrantId?: string;
     approvalId?: string;
   }): Promise<{ allowed: boolean; reason?: string }> {
-    if (
-      input.project !== this.#config.project
-      || normalizeGitHubRepository(input.repositoryFullName).toLowerCase()
-        !== this.#config.repositoryFullName
-    ) {
+    if (input.project !== this.#config.project) {
       return {
         allowed: false,
         reason: "GitHub operation is outside the configured hosted provider binding",

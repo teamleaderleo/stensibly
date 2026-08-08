@@ -116,15 +116,46 @@ Delete the temporary file immediately after the successful deployment. Keep one 
 
 Hosted GitHub auth activation is a separate controlled binding change. Configure its complete required set through the approved Cloudflare path, preserve all four MCP OAuth bindings as absent, deploy the accepted Worker build, and run the disabled-state verification described below. Do not put secret values in repository files, workflow inputs, issue comments, or retained verifier output.
 
-## Code-only deployments
+## Guarded code-only deployments
 
-Once encrypted bindings exist, routine code deployments preserve them:
+Once encrypted bindings exist, routine releases use the guarded uploader and promoter:
 
 ```bash
-bun run worker:deploy
+release_candidate_sha="$(git rev-parse HEAD)"
+release_oauth_expectation="enabled"
+bun run worker:deploy -- \
+  --expected-sha "$release_candidate_sha" \
+  --oauth-expectation "$release_oauth_expectation"
 ```
 
-That preservation is useful but means a code-only deployment cannot repair missing hosted-auth configuration. The production workflow therefore verifies the declared public OAuth state after every deployment instead of treating successful legacy bearer checks as proof that hosted auth exists.
+The command requires `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, and
+`STENSIBLY_TOKEN` in the protected environment. It rejects a dirty or stale checkout,
+uploads a version without traffic, validates the actual uploaded binding inventory,
+verifies the exact preview, confirms that neither `main` nor the active deployment
+moved, and only then promotes. A failed post-promotion check restores the captured
+baseline when doing so cannot overwrite a concurrent deployment.
+
+Dirty includes tracked changes, every ordinary untracked path, and every ignored path
+except the explicit `node_modules/` dependency and `.wrangler-dry-run/` generated-output
+roots. `.wrangler/` is rejected because Wrangler can follow its ignored deployment
+configuration redirect. Every release-time Wrangler command also pins the reviewed
+`wrangler.jsonc`; after upload, the guard removes only Wrangler's empty generated
+`.wrangler/tmp` and `.wrangler` directories before rechecking the worktree. Any non-empty
+or unexpected release state fails closed. Together these checks prevent an unreviewed
+local file or configuration from changing the Worker bundle while leaving deterministic
+install and dry-run output usable.
+
+The reviewed inventory lives at `config/worker-production-bindings.json`. Reconcile
+that contract with `wrangler.jsonc` whenever a routing or authentication migration
+changes the production binding model. A code-only upload preserves encrypted secrets,
+but it cannot manufacture missing secret bindings; the uploaded-version check therefore
+fails before traffic when the inventory is incomplete. Auth and OAuth secrets appear
+in the contract only as binding names and `secret_text` types; their values remain in
+Cloudflare.
+
+Do not use raw `wrangler deploy` for routine production changes. It immediately sends
+100% traffic to a newly uploaded version and bypasses these guards. The first-deployment
+bootstrap above is the explicit exception because no baseline deployment exists yet.
 
 Before deployment, run:
 

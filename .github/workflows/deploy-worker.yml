@@ -7,6 +7,8 @@ on:
     paths:
       - "src/**"
       - "wrangler.jsonc"
+      - "config/worker-production-bindings.json"
+      - "scripts/worker-production-release.ts"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/deploy-worker.yml"
@@ -122,7 +124,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          secret_inventory="$(bunx wrangler secret list --name stensibly-api --format json)"
+          secret_inventory="$(bunx wrangler secret list --name stensibly-api --format json --config wrangler.jsonc)"
           for name in \
             CONVEX_URL \
             STENSIBLY_SERVICE_SECRET \
@@ -136,84 +138,66 @@ jobs:
             fi
           done
 
-      - name: Deploy Cloudflare Worker
+      - name: Release exact production Worker candidate
+        id: release
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: bun run worker:deploy
-
-      - name: Verify Worker fallback bearer compatibility
-        env:
           STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
-          STENSIBLY_PROJECT: ${{ inputs.project }}
+          VERIFY_PROJECT: ${{ inputs.project }}
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            if bun run verify:hosted -- --endpoint https://stensibly-api.leoli-082000.workers.dev; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              sleep 10
-            fi
-          done
-          exit 1
-
-      - name: Verify official endpoint bearer compatibility
-        env:
-          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
-          STENSIBLY_PROJECT: ${{ inputs.project }}
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if bun run verify:hosted; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              sleep 10
-            fi
-          done
-          exit 1
-
-      - name: Verify Worker fallback public OAuth state
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if bun run verify:oauth -- \
-              --endpoint https://stensibly-api.leoli-082000.workers.dev \
-              --issuer https://api.stensibly.com \
-              --expect "$OAUTH_EXPECTATION"; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              sleep 10
-            fi
-          done
-          exit 1
-
-      - name: Verify official endpoint public OAuth state
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if bun run verify:oauth -- --expect "$OAUTH_EXPECTATION"; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              sleep 10
-            fi
-          done
-          exit 1
+          args=(
+            --expected-sha "$GITHUB_SHA"
+            --oauth-expectation "$OAUTH_EXPECTATION"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ -n "$VERIFY_PROJECT" ]]; then
+            args+=(--project "$VERIFY_PROJECT")
+          fi
+          bun run worker:deploy -- "${args[@]}"
 
       - name: Record deployment summary
+        if: ${{ success() }}
         env:
           DEPLOY_SHA: ${{ github.sha }}
+          BASELINE_DEPLOYMENT_ID: ${{ steps.release.outputs.baseline_deployment_id }}
+          CANDIDATE_VERSION_ID: ${{ steps.release.outputs.candidate_version_id }}
         run: |
           {
             echo "### Stensibly Worker deployed"
             echo
             echo "- Commit: \`$DEPLOY_SHA\`"
+            echo "- Baseline deployment: \`$BASELINE_DEPLOYMENT_ID\`"
+            echo "- Worker version: \`$CANDIDATE_VERSION_ID\`"
             echo "- Worker fallback: https://stensibly-api.leoli-082000.workers.dev"
             echo "- Official endpoint: https://api.stensibly.com"
             echo "- Declared OAuth state: \`$OAUTH_EXPECTATION\`"
+            echo "- Exact current-main check: passed before upload and promotion"
+            echo "- Uploaded production binding inventory: passed"
+            echo "- Candidate preview verification: passed before promotion"
             echo "- Legacy bearer verification: passed on both origins"
             echo "- Public auth/OAuth verification: passed on both origins"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record failed release and recovery state
+        if: ${{ failure() && steps.release.outputs.candidate_version_id != '' }}
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          BASELINE_DEPLOYMENT_ID: ${{ steps.release.outputs.baseline_deployment_id }}
+          CANDIDATE_VERSION_ID: ${{ steps.release.outputs.candidate_version_id }}
+          RECOVERED: ${{ steps.release.outputs.recovered || 'false' }}
+        run: |
+          {
+            echo "### Stensibly Worker release failed"
+            echo
+            echo "- Commit: \`$DEPLOY_SHA\`"
+            echo "- Candidate Worker version: \`$CANDIDATE_VERSION_ID\`"
+            echo "- Preserved baseline deployment: \`$BASELINE_DEPLOYMENT_ID\`"
+            echo "- Automatic baseline recovery completed: \`$RECOVERED\`"
+            if [[ "$RECOVERED" == "true" ]]; then
+              echo "- Result: captured baseline was restored and health-checked"
+            else
+              echo "- Result: active deployment is unknown; manually reconcile Cloudflare before retrying"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

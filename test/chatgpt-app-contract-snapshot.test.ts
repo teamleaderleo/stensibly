@@ -6,6 +6,7 @@ import { createMcpServer } from "../src/mcp.ts";
 import { createMcpReleaseManifest } from "../src/mcp-release-manifest.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
+import { withHostedGitHubDelegatedReadProvider } from "./support/hosted-mcp-ledger.ts";
 
 interface ChatGptAppContractSnapshot {
   toolContractFingerprint: string;
@@ -21,7 +22,9 @@ describe("ChatGPT app full contract snapshot", () => {
   test("requires a checked-in refresh checkpoint for schema and metadata drift", async () => {
     const snapshot = readSnapshot();
     const store = new StensiblyStore(":memory:");
-    const server = createMcpServer(new SqliteWorkLedger(store));
+    const server = createMcpServer(withHostedGitHubDelegatedReadProvider(
+      new SqliteWorkLedger(store),
+    ));
     const client = new Client(
       { name: "chatgpt-contract-snapshot-test", version: "0.0.1" },
       { capabilities: {} },

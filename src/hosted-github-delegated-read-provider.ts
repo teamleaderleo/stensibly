@@ -11,25 +11,13 @@ import {
   type GitHubDelegatedReadAuthority,
   type GitHubDelegatedReadReceipt,
 } from "./github-delegated-read.js";
-import type {
-  GitHubProjectRepositoryBinding,
-  GitHubProviderBindingStore,
-  GitHubProviderConnection,
-} from "./github-provider-contracts.js";
-import {
-  normalizeGitHubRepository,
-  sha256,
-  stableJson,
-} from "./github-provider-validation.js";
+import { HostedGitHubAttachmentBindingStore } from "./hosted-github-attachment-binding.js";
 import { GitHubRestActionsJobDetailAdapter } from "./github-rest-actions-job-detail-adapter.js";
 import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";
 import { GitHubRestCommitStatusAdapter } from "./github-rest-commit-status-adapter.js";
 import { GitHubRestPullRequestReviewThreadAdapter } from "./github-rest-pull-request-review-thread-adapter.js";
 import type { WorkLedger } from "./ledger.js";
-import {
-  projectAttachmentLedger,
-  type ProjectAttachmentLedger,
-} from "./project-attachment-ledger.js";
+import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 
 export const hostedGitHubDelegatedReadTools = Object.freeze([
   "get_repo",
@@ -73,7 +61,6 @@ export interface HostedGitHubDelegatedReadOverrides {
 
 interface HostedGitHubDelegatedReadConfig {
   project: string;
-  repositoryFullName: string;
   appId: string;
   installationId: string;
   accountLogin: string;
@@ -121,7 +108,7 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
   const enabledTools = new Set<string>(delegatedTools);
   const now = overrides.now ?? Date.now;
   const observedAt = exactObservationTime(now);
-  const bindings = new AcceptedAttachmentDelegatedBindingStore(
+  const bindings = new HostedGitHubAttachmentBindingStore(
     projects,
     config,
     observedAt,
@@ -131,13 +118,14 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
     installationId: config.installationId,
     accountLogin: config.accountLogin,
     privateKeyPem: config.privateKeyPem,
-    repositoryFullNames: [config.repositoryFullName],
+    authorizeRepository: (repositoryFullName) =>
+      bindings.authorizesRepository(repositoryFullName),
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
     now,
   });
   const adapterOptions = {
-    connectionId: bindings.connection.id,
+    connectionId: bindings.connectionId,
     installationId: config.installationId,
     credentialRef: config.credentialRef,
     tokenProvider: tokens,
@@ -211,9 +199,6 @@ function hostedGitHubDelegatedReadConfig(
   const project = hostedProjectSlug(
     requiredEnv(env, "STENSIBLY_GITHUB_PROVIDER_PROJECT", false),
   );
-  const repositoryFullName = normalizeGitHubRepository(
-    exactAuthorityEnv(env, "STENSIBLY_GITHUB_PROVIDER_REPOSITORY"),
-  ).toLowerCase();
   const accountLogin = exactAuthorityEnv(
     env,
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN",
@@ -227,7 +212,6 @@ function hostedGitHubDelegatedReadConfig(
 
   return {
     project,
-    repositoryFullName,
     appId,
     installationId,
     accountLogin,
@@ -236,70 +220,6 @@ function hostedGitHubDelegatedReadConfig(
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
     jobDetailReadsEnabled,
   };
-}
-
-class AcceptedAttachmentDelegatedBindingStore
-  implements GitHubProviderBindingStore
-{
-  readonly #projects: ProjectAttachmentLedger;
-  readonly #config: HostedGitHubDelegatedReadConfig;
-  readonly connection: GitHubProviderConnection;
-
-  constructor(
-    projects: ProjectAttachmentLedger,
-    config: HostedGitHubDelegatedReadConfig,
-    observedAt: string,
-  ) {
-    this.#projects = projects;
-    this.#config = config;
-    this.connection = Object.freeze({
-      id: `ghconn_installation_${config.installationId}`,
-      provider: "github",
-      installationId: config.installationId,
-      accountLogin: config.accountLogin,
-      credentialRef: config.credentialRef,
-      status: "active",
-      repositoryFullNames: [config.repositoryFullName],
-      observedAt,
-    });
-  }
-
-  async getGitHubProjectRepositoryBinding(
-    project: string,
-    repositoryFullName: string,
-  ): Promise<GitHubProjectRepositoryBinding | null> {
-    if (
-      project !== this.#config.project
-      || repositoryFullName !== this.#config.repositoryFullName
-    ) {
-      return null;
-    }
-    const attachment = await this.#projects.getProjectAttachment(project);
-    if (!attachment) return null;
-    const digest = sha256(stableJson({
-      project,
-      repositoryFullName,
-      connectionId: this.connection.id,
-      attachmentId: attachment.id,
-      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
-    }));
-    return Object.freeze({
-      id: `ghbind_${digest.slice("sha256:".length, "sha256:".length + 24)}`,
-      project,
-      repositoryFullName,
-      connectionId: this.connection.id,
-      attachmentId: attachment.id,
-      attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
-      status: "active",
-      acceptedAt: attachment.acceptedAt,
-    });
-  }
-
-  async getGitHubProviderConnection(
-    id: string,
-  ): Promise<GitHubProviderConnection | null> {
-    return id === this.connection.id ? this.connection : null;
-  }
 }
 
 class HostedDelegatedReadAuthority
@@ -329,7 +249,6 @@ class HostedDelegatedReadAuthority
     return {
       allowed:
         input.project === this.#config.project
-        && input.repositoryFullName === this.#config.repositoryFullName
         && this.#enabledTools.has(input.tool),
     };
   }
