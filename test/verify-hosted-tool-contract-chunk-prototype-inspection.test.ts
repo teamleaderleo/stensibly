@@ -37,25 +37,12 @@ describe("hosted MCP tool-contract chunk prototype inspection", () => {
     });
     Object.setPrototypeOf(chunk, hostilePrototype);
 
-    let delivered = false;
-    const reader = {
-      async read(): Promise<ReadableStreamReadResult<Uint8Array>> {
-        if (!delivered) {
-          delivered = true;
-          return { done: false, value: chunk };
-        }
-        return { done: true, value: undefined };
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
       },
-      async cancel(): Promise<void> {},
-      releaseLock(): void {},
-    } as unknown as ReadableStreamDefaultReader<Uint8Array>;
-    const body = {
-      locked: false,
-      getReader() {
-        return reader;
-      },
-      async cancel(): Promise<void> {},
-    } as unknown as ReadableStream<Uint8Array>;
+    });
     const response = {
       status: 200,
       headers: contractHeaders("tool-contract-chunk-prototype"),
