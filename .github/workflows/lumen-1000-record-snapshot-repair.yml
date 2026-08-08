@@ -27,7 +27,7 @@ jobs:
 
       - name: Verify exact source packet and current main
         env:
-          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          MAIN: 88f400b070862f01a58ead18ad05c4e7e6be98cb
         shell: bash
         run: |
           set -euo pipefail
@@ -192,6 +192,75 @@ jobs:
           PY
           git diff --check
 
+      - name: Normalize revoked Merkle arrays and absorb exact control
+        shell: bash
+        env:
+          CONTROL_SHA: b98bfef25ef9036b7ba0c2c70547b61319725936
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$CONTROL_SHA"
+          test "$(git rev-parse $CONTROL_SHA:test/github-observation-merkle-checkpoint-revoked-array.test.ts)" = "bb66cb33ddba804608b24b3f6365dffd01dea608"
+          git show "$CONTROL_SHA":test/github-observation-merkle-checkpoint-revoked-array.test.ts \
+            > test/github-observation-merkle-checkpoint-revoked-array.test.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/github-observation-merkle-checkpoint.ts")
+          source = source_path.read_text()
+          start = source.index("function snapshotArray(")
+          end = source.index("function preflightCompileInput(", start)
+          replacement = '''function snapshotArray(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+): unknown[] {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be an ordinary array`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  if (!isArray || prototype !== Array.prototype) {
+    throw new TypeError(`${label} must be an ordinary array`);
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < minimum || length > maximum) {
+    throw new RangeError(`${label} length is outside the accepted range`);
+  }
+  const result: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} must contain dense enumerable data properties`);
+    }
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
+'''
+          source_path.write_text(source[:start] + replacement + source[end:])
+          PY
+          git diff --check
+
       - uses: oven-sh/setup-bun@v2
 
       - name: Validate repaired Merkle packet
@@ -205,7 +274,7 @@ jobs:
       - name: Publish workflow-free packet on current main
         shell: bash
         env:
-          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          MAIN: 88f400b070862f01a58ead18ad05c4e7e6be98cb
           CARRIER_SHA: ${{ github.sha }}
           HEAD_REF: cicada/962-current-main-merkle-replay
         run: |
@@ -324,6 +393,7 @@ jobs:
             test/github-observation-merkle-checkpoint-import-boundary.test.ts \
             test/github-observation-merkle-checkpoint-matrix.test.ts \
             test/github-observation-merkle-checkpoint-record-key-budget.test.ts \
+            test/github-observation-merkle-checkpoint-revoked-array.test.ts \
             test/github-observation-merkle-checkpoint-retained-reference-privacy.test.ts \
             test/github-observation-merkle-checkpoint-route-prefix-privacy.test.ts \
             test/github-observation-merkle-checkpoint-schemeless-item-view-privacy.test.ts \
@@ -333,7 +403,7 @@ jobs:
             test/github-observation-merkle-checkpoint.test.ts \
             test/runtime/observation-merkle-vector.ts
           git diff --cached --check
-          test "$(git diff --cached --name-only | wc -l)" -eq 19
+          test "$(git diff --cached --name-only | wc -l)" -eq 20
           test "$(git diff --cached --name-only | grep -c '^\.github/' || true)" -eq 0
           git config user.name "Junco"
           git config user.email "actions@users.noreply.github.com"
