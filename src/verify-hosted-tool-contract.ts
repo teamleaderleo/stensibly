@@ -23,11 +23,26 @@ const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SNAPSHOT_PATH = new URL("../docs/chatgpt-app-actions.json", import.meta.url);
+const RESPONSE_METADATA_ERROR = "MCP tools/list response metadata was unavailable";
+const responseStatusGetter = Object.getOwnPropertyDescriptor(
+  Response.prototype,
+  "status",
+)?.get;
+const responseHeadersGetter = Object.getOwnPropertyDescriptor(
+  Response.prototype,
+  "headers",
+)?.get;
+const headersGet = Headers.prototype.get;
 
 interface ChatGptAppContractSnapshot {
   snapshotVersion: number;
   toolCount: number;
   toolContractFingerprint: string;
+}
+
+interface ResponseMetadata {
+  status: number;
+  headers: Headers;
 }
 
 export async function verifyHostedToolContract(
@@ -59,41 +74,49 @@ export async function verifyHostedToolContract(
         params: {},
       }),
     }, timeoutMs);
-    if (response.status !== 200) {
+    let metadata: ResponseMetadata;
+    try {
+      metadata = readResponseMetadata(response);
+    } catch (error) {
+      void cancelResponseBody(response);
+      throw error;
+    }
+    if (metadata.status !== 200) {
       void cancelResponseBody(response);
     }
-    expectStatus(response, 200);
-    const body = await readBoundedJson(response, timeoutMs);
-    const tools = readToolsListTools(response, body);
+    expectStatus(metadata, 200);
+    const body = await readBoundedJson(response, metadata, timeoutMs);
+    const tools = readToolsListTools(metadata, body);
 
     const contracts = tools.map((tool, index) => readToolContract(tool, index));
-    const manifest = compileManifest(response, contracts);
+    const manifest = compileManifest(metadata, contracts);
     if (manifest.tools.length !== snapshot.toolCount) {
       throw responseError(
-        response,
+        metadata,
         `Expected ChatGPT tool count ${snapshot.toolCount}; received ${manifest.tools.length}`,
       );
     }
     if (manifest.digest !== snapshot.toolContractFingerprint) {
       throw responseError(
-        response,
+        metadata,
         `Expected ChatGPT tool contract ${snapshot.toolContractFingerprint}; received ${manifest.digest}`,
       );
     }
 
-    const coarseFingerprint = response.headers
-      .get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)
-      ?.trim();
+    const coarseFingerprint = readHeader(
+      metadata,
+      MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+    )?.trim();
     if (coarseFingerprint !== MCP_TOOL_MANIFEST_FINGERPRINT) {
       throw responseError(
-        response,
+        metadata,
         `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${MCP_TOOL_MANIFEST_FINGERPRINT}; received ${coarseFingerprint || "missing"}`,
       );
     }
-    const count = response.headers.get(MCP_TOOL_COUNT_HEADER)?.trim();
+    const count = readHeader(metadata, MCP_TOOL_COUNT_HEADER)?.trim();
     if (count !== String(snapshot.toolCount)) {
       throw responseError(
-        response,
+        metadata,
         `Expected ${MCP_TOOL_COUNT_HEADER}=${snapshot.toolCount}; received ${count || "missing"}`,
       );
     }
@@ -143,7 +166,7 @@ function readSnapshot(): ChatGptAppContractSnapshot {
   };
 }
 
-function readToolsListTools(response: Response, value: unknown): unknown[] {
+function readToolsListTools(metadata: ResponseMetadata, value: unknown): unknown[] {
   if (
     !isRecord(value)
     || value.jsonrpc !== "2.0"
@@ -153,7 +176,7 @@ function readToolsListTools(response: Response, value: unknown): unknown[] {
     || !Array.isArray(value.result.tools)
   ) {
     throw responseError(
-      response,
+      metadata,
       "Expected matching MCP tools/list JSON-RPC response",
     );
   }
@@ -187,11 +210,11 @@ function readToolContract(value: unknown, index: number): McpToolContract {
   };
 }
 
-function compileManifest(response: Response, contracts: McpToolContract[]) {
+function compileManifest(metadata: ResponseMetadata, contracts: McpToolContract[]) {
   try {
     return createMcpReleaseManifest(contracts);
   } catch {
-    throw responseError(response, "MCP tools/list contract is invalid");
+    throw responseError(metadata, "MCP tools/list contract is invalid");
   }
 }
 
@@ -215,10 +238,51 @@ async function request(
   }
 }
 
-async function readBoundedJson(response: Response, timeoutMs: number): Promise<unknown> {
+function readResponseMetadata(response: Response): ResponseMetadata {
+  try {
+    const statusDescriptor = Object.getOwnPropertyDescriptor(response, "status");
+    const headersDescriptor = Object.getOwnPropertyDescriptor(response, "headers");
+    const status = statusDescriptor === undefined
+      ? responseStatusGetter?.call(response)
+      : "value" in statusDescriptor
+      ? statusDescriptor.value
+      : undefined;
+    const headers = headersDescriptor === undefined
+      ? responseHeadersGetter?.call(response)
+      : "value" in headersDescriptor
+      ? headersDescriptor.value
+      : undefined;
+    if (
+      !Number.isInteger(status)
+      || (status as number) < 0
+      || (status as number) > 999
+      || !headers
+    ) {
+      throw new Error(RESPONSE_METADATA_ERROR);
+    }
+    headersGet.call(headers, "x-stensibly-metadata-probe");
+    return { status: status as number, headers: headers as Headers };
+  } catch {
+    throw new Error(RESPONSE_METADATA_ERROR);
+  }
+}
+
+function readHeader(metadata: ResponseMetadata, name: string): string | null {
+  try {
+    return headersGet.call(metadata.headers, name);
+  } catch {
+    throw new Error(RESPONSE_METADATA_ERROR);
+  }
+}
+
+async function readBoundedJson(
+  response: Response,
+  metadata: ResponseMetadata,
+  timeoutMs: number,
+): Promise<unknown> {
   let declaredLength: number | null;
   try {
-    declaredLength = admitContentLength(response.headers.get("content-length"));
+    declaredLength = admitContentLength(readHeader(metadata, "content-length"));
   } catch (error) {
     void cancelResponseBody(response);
     throw error;
@@ -426,14 +490,17 @@ async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Pr
   }
 }
 
-function expectStatus(response: Response, expected: number): void {
-  if (response.status !== expected) {
-    throw responseError(response, `Expected HTTP ${expected}; received HTTP ${response.status}`);
+function expectStatus(metadata: ResponseMetadata, expected: number): void {
+  if (metadata.status !== expected) {
+    throw responseError(
+      metadata,
+      `Expected HTTP ${expected}; received HTTP ${metadata.status}`,
+    );
   }
 }
 
-function responseError(response: Response, message: string): Error {
-  const requestId = response.headers.get("x-request-id")?.trim();
+function responseError(metadata: ResponseMetadata, message: string): Error {
+  const requestId = readHeader(metadata, "x-request-id")?.trim();
   return new Error(
     requestId && REQUEST_ID_PATTERN.test(requestId)
       ? `${message}; requestId=${requestId}`
