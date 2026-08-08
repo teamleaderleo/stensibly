@@ -20,6 +20,13 @@ import {
   type RunnerObservationV1,
   type RunnerStartCommandV1,
 } from "./runner-adapter-v1.js";
+import {
+  VERCEL_AI_SDK_ADAPTER_ID,
+  VERCEL_AI_SDK_ADAPTER_VERSION,
+  VERCEL_AI_SDK_PROFILE_ID,
+  VERCEL_AI_SDK_PROFILE_VERSION,
+  VercelAISDKRunnerAdapter,
+} from "./runner-adapters/vercel-ai-sdk.js";
 import { assertRunnerCommandAuthorityActiveV1 } from "./runner-command-authority.js";
 import { runAuthorityFence } from "./authority-fence.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
@@ -36,7 +43,7 @@ export type RunnerAdapterHostLedgerV1 =
 
 export interface RunnerAdapterHostOptionsV1 {
   ledger: RunnerAdapterHostLedgerV1;
-  adapter: RunnerAdapterV1;
+  adapter: VercelAISDKRunnerAdapter;
   actor: ActorInput;
   profileId: string;
   transport?: string;
@@ -71,6 +78,8 @@ export interface RunnerAdapterHostExecutionV1 {
 interface NormalizedHostOptions {
   ledger: RunnerAdapterHostLedgerV1;
   adapter: RunnerAdapterV1;
+  inspectCapabilities: RunnerAdapterV1["inspectCapabilities"];
+  start: RunnerAdapterV1["start"];
   descriptor: RunnerAdapterDescriptorV1;
   actor: ActorInput;
   profile: RunnerAdapterDescriptorV1["profiles"][number];
@@ -86,8 +95,11 @@ interface NormalizedHostOptions {
   now: () => Date;
 }
 
+const maximumEpisodeObservations = 32;
+const maximumEpisodeObservationBytes = 256 * 1024;
+
 /**
- * One bounded external-runner episode. The host reserves the adapter command in
+ * One bounded Vercel AI SDK runner episode. The host reserves the adapter command in
  * the durable event/receipt ledger before advancing the async generator, so a
  * sequential response-loss retry cannot blindly redispatch model work.
  *
@@ -211,7 +223,7 @@ export class RunnerAdapterHostV1 {
       observedAt: command.issuedAt,
       traceId: command.correlationId ?? deterministicId("trace", command.commandId),
     });
-    await this.#options.adapter.inspectCapabilities(probe);
+    await this.#options.inspectCapabilities(probe);
 
     const consumer = new RunnerObservationConsumerV1({
       ledger: this.#options.ledger,
@@ -222,7 +234,7 @@ export class RunnerAdapterHostV1 {
       leaseSeconds: this.#options.leaseSeconds,
       now: this.#options.now,
     });
-    const consumed = await consumer.consume(this.#options.adapter.start(command));
+    const consumed = await consumer.consume(this.#options.start(command));
     return executionResult(
       "executed",
       command,
@@ -282,6 +294,7 @@ export class RunnerObservationConsumerV1 {
   #latestCheckpoint: RunnerExternalReferenceV1 | null = null;
   readonly #observations: RunnerObservationV1[] = [];
   readonly #seen = new Map<string, string>();
+  #observationBytes = 0;
 
   constructor(input: {
     ledger: RunnerAdapterHostLedgerV1;
@@ -307,36 +320,62 @@ export class RunnerObservationConsumerV1 {
     latestCheckpoint: RunnerExternalReferenceV1 | null;
     run: WorkRun;
   }> {
-    for await (const value of stream) {
-      const now = invocationTime(this.#now);
-      assertRunnerCommandAuthorityActiveV1(this.#command, now);
-      this.#run = await this.#ledger.getRun(this.#command.runId);
-      this.#assertCurrentRun(this.#run);
-      const observation = assertRunnerObservationBinding(
-        this.#descriptor,
-        this.#command,
-        value,
-      );
-      const canonical = stableJson(observation);
-      const prior = this.#seen.get(observation.observationId);
-      if (prior !== undefined) {
-        if (prior !== canonical) {
-          throw new RangeError(
-            `Runner observation ${observation.observationId} was replayed with different content`,
-          );
+    const iterator = stream[Symbol.asyncIterator]();
+    try {
+      while (true) {
+        await this.#assertAuthorityBeforeAdvance();
+        const next = await iterator.next();
+        if (next.done) break;
+        const now = invocationTime(this.#now);
+        assertRunnerCommandAuthorityActiveV1(this.#command, now);
+        this.#run = await this.#ledger.getRun(this.#command.runId);
+        this.#assertCurrentRun(this.#run);
+        const observation = assertRunnerObservationBinding(
+          this.#descriptor,
+          this.#command,
+          next.value,
+        );
+        const canonical = stableJson(observation);
+        const prior = this.#seen.get(observation.observationId);
+        if (prior !== undefined) {
+          if (prior !== canonical) {
+            throw new RangeError(
+              `Runner observation ${observation.observationId} was replayed with different content`,
+            );
+          }
+          continue;
         }
-        continue;
+        this.#admitEpisodeBound(canonical);
+        this.#seen.set(observation.observationId, canonical);
+        await this.#recordReceipt(observation);
+        await this.#applyEvidence(observation);
+        this.#observations.push(observation);
       }
-      this.#seen.set(observation.observationId, canonical);
-      await this.#recordReceipt(observation);
-      await this.#applyEvidence(observation);
-      this.#observations.push(observation);
+    } finally {
+      await iterator.return?.();
     }
     return {
       observations: Object.freeze([...this.#observations]),
       latestCheckpoint: this.#latestCheckpoint,
       run: this.#run,
     };
+  }
+
+  async #assertAuthorityBeforeAdvance(): Promise<void> {
+    const now = invocationTime(this.#now);
+    assertRunnerCommandAuthorityActiveV1(this.#command, now);
+    this.#run = await this.#ledger.getRun(this.#command.runId);
+    this.#assertCurrentRun(this.#run);
+  }
+
+  #admitEpisodeBound(canonical: string): void {
+    if (this.#seen.size >= maximumEpisodeObservations) {
+      throw new RangeError("AI SDK runner episode exceeds the observation count bound");
+    }
+    this.#observationBytes += new TextEncoder().encode(canonical).byteLength;
+    if (this.#observationBytes > maximumEpisodeObservationBytes) {
+      throw new RangeError("AI SDK runner episode exceeds the observation byte bound");
+    }
   }
 
   #assertCurrentRun(run: WorkRun): void {
@@ -387,12 +426,13 @@ export class RunnerObservationConsumerV1 {
   async #applyEvidence(observation: RunnerObservationV1): Promise<void> {
     if (observation.type === "heartbeat") {
       this.#latestCheckpoint = observation.checkpointRef ?? this.#latestCheckpoint;
+      if (observation.checkpointRef) this.#assertCheckpointReference(observation.checkpointRef);
       this.#run = await this.#ledger.heartbeatRun({
         id: this.#run.id,
         actor: this.#actor,
         expectedGeneration: this.#run.generation,
         expectedLeaseGeneration: this.#run.leaseGeneration,
-        leaseSeconds: this.#leaseSeconds,
+        leaseSeconds: this.#remainingLeaseSeconds(),
         usage: observation.usage,
         ...(observation.checkpointRef
           ? { checkpoint: serializeReference(observation.checkpointRef) }
@@ -402,13 +442,14 @@ export class RunnerObservationConsumerV1 {
       return;
     }
     if (observation.type === "checkpoint_published") {
+      this.#assertCheckpointReference(observation.reference);
       this.#latestCheckpoint = observation.reference;
       this.#run = await this.#ledger.heartbeatRun({
         id: this.#run.id,
         actor: this.#actor,
         expectedGeneration: this.#run.generation,
         expectedLeaseGeneration: this.#run.leaseGeneration,
-        leaseSeconds: this.#leaseSeconds,
+        leaseSeconds: this.#remainingLeaseSeconds(),
         checkpoint: serializeReference(observation.reference),
         idempotencyKey: observationKey(observation, "checkpoint"),
       });
@@ -423,10 +464,39 @@ export class RunnerObservationConsumerV1 {
       });
     }
   }
+
+  #remainingLeaseSeconds(): number {
+    const remaining = Math.floor(
+      (Date.parse(this.#command.authority.expiresAt) - invocationTime(this.#now).getTime()) / 1_000,
+    );
+    return boundedInteger(
+      Math.min(this.#leaseSeconds, remaining),
+      30,
+      86_400,
+      "AI SDK runner remaining lease seconds",
+    );
+  }
+
+  #assertCheckpointReference(reference: RunnerExternalReferenceV1): void {
+    if (
+      reference.kind !== "checkpoint"
+      || reference.adapterId !== this.#command.adapterId
+      || reference.generation !== this.#command.runGeneration
+      || reference.uri !== null
+      || reference.externalId === null
+      || reference.digest === null
+    ) {
+      throw new RangeError("AI SDK checkpoint reference does not match the active command");
+    }
+  }
 }
 
 function normalizeOptions(options: RunnerAdapterHostOptionsV1): NormalizedHostOptions {
+  if (!(options.adapter instanceof VercelAISDKRunnerAdapter)) {
+    throw new RangeError("Runner host requires a Vercel AI SDK adapter instance");
+  }
   const descriptor = parseRunnerAdapterDescriptorV1(options.adapter.describe());
+  assertVercelAISDKDescriptor(descriptor);
   const profile = descriptor.profiles.find((entry) => entry.id === options.profileId);
   if (!profile) throw new RangeError("Runner host profile is absent from the adapter descriptor");
   const transport = options.transport ?? descriptor.transports[0];
@@ -436,16 +506,18 @@ function normalizeOptions(options: RunnerAdapterHostOptionsV1): NormalizedHostOp
   return {
     ledger: options.ledger,
     adapter: options.adapter,
+    inspectCapabilities: options.adapter.inspectCapabilities.bind(options.adapter),
+    start: options.adapter.start.bind(options.adapter),
     descriptor,
-    actor: options.actor,
+    actor: Object.freeze({ ...options.actor }),
     profile,
     transport,
     clientProduct: options.clientProduct ?? "stensibly-runner-host",
     clientBuild: options.clientBuild ?? RUNNER_ADAPTER_HOST_VERSION,
     modelProfile: options.modelProfile ?? profile.id,
-    requiredCapabilities: options.requiredCapabilities ?? [],
-    capabilityGrantRefs: options.capabilityGrantRefs ?? [],
-    recoveryActions: options.recoveryActions ?? ["resume_with_current_tools"],
+    requiredCapabilities: detachedJson(options.requiredCapabilities ?? []),
+    capabilityGrantRefs: Object.freeze([...(options.capabilityGrantRefs ?? [])]),
+    recoveryActions: Object.freeze([...(options.recoveryActions ?? ["resume_with_current_tools"])]),
     leaseSeconds: boundedInteger(options.leaseSeconds ?? 900, 30, 86_400, "Runner host lease seconds"),
     maxContextCharacters: boundedInteger(
       options.maxContextCharacters ?? 12_000,
@@ -455,6 +527,24 @@ function normalizeOptions(options: RunnerAdapterHostOptionsV1): NormalizedHostOp
     ),
     now: options.now ?? (() => new Date()),
   };
+}
+
+function detachedJson<T>(value: T): T {
+  return JSON.parse(stableJson(value)) as T;
+}
+
+function assertVercelAISDKDescriptor(descriptor: RunnerAdapterDescriptorV1): void {
+  const exactProfile = descriptor.profiles.length === 1 ? descriptor.profiles[0] : undefined;
+  if (
+    descriptor.adapterId !== VERCEL_AI_SDK_ADAPTER_ID
+    || descriptor.adapterVersion !== VERCEL_AI_SDK_ADAPTER_VERSION
+    || exactProfile?.id !== VERCEL_AI_SDK_PROFILE_ID
+    || exactProfile?.version !== VERCEL_AI_SDK_PROFILE_VERSION
+    || descriptor.transports.length !== 1
+    || descriptor.transports[0] !== "in_process"
+  ) {
+    throw new RangeError("Runner host requires the exact Vercel AI SDK adapter descriptor");
+  }
 }
 
 function assertRunBinding(
