@@ -37,13 +37,13 @@ describe("atomic native repository write publication", () => {
     const tokenCalls: Array<"read" | "write"> = [];
     const content = "atomic content\n";
     const blobSha = gitBlobSha(content);
-    const adapter = adapter(recorded, tokenCalls, "create_file", {
+    const writeAdapter = adapter(recorded, tokenCalls, "create_file", {
       operation: "create_file",
       content,
       message: "Create atomic file",
     });
 
-    await expect(adapter.dispatchRepositoryWrite({
+    await expect(writeAdapter.dispatchRepositoryWrite({
       repositoryFullName,
       path,
       operation: "create_file",
