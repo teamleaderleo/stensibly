@@ -1,4 +1,5 @@
 import { HttpGitHubOAuthClient } from "../../src/hosted-auth.ts";
+import { receiverSafeFetch } from "../../src/fetch-implementation.ts";
 import {
   assertFetchReceiverProfile,
   assertWorkerdSelfFetchReceiverMatrix,
@@ -50,6 +51,18 @@ export default {
       return json({
         ok: true,
         path: "HttpGitHubOAuthClient default fetch",
+      });
+    }
+
+    if (path === "/receiver-safe-fetch") {
+      const holder = { fetch: receiverSafeFetch() };
+      const response = await holder.fetch(
+        "https://receiver.test/receiver-ok",
+      );
+      return json({
+        ok: response.ok,
+        body: await response.text(),
+        path: "receiverSafeFetch default fetch stored on an object",
       });
     }
 

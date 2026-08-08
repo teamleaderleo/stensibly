@@ -225,6 +225,14 @@ async function main() {
       throw new Error(`Unexpected production-path result: ${JSON.stringify(productionPath)}`);
     }
     console.log(JSON.stringify(productionPath, null, 2));
+
+    const receiverSafeFetch = await readJson(baseUrl, "/receiver-safe-fetch");
+    if (receiverSafeFetch.ok !== true || receiverSafeFetch.body !== "receiver-ok") {
+      throw new Error(
+        `Unexpected receiver-safe fetch result: ${JSON.stringify(receiverSafeFetch)}`,
+      );
+    }
+    console.log(JSON.stringify(receiverSafeFetch, null, 2));
   } finally {
     if (workerd) await stopWorkerd(workerd.child);
     await rm(temporaryDirectory, { recursive: true, force: true });
