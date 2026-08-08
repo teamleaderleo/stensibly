@@ -279,6 +279,37 @@ describe("Convex work ledger", () => {
     });
   });
 
+  test("maps runner adapter command reservation to its scoped mutation", async () => {
+    const client = new RecordingCaller();
+    const ledger = new ConvexWorkLedger({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+    });
+    const input = {
+      project: "scrapbook",
+      itemId: "item_1",
+      runId: "run_1",
+      runGeneration: 2,
+      leaseGeneration: 3,
+      actor,
+      adapterId: "vercel-ai-sdk",
+      profileId: "default",
+      requestFingerprint: `sha256:${"a".repeat(64)}`,
+      commandId: "command_1",
+      commandFingerprint: `sha256:${"b".repeat(64)}`,
+      idempotencyKey: "reserve-command-1",
+    };
+
+    await ledger.reserveRunnerAdapterCommand(input);
+
+    expect(call(client, "runnerAdapterCommands:reserve", "mutation").args).toEqual({
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+      ...input,
+    });
+  });
+
   test("rejects incomplete or unsafe configuration", () => {
     const client = new RecordingCaller();
     expect(() => new ConvexWorkLedger({ client, serviceSecret: "" })).toThrow(

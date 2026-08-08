@@ -43,6 +43,9 @@ export const convexApi = {
     heartbeat: mutationRef("runnerRuns:heartbeat"),
     transition: mutationRef("runnerRuns:transition"),
   },
+  runnerAdapterCommands: {
+    reserve: mutationRef("runnerAdapterCommands:reserve"),
+  },
   completionContinuations: {
     complete: mutationRef("completionContinuations:complete"),
   },

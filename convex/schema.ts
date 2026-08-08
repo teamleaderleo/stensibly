@@ -545,6 +545,32 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_workspace_id_and_idempotency_key", ["workspaceId", "idempotencyKey"]),
 
+  runnerAdapterCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    itemId: v.id("items"),
+    runId: v.id("queuedRuns"),
+    projectExternalId: v.string(),
+    itemExternalId: v.string(),
+    runExternalId: v.string(),
+    runGeneration: v.number(),
+    leaseGeneration: v.number(),
+    actorId: v.id("actors"),
+    actorExternalId: v.string(),
+    adapterId: v.string(),
+    profileId: v.string(),
+    requestFingerprint: v.string(),
+    commandId: v.string(),
+    commandFingerprint: v.string(),
+    request: v.any(),
+    stableRequest: v.any(),
+    idempotencyKey: v.string(),
+    reservedAt: v.number(),
+  })
+    .index("by_workspace_id_and_idempotency_key", ["workspaceId", "idempotencyKey"])
+    .index("by_workspace_id_and_command_id", ["workspaceId", "commandId"])
+    .index("by_run_id_and_reserved_at", ["runId", "reservedAt"]),
+
   dependencies: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),

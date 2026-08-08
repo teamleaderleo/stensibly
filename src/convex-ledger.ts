@@ -48,6 +48,10 @@ import type {
 } from "./operation-receipt-contracts.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type {
+  ReserveRunnerAdapterCommandInput,
+  RunnerAdapterCommandLedger,
+} from "./runner-adapter-command-contracts.js";
+import type {
   HeartbeatWorkRunInput,
   ListWorkRunsInput,
   TransitionWorkRunInput,
@@ -104,7 +108,8 @@ export class ConvexWorkLedger implements
   ContinuationSupervisorLedger,
   OperationReceiptLedger,
   GitHubProjectContextLedger,
-  RunnerLedger
+  RunnerLedger,
+  RunnerAdapterCommandLedger
 {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -283,6 +288,13 @@ export class ConvexWorkLedger implements
       convexApi.runnerRuns.claim,
       this.args(input),
     ) as Awaited<ReturnType<RunnerLedger["claimRunnerWork"]>>;
+  }
+
+  async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
+    return await this.client.mutation(
+      convexApi.runnerAdapterCommands.reserve,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerAdapterCommandLedger["reserveRunnerAdapterCommand"]>>;
   }
 
   async getRun(id: string) {

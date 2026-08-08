@@ -498,6 +498,68 @@ describe("hosted runner ledger parity", () => {
     expect(statuses).toHaveLength(101);
     expect(statuses.every((status) => status === "queued")).toBe(true);
   });
+
+  test("reserves one hosted adapter command and replays immutable winner evidence", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seedRun(t, {
+      project: "adapter",
+      title: "Reserve hosted adapter dispatch",
+    });
+    const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+      project: "adapter",
+      runId: seeded.runId,
+    })) as any;
+    const input = {
+      ...baseArgs,
+      project: "adapter",
+      itemId: seeded.itemId,
+      runId: claimed.id,
+      runGeneration: claimed.generation,
+      leaseGeneration: claimed.leaseGeneration,
+      actor: runnerA,
+      adapterId: "vercel-ai-sdk",
+      profileId: "default",
+      requestFingerprint: `sha256:${"a".repeat(64)}`,
+      commandId: "hosted-command-winner",
+      commandFingerprint: `sha256:${"b".repeat(64)}`,
+      idempotencyKey: "reserve-hosted-adapter-command",
+    };
+
+    const reserved = await t.mutation(convexApi.runnerAdapterCommands.reserve, input) as any;
+    expect(reserved).toMatchObject({
+      outcome: "reserved",
+      dispatchAuthorized: true,
+      command: {
+        commandId: "hosted-command-winner",
+        commandFingerprint: `sha256:${"b".repeat(64)}`,
+      },
+    });
+    const replayed = await t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...input,
+      commandId: "rebuilt-after-context-change",
+      commandFingerprint: `sha256:${"c".repeat(64)}`,
+    }) as any;
+    expect(replayed).toEqual({
+      ...reserved,
+      outcome: "replayed",
+      dispatchAuthorized: false,
+    });
+    await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...input,
+      requestFingerprint: `sha256:${"d".repeat(64)}`,
+    })).rejects.toThrow("different command");
+    await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...input,
+      profileId: "altered-profile",
+    })).rejects.toThrow("different command");
+    await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...input,
+      idempotencyKey: "different-idempotency-key",
+    })).rejects.toThrow("different idempotency key");
+    expect(await t.run(async (ctx) =>
+      await ctx.db.query("runnerAdapterCommands").collect()
+    )).toHaveLength(1);
+  });
 });
 
 const baseArgs = { serviceSecret: secret, workspace };
