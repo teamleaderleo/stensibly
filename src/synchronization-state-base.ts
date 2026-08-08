@@ -1,4 +1,5 @@
 import { sha256, stableJson } from "./canonical-json.js";
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 
 export const synchronizationCompilerRevision = "synchronization-state/2" as const;
 
@@ -183,8 +184,6 @@ const hardConflictTypes = new Set<SynchronizationConflictType>([
   "projection_input_changed",
   "unsupported_source_transition",
 ]);
-
-const realisticCredentialPattern = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/u;
 
 export function compileSynchronizationState(
   input: unknown,
@@ -726,7 +725,7 @@ function safeText(value: unknown, label: string, maxLength: number): string {
   if (value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new TypeError(`${label} must use exact control-free bytes`);
   }
-  if (realisticCredentialPattern.test(value)) {
+  if (containsRealisticRetainedCredential(value)) {
     throw new TypeError(`${label} must not contain a credential value or reference`);
   }
   return value;

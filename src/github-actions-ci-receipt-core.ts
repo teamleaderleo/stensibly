@@ -1,5 +1,6 @@
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 import { CI_BROWSER_EVIDENCE_TOPOLOGIES_V1 } from "./ci-browser-evidence-profile.js";
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 import {
   GITHUB_ACTIONS_CI_RECEIPT_BUNDLE_V1,
   GITHUB_ACTIONS_CI_VALIDATION_PROFILES,
@@ -119,19 +120,6 @@ const allowedEvents = ["pull_request", "push", "workflow_dispatch"] as const;
 const allowedArtifactNames = [
   "diagnostics", "runtime-parity-diagnostics", "serial-full-diagnostics",
 ] as const;
-const realisticCredentialPattern = new RegExp(
-  [
-    "(?:^|[._:/\\s-])(?:env|secret):\\/\\/",
-    "(?:^|[._:/\\s-])github_pat_[A-Za-z0-9_]{20,}",
-    "(?:^|[._:/\\s-])gh[pousr]_[A-Za-z0-9]{20,}",
-    "(?:^|[._:/\\s-])stn\\.tok_[A-Za-z0-9._-]{20,}",
-    "(?:^|[._:/\\s-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}",
-    "(?:^|[._:/\\s-])xox[baprs]-[A-Za-z0-9-]{20,}",
-    "(?:^|[._:/\\s-])bearer[\\t ]+[A-Za-z0-9._~+/-]{20,}={0,2}",
-    "(?:^|[._:/\\s-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
-  ].join("|"),
-  "iu",
-);
 const internalRepository = "receipt/ci-evidence";
 const browserJobName = CI_BROWSER_EVIDENCE_TOPOLOGIES_V1.full_parallel.jobName;
 const failureEvidenceConclusions = new Set<CiRunConclusion>([
@@ -713,7 +701,7 @@ function displayText(value: unknown, label: string, maximum: number): string {
   if (
     typeof value !== "string" || !value || value.length > maximum
     || value.trim() !== value || /[\u0000-\u001f\u007f]/u.test(value)
-    || realisticCredentialPattern.test(value)
+    || containsRealisticRetainedCredential(value)
   ) throw new RangeError(`${label} is invalid`);
   return value;
 }
