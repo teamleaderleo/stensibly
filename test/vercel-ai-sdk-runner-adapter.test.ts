@@ -13,7 +13,6 @@ import {
   parseRunnerResumeCommandV1,
   parseRunnerStartCommandV1,
   type RunnerCapabilityProbeV1,
-  type RunnerExternalReferenceV1,
   type RunnerObservationV1,
   type RunnerStartCommandV1,
 } from "../src/runner-adapter-v1.ts";
@@ -81,7 +80,7 @@ describe("Vercel AI SDK runner adapter", () => {
     expect(report.executionCertaintyImplemented).toBe(false);
     expect(report.authoritativeSettlementImplemented).toBe(false);
     expect(model.doGenerateCalls).toHaveLength(2);
-    expect(store.records).toHaveLength(1);
+    expect(store.records.size).toBe(1);
   });
 
   test("authorizes each ToolLoopAgent tool execution before the tool runs", async () => {
@@ -161,7 +160,7 @@ describe("Vercel AI SDK runner adapter", () => {
       observations.some(
         (entry) =>
           entry.type === "failure_observed"
-          && entry.message.includes("capability grant rejected"),
+          && entry.message.includes("tool authorization rejected"),
       ),
     ).toBe(true);
   });
