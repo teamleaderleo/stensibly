@@ -1,7 +1,13 @@
-import type { Agent } from "ai";
+import {
+  ToolLoopAgent,
+  type Agent,
+  type ToolLoopAgentSettings,
+} from "ai";
+import { sha256, stableJson } from "../canonical-json.js";
 import type {
   EffectiveToolSurfaceSnapshot,
   EffectiveToolSurfaceSnapshotInput,
+  ToolSurfaceCapabilityRequirementInput,
 } from "../effective-tool-surface.js";
 import {
   bindRunnerCapabilityInspectionToCommandV1,
@@ -9,6 +15,7 @@ import {
   requireRunnerCapabilityInspectionForCommandV1,
   type RunnerCapabilityInspectionV1,
 } from "../runner-capability-binding.js";
+import { assertRunnerCommandAuthorityActiveV1 } from "../runner-command-authority.js";
 import {
   RUNNER_ADAPTER_V1,
   parseRunnerAdapterDescriptorV1,
@@ -39,8 +46,16 @@ const credentialShapedTextPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.tok_[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[^\s]+|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/giu;
 const unsafeTextPattern =
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/gu;
+const maximumCheckpointCharacters = 1_000_000;
+const maximumCachedEntries = 256;
+const maximumInspectionAgeMilliseconds = 60 * 60 * 1_000;
 
 type AnyAgent = Agent<never, any, any, any>;
+type AnyToolLoopAgentSettings = ToolLoopAgentSettings<never, any, any, any>;
+type GuardedToolLoopAgentSettings = Omit<
+  AnyToolLoopAgentSettings,
+  "prepareCall" | "toolApproval" | "runtimeContext"
+>;
 
 interface PendingCapabilityInspection {
   probe: RunnerCapabilityProbeV1;
@@ -48,13 +63,18 @@ interface PendingCapabilityInspection {
 }
 
 export interface VercelAISDKCheckpointRecordV1 {
+  version: 1;
   externalId: string;
   adapterVersion: string;
+  commandId: string;
   runId: string;
   runGeneration: number;
+  leaseGeneration: number;
   profileId: string;
   profileVersion: string;
   createdAt: string;
+  bindingDigest: string;
+  messagesDigest: string;
   messages: readonly unknown[];
 }
 
@@ -71,7 +91,7 @@ export interface VercelAISDKToolExecutionInput {
 }
 
 export interface VercelAISDKRunnerAdapterOptions {
-  agent: AnyAgent;
+  agentSettings: GuardedToolLoopAgentSettings;
   checkpointStore: VercelAISDKCheckpointStore;
   capabilityClasses?: (
     input: RunnerCapabilityProbeV1,
@@ -80,6 +100,7 @@ export interface VercelAISDKRunnerAdapterOptions {
   authorizeToolExecution?: (
     input: VercelAISDKToolExecutionInput,
   ) => Promise<void> | void;
+  now?: () => Date;
 }
 
 export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
@@ -89,16 +110,40 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     VercelAISDKRunnerAdapterOptions["capabilityClasses"]
   >;
   readonly #authorizeToolExecution?: VercelAISDKRunnerAdapterOptions["authorizeToolExecution"];
+  readonly #now: () => Date;
   readonly #descriptor: RunnerAdapterDescriptorV1;
   readonly #inspections = new Map<string, PendingCapabilityInspection>();
   readonly #latestCheckpoints = new Map<string, RunnerExternalReferenceV1>();
   readonly #activeAbortControllers = new Map<string, AbortController>();
+  readonly #authorityHolders = new Map<string, string>();
 
   constructor(options: VercelAISDKRunnerAdapterOptions) {
-    this.#agent = options.agent;
     this.#checkpointStore = options.checkpointStore;
     this.#capabilityClasses = options.capabilityClasses ?? defaultCapabilityClasses;
     this.#authorizeToolExecution = options.authorizeToolExecution;
+    this.#now = options.now ?? (() => new Date());
+    assertStaticAgentSettings(options.agentSettings);
+    this.#agent = new ToolLoopAgent({
+      ...options.agentSettings,
+      toolApproval: async (event: any) => {
+        if (!this.#authorizeToolExecution) {
+          throw new Error(
+            "Stensibly tool authorization is required before AI SDK tool execution",
+          );
+        }
+        try {
+          await this.#authorizeToolExecution({
+            command: event.runtimeContext.command,
+            event,
+          });
+        } catch {
+          throw new Error(
+            "Stensibly tool authorization rejected the AI SDK tool proposal",
+          );
+        }
+        return "approved" as const;
+      },
+    } as AnyToolLoopAgentSettings);
     this.#descriptor = parseRunnerAdapterDescriptorV1({
       version: RUNNER_ADAPTER_V1,
       adapterId: VERCEL_AI_SDK_ADAPTER_ID,
@@ -117,7 +162,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
         resume: true,
         capabilityInspection: true,
         streamingObservations: true,
-        durableReplay: true,
+        durableReplay: false,
         usageReferences: false,
         traceReferences: false,
       },
@@ -306,20 +351,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
   ): Promise<any> {
     return await this.#agent.generate({
       ...input,
-      onToolExecutionStart: async (event: unknown) => {
-        if (!this.#authorizeToolExecution) {
-          throw new Error(
-            "Stensibly tool authorization is required before AI SDK tool execution",
-          );
-        }
-        try {
-          await this.#authorizeToolExecution({ command, event });
-        } catch {
-          throw new Error(
-            "Stensibly tool authorization rejected the AI SDK tool proposal",
-          );
-        }
-      },
+      runtimeContext: { command },
     } as any);
   }
 
@@ -392,6 +424,18 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     ) {
       throw new RangeError("AI SDK control command does not match adapter identity");
     }
+  }
+}
+
+function assertStaticAgentSettings(settings: GuardedToolLoopAgentSettings): void {
+  if (
+    Object.prototype.hasOwnProperty.call(settings, "prepareCall")
+    || Object.prototype.hasOwnProperty.call(settings, "toolApproval")
+    || Object.prototype.hasOwnProperty.call(settings, "runtimeContext")
+  ) {
+    throw new RangeError(
+      "AI SDK first-profile settings cannot override prepareCall, toolApproval, or runtimeContext",
+    );
   }
 }
 

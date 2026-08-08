@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ToolLoopAgent, tool } from "ai";
+import { tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { compatibilityExecutionEnvelope } from "../src/execution-envelope-default.ts";
@@ -51,7 +51,7 @@ describe("Vercel AI SDK runner adapter", () => {
     const model = new MockLanguageModelV4({
       doGenerate: async () => textResult("bounded reply"),
     });
-    const agent = new ToolLoopAgent({
+    const agentSettings = {
       id: "stensibly-conformance",
       model,
       tools: {
@@ -61,9 +61,9 @@ describe("Vercel AI SDK runner adapter", () => {
           execute: async ({ value }) => value,
         }),
       },
-    });
+    };
     const store = new InMemoryCheckpointStore();
-    const adapter = new VercelAISDKRunnerAdapter({ agent, checkpointStore: store });
+    const adapter = new VercelAISDKRunnerAdapter({ agentSettings, checkpointStore: store });
     const scenario = conformanceScenario();
 
     const report = await runRunnerAdapterConformanceV1(adapter, scenario);
@@ -94,7 +94,7 @@ describe("Vercel AI SDK runner adapter", () => {
           : textResult("done");
       },
     });
-    const agent = new ToolLoopAgent({
+    const agentSettings = {
       id: "stensibly-tool-authorization",
       model,
       tools: {
@@ -106,9 +106,9 @@ describe("Vercel AI SDK runner adapter", () => {
           },
         }),
       },
-    });
+    };
     const adapter = new VercelAISDKRunnerAdapter({
-      agent,
+      agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
       authorizeToolExecution: ({ event }) => {
         const toolName = toolNameFromEvent(event);
@@ -130,7 +130,7 @@ describe("Vercel AI SDK runner adapter", () => {
       doGenerate: async () =>
         toolCallResult("probeTool", "call-unbound", { value: "blocked" }),
     });
-    const agent = new ToolLoopAgent({
+    const agentSettings = {
       id: "stensibly-tool-unbound",
       model,
       tools: {
@@ -142,9 +142,9 @@ describe("Vercel AI SDK runner adapter", () => {
           },
         }),
       },
-    });
+    };
     const adapter = new VercelAISDKRunnerAdapter({
-      agent,
+      agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
     });
     await adapter.inspectCapabilities(startProbe());
@@ -168,7 +168,7 @@ describe("Vercel AI SDK runner adapter", () => {
       doGenerate: async () =>
         toolCallResult("probeTool", "call-denied", { value: "blocked" }),
     });
-    const agent = new ToolLoopAgent({
+    const agentSettings = {
       id: "stensibly-tool-denial",
       model,
       tools: {
@@ -180,9 +180,9 @@ describe("Vercel AI SDK runner adapter", () => {
           },
         }),
       },
-    });
+    };
     const adapter = new VercelAISDKRunnerAdapter({
-      agent,
+      agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
       authorizeToolExecution: () => {
         throw new Error("Stensibly capability grant rejected the tool proposal");
@@ -204,7 +204,7 @@ describe("Vercel AI SDK runner adapter", () => {
   });
 
   test("reports configured tools without execute functions as catalogue-only", async () => {
-    const agent = new ToolLoopAgent({
+    const agentSettings = {
       id: "stensibly-catalogue-only",
       model: new MockLanguageModelV4({
         doGenerate: async () => textResult("reply"),
@@ -215,9 +215,9 @@ describe("Vercel AI SDK runner adapter", () => {
           outputSchema: z.string(),
         }),
       },
-    });
+    };
     const adapter = new VercelAISDKRunnerAdapter({
-      agent,
+      agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
     });
     const capabilityProbe = parseRunnerCapabilityProbeV1({
@@ -241,7 +241,7 @@ describe("Vercel AI SDK runner adapter", () => {
   });
 
   test("rejects provider-executed tools from the first profile", async () => {
-    const agent = new ToolLoopAgent({
+    const agentSettings = {
       id: "stensibly-provider-executed-rejection",
       model: new MockLanguageModelV4({
         doGenerate: async () => textResult("reply"),
@@ -256,9 +256,9 @@ describe("Vercel AI SDK runner adapter", () => {
           outputSchema: z.string(),
         }),
       },
-    });
+    };
     const adapter = new VercelAISDKRunnerAdapter({
-      agent,
+      agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
     });
 
@@ -269,11 +269,11 @@ describe("Vercel AI SDK runner adapter", () => {
 
   test("pins the adapter profile to the reviewed AI SDK package version", () => {
     const adapter = new VercelAISDKRunnerAdapter({
-      agent: new ToolLoopAgent({
+      agentSettings: {
         model: new MockLanguageModelV4({
           doGenerate: async () => textResult("reply"),
         }),
-      }),
+      },
       checkpointStore: new InMemoryCheckpointStore(),
     });
 
