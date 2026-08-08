@@ -30,14 +30,20 @@ describe("production Worker deployment workflow", () => {
       .toBeLessThan(workflow.indexOf("environment:"));
   });
 
-  test("requires only the deployment and read-verification secrets", () => {
+  test("requires deployment credentials and the production Worker secret inventory", () => {
     expect(workflow).toContain("secrets.CLOUDFLARE_ACCOUNT_ID");
     expect(workflow).toContain("secrets.CLOUDFLARE_API_TOKEN");
     expect(workflow).toContain("secrets.STENSIBLY_READ_TOKEN");
-    expect(workflow).not.toContain("STENSIBLY_SERVICE_SECRET");
-    expect(workflow).not.toContain("CONVEX_URL");
+    expect(workflow).toContain("wrangler secret list --name stensibly-api --format json");
+    expect(workflow).toContain("CONVEX_URL");
+    expect(workflow).toContain("STENSIBLY_SERVICE_SECRET");
+    expect(workflow).toContain("STENSIBLY_GITHUB_APP_ID");
+    expect(workflow).toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
+    expect(workflow).toContain("STENSIBLY_GITHUB_INSTALLATION_ID");
     expect(workflow).not.toContain("GITHUB_OAUTH_CLIENT_SECRET");
     expect(workflow).not.toContain("STENSIBLY_OAUTH_SIGNING_SECRET");
+    expect(workflow.indexOf("wrangler secret list --name stensibly-api --format json"))
+      .toBeLessThan(workflow.indexOf("bun run worker:deploy"));
   });
 
   test("runs locked checks before deployment", () => {
