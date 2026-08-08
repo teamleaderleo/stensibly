@@ -35,13 +35,15 @@ Use a read token through the environment so it stays out of shell history:
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
 ```
 
-The verifier performs five read-only checks:
+The verifier performs seven read-only checks:
 
 1. Convex-backed health
 2. unauthenticated REST rejection
 3. dashboard CORS preflight
 4. authenticated item listing
 5. authenticated remote MCP initialization
+6. full live MCP tool contract against the checked-in ChatGPT action snapshot
+7. one bounded `survey_workspace` MCP read with Worker and request receipts
 
 Use the Worker fallback or a project-scoped check when needed:
 
