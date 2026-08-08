@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "workerName": "stensibly-api",
+  "requiredBindings": [
+    { "name": "CONVEX_URL", "type": "secret_text" },
+    { "name": "GITHUB_OAUTH_CLIENT_ID", "type": "secret_text" },
+    { "name": "GITHUB_OAUTH_CLIENT_SECRET", "type": "secret_text" },
+    { "name": "OAUTH_REGISTRATION_RATE_LIMITER", "type": "ratelimit" },
+    { "name": "STENSIBLY_SERVICE_SECRET", "type": "secret_text" },
+    { "name": "STENSIBLY_ALLOWED_ORIGINS", "type": "plain_text", "text": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app" },
+    { "name": "STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS", "type": "secret_text" },
+    { "name": "STENSIBLY_AUTH_BOOTSTRAP_ROLE", "type": "secret_text" },
+    { "name": "STENSIBLY_AUTH_ORIGIN", "type": "secret_text" },
+    { "name": "STENSIBLY_AUTH_RETURN_ORIGINS", "type": "secret_text" },
+    { "name": "STENSIBLY_GITHUB_APP_ID", "type": "secret_text" },
+    { "name": "STENSIBLY_GITHUB_APP_PRIVATE_KEY", "type": "secret_text" },
+    { "name": "STENSIBLY_GITHUB_INSTALLATION_ID", "type": "secret_text" },
+    { "name": "STENSIBLY_WORKSPACE", "type": "plain_text", "text": "default" },
+    { "name": "STENSIBLY_GITHUB_PROVIDER_PROJECT", "type": "plain_text", "text": "stensibly" },
+    { "name": "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN", "type": "plain_text", "text": "teamleaderleo" },
+    { "name": "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED", "type": "plain_text", "text": "true" },
+    { "name": "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED", "type": "plain_text", "text": "true" },
+    { "name": "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED", "type": "plain_text", "text": "true" },
+    { "name": "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS", "type": "secret_text" },
+    { "name": "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS", "type": "secret_text" },
+    { "name": "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS", "type": "secret_text" },
+    { "name": "STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS", "type": "plain_text", "text": "https://chatgpt.com" },
+    { "name": "STENSIBLY_OAUTH_SIGNING_SECRET", "type": "secret_text" }
+  ],
+  "forbiddenBindings": [
+    "STENSIBLY_GITHUB_PROVIDER_REPOSITORY"
+  ]
+}

@@ -125,16 +125,38 @@ The workflow performs these stages:
 4. requests production environment approval
 5. installs locked dependencies in the deployment job
 6. validates the required environment secrets and optional project slug
-7. deploys with the locked Wrangler dependency
-8. verifies the `workers.dev` fallback up to three times
-9. verifies `api.stensibly.com` up to three times
-10. records the deployed commit and successful endpoint checks in the job summary
+7. re-fetches `origin/main` and rejects a queued or stale candidate
+8. snapshots the exact active Cloudflare deployment
+9. uploads an inert tagged Worker version without changing traffic
+10. checks the uploaded version's real binding inventory against
+    `config/worker-production-bindings.json`
+11. verifies bearer and OAuth behavior against that exact version's preview URL
+12. re-checks `origin/main`, the active deployment, and the candidate bindings
+13. promotes only the verified version to 100% traffic
+14. verifies the exact version ID, bearer behavior, and OAuth behavior on both origins
+15. restores and health-checks the captured baseline automatically if a
+    post-promotion check fails
+16. records the commit, version, baseline, and outcome in the job summary
 
 Production secrets become available only in the deployment job after candidate checks pass and environment approval is granted.
 
 Verifier failures include request IDs when the deployed Worker responds. Use those IDs with `bun run worker:tail` to find matching completion records.
 
-The workflow stops after a failed post-deploy verification. It leaves rollback to an operator because Worker rollback and any Convex data implications require an explicit decision.
+Candidate verification is traffic-free. A failure before promotion leaves the active
+deployment unchanged. A failure after promotion restores the captured baseline only
+when the failed candidate is still the sole active version; the guard refuses to
+overwrite a newer concurrent deployment. This recovery changes only Worker code and
+versioned bindings. It does not reverse Convex data. When recovery or displacement
+cannot be proved, the failed workflow reports the active deployment as unknown and
+requires Cloudflare reconciliation before retry.
+
+The production binding contract is deliberately separate from `wrangler.jsonc`. Update
+both in the same integration candidate when a reviewed routing or authentication
+migration changes which bindings are authoritative. The guard currently forbids the
+obsolete single-repository `STENSIBLY_GITHUB_PROVIDER_REPOSITORY` binding because
+repository authority comes from the accepted project attachment. Secret bindings are
+enumerated by name and type only; their values never enter the contract or diagnostic
+output.
 
 ### Manual deployment fallback
 
@@ -152,13 +174,32 @@ bun run worker:check
 
 Review changes to bindings, browser origins, authentication, scopes, REST contracts, MCP behavior, and logging before deploying.
 
-Deploy code:
+Export the same protected credentials used by the workflow, then run the guarded
+release from an exact, clean `origin/main` checkout:
 
 ```bash
-bun run worker:deploy
+release_candidate_sha="$(git rev-parse HEAD)"
+release_oauth_expectation="enabled"
+bun run worker:deploy -- \
+  --expected-sha "$release_candidate_sha" \
+  --oauth-expectation "$release_oauth_expectation"
 ```
 
-Verify both endpoints:
+`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, and `STENSIBLY_TOKEN` must remain
+in the protected shell environment. Add `--project <slug>` when the verification
+token is project-scoped.
+
+The checkout must contain no tracked changes or ordinary untracked paths. Of ignored
+paths, only `node_modules/` and `.wrangler-dry-run/` are admitted as explicit dependency
+or generated-output roots. `.wrangler/` fails closed because its deployment configuration
+redirect can change Wrangler's inputs. Every release-time Wrangler command pins the
+reviewed `wrangler.jsonc`. After upload, the guard removes only Wrangler's empty generated
+`.wrangler/tmp` and `.wrangler` directories before the second exact-worktree check; any
+non-empty or unexpected state fails closed. Environment files, databases, test artifacts,
+and every other ignored path also fail closed before any Cloudflare command.
+
+The command performs candidate and production verification; the following calls are
+useful only as independent follow-up evidence:
 
 ```bash
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
@@ -169,6 +210,10 @@ STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
 ```
 
 A custom-domain failure with a healthy fallback points toward DNS, TLS, or route attachment. Failure on both points toward Worker code, bindings, or Convex.
+
+Do not use `wrangler deploy` for a routine or recovery production release. It couples
+version upload to immediate 100% traffic and bypasses the exact-main, uploaded-binding,
+preview-health, concurrent-deployment, and automatic-recovery gates.
 
 ## Dashboard deployment
 

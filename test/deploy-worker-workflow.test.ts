@@ -10,6 +10,8 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("- main");
     expect(workflow).toContain('"src/**"');
     expect(workflow).toContain('"wrangler.jsonc"');
+    expect(workflow).toContain('"config/worker-production-bindings.json"');
+    expect(workflow).toContain('"scripts/worker-production-release.ts"');
     expect(workflow).not.toContain('"wrangler.toml"');
     expect(workflow).toContain('"package.json"');
     expect(workflow).toContain('"bun.lock"');
@@ -19,6 +21,7 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("group: stensibly-worker-production");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("name: production");
+    expect(workflow).toContain("Release exact production Worker candidate");
   });
 
   test("runs checks before entering the production environment", () => {
@@ -34,7 +37,9 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("secrets.CLOUDFLARE_ACCOUNT_ID");
     expect(workflow).toContain("secrets.CLOUDFLARE_API_TOKEN");
     expect(workflow).toContain("secrets.STENSIBLY_READ_TOKEN");
-    expect(workflow).toContain("wrangler secret list --name stensibly-api --format json");
+    expect(workflow).toContain(
+      "wrangler secret list --name stensibly-api --format json --config wrangler.jsonc",
+    );
     expect(workflow).toContain("CONVEX_URL");
     expect(workflow).toContain("STENSIBLY_SERVICE_SECRET");
     expect(workflow).toContain("STENSIBLY_GITHUB_APP_ID");
@@ -42,7 +47,9 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("STENSIBLY_GITHUB_INSTALLATION_ID");
     expect(workflow).not.toContain("GITHUB_OAUTH_CLIENT_SECRET");
     expect(workflow).not.toContain("STENSIBLY_OAUTH_SIGNING_SECRET");
-    expect(workflow.indexOf("wrangler secret list --name stensibly-api --format json"))
+    expect(workflow.indexOf(
+      "wrangler secret list --name stensibly-api --format json --config wrangler.jsonc",
+    ))
       .toBeLessThan(workflow.indexOf("bun run worker:deploy"));
   });
 
@@ -69,28 +76,31 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).not.toContain("inputs.issuer");
   });
 
-  test("deploys once and verifies bearer and public OAuth state on both origins", () => {
+  test("runs one guarded release instead of an immediate Wrangler deployment", () => {
     expect(workflow.match(/bun run worker:deploy/g)).toHaveLength(1);
-    expect(workflow).toContain("https://stensibly-api.leoli-082000.workers.dev");
-    expect(workflow).toContain("https://api.stensibly.com");
-    expect(workflow.match(/bun run verify:hosted/g)).toHaveLength(2);
-    expect(workflow.match(/bun run verify:oauth/g)).toHaveLength(2);
-    expect(workflow).toContain('--expect "$OAUTH_EXPECTATION"');
-    expect(workflow.match(/for attempt in 1 2 3/g)).toHaveLength(4);
-
-    const finalBearer = workflow.indexOf("Verify official endpoint bearer compatibility");
-    const firstOAuth = workflow.indexOf("Verify Worker fallback public OAuth state");
-    expect(finalBearer).toBeGreaterThan(-1);
-    expect(firstOAuth).toBeGreaterThan(finalBearer);
+    expect(workflow).not.toContain("wrangler deploy");
+    expect(workflow).toContain('--expected-sha "$GITHUB_SHA"');
+    expect(workflow).toContain('--oauth-expectation "$OAUTH_EXPECTATION"');
+    expect(workflow).toContain('--github-output "$GITHUB_OUTPUT"');
   });
 
-  test("records the declared state only after every verification gate", () => {
-    const officialOAuth = workflow.indexOf("Verify official endpoint public OAuth state");
+  test("records exact candidate proof and automatic recovery state", () => {
+    const release = workflow.indexOf("Release exact production Worker candidate");
     const summary = workflow.indexOf("Record deployment summary");
-    expect(officialOAuth).toBeGreaterThan(-1);
-    expect(summary).toBeGreaterThan(officialOAuth);
+    expect(release).toBeGreaterThan(-1);
+    expect(summary).toBeGreaterThan(release);
     expect(workflow).toContain("Declared OAuth state");
+    expect(workflow).toContain("Exact current-main check: passed before upload and promotion");
+    expect(workflow).toContain("Uploaded production binding inventory: passed");
+    expect(workflow).toContain("Candidate preview verification: passed before promotion");
     expect(workflow).toContain("Legacy bearer verification: passed on both origins");
     expect(workflow).toContain("Public auth/OAuth verification: passed on both origins");
+    expect(workflow).toContain("Record failed release and recovery state");
+    expect(workflow).toContain("steps.release.outputs.recovered || 'false'");
+    expect(workflow).toContain("captured baseline was restored and health-checked");
+    expect(workflow).toContain(
+      "active deployment is unknown; manually reconcile Cloudflare before retrying",
+    );
+    expect(workflow).not.toContain("candidate did not remain at 100% traffic");
   });
 });

@@ -88,10 +88,10 @@ The first typed Stensibly-to-GitHub issue-write chain is now merged end to end.
 2. PR #937 merged private hosted create/update/comment execution as `c3a0079f7e9232a07976bf112c327f8db750d80e`.
 3. PR #938 merged public typed MCP actions as `a14133c6f2096a803b1e6ac503241dca9322251e`.
 
-The public release now contains 37 tools with manifest fingerprint:
+The hosted public release now contains 38 tools, including the provider-mounted `github_call_tool`, with manifest fingerprint:
 
 ```text
-sha256:a503c88468a85884ee10b72e0a3d6df47afa8eba95dfe599e9c1c48f59874b70
+sha256:c613de39802426b6788c802ad6d1dd64600f361b1234dd591530bf6709a76836
 ```
 
 The new actions are:
@@ -107,7 +107,7 @@ Hosted execution remains disabled unless `STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED=
 
 Mutations use repository-scoped `issues:write`; independent verification uses `issues:read`. Transport loss, 5xx, throttling, malformed mutation responses, or failed post-mutation readback remain `pending_reconciliation`; exact replay does not redispatch.
 
-#921 remains open until the deployed 37-tool release is refreshed in the ChatGPT app and one authorised create/update/comment journey returns a durable receipt, survives reconnect, and reconciles accepted GitHub context without duplicate mutation.
+#921 remains open until the deployed 38-tool hosted release is refreshed in the ChatGPT app and one authorised create/update/comment journey returns a durable receipt, survives reconnect, and reconciles accepted GitHub context without duplicate mutation.
 
 ### OpenAI Agents runner adapter
 
@@ -160,7 +160,7 @@ A merged PR, setup document, dashboard sign-in, metadata check, or single succes
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
 | P0 | #490 sustained-use incident | Code paths and diagnostics are stronger; continued execution and reconnect remain unproved | Run the complete uniquely identified lifecycle in one fresh authenticated conversation, checkpointing GitHub between segments | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
-| P0 | #921 governed GitHub writes | Durable receipts, private hosted execution, and public typed MCP actions are merged in #934/#937/#938 | Confirm deployed `a14133c6…`, refresh the ChatGPT app to the 37-tool manifest, then perform one authorised idempotent create/update/comment and reconnect receipt lookup | Live verified receipt survives reconnect, exact replay does not duplicate, and accepted context reconciliation is visible |
+| P0 | #921 governed GitHub writes | Durable receipts, private hosted execution, and public typed MCP actions are merged in #934/#937/#938 | Confirm deployed `a14133c6…`, refresh the ChatGPT app to the 38-tool hosted manifest, then perform one authorised idempotent create/update/comment and reconnect receipt lookup | Live verified receipt survives reconnect, exact replay does not duplicate, and accepted context reconciliation is visible |
 | P0 | #492 hosted GitHub context | Persistence #908 and public MCP #933 are merged | Record one authorised hosted `get_github_project_context` read, then use it during a sustained lifecycle run | Hosted receipt and repeated lifecycle use pass |
 | P0 | #697 Actions step/log mounting | PR #931 merged the exact opt-in ten-tool path | Verify deployed revision and record one authenticated hosted step/log receipt | Live ten-tool receipt passes and #697 closes |
 | P1 | #591 / #744 signed observations | Operational lane owns signed receipt and replay/conflict evidence | Complete exact live receipt, replay, and conflict proof without overlapping provider-write or secret work | Signed observation lifecycle has attributable live evidence and deterministic conflict handling |
@@ -208,7 +208,7 @@ A failed dogfood attempt is product evidence and should produce a sharper test, 
 
 ## Immediate next actions
 
-- Confirm the deployed revision includes `a14133c6f2096a803b1e6ac503241dca9322251e`, refresh or recreate the ChatGPT app against the 37-tool manifest, and record one authorised `github_create_issue` plus `get_github_provider_receipt` replay/reconnect proof under #921.
+- Confirm the deployed revision includes `a14133c6f2096a803b1e6ac503241dca9322251e`, refresh or recreate the ChatGPT app against the 38-tool hosted manifest, and record one authorised `github_create_issue` plus `get_github_provider_receipt` replay/reconnect proof under #921.
 - Verify the production rollout of `d1a90b2d8eecb1ee09a39d7d99f9564d340aec30` and record one authenticated hosted step/log receipt under #697.
 - Record one authorised hosted `get_github_project_context` receipt for #492/#933.
 - Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.

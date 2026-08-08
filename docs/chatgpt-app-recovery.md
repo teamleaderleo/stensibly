@@ -4,14 +4,14 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-Current `main` defines **37** public MCP tools with two release fingerprints:
+The hosted production composition defines **38** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:9da895533a888fc9acc041988ace72e08acd85038aee7e20204a2a3c0fb9f834
-names-only diagnostic:       sha256:a503c88468a85884ee10b72e0a3d6df47afa8eba95dfe599e9c1c48f59874b70
+full ChatGPT tool contract: sha256:b895a016a9d411d5819155dc355f6c71f7683019ba5be798e1cc7e68a9fdee75
+names-only diagnostic:       sha256:c613de39802426b6788c802ad6d1dd64600f361b1234dd591530bf6709a76836
 ```
 
-The full-contract fingerprint covers public tool names, descriptions, annotations, and input schemas. It is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse tool-surface identity.
+The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 37 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
 

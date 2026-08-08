@@ -4,6 +4,7 @@ import {
   REQUEST_ID_HEADER,
   type FailureCategory,
 } from "./worker-observability.js";
+import { hasGitHubDelegatedReadProvider } from "./github-capability-mcp.js";
 
 export const MCP_TOOL_MANIFEST_VERSION = 1;
 export const MCP_TOOL_MANIFEST_FINGERPRINT_HEADER =
@@ -11,7 +12,7 @@ export const MCP_TOOL_MANIFEST_FINGERPRINT_HEADER =
 export const MCP_TOOL_COUNT_HEADER = "x-stensibly-mcp-tool-count";
 export const MCP_FAILURE_STAGE_HEADER = "x-stensibly-mcp-failure-stage";
 
-export const MCP_TOOL_NAMES = [
+export const MCP_CORE_TOOL_NAMES = [
   "attach_artifact",
   "block_work",
   "claim_work",
@@ -51,19 +52,51 @@ export const MCP_TOOL_NAMES = [
   "unblock_work",
 ] as const;
 
-const manifestJson = JSON.stringify({
-  version: MCP_TOOL_MANIFEST_VERSION,
-  tools: MCP_TOOL_NAMES,
-});
+export const MCP_TOOL_NAMES = [
+  ...MCP_CORE_TOOL_NAMES.slice(0, 15),
+  "github_call_tool",
+  ...MCP_CORE_TOOL_NAMES.slice(15),
+] as const;
 
-export const MCP_TOOL_MANIFEST_FINGERPRINT = `sha256:${createHash("sha256")
-  .update(manifestJson)
-  .digest("hex")}`;
-export const MCP_TOOL_MANIFEST_REVISION = MCP_TOOL_MANIFEST_FINGERPRINT.slice(
-  "sha256:".length,
-  "sha256:".length + 12,
-);
-export const MCP_SERVER_VERSION = `0.0.1+manifest.${MCP_TOOL_MANIFEST_REVISION}`;
+export interface McpToolManifestIdentity {
+  readonly fingerprint: string;
+  readonly revision: string;
+  readonly serverVersion: string;
+  readonly tools: readonly string[];
+}
+
+function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity {
+  const manifestJson = JSON.stringify({
+    version: MCP_TOOL_MANIFEST_VERSION,
+    tools,
+  });
+  const fingerprint = `sha256:${createHash("sha256")
+    .update(manifestJson)
+    .digest("hex")}`;
+  const revision = fingerprint.slice("sha256:".length, "sha256:".length + 12);
+  return Object.freeze({
+    fingerprint,
+    revision,
+    serverVersion: `0.0.1+manifest.${revision}`,
+    tools,
+  });
+}
+
+export const MCP_CORE_TOOL_MANIFEST = toolManifestIdentity(MCP_CORE_TOOL_NAMES);
+export const MCP_TOOL_MANIFEST = toolManifestIdentity(MCP_TOOL_NAMES);
+
+export const MCP_CORE_TOOL_MANIFEST_FINGERPRINT = MCP_CORE_TOOL_MANIFEST.fingerprint;
+export const MCP_CORE_TOOL_MANIFEST_REVISION = MCP_CORE_TOOL_MANIFEST.revision;
+export const MCP_CORE_SERVER_VERSION = MCP_CORE_TOOL_MANIFEST.serverVersion;
+export const MCP_TOOL_MANIFEST_FINGERPRINT = MCP_TOOL_MANIFEST.fingerprint;
+export const MCP_TOOL_MANIFEST_REVISION = MCP_TOOL_MANIFEST.revision;
+export const MCP_SERVER_VERSION = MCP_TOOL_MANIFEST.serverVersion;
+
+export function mcpToolManifestForLedger(ledger: unknown): McpToolManifestIdentity {
+  return hasGitHubDelegatedReadProvider(ledger)
+    ? MCP_TOOL_MANIFEST
+    : MCP_CORE_TOOL_MANIFEST;
+}
 
 export type McpFailureStage =
   | "method_validation"
@@ -101,10 +134,11 @@ export interface McpFailureDiagnosticData {
 export async function withMcpDiagnostics(
   request: Request,
   response: Response,
+  manifest: McpToolManifestIdentity = MCP_CORE_TOOL_MANIFEST,
 ): Promise<Response> {
   const headers = new Headers(response.headers);
-  headers.set(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER, MCP_TOOL_MANIFEST_FINGERPRINT);
-  headers.set(MCP_TOOL_COUNT_HEADER, String(MCP_TOOL_NAMES.length));
+  headers.set(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER, manifest.fingerprint);
+  headers.set(MCP_TOOL_COUNT_HEADER, String(manifest.tools.length));
 
   const requestId = acceptedRequestId(request.headers.get(REQUEST_ID_HEADER));
   if (!requestId || response.status < 400 || !isJsonResponse(response)) {
@@ -141,6 +175,7 @@ export async function withMcpDiagnostics(
       method,
       tool,
       idempotencyKeyPresent,
+      manifest,
     }),
   };
 
@@ -158,6 +193,7 @@ function diagnosticData(input: {
   method?: string;
   tool?: string;
   idempotencyKeyPresent: boolean;
+  manifest: McpToolManifestIdentity;
 }): McpFailureDiagnosticData {
   const writeMayHaveExecuted = input.stage === "request_execution"
     && input.method === "tools/call"
@@ -191,8 +227,8 @@ function diagnosticData(input: {
     retryable,
     reconciliation,
     recommendedAction,
-    manifestFingerprint: MCP_TOOL_MANIFEST_FINGERPRINT,
-    manifestToolCount: MCP_TOOL_NAMES.length,
+    manifestFingerprint: input.manifest.fingerprint,
+    manifestToolCount: input.manifest.tools.length,
     ...(input.method ? { method: input.method } : {}),
     ...(input.tool ? { tool: input.tool } : {}),
     ...(writeMayHaveExecuted

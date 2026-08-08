@@ -13,7 +13,7 @@ import {
   createMcpCapabilityRegistrationGuard,
 } from "./mcp-capability-policy.js";
 import type { McpRequestContext } from "./mcp-context.js";
-import { MCP_SERVER_VERSION } from "./mcp-diagnostics.js";
+import { mcpToolManifestForLedger } from "./mcp-diagnostics.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
 import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
@@ -29,7 +29,7 @@ export function createMcpServer(
   context: McpRequestContext = {},
 ): McpServer {
   const rawServer = new McpServer(
-    { name: "stensibly", version: MCP_SERVER_VERSION },
+    { name: "stensibly", version: mcpToolManifestForLedger(ledger).serverVersion },
     {
       instructions: [
         "Stensibly is a shared scrapbook for work in motion.",
