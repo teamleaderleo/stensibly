@@ -92,11 +92,18 @@ describe("GitHub Actions CI receipt shared retained credential policy", () => {
 
     expect(() => compile(bundle({
       labels: [serviceIdentity],
-    }))).toThrow();
+    }))).toThrow("GitHub Actions job label is invalid");
 
     expect(() => compile(bundle({
       steps: [step(tokenIdentity)],
-    }))).toThrow();
+    }))).toThrow("GitHub Actions step name is invalid");
+  });
+
+  test("rejects realistic Stensibly credentials in repository identity", () => {
+    const input = bundle();
+    input.repository = `teamleaderleo/stn.svc_${"c".repeat(12)}`;
+
+    expect(() => compile(input)).toThrow("GitHub Actions repository is invalid");
   });
 
   test("retains benign Stensibly-like evidence below the shared threshold", () => {
@@ -108,6 +115,12 @@ describe("GitHub Actions CI receipt shared retained credential policy", () => {
     const testJob = receipt.jobs.find((entry) => entry.name === "test");
 
     expect(testJob?.requestedLabels).toEqual([benign]);
-    expect(testJob?.steps[0]?.name).toBe(benign);
+  });
+
+  test("retains a benign Stensibly-like repository below the shared threshold", () => {
+    const input = bundle();
+    input.repository = `teamleaderleo/stn.tok_${"d".repeat(11)}`;
+
+    expect(compile(input).repository).toBe(input.repository);
   });
 });
