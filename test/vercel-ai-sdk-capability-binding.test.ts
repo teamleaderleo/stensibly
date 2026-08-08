@@ -33,7 +33,7 @@ class NullCheckpointStore implements VercelAISDKCheckpointStore {
 }
 
 describe("Vercel AI SDK capability binding", () => {
-  test("rejects tool-surface drift between inspection and execution", async () => {
+  test("detaches the admitted tool surface from caller registry drift", async () => {
     const tools: Record<string, any> = {
       probeTool: tool({
         inputSchema: z.object({ value: z.string() }),
@@ -56,10 +56,9 @@ describe("Vercel AI SDK capability binding", () => {
       execute: async () => "late",
     });
 
-    await expect(collect(adapter.start(startCommand()))).rejects.toThrow(
-      "capability surface changed after inspection and before execution",
-    );
-    expect(model.doGenerateCalls).toHaveLength(0);
+    const observations = await collect(adapter.start(startCommand()));
+    expect(observations.at(-1)?.type).toBe("interrupted");
+    expect(model.doGenerateCalls).toHaveLength(1);
   });
 
   test("rejects a command whose required capabilities differ from its inspection", async () => {
@@ -114,7 +113,7 @@ describe("Vercel AI SDK capability binding", () => {
     expect(model.doGenerateCalls).toHaveLength(0);
   });
 
-  test("rechecks pre-authorization hooks added after inspection", async () => {
+  test("detaches tool definitions from hooks added by the caller later", async () => {
     const probeTool = tool({
       inputSchema: z.object({ value: z.string() }),
       execute: async ({ value }) => value,
@@ -130,10 +129,9 @@ describe("Vercel AI SDK capability binding", () => {
     await adapter.inspectCapabilities(capabilityProbe());
     (probeTool as any).onInputStart = () => {};
 
-    await expect(collect(adapter.start(startCommand()))).rejects.toThrow(
-      "pre-authorization input hook",
-    );
-    expect(model.doGenerateCalls).toHaveLength(0);
+    const observations = await collect(adapter.start(startCommand()));
+    expect(observations.at(-1)?.type).toBe("interrupted");
+    expect(model.doGenerateCalls).toHaveLength(1);
   });
 });
 

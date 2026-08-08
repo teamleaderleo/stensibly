@@ -415,6 +415,90 @@ describe("Vercel AI SDK runner adapter", () => {
     );
     expect(model.doGenerateCalls).toHaveLength(1);
   });
+
+  test("detaches tool execution from same-name mutations after inspection and yield", async () => {
+    const order: string[] = [];
+    let modelCalls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        modelCalls += 1;
+        return modelCalls === 1
+          ? toolCallResult("probeTool", "call-detached", { value: "safe" })
+          : textResult("done");
+      },
+    });
+    const probeTool = tool({
+      inputSchema: z.object({ value: z.string() }),
+      execute: async ({ value }) => {
+        order.push(`original:${value}`);
+        return value;
+      },
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: { model, tools: { probeTool } },
+      checkpointStore: new InMemoryCheckpointStore(),
+      authorizeToolExecution: () => {
+        order.push("authorize");
+      },
+      now: () => new Date(invocationTime),
+    });
+    await adapter.inspectCapabilities(startProbe());
+    const iterator = adapter.start(startCommand())[Symbol.asyncIterator]();
+    expect((await iterator.next()).value?.type).toBe("start_accepted");
+    (probeTool as any).onInputStart = () => order.push("late-input-hook");
+    (probeTool as any).execute = async () => {
+      order.push("replacement");
+      return "replacement";
+    };
+    const remaining: RunnerObservationV1[] = [];
+    for await (const entry of { [Symbol.asyncIterator]: () => iterator }) {
+      remaining.push(entry);
+    }
+
+    expect(order).toEqual(["authorize", "original:safe"]);
+    expect(remaining.at(-1)?.type).toBe("interrupted");
+  });
+
+  test("rechecks lease expiry at the unswallowed tool gate", async () => {
+    let clockReads = 0;
+    let authorized = 0;
+    let executed = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () =>
+        toolCallResult("probeTool", "call-expired-at-gate", { value: "blocked" }),
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: {
+        model,
+        tools: {
+          probeTool: tool({
+            inputSchema: z.object({ value: z.string() }),
+            execute: async ({ value }) => {
+              executed += 1;
+              return value;
+            },
+          }),
+        },
+      },
+      checkpointStore: new InMemoryCheckpointStore(),
+      authorizeToolExecution: () => {
+        authorized += 1;
+      },
+      now: () => new Date(
+        clockReads++ === 0
+          ? "2026-08-09T00:10:02.000Z"
+          : "2026-08-09T01:00:00.000Z",
+      ),
+    });
+    await adapter.inspectCapabilities(startProbe());
+
+    const observations = await collect(adapter.start(startCommand()));
+
+    expect(authorized).toBe(0);
+    expect(executed).toBe(0);
+    expect(observations.at(-1)?.type).toBe("failure_observed");
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
 });
 
 function conformanceScenario(): RunnerAdapterConformanceScenarioV1 {

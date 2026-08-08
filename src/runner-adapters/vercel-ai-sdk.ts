@@ -144,9 +144,14 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     this.#authorizeToolExecution = options.authorizeToolExecution;
     this.#now = options.now ?? (() => new Date());
     assertStaticAgentSettings(options.agentSettings);
+    const agentSettings = detachAgentSettings(options.agentSettings);
     this.#agent = new ToolLoopAgent({
-      ...options.agentSettings,
+      ...agentSettings,
       toolApproval: async (event: any) => {
+        const command = event.runtimeContext.command as
+          | RunnerStartCommandV1
+          | RunnerResumeCommandV1;
+        assertExecutableAuthority(command, this.#invocationTime());
         if (!this.#authorizeToolExecution) {
           throw new Error(
             "Stensibly tool authorization is required before AI SDK tool execution",
@@ -154,7 +159,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
         }
         try {
           await this.#authorizeToolExecution({
-            command: event.runtimeContext.command,
+            command,
             event,
           });
         } catch {
@@ -162,6 +167,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
             "Stensibly tool authorization rejected the AI SDK tool proposal",
           );
         }
+        assertExecutableAuthority(command, this.#invocationTime());
         return "approved" as const;
       },
     } as AnyToolLoopAgentSettings);
@@ -562,6 +568,51 @@ function assertStaticAgentSettings(settings: GuardedToolLoopAgentSettings): void
   assertNoPreAuthorizationToolHooks({ tools: settings.tools } as AnyAgent);
 }
 
+function detachAgentSettings(
+  settings: GuardedToolLoopAgentSettings,
+): GuardedToolLoopAgentSettings {
+  const tools = detachTools(settings.tools as Record<string, unknown> | undefined);
+  return Object.freeze({
+    ...settings,
+    ...(settings.tools === undefined ? {} : { tools }),
+  }) as GuardedToolLoopAgentSettings;
+}
+
+function detachTools(
+  tools: Record<string, unknown> | undefined,
+): Readonly<Record<string, unknown>> | undefined {
+  if (tools === undefined) return undefined;
+  const descriptors = Object.getOwnPropertyDescriptors(tools);
+  const output: Record<string, unknown> = Object.create(null);
+  for (const [id, descriptor] of Object.entries(descriptors)) {
+    if (descriptor.enumerable !== true || !("value" in descriptor)) {
+      throw new RangeError("AI SDK first-profile tools must use enumerable data properties");
+    }
+    const value = descriptor.value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new RangeError(`AI SDK first-profile tool ${id} is invalid`);
+    }
+    const toolDescriptors = Object.getOwnPropertyDescriptors(value);
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      throw new RangeError(`AI SDK first-profile tool ${id} contains symbol decoration`);
+    }
+    const toolCopy: Record<string, unknown> = Object.create(null);
+    for (const [key, toolDescriptor] of Object.entries(toolDescriptors)) {
+      if (toolDescriptor.enumerable !== true || !("value" in toolDescriptor)) {
+        throw new RangeError(
+          `AI SDK first-profile tool ${id} must use enumerable data properties`,
+        );
+      }
+      toolCopy[key] = toolDescriptor.value;
+    }
+    output[id] = Object.freeze(toolCopy);
+  }
+  if (Object.getOwnPropertySymbols(tools).length > 0) {
+    throw new RangeError("AI SDK first-profile tools contain symbol decoration");
+  }
+  return Object.freeze(output);
+}
+
 function assertNoPreAuthorizationToolHooks(agent: AnyAgent): void {
   for (const [id, value] of Object.entries(
     (agent.tools ?? {}) as Record<string, unknown>,
@@ -906,6 +957,17 @@ function assertControlAuthorityActive(
   }
   if (now.getTime() >= Date.parse(input.authority.expiresAt)) {
     throw new RangeError("AI SDK control command authority expired before execution");
+  }
+}
+
+function assertExecutableAuthority(
+  command: RunnerStartCommandV1 | RunnerResumeCommandV1,
+  now: Date,
+): void {
+  if (command.kind === "start") {
+    assertRunnerCommandAuthorityActiveV1(command, now);
+  } else {
+    assertRunnerCommandAuthorityActiveV1(command, now);
   }
 }
 
