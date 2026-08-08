@@ -63,6 +63,12 @@ describe("canonical JSON and digest helpers", () => {
     expect(sha256("stensibly")).toBe(
       "sha256:fc06bf1e41241eeaabcab19a4ced027c84345784a1b7383103569e900adb63af",
     );
+    expect(sha256("")).toBe(
+      "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    expect(sha256("🙂\n多代理")).toBe(
+      "sha256:53ef7b8e8a12c85504040e7de85dd931a816c4d2ee2e07c8d583a5401440fda4",
+    );
   });
 
   test("keeps GitHub compatibility exports bound to the neutral helpers", () => {
