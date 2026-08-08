@@ -7,7 +7,6 @@ import type {
   ToolSurfaceRecoveryAction,
 } from "./effective-tool-surface.js";
 import type { WorkLedger } from "./ledger.js";
-import type { OperationReceiptLedger } from "./operation-receipt-contracts.js";
 import {
   RUNNER_ADAPTER_V1,
   assertRunnerObservationBinding,
@@ -28,6 +27,7 @@ import {
   VercelAISDKRunnerAdapter,
 } from "./runner-adapters/vercel-ai-sdk.js";
 import { assertRunnerCommandAuthorityActiveV1 } from "./runner-command-authority.js";
+import type { RunnerAdapterCommandLedger } from "./runner-adapter-command-contracts.js";
 import { runAuthorityFence } from "./authority-fence.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type { ActorInput } from "./schemas.js";
@@ -39,7 +39,7 @@ export const RUNNER_ADAPTER_HOST_VERSION = "0.1.0";
 export type RunnerAdapterHostLedgerV1 =
   & WorkLedger
   & RunnerLedger
-  & OperationReceiptLedger;
+  & RunnerAdapterCommandLedger;
 
 export interface RunnerAdapterHostOptionsV1 {
   ledger: RunnerAdapterHostLedgerV1;
@@ -100,8 +100,9 @@ const maximumEpisodeObservationBytes = 256 * 1024;
 
 /**
  * One bounded Vercel AI SDK runner episode. The host reserves the adapter command in
- * the durable event/receipt ledger before advancing the async generator, so a
- * sequential response-loss retry cannot blindly redispatch model work.
+ * the durable command ledger before advancing the async generator, so
+ * concurrent hosts and response-loss retries cannot blindly redispatch model
+ * work.
  *
  * V1 intentionally keeps the durable run in `starting`. Adapter observations
  * are all bound to the claim generation, while canonical run transitions
@@ -161,27 +162,38 @@ export class RunnerAdapterHostV1 {
     const detail = await this.#options.ledger.getItem(run.itemId);
     const project = detail.item.project;
     const commandReceiptKey = hostIdempotencyKey("command", operationId, run.id);
-    const existing = await this.#options.ledger.getOperationReceipt({
-      project,
-      idempotencyKey: commandReceiptKey,
-    });
-    if (existing.status === "recorded") {
-      if (
-        existing.operation !== "run.adapter.command_dispatched"
-        || existing.itemId !== run.itemId
-        || existing.actorId !== this.#options.actor.id
-      ) {
-        throw new RangeError("Runner adapter command receipt binding is invalid");
-      }
-      return executionResult("already_dispatched", null, [], null, run);
-    }
-
     const command = await this.#buildCommand(
       operationId,
       run,
       project,
       input.correlationId ?? null,
     );
+    const commandFingerprint = digest(command);
+    const reservation = await this.#options.ledger.reserveRunnerAdapterCommand({
+      project,
+      itemId: run.itemId,
+      runId: run.id,
+      runGeneration: run.generation,
+      leaseGeneration: run.leaseGeneration,
+      actor: this.#options.actor,
+      adapterId: command.adapterId,
+      profileId: command.profileId,
+      requestFingerprint: digest(
+        this.#reservationRequest(claim, operationId, command, run, project),
+      ),
+      commandId: command.commandId,
+      commandFingerprint,
+      idempotencyKey: commandReceiptKey,
+    });
+    if (!reservation.dispatchAuthorized) {
+      return executionResult("already_dispatched", null, [], null, run);
+    }
+    if (
+      reservation.command.commandId !== command.commandId
+      || reservation.command.commandFingerprint !== commandFingerprint
+    ) {
+      throw new RangeError("Runner adapter command reservation winner is invalid");
+    }
     await this.#options.ledger.recordEvent({
       id: run.itemId,
       actor: this.#options.actor,
@@ -189,7 +201,7 @@ export class RunnerAdapterHostV1 {
       payload: {
         version: RUNNER_ADAPTER_HOST_V1,
         commandId: command.commandId,
-        commandFingerprint: digest(command),
+        commandFingerprint,
         runId: command.runId,
         runGeneration: command.runGeneration,
         leaseGeneration: command.leaseGeneration,
@@ -242,6 +254,43 @@ export class RunnerAdapterHostV1 {
       consumed.latestCheckpoint,
       consumed.run,
     );
+  }
+
+  #reservationRequest(
+    claim: ClaimRunnerWorkInput,
+    operationId: string,
+    command: RunnerStartCommandV1,
+    run: WorkRun,
+    project: string,
+  ) {
+    return {
+      version: RUNNER_ADAPTER_HOST_V1,
+      operationId,
+      requestedProject: claim.project ?? null,
+      requestedRunId: claim.runId ?? null,
+      requestedExternalRunId: claim.externalRunId ?? null,
+      correlationId: command.correlationId,
+      project,
+      itemId: run.itemId,
+      runId: run.id,
+      runGeneration: run.generation,
+      leaseGeneration: run.leaseGeneration,
+      actor: this.#options.actor,
+      adapterId: this.#options.descriptor.adapterId,
+      adapterVersion: this.#options.descriptor.adapterVersion,
+      profileId: this.#options.profile.id,
+      profileVersion: this.#options.profile.version,
+      executionEnvelopeFingerprint: digest(run.executionEnvelope),
+      transport: this.#options.transport,
+      clientProduct: this.#options.clientProduct,
+      clientBuild: this.#options.clientBuild,
+      modelProfile: this.#options.modelProfile,
+      requiredCapabilities: this.#options.requiredCapabilities,
+      capabilityGrantRefs: this.#options.capabilityGrantRefs,
+      recoveryActions: this.#options.recoveryActions,
+      leaseSeconds: this.#options.leaseSeconds,
+      maxContextCharacters: this.#options.maxContextCharacters,
+    };
   }
 
   async #buildCommand(

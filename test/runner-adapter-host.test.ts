@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
@@ -103,7 +106,7 @@ describe("runner adapter host v1", () => {
     }
   });
 
-  test("uses the durable command receipt to prevent sequential blind redispatch", async () => {
+  test("uses the durable command reservation to prevent sequential blind redispatch", async () => {
     const fixture = createFixture();
     try {
       const input = {
@@ -129,6 +132,102 @@ describe("runner adapter host v1", () => {
       )).toHaveLength(6);
     } finally {
       fixture.store.close();
+    }
+  });
+
+  test("conflicts altered stable inputs under the same command reservation key", async () => {
+    const fixture = createFixture();
+    try {
+      const operationId = "ai-sdk-host-altered-reservation-1";
+      const first = await fixture.host.startNext({
+        operationId,
+        project: "runner_host",
+        correlationId: "trace:first",
+      });
+      await expect(fixture.host.startNext({
+        operationId,
+        project: "runner_host",
+        correlationId: "trace:changed",
+      })).rejects.toThrow("idempotency key was already used for a different command");
+
+      expect(first?.disposition).toBe("executed");
+      expect(fixture.model.doGenerateCalls).toHaveLength(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("authorizes exactly one model dispatch across concurrent host instances", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stensibly-runner-host-"));
+    const database = join(directory, "runner.db");
+    const firstStore = new StensiblyStore(database);
+    const firstLedger = new SqliteWorkLedger(firstStore);
+    const item = firstStore.createItem({
+      project: "runner_host",
+      kind: "task",
+      title: "Reserve one concurrent AI SDK host episode",
+      summary: "Prove only one host may advance the adapter.",
+      nextAction: "Race two exact command reservations.",
+      priority: 90,
+      actor: supervisor,
+    });
+    dispatchNextWork(firstStore, {
+      actor: supervisor,
+      runnerType: VERCEL_AI_SDK_ADAPTER_ID,
+      runnerProfile: VERCEL_AI_SDK_PROFILE_ID,
+      itemId: item.id,
+      leaseSeconds: 300,
+      maxAttempts: 1,
+      retryBackoffSeconds: 0,
+      idempotencyKey: `dispatch:${item.id}`,
+      executionEnvelope: compatibilityExecutionEnvelope("Reserve one host episode"),
+    });
+    const secondStore = new StensiblyStore(database);
+    const secondLedger = new SqliteWorkLedger(secondStore);
+    const firstModel = new MockLanguageModelV4({
+      doGenerate: async () => textResult("first bounded reply"),
+    });
+    const secondModel = new MockLanguageModelV4({
+      doGenerate: async () => textResult("second bounded reply"),
+    });
+    const host = (ledger: SqliteWorkLedger, model: MockLanguageModelV4) =>
+      new RunnerAdapterHostV1({
+        ledger,
+        adapter: new VercelAISDKRunnerAdapter({
+          agentSettings: {
+            id: "runner-host-concurrent",
+            model,
+            tools: {},
+          },
+          checkpointStore: new CheckpointStore(),
+        }),
+        actor: runner,
+        profileId: VERCEL_AI_SDK_PROFILE_ID,
+        leaseSeconds: 300,
+      });
+    try {
+      const input = {
+        operationId: "ai-sdk-host-concurrent-1",
+        project: "runner_host",
+      };
+      const [first, second] = await Promise.all([
+        host(firstLedger, firstModel).startNext(input),
+        host(secondLedger, secondModel).startNext(input),
+      ]);
+
+      expect([first?.disposition, second?.disposition].sort()).toEqual([
+        "already_dispatched",
+        "executed",
+      ]);
+      expect(firstModel.doGenerateCalls.length + secondModel.doGenerateCalls.length).toBe(1);
+      const detail = await firstLedger.getItem(item.id);
+      expect(detail.events.filter(
+        (event) => event.type === "run.adapter.command_dispatched",
+      )).toHaveLength(1);
+    } finally {
+      secondStore.close();
+      firstStore.close();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
