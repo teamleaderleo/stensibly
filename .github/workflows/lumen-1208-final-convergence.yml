@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact current carrier
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-          CARRIER_PARENT: 023eaa321e336cc0ad79393bebc18565f83324d4
+          CARRIER_PARENT: 970a8f3e85add477b50e6efc256ca4ceb5276d71
           CAS_REPAIR: 795b45666ba7c7e4f2cdeeb2706ef068c06b8f64
           REQUIRED_FIELDS_CONTROL: 68d620992a2359a482e2c7f3c627ab2bb0fd49c4
         shell: bash
@@ -231,7 +231,8 @@ test("admits provider case spelling only after canonical repository normalizatio
             test/github-rest-repository-write-atomic-mode-preservation.test.ts \
             test/github-rest-repository-write-adapter.test.ts \
             test/github-rest-repository-write-adapter-fence-parity.test.ts \
-            test/github-rest-repository-write-provider-url-spelling.test.ts
+            test/github-rest-repository-write-provider-url-spelling.test.ts \
+            test/github-rest-repository-write-repository-node-provenance.test.ts
 
       - name: Publish one workflow-free exact-CAS head
         env:
