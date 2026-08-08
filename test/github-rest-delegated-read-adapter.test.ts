@@ -103,7 +103,7 @@ describe("native GitHub delegated repository reads", () => {
     });
   });
 
-  test("stops binding and unsupported-tool mismatches before token or provider activity", async () => {
+  test("stops binding and unsupported-tool mismatches before provider activity while discarding unrelated arguments", async () => {
     const tokenProvider = new RecordingTokenProvider();
     let providerCalls = 0;
     const adapter = createAdapter(tokenProvider, async () => {
@@ -119,13 +119,20 @@ describe("native GitHub delegated repository reads", () => {
       ...callInput("get_repo", {}),
       tool: "get_pr_info",
     })).rejects.toThrow("outside the enabled native subset");
-    await expect(adapter.callReadTool({
-      ...callInput("get_repo", {}),
-      arguments: { repository: "other/repo" },
-    })).rejects.toThrow("has an unknown field");
 
     expect(tokenProvider.requests).toEqual([]);
     expect(providerCalls).toBe(0);
+
+    const decorated = await adapter.callReadTool({
+      ...callInput("get_repo", {}),
+      arguments: { repository: "other/repo" },
+    });
+    expect(decorated.result).toMatchObject({ repositoryFullName });
+    expect(tokenProvider.requests).toEqual([{
+      repositoryFullName,
+      permission: { name: "metadata", access: "read" },
+    }]);
+    expect(providerCalls).toBe(1);
   });
 
   test("rejects repository, path, and provider-owned URL identity mismatches", async () => {
