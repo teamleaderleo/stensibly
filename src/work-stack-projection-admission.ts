@@ -21,8 +21,8 @@ import {
   enumValue,
   lowercaseSlug,
   nullableText,
-  requirePlainObject,
   requireUnique,
+  snapshotPlainObject,
 } from "./work-stack-projection-validation.ts";
 
 const itemKinds = new Set<WorkStackItemKind>([
@@ -46,33 +46,37 @@ export interface AdmittedProjectionInput extends WorkStackProjectionInput {
 }
 
 export function admitProjectionInput(value: WorkStackProjectionInput): AdmittedProjectionInput {
-  requirePlainObject(
+  const input = snapshotPlainObject(
     value,
     ["version", "project", "observedAt", "selectedId", "limits", "records"],
     "work-stack input",
   );
-  if (value.version !== WORK_STACK_PROJECTION_VERSION) {
+  if (input.version !== WORK_STACK_PROJECTION_VERSION) {
     throw new TypeError("Unsupported work-stack projection version");
   }
-  const project = lowercaseSlug(value.project, "project");
-  const observedAt = canonicalTimestamp(value.observedAt, "observedAt");
-  const selectedId = value.selectedId === null
+  const project = lowercaseSlug(input.project, "project");
+  const observedAt = canonicalTimestamp(input.observedAt, "observedAt");
+  const selectedId = input.selectedId === null
     ? null
-    : boundedIdentity(value.selectedId, "selectedId");
-  requirePlainObject(value.limits, ["hot", "review", "warm", "index"], "work-stack limits");
+    : boundedIdentity(input.selectedId, "selectedId");
+  const rawLimits = snapshotPlainObject(
+    input.limits,
+    ["hot", "review", "warm", "index"],
+    "work-stack limits",
+  );
   const limits = {
-    hot: boundedInteger(value.limits.hot, 1, WORK_STACK_LIMITS.maxHot, "hot limit"),
+    hot: boundedInteger(rawLimits.hot, 1, WORK_STACK_LIMITS.maxHot, "hot limit"),
     review: boundedInteger(
-      value.limits.review,
+      rawLimits.review,
       1,
       WORK_STACK_LIMITS.maxReview,
       "review limit",
     ),
-    warm: boundedInteger(value.limits.warm, 1, WORK_STACK_LIMITS.maxWarm, "warm limit"),
-    index: boundedInteger(value.limits.index, 1, WORK_STACK_LIMITS.maxIndex, "index limit"),
+    warm: boundedInteger(rawLimits.warm, 1, WORK_STACK_LIMITS.maxWarm, "warm limit"),
+    index: boundedInteger(rawLimits.index, 1, WORK_STACK_LIMITS.maxIndex, "index limit"),
   };
-  const records = denseDataArray(
-    value.records,
+  const records = denseDataArray<WorkStackRecordInput>(
+    input.records,
     WORK_STACK_LIMITS.maxInputRecords,
     "records",
   );
@@ -94,36 +98,36 @@ function admitRecord(
   project: string,
   observedMs: number,
 ): WorkStackRecordInput {
-  requirePlainObject(value, [
+  const input = snapshotPlainObject(value, [
     "id", "project", "kind", "title", "state", "priority", "summary", "nextAction",
     "owner", "createdAt", "updatedAt", "actionableAt", "latestEvidenceAt",
     "attentionReason", "reviewState", "blockedFanOut", "links",
   ], "work-stack record");
   const record: WorkStackRecordInput = {
-    id: boundedIdentity(value.id, "record id"),
-    project: lowercaseSlug(value.project, "record project"),
-    kind: enumValue(value.kind, itemKinds, "record kind"),
-    title: boundedText(value.title, 1, 240, "record title"),
-    state: enumValue(value.state, states, "record state"),
-    priority: boundedInteger(value.priority, 0, 100, "record priority"),
-    summary: nullableText(value.summary, 1_000, "record summary"),
-    nextAction: nullableText(value.nextAction, 500, "record next action"),
-    owner: nullableText(value.owner, 160, "record owner"),
-    createdAt: canonicalTimestamp(value.createdAt, "record createdAt"),
-    updatedAt: canonicalTimestamp(value.updatedAt, "record updatedAt"),
-    actionableAt: value.actionableAt === null
+    id: boundedIdentity(input.id, "record id"),
+    project: lowercaseSlug(input.project, "record project"),
+    kind: enumValue(input.kind, itemKinds, "record kind"),
+    title: boundedText(input.title, 1, 240, "record title"),
+    state: enumValue(input.state, states, "record state"),
+    priority: boundedInteger(input.priority, 0, 100, "record priority"),
+    summary: nullableText(input.summary, 1_000, "record summary"),
+    nextAction: nullableText(input.nextAction, 500, "record next action"),
+    owner: nullableText(input.owner, 160, "record owner"),
+    createdAt: canonicalTimestamp(input.createdAt, "record createdAt"),
+    updatedAt: canonicalTimestamp(input.updatedAt, "record updatedAt"),
+    actionableAt: input.actionableAt === null
       ? null
-      : canonicalTimestamp(value.actionableAt, "record actionableAt"),
-    latestEvidenceAt: value.latestEvidenceAt === null
+      : canonicalTimestamp(input.actionableAt, "record actionableAt"),
+    latestEvidenceAt: input.latestEvidenceAt === null
       ? null
-      : canonicalTimestamp(value.latestEvidenceAt, "record latestEvidenceAt"),
-    attentionReason: value.attentionReason === null
+      : canonicalTimestamp(input.latestEvidenceAt, "record latestEvidenceAt"),
+    attentionReason: input.attentionReason === null
       ? null
-      : enumValue(value.attentionReason, attentionReasons, "attention reason"),
-    reviewState: enumValue(value.reviewState, reviewStates, "review state"),
-    blockedFanOut: boundedInteger(value.blockedFanOut, 0, 10_000, "blocked fan-out"),
-    links: denseDataArray(
-      value.links,
+      : enumValue(input.attentionReason, attentionReasons, "attention reason"),
+    reviewState: enumValue(input.reviewState, reviewStates, "review state"),
+    blockedFanOut: boundedInteger(input.blockedFanOut, 0, 10_000, "blocked fan-out"),
+    links: denseDataArray<WorkStackLinkInput>(
+      input.links,
       WORK_STACK_LIMITS.maxLinksPerRecord,
       "record links",
     ).map(admitLink).sort(compareLinks),
@@ -163,12 +167,16 @@ function admitRecord(
 }
 
 function admitLink(value: WorkStackLinkInput): WorkStackLinkInput {
-  requirePlainObject(value, ["kind", "identity", "href", "label"], "work-stack link");
+  const input = snapshotPlainObject(
+    value,
+    ["kind", "identity", "href", "label"],
+    "work-stack link",
+  );
   return {
-    kind: enumValue(value.kind, linkKinds, "link kind"),
-    identity: boundedIdentity(value.identity, "link identity"),
-    href: admitHref(value.href),
-    label: boundedText(value.label, 1, 160, "link label"),
+    kind: enumValue(input.kind, linkKinds, "link kind"),
+    identity: boundedIdentity(input.identity, "link identity"),
+    href: admitHref(input.href),
+    label: boundedText(input.label, 1, 160, "link label"),
   };
 }
 
