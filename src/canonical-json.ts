@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./sha256.js";
 
 /**
  * Compares strings by exact UTF-16 code units for deterministic canonical
@@ -9,7 +9,7 @@ export function compareCodeUnits(left: string, right: string): number {
 }
 
 export function sha256(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+  return `sha256:${sha256Hex(value)}`;
 }
 
 export function stableJson(value: unknown): string {
