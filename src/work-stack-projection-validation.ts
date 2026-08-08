@@ -1,5 +1,46 @@
 import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 
+export function snapshotPlainObject(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  if (isArray || prototype !== Object.prototype) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  const result = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
+    }
+    if (!descriptor) {
+      throw new TypeError(`${label} has an invalid field set`);
+    }
+    if (!("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`${label} fields must be enumerable data properties`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+// Compatibility boundary for compiler-owned detached records that still require
+// the historical exact-field-set contract. Caller-facing work-stack admission
+// uses snapshotPlainObject() instead and never enumerates caller keys.
 export function requirePlainObject(
   value: unknown,
   keys: readonly string[],
@@ -28,24 +69,43 @@ export function requirePlainObject(
   }
 }
 
-export function denseDataArray<T>(value: T[], max: number, label: string): T[] {
+export function denseDataArray<T>(value: unknown, max: number, label: string): T[] {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be a bounded ordinary array`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = isArray ? Object.getPrototypeOf(value) : null;
+    lengthDescriptor = isArray
+      ? Object.getOwnPropertyDescriptor(value, "length")
+      : undefined;
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
   if (
-    !Array.isArray(value)
-    || Object.getPrototypeOf(value) !== Array.prototype
-    || value.length > max
+    !isArray
+    || prototype !== Array.prototype
+    || typeof length !== "number"
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > max
   ) {
     throw new TypeError(`${label} must be a bounded ordinary array`);
   }
-  const keys = Reflect.ownKeys(value);
-  if (keys.length !== value.length + 1 || keys[keys.length - 1] !== "length") {
-    throw new TypeError(`${label} must contain only dense array entries`);
-  }
   const result: T[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    if (keys[index] !== String(index)) {
-      throw new TypeError(`${label} must be dense and undecorated`);
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new TypeError(`${label} could not be inspected`);
     }
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
       throw new TypeError(`${label} entries must be enumerable data properties`);
     }
