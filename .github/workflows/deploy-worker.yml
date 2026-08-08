@@ -116,6 +116,26 @@ jobs:
             *) echo "OAuth expectation must be disabled or enabled" >&2; exit 1 ;;
           esac
 
+      - name: Verify production Worker secret inventory
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          secret_inventory="$(bunx wrangler secret list --name stensibly-api --format json)"
+          for name in \
+            CONVEX_URL \
+            STENSIBLY_SERVICE_SECRET \
+            STENSIBLY_GITHUB_APP_ID \
+            STENSIBLY_GITHUB_APP_PRIVATE_KEY \
+            STENSIBLY_GITHUB_INSTALLATION_ID; do
+            if ! jq -e --arg name "$name" 'any(.[]; .name == $name)' \
+              <<< "$secret_inventory" >/dev/null; then
+              echo "Missing required production Worker secret: $name" >&2
+              exit 1
+            fi
+          done
+
       - name: Deploy Cloudflare Worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

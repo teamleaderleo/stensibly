@@ -10,8 +10,26 @@
   "version_metadata": {
     "binding": "CF_VERSION_METADATA"
   },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
   "vars": {
     "STENSIBLY_WORKSPACE": "default",
+    "STENSIBLY_GITHUB_PROVIDER_PROJECT": "stensibly",
+    "STENSIBLY_GITHUB_PROVIDER_REPOSITORY": "teamleaderleo/stensibly",
+    "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN": "teamleaderleo",
+    "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED": "true",
+    "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED": "true",
+    "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED": "true",
     "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app",
     "STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS": "https://chatgpt.com"
   },
@@ -26,6 +44,12 @@
     }
   ],
   "secrets": {
-    "required": ["CONVEX_URL", "STENSIBLY_SERVICE_SECRET"]
+    "required": [
+      "CONVEX_URL",
+      "STENSIBLY_SERVICE_SECRET",
+      "STENSIBLY_GITHUB_APP_ID",
+      "STENSIBLY_GITHUB_APP_PRIVATE_KEY",
+      "STENSIBLY_GITHUB_INSTALLATION_ID"
+    ]
   }
 }
