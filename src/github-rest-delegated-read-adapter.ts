@@ -2,6 +2,7 @@ import type { GitHubInstallationTokenProvider } from "./github-app-installation-
 import type { GitHubDelegatedReadAdapter } from "./github-delegated-read.js";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
+import { parseStrictJson } from "./strict-json.js";
 
 export interface GitHubRestDelegatedReadAdapterOptions {
   connectionId: string;
@@ -213,12 +214,16 @@ export class GitHubRestDelegatedReadAdapter
         "GitHub delegated provider request failed before a response was available",
       );
     }
-    if (!response.ok) throw providerHttpError(response.status);
+    if (!response.ok) {
+      void cancelResponseBody(response);
+      throw providerHttpError(response.status);
+    }
     const contentType = response.headers.get("content-type");
     if (
       contentType
       && !contentType.toLowerCase().includes("json")
     ) {
+      void cancelResponseBody(response);
       throw rejected(
         "github_delegated_provider_invalid_response",
         "GitHub delegated provider returned an unsupported content type",
@@ -350,53 +355,100 @@ function fileResult(
   });
 }
 
+const maximumResponseChunks = 4_096;
+const responseByteLimit = Symbol("github-delegated-response-byte-limit");
+
 async function readBoundedJson(
   response: Response,
   maximumBytes: number,
 ): Promise<unknown> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength && /^\d+$/.test(declaredLength)) {
-    const length = Number(declaredLength);
-    if (!Number.isSafeInteger(length) || length > maximumBytes) {
-      throw rejected(
-        "github_delegated_provider_result_too_large",
-        `GitHub delegated provider response exceeds ${maximumBytes} bytes`,
-      );
-    }
+  let declaredLength: number | null;
+  try {
+    declaredLength = admitContentLength(response.headers.get("content-length"));
+  } catch {
+    void cancelResponseBody(response);
+    throw rejected(
+      "github_delegated_provider_invalid_response",
+      "GitHub delegated provider returned an invalid Content-Length",
+    );
   }
-  if (!response.body) {
+  if (declaredLength !== null && declaredLength > maximumBytes) {
+    void cancelResponseBody(response);
+    throw rejected(
+      "github_delegated_provider_result_too_large",
+      `GitHub delegated provider response exceeds ${maximumBytes} bytes`,
+    );
+  }
+
+  const reader = acquireResponseReader(response);
+  if (!reader) {
     throw rejected(
       "github_delegated_provider_invalid_response",
       "GitHub delegated provider returned an empty response",
     );
   }
-  const reader = response.body.getReader();
+
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let deliveredChunks = 0;
   try {
     while (true) {
-      const read = await reader.read();
-      if (read.done) break;
-      total += read.value.byteLength;
-      if (total > maximumBytes) {
-        await reader.cancel();
+      let read: ReadableStreamReadResult<Uint8Array>;
+      try {
+        read = await ReadableStreamDefaultReader.prototype.read.call(reader) as
+          ReadableStreamReadResult<Uint8Array>;
+      } catch {
+        void cancelReader(reader);
         throw rejected(
-          "github_delegated_provider_result_too_large",
-          `GitHub delegated provider response exceeds ${maximumBytes} bytes`,
+          "github_delegated_provider_response_failed",
+          "GitHub delegated provider response could not be read",
         );
       }
-      chunks.push(read.value);
+      if (read.done) break;
+      deliveredChunks += 1;
+      if (deliveredChunks > maximumResponseChunks) {
+        void cancelReader(reader);
+        throw rejected(
+          "github_delegated_provider_result_too_large",
+          `GitHub delegated provider response exceeds ${maximumResponseChunks} chunks`,
+        );
+      }
+      let detached: Uint8Array;
+      try {
+        detached = detachResponseChunk(read.value, maximumBytes - total);
+      } catch (error) {
+        void cancelReader(reader);
+        if (error === responseByteLimit) {
+          throw rejected(
+            "github_delegated_provider_result_too_large",
+            `GitHub delegated provider response exceeds ${maximumBytes} bytes`,
+          );
+        }
+        throw rejected(
+          "github_delegated_provider_response_failed",
+          "GitHub delegated provider response could not be read",
+        );
+      }
+      total += detached.byteLength;
+      chunks.push(detached);
     }
-  } catch (error) {
-    if (error instanceof GitHubProviderRejectedError) throw error;
-    throw rejected(
-      "github_delegated_provider_response_failed",
-      "GitHub delegated provider response could not be read",
-    );
   } finally {
-    reader.releaseLock();
+    releaseReaderLock(reader);
   }
-  const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+
+  if (declaredLength !== null && declaredLength !== total) {
+    throw rejected(
+      "github_delegated_provider_invalid_response",
+      "GitHub delegated provider response length did not match Content-Length",
+    );
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -407,12 +459,97 @@ async function readBoundedJson(
     );
   }
   try {
-    return JSON.parse(text) as unknown;
+    return parseStrictJson(text, {
+      maxBytes: maximumBytes,
+      maxDepth: 128,
+      maxStringLength: maximumBytes,
+      maxObjectKeys: 100_000,
+      maxArrayLength: 100_000,
+      prefix: "GITHUB_DELEGATED_PROVIDER_JSON",
+    });
   } catch {
     throw rejected(
       "github_delegated_provider_invalid_response",
       "GitHub delegated provider returned invalid JSON",
     );
+  }
+}
+
+function admitContentLength(value: string | null): number | null {
+  if (value === null) return null;
+  if (!/^(?:0|[1-9][0-9]*)$/.test(value)) {
+    throw new TypeError("invalid Content-Length");
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length)) {
+    throw new TypeError("invalid Content-Length");
+  }
+  return length;
+}
+
+function acquireResponseReader(
+  response: Response,
+): ReadableStreamDefaultReader<Uint8Array> | null {
+  let body: ReadableStream<Uint8Array> | null;
+  try {
+    body = response.body;
+  } catch {
+    throw rejected(
+      "github_delegated_provider_response_failed",
+      "GitHub delegated provider response could not be read",
+    );
+  }
+  if (!body) return null;
+  try {
+    return ReadableStream.prototype.getReader.call(body) as
+      ReadableStreamDefaultReader<Uint8Array>;
+  } catch {
+    throw rejected(
+      "github_delegated_provider_response_failed",
+      "GitHub delegated provider response could not be read",
+    );
+  }
+}
+
+function detachResponseChunk(value: unknown, maximumBytes: number): Uint8Array {
+  const bytes: number[] = [];
+  try {
+    Uint8Array.prototype.forEach.call(value, (byte: number) => {
+      if (bytes.length >= maximumBytes) throw responseByteLimit;
+      bytes.push(byte);
+    });
+  } catch (error) {
+    if (error === responseByteLimit) throw error;
+    throw new TypeError("invalid delegated response chunk");
+  }
+  return new Uint8Array(bytes);
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    const body = response.body;
+    if (!body) return;
+    await ReadableStream.prototype.cancel.call(body);
+  } catch {
+    // Cancellation is best-effort after a fixed provider decision.
+  }
+}
+
+async function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await ReadableStreamDefaultReader.prototype.cancel.call(reader);
+  } catch {
+    // Cancellation is best-effort after a fixed provider decision.
+  }
+}
+
+function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    ReadableStreamDefaultReader.prototype.releaseLock.call(reader);
+  } catch {
+    // Preserve the primary provider response result if stream cleanup is hostile.
   }
 }
 
@@ -422,34 +559,56 @@ function exactDataRecord(
   requiredFields: readonly string[],
   label: string,
 ): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
     throw rejected(
       "github_delegated_adapter_invalid_input",
       `${label} must be a plain object`,
     );
   }
-  const prototype = Object.getPrototypeOf(value);
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw rejected(
+      "github_delegated_adapter_invalid_input",
+      `${label} could not be inspected`,
+    );
+  }
+  if (isArray) {
+    throw rejected(
+      "github_delegated_adapter_invalid_input",
+      `${label} must be a plain object`,
+    );
+  }
   if (prototype !== Object.prototype && prototype !== null) {
     throw rejected(
       "github_delegated_adapter_invalid_input",
       `${label} must use a plain or null prototype`,
     );
   }
-  if (Object.getOwnPropertySymbols(value).length > 0) {
-    throw rejected(
-      "github_delegated_adapter_invalid_input",
-      `${label} contains a symbol field`,
-    );
-  }
-  const allowed = new Set<string>(allowedFields);
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+
+  const required = new Set(requiredFields);
   const result = Object.create(null) as Record<string, unknown>;
-  for (const [key, descriptor] of Object.entries(descriptors)) {
-    if (!allowed.has(key)) {
+  for (const key of allowedFields) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
       throw rejected(
         "github_delegated_adapter_invalid_input",
-        `${label} has an unknown field`,
+        `${label} could not be inspected`,
       );
+    }
+    if (!descriptor) {
+      if (required.has(key)) {
+        throw rejected(
+          "github_delegated_adapter_invalid_input",
+          `${label} is missing a required field`,
+        );
+      }
+      continue;
     }
     if (!descriptor.enumerable || !("value" in descriptor)) {
       throw rejected(
@@ -458,14 +617,6 @@ function exactDataRecord(
       );
     }
     result[key] = descriptor.value;
-  }
-  for (const key of requiredFields) {
-    if (!Object.hasOwn(result, key)) {
-      throw rejected(
-        "github_delegated_adapter_invalid_input",
-        `${label} is missing a required field`,
-      );
-    }
   }
   return result;
 }
