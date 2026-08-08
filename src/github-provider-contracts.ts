@@ -20,6 +20,23 @@ export const githubIssueProviderOperations = [
 export type GitHubIssueProviderOperation =
   typeof githubIssueProviderOperations[number];
 
+export const githubPublicationProviderOperations = [
+  "github_create_branch",
+  "github_create_pull_request",
+] as const;
+
+export type GitHubPublicationProviderOperation =
+  typeof githubPublicationProviderOperations[number];
+
+export type GitHubProviderOperation =
+  | GitHubIssueProviderOperation
+  | GitHubPublicationProviderOperation;
+
+export const githubProviderOperations = [
+  ...githubIssueProviderOperations,
+  ...githubPublicationProviderOperations,
+] as const satisfies readonly GitHubProviderOperation[];
+
 export interface GitHubProviderRequestContext {
   project: string;
   repository: string;
@@ -81,7 +98,7 @@ export interface GitHubProviderAuthority {
   authorizeGitHubOperation(input: {
     project: string;
     repositoryFullName: string;
-    operation: GitHubIssueProviderOperation;
+    operation: GitHubProviderOperation;
     actorId: string;
     clientId: string;
     capabilityGrantId?: string;
@@ -117,6 +134,66 @@ export interface GitHubIssueComment {
     sha256: string;
   };
   containsBody: false;
+}
+
+export interface GitHubBranchResult {
+  kind: "branch";
+  name: string;
+  ref: string;
+  commitSha: string;
+  canonicalUrl: string;
+  sourceRevision: string;
+}
+
+export interface GitHubPullRequestResult {
+  kind: "pull_request";
+  number: number;
+  providerNodeId: string | null;
+  title: string;
+  head: string;
+  headSha: string;
+  base: string;
+  baseSha: string;
+  draft: boolean;
+  state: "open";
+  canonicalUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  bodyRevision: {
+    byteLength: number;
+    sha256: string;
+  };
+  sourceRevision: string;
+  containsBody: false;
+}
+
+export interface GitHubPublicationProviderAdapter {
+  getBranch(input: {
+    repositoryFullName: string;
+    branch: string;
+  }): Promise<GitHubBranchResult | null>;
+  createBranch(input: {
+    repositoryFullName: string;
+    branch: string;
+    fromCommitSha: string;
+    idempotencyKey: string;
+  }): Promise<{ branch: GitHubBranchResult; providerRequestId?: string }>;
+  getPullRequest(input: {
+    repositoryFullName: string;
+    pullRequestNumber: number;
+  }): Promise<GitHubPullRequestResult>;
+  createPullRequest(input: {
+    repositoryFullName: string;
+    title: string;
+    body?: string;
+    head: string;
+    base: string;
+    draft: boolean;
+    idempotencyKey: string;
+  }): Promise<{
+    pullRequest: GitHubPullRequestResult;
+    providerRequestId?: string;
+  }>;
 }
 
 export interface GitHubIssueProviderAdapter {
@@ -208,7 +285,7 @@ export interface GitHubProviderReceipt {
   project: string;
   provider: "github";
   repositoryFullName: string;
-  operation: GitHubIssueProviderOperation;
+  operation: GitHubProviderOperation;
   target: string;
   actorId: string;
   clientId: string;
@@ -226,7 +303,12 @@ export interface GitHubProviderReceipt {
   createdAt: string;
   updatedAt: string;
   providerRequestId: string | null;
-  result: GitHubIssueContext | GitHubIssueComment | null;
+  result:
+    | GitHubIssueContext
+    | GitHubIssueComment
+    | GitHubBranchResult
+    | GitHubPullRequestResult
+    | null;
   verification: {
     state: "not_run" | "passed" | "failed";
     checkedAt: string | null;

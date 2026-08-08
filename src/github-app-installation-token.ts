@@ -15,14 +15,18 @@ export const githubInstallationPermissionNames = [
 export type GitHubInstallationPermissionName =
   typeof githubInstallationPermissionNames[number];
 
+type GitHubWriteInstallationPermissionName = Extract<
+  GitHubInstallationPermissionName,
+  "issues" | "contents" | "pull_requests"
+>;
 type GitHubReadInstallationPermissionName = Exclude<
   GitHubInstallationPermissionName,
-  "issues"
+  GitHubWriteInstallationPermissionName
 >;
 
 export type GitHubInstallationPermissionInput =
   | {
-    name: "issues";
+    name: GitHubWriteInstallationPermissionName;
     access: "read" | "write";
   }
   | {

@@ -1,10 +1,14 @@
 import type {
+  GitHubBranchResult,
   GitHubIssueComment,
-  GitHubIssueProviderOperation,
+  GitHubProviderOperation,
   GitHubProviderReceipt,
   GitHubProviderReceiptState,
+  GitHubPullRequestResult,
 } from "./github-provider-contracts.js";
-import { githubIssueProviderOperations } from "./github-provider-contracts.js";
+import {
+  githubProviderOperations,
+} from "./github-provider-contracts.js";
 import type { GitHubIssueContext } from "./github-issue-context.js";
 import {
   canonicalJsonString,
@@ -88,6 +92,32 @@ const issueReferenceKeys = [
 const issueBodyRevisionKeys = ["byteLength", "present", "sha256"] as const;
 const milestoneKeys = ["number", "title"] as const;
 const relationshipKeys = ["kind", "target"] as const;
+const branchKeys = [
+  "canonicalUrl",
+  "commitSha",
+  "kind",
+  "name",
+  "ref",
+  "sourceRevision",
+] as const;
+const pullRequestKeys = [
+  "base",
+  "baseSha",
+  "bodyRevision",
+  "canonicalUrl",
+  "containsBody",
+  "createdAt",
+  "draft",
+  "head",
+  "headSha",
+  "kind",
+  "number",
+  "providerNodeId",
+  "sourceRevision",
+  "state",
+  "title",
+  "updatedAt",
+] as const;
 
 const receiptStates: readonly GitHubProviderReceiptState[] = [
   "reserved",
@@ -213,9 +243,9 @@ function admitReceiptSnapshot(value: unknown): GitHubProviderReceipt {
   );
   const operation = exactEnum(
     value.operation,
-    githubIssueProviderOperations,
+    githubProviderOperations,
     "operation",
-  ) as GitHubIssueProviderOperation;
+  ) as GitHubProviderOperation;
   const state = exactEnum(value.state, receiptStates, "state");
   const createdAt = timestamp(value.createdAt, "createdAt");
   const updatedAt = timestamp(value.updatedAt, "updatedAt");
@@ -236,6 +266,25 @@ function admitReceiptSnapshot(value: unknown): GitHubProviderReceipt {
     && isCommentResult(result)
   ) {
     throw new RangeError("GitHub issue operation has a comment result");
+  }
+  if (operation === "github_create_branch" && !isBranchResult(result)) {
+    if (result !== null || state === "succeeded" || state === "stale") {
+      throw new RangeError("GitHub branch operation has an invalid result");
+    }
+  }
+  if (operation === "github_create_pull_request") {
+    const valid = isPullRequestResult(result)
+      || (state === "stale" && isBranchResult(result));
+    if (!valid && (result !== null || state === "succeeded" || state === "stale")) {
+      throw new RangeError("GitHub pull request operation has an invalid result");
+    }
+  }
+  if (
+    operation !== "github_create_branch"
+    && operation !== "github_create_pull_request"
+    && (isBranchResult(result) || isPullRequestResult(result))
+  ) {
+    throw new RangeError("GitHub issue operation has a publication result");
   }
   const receipt: GitHubProviderReceipt = {
     version: 1,
@@ -331,6 +380,12 @@ function admitResult(
 ): GitHubProviderReceipt["result"] {
   if (value === null) return null;
   if (!isRecord(value)) throw new RangeError("GitHub provider result is invalid");
+  if (value.kind === "branch") {
+    return admitBranch(value, repositoryFullName);
+  }
+  if (value.kind === "pull_request") {
+    return admitPullRequest(value, repositoryFullName);
+  }
   if (value.containsBody === false) {
     return admitComment(value, repositoryFullName);
   }
@@ -338,6 +393,78 @@ function admitResult(
     return admitIssue(value, repositoryFullName);
   }
   throw new RangeError("GitHub provider result type is invalid");
+}
+
+function admitBranch(
+  value: Record<string, unknown>,
+  repositoryFullName: string,
+): GitHubBranchResult {
+  if (!hasExactKeys(value, branchKeys) || value.kind !== "branch") {
+    throw new RangeError("GitHub branch result has an invalid field set");
+  }
+  const name = exactBranch(value.name, "branch name");
+  const ref = `refs/heads/${name}`;
+  const commitSha = exactCommitSha(value.commitSha, "branch commit SHA");
+  const canonicalUrl = `https://github.com/${repositoryFullName}/tree/${encodeURIComponent(name)}`;
+  if (
+    value.ref !== ref
+    || value.canonicalUrl !== canonicalUrl
+    || value.sourceRevision !== commitSha
+  ) {
+    throw new RangeError("GitHub branch result identity is invalid");
+  }
+  return {
+    kind: "branch",
+    name,
+    ref,
+    commitSha,
+    canonicalUrl,
+    sourceRevision: commitSha,
+  };
+}
+
+function admitPullRequest(
+  value: Record<string, unknown>,
+  repositoryFullName: string,
+): GitHubPullRequestResult {
+  if (!hasExactKeys(value, pullRequestKeys) || value.kind !== "pull_request") {
+    throw new RangeError("GitHub pull request result has an invalid field set");
+  }
+  const number = positiveInteger(value.number, "pull request number");
+  const canonicalUrl = `https://github.com/${repositoryFullName}/pull/${number}`;
+  if (value.canonicalUrl !== canonicalUrl || value.containsBody !== false) {
+    throw new RangeError("GitHub pull request result identity is invalid");
+  }
+  const createdAt = timestamp(value.createdAt, "pull request createdAt");
+  const updatedAt = timestamp(value.updatedAt, "pull request updatedAt");
+  if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+    throw new RangeError("GitHub pull request update precedes creation");
+  }
+  return {
+    kind: "pull_request",
+    number,
+    providerNodeId: nullableText(
+      value.providerNodeId,
+      "pull request provider node ID",
+      256,
+    ),
+    title: exactText(value.title, "pull request title", 256),
+    head: exactBranch(value.head, "pull request head"),
+    headSha: exactCommitSha(value.headSha, "pull request head SHA"),
+    base: exactBranch(value.base, "pull request base"),
+    baseSha: exactCommitSha(value.baseSha, "pull request base SHA"),
+    draft: exactBoolean(value.draft, "pull request draft flag"),
+    state: exactEnum(value.state, ["open"] as const, "pull request state"),
+    canonicalUrl,
+    createdAt,
+    updatedAt,
+    bodyRevision: admitBodyRevision(value.bodyRevision, false),
+    sourceRevision: exactHash(
+      value.sourceRevision,
+      "pull request source revision",
+    ),
+    containsBody: false,
+  };
 }
 
 function admitComment(
@@ -628,6 +755,47 @@ function nonnegativeInteger(value: unknown, label: string): number {
   return Number(value);
 }
 
+function exactBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new RangeError(`GitHub provider ${label} is invalid`);
+  }
+  return value;
+}
+
+function exactCommitSha(value: unknown, label: string): string {
+  return exactString(value, label, 64, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
+}
+
+function exactBranch(value: unknown, label: string): string {
+  const branch = exactText(value, label, 240);
+  if (
+    branch === "@"
+    || branch === "HEAD"
+    || branch.startsWith("refs/heads/")
+    || branch.startsWith("/")
+    || branch.endsWith("/")
+    || branch.startsWith("-")
+    || branch.includes("//")
+    || branch.includes("..")
+    || branch.includes("@{")
+    || /[~^:?*\[\\\s]/u.test(branch)
+  ) {
+    throw new RangeError(`GitHub provider ${label} is invalid`);
+  }
+  const segments = branch.split("/");
+  if (segments.some((segment) =>
+    !segment
+    || segment === "."
+    || segment === ".."
+    || segment.startsWith(".")
+    || segment.endsWith(".")
+    || segment.endsWith(".lock")
+  )) {
+    throw new RangeError(`GitHub provider ${label} is invalid`);
+  }
+  return branch;
+}
+
 function snapshotBoundedJson(value: unknown): BoundedJsonValue {
   return snapshotValue(value, 0, {
     active: new WeakSet<object>(),
@@ -737,7 +905,21 @@ function snapshotDataDescriptor(
 function isCommentResult(
   value: Exclude<GitHubProviderReceipt["result"], null>,
 ): value is GitHubIssueComment {
-  return "containsBody" in value && value.containsBody === false;
+  return !("kind" in value)
+    && "containsBody" in value
+    && value.containsBody === false;
+}
+
+function isBranchResult(
+  value: GitHubProviderReceipt["result"],
+): value is GitHubBranchResult {
+  return value !== null && "kind" in value && value.kind === "branch";
+}
+
+function isPullRequestResult(
+  value: GitHubProviderReceipt["result"],
+): value is GitHubPullRequestResult {
+  return value !== null && "kind" in value && value.kind === "pull_request";
 }
 
 function byteLength(value: string): number {

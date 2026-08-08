@@ -68,6 +68,34 @@ export interface GitHubProviderReceiptLookupService {
   ): Promise<GitHubProviderReceipt | null>;
 }
 
+export interface GitHubPublicationProviderWriteService {
+  createBranch(input: GitHubProviderRequestContext & {
+    branch: string;
+    fromCommitSha: string;
+    idempotencyKey: string;
+  }): Promise<GitHubProviderReceipt>;
+  createPullRequest(input: GitHubProviderRequestContext & {
+    title: string;
+    body?: string;
+    head: string;
+    base: string;
+    expectedHeadSha: string;
+    expectedBaseSha: string;
+    draft?: boolean;
+    idempotencyKey: string;
+  }): Promise<GitHubProviderReceipt>;
+}
+
+export function withGitHubPublicationProviderWriteService<T extends object>(
+  target: T,
+  service: GitHubPublicationProviderWriteService,
+): T & GitHubPublicationProviderWriteService {
+  return Object.assign(target, {
+    createBranch: service.createBranch.bind(service),
+    createPullRequest: service.createPullRequest.bind(service),
+  });
+}
+
 export function withGitHubIssueProviderWriteService<T extends object>(
   target: T,
   service: GitHubIssueProviderWriteService,
@@ -283,6 +311,62 @@ export function registerGitHubIssueProviderTools(
       return receipt;
     }),
   );
+
+  server.registerTool(
+    "github_create_branch",
+    {
+      description: "Create one absent GitHub branch at an exact commit in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        branch: branchSchema(),
+        fromCommitSha: commitShaSchema(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() =>
+      publicationWriteService(ledger).createBranch({
+        ...providerContext(context, input.project, input.repository, "write"),
+        branch: input.branch,
+        fromCommitSha: input.fromCommitSha,
+        idempotencyKey: input.idempotencyKey,
+      })
+    ),
+  );
+
+  server.registerTool(
+    "github_create_pull_request",
+    {
+      description: "Create one GitHub pull request between two exact repository branch revisions. Requires write scope, optimistic head/base commit fences, and an explicit idempotency key; the durable receipt omits the body.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        title: z.string().trim().min(1).max(256),
+        body: z.string().max(128 * 1024).optional(),
+        head: branchSchema(),
+        base: branchSchema(),
+        expectedHeadSha: commitShaSchema(),
+        expectedBaseSha: commitShaSchema(),
+        draft: z.boolean().default(false),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() =>
+      publicationWriteService(ledger).createPullRequest({
+        ...providerContext(context, input.project, input.repository, "write"),
+        title: input.title,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        head: input.head,
+        base: input.base,
+        expectedHeadSha: input.expectedHeadSha,
+        expectedBaseSha: input.expectedBaseSha,
+        draft: input.draft,
+        idempotencyKey: input.idempotencyKey,
+      })
+    ),
+  );
 }
 
 function readService(ledger: WorkLedger): GitHubIssueProviderReadService {
@@ -321,6 +405,24 @@ function receiptLookupService(
   return Object.freeze({
     getGitHubProviderReceipt:
       get as GitHubProviderReceiptLookupService["getGitHubProviderReceipt"],
+  });
+}
+
+function publicationWriteService(
+  ledger: WorkLedger,
+): GitHubPublicationProviderWriteService {
+  const createBranch = captureDataMethod(ledger, "createBranch");
+  const createPullRequest = captureDataMethod(ledger, "createPullRequest");
+  if (!createBranch || !createPullRequest) {
+    throw new Error(
+      "GitHub publication writes are unavailable because this backend has no enabled publication service",
+    );
+  }
+  return Object.freeze({
+    createBranch:
+      createBranch as GitHubPublicationProviderWriteService["createBranch"],
+    createPullRequest:
+      createPullRequest as GitHubPublicationProviderWriteService["createPullRequest"],
   });
 }
 
@@ -431,4 +533,35 @@ function idempotencyKeySchema() {
 
 function sourceRevisionSchema() {
   return z.string().regex(/^sha256:[a-f0-9]{64}$/);
+}
+
+function commitShaSchema() {
+  return z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+}
+
+function branchSchema() {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(240)
+    .refine((value) =>
+      value !== "@"
+      && value !== "HEAD"
+      && !value.startsWith("refs/heads/")
+      && !value.startsWith("/")
+      && !value.endsWith("/")
+      && !value.startsWith("-")
+      && !value.includes("//")
+      && !value.includes("..")
+      && !value.includes("@{")
+      && !/[~^:?*\[\\\s]/u.test(value)
+      && value.split("/").every((segment) =>
+        segment.length > 0
+        && segment !== "."
+        && segment !== ".."
+        && !segment.startsWith(".")
+        && !segment.endsWith(".")
+        && !segment.endsWith(".lock")
+      ), "Use a valid GitHub branch name");
 }
