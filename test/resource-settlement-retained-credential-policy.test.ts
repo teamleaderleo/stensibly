@@ -62,17 +62,13 @@ describe("resource settlement shared retained credential policy", () => {
 
     expect(() => createResourceSettlementReceipt({
       ...input(),
-      owners: [owner(serviceIdentity)],
-    })).toThrow("Settlement owner identity is invalid");
-  });
-
-  test("applies the shared policy to slug fields too", () => {
-    const serviceIdentity = `stn.svc_${"c".repeat(12)}`;
+      policyVersion: serviceIdentity,
+    })).toThrow("Settlement policy version is invalid");
 
     expect(() => createResourceSettlementReceipt({
       ...input(),
-      workspace: serviceIdentity,
-    })).toThrow("Resource settlement workspace must be a bounded lowercase slug");
+      owners: [owner(serviceIdentity)],
+    })).toThrow("Settlement owner identity is invalid");
   });
 
   test("retains benign Stensibly-like aliases below the shared threshold", () => {
@@ -81,11 +77,13 @@ describe("resource settlement shared retained credential policy", () => {
       ...input(),
       resourceId: benign,
       operationRef: benign,
+      policyVersion: benign,
       owners: [owner(benign)],
     });
 
     expect(receipt.resourceId).toBe(benign);
     expect(receipt.operationRef).toBe(benign);
+    expect(receipt.policyVersion).toBe(benign);
     expect(receipt.owners[0]?.id).toBe(benign);
     expect(receipt.receiptFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
   });
