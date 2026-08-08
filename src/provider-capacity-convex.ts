@@ -82,17 +82,21 @@ export class ConvexProviderCapacityService implements ProviderCapacityService {
   }
 
   async snapshot(repository: string, subjectLogin: string, now = Date.now()) {
-    const raw = await this.client.query(latestRef, this.args({
-      repository,
-      subjectLogin,
-    })) as ConvexObservation | null;
-    return projectCodeRabbitCapacityObservation(
-      raw ? mapObservation(raw, "") : null,
-      repository,
-      subjectLogin,
-      now,
-      this.availableFreshnessMs,
-    );
+    try {
+      const raw = await this.client.query(latestRef, this.args({
+        repository,
+        subjectLogin,
+      })) as ConvexObservation | null;
+      return projectCodeRabbitCapacityObservation(
+        raw ? mapObservation(raw, "") : null,
+        repository,
+        subjectLogin,
+        now,
+        this.availableFreshnessMs,
+      );
+    } catch (error) {
+      throw mapProviderCapacityError(error);
+    }
   }
 
   private args(input: Record<string, unknown>): Record<string, unknown> {
@@ -120,16 +124,34 @@ function mapObservation(input: ConvexObservation, deliveryId: string): CodeRabbi
 }
 
 function mapProviderCapacityError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = ownDataErrorMessage(error);
   if (message.includes("PROVIDER_CAPACITY_DELIVERY_CONFLICT")) {
     return new ProviderCapacityConflictError(
       "GitHub delivery identity was reused with different provider capacity content",
     );
   }
-  if (message.includes("PROVIDER_CAPACITY_DELIVERY_LIMIT") || message.includes("PROVIDER_CAPACITY_STORAGE_LIMIT")) {
+  if (
+    message.includes("PROVIDER_CAPACITY_DELIVERY_LIMIT")
+    || message.includes("PROVIDER_CAPACITY_STORAGE_LIMIT")
+  ) {
     return new ProviderCapacityStorageError();
   }
-  return error instanceof Error ? error : new Error("Provider capacity backend failed");
+  return new Error("Provider capacity backend failed");
+}
+
+function ownDataErrorMessage(error: unknown): string {
+  if (error === null || typeof error !== "object") return "";
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  } catch {
+    return "";
+  }
+  return descriptor
+    && "value" in descriptor
+    && typeof descriptor.value === "string"
+    ? descriptor.value
+    : "";
 }
 
 function required(value: string, label: string): string {
