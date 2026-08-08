@@ -60,6 +60,26 @@ describe("GitHub capability catalogue MCP surface", () => {
         dispatchEnabled: true,
       });
       expect(exact.recommendedAction).toContain("github_search_issues");
+
+      const expectedWriteBindings = [
+        ["create_issue", "github_create_issue"],
+        ["update_issue", "github_update_issue"],
+        ["add_comment_to_issue", "github_add_issue_comment"],
+      ] as const;
+      for (const [capability, tool] of expectedWriteBindings) {
+        const entry = await call<{
+          executionMode: string;
+          firstPartyTool: string | null;
+          dispatchEnabled: boolean;
+          recommendedAction: string;
+        }>(client, "github_get_tool", { name: capability });
+        expect(entry).toMatchObject({
+          executionMode: "typed_first_party",
+          firstPartyTool: tool,
+          dispatchEnabled: true,
+        });
+        expect(entry.recommendedAction).toContain(tool);
+      }
     } finally {
       await client.close();
       await server.close();
