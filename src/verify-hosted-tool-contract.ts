@@ -8,6 +8,7 @@ import {
   createMcpReleaseManifest,
   type McpToolContract,
 } from "./mcp-release-manifest.js";
+import { parseStrictJson } from "./strict-json.js";
 import {
   redactSecrets,
   type CheckResult,
@@ -17,6 +18,7 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
+const MAXIMUM_RESPONSE_CHUNKS = 4096;
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -57,17 +59,12 @@ export async function verifyHostedToolContract(
         params: {},
       }),
     }, timeoutMs);
-    const body = await readBoundedJson(response, timeoutMs);
-    expectStatus(response, 200);
-
-    const tools = isRecord(body)
-      && isRecord(body.result)
-      && Array.isArray(body.result.tools)
-      ? body.result.tools
-      : null;
-    if (!tools) {
-      throw responseError(response, "Expected an MCP tools/list result");
+    if (response.status !== 200) {
+      void cancelResponseBody(response);
     }
+    expectStatus(response, 200);
+    const body = await readBoundedJson(response, timeoutMs);
+    const tools = readToolsListTools(response, body);
 
     const contracts = tools.map((tool, index) => readToolContract(tool, index));
     const manifest = compileManifest(response, contracts);
@@ -146,6 +143,23 @@ function readSnapshot(): ChatGptAppContractSnapshot {
   };
 }
 
+function readToolsListTools(response: Response, value: unknown): unknown[] {
+  if (
+    !isRecord(value)
+    || value.jsonrpc !== "2.0"
+    || value.id !== 2
+    || value.error !== undefined
+    || !isRecord(value.result)
+    || !Array.isArray(value.result.tools)
+  ) {
+    throw responseError(
+      response,
+      "Expected matching MCP tools/list JSON-RPC response",
+    );
+  }
+  return value.result.tools;
+}
+
 function readToolContract(value: unknown, index: number): McpToolContract {
   if (!isRecord(value)) {
     throw new Error(`MCP tools/list tool ${index + 1} is invalid`);
@@ -206,15 +220,15 @@ async function readBoundedJson(response: Response, timeoutMs: number): Promise<u
   try {
     declaredLength = admitContentLength(response.headers.get("content-length"));
   } catch (error) {
-    await cancelResponseBody(response);
+    void cancelResponseBody(response);
     throw error;
   }
   if (declaredLength !== null && declaredLength > MAXIMUM_RESPONSE_BYTES) {
-    await cancelResponseBody(response);
+    void cancelResponseBody(response);
     throw new Error("MCP tools/list response exceeded 1 MiB");
   }
 
-  const reader = response.body?.getReader();
+  const reader = acquireResponseReader(response);
   if (!reader) {
     if (declaredLength !== null && declaredLength !== 0) {
       throw new Error("MCP tools/list response length did not match its declaration");
@@ -226,28 +240,34 @@ async function readBoundedJson(response: Response, timeoutMs: number): Promise<u
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
+  let deliveredChunks = 0;
   try {
     while (true) {
       const result = await readWithDeadline(reader, controller.signal, timeoutMs);
       if (result.done) break;
-      if (!(result.value instanceof Uint8Array)) {
-        await cancelReader(reader);
-        throw new Error("MCP tools/list returned an invalid byte stream");
+      deliveredChunks += 1;
+      if (deliveredChunks > MAXIMUM_RESPONSE_CHUNKS) {
+        void cancelReader(reader);
+        throw new Error(
+          `MCP tools/list response exceeded ${MAXIMUM_RESPONSE_CHUNKS} chunks`,
+        );
       }
-      totalBytes += result.value.byteLength;
-      if (totalBytes > MAXIMUM_RESPONSE_BYTES) {
-        await cancelReader(reader);
-        throw new Error("MCP tools/list response exceeded 1 MiB");
+      let detached: Uint8Array;
+      try {
+        detached = detachResponseChunk(
+          result.value,
+          MAXIMUM_RESPONSE_BYTES - totalBytes,
+        );
+      } catch (error) {
+        void cancelReader(reader);
+        throw error;
       }
-      chunks.push(result.value.slice());
+      totalBytes += detached.byteLength;
+      chunks.push(detached);
     }
   } finally {
     clearTimeout(timer);
-    try {
-      reader.releaseLock();
-    } catch {
-      // A cancelled or failed stream can keep a pending read until cancellation settles.
-    }
+    releaseReaderLock(reader);
   }
 
   if (declaredLength !== null && declaredLength !== totalBytes) {
@@ -269,10 +289,55 @@ async function readBoundedJson(response: Response, timeoutMs: number): Promise<u
     throw new Error("MCP tools/list returned invalid UTF-8");
   }
   try {
-    return JSON.parse(text) as unknown;
+    return parseStrictJson(text, {
+      maxBytes: MAXIMUM_RESPONSE_BYTES,
+      maxDepth: 128,
+      maxStringLength: MAXIMUM_RESPONSE_BYTES,
+      maxObjectKeys: 100_000,
+      maxArrayLength: 100_000,
+      prefix: "MCP_TOOL_CONTRACT_JSON",
+    });
   } catch {
     throw new Error("MCP tools/list returned invalid JSON");
   }
+}
+
+function acquireResponseReader(
+  response: Response,
+): ReadableStreamDefaultReader<Uint8Array> | null {
+  let body: ReadableStream<Uint8Array> | null;
+  try {
+    body = response.body;
+  } catch {
+    throw new Error("MCP tools/list response body could not be inspected");
+  }
+  if (!body) return null;
+  try {
+    return ReadableStream.prototype.getReader.call(body) as ReadableStreamDefaultReader<Uint8Array>;
+  } catch {
+    throw new Error("MCP tools/list response body could not be inspected");
+  }
+}
+
+const RESPONSE_BYTE_LIMIT = Symbol("response-byte-limit");
+
+function detachResponseChunk(
+  value: unknown,
+  maximumBytes: number,
+): Uint8Array {
+  const bytes: number[] = [];
+  try {
+    Uint8Array.prototype.forEach.call(value, (byte: number) => {
+      if (bytes.length >= maximumBytes) throw RESPONSE_BYTE_LIMIT;
+      bytes.push(byte);
+    });
+  } catch (error) {
+    if (error === RESPONSE_BYTE_LIMIT) {
+      throw new Error("MCP tools/list response exceeded 1 MiB");
+    }
+    throw new Error("MCP tools/list returned an invalid byte stream");
+  }
+  return new Uint8Array(bytes);
 }
 
 async function readWithDeadline(
@@ -281,7 +346,7 @@ async function readWithDeadline(
   timeoutMs: number,
 ) {
   if (signal.aborted) {
-    await cancelReader(reader);
+    void cancelReader(reader);
     throw timeoutError(timeoutMs);
   }
 
@@ -295,8 +360,8 @@ async function readWithDeadline(
   });
   try {
     return await Promise.race([
-      reader.read().catch(async () => {
-        await cancelReader(reader);
+      readFromReader(reader).catch(() => {
+        void cancelReader(reader);
         if (signal.aborted) throw timeoutError(timeoutMs);
         throw new Error("MCP tools/list response stream failed");
       }),
@@ -304,6 +369,26 @@ async function readWithDeadline(
     ]);
   } finally {
     if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function readFromReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  try {
+    return ReadableStreamDefaultReader.prototype.read.call(reader) as Promise<
+      ReadableStreamReadResult<Uint8Array>
+    >;
+  } catch {
+    return Promise.reject(new Error("MCP tools/list response stream failed"));
+  }
+}
+
+function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    ReadableStreamDefaultReader.prototype.releaseLock.call(reader);
+  } catch {
+    // A cancelled or failed stream can keep a pending read until cancellation settles.
   }
 }
 
@@ -324,9 +409,10 @@ function admitContentLength(value: string | null): number | null {
 }
 
 async function cancelResponseBody(response: Response): Promise<void> {
-  if (!response.body || response.body.locked) return;
   try {
-    await response.body.cancel();
+    const body = response.body;
+    if (!body || body.locked) return;
+    await body.cancel();
   } catch {
     // Cancellation is best-effort after a fixed verifier decision.
   }
@@ -334,7 +420,7 @@ async function cancelResponseBody(response: Response): Promise<void> {
 
 async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
   try {
-    await reader.cancel();
+    await ReadableStreamDefaultReader.prototype.cancel.call(reader);
   } catch {
     // Cancellation is best-effort after a fixed verifier decision.
   }
