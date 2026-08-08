@@ -100,6 +100,18 @@ describe("curated GitHub capability surface", () => {
       firstPartyTool: "github_add_issue_comment",
       dispatchEnabled: true,
     });
+    expect(service.getTool("create_branch")).toMatchObject({
+      tier: "essential",
+      executionMode: "typed_first_party",
+      firstPartyTool: "github_create_branch",
+      dispatchEnabled: true,
+    });
+    expect(service.getTool("create_pull_request")).toMatchObject({
+      tier: "essential",
+      executionMode: "typed_first_party",
+      firstPartyTool: "github_create_pull_request",
+      dispatchEnabled: true,
+    });
     expect(service.getTool("fetch_file")).toMatchObject({
       tier: "essential",
       executionMode: "delegated",

@@ -97,18 +97,23 @@ describe("GitHub App installation permission profiles", () => {
     });
   });
 
-  test("rejects unsupported, write-capable, decorated, and accessor profiles before provider activity", async () => {
+  test("admits publication writes and rejects unsupported, non-writable, decorated, and accessor profiles before provider activity", async () => {
     let providerCalls = 0;
     const minter = createMinter(async () => {
       providerCalls += 1;
-      return tokenResponse({ contents: "read" }, "unreachable");
+      return tokenResponse({ contents: "write" }, "publication-token");
     });
+
+    expect(await minter.getInstallationToken({
+      repositoryFullName,
+      permission: { name: "contents", access: "write" },
+    })).toMatchObject({ token: "publication-token" });
 
     await expect(minter.getInstallationToken({
       repositoryFullName,
-      permission: { name: "contents", access: "write" },
+      permission: { name: "statuses", access: "write" },
     } as unknown as GitHubInstallationTokenRequest)).rejects.toThrow(
-      "contents supports read access only",
+      "statuses supports read access only",
     );
 
     await expect(minter.getInstallationToken({
@@ -147,7 +152,7 @@ describe("GitHub App installation permission profiles", () => {
     );
 
     expect(getterCalls).toBe(0);
-    expect(providerCalls).toBe(0);
+    expect(providerCalls).toBe(1);
   });
 
   test("requires exactly one legacy or exact permission profile", async () => {

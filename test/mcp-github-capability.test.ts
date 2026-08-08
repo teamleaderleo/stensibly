@@ -65,6 +65,8 @@ describe("GitHub capability catalogue MCP surface", () => {
         ["create_issue", "github_create_issue"],
         ["update_issue", "github_update_issue"],
         ["add_comment_to_issue", "github_add_issue_comment"],
+        ["create_branch", "github_create_branch"],
+        ["create_pull_request", "github_create_pull_request"],
       ] as const;
       for (const [capability, tool] of expectedWriteBindings) {
         const entry = await call<{

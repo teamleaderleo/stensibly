@@ -89,6 +89,11 @@ const githubApiVersion = "2022-11-28";
 const installationTokenResponseMaximumBytes = 64 * 1024;
 const decimalByteLengthPattern = /^(?:0|[1-9][0-9]*)$/;
 const permissionNames = new Set<string>(githubInstallationPermissionNames);
+const writablePermissionNames = new Set<string>([
+  "issues",
+  "contents",
+  "pull_requests",
+]);
 
 /**
  * Mints short-lived, repository-narrowed GitHub App installation tokens.
@@ -339,7 +344,7 @@ function admitPermission(value: unknown): Readonly<GitHubInstallationPermissionI
   if (access !== "read" && access !== "write") {
     throw new RangeError("GitHub installation permission access is invalid");
   }
-  if (name !== "issues" && access !== "read") {
+  if (!writablePermissionNames.has(name) && access !== "read") {
     throw new RangeError(
       `GitHub installation permission ${name} supports read access only`,
     );

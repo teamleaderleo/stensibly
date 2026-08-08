@@ -69,6 +69,22 @@ class GitHubPublicationStaleVersionError extends Error {
   }
 }
 
+class GitHubPublicationMutationUnverifiedError extends Error {
+  readonly result: GitHubBranchResult | GitHubPullRequestResult;
+  readonly providerRequestId: string | null;
+
+  constructor(
+    message: string,
+    result: GitHubBranchResult | GitHubPullRequestResult,
+    providerRequestId: string | null,
+  ) {
+    super(message);
+    this.name = "GitHubPublicationMutationUnverifiedError";
+    this.result = result;
+    this.providerRequestId = providerRequestId;
+  }
+}
+
 /**
  * Executes the bounded publication operations that surround repository-file
  * writes. File mutation remains in GitHubRepositoryWriteProviderService so its
@@ -124,23 +140,36 @@ export class GitHubPublicationProviderService {
           fromCommitSha,
           idempotencyKey: key,
         });
-        const readback = await this.#adapter.getBranch({
-          repositoryFullName: scope.repositoryFullName,
-          branch,
-        });
+        let readback: GitHubBranchResult | null;
+        try {
+          readback = await this.#adapter.getBranch({
+            repositoryFullName: scope.repositoryFullName,
+            branch,
+          });
+        } catch {
+          throw new GitHubPublicationMutationUnverifiedError(
+            "GitHub branch mutation requires exact reconciliation",
+            created.branch,
+            created.providerRequestId ?? null,
+          );
+        }
         if (
           !readback
           || readback.name !== branch
           || readback.ref !== `refs/heads/${branch}`
           || readback.commitSha !== fromCommitSha
         ) {
-          throw new Error(
-            "GitHub branch readback did not match the requested source commit",
+          throw new GitHubPublicationMutationUnverifiedError(
+            "GitHub branch mutation requires exact reconciliation",
+            created.branch,
+            created.providerRequestId ?? null,
           );
         }
         if (stableJson(created.branch) !== stableJson(readback)) {
-          throw new Error(
-            "GitHub branch mutation response did not match canonical readback",
+          throw new GitHubPublicationMutationUnverifiedError(
+            "GitHub branch mutation requires exact reconciliation",
+            created.branch,
+            created.providerRequestId ?? null,
           );
         }
         return {
@@ -232,10 +261,19 @@ export class GitHubPublicationProviderService {
           draft,
           idempotencyKey: key,
         });
-        const readback = await this.#adapter.getPullRequest({
-          repositoryFullName: scope.repositoryFullName,
-          pullRequestNumber: created.pullRequest.number,
-        });
+        let readback: GitHubPullRequestResult;
+        try {
+          readback = await this.#adapter.getPullRequest({
+            repositoryFullName: scope.repositoryFullName,
+            pullRequestNumber: created.pullRequest.number,
+          });
+        } catch {
+          throw new GitHubPublicationMutationUnverifiedError(
+            "GitHub pull request mutation requires exact reconciliation",
+            created.pullRequest,
+            created.providerRequestId ?? null,
+          );
+        }
         if (
           readback.title !== title
           || readback.head !== head
@@ -246,13 +284,17 @@ export class GitHubPublicationProviderService {
           || readback.state !== "open"
           || readback.bodyRevision.sha256 !== sha256(canonicalBody(body ?? ""))
         ) {
-          throw new Error(
-            "GitHub pull request readback did not match guarded publication",
+          throw new GitHubPublicationMutationUnverifiedError(
+            "GitHub pull request mutation requires exact reconciliation",
+            created.pullRequest,
+            created.providerRequestId ?? null,
           );
         }
         if (stableJson(created.pullRequest) !== stableJson(readback)) {
-          throw new Error(
-            "GitHub pull request mutation response did not match canonical readback",
+          throw new GitHubPublicationMutationUnverifiedError(
+            "GitHub pull request mutation requires exact reconciliation",
+            created.pullRequest,
+            created.providerRequestId ?? null,
           );
         }
         return {
@@ -398,6 +440,28 @@ export class GitHubPublicationProviderService {
             nextAction: "inspect_authority_or_provider_rejection",
           },
         });
+      }
+      if (error instanceof GitHubPublicationMutationUnverifiedError) {
+        const checkedAt = this.#now();
+        const pending = await this.#receipts.updateGitHubProviderReceipt({
+          ...reserved,
+          state: "pending_reconciliation",
+          updatedAt: checkedAt,
+          providerRequestId: error.providerRequestId,
+          result: error.result,
+          verification: {
+            state: "failed",
+            checkedAt,
+            sourceRevision: error.result.sourceRevision,
+          },
+          error: {
+            code: "ambiguous_provider_outcome",
+            message: "GitHub publication outcome requires exact reconciliation",
+            retry: "reconcile_before_retry",
+          },
+          recovery: { nextAction: "reconcile_exact_operation" },
+        });
+        throw new GitHubProviderPendingReconciliationError(pending);
       }
       const checkedAt = this.#now();
       const pending = await this.#receipts.updateGitHubProviderReceipt({
