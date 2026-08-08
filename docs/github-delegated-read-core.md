@@ -1,6 +1,6 @@
 # Guarded delegated GitHub read core
 
-This slice advances issue #585 with a provider-neutral admission and receipt boundary for long-tail GitHub reads.
+This document describes the provider-neutral admission and receipt boundary originally introduced for long-tail GitHub reads, plus the current hosted state built on that core.
 
 ## Admission order
 
@@ -8,7 +8,7 @@ A delegated read proceeds only after all of these checks pass:
 
 1. the caller supplies the exact current curated catalogue fingerprint;
 2. the requested capability exists, is searchable, read-only, repository-scoped, and delegated;
-3. the capability belongs to the explicit initial contracted tool subset;
+3. the capability belongs to the explicit contracted tool subset;
 4. the exact caller-supplied tool bytes and arguments pass that tool's closed contract;
 5. caller arguments contain no repository selector because the repository comes from Stensibly authority;
 6. `fetch_file` carries one full 40-hex commit identity, never an omitted or mutable ref;
@@ -21,9 +21,9 @@ A delegated read proceeds only after all of these checks pass:
 
 Every admission failure keeps adapter dispatch at zero.
 
-## Initial contracted subset
+## Contracted subset
 
-The first provider-neutral contract release enables only:
+The currently contracted delegated-read surface includes:
 
 - `get_repo`;
 - `fetch_file`;
@@ -36,15 +36,17 @@ The first provider-neutral contract release enables only:
 - `fetch_workflow_job_steps`;
 - `fetch_workflow_job_logs`.
 
-Other catalogue entries remain discoverable according to their curation tier while delegated execution stays denied until each tool receives an exact input contract and provider-result verification.
+Other catalogue entries remain discoverable according to their curation tier while delegated execution stays denied until each tool receives an exact input contract, permission profile, bounded provider adapter, and result verification.
 
 ## Adapter boundary
 
 The adapter receives the exact tool, frozen contracted arguments, repository, connection and installation identity, protected credential reference, and catalogue fingerprint. The credential reference stays inside the provider boundary and is omitted from the returned receipt.
 
-The production adapter must inject the repository argument required by the selected downstream GitHub tool. Caller input cannot override it. The adapter must mint a short-lived installation credential narrowed to the accepted repository and required permission profile.
+The production adapter injects the repository argument required by the selected downstream GitHub operation. Caller input cannot override it. It mints a short-lived installation credential narrowed to the accepted repository and required read permission profile.
 
-The returned provider value passes a descriptor-based JSON admission walk before hashing or receipt publication. The service accepts only plain objects and default-prototype dense arrays with own enumerable data properties, rejects accessors without invocation, rejects hidden, symbolic, inherited, decorated, non-finite, oversized, or excessively deep values, and deeply freezes the admitted result graph. Tool-specific result and repository-identity checks remain required in the hosted adapter slice.
+Provider results still pass bounded structural admission and tool-specific repository/identity verification before receipt publication. The service retains only the content needed for the delegated read and bounded provider evidence; credential material remains outside receipts.
+
+The native REST adapter's caller-input and raw response-intake seams are under additional hardening review. Test-only controls #1258 and #1261 pin canonical response metadata/bytes/JSON handling and closed descriptor-only caller admission. Those controls do not change the public delegated-read contract or grant additional provider access.
 
 ## Receipt
 
@@ -59,8 +61,18 @@ A successful call returns a frozen receipt binding:
 - bounded provider request identity;
 - the deeply frozen validated read result.
 
-## Current fence
+## Current hosted state
 
-This core has no public MCP registration, durable receipt store, hosted connection persistence, credential creation, provider network adapter, write dispatch, deployment, or live-state change. `delegatedDispatchEnabled` remains false.
+The provider-neutral core is no longer the outer edge of the implementation. Hosted GitHub App connection/binding state, installation-token minting, native read adapters, public delegated-read composition, and the contracted MCP read surface now exist in the repository.
 
-The next slice can mount a production read adapter only after the typed GitHub App provider path lands. Public `github_call_tool` registration follows exact adapter conformance, result verification, credential redaction, and deployed smoke tests for the initial subset.
+PR #1168 changed activation policy for the two reviewed hosted read switches:
+
+- `STENSIBLY_GITHUB_DELEGATED_READS_ENABLED` defaults on when hosted GitHub provider configuration is present;
+- `STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED` does the same for job-detail reads;
+- exact `false` remains the independent recovery switch for each surface;
+- empty configuration remains unconfigured;
+- partial or malformed provider configuration still fails closed through provider admission.
+
+This repository state is not the same as hosted acceptance. Issue #697 remains open until a governed deployment and authenticated product journey produce a bounded GitHub job step/log receipt with the expected project/repository/binding attribution. A merge, catalogue declaration, or default-on setting is not a substitute for that live receipt.
+
+Hosted GitHub issue writes remain a separate exact-opt-in mutation surface and are not implied by delegated-read activation.
