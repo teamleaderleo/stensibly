@@ -292,8 +292,13 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
     return await this.#agent.generate({
       ...input,
       onToolExecutionStart: async (event: unknown) => {
+        if (!this.#authorizeToolExecution) {
+          throw new Error(
+            "Stensibly tool authorization is required before AI SDK tool execution",
+          );
+        }
         try {
-          await this.#authorizeToolExecution?.({ command, event });
+          await this.#authorizeToolExecution({ command, event });
         } catch {
           throw new Error(
             "Stensibly tool authorization rejected the AI SDK tool proposal",
@@ -358,16 +363,31 @@ function defaultCapabilityClasses(
   _probe: RunnerCapabilityProbeV1,
   agent: AnyAgent,
 ): EffectiveToolSurfaceSnapshotInput["classes"] {
-  const tools = Object.keys((agent.tools ?? {}) as Record<string, unknown>)
-    .sort()
-    .map((id) => ({ id, name: id }));
+  const catalogue: Array<{ id: string; name: string }> = [];
+  const executable: Array<{ id: string; name: string }> = [];
+  for (const [id, value] of Object.entries(
+    (agent.tools ?? {}) as Record<string, unknown>,
+  )) {
+    const capability = { id, name: id };
+    catalogue.push(capability);
+    if (isLocallyExecutableAITool(value)) executable.push(capability);
+  }
+  catalogue.sort((left, right) => left.id.localeCompare(right.id));
+  executable.sort((left, right) => left.id.localeCompare(right.id));
   return {
     host_dynamic: {
-      catalogue: tools,
-      executable: tools,
+      catalogue,
+      executable,
       provenance: [`ai-sdk:${VERCEL_AI_SDK_PACKAGE_VERSION}:tool-loop-agent`],
     },
   };
+}
+
+function isLocallyExecutableAITool(value: unknown): boolean {
+  return value !== null
+    && typeof value === "object"
+    && "execute" in value
+    && typeof (value as { execute?: unknown }).execute === "function";
 }
 
 function checkpointReference(
