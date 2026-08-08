@@ -240,6 +240,33 @@ describe("Vercel AI SDK runner adapter", () => {
     ]);
   });
 
+  test("rejects provider-executed tools from the first profile", async () => {
+    const agent = new ToolLoopAgent({
+      id: "stensibly-provider-executed-rejection",
+      model: new MockLanguageModelV4({
+        doGenerate: async () => textResult("reply"),
+      }),
+      tools: {
+        providerSearch: tool({
+          type: "provider",
+          id: "test.search",
+          args: {},
+          isProviderExecuted: true,
+          inputSchema: z.object({ query: z.string() }),
+          outputSchema: z.string(),
+        }),
+      },
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agent,
+      checkpointStore: new InMemoryCheckpointStore(),
+    });
+
+    await expect(adapter.inspectCapabilities(startProbe())).rejects.toThrow(
+      "provider-executed tool providerSearch",
+    );
+  });
+
   test("pins the adapter profile to the reviewed AI SDK package version", () => {
     const adapter = new VercelAISDKRunnerAdapter({
       agent: new ToolLoopAgent({
