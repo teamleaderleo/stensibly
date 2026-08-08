@@ -243,6 +243,55 @@ describe("production Worker release guard", () => {
     expect(harness.activeVersion()).toBe(VERSION_A);
   });
 
+  test("waits for official-domain routing convergence without rolling back a healthy candidate", async () => {
+    const harness = recoveryHarness(true, { officialPromotionLagAttempts: 11 });
+
+    const result = await withCredentialEnvironment(() => runProductionRelease({
+      expectedSha: SHA,
+      oauthExpectation: "enabled",
+    }, harness.dependencies));
+
+    expect(result.recovered).toBe(false);
+    expect(harness.activeVersion()).toBe(VERSION_B);
+    expect(harness.officialPromotionAttempts()).toBe(12);
+    expect(harness.commands.some((command) => command.includes(
+      `wrangler versions deploy ${VERSION_A}@100%`,
+    ))).toBe(false);
+  });
+
+  for (const failure of ["http_500", "missing_version", "network"] as const) {
+    test(`does not treat official-domain ${failure} as a long routing-convergence wait`, async () => {
+      const harness = recoveryHarness(true, { officialPromotionFailure: failure });
+
+      await withCredentialEnvironment(async () => {
+        await expect(runProductionRelease({
+          expectedSha: SHA,
+          oauthExpectation: "enabled",
+        }, harness.dependencies)).rejects.toThrow("previous deployment was restored");
+      });
+
+      expect(harness.officialPromotionAttempts()).toBe(3);
+      expect(harness.activeVersion()).toBe(VERSION_A);
+    });
+  }
+
+  test("waits for official-domain recovery routing to return to the restored baseline", async () => {
+    const harness = recoveryHarness(true, {
+      officialPromotionFailure: "http_500",
+      officialRecoveryLagAttempts: 11,
+    });
+
+    await withCredentialEnvironment(async () => {
+      await expect(runProductionRelease({
+        expectedSha: SHA,
+        oauthExpectation: "enabled",
+      }, harness.dependencies)).rejects.toThrow("previous deployment was restored");
+    });
+
+    expect(harness.officialRecoveryAttempts()).toBe(12);
+    expect(harness.activeVersion()).toBe(VERSION_A);
+  });
+
   test("keeps recovery false when restored baseline health cannot be proved", async () => {
     const harness = recoveryHarness(false);
     const outputDirectory = await mkdtemp(join(tmpdir(), "stensibly-release-output-test-"));
@@ -312,18 +361,29 @@ function unusedDependencies(): ReleaseDependencies {
   };
 }
 
-function recoveryHarness(recoveryHealthy: boolean): {
+function recoveryHarness(
+  recoveryHealthy: boolean,
+  options: {
+    officialPromotionLagAttempts?: number;
+    officialPromotionFailure?: "http_500" | "missing_version" | "network";
+    officialRecoveryLagAttempts?: number;
+  } = {},
+): {
   dependencies: ReleaseDependencies;
   commands: string[];
   activeVersion(): string;
   cleanupCalls(): number;
   healthAttempts(): number;
+  officialPromotionAttempts(): number;
+  officialRecoveryAttempts(): number;
 } {
   const commands: string[] = [];
   let activeVersion = VERSION_A;
   let deploymentId = DEPLOYMENT_A;
   let healthAttempts = 0;
   let cleanupCalls = 0;
+  let officialPromotionAttempts = 0;
+  let officialRecoveryAttempts = 0;
   const dependencies: ReleaseDependencies = {
     ...unusedDependencies(),
     async run(command, args, options) {
@@ -379,6 +439,46 @@ function recoveryHarness(recoveryHealthy: boolean): {
           headers: { "x-stensibly-worker-version-id": VERSION_B },
         });
       }
+      if (
+        activeVersion === VERSION_B
+        && (options.officialPromotionLagAttempts !== undefined || options.officialPromotionFailure)
+      ) {
+        if (input.startsWith("https://api.stensibly.com")) {
+          officialPromotionAttempts += 1;
+          if (options.officialPromotionFailure === "http_500") {
+            return new Response("failure", { status: 500 });
+          }
+          if (options.officialPromotionFailure === "missing_version") {
+            return new Response("healthy without identity", { status: 200 });
+          }
+          if (options.officialPromotionFailure === "network") {
+            throw new Error("simulated network failure");
+          }
+          if (officialPromotionAttempts <= (options.officialPromotionLagAttempts ?? 0)) {
+            return new Response("stale route", {
+              status: 200,
+              headers: { "x-stensibly-worker-version-id": VERSION_A },
+            });
+          }
+        }
+        return new Response("healthy", {
+          status: 200,
+          headers: { "x-stensibly-worker-version-id": VERSION_B },
+        });
+      }
+      if (
+        activeVersion === VERSION_A
+        && options.officialRecoveryLagAttempts !== undefined
+        && input.startsWith("https://api.stensibly.com")
+      ) {
+        officialRecoveryAttempts += 1;
+        if (officialRecoveryAttempts <= options.officialRecoveryLagAttempts) {
+          return new Response("stale candidate route", {
+            status: 200,
+            headers: { "x-stensibly-worker-version-id": VERSION_B },
+          });
+        }
+      }
       if (activeVersion === VERSION_B || !recoveryHealthy) {
         return new Response("failure", { status: 500 });
       }
@@ -398,15 +498,17 @@ function recoveryHarness(recoveryHealthy: boolean): {
     activeVersion: () => activeVersion,
     cleanupCalls: () => cleanupCalls,
     healthAttempts: () => healthAttempts,
+    officialPromotionAttempts: () => officialPromotionAttempts,
+    officialRecoveryAttempts: () => officialRecoveryAttempts,
   };
 }
 
-async function withCredentialEnvironment(operation: () => Promise<void>): Promise<void> {
+async function withCredentialEnvironment<T>(operation: () => Promise<T>): Promise<T> {
   const names = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "STENSIBLY_TOKEN"] as const;
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   for (const name of names) process.env[name] = "test-secret-present";
   try {
-    await operation();
+    return await operation();
   } finally {
     for (const name of names) {
       const value = previous[name];

@@ -7,6 +7,21 @@ const FALLBACK_ENDPOINT = "https://stensibly-api.leoli-082000.workers.dev";
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WRANGLER_CONFIG = "wrangler.jsonc";
+const STANDARD_RETRY_ATTEMPTS = 3;
+const EDGE_CONVERGENCE_RETRY_ATTEMPTS = 12;
+const RETRY_DELAY_MILLISECONDS = 10_000;
+
+class WorkerVersionMismatchError extends Error {
+  constructor(
+    readonly observedVersionId: string | null,
+    readonly expectedVersionIds: readonly string[],
+  ) {
+    super(
+      `Health reached Worker version ${observedVersionId ?? "missing"}; expected ${expectedVersionIds.join(", ")}`,
+    );
+    this.name = "WorkerVersionMismatchError";
+  }
+}
 
 export interface ProductionBindingExpectation {
   name: string;
@@ -420,11 +435,18 @@ async function verifyProduction(
   dependencies: ReleaseDependencies,
 ): Promise<void> {
   for (const endpoint of [FALLBACK_ENDPOINT, OFFICIAL_ENDPOINT]) {
-    await retry(`exact health verification at ${endpoint}`, dependencies, () => verifyHealthVersion(
-      endpoint,
-      [candidateVersionId],
+    await retry(
+      `exact health verification at ${endpoint}`,
       dependencies,
-    ));
+      () => verifyHealthVersion(endpoint, [candidateVersionId], dependencies),
+      endpoint === OFFICIAL_ENDPOINT
+        ? {
+          attempts: EDGE_CONVERGENCE_RETRY_ATTEMPTS,
+          retryable: (error) => error instanceof WorkerVersionMismatchError
+            && error.observedVersionId !== null,
+        }
+        : undefined,
+    );
     await retry(`bearer verification at ${endpoint}`, dependencies, () => runHostedVerifier(
       endpoint,
       options.project,
@@ -445,11 +467,18 @@ async function verifyRecoveredBaseline(
 ): Promise<void> {
   const expectedVersionIds = baseline.versions.map((version) => version.version_id);
   for (const endpoint of [FALLBACK_ENDPOINT, OFFICIAL_ENDPOINT]) {
-    await retry(`recovery health verification at ${endpoint}`, dependencies, () => verifyHealthVersion(
-      endpoint,
-      expectedVersionIds,
+    await retry(
+      `recovery health verification at ${endpoint}`,
       dependencies,
-    ));
+      () => verifyHealthVersion(endpoint, expectedVersionIds, dependencies),
+      endpoint === OFFICIAL_ENDPOINT
+        ? {
+          attempts: EDGE_CONVERGENCE_RETRY_ATTEMPTS,
+          retryable: (error) => error instanceof WorkerVersionMismatchError
+            && error.observedVersionId !== null,
+        }
+        : undefined,
+    );
   }
 }
 
@@ -465,7 +494,7 @@ async function verifyHealthVersion(
   if (response.status !== 200) throw new Error(`Health returned ${response.status}`);
   const versionId = response.headers.get("x-stensibly-worker-version-id")?.trim();
   if (!versionId || !expectedVersionIds.includes(versionId)) {
-    throw new Error(`Health reached Worker version ${versionId ?? "missing"}; expected ${expectedVersionIds.join(", ")}`);
+    throw new WorkerVersionMismatchError(versionId || null, expectedVersionIds);
   }
 }
 
@@ -506,19 +535,33 @@ async function retry(
   label: string,
   dependencies: ReleaseDependencies,
   operation: () => Promise<void>,
+  policy: {
+    attempts?: number;
+    delayMilliseconds?: number;
+    retryable?: (error: unknown) => boolean;
+  } = {},
 ): Promise<void> {
+  const attempts = policy.attempts ?? STANDARD_RETRY_ATTEMPTS;
+  const delayMilliseconds = policy.delayMilliseconds ?? RETRY_DELAY_MILLISECONDS;
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  let ordinaryFailures = 0;
+  let attemptsMade = 0;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    attemptsMade = attempt;
     try {
       await operation();
       return;
     } catch (error) {
       lastError = error;
-      if (attempt < 3) await dependencies.sleep(10_000);
+      if (!policy.retryable?.(error)) {
+        ordinaryFailures += 1;
+        if (ordinaryFailures >= STANDARD_RETRY_ATTEMPTS) break;
+      }
+      if (attempt < attempts) await dependencies.sleep(delayMilliseconds);
     }
   }
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`${label} failed after three attempts: ${detail}`, { cause: lastError });
+  throw new Error(`${label} failed after ${attemptsMade} attempts: ${detail}`, { cause: lastError });
 }
 
 function parseDeploymentSnapshot(value: unknown): DeploymentSnapshot {
