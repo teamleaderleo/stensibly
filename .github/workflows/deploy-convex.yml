@@ -1,0 +1,160 @@
+name: Deploy Convex Production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "convex/**"
+      - "src/**"
+      - "convex.json"
+      - "scripts/convex-production-deploy-key.ts"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/deploy-convex.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-convex-production
+  cancel-in-progress: false
+
+jobs:
+  validate-ref:
+    name: Validate deployment ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require main branch
+        env:
+          DEPLOY_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$DEPLOY_REF" != "refs/heads/main" ]]; then
+            echo "Production Convex deployments must run from main; received $DEPLOY_REF" >&2
+            exit 1
+          fi
+
+  test:
+    name: Validate Convex production candidate
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run typecheck
+        run: bun run typecheck
+
+      - name: Run Convex tests
+        run: bun run test:convex
+
+  deploy:
+    name: Deploy exact Convex candidate
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate the protected deploy key
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: bun run scripts/convex-production-deploy-key.ts
+
+      - name: Require the exact current main candidate
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main
+          current_main="$(git rev-parse FETCH_HEAD)"
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "$checked_out" != "$GITHUB_SHA" || "$current_main" != "$GITHUB_SHA" ]]; then
+            echo "Refusing stale Convex candidate: checked out $checked_out, event $GITHUB_SHA, current main $current_main" >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "Refusing a Convex candidate with local workspace changes" >&2
+            exit 1
+          fi
+
+      - name: Analyze the exact Convex schema and bundle
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: bunx convex codegen --dry-run --typecheck disable
+
+      - name: Require unchanged current main immediately before deployment
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main
+          current_main="$(git rev-parse FETCH_HEAD)"
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "$checked_out" != "$GITHUB_SHA" || "$current_main" != "$GITHUB_SHA" ]]; then
+            echo "Refusing stale Convex candidate immediately before deployment" >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "Refusing a Convex candidate changed during schema analysis" >&2
+            exit 1
+          fi
+
+      - name: Deploy exact production Convex functions and schema
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: >-
+          bunx convex deploy
+          --typecheck enable
+          --codegen disable
+          --message "GitHub Actions ${GITHUB_SHA}"
+
+      - name: Verify deployed function metadata is readable
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: bunx convex function-spec >/dev/null
+
+      - name: Record post-deploy current-main evidence
+        id: postdeploy
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main
+          current_main="$(git rev-parse FETCH_HEAD)"
+          if [[ "$current_main" == "$GITHUB_SHA" ]]; then
+            echo "current_main=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current_main=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record deployment summary
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "### Stensibly Convex deployed"
+            echo
+            echo "- Commit: \`$DEPLOY_SHA\`"
+            echo "- Protected production deploy key: present"
+            echo "- Exact current-main check: passed immediately before deployment"
+            echo "- Locked typecheck and Convex tests: passed"
+            echo "- Schema analysis and bundle: passed"
+            echo "- Production function metadata readback: passed"
+            echo "- Current main still matched after deployment: \`${{ steps.postdeploy.outputs.current_main }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require post-deploy current-main convergence
+        if: ${{ steps.postdeploy.outputs.current_main != 'true' }}
+        run: |
+          echo "Convex deployed, but main advanced during deployment; a current-main recovery deployment is required" >&2
+          exit 1

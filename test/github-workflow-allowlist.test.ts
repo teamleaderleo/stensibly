@@ -11,6 +11,7 @@ const permanentWorkflows = [
   "auto-deploy-dashboard.yml",
   "callsign-registry.yml",
   "ci.yml",
+  "deploy-convex.yml",
   "deploy-dashboard.yml",
   "deploy-worker.yml",
   "mcp-stateful-replay-v130-probe.yml",
