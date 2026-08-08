@@ -475,21 +475,16 @@ function callerDataValue(
   key: PropertyKey,
   label: string,
 ): unknown {
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
-      throw new Error(`${label} fields must be enumerable data properties`);
-    }
-    return descriptor.value;
-  } catch (error) {
-    if (
-      error instanceof Error
-      && error.message === `${label} fields must be enumerable data properties`
-    ) {
-      throw error;
-    }
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
     throw new Error(`${label} could not be inspected`);
   }
+  if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+    throw new Error(`${label} fields must be enumerable data properties`);
+  }
+  return descriptor.value;
 }
 
 function observationLineageKey(observation: OrchestratorActivityObservation): string {
