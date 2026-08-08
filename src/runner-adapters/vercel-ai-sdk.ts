@@ -123,6 +123,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
   ): Promise<EffectiveToolSurfaceSnapshot> {
     const probe = parseRunnerCapabilityProbeV1(value);
     this.#assertProbeBinding(probe);
+    assertNoProviderExecutedTools(this.#agent);
     const snapshot = buildRunnerCapabilitySnapshotV1(
       probe,
       this.#capabilityClasses(probe, this.#agent),
@@ -381,6 +382,25 @@ function defaultCapabilityClasses(
       provenance: [`ai-sdk:${VERCEL_AI_SDK_PACKAGE_VERSION}:tool-loop-agent`],
     },
   };
+}
+
+function assertNoProviderExecutedTools(agent: AnyAgent): void {
+  for (const [id, value] of Object.entries(
+    (agent.tools ?? {}) as Record<string, unknown>,
+  )) {
+    if (isProviderExecutedAITool(value)) {
+      throw new RangeError(
+        `AI SDK provider-executed tool ${id} is outside the first Stensibly profile`,
+      );
+    }
+  }
+}
+
+function isProviderExecutedAITool(value: unknown): boolean {
+  return value !== null
+    && typeof value === "object"
+    && (value as { type?: unknown }).type === "provider"
+    && (value as { isProviderExecuted?: unknown }).isProviderExecuted === true;
 }
 
 function isLocallyExecutableAITool(value: unknown): boolean {
