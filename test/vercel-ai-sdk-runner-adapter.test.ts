@@ -32,6 +32,7 @@ const runId = "run_vercel_ai_sdk";
 const itemId = "item_vercel_ai_sdk";
 const project = "scrapbook";
 const correlationId = "workflow_vercel_ai_sdk";
+const invocationTime = "2026-08-09T00:10:02.000Z";
 
 class InMemoryCheckpointStore implements VercelAISDKCheckpointStore {
   readonly records = new Map<string, VercelAISDKCheckpointRecordV1>();
@@ -63,7 +64,11 @@ describe("Vercel AI SDK runner adapter", () => {
       },
     };
     const store = new InMemoryCheckpointStore();
-    const adapter = new VercelAISDKRunnerAdapter({ agentSettings, checkpointStore: store });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings,
+      checkpointStore: store,
+      now: () => new Date(invocationTime),
+    });
     const scenario = conformanceScenario();
 
     const report = await runRunnerAdapterConformanceV1(adapter, scenario);
@@ -110,6 +115,7 @@ describe("Vercel AI SDK runner adapter", () => {
     const adapter = new VercelAISDKRunnerAdapter({
       agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
       authorizeToolExecution: ({ event }) => {
         const toolName = toolNameFromEvent(event);
         order.push(`authorize:${toolName}`);
@@ -146,6 +152,7 @@ describe("Vercel AI SDK runner adapter", () => {
     const adapter = new VercelAISDKRunnerAdapter({
       agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
     });
     await adapter.inspectCapabilities(startProbe());
 
@@ -184,6 +191,7 @@ describe("Vercel AI SDK runner adapter", () => {
     const adapter = new VercelAISDKRunnerAdapter({
       agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
       authorizeToolExecution: () => {
         throw new Error("Stensibly capability grant rejected the tool proposal");
       },
@@ -219,6 +227,7 @@ describe("Vercel AI SDK runner adapter", () => {
     const adapter = new VercelAISDKRunnerAdapter({
       agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
     });
     const capabilityProbe = parseRunnerCapabilityProbeV1({
       ...startProbe(),
@@ -260,6 +269,7 @@ describe("Vercel AI SDK runner adapter", () => {
     const adapter = new VercelAISDKRunnerAdapter({
       agentSettings,
       checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
     });
 
     await expect(adapter.inspectCapabilities(startProbe())).rejects.toThrow(
@@ -275,6 +285,7 @@ describe("Vercel AI SDK runner adapter", () => {
         }),
       },
       checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
     });
 
     expect(VERCEL_AI_SDK_PACKAGE_VERSION).toBe("7.0.58");
@@ -285,11 +296,133 @@ describe("Vercel AI SDK runner adapter", () => {
       },
     ]);
   });
+
+  test("rejects pre-authorization tool hooks from the static first profile", () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textResult("unused"),
+    });
+
+    expect(() => new VercelAISDKRunnerAdapter({
+      agentSettings: {
+        model,
+        tools: {
+          probeTool: tool({
+            inputSchema: z.object({ value: z.string() }),
+            onInputStart: () => {},
+            execute: async ({ value }) => value,
+          }),
+        },
+      },
+      checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
+    })).toThrow("pre-authorization input hook");
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  test("rejects expired command authority before the model call", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textResult("unused"),
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: {
+        model,
+        tools: {
+          probeTool: tool({
+            inputSchema: z.object({ value: z.string() }),
+            execute: async ({ value }) => value,
+          }),
+        },
+      },
+      checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date("2026-08-09T01:00:00.000Z"),
+    });
+    await adapter.inspectCapabilities(startProbe());
+
+    await expect(collect(adapter.start(startCommand()))).rejects.toThrow(
+      "authority expired",
+    );
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  test("rejects a foreign holder at the checkpoint control boundary", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textResult("bounded reply"),
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: {
+        model,
+        tools: {
+          probeTool: tool({
+            inputSchema: z.object({ value: z.string() }),
+            execute: async ({ value }) => value,
+          }),
+        },
+      },
+      checkpointStore: new InMemoryCheckpointStore(),
+      now: () => new Date(invocationTime),
+    });
+    const command = startCommand();
+    await adapter.inspectCapabilities(startProbe());
+    await collect(adapter.start(command));
+
+    await expect(adapter.requestCheckpoint({
+      version: RUNNER_ADAPTER_V1,
+      commandId: "checkpoint-foreign-holder",
+      adapterId: command.adapterId,
+      adapterVersion: command.adapterVersion,
+      profileId: command.profileId,
+      runId: command.runId,
+      runGeneration: command.runGeneration,
+      leaseGeneration: command.leaseGeneration,
+      authority: {
+        ...command.authority,
+        holderId: "foreign-holder",
+      },
+      requestedAt: "2026-08-09T00:10:01.000Z",
+    })).rejects.toThrow("authority holder is stale");
+  });
+
+  test("rejects checkpoint content whose retained digest was changed", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textResult("bounded reply"),
+    });
+    const store = new InMemoryCheckpointStore();
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: {
+        model,
+        tools: {
+          probeTool: tool({
+            inputSchema: z.object({ value: z.string() }),
+            execute: async ({ value }) => value,
+          }),
+        },
+      },
+      checkpointStore: store,
+      now: () => new Date(invocationTime),
+    });
+    const scenario = conformanceScenario();
+    await adapter.inspectCapabilities(scenario.startProbe);
+    await collect(adapter.start(scenario.startCommand));
+    const [externalId, record] = [...store.records.entries()][0]!;
+    store.records.set(externalId, {
+      ...record,
+      messagesDigest: `sha256:${"0".repeat(64)}`,
+    });
+    await adapter.inspectCapabilities(scenario.resumeProbe);
+
+    await expect(collect(adapter.resume(scenario.resumeCommand))).rejects.toThrow(
+      "checkpoint does not match",
+    );
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
 });
 
 function conformanceScenario(): RunnerAdapterConformanceScenarioV1 {
   const start = startCommand();
-  const checkpoint = vercelAISDKCheckpointReferenceForStart(start);
+  const checkpoint = vercelAISDKCheckpointReferenceForStart(
+    start,
+    "2026-08-09T00:10:02.006Z",
+  );
   return {
     version: RUNNER_ADAPTER_V1,
     scenarioId: "scenario-vercel-ai-sdk-tool-loop",

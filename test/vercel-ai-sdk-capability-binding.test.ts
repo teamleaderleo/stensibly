@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ToolLoopAgent, tool } from "ai";
+import { tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { compatibilityExecutionEnvelope } from "../src/execution-envelope-default.ts";
@@ -44,7 +44,8 @@ describe("Vercel AI SDK capability binding", () => {
       doGenerate: async () => textResult("unused"),
     });
     const adapter = new VercelAISDKRunnerAdapter({
-      agent: new ToolLoopAgent({ model, tools }),
+      agentSettings: { model, tools },
+      now: () => new Date("2026-08-09T00:00:02.000Z"),
       checkpointStore: new NullCheckpointStore(),
       authorizeToolExecution: () => {},
     });
@@ -66,7 +67,7 @@ describe("Vercel AI SDK capability binding", () => {
       doGenerate: async () => textResult("unused"),
     });
     const adapter = new VercelAISDKRunnerAdapter({
-      agent: new ToolLoopAgent({
+      agentSettings: {
         model,
         tools: {
           probeTool: tool({
@@ -74,7 +75,8 @@ describe("Vercel AI SDK capability binding", () => {
             execute: async ({ value }) => value,
           }),
         },
-      }),
+      },
+      now: () => new Date("2026-08-09T00:00:02.000Z"),
       checkpointStore: new NullCheckpointStore(),
       authorizeToolExecution: () => {},
     });
@@ -87,7 +89,49 @@ describe("Vercel AI SDK capability binding", () => {
     });
 
     await expect(collect(adapter.start(mismatched))).rejects.toThrow(
-      "required capabilities do not match command",
+      "requires a current capability inspection",
+    );
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  test("rejects a degraded inspection before model execution", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textResult("unused"),
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: { model, tools: {} },
+      checkpointStore: new NullCheckpointStore(),
+      now: () => new Date("2026-08-09T00:00:02.000Z"),
+    });
+
+    const snapshot = await adapter.inspectCapabilities(capabilityProbe());
+    expect(snapshot.missingRequiredCapabilities).toEqual([
+      { class: "host_dynamic", id: "probeTool" },
+    ]);
+    await expect(collect(adapter.start(startCommand()))).rejects.toThrow(
+      "cannot satisfy the required capabilities",
+    );
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  test("rechecks pre-authorization hooks added after inspection", async () => {
+    const probeTool = tool({
+      inputSchema: z.object({ value: z.string() }),
+      execute: async ({ value }) => value,
+    });
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textResult("unused"),
+    });
+    const adapter = new VercelAISDKRunnerAdapter({
+      agentSettings: { model, tools: { probeTool } },
+      checkpointStore: new NullCheckpointStore(),
+      now: () => new Date("2026-08-09T00:00:02.000Z"),
+    });
+    await adapter.inspectCapabilities(capabilityProbe());
+    (probeTool as any).onInputStart = () => {};
+
+    await expect(collect(adapter.start(startCommand()))).rejects.toThrow(
+      "pre-authorization input hook",
     );
     expect(model.doGenerateCalls).toHaveLength(0);
   });
