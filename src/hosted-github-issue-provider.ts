@@ -46,6 +46,13 @@ import { GitHubRestRepositoryWriteAdapter } from "./github-rest-repository-write
 import { admitGitHubBranchRef } from "./github-repository-write-admission.js";
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
+import {
+  GitHubPublishChangeOperation,
+  withGitHubPublishChangeService,
+  type GitHubPublishChangeService,
+} from "./github-publish-change-operation.js";
+import { operationWorkflowStore } from "./operation-workflow-contracts.js";
+import { runnerLedger } from "./runner-contracts.js";
 
 export interface HostedGitHubIssueProviderOverrides {
   fetch?: typeof fetch;
@@ -92,7 +99,8 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   & Partial<GitHubIssueProviderReadService>
   & Partial<GitHubIssueProviderWriteService>
   & Partial<GitHubPublicationProviderWriteService>
-  & Partial<GitHubRepositoryFileWriteService> {
+  & Partial<GitHubRepositoryFileWriteService>
+  & Partial<GitHubPublishChangeService> {
   const config = hostedGitHubIssueProviderConfig(env);
   if (!config) return ledger;
   const projects = projectAttachmentLedger(ledger);
@@ -151,18 +159,19 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     : mountedReads;
   if (!config.publicationWritesEnabled) return mountedIssueWrites;
 
+  const publicationWrites = canonicalHostedPublicationWriteService(
+    new GitHubPublicationProviderService({
+      projects,
+      bindings,
+      authority,
+      adapter: new GitHubRestPublicationWriteAdapter(adapterOptions),
+      receipts: durableReceiptStore(ledger),
+      now: () => new Date(now()).toISOString(),
+    }),
+  );
   const mountedPublication = withGitHubPublicationProviderWriteService(
     mountedIssueWrites,
-    canonicalHostedPublicationWriteService(
-      new GitHubPublicationProviderService({
-        projects,
-        bindings,
-        authority,
-        adapter: new GitHubRestPublicationWriteAdapter(adapterOptions),
-        receipts: durableReceiptStore(ledger),
-        now: () => new Date(now()).toISOString(),
-      }),
-    ),
+    publicationWrites,
   );
   const metadataAdapter = new GitHubRestDelegatedReadAdapter({
     connectionId: bindings.connectionId,
@@ -186,9 +195,53 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     store: durableRepositoryWriteStore(ledger),
     now: () => new Date(now()).toISOString(),
   });
-  return withGitHubRepositoryFileWriteService(
+  const repositoryFileWrites = canonicalHostedRepositoryFileWriteService(repositoryWrites);
+  const mountedFiles = withGitHubRepositoryFileWriteService(
     mountedPublication,
-    canonicalHostedRepositoryFileWriteService(repositoryWrites),
+    repositoryFileWrites,
+  );
+  const workflows = operationWorkflowStore(ledger);
+  if (!workflows) return mountedFiles;
+  const repositoryWriteStore = durableRepositoryWriteStore(ledger);
+  return withGitHubPublishChangeService(
+    mountedFiles,
+    new GitHubPublishChangeOperation({
+      workflows,
+      assertAuthority: async (input) => {
+        const runs = runnerLedger(ledger);
+        if (!runs) throw new Error("Hosted GitHub operations require the runner ledger");
+        const run = await runs.getRun(input.runId);
+        const item = await ledger.getItem(input.itemId);
+        const match = /^run:(.+):generation:(\d+)$/u.exec(input.authorityFence.resource);
+        const expectedRunGeneration = match ? Number(match[2]) : Number.NaN;
+        const currentLeaseExpiry = run.leaseExpiresAt === null
+          ? Number.NaN
+          : Date.parse(run.leaseExpiresAt);
+        const fencedLeaseExpiry = Date.parse(input.authorityFence.expiresAt);
+        if (
+          !match
+          || match[1] !== input.runId
+          || run.itemId !== input.itemId
+          || item.item.project !== input.project
+          || run.generation !== expectedRunGeneration
+          || run.leaseGeneration !== input.authorityFence.generation
+          || run.leaseOwnerId !== input.actorId
+          || !Number.isFinite(currentLeaseExpiry)
+          || currentLeaseExpiry < fencedLeaseExpiry
+          || (run.status !== "starting" && run.status !== "running")
+          || currentLeaseExpiry <= now()
+        ) {
+          throw new Error("Hosted GitHub operation runner authority is stale or mismatched");
+        }
+      },
+      publication: publicationWrites,
+      repositoryFiles: {
+        ...repositoryFileWrites,
+        getRepositoryWriteReceipt:
+          repositoryWriteStore.getRepositoryWriteReceipt.bind(repositoryWriteStore),
+      },
+      now: () => new Date(now()).toISOString(),
+    }),
   );
 }
 

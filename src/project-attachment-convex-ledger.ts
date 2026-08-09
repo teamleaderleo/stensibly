@@ -12,6 +12,7 @@ import type {
   GitHubPublicationProviderWriteService,
   GitHubRepositoryFileWriteService,
 } from "./github-issue-provider-mcp.js";
+import type { GitHubPublishChangeService } from "./github-publish-change-operation.js";
 import {
   withConvexGitHubRepositoryWriteStore,
 } from "./github-repository-write-convex-store.js";
@@ -27,6 +28,10 @@ import {
   type HostedGitHubDelegatedReadProvider,
 } from "./hosted-github-delegated-read-provider.js";
 import { mountHostedGitHubIssueProviderFromEnv } from "./hosted-github-issue-provider.js";
+import {
+  withConvexOperationWorkflowStore,
+} from "./operation-workflow-convex-store.js";
+import type { OperationWorkflowStore } from "./operation-workflow-contracts.js";
 import {
   prepareProjectAttachmentAcceptance,
   type AcceptProjectAttachmentInput,
@@ -113,10 +118,12 @@ export function createConvexProjectAttachmentLedgerFromEnv(
 ): ConvexProjectAttachmentLedger
   & GitHubProviderReceiptStore
   & GitHubRepositoryWriteStore
+  & OperationWorkflowStore
   & Partial<GitHubIssueProviderReadService>
   & Partial<GitHubIssueProviderWriteService>
   & Partial<GitHubPublicationProviderWriteService>
   & Partial<GitHubRepositoryFileWriteService>
+  & Partial<GitHubPublishChangeService>
   & Partial<HostedGitHubDelegatedReadProvider> {
   const url = required(env.CONVEX_URL, "CONVEX_URL");
   const serviceSecret = required(
@@ -135,8 +142,13 @@ export function createConvexProjectAttachmentLedgerFromEnv(
     serviceSecret,
     workspace,
   });
+  const workflowLedger = withConvexOperationWorkflowStore(repositoryWriteLedger, {
+    client,
+    serviceSecret,
+    workspace,
+  });
   const receiptLedger = withConvexGitHubProviderReceiptStore(
-    repositoryWriteLedger,
+    workflowLedger,
     {
       client,
       serviceSecret,

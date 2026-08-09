@@ -248,6 +248,36 @@ export default defineSchema({
     .index("by_project_ref", ["projectId", "repositoryFullName", "targetRef"])
     .index("by_project_owner", ["projectId", "ownerReceiptExternalId"]),
 
+  operationWorkflows: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    idempotencyKey: v.string(),
+    kind: v.literal("github_publish_change"),
+    requestSha256: v.string(),
+    state: v.union(
+      v.literal("reserved"),
+      v.literal("running"),
+      v.literal("waiting_reconciliation"),
+      v.literal("succeeded"),
+      v.literal("compensating"),
+      v.literal("compensated"),
+      v.literal("partially_completed"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+      v.literal("escalated"),
+    ),
+    revision: v.number(),
+    workflowJson: v.string(),
+    workflowSha256: v.string(),
+    stableRequestJson: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_id_and_idempotency_key", ["projectId", "idempotencyKey"])
+    .index("by_workspace_id_and_external_id", ["workspaceId", "externalId"])
+    .index("by_project_id_and_state_and_updated_at", ["projectId", "state", "updatedAt"]),
+
   actors: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),

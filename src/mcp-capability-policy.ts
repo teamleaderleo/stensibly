@@ -93,6 +93,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   readPolicy("get_github_provider_receipt", directProject),
   readPolicy("get_github_repository_write_receipt", directProject),
   readPolicy("get_operation_receipt", directProject),
+  readPolicy("get_operation_workflow", directProject),
   readPolicy("github_call_tool", directProject),
   readPolicy("github_get_issue", directProject),
   readPolicy("github_get_tool", noProject),
@@ -123,6 +124,10 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy("github_create_file", directProject),
   writePolicy("github_create_issue", directProject),
   writePolicy("github_create_pull_request", directProject),
+  {
+    ...writePolicy("github_publish_change", directProject, "bounded_write"),
+    defaultExposure: "searchable",
+  },
   writePolicy("github_update_file", directProject),
   writePolicy("github_update_issue", directProject),
   writePolicy("propose_continuation", sourceItemId),

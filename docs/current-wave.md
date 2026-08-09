@@ -1,232 +1,175 @@
-# Current dogfood wave: GitHub-first MCP reliability
+# Current dogfood wave: durable agent operations
 
-**Status:** active P0 execution focus  
-**Date established:** 2026-07-27  
-**Last reconciled:** 2026-08-02 after governed GitHub issue writes merged  
-**Current main:** `a14133c6f2096a803b1e6ac503241dca9322251e`  
-**Tracking incident:** #490  
-**Programme:** #491  
-**Canonical queue:** #301  
-**GitHub context integration:** #492  
-**Governed GitHub writes:** #921  
-**Wave:** `W01`  
-**Wave revision:** `9`  
-**Operating protocol:** `stensibly-agent-ops/0.5.0` plus standing policy `stensibly-internal-dogfood/v2`
+**Status:** active P0 rollout
+**Last reconciled:** 2026-08-10
+**Exact base before this revision:** `e421f8f4b352046a7d9e9485874539f05093505d`
+**Sustained-use incident:** #490
+**Programme:** #491
+**Canonical queue:** #301
+**Operation model:** #154
+**Operating protocol:** `stensibly-agent-ops/0.5.0` plus `stensibly-internal-dogfood/v2`
 
 ## In simple words / purpose
 
-Make GitHub and Stensibly remain executable together through sustained ChatGPT use, repeated reads and writes, reconnect, and recovery.
+Stensibly is moving from “another MCP server with GitHub tools” to a durable
+agent-operations layer. Raw GitHub reads and writes remain available, but the
+product should increasingly expose bounded outcomes such as publishing a
+change, landing a pull request, diagnosing CI, tidying branches, and reversing
+an operation from its receipt.
 
-GitHub remains the independent public project and recovery record. Stensibly adds durable responsibility, authority, continuation, provider receipts, and execution history when its connector is available.
+The durable layer owns authority, exact preconditions, provider selection,
+idempotency, reconciliation, compensation, telemetry, and continuation across
+temporary chats and runner processes. GitHub remains the independent source and
+recovery record.
 
-## Required lifecycle
+## Current verified foundation
 
-```text
-GitHub repository and issue reads
-  → Stensibly survey
-  → create
-  → claim
-  → progress event
-  → artifact attachment
-  → read back
-  → complete with exact continuation
-  → reread
-  → governed Stensibly-to-GitHub write
-  → provider receipt reconciliation
-  → further GitHub read/write
-  → disconnect/reconnect
-  → repeat bounded read/write
-```
+### MCP and the ChatGPT surface
 
-A single successful login, discovery call, read, or write is useful evidence. W01 completes after repeated same-conversation execution and reconnect recovery pass.
+PR #1308 directly integrated the self-describing MCP `2026-07-28` transport
+alongside the existing Streamable HTTP flow. The modern path supports direct
+discovery, list/call, pagination, task polling, protocol headers, and the same
+authenticated capability policy. This is real repository and runtime work, not
+an unstarted “MCP v2” roadmap item.
 
-## Current verified reality
+At the exact base above, the checked-in hosted ChatGPT snapshot is v8 with 43
+tools. This revision stages snapshot v9 with 45 tools:
 
-### Sustained-use incident
+- searchable `github_publish_change`;
+- read-only `get_operation_workflow`.
 
-The initial hosted coexistence path succeeded: GitHub and Stensibly were discovered in one authenticated conversation, repository state was read, the workspace was surveyed, and one idempotent item was created and claimed.
-
-Continued use later failed: Stensibly mutations disappeared or returned no useful result, artifact attachment and completion became unreliable, rediscovery did not reliably restore execution, and connector availability changed during incident recording. Issue #490 owns this sustained-use failure. Initial authentication evidence remains in #220 and #286.
-
-### Guarded GitHub reads
-
-The repository contains a guarded ten-tool GitHub read path.
-
-Eight tools remain mounted by default:
-
-1. `get_repo`;
-2. immutable-commit `fetch_file`;
-3. `get_pr_info`;
-4. bounded `get_pr_diff` / patch;
-5. bounded `list_pull_request_review_threads`;
-6. exact `get_commit_combined_status`;
-7. exact-commit `fetch_commit_workflow_runs`;
-8. exact-run `fetch_workflow_run_jobs`.
-
-PR #931 merged as `d1a90b2d8eecb1ee09a39d7d99f9564d340aec30`. Exact `STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED=true` adds:
-
-9. `fetch_workflow_job_steps`;
-10. `fetch_workflow_job_logs`.
-
-The two job-detail reads use repository-scoped `actions:read`, bind provider request identity to the producing request, omit installation credentials from the download request, retain bounded UTF-8 text, and keep artifact bytes and writes unavailable. Canonical CI `30723519846` passed every repository, runtime, browser, artifact, and exact-revision serial gate.
-
-#697 remains open until the deployed revision and one authenticated hosted step/log receipt prove the exact ten-tool declaration in the live environment.
-
-### GitHub project context
-
-Hosted GitHub issue-context persistence landed through #908 as `d2880ea9f7efe6ad8f29107acde9db79bc0faed9`.
-
-PR #933 merged the project-scoped read-only `get_github_project_context` action as `d8417bb073f2374025c2fa43cc78744e68c6f3ea`. The action uses SQLite or hosted `ConvexWorkLedger`, follows the capability policy, and is part of the current public manifest.
-
-Historical carrier PRs #560 and #926 are closed. #492 now needs one authorised hosted context read and subsequent use inside the sustained W01 lifecycle.
-
-### Governed GitHub issue writes
-
-The first typed Stensibly-to-GitHub issue-write chain is now merged end to end.
-
-1. PR #934 merged durable hosted `GitHubProviderReceiptStore` persistence as `0853d23ebc8b876e0267d7e485d184a51b8e6613`.
-2. PR #937 merged private hosted create/update/comment execution as `c3a0079f7e9232a07976bf112c327f8db750d80e`.
-3. PR #938 merged public typed MCP actions as `a14133c6f2096a803b1e6ac503241dca9322251e`.
-
-The hosted public release now contains 38 tools, including the provider-mounted `github_call_tool`, with manifest fingerprint:
+The staged hosted names-only fingerprint is:
 
 ```text
-sha256:c613de39802426b6788c802ad6d1dd64600f361b1234dd591530bf6709a76836
+sha256:668ab7cc8fbf576ee16b4487bc18f7834186dd63fa56c8bc447ee546b70a590e
 ```
 
-The new actions are:
+The staged full tool-contract fingerprint is:
 
-- `github_create_issue`;
-- `github_update_issue`;
-- `github_add_issue_comment`;
-- read-only `get_github_provider_receipt`.
+```text
+sha256:b7d8bdafb8a453d5dd68e5ff5136046a9cb7804a3213f1aee78714d353d8dfbb
+```
 
-Every write derives actor/client identity from the authenticated MCP principal, requires write scope and project access, binds the exact repository, and requires one explicit idempotency key. Updates require the last SHA-256 provider source revision. Receipt lookup returns a row only when project, repository, actor, and client all match.
+These fingerprints are not live evidence until Convex and the Worker deploy,
+hosted verification passes, and the ChatGPT app is refreshed against v9.
 
-Hosted execution remains disabled unless `STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED=true` is configured with the complete accepted repository binding and durable receipt store. Initial labels, assignees, label-set writes, assignee-set writes, generic write tunnels, and live configuration are outside the public packet.
+### GitHub execution provider
 
-Mutations use repository-scoped `issues:write`; independent verification uses `issues:read`. Transport loss, 5xx, throttling, malformed mutation responses, or failed post-mutation readback remain `pending_reconciliation`; exact replay does not redispatch.
+The merged provider stack now has:
 
-#921 remains open until the deployed 38-tool hosted release is refreshed in the ChatGPT app and one authorised create/update/comment journey returns a durable receipt, survives reconnect, and reconciles accepted GitHub context without duplicate mutation.
+- accepted-attachment-derived multi-repository routing under one configured
+  GitHub installation/account;
+- exact repository and permission token minting;
+- governed issue create/update/comment with durable receipts;
+- guarded delegated GitHub reads;
+- typed create-branch and create-pull-request operations;
+- exact-parent create/update-file publication with durable CAS receipts;
+- protected Convex and Worker deployment workflows with exact-candidate
+  verification and recovery.
 
-### OpenAI Agents runner adapter
+Raw primitives remain useful and are the implementation pieces for higher-level
+operations. They are not the final product boundary.
 
-Parent PR #659 remains a stale-base draft. Its model-free four-file adapter candidate passed historical gates, and #875 documented two accepted repairs:
+### Runner adapters
 
-- replayed checkpoint receipts must satisfy `record.createdAt <= proposedCreatedAt`, while fresh receipts retain exact equality;
-- checkpoint holder authority must be validated before consulting the process-local latest-reference cache.
+The OpenAI Agents SDK adapter (#945), Vercel AI SDK adapter (#1295), shared
+runner host (#1303), and hosted Convex runner parity are merged. These are
+alternative model/runtime adapters under the same runner authority and durable
+ledger contracts; neither SDK is a second product direction.
 
-The executable #659 action is a trusted source commit containing the documented substitutions, followed by a carrier-free current-main replay, focused adapter suites, canonical CI, complete review, and mergeability proof. No provider request, model execution, credential, dependency, deployment, public MCP/REST surface, or canonical Stensibly transition belongs in that packet.
+The current host slice is deliberately model-free and bounded. It proves exact
+capability binding, lease authority, atomic dispatch reservation, checkpoint
+privacy, observation limits, and no blind redispatch. A durable command inbox,
+full restartable continuation, and live model/provider mounting remain follow-up
+work.
 
-### Operating protocol
+## This revision: first composite operation
 
-Protocol `stensibly-agent-ops/0.5.0` and bootstrap `stensibly-project-bootstrap/v3` keep existing work visible for dependencies, useful continuations, and overlap while allowing valuable bounded lanes to start according to expected value, coherence, collision risk, and recoverability.
+`github_publish_change` composes three existing provider services under one
+durable operation:
 
-## Temporary degraded mode
+```text
+exact source commit
+  → create/replay branch
+  → create or update one file at the exact parent
+  → verify the resulting commit
+  → open/replay a draft PR at exact head and base SHAs
+```
 
-While #490 remains open:
+Before every provider call, Stensibly durably reserves the step and rechecks the
+current runner authority. Each step retains only identities, digests, closed
+states, provider receipt references, and its planned compensation. Patches,
+file contents, PR bodies, tokens, and arbitrary provider prose are not stored in
+the operation aggregate.
 
-- GitHub owns repository instructions, issues, priorities, source, pull requests, reviews, checks, deployments, evidence, blockers, and handoffs;
-- Stensibly adds claims, leases, responsibility, run identity, generations, approvals, grants, budgets, artifacts, provider receipts, and attributable execution history;
-- ordinary implementation and review work stays recoverable through GitHub;
-- Stensibly mutations occur only inside an explicitly identified reliability run or another bounded test lane;
-- ambiguous writes are reconciled by unique operation or idempotency identity before replay;
-- only one worker mutates one dedicated lifecycle record at a time;
-- OAuth remains enabled unless concrete hosted evidence supports another decision.
+SQLite and Convex implement the same project-scoped reservation, replay,
+conflict, and exact-revision transition contract. Ambiguous provider outcomes
+or lost workflow settlement halt at `waiting_reconciliation`; replay never
+blindly dispatches the provider call again. A monotonic heartbeat extension is
+accepted only while run, owner, run generation, and lease generation remain
+exact.
 
-A connector or chat outage must never hide the backlog or repository instructions.
+The first slice is intentionally bounded to one file. Compensation is durable
+as a plan and lifecycle, but automated compensators are not yet mounted.
 
-## Definition of done
+## Required dogfood lifecycle
 
-W01 completes when fresh authenticated ChatGPT conversations repeatedly prove:
+```text
+fresh authenticated ChatGPT conversation
+  → discover/list exact v9 tool surface
+  → read accepted GitHub project context
+  → create and claim one bounded work item/run
+  → call github_publish_change once
+  → read operation workflow and provider receipts
+  → repeat the same idempotency key without duplicate GitHub effects
+  → reconnect ChatGPT
+  → read the same workflow and receipts again
+  → complete or clean up the bounded work item
+```
 
-1. repository instructions and the current GitHub backlog remain readable;
-2. OAuth discovery, GitHub-backed login, consent, token exchange, refresh, and reconnect succeed;
-3. Stensibly tools remain discovered and executable after several calls;
-4. the complete create/claim/event/artifact/read/complete/reread lifecycle succeeds;
-5. every mutation returns typed success, actionable failure, or explicit ambiguity with deterministic reconciliation;
-6. a governed Stensibly-to-GitHub create/update/comment operation returns a durable actor-bound receipt;
-7. GitHub and Stensibly remain usable together throughout the conversation;
-8. disconnect and reconnect restore authorised functionality and receipt lookup;
-9. the lifecycle passes repeatedly in one conversation and across reconnects;
-10. automated coverage exercises repeated same-session operations and reconnects;
-11. diagnostics identify which layer rejected, timed out, lost, or ambiguously completed a call without exposing secrets;
-12. GitHub remains independently readable and writable during Stensibly degradation.
-
-A merged PR, setup document, dashboard sign-in, metadata check, or single successful write does not complete the wave.
+The exercise must preserve GitHub usability throughout. Any ambiguous result is
+reconciled from the durable operation and provider keys before another write.
 
 ## Active lanes
 
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
-| P0 | #490 sustained-use incident | Code paths and diagnostics are stronger; continued execution and reconnect remain unproved | Run the complete uniquely identified lifecycle in one fresh authenticated conversation, checkpointing GitHub between segments | Repeated lifecycle and reconnect pass with typed outcomes and layer-specific diagnostics |
-| P0 | #921 governed GitHub writes | Durable receipts, private hosted execution, and public typed MCP actions are merged in #934/#937/#938 | Confirm deployed `a14133c6…`, refresh the ChatGPT app to the 38-tool hosted manifest, then perform one authorised idempotent create/update/comment and reconnect receipt lookup | Live verified receipt survives reconnect, exact replay does not duplicate, and accepted context reconciliation is visible |
-| P0 | #492 hosted GitHub context | Persistence #908 and public MCP #933 are merged | Record one authorised hosted `get_github_project_context` read, then use it during a sustained lifecycle run | Hosted receipt and repeated lifecycle use pass |
-| P0 | #697 Actions step/log mounting | PR #931 merged the exact opt-in ten-tool path | Verify deployed revision and record one authenticated hosted step/log receipt | Live ten-tool receipt passes and #697 closes |
-| P1 | #591 / #744 signed observations | Operational lane owns signed receipt and replay/conflict evidence | Complete exact live receipt, replay, and conflict proof without overlapping provider-write or secret work | Signed observation lifecycle has attributable live evidence and deterministic conflict handling |
-| P1 | #659 runner adapter | Parent implementation exists; accepted #875 repairs remain uncommitted source bytes | Publish the documented repair through a trusted source commit, replay the clean files on current main, and run canonical proof | Focused adapter suites, canonical CI, review, and integration pass |
+| P0 | First operation rollout (#154) | Durable SQLite/Convex saga and bounded GitHub composer are in this candidate | Merge, deploy Convex then Worker, verify the 45-tool contract, refresh ChatGPT, and dogfood one exact branch→file→PR journey | Hosted success and exact replay produce one branch, one commit, one PR, and durable readback across reconnect |
+| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, and deployment controls are materially stronger; repeated ChatGPT execution remains the proof gap | Run the complete lifecycle above in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
+| P1 | Reconciliation and compensation | Ambiguous steps expose a deterministic underlying provider key; compensation plans are durable but not executable | Add a reconciler, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Pending steps settle without redispatch and reversible operations can be safely compensated |
+| P1 | Operation catalogue | Raw provider reach is broad but model exposure should stay compact | Add `repo_health`, plan-only `branch_tidy`, then `land_pr` and `ci_diagnose` behind searchable capability discovery | Agents can request common outcomes without manually orchestrating long raw-tool chains |
+| P1 | Restartable runner execution | Both SDK adapters and the bounded host exist; durable command delivery and continuation remain incomplete | Add the command inbox/observation receipt and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
 
-## Supporting product chain
+## Definition of done for the wave
 
-The first visible guarded feature chain remains:
+This wave is complete when fresh authenticated ChatGPT conversations repeatedly
+prove:
 
-```text
-#149 causal event envelopes and sequence
-  → #273 authorised external chat and runner surfaces
-  → #403 attributable response thread
-```
+1. exact MCP discovery, tool registration, and invocation remain stable through
+   sustained use and reconnect;
+2. raw GitHub primitives and at least one composite operation both work;
+3. each write produces a durable, attributable, project-scoped receipt;
+4. retries replay or reconcile without duplicate provider effects;
+5. the operator can see where a call was catalogued, exposed, invoked, admitted,
+   dispatched, accepted, verified, and delivered;
+6. reversible operations expose truthful compensation state;
+7. GitHub remains independently readable and writable during Stensibly
+   degradation;
+8. a temporary chat or runner process can disappear without erasing the work,
+   authority, evidence, or next action.
 
-Advance #403 after #490 and the bounded #492/#921 live proofs pass their gates. Broader autonomy work continues from reliable measured foundations.
+## Immediate sequence
 
-## Work selection
+1. Integrate and deploy this first operation through the protected workflows.
+2. Verify the hosted v9/45 contract and refresh the existing ChatGPT app; do not
+   recreate it unless the host refuses an in-place refresh.
+3. Dogfood one bounded publish-change operation and exact replay.
+4. Implement reconciliation from the retained provider idempotency key.
+5. Add `repo_health`, then plan-only `branch_tidy` before branch deletion.
+6. Add exact compensators and build `land_pr` from the same operation spine.
+7. Instrument catalogue → policy → registration → invocation → admission →
+   dispatch → provider acceptance → verification → delivery as one traceable
+   capability journey.
 
-Use this value order when choosing among eligible lanes:
-
-1. reproduce or repair the exact #490 failure;
-2. finish live verification for merged #921, #492, and #697 work;
-3. integrate active work that removes a demonstrated blocker;
-4. keep GitHub instructions, queue, issues, pull requests, and evidence accurate;
-5. advance a bounded non-overlapping runner or observation slice;
-6. advance the #149/#273/#403 feature chain without claiming sustained reliability;
-7. continue broader autonomy work from measured foundations.
-
-Before committing to a lane, inspect dependencies, useful continuations, and overlap. Start bounded work when it advances W01 and leaves an exact recoverable handoff.
-
-## Failure handling
-
-When a step fails:
-
-- identify the exact failing stage and responsible surface where possible;
-- preserve bounded evidence, operation identity, and ambiguity identity;
-- reconcile a possible successful mutation before retrying;
-- repair and deploy when fix-forward is safe;
-- roll back after a demonstrated regression or unsafe partial state;
-- resume the failing segment and then repeat the whole lifecycle;
-- leave GitHub with the current fact, evidence, and one executable next action.
-
-A failed dogfood attempt is product evidence and should produce a sharper test, diagnostic, or repair.
-
-## Immediate next actions
-
-- Confirm the deployed revision includes `a14133c6f2096a803b1e6ac503241dca9322251e`, refresh or recreate the ChatGPT app against the 38-tool hosted manifest, and record one authorised `github_create_issue` plus `get_github_provider_receipt` replay/reconnect proof under #921.
-- Verify the production rollout of `d1a90b2d8eecb1ee09a39d7d99f9564d340aec30` and record one authenticated hosted step/log receipt under #697.
-- Record one authorised hosted `get_github_project_context` receipt for #492/#933.
-- Execute one fresh #490 lifecycle run with GitHub checkpoints before discovery, between mutation segments, after completion, and after reconnect.
-- Publish the accepted #659 chronology and holder-authority repair through a trusted source commit, then replay the carrier-free adapter packet on current main.
-- Complete the live #591/#744 signed-observation receipt and conflict evidence.
-
-## Retrospective questions
-
-After #490 passes, record:
-
-- which layer caused each lost, rejected, or ambiguous call;
-- whether GitHub remained usable throughout degradation;
-- whether provider receipt reconciliation prevented duplicate effects;
-- which instructions accelerated delivery or caused stalls;
-- whether self-review preserved quality while reducing operator interruption;
-- defects found only through sustained same-conversation use;
-- duplicated, abandoned, or successfully recovered work;
-- the next accepted, rejected, or no-change proposal under #293.
-
-— Kestrel · W01 revision 9 reconciliation  
-  Intention: keep one concise verified campaign record with exact live verification steps
+— Keel · durable operations reconciliation
+  Intention: ship the first outcome-oriented GitHub operation and prove it through ChatGPT
