@@ -7,6 +7,9 @@ import type {
   GitHubProviderReceipt,
   GitHubProviderRequestContext,
 } from "./github-provider-contracts.js";
+import type {
+  GitHubRepositoryWriteReceipt,
+} from "./github-repository-write-provider-service.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import type { McpRequestContext } from "./mcp-context.js";
@@ -84,6 +87,36 @@ export interface GitHubPublicationProviderWriteService {
     draft?: boolean;
     idempotencyKey: string;
   }): Promise<GitHubProviderReceipt>;
+}
+
+export interface GitHubRepositoryFileWriteService {
+  createRepositoryFile(input: GitHubProviderRequestContext & {
+    path: string;
+    branch: string;
+    expectedParentSha: string;
+    content: string;
+    message: string;
+    idempotencyKey: string;
+  }): Promise<GitHubRepositoryWriteReceipt>;
+  updateRepositoryFile(input: GitHubProviderRequestContext & {
+    path: string;
+    branch: string;
+    expectedParentSha: string;
+    contentSha: string;
+    content: string;
+    message: string;
+    idempotencyKey: string;
+  }): Promise<GitHubRepositoryWriteReceipt>;
+}
+
+export function withGitHubRepositoryFileWriteService<T extends object>(
+  target: T,
+  service: GitHubRepositoryFileWriteService,
+): T & GitHubRepositoryFileWriteService {
+  return Object.assign(target, {
+    createRepositoryFile: service.createRepositoryFile.bind(service),
+    updateRepositoryFile: service.updateRepositoryFile.bind(service),
+  });
 }
 
 export function withGitHubPublicationProviderWriteService<T extends object>(
@@ -313,6 +346,40 @@ export function registerGitHubIssueProviderTools(
   );
 
   server.registerTool(
+    "get_github_repository_write_receipt",
+    {
+      description: "Reconcile one native GitHub repository-file write by project, repository, and idempotency key. Returns a bounded durable receipt only when it belongs to the authenticated actor and client; foreign or absent receipts return null.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asToolResult(async () => {
+      const identity = providerContext(
+        context,
+        input.project,
+        input.repository,
+        "read",
+      );
+      const receipt = await repositoryWriteReceiptLookup(ledger)(
+        input.project,
+        input.idempotencyKey,
+      );
+      if (
+        !receipt
+        || receipt.repositoryFullName !== input.repository.toLowerCase()
+        || receipt.actorId !== identity.actorId
+        || receipt.clientId !== identity.clientId
+      ) {
+        return null;
+      }
+      return receipt;
+    }),
+  );
+
+  server.registerTool(
     "github_create_branch",
     {
       description: "Create one absent GitHub branch at an exact commit in the repository bound to a Stensibly project. Requires write scope and an explicit idempotency key.",
@@ -330,6 +397,35 @@ export function registerGitHubIssueProviderTools(
         ...providerContext(context, input.project, input.repository, "write"),
         branch: input.branch,
         fromCommitSha: input.fromCommitSha,
+        idempotencyKey: input.idempotencyKey,
+      })
+    ),
+  );
+
+  server.registerTool(
+    "github_create_file",
+    {
+      description: "Create one absent UTF-8 file on an existing non-default GitHub branch through an exact expected-parent compare-and-swap. Requires write scope and an explicit idempotency key.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        path: repositoryPathSchema(),
+        branch: branchSchema(),
+        expectedParentSha: commitShaSchema(),
+        content: repositoryFileContentSchema(),
+        message: commitMessageSchema(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() =>
+      repositoryFileWriteService(ledger).createRepositoryFile({
+        ...providerContext(context, input.project, input.repository, "write"),
+        path: input.path,
+        branch: input.branch,
+        expectedParentSha: input.expectedParentSha,
+        content: boundedRepositoryFileContent(input.content),
+        message: input.message,
         idempotencyKey: input.idempotencyKey,
       })
     ),
@@ -363,6 +459,37 @@ export function registerGitHubIssueProviderTools(
         expectedHeadSha: input.expectedHeadSha,
         expectedBaseSha: input.expectedBaseSha,
         draft: input.draft,
+        idempotencyKey: input.idempotencyKey,
+      })
+    ),
+  );
+
+  server.registerTool(
+    "github_update_file",
+    {
+      description: "Update one existing UTF-8 file on a non-default GitHub branch through exact expected-parent and existing-blob compare-and-swap fences. Requires write scope and an explicit idempotency key.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        path: repositoryPathSchema(),
+        branch: branchSchema(),
+        expectedParentSha: commitShaSchema(),
+        contentSha: commitShaSchema(),
+        content: repositoryFileContentSchema(),
+        message: commitMessageSchema(),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(() =>
+      repositoryFileWriteService(ledger).updateRepositoryFile({
+        ...providerContext(context, input.project, input.repository, "write"),
+        path: input.path,
+        branch: input.branch,
+        expectedParentSha: input.expectedParentSha,
+        contentSha: input.contentSha,
+        content: boundedRepositoryFileContent(input.content),
+        message: input.message,
         idempotencyKey: input.idempotencyKey,
       })
     ),
@@ -426,6 +553,42 @@ function publicationWriteService(
   });
 }
 
+function repositoryFileWriteService(
+  ledger: WorkLedger,
+): GitHubRepositoryFileWriteService {
+  const createRepositoryFile = captureDataMethod(ledger, "createRepositoryFile");
+  const updateRepositoryFile = captureDataMethod(ledger, "updateRepositoryFile");
+  if (!createRepositoryFile || !updateRepositoryFile) {
+    throw new Error(
+      "GitHub repository-file writes are unavailable because this backend has no enabled exact-CAS file service",
+    );
+  }
+  return Object.freeze({
+    createRepositoryFile:
+      createRepositoryFile as GitHubRepositoryFileWriteService["createRepositoryFile"],
+    updateRepositoryFile:
+      updateRepositoryFile as GitHubRepositoryFileWriteService["updateRepositoryFile"],
+  });
+}
+
+function repositoryWriteReceiptLookup(
+  ledger: WorkLedger,
+): (
+  project: string,
+  idempotencyKey: string,
+) => Promise<GitHubRepositoryWriteReceipt | null> {
+  const get = captureDataMethod(ledger, "getRepositoryWriteReceipt");
+  if (!get) {
+    throw new Error(
+      "GitHub repository-write receipts are unavailable on this backend",
+    );
+  }
+  return get as (
+    project: string,
+    idempotencyKey: string,
+  ) => Promise<GitHubRepositoryWriteReceipt | null>;
+}
+
 function hasReadService(value: unknown): value is WorkLedger & GitHubIssueProviderReadService {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<GitHubIssueProviderReadService>;
@@ -472,6 +635,25 @@ function projectSchema() {
     .min(1)
     .max(80)
     .regex(/^[a-z0-9][a-z0-9_-]*$/, "Use a lowercase project slug");
+}
+
+function repositoryPathSchema() {
+  return z.string().min(1).max(4_096);
+}
+
+function repositoryFileContentSchema() {
+  return z.string().max(256 * 1024);
+}
+
+function commitMessageSchema() {
+  return z.string().trim().min(1).max(256);
+}
+
+function boundedRepositoryFileContent(value: string): string {
+  if (new TextEncoder().encode(value).byteLength > 256 * 1024) {
+    throw new RangeError("GitHub repository file content exceeds 256 KiB");
+  }
+  return value;
 }
 
 function repositorySchema() {

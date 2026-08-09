@@ -193,6 +193,12 @@ Available tools include:
 - `list_artifacts`
 - `complete_work`
 
+When the guarded GitHub publication provider is enabled, the hosted surface also
+supports an exact-CAS `github_create_branch` → `github_create_file` or
+`github_update_file` → `github_create_pull_request` workflow. File writes require
+an existing non-default branch and exact commit/content preconditions; ambiguous
+results are reconciled through durable receipts before replay.
+
 ### Local stdio
 
 For a trusted local client:
