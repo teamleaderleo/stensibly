@@ -15,6 +15,7 @@ export const dashboardAssets: readonly DashboardAssetExpectation[] = [
   { path: "/styles.css", kind: "css", contentTypes: cssContentTypes, marker: ".detail-activity-thread" },
   { path: "/hosted-session.css", kind: "css", contentTypes: cssContentTypes, marker: ".hosted-sign-in" },
   { path: "/login-scrapbook.css", kind: "css", contentTypes: cssContentTypes, marker: ".login-card" },
+  { path: "/operator-root.css", kind: "css", contentTypes: cssContentTypes, marker: ".dashboard-lede" },
   { path: "/provider-capacity.css", kind: "css", contentTypes: cssContentTypes, marker: ".provider-capacity" },
   { path: "/app.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "DEFAULT_ENDPOINT" },
   { path: "/hosted-session.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "hostedSessionSentinel" },

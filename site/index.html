@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/calm-root.css" />
     <link rel="stylesheet" href="/root-mode-status.css" />
     <link rel="stylesheet" href="/crunch-root.css" />
+    <link rel="stylesheet" href="/operator-root.css" />
   </head>
   <body>
     <main class="shell">
@@ -108,8 +109,9 @@
       <section class="dashboard" id="dashboard" hidden>
         <div class="dashboard-head">
           <div>
-            <p class="eyebrow">Project desk</p>
+            <p class="eyebrow">Work ledger</p>
             <h2 id="ledger-name">All projects</h2>
+            <p class="dashboard-lede">Start with work that needs intervention, then follow what is already moving.</p>
           </div>
           <div class="dashboard-actions">
             <select id="project-filter" aria-label="Filter by project"><option value="">all projects</option></select>
@@ -118,23 +120,38 @@
           </div>
         </div>
 
+        <section class="metrics" aria-label="Status totals">
+          <article class="metric-attention"><span>needs attention</span><strong id="metric-blocked">0</strong></article>
+          <article class="metric-active"><span>in motion</span><strong id="metric-active">0</strong></article>
+          <article class="metric-ready"><span>ready next</span><strong id="metric-ready">0</strong></article>
+          <article class="metric-done"><span>completed</span><strong id="metric-done">0</strong></article>
+        </section>
+
+        <section class="agents-panel">
+          <div class="section-head"><h3>Actors holding active work</h3><span id="last-updated">waiting</span></div>
+          <div class="agents" id="agents"><p class="empty">Nothing active right now.</p></div>
+        </section>
+
+        <section class="board" id="board" aria-label="Work grouped by disposition"></section>
+        <p class="sr-only" id="board-announcer" aria-live="polite"></p>
+
         <details class="session-context" id="session-context-panel" data-mode="unavailable">
           <summary class="session-context-head">
             <span class="session-context-summary-copy">
-              <span class="eyebrow">Connection</span>
-              <strong id="session-context-title">Connection &amp; write identity</strong>
+              <span class="eyebrow">Account &amp; authority</span>
+              <strong id="session-context-title">Connection and write identity</strong>
             </span>
             <span id="capability-state">unavailable</span>
           </summary>
 
           <div class="principal-summary" id="principal-summary" hidden>
             <div>
-              <span>Authenticated authority</span>
+              <span>Signed in as</span>
               <strong id="principal-name"></strong>
               <small id="principal-boundary"></small>
             </div>
             <div>
-              <span>Declared scopes</span>
+              <span>Can do</span>
               <strong id="principal-scopes"></strong>
               <div class="capability-badges" id="capability-badges" aria-label="Effective capabilities"></div>
             </div>
@@ -142,7 +159,7 @@
 
           <div class="actor-summary" id="actor-summary" hidden>
             <div>
-              <span>Active write actor</span>
+              <span>Recording changes as</span>
               <strong id="actor-display"></strong>
             </div>
             <div class="actor-actions">
@@ -175,20 +192,6 @@
           <p class="session-context-error" id="session-context-error" role="alert" hidden></p>
           <p class="session-context-note">The hosted account or bearer token grants authority. The actor identifies who or what will be recorded in ledger events. Actor context stays in this browser session.</p>
         </details>
-
-        <section class="metrics" aria-label="Status totals">
-          <article><span>ready</span><strong id="metric-ready">0</strong></article>
-          <article><span>active</span><strong id="metric-active">0</strong></article>
-          <article><span>blocked</span><strong id="metric-blocked">0</strong></article>
-          <article><span>done</span><strong id="metric-done">0</strong></article>
-        </section>
-
-        <section class="agents-panel">
-          <div class="section-head"><h3>People and agents working here</h3><span id="last-updated">waiting</span></div>
-          <div class="agents" id="agents"><p class="empty">Nothing active right now.</p></div>
-        </section>
-
-        <section class="board" id="board" aria-live="polite"></section>
       </section>
 
       <section class="disconnected" id="disconnected-state">

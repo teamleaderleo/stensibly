@@ -51,7 +51,7 @@ describe("calm production dashboard root", () => {
     );
 
     expect(session).toContain('<summary class="session-context-head">');
-    expect(session).toContain('id="session-context-title">Connection &amp; write identity');
+    expect(session).toContain('id="session-context-title">Connection and write identity');
     expect(session).toContain('id="capability-state">unavailable');
     expect(session).toContain('id="actor-form" hidden');
     expect(session).toContain('id="change-actor"');
