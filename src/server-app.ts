@@ -18,6 +18,10 @@ import {
   handleRunnerMcpHttpRequest,
   type RunnerMcpHttpOptions,
 } from "./runner-mcp-http.js";
+import {
+  createProjectSetupStatusApi,
+  type ProjectSetupStatusObserver,
+} from "./setup-status-api.js";
 import { SqliteWorkLedger } from "./sqlite-ledger.js";
 import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import { StensiblyStore } from "./store.js";
@@ -32,6 +36,7 @@ export interface ServerAppOptions {
   corsOrigins?: string[];
   backend?: "sqlite" | "convex";
   githubWebhook?: GitHubWebhookOptions;
+  setupStatusObserver?: ProjectSetupStatusObserver;
 }
 
 export function createServerApp(
@@ -83,6 +88,17 @@ export function createServerApp(
     );
   }
 
+  if (options.setupStatusObserver) {
+    app.route(
+      "/api/v1",
+      createProjectSetupStatusApi(
+        authenticator,
+        ledger,
+        authOptions,
+        options.setupStatusObserver,
+      ),
+    );
+  }
   app.route("/api/v1", createApiV1(authenticator, ledger, authOptions));
   app.route("/api/v1", createContextPacketApi(authenticator, ledger, authOptions));
   app.route("/", createApp(store, authOptions));
