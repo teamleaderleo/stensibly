@@ -160,12 +160,12 @@ function preserveHostedSessionRecovery(status) {
   hostedSessionRejectedStatus = status;
   hostedAuthorizationDenied = true;
   if (hostedSignOutButton) {
-    hostedSignOutButton.hidden = false;
-    hostedSignOutButton.textContent = status === 401 ? 'Reset sign-in' : 'Sign out';
+    hostedSignOutButton.hidden = status === 401;
+    hostedSignOutButton.textContent = 'Sign out';
   }
   if (signInState) {
     signInState.textContent = status === 401
-      ? 'This browser session expired. Reset sign-in to continue.'
+      ? 'Sign in with GitHub to open the tower.'
       : 'This account cannot access this workspace.';
   }
 }
@@ -190,7 +190,6 @@ async function signOutHostedSession(event) {
   if (disconnectButton) disconnectButton.disabled = true;
   if (hostedSignOutButton) hostedSignOutButton.disabled = true;
   clearError();
-  const restartGithubSignIn = hostedSessionRejectedStatus === 401;
 
   try {
     await revokeHostedSession(originalFetch, DEFAULT_ENDPOINT);
@@ -207,10 +206,6 @@ async function signOutHostedSession(event) {
   clearHostedDenialRecovery();
   clearDashboardSnapshot(optionalLocalStorage());
   clearHostedMarker();
-  if (restartGithubSignIn) {
-    beginGithubSignIn();
-    return;
-  }
   window.location.reload();
 }
 

@@ -251,6 +251,10 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     scheduleRefresh();
   } catch (error) {
     if (!isCurrentRequest(requestId)) return;
+    const hostedSignInRequired = initial
+      && isHostedSessionSentinel(token)
+      && error instanceof ConnectionFailure
+      && error.kind === 'invalid_token';
     const message = await explainConnectionFailure(error, endpoint);
     if (!isCurrentRequest(requestId)) return;
     if (isTerminalConnectionFailure(error)) {
@@ -261,7 +265,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
       itemDetail.reset();
       sessionContext.reset();
       resetRefreshPolicy();
-      showConnectionForm(message);
+      showConnectionForm(hostedSignInRequired ? '' : message);
       return;
     }
     if (!connected) {
@@ -457,7 +461,7 @@ function showConnectedIssue(message) {
 }
 
 function showConnectionForm(message = '', { keepDashboard = false, allowCancel = false } = {}) {
-  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Welcome back';
+  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Open the tower';
   form.hidden = false;
   connectedSummary.hidden = true;
   cancelConnection.hidden = !allowCancel;
