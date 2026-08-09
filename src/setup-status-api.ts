@@ -1,7 +1,9 @@
-import type { Hono } from "hono";
+import { Hono } from "hono";
 import {
+  createHttpAuthMiddleware,
   currentPrincipal,
   requireHttpAccess,
+  type HttpAuthOptions,
   type StensiblyEnv,
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
@@ -13,6 +15,7 @@ import {
   projectSetupStatusWithRepository,
 } from "./setup-status-repository.js";
 import type { SetupStatusInput } from "./setup-status.js";
+import type { ApiTokenAuthenticator } from "./token-provider.js";
 
 export type SetupStatusPrincipalKind = "account" | "api_token";
 
@@ -28,12 +31,14 @@ export interface ProjectSetupStatusObserver {
   }): ProjectSetupStatusObservation | Promise<ProjectSetupStatusObservation>;
 }
 
-export function registerProjectSetupStatusApi(
-  app: Hono<StensiblyEnv>,
+export function createProjectSetupStatusApi(
+  authenticator: ApiTokenAuthenticator,
   ledger: WorkLedger,
-  observer: ProjectSetupStatusObserver | undefined,
-): void {
-  if (!observer) return;
+  authOptions: HttpAuthOptions,
+  observer: ProjectSetupStatusObserver,
+): Hono<StensiblyEnv> {
+  const app = new Hono<StensiblyEnv>();
+  app.use("*", createHttpAuthMiddleware(authenticator, authOptions));
 
   app.get("/projects/:project/setup-status", async (context) => {
     const project = context.req.param("project");
@@ -64,7 +69,10 @@ export function registerProjectSetupStatusApi(
         principalKind: principal.kind === "account" ? "account" : "api_token",
       });
     } catch {
-      throw new Error("Setup status observation failed");
+      return context.json({
+        error: "Setup status observation failed",
+        code: "observation_failed",
+      }, 502);
     }
 
     const setupStatus = projectSetupStatusWithRepository({
@@ -75,4 +83,6 @@ export function registerProjectSetupStatusApi(
     });
     return context.json({ setupStatus });
   });
+
+  return app;
 }
