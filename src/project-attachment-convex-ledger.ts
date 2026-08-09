@@ -29,6 +29,9 @@ import {
 } from "./hosted-github-delegated-read-provider.js";
 import { mountHostedGitHubIssueProviderFromEnv } from "./hosted-github-issue-provider.js";
 import {
+  mountHostedGitHubPublicationReadbackFromEnv,
+} from "./hosted-github-publication-readback.js";
+import {
   withConvexOperationWorkflowStore,
 } from "./operation-workflow-convex-store.js";
 import type { OperationWorkflowStore } from "./operation-workflow-contracts.js";
@@ -156,7 +159,11 @@ export function createConvexProjectAttachmentLedgerFromEnv(
     },
   );
   const issueProvider = mountHostedGitHubIssueProviderFromEnv(receiptLedger, env);
-  return mountHostedGitHubDelegatedReadProviderFromEnv(issueProvider, env);
+  const publicationReadback = mountHostedGitHubPublicationReadbackFromEnv(
+    issueProvider,
+    env,
+  );
+  return mountHostedGitHubDelegatedReadProviderFromEnv(publicationReadback, env);
 }
 
 function mapRecord(value: unknown): ProjectAttachmentRecord {
