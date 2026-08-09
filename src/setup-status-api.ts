@@ -7,13 +7,9 @@ import {
   type StensiblyEnv,
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
-import {
-  projectAttachmentLedger,
-} from "./project-attachment-ledger.js";
+import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 import type { ProjectAttachmentSetupContext } from "./project-attachment-setup-plan.js";
-import {
-  projectSetupStatusWithRepository,
-} from "./setup-status-repository.js";
+import { projectSetupStatusWithRepository } from "./setup-status-repository.js";
 import type { SetupStatusInput } from "./setup-status.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 
@@ -54,7 +50,16 @@ export function createProjectSetupStatusApi(
         code: "not_supported",
       }, 501);
     }
-    const attachment = await attachments.getProjectAttachment(project);
+
+    let attachment;
+    try {
+      attachment = await attachments.getProjectAttachment(project);
+    } catch {
+      return context.json({
+        error: "Project attachment observation failed",
+        code: "attachment_observation_failed",
+      }, 502);
+    }
 
     let observation: ProjectSetupStatusObservation;
     try {
