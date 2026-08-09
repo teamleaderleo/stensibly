@@ -117,6 +117,8 @@ const actionPattern = /^[a-z][a-z0-9_]{0,63}$/u;
 const actorPattern =
   /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[bot\])?$/u;
 const fullRevisionPattern = /^[a-f0-9]{40}$/u;
+const providerTimestampPattern =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/u;
 const zeroRevision = "0000000000000000000000000000000000000000";
 const unsafeIdentityTextPattern =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
@@ -694,9 +696,20 @@ function sourceTime(
     return { sourceTime: receivedAt, sourceTimeSource: "received" };
   }
   return {
-    sourceTime: canonicalTimestamp(requiredString(value, label), label),
+    sourceTime: canonicalProviderTimestamp(requiredString(value, label), label),
     sourceTimeSource: "provider",
   };
+}
+
+function canonicalProviderTimestamp(value: string, label: string): string {
+  if (!providerTimestampPattern.test(value)) {
+    throw new RangeError(`${label} must be an ISO timestamp with a timezone`);
+  }
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) {
+    throw new RangeError(`${label} must be a valid timestamp`);
+  }
+  return instant.toISOString();
 }
 
 function revisionSubject(
