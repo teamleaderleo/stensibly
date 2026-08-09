@@ -13,7 +13,7 @@ const other = "c".repeat(40);
 function intent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     version: 1,
-    repositoryFullName: "TeamLeaderLeo/Stensibly",
+    repositoryFullName: "teamleaderleo/stensibly",
     path: "docs/write-receipt.json",
     operation: "create_file",
     targetRef: "feature/exact-write",
