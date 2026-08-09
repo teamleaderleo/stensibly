@@ -65,17 +65,20 @@ describe("production Worker release guard", () => {
   });
 
   test("rejects a present enablement binding with the wrong production value", () => {
-    const bindings = completeBindings().map((binding) => (
-      binding.name === "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED"
-        ? { ...binding, text: "false" }
-        : binding
-    ));
-    expect(validateProductionVersion({
-      id: VERSION_A,
-      resources: { bindings },
-    }, VERSION_A)).toContain(
-      "binding STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED has an unexpected production value",
-    );
+    for (const name of [
+      "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED",
+      "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED",
+    ]) {
+      const bindings = completeBindings().map((binding) => (
+        binding.name === name ? { ...binding, text: "false" } : binding
+      ));
+      expect(validateProductionVersion({
+        id: VERSION_A,
+        resources: { bindings },
+      }, VERSION_A)).toContain(
+        `binding ${name} has an unexpected production value`,
+      );
+    }
   });
 
   test("requires the production rate limiter with Wrangler's actual binding type", () => {

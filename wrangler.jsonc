@@ -27,6 +27,7 @@
     "STENSIBLY_GITHUB_PROVIDER_PROJECT": "stensibly",
     "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN": "teamleaderleo",
     "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED": "true",
+    "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED": "true",
     "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED": "true",
     "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED": "true",
     "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app",

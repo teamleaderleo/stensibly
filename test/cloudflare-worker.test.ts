@@ -33,12 +33,14 @@ describe("Cloudflare Worker entrypoint", () => {
       CONVEX_URL: "https://example.convex.cloud",
       STENSIBLY_SERVICE_SECRET: "test-service-secret",
       STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED: "true",
+      STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED: "true",
       STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "false",
       STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "true",
     };
 
     expect(stringEnvironment(bindings)).toMatchObject({
       STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED: "true",
+      STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED: "true",
       STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: "false",
       STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: "true",
     });
