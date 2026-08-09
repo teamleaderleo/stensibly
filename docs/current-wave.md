@@ -2,7 +2,7 @@
 
 **Status:** active P0 rollout
 **Last reconciled:** 2026-08-10
-**Exact base before this revision:** `e421f8f4b352046a7d9e9485874539f05093505d`
+**Exact live base before this revision:** `3682ca3ec7e9617771d90b69b2936cde9ec12dcc`
 **Sustained-use incident:** #490
 **Programme:** #491
 **Canonical queue:** #301
@@ -32,26 +32,27 @@ discovery, list/call, pagination, task polling, protocol headers, and the same
 authenticated capability policy. This is real repository and runtime work, not
 an unstarted “MCP v2” roadmap item.
 
-At the exact base above, the checked-in hosted ChatGPT snapshot is v8 with 43
-tools. This revision stages snapshot v9 with 45 tools:
+At the exact base above, the hosted Worker and Convex deployment serve the v9
+contract with 45 tools. This revision stages snapshot v10 with 46 tools:
 
 - searchable `github_publish_change`;
-- read-only `get_operation_workflow`.
+- read-only `get_operation_workflow`;
+- searchable `reconcile_github_publish_change`.
 
 The staged hosted names-only fingerprint is:
 
 ```text
-sha256:668ab7cc8fbf576ee16b4487bc18f7834186dd63fa56c8bc447ee546b70a590e
+sha256:7f410756f91d18c6325fa6e1d75f41c7a5523b3e6604f5f23c1b6ce7cbced318
 ```
 
 The staged full tool-contract fingerprint is:
 
 ```text
-sha256:b7d8bdafb8a453d5dd68e5ff5136046a9cb7804a3213f1aee78714d353d8dfbb
+sha256:cd66a9a6824642e2145e6aac944d6015bc7fd3c60276030780cd81814780683e
 ```
 
-These fingerprints are not live evidence until Convex and the Worker deploy,
-hosted verification passes, and the ChatGPT app is refreshed against v9.
+These v10 fingerprints are not live evidence until the Worker deploy and hosted
+verification pass, then the existing ChatGPT app is refreshed in place.
 
 ### GitHub execution provider
 
@@ -83,7 +84,7 @@ privacy, observation limits, and no blind redispatch. A durable command inbox,
 full restartable continuation, and live model/provider mounting remain follow-up
 work.
 
-## This revision: first composite operation
+## Current composite operation and this revision
 
 `github_publish_change` composes three existing provider services under one
 durable operation:
@@ -109,14 +110,18 @@ blindly dispatches the provider call again. A monotonic heartbeat extension is
 accepted only while run, owner, run generation, and lease generation remain
 exact.
 
-The first slice is intentionally bounded to one file. Compensation is durable
-as a plan and lifecycle, but automated compensators are not yet mounted.
+The first slice is intentionally bounded to one file. This revision adds a
+receipt-driven reconciler for lost workflow settlement. The caller resubmits
+the exact original bounded request, Stensibly recomputes every retained digest,
+and an already-settled branch/file/PR receipt can advance the workflow without
+another GitHub write. Missing or ambiguous receipts remain blocked. Compensation
+is durable as a plan and lifecycle, but automated compensators are not yet mounted.
 
 ## Required dogfood lifecycle
 
 ```text
 fresh authenticated ChatGPT conversation
-  → discover/list exact v9 tool surface
+  → discover/list exact v10 tool surface
   → read accepted GitHub project context
   → create and claim one bounded work item/run
   → call github_publish_change once
@@ -134,9 +139,9 @@ reconciled from the durable operation and provider keys before another write.
 
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
-| P0 | First operation rollout (#154) | Durable SQLite/Convex saga and bounded GitHub composer are in this candidate | Merge, deploy Convex then Worker, verify the 45-tool contract, refresh ChatGPT, and dogfood one exact branch→file→PR journey | Hosted success and exact replay produce one branch, one commit, one PR, and durable readback across reconnect |
+| P0 | First operation rollout (#154) | The composer is merged and live at `d7a5b89a`; receipt-driven workflow reconciliation is in this candidate | Deploy the 46-tool contract, refresh ChatGPT, and dogfood one exact branch→file→PR journey including response-loss recovery | Hosted success, reconciliation, and exact replay produce one branch, one commit, one PR, and durable readback across reconnect |
 | P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, and deployment controls are materially stronger; repeated ChatGPT execution remains the proof gap | Run the complete lifecycle above in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
-| P1 | Reconciliation and compensation | Ambiguous steps expose a deterministic underlying provider key; compensation plans are durable but not executable | Add a reconciler, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Pending steps settle without redispatch and reversible operations can be safely compensated |
+| P1 | Reconciliation and compensation | Settled provider receipts can now repair lost workflow settlement without redispatch; truly ambiguous provider outcomes still require independent readback | Add exact provider readback reconciliation, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
 | P1 | Operation catalogue | Raw provider reach is broad but model exposure should stay compact | Add `repo_health`, plan-only `branch_tidy`, then `land_pr` and `ci_diagnose` behind searchable capability discovery | Agents can request common outcomes without manually orchestrating long raw-tool chains |
 | P1 | Restartable runner execution | Both SDK adapters and the bounded host exist; durable command delivery and continuation remain incomplete | Add the command inbox/observation receipt and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
 
@@ -160,11 +165,11 @@ prove:
 
 ## Immediate sequence
 
-1. Integrate and deploy this first operation through the protected workflows.
-2. Verify the hosted v9/45 contract and refresh the existing ChatGPT app; do not
+1. Integrate and deploy receipt-driven workflow reconciliation.
+2. Verify the hosted v10/46 contract and refresh the existing ChatGPT app; do not
    recreate it unless the host refuses an in-place refresh.
 3. Dogfood one bounded publish-change operation and exact replay.
-4. Implement reconciliation from the retained provider idempotency key.
+4. Add independent provider readback for receipts that remain genuinely ambiguous.
 5. Add `repo_health`, then plan-only `branch_tidy` before branch deletion.
 6. Add exact compensators and build `land_pr` from the same operation spine.
 7. Instrument catalogue → policy → registration → invocation → admission →

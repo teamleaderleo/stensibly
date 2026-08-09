@@ -4,11 +4,11 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-The hosted production composition defines **45** public MCP tools with two release fingerprints:
+The hosted production composition defines **46** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:b7d8bdafb8a453d5dd68e5ff5136046a9cb7804a3213f1aee78714d353d8dfbb
-names-only diagnostic:       sha256:668ab7cc8fbf576ee16b4487bc18f7834186dd63fa56c8bc447ee546b70a590e
+full ChatGPT tool contract: sha256:cd66a9a6824642e2145e6aac944d6015bc7fd3c60276030780cd81814780683e
+names-only diagnostic:       sha256:7f410756f91d18c6325fa6e1d75f41c7a5523b3e6604f5f23c1b6ce7cbced318
 ```
 
 The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 44 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.

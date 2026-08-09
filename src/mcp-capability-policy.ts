@@ -128,6 +128,14 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
     ...writePolicy("github_publish_change", directProject, "bounded_write"),
     defaultExposure: "searchable",
   },
+  {
+    ...writePolicy(
+      "reconcile_github_publish_change",
+      directProject,
+      "bounded_write",
+    ),
+    defaultExposure: "searchable",
+  },
   writePolicy("github_update_file", directProject),
   writePolicy("github_update_issue", directProject),
   writePolicy("propose_continuation", sourceItemId),

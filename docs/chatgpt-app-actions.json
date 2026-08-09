@@ -1,9 +1,9 @@
 {
-  "snapshotVersion": 9,
+  "snapshotVersion": 10,
   "manifestVersion": 1,
-  "toolCount": 45,
-  "toolManifestFingerprint": "sha256:668ab7cc8fbf576ee16b4487bc18f7834186dd63fa56c8bc447ee546b70a590e",
-  "toolContractFingerprint": "sha256:b7d8bdafb8a453d5dd68e5ff5136046a9cb7804a3213f1aee78714d353d8dfbb",
+  "toolCount": 46,
+  "toolManifestFingerprint": "sha256:7f410756f91d18c6325fa6e1d75f41c7a5523b3e6604f5f23c1b6ce7cbced318",
+  "toolContractFingerprint": "sha256:cd66a9a6824642e2145e6aac944d6015bc7fd3c60276030780cd81814780683e",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -43,6 +43,7 @@
     "list_work",
     "propose_continuation",
     "queue_continuation_for_supervisor",
+    "reconcile_github_publish_change",
     "record_event",
     "release_work",
     "renew_claim",

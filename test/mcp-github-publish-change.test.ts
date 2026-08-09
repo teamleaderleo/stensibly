@@ -24,6 +24,10 @@ describe("GitHub publish-change MCP operation", () => {
           received.push(input);
           return workflow;
         },
+        reconcile: async (input: any) => {
+          received.push({ ...input, reconciled: true });
+          return workflow;
+        },
       } as any),
       {
         async getRun(id: string) {
@@ -121,6 +125,38 @@ describe("GitHub publish-change MCP operation", () => {
           holderId: actorId,
           generation: 3,
           expiresAt: "2026-08-10T00:10:00.000Z",
+        },
+      });
+
+      const reconciled = await client.callTool({
+        name: "reconcile_github_publish_change",
+        arguments: {
+          project,
+          repository,
+          runId: "run_operation",
+          branch: "codex/operation",
+          fromCommitSha: "a".repeat(40),
+          file: {
+            operation: "create_file",
+            path: "docs/operation.md",
+            content: "bounded change\n",
+            message: "Add bounded operation",
+          },
+          base: "main",
+          expectedBaseSha: "a".repeat(40),
+          title: "Publish bounded operation",
+          draft: true,
+          idempotencyKey: "publish-change:mcp",
+        },
+      });
+      expect(reconciled.isError).not.toBe(true);
+      expect(received).toHaveLength(2);
+      expect(received[1]).toMatchObject({
+        reconciled: true,
+        runId: "run_operation",
+        authorityFence: {
+          resource: "run:run_operation:generation:7",
+          generation: 3,
         },
       });
 

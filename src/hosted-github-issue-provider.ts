@@ -159,13 +159,14 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     : mountedReads;
   if (!config.publicationWritesEnabled) return mountedIssueWrites;
 
+  const providerReceiptStore = durableReceiptStore(ledger);
   const publicationWrites = canonicalHostedPublicationWriteService(
     new GitHubPublicationProviderService({
       projects,
       bindings,
       authority,
       adapter: new GitHubRestPublicationWriteAdapter(adapterOptions),
-      receipts: durableReceiptStore(ledger),
+      receipts: providerReceiptStore,
       now: () => new Date(now()).toISOString(),
     }),
   );
@@ -234,7 +235,11 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
           throw new Error("Hosted GitHub operation runner authority is stale or mismatched");
         }
       },
-      publication: publicationWrites,
+      publication: {
+        ...publicationWrites,
+        getGitHubProviderReceipt:
+          providerReceiptStore.getGitHubProviderReceipt.bind(providerReceiptStore),
+      },
       repositoryFiles: {
         ...repositoryFileWrites,
         getRepositoryWriteReceipt:
