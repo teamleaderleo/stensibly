@@ -199,20 +199,18 @@ describe("hosted dashboard auth URLs and logout", () => {
     await expect(revokeHostedSession(failure, endpoint)).rejects.toThrow("Sign out returned HTTP 503");
   });
 
-  test("wires expired-session reset and forbidden-session sign-out", async () => {
+  test("keeps ordinary sign-in calm and preserves forbidden-session sign-out", async () => {
     const [html, bridge] = await Promise.all([
       readFile(new URL("../site/index.html", import.meta.url), "utf8"),
       readFile(new URL("../site/hosted-session-bridge.js", import.meta.url), "utf8"),
     ]);
     expect(html).toContain('id="hosted-sign-out"');
     expect(bridge).toContain("onHostedSessionRejected: preserveHostedSessionRecovery");
-    expect(bridge).toContain("status === 401 ? 'Reset sign-in' : 'Sign out'");
-    expect(bridge).toContain("This browser session expired. Reset sign-in to continue.");
+    expect(bridge).toContain("hostedSignOutButton.hidden = status === 401");
+    expect(bridge).toContain("Sign in with GitHub to open the tower.");
     expect(bridge).toContain("classifyHostedSessionDisconnect(stored, hostedAuthorizationDenied)");
     expect(bridge).toContain("if (mode === 'bearer')");
-    expect(bridge).toContain("const restartGithubSignIn = hostedSessionRejectedStatus === 401");
-    expect(bridge).toContain("if (restartGithubSignIn)");
-    expect(bridge).toContain("beginGithubSignIn();");
+    expect(bridge).not.toContain("restartGithubSignIn");
     expect(bridge).toContain("hostedSignOutButton.textContent = 'Sign out'");
     expect(bridge).toContain("clearDashboardSnapshot(optionalLocalStorage())");
     expect(bridge).toContain("clearHostedMarker()");

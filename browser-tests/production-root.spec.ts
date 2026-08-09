@@ -173,6 +173,11 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-hidden", "true");
   await expect(page.locator("#dashboard")).toBeHidden();
   await expect(page.locator("#connect-form [name=token]")).toBeHidden();
+  await expect(page.locator("#connection-error")).toBeHidden();
+  await expect(page.locator("#connection-state")).toHaveText("disconnected");
+  await expect(page.locator("#hosted-sign-out")).toBeHidden();
+
+  await attachScreenshot(page, testInfo, "production-root-signed-out-narrow-dark");
 
   await page.getByText("Use API token", { exact: true }).click();
   await expect(page.locator("#connect-form [name=token]")).toBeVisible();
@@ -188,7 +193,6 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   expect(viewportBoundary.reduced).toBe(true);
   expect(viewportBoundary.dark).toBe(true);
 
-  await attachScreenshot(page, testInfo, "production-root-signed-out-narrow-dark");
   expect(errors).toEqual([]);
 });
 
