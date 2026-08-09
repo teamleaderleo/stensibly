@@ -6,21 +6,25 @@ import { GitHubIssueProviderService } from "./github-issue-provider-service.js";
 import {
   withGitHubIssueProviderReadService,
   withGitHubIssueProviderWriteService,
+  withGitHubPublicationProviderWriteService,
   type GitHubIssueProviderReadService,
   type GitHubIssueProviderWriteService,
+  type GitHubPublicationProviderWriteService,
 } from "./github-issue-provider-mcp.js";
 import type {
-  GitHubIssueProviderOperation,
+  GitHubProviderOperation,
   GitHubProviderAuthority,
   GitHubProviderReceipt,
   GitHubProviderReceiptReservation,
   GitHubProviderReceiptStore,
   GitHubProviderRequestContext,
 } from "./github-provider-contracts.js";
+import { GitHubPublicationProviderService } from "./github-publication-provider-service.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import { HostedGitHubAttachmentBindingStore } from "./hosted-github-attachment-binding.js";
 import { GitHubRestIssueProviderAdapter } from "./github-rest-issue-adapter.js";
 import { GitHubRestIssueWriteAdapter } from "./github-rest-issue-write-adapter.js";
+import { GitHubRestPublicationWriteAdapter } from "./github-rest-publication-write-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 
@@ -38,17 +42,22 @@ interface HostedGitHubIssueProviderConfig {
   apiBaseUrl: string;
   credentialRef: string;
   issueWritesEnabled: boolean;
+  publicationWritesEnabled: boolean;
 }
 
-const readOperations = new Set<GitHubIssueProviderOperation>([
+const readOperations = new Set<GitHubProviderOperation>([
   "github_list_issues",
   "github_search_issues",
   "github_get_issue",
 ]);
-const initialWriteOperations = new Set<GitHubIssueProviderOperation>([
+const initialWriteOperations = new Set<GitHubProviderOperation>([
   "github_create_issue",
   "github_update_issue",
   "github_add_issue_comment",
+]);
+const publicationWriteOperations = new Set<GitHubProviderOperation>([
+  "github_create_branch",
+  "github_create_pull_request",
 ]);
 
 /**
@@ -62,7 +71,8 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
   overrides: HostedGitHubIssueProviderOverrides = {},
 ): T
   & Partial<GitHubIssueProviderReadService>
-  & Partial<GitHubIssueProviderWriteService> {
+  & Partial<GitHubIssueProviderWriteService>
+  & Partial<GitHubPublicationProviderWriteService> {
   const config = hostedGitHubIssueProviderConfig(env);
   if (!config) return ledger;
   const projects = projectAttachmentLedger(ledger);
@@ -106,19 +116,33 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     ledger,
     canonicalHostedReadService(readService),
   );
-  if (!config.issueWritesEnabled) return mountedReads;
+  const mountedIssueWrites = config.issueWritesEnabled
+    ? withGitHubIssueProviderWriteService(
+      mountedReads,
+      canonicalHostedWriteService(new GitHubIssueProviderService({
+        projects,
+        bindings,
+        authority,
+        adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
+        receipts: durableReceiptStore(ledger),
+        now: () => new Date(now()).toISOString(),
+      })),
+    )
+    : mountedReads;
+  if (!config.publicationWritesEnabled) return mountedIssueWrites;
 
-  const writeService = new GitHubIssueProviderService({
-    projects,
-    bindings,
-    authority,
-    adapter: new GitHubRestIssueWriteAdapter(adapterOptions),
-    receipts: durableReceiptStore(ledger),
-    now: () => new Date(now()).toISOString(),
-  });
-  return withGitHubIssueProviderWriteService(
-    mountedReads,
-    canonicalHostedWriteService(writeService),
+  return withGitHubPublicationProviderWriteService(
+    mountedIssueWrites,
+    canonicalHostedPublicationWriteService(
+      new GitHubPublicationProviderService({
+        projects,
+        bindings,
+        authority,
+        adapter: new GitHubRestPublicationWriteAdapter(adapterOptions),
+        receipts: durableReceiptStore(ledger),
+        now: () => new Date(now()).toISOString(),
+      }),
+    ),
   );
 }
 
@@ -135,6 +159,10 @@ function hostedGitHubIssueProviderConfig(
     env,
     "STENSIBLY_GITHUB_ISSUE_WRITES_ENABLED",
   );
+  const publicationWritesEnabled = optionalBooleanEnv(
+    env,
+    "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED",
+  );
   const keys = [
     "STENSIBLY_GITHUB_APP_ID",
     "STENSIBLY_GITHUB_APP_PRIVATE_KEY",
@@ -144,6 +172,7 @@ function hostedGitHubIssueProviderConfig(
     "STENSIBLY_GITHUB_API_BASE_URL",
   ] as const;
   const configured = issueWritesEnabled
+    || publicationWritesEnabled
     || keys.some((key) => Boolean(trimmed(env[key])));
   if (!configured) return null;
 
@@ -174,6 +203,7 @@ function hostedGitHubIssueProviderConfig(
     apiBaseUrl,
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
     issueWritesEnabled,
+    publicationWritesEnabled,
   };
 }
 
@@ -187,7 +217,7 @@ class HostedGitHubAuthority implements GitHubProviderAuthority {
   async authorizeGitHubOperation(input: {
     project: string;
     repositoryFullName: string;
-    operation: GitHubIssueProviderOperation;
+    operation: GitHubProviderOperation;
     actorId: string;
     clientId: string;
     capabilityGrantId?: string;
@@ -203,6 +233,12 @@ class HostedGitHubAuthority implements GitHubProviderAuthority {
     if (
       this.#config.issueWritesEnabled
       && initialWriteOperations.has(input.operation)
+    ) {
+      return { allowed: true };
+    }
+    if (
+      this.#config.publicationWritesEnabled
+      && publicationWriteOperations.has(input.operation)
     ) {
       return { allowed: true };
     }
@@ -273,6 +309,16 @@ function canonicalHostedWriteService(
     createIssue: (input) => service.createIssue(canonicalRequest(input)),
     updateIssue: (input) => service.updateIssue(canonicalRequest(input)),
     addIssueComment: (input) => service.addIssueComment(canonicalRequest(input)),
+  };
+}
+
+function canonicalHostedPublicationWriteService(
+  service: GitHubPublicationProviderWriteService,
+): GitHubPublicationProviderWriteService {
+  return {
+    createBranch: (input) => service.createBranch(canonicalRequest(input)),
+    createPullRequest: (input) =>
+      service.createPullRequest(canonicalRequest(input)),
   };
 }
 

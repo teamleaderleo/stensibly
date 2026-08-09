@@ -1,9 +1,9 @@
 {
-  "snapshotVersion": 6,
+  "snapshotVersion": 7,
   "manifestVersion": 1,
-  "toolCount": 38,
-  "toolManifestFingerprint": "sha256:c613de39802426b6788c802ad6d1dd64600f361b1234dd591530bf6709a76836",
-  "toolContractFingerprint": "sha256:b895a016a9d411d5819155dc355f6c71f7683019ba5be798e1cc7e68a9fdee75",
+  "toolCount": 40,
+  "toolManifestFingerprint": "sha256:03efff06afd477909fa3885b1c5b10d1b856d6427f27aa14bccdc31fefa4163c",
+  "toolContractFingerprint": "sha256:4df5185ea9981931151cf460f8155953cd7e526384317852133d4ce026f78a1c",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -21,7 +21,9 @@
     "get_runner_context",
     "github_add_issue_comment",
     "github_call_tool",
+    "github_create_branch",
     "github_create_issue",
+    "github_create_pull_request",
     "github_get_issue",
     "github_get_tool",
     "github_list_issues",

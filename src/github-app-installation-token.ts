@@ -1,6 +1,9 @@
 import { createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { receiverSafeFetch } from "./fetch-implementation.js";
-import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
+import {
+  GitHubProviderRejectedError,
+  githubPublicationProviderRejectionCode,
+} from "./github-provider-contracts.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 
 export const githubInstallationPermissionNames = [
@@ -15,14 +18,18 @@ export const githubInstallationPermissionNames = [
 export type GitHubInstallationPermissionName =
   typeof githubInstallationPermissionNames[number];
 
+type GitHubWriteInstallationPermissionName = Extract<
+  GitHubInstallationPermissionName,
+  "issues" | "contents" | "pull_requests"
+>;
 type GitHubReadInstallationPermissionName = Exclude<
   GitHubInstallationPermissionName,
-  "issues"
+  GitHubWriteInstallationPermissionName
 >;
 
 export type GitHubInstallationPermissionInput =
   | {
-    name: "issues";
+    name: GitHubWriteInstallationPermissionName;
     access: "read" | "write";
   }
   | {
@@ -85,6 +92,11 @@ const githubApiVersion = "2022-11-28";
 const installationTokenResponseMaximumBytes = 64 * 1024;
 const decimalByteLengthPattern = /^(?:0|[1-9][0-9]*)$/;
 const permissionNames = new Set<string>(githubInstallationPermissionNames);
+const writablePermissionNames = new Set<string>([
+  "issues",
+  "contents",
+  "pull_requests",
+]);
 
 /**
  * Mints short-lived, repository-narrowed GitHub App installation tokens.
@@ -184,7 +196,7 @@ export class GitHubAppInstallationTokenMinter
         authorized = decision;
       } catch {
         throw new GitHubProviderRejectedError(
-          "github_repository_authority_unavailable",
+          githubPublicationProviderRejectionCode.repositoryAuthorityUnavailable,
           "GitHub repository authority could not be verified",
         );
       }
@@ -199,7 +211,7 @@ export class GitHubAppInstallationTokenMinter
     const now = this.#now();
     if (!Number.isFinite(now)) {
       throw new GitHubProviderRejectedError(
-        "github_credential_mint_failed",
+        githubPublicationProviderRejectionCode.credentialMintFailed,
         "GitHub installation token mint requires a valid current time",
       );
     }
@@ -242,19 +254,19 @@ export class GitHubAppInstallationTokenMinter
     const expiresAtMs = Date.parse(expiresAt);
     if (expiresAtMs <= now + this.#refreshSkewMs) {
       throw new GitHubProviderRejectedError(
-        "github_credential_mint_failed",
+        githubPublicationProviderRejectionCode.credentialMintFailed,
         "GitHub returned an installation token without a usable lifetime",
       );
     }
     if (!hasExactPermissionScope(tokenResponse.permissions, permission)) {
       throw new GitHubProviderRejectedError(
-        "github_installation_permission_insufficient",
+        githubPublicationProviderRejectionCode.installationPermissionInsufficient,
         `GitHub App installation did not grant exact ${permission.name}:${permission.access} permission scope`,
       );
     }
     if (!hasExactRepositoryScope(tokenResponse, repositoryFullName)) {
       throw new GitHubProviderRejectedError(
-        "github_installation_permission_insufficient",
+        githubPublicationProviderRejectionCode.installationPermissionInsufficient,
         `GitHub App installation did not grant exact repository ${repositoryFullName}`,
       );
     }
@@ -282,7 +294,7 @@ function repositoryOutsideInstallation(
   repositoryFullName: string,
 ): GitHubProviderRejectedError {
   return new GitHubProviderRejectedError(
-    "github_repository_outside_installation",
+    githubPublicationProviderRejectionCode.repositoryOutsideInstallation,
     `GitHub App installation is not configured for ${repositoryFullName}`,
   );
 }
@@ -335,7 +347,7 @@ function admitPermission(value: unknown): Readonly<GitHubInstallationPermissionI
   if (access !== "read" && access !== "write") {
     throw new RangeError("GitHub installation permission access is invalid");
   }
-  if (name !== "issues" && access !== "read") {
+  if (!writablePermissionNames.has(name) && access !== "read") {
     throw new RangeError(
       `GitHub installation permission ${name} supports read access only`,
     );
@@ -560,7 +572,7 @@ function credentialResponseTooLarge(): GitHubProviderRejectedError {
 
 function invalidCredentialResponse(message: string): GitHubProviderRejectedError {
   return new GitHubProviderRejectedError(
-    "github_provider_invalid_response",
+    githubPublicationProviderRejectionCode.providerInvalidResponse,
     message,
   );
 }
@@ -569,7 +581,7 @@ function credentialTransportError(
   stage: "request" | "response",
 ): GitHubProviderRejectedError {
   return new GitHubProviderRejectedError(
-    "github_credential_mint_failed",
+    githubPublicationProviderRejectionCode.credentialMintFailed,
     stage === "request"
       ? "GitHub installation token request failed before a response was available"
       : "GitHub installation token response could not be read",
@@ -579,7 +591,7 @@ function credentialTransportError(
 function secretString(value: unknown, label: string): string {
   if (typeof value !== "string" || !value || value.length > 8_192) {
     throw new GitHubProviderRejectedError(
-      "github_credential_mint_failed",
+      githubPublicationProviderRejectionCode.credentialMintFailed,
       `${label} was absent from the provider response`,
     );
   }
@@ -589,14 +601,14 @@ function secretString(value: unknown, label: string): string {
 function timestamp(value: unknown, label: string): string {
   if (typeof value !== "string") {
     throw new GitHubProviderRejectedError(
-      "github_credential_mint_failed",
+      githubPublicationProviderRejectionCode.credentialMintFailed,
       `${label} was absent from the provider response`,
     );
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     throw new GitHubProviderRejectedError(
-      "github_credential_mint_failed",
+      githubPublicationProviderRejectionCode.credentialMintFailed,
       `${label} was invalid`,
     );
   }
@@ -662,19 +674,37 @@ function githubHttpError(
 ): GitHubProviderRejectedError {
   const message = `GitHub could not ${operation} (HTTP ${status})`;
   if (status === 401) {
-    return new GitHubProviderRejectedError("github_app_credential_rejected", message);
+    return new GitHubProviderRejectedError(
+      githubPublicationProviderRejectionCode.appCredentialRejected,
+      message,
+    );
   }
   if (status === 403) {
-    return new GitHubProviderRejectedError("github_installation_permission_denied", message);
+    return new GitHubProviderRejectedError(
+      githubPublicationProviderRejectionCode.installationPermissionDenied,
+      message,
+    );
   }
   if (status === 404) {
-    return new GitHubProviderRejectedError("github_installation_absent", message);
+    return new GitHubProviderRejectedError(
+      githubPublicationProviderRejectionCode.installationAbsent,
+      message,
+    );
   }
   if (status === 422) {
-    return new GitHubProviderRejectedError("github_installation_request_rejected", message);
+    return new GitHubProviderRejectedError(
+      githubPublicationProviderRejectionCode.installationRequestRejected,
+      message,
+    );
   }
   if (status === 429 || status >= 500) {
-    return new GitHubProviderRejectedError("github_provider_temporarily_unavailable", message);
+    return new GitHubProviderRejectedError(
+      githubPublicationProviderRejectionCode.providerTemporarilyUnavailable,
+      message,
+    );
   }
-  return new GitHubProviderRejectedError("github_credential_mint_failed", message);
+  return new GitHubProviderRejectedError(
+    githubPublicationProviderRejectionCode.credentialMintFailed,
+    message,
+  );
 }

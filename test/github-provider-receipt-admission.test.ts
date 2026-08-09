@@ -4,6 +4,8 @@ import {
   canonicalGitHubProviderReceiptJson,
   parseGitHubProviderReceiptJson,
 } from "../src/github-provider-receipt-admission.ts";
+import type { GitHubPullRequestResult } from "../src/github-provider-contracts.ts";
+import { githubPullRequestSourceRevision } from "../src/github-provider-validation.ts";
 
 describe("GitHub provider receipt admission", () => {
   test("round-trips one canonical deeply frozen receipt", () => {
@@ -82,6 +84,48 @@ describe("GitHub provider receipt admission", () => {
       operation: "github_update_issue",
       result: commentResult(),
     }))).toThrow("issue operation has a comment result");
+    expect(() => admitGitHubProviderReceipt(receipt({
+      operation: "github_create_issue",
+      result: branchResult(),
+    }))).toThrow("issue operation has a publication result");
+  });
+
+  test("round-trips bounded branch and pull-request results without body text", () => {
+    const branch = admitGitHubProviderReceipt(receipt({
+      operation: "github_create_branch",
+      target: "teamleaderleo/stensibly:refs/heads/codex/publication",
+      state: "succeeded",
+      updatedAt: "2026-08-02T00:00:01.000Z",
+      providerRequestId: "BRANCH:CREATE",
+      result: branchResult(),
+      verification: {
+        state: "passed",
+        checkedAt: "2026-08-02T00:00:01.000Z",
+        sourceRevision: "a".repeat(40),
+      },
+    }));
+    expect(parseGitHubProviderReceiptJson(
+      canonicalGitHubProviderReceiptJson(branch),
+    )).toEqual(branch);
+
+    const result = pullRequestResult();
+    const pullRequest = admitGitHubProviderReceipt(receipt({
+      operation: "github_create_pull_request",
+      target:
+        "teamleaderleo/stensibly:pull:new:codex/publication->main",
+      state: "succeeded",
+      updatedAt: "2026-08-02T00:00:01.000Z",
+      providerRequestId: "PR:CREATE",
+      result,
+      verification: {
+        state: "passed",
+        checkedAt: "2026-08-02T00:00:01.000Z",
+        sourceRevision: result.sourceRevision,
+      },
+    }));
+    const json = canonicalGitHubProviderReceiptJson(pullRequest);
+    expect(json).not.toContain("unretained body");
+    expect(parseGitHubProviderReceiptJson(json)).toEqual(pullRequest);
   });
 
   test("rejects reversed result chronology", () => {
@@ -198,6 +242,42 @@ function commentResult(): Record<string, unknown> {
     sourceRevision: "github-rest:IC_123456789:2026-08-02T00:00:01.000Z",
     bodyRevision: { byteLength: 12, sha256: hash("e") },
     containsBody: false,
+  };
+}
+
+function branchResult(): Record<string, unknown> {
+  return {
+    kind: "branch",
+    name: "codex/publication",
+    ref: "refs/heads/codex/publication",
+    commitSha: "a".repeat(40),
+    canonicalUrl:
+      "https://github.com/teamleaderleo/stensibly/tree/codex%2Fpublication",
+    sourceRevision: "a".repeat(40),
+  };
+}
+
+function pullRequestResult(): GitHubPullRequestResult {
+  const retained = {
+    kind: "pull_request",
+    number: 42,
+    providerNodeId: "PR_kwDO_publication",
+    title: "Guarded publication",
+    head: "codex/publication",
+    headSha: "a".repeat(40),
+    base: "main",
+    baseSha: "b".repeat(40),
+    draft: true,
+    state: "open",
+    canonicalUrl: "https://github.com/teamleaderleo/stensibly/pull/42",
+    createdAt: "2026-08-02T00:00:00.000Z",
+    updatedAt: "2026-08-02T00:00:01.000Z",
+    bodyRevision: { byteLength: 15, sha256: hash("e") },
+    containsBody: false,
+  } satisfies Omit<GitHubPullRequestResult, "sourceRevision">;
+  return {
+    ...retained,
+    sourceRevision: githubPullRequestSourceRevision(retained),
   };
 }
 

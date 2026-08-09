@@ -1,6 +1,7 @@
-import type {
-  GitHubIssueProviderOperation,
-  GitHubProviderReceipt,
+import {
+  githubIssueProviderOperations,
+  type GitHubIssueProviderOperation,
+  type GitHubProviderReceipt,
 } from "./github-provider-contracts.js";
 import {
   parseGitHubIssueExternalId,
@@ -84,6 +85,10 @@ interface AdmittedReceiptTarget {
   issueNumber: number | null;
 }
 
+type GitHubIssueProviderReceipt = GitHubProviderReceipt & {
+  operation: GitHubIssueProviderOperation;
+};
+
 export function compileGitHubProviderContextReconciliation(
   value: unknown,
 ): GitHubProviderContextReconciliationProposalV1 {
@@ -91,7 +96,15 @@ export function compileGitHubProviderContextReconciliation(
   if (input.schemaVersion !== GITHUB_PROVIDER_CONTEXT_RECONCILIATION_V1) {
     throw new RangeError("GitHub provider context reconciliation schemaVersion must equal 1");
   }
-  const receipt = admitGitHubProviderReceipt(input.receipt as GitHubProviderReceipt);
+  const admittedReceipt = admitGitHubProviderReceipt(
+    input.receipt as GitHubProviderReceipt,
+  );
+  if (!isIssueProviderOperation(admittedReceipt.operation)) {
+    throw new Error(
+      "GitHub publication receipts do not produce issue-context reconciliation",
+    );
+  }
+  const receipt = admittedReceipt as GitHubIssueProviderReceipt;
   assertReceiptLifecycleCoherence(receipt);
   const target = admitReceiptTarget(receipt);
   const current = input.current === null ? null : admitCurrentIdentity(input.current);
@@ -129,6 +142,12 @@ export function compileGitHubProviderContextReconciliation(
   });
 }
 
+function isIssueProviderOperation(
+  value: GitHubProviderReceipt["operation"],
+): value is GitHubIssueProviderOperation {
+  return (githubIssueProviderOperations as readonly string[]).includes(value);
+}
+
 interface Decision {
   externalId: string | null;
   providerSourceRevision: string | null;
@@ -138,7 +157,7 @@ interface Decision {
 }
 
 function decide(
-  receipt: GitHubProviderReceipt,
+  receipt: GitHubIssueProviderReceipt,
   current: CurrentGitHubIssueContextIdentityV1 | null,
   target: AdmittedReceiptTarget,
 ): Decision {
@@ -217,7 +236,7 @@ function decide(
   );
 }
 
-function assertReceiptLifecycleCoherence(receipt: GitHubProviderReceipt): void {
+function assertReceiptLifecycleCoherence(receipt: GitHubIssueProviderReceipt): void {
   if (!receiptProducingOperations.has(receipt.operation)) {
     throw new Error("GitHub operation does not produce a provider write receipt");
   }
@@ -307,7 +326,7 @@ function assertReceiptLifecycleCoherence(receipt: GitHubProviderReceipt): void {
 }
 
 function admitReceiptTarget(
-  receipt: GitHubProviderReceipt,
+  receipt: GitHubIssueProviderReceipt,
 ): AdmittedReceiptTarget {
   const repositoryPrefix = `${receipt.repositoryFullName}#`;
   if (receipt.operation === "github_create_issue") {
@@ -359,7 +378,7 @@ function admitReceiptTarget(
 }
 
 function assertSettledIssueReadback(
-  receipt: GitHubProviderReceipt,
+  receipt: GitHubIssueProviderReceipt,
   snapshot: GitHubIssueContext,
   target: AdmittedReceiptTarget,
 ): void {
