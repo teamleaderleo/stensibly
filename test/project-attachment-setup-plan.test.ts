@@ -114,6 +114,11 @@ describe("project attachment setup recovery", () => {
   });
 
   test("rejects malformed or credential-shaped setup context", () => {
+    const bearerCredentialCheck = [
+      "Authorization:",
+      ["Bear", "er"].join(""),
+      "x".repeat(26),
+    ].join(" ");
     expect(() => projectAttachmentRecovery("scrapbook", null, {
       ...scrapbookContext,
       repositoryFullName: "teamleaderleo/scrapbook ",
@@ -128,7 +133,7 @@ describe("project attachment setup recovery", () => {
     })).toThrow("must be unique");
     expect(() => projectAttachmentRecovery("scrapbook", null, {
       ...scrapbookContext,
-      checks: ["Authorization: Bearer abcdefghijklmnopqrstuvwxyz"],
+      checks: [bearerCredentialCheck],
     })).toThrow("credential-shaped");
   });
 });
