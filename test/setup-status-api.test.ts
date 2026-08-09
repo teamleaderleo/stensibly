@@ -34,6 +34,15 @@ class FixedAuthenticator implements ApiTokenAuthenticator {
   }
 }
 
+class CountingAuthenticator extends FixedAuthenticator {
+  calls = 0;
+
+  override async authenticate(rawToken: string): Promise<TokenPrincipal | null> {
+    this.calls += 1;
+    return super.authenticate(rawToken);
+  }
+}
+
 let store: StensiblyStore;
 let ledger: SqliteWorkLedger;
 
@@ -77,6 +86,28 @@ describe("project setup status API", () => {
       principalKind: "anonymous",
       hasAcceptedAttachment: false,
     }]);
+  });
+
+  test("authenticates the setup route and ordinary API routes once each", async () => {
+    const authenticator = new CountingAuthenticator();
+    const app = createServerApp(store, {
+      ledger,
+      authenticator,
+      httpAuth: { required: true },
+      setupStatusObserver: { observe: () => ({ setup: setup("missing") }) },
+    });
+
+    const setupResponse = await app.request("/api/v1/projects/scrapbook/setup-status", {
+      headers: bearer("reader"),
+    });
+    expect(setupResponse.status).toBe(200);
+    expect(authenticator.calls).toBe(1);
+
+    const itemsResponse = await app.request("/api/v1/items?project=scrapbook", {
+      headers: bearer("reader"),
+    });
+    expect(itemsResponse.status).toBe(200);
+    expect(authenticator.calls).toBe(2);
   });
 
   test("checks project read access before observing and returns missing-context recovery", async () => {
