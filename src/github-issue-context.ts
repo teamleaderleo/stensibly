@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./sha256.js";
 
 export const githubIssueRelationshipKinds = [
   "parent",
@@ -215,7 +215,7 @@ export function buildGitHubIssueContext(
     title,
     bodyRevision: {
       present: body !== null,
-      byteLength: body === null ? 0 : Buffer.byteLength(body, "utf8"),
+      byteLength: body === null ? 0 : new TextEncoder().encode(body).byteLength,
       sha256: sha256(stableJson({ present: body !== null, body })),
     },
     state,
@@ -469,7 +469,7 @@ function codeUnitCompare(left: string, right: string): number {
 }
 
 function sha256(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+  return `sha256:${sha256Hex(value)}`;
 }
 
 function stableJson(value: unknown): string {

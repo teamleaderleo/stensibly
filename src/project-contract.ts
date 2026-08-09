@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { sha256Hex } from "./sha256.js";
 
 export const PROJECT_CONTRACT_FILENAME = "STENSIBLY.md";
 export const PROJECT_ATTACHMENT_FORMAT = "stensibly.project-attachment";
@@ -414,7 +414,7 @@ function canonicalJson(value: unknown): string {
 }
 
 function hash(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+  return `sha256:${sha256Hex(value)}`;
 }
 
 function normalizeNewlines(value: string): string {
