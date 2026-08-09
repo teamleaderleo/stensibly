@@ -43,6 +43,15 @@ class CountingAuthenticator extends FixedAuthenticator {
   }
 }
 
+class CountingAttachmentLedger extends SqliteWorkLedger {
+  attachmentReads = 0;
+
+  override async getProjectAttachment(project: string) {
+    this.attachmentReads += 1;
+    return super.getProjectAttachment(project);
+  }
+}
+
 let store: StensiblyStore;
 let ledger: SqliteWorkLedger;
 
@@ -106,6 +115,31 @@ describe("project setup status API", () => {
     });
     expect(itemsResponse.status).toBe(200);
     expect(authenticator.calls).toBe(2);
+  });
+
+  test("admits project identity before attachment or observer dependencies", async () => {
+    const countingLedger = new CountingAttachmentLedger(store);
+    const observerCalls: unknown[] = [];
+    const app = createServerApp(store, {
+      ledger: countingLedger,
+      authenticator: new FixedAuthenticator(),
+      httpAuth: { required: false },
+      setupStatusObserver: {
+        observe(input) {
+          observerCalls.push(input);
+          return { setup: setup("missing") };
+        },
+      },
+    });
+
+    const response = await app.request("/api/v1/projects/Scrapbook/setup-status");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Setup status project is invalid",
+      code: "invalid_project",
+    });
+    expect(countingLedger.attachmentReads).toBe(0);
+    expect(observerCalls).toEqual([]);
   });
 
   test("checks project read access before observing and returns missing-context recovery", async () => {
