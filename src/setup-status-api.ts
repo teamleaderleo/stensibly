@@ -38,9 +38,16 @@ export function createProjectSetupStatusApi(
   const route = "/projects/:project/setup-status";
   app.use(route, createHttpAuthMiddleware(authenticator, authOptions));
   app.get(route, async (context) => {
-    const project = context.req.param("project");
-    const denied = requireHttpAccess(context, "read", project);
+    const rawProject = context.req.param("project");
+    const denied = requireHttpAccess(context, "read", rawProject);
     if (denied) return denied;
+    const project = admittedProjectSlug(rawProject);
+    if (!project) {
+      return context.json({
+        error: "Setup status project is invalid",
+        code: "invalid_project",
+      }, 400);
+    }
 
     const principal = currentPrincipal(context);
     const attachments = projectAttachmentLedger(ledger);
@@ -93,4 +100,12 @@ export function createProjectSetupStatusApi(
     }
   });
   return app;
+}
+
+function admittedProjectSlug(value: string): string | null {
+  return value.length >= 1
+    && value.length <= 80
+    && /^[a-z0-9][a-z0-9-_]*$/u.test(value)
+    ? value
+    : null;
 }
