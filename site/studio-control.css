@@ -363,6 +363,7 @@ html[data-theme="light"] .theme-moon {
   border-top: 1px solid var(--line);
 }
 
+html[data-app-mode="connecting"] .hero-login,
 html[data-app-mode="connected"] .hero-login,
 html[data-app-mode="degraded"] .hero-login {
   display: none;

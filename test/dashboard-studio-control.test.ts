@@ -7,7 +7,7 @@ describe("production studio control", () => {
     const html = await siteFile("index.html");
     const studioIndex = html.indexOf('href="/studio-control.css"');
 
-    expect(html).toContain('<html lang="en" data-theme="dark" data-dashboard-view="overview">');
+    expect(html).toContain('<html lang="en" data-theme="dark" data-dashboard-view="overview" data-app-mode="connecting">');
     expect(studioIndex).toBeGreaterThan(html.indexOf('href="/root-mode-status.css"'));
     for (const retired of [
       "login-scrapbook.css",

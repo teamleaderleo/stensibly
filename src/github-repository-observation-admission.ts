@@ -111,8 +111,15 @@ export type BoundedJsonValue =
 
 interface SnapshotState {
   readonly active: WeakSet<object>;
+  readonly maximumValues: number;
+  readonly maximumTotalStringBytes: number;
   visited: number;
   stringBytes: number;
+}
+
+export interface BoundedJsonSnapshotOptions {
+  readonly maximumValues?: number;
+  readonly maximumTotalStringBytes?: number;
 }
 
 interface ValidatedRelationships {
@@ -367,12 +374,27 @@ export function admitGitHubRepositoryObservationEnvelope(
 export function snapshotBoundedJson(
   value: unknown,
   label: string,
+  options: BoundedJsonSnapshotOptions = {},
 ): BoundedJsonValue {
+  const maximumValues = boundedSnapshotLimit(
+    options.maximumValues,
+    maximumAdmissionValues,
+    16_384,
+    "maximumValues",
+  );
+  const totalStringBytes = boundedSnapshotLimit(
+    options.maximumTotalStringBytes,
+    maximumTotalStringBytes,
+    1024 * 1024,
+    "maximumTotalStringBytes",
+  );
   return snapshotJsonValue(
     value,
     label,
     {
       active: new WeakSet<object>(),
+      maximumValues,
+      maximumTotalStringBytes: totalStringBytes,
       visited: 0,
       stringBytes: 0,
     },
@@ -387,7 +409,7 @@ function snapshotJsonValue(
   depth: number,
 ): BoundedJsonValue {
   state.visited += 1;
-  if (state.visited > maximumAdmissionValues || depth > maximumAdmissionDepth) {
+  if (state.visited > state.maximumValues || depth > maximumAdmissionDepth) {
     throw new RangeError(`${label} exceeds the bounded data envelope`);
   }
   if (value === null || typeof value === "boolean") return value;
@@ -396,7 +418,7 @@ function snapshotJsonValue(
     state.stringBytes += bytes;
     if (
       bytes > maximumStringBytes
-      || state.stringBytes > maximumTotalStringBytes
+      || state.stringBytes > state.maximumTotalStringBytes
     ) {
       throw new RangeError(`${label} contains oversized text`);
     }
@@ -422,6 +444,19 @@ function snapshotJsonValue(
   } finally {
     state.active.delete(value);
   }
+}
+
+function boundedSnapshotLimit(
+  value: number | undefined,
+  fallback: number,
+  ceiling: number,
+  label: string,
+): number {
+  const candidate = value ?? fallback;
+  if (!Number.isSafeInteger(candidate) || candidate < 1 || candidate > ceiling) {
+    throw new RangeError(`GitHub observation snapshot ${label} is invalid`);
+  }
+  return candidate;
 }
 
 function snapshotArray(
