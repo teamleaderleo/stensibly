@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A fictional airspace-control chaos toy for Stensibly Labs." />
+  <title>Airspace Control · Stensibly Labs</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body data-stensibly-lab="prototype">
+  <header class="topbar">
+    <a class="brand" href="../" aria-label="Return to all Stensibly Labs variants">
+      <span class="brand-mark" aria-hidden="true">AC</span>
+      <span class="brand-copy"><strong>Airspace Control</strong><small>fictional chaos console · issue #1318</small></span>
+    </a>
+    <div class="top-status">
+      <span class="lamp" aria-hidden="true"></span>
+      <span id="mode-label">Manual sector</span>
+    </div>
+    <div class="top-actions">
+      <button id="crew-toggle" type="button" aria-pressed="false">Release the agents</button>
+      <button id="reset" type="button">Reset sector</button>
+      <a href="../">All variants</a>
+    </div>
+  </header>
+
+  <main class="console">
+    <section class="scope-panel" aria-labelledby="scope-title">
+      <header class="panel-head">
+        <div>
+          <h1 id="scope-title">Mercury Sector</h1>
+          <p>Invented tracks, invented coordinates, wonderfully questionable decisions.</p>
+        </div>
+        <div class="clock" id="sim-clock">T+00:00</div>
+      </header>
+      <div class="boundary" role="note"><strong>Toy simulation:</strong> fictional geometry and commands only. This lab does not model real ATC procedures, navigation data, airports, or operational guidance.</div>
+      <div class="scope-wrap">
+        <svg id="scope" viewBox="0 0 800 600" role="img" aria-label="Fictional radar scope with moving aircraft tracks">
+          <defs>
+            <radialGradient id="scopeFade" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="currentColor" stop-opacity="0.04" />
+              <stop offset="100%" stop-color="currentColor" stop-opacity="0" />
+            </radialGradient>
+          </defs>
+          <rect class="scope-bg" width="800" height="600" rx="18" />
+          <circle class="range-ring" cx="400" cy="300" r="90" />
+          <circle class="range-ring" cx="400" cy="300" r="180" />
+          <circle class="range-ring" cx="400" cy="300" r="270" />
+          <line class="axis" x1="400" y1="20" x2="400" y2="580" />
+          <line class="axis" x1="40" y1="300" x2="760" y2="300" />
+          <circle class="scope-fade" cx="400" cy="300" r="280" />
+          <g id="conflict-layer"></g>
+          <g id="track-layer"></g>
+        </svg>
+        <div class="scope-legend"><span>ALT = playful level</span><span>HDG = abstract heading</span><span>◆ = selected</span></div>
+      </div>
+    </section>
+
+    <aside class="side-panel" aria-label="Controller desk">
+      <section class="panel selected-panel" aria-labelledby="selected-title">
+        <header class="panel-head compact"><h2 id="selected-title">Selected track</h2><span id="selected-chip">—</span></header>
+        <div id="selected-detail" class="selected-detail">Select a track on the scope.</div>
+        <div class="command-grid" aria-label="Toy control commands">
+          <button type="button" data-command="left">Turn left</button>
+          <button type="button" data-command="right">Turn right</button>
+          <button type="button" data-command="climb">Climb</button>
+          <button type="button" data-command="descend">Descend</button>
+          <button type="button" data-command="hold">Hold</button>
+          <button type="button" data-command="handoff">Hand off</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="alerts-title">
+        <header class="panel-head compact"><h2 id="alerts-title">Conflict board</h2><span id="alert-count">0</span></header>
+        <ul id="alerts" class="alert-list"></ul>
+      </section>
+
+      <section class="panel log-panel" aria-labelledby="log-title">
+        <header class="panel-head compact"><h2 id="log-title">Controller tape</h2><span id="agent-name">human desk</span></header>
+        <ol id="event-log" class="event-log" aria-live="polite"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
