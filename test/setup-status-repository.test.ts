@@ -116,7 +116,11 @@ describe("repository-aware setup status", () => {
       repositorySetup,
     });
 
-    expect(result.optionalAttentionSteps).toContain("repository");
+    expect(result).toMatchObject({
+      state: "ready",
+      nextStep: null,
+      optionalAttentionSteps: ["repository"],
+    });
     expect(result.repositoryRecovery).toMatchObject({
       state: "attachment_required",
       repository: { fullName: "teamleaderleo/scrapbook" },
