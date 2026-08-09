@@ -17,7 +17,7 @@ import {
 import type { SetupStatusInput } from "./setup-status.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 
-export type SetupStatusPrincipalKind = "account" | "api_token";
+export type SetupStatusPrincipalKind = "account" | "api_token" | "anonymous";
 
 export interface ProjectSetupStatusObservation {
   setup: SetupStatusInput;
@@ -47,13 +47,6 @@ export function createProjectSetupStatusApi(
     if (denied) return denied;
 
     const principal = currentPrincipal(context);
-    if (!principal) {
-      return context.json({
-        error: "An authenticated setup-status reader is required",
-        code: "unauthorized",
-      }, 401);
-    }
-
     const attachments = projectAttachmentLedger(ledger);
     if (!attachments) {
       return context.json({
@@ -67,7 +60,9 @@ export function createProjectSetupStatusApi(
     try {
       observation = await observer.observe({
         project,
-        principalKind: principal.kind === "account" ? "account" : "api_token",
+        principalKind: principal
+          ? principal.kind === "account" ? "account" : "api_token"
+          : "anonymous",
         hasAcceptedAttachment: attachment !== null,
       });
     } catch {
