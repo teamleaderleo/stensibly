@@ -25,7 +25,8 @@ describe("dashboard board filter integration", () => {
     expect(controller).toContain("result.setAttribute('aria-live', 'polite')");
     expect(controller).toContain("clearButton.textContent = 'clear board filters'");
     expect(controller).toContain("event.key !== 'Escape'");
-    expect(controller).toContain("if (manifestHead) manifestHead.after(panel)");
+    expect(controller).toContain("const workHead = board.closest('[data-dashboard-view-panel=\"work\"]')");
+    expect(controller).toContain("if (workHead) workHead.after(panel)");
     expect(controller).toContain("else dashboardHead.after(panel)");
   });
 

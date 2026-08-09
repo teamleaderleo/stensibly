@@ -7,9 +7,9 @@ const app = readFileSync(new URL("../site/app.js", import.meta.url), "utf8");
 describe("dashboard connection-state contract", () => {
   test("ships every disconnected child that the renderer updates", () => {
     expect(html).toContain('<section class="disconnected" id="disconnected-state">');
-    expect(html).toContain("<p>Sign in to continue.</p>");
+    expect(html).toContain("<p>Your studio is ready when you are.</p>");
     expect(html).toContain(
-      "<span>Continue with GitHub, or use the advanced connection for another endpoint.</span>",
+      "<span>Continue with GitHub above. Your existing hosted session will be restored automatically.</span>",
     );
     expect(app).toContain("disconnected.querySelector('p').textContent");
     expect(app).toContain("disconnected.querySelector('span').textContent");
@@ -17,7 +17,7 @@ describe("dashboard connection-state contract", () => {
 
   test("describes bearer-token retention as browser-session scoped", () => {
     expect(html).toContain(
-      "A bearer token stays in this browser session and is cleared when the session ends.",
+      "Your hosted login is restored automatically. API tokens stay only in this browser session.",
     );
     expect(html).not.toContain("Tokens are not saved.");
     expect(app).toContain("const browserSessionStorage = optionalSessionStorage()");

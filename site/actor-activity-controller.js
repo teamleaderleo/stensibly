@@ -15,7 +15,8 @@ const ITEM_STATUSES = ['ready', 'active', 'blocked', 'done'];
 
 export function installActorActivityController() {
   const dashboard = document.querySelector('#dashboard');
-  const actions = document.querySelector('.dashboard-actions');
+  const actions = document.querySelector('.dashboard-secondary-actions')
+    || document.querySelector('.dashboard-actions');
   const board = document.querySelector('#board');
   const projectFilter = document.querySelector('#project-filter');
   const refreshBoardButton = document.querySelector('#refresh');
@@ -30,7 +31,8 @@ export function installActorActivityController() {
   openButton.type = 'button';
   openButton.className = 'secondary';
   openButton.textContent = 'actor activity';
-  actions.insertBefore(openButton, refreshBoardButton);
+  if (refreshBoardButton.parentElement === actions) actions.insertBefore(openButton, refreshBoardButton);
+  else actions.append(openButton);
 
   const dialog = element('dialog', 'actor-activity-dialog');
   dialog.id = 'actor-activity-dialog';

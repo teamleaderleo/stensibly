@@ -9,24 +9,25 @@ import {
 
 const validHtml = `<!doctype html>
 <html><head>
-<title>Stensibly · Studio Airfield</title>
-<meta name="description" content="Stensibly is the live control room for work moving across people, agents, providers, and deployments." />
-<meta property="og:image" content="https://www.stensibly.com/stensibly-airfield-social.png" />
+<title>Stensibly · Studio control</title>
+<meta name="description" content="Stensibly is the live control surface for work moving across people, agents, providers, and deployments." />
+<meta property="og:image" content="https://www.stensibly.com/studio-control-social.png" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="/favicon.ico" sizes="any" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/item-claim.css" />
 <link rel="stylesheet" href="/hosted-session.css" />
-<link rel="stylesheet" href="/login-scrapbook.css" />
-<link rel="stylesheet" href="/airspace-operator.css" />
+<link rel="stylesheet" href="/studio-control.css" />
 </head><body>
 <button id="github-sign-in"></button>
 <form id="connect-form"></form>
 <section id="dashboard"></section>
-<section id="airfield"></section>
-<div id="traffic-layer"></div>
+<section data-dashboard-view-panel="overview"><div id="focus-list"></div></section>
+<section data-dashboard-view-panel="work"></section>
+<section data-dashboard-view-panel="system"></section>
 <dialog id="item-detail-dialog"></dialog>
 <p id="item-detail-announcer"></p>
+<script src="/ui-preferences.js" type="module"></script>
 <script src="/hosted-session-bridge.js" type="module"></script>
 <script src="/app.js" type="module"></script>
 </body></html>`;
@@ -48,8 +49,8 @@ describe("dashboard HTML verification", () => {
   });
 
   test("rejects retired shell copy, missing UI markers, and token-shaped values", () => {
-    expect(() => verifyDashboardHtml(validHtml.replace("Studio Airfield", "Agent scrapbook")))
-      .toThrow("Studio Airfield");
+    expect(() => verifyDashboardHtml(validHtml.replace("Studio control", "Agent scrapbook")))
+      .toThrow("Studio control");
     expect(() => verifyDashboardHtml(validHtml.replace('id="dashboard"', 'id="missing"')))
       .toThrow("dashboard");
     expect(() => verifyDashboardHtml(validHtml + "stn.tok_deadbeef.secret"))
@@ -88,8 +89,17 @@ describe("dashboard asset verification contract", () => {
       marker: ".detail-activity-thread",
     }));
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
-      path: "/login-scrapbook.css",
-      marker: ".login-card",
+      path: "/studio-control.css",
+      marker: ".overview-grid",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/ui-preferences.js",
+      marker: "stensiblyDashboardView",
+    }));
+    expect(dashboardAssets).toContainEqual(expect.objectContaining({
+      path: "/studio-control-social.png",
+      kind: "png",
+      marker: "PNG",
     }));
     expect(dashboardAssets).toContainEqual(expect.objectContaining({
       path: "/provider-capacity-entry.js",

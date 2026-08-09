@@ -147,7 +147,9 @@ describe("dashboard provider capacity wiring", () => {
     expect(entry).toContain('id=\"provider-capacity-panel\"');
     expect(entry).toContain('name=\"repository\"');
     expect(entry).toContain('name=\"subject\"');
-    expect(entry).toContain("MutationObserver");
+    expect(entry).toContain("panel?.addEventListener('toggle', refreshWhenOpened)");
+    expect(entry).not.toContain("MutationObserver");
+    expect(entry).not.toContain("queueMicrotask");
     expect(entry).toContain("/provider-capacity.css");
     expect(controller).toContain("/api/v1/provider-capacities/coderabbit?");
     expect(controller).toContain("localStorage.setItem(STORAGE_KEY");

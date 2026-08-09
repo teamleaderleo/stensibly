@@ -104,23 +104,17 @@ describe("production root connecting status", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain('aria-busy="false"');
-    expect(html).toContain("Revalidating the live picture…");
+    expect(html).toContain("Restoring your studio…");
     expect(html.indexOf('/root-mode-status.css')).toBeGreaterThan(
-      html.indexOf('/calm-root.css'),
+      html.indexOf('/hosted-session.css'),
     );
     expect(html.indexOf('/root-mode-status-bridge.js')).toBeLessThan(
       html.indexOf('/hosted-session-bridge.js'),
     );
-    expect(css).toContain('html[data-app-mode="connecting"] .root-connecting-status');
-    expect(css).toContain('html[data-app-mode="connecting"] .shell::after');
-    expect(css).toContain("content: none");
-    for (const selector of [
-      'html[data-app-mode="editing"] .hero-copy',
-      'html[data-app-mode="editing"] .hero-login',
-      'html[data-app-mode="editing"] .login-card',
-    ]) {
-      expect(css).toContain(selector);
-    }
+    expect(css).toContain('.root-connecting-status');
+    expect(css).toContain('clip: rect(0, 0, 0, 0)');
+    expect(css).not.toContain('min-height: min(30rem');
+    expect(css).toContain('html[data-app-mode="editing"] .hero-copy');
     expect(bridge).toContain('setAttribute("aria-hidden", "true")');
     expect(bridge).not.toContain("console.");
   });

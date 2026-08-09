@@ -1,7 +1,7 @@
 export const FRONTEND_LABS_ENTRY = Object.freeze({
   href: '/labs/',
-  label: 'interface previews',
-  description: 'Open the fixture-backed interface studies.',
+  label: 'Labs',
+  description: 'Open isolated interface and simulation experiments.',
 });
 
 const ENTRY_ID = 'frontend-labs-entry';
@@ -22,7 +22,7 @@ export function installFrontendLabsEntry(documentRef = globalThis.document) {
   link.textContent = FRONTEND_LABS_ENTRY.label;
   link.setAttribute('aria-label', FRONTEND_LABS_ENTRY.description);
 
-  const sourceLink = documentRef.querySelector('.topbar > .github');
+  const sourceLink = documentRef.querySelector('.topbar-actions > .github, .topbar > .github');
   if (sourceLink && typeof sourceLink.insertAdjacentElement === 'function') {
     sourceLink.insertAdjacentElement('beforebegin', link);
   } else {
