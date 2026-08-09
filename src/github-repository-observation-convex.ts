@@ -266,8 +266,12 @@ function validateStoredRecord(
 }
 
 function mapStorageError(error: unknown): Error {
-  if (error instanceof GitHubRepositoryObservationConflictError) return error;
-  if (error instanceof GitHubRepositoryObservationStorageError) return error;
+  if (safelyMatchesError(error, GitHubRepositoryObservationConflictError)) {
+    return new GitHubRepositoryObservationConflictError();
+  }
+  if (safelyMatchesError(error, GitHubRepositoryObservationStorageError)) {
+    return new GitHubRepositoryObservationStorageError();
+  }
   const message = ownDataErrorMessage(error);
   if (
     message.includes("GITHUB_REPOSITORY_DELIVERY_CONFLICT")
@@ -278,9 +282,25 @@ function mapStorageError(error: unknown): Error {
   return new GitHubRepositoryObservationStorageError();
 }
 
+function safelyMatchesError(
+  error: unknown,
+  constructor: new () => Error,
+): boolean {
+  try {
+    return error instanceof constructor;
+  } catch {
+    return false;
+  }
+}
+
 function ownDataErrorMessage(error: unknown): string {
   if (!error || typeof error !== "object") return "";
-  const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  } catch {
+    return "";
+  }
   return descriptor && "value" in descriptor && typeof descriptor.value === "string"
     ? descriptor.value
     : "";
