@@ -5,15 +5,15 @@ const TOKEN_STORAGE_KEY = 'stensiblyToken';
 const ENDPOINT_STORAGE_KEY = 'stensiblyEndpoint';
 
 export function installProviderCapacityCard() {
-  const metrics = document.querySelector('.metrics');
+  const sessionContext = document.querySelector('#session-context-panel');
   const dashboard = document.querySelector('#dashboard');
   const lastUpdated = document.querySelector('#last-updated');
   const connectionState = document.querySelector('#connection-state');
-  if (!metrics || !dashboard || !lastUpdated || !connectionState) return null;
+  if (!sessionContext || !dashboard || !lastUpdated || !connectionState) return null;
   if (document.querySelector('#provider-capacity-panel')) return null;
 
   installStylesheet();
-  metrics.insertAdjacentHTML('beforebegin', panelMarkup());
+  sessionContext.insertAdjacentHTML('beforebegin', panelMarkup());
 
   const controller = createProviderCapacityController({
     getConnection: () => ({
@@ -64,34 +64,36 @@ function installStylesheet() {
 }
 
 function panelMarkup() {
-  return `<section class="provider-capacity" id="provider-capacity-panel" data-state="unknown" aria-labelledby="provider-capacity-title">
-    <div class="provider-capacity-head">
+  return `<details class="provider-capacity" id="provider-capacity-panel" data-state="unknown">
+    <summary class="provider-capacity-head">
       <div>
         <p class="eyebrow">Review capacity</p>
         <h3 id="provider-capacity-title">CodeRabbit preflight</h3>
       </div>
       <span id="provider-capacity-status" role="status">scope needed</span>
+    </summary>
+    <div class="provider-capacity-body">
+      <form class="provider-capacity-form" id="provider-capacity-form">
+        <label>
+          Repository
+          <input name="repository" required maxlength="200" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="owner/repository" />
+        </label>
+        <label>
+          Developer subject
+          <input name="subject" required maxlength="120" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="GitHub login" />
+        </label>
+        <button type="submit">read capacity</button>
+        <button class="secondary" id="provider-capacity-clear" type="button" hidden>clear scope</button>
+      </form>
+      <p id="provider-capacity-scope">Choose the repository and developer subject whose quota observation should be shown.</p>
+      <div class="provider-capacity-details" id="provider-capacity-details" hidden>
+        <div><span>Quota</span><strong id="provider-capacity-quota"></strong></div>
+        <div><span>Timing</span><strong id="provider-capacity-timing"></strong></div>
+        <div><span>Observation</span><strong id="provider-capacity-observed"></strong></div>
+        <div><span>Source</span><a id="provider-capacity-source" target="_blank" rel="noreferrer"></a></div>
+      </div>
+      <p class="provider-capacity-error" id="provider-capacity-error" role="alert" hidden></p>
+      <p class="provider-capacity-note">Read-only. This card never posts a quota query or requests a review. Automatic reviews may consume capacity after the last observation.</p>
     </div>
-    <form class="provider-capacity-form" id="provider-capacity-form">
-      <label>
-        Repository
-        <input name="repository" required maxlength="200" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="owner/repository" />
-      </label>
-      <label>
-        Developer subject
-        <input name="subject" required maxlength="120" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="GitHub login" />
-      </label>
-      <button type="submit">read capacity</button>
-      <button class="secondary" id="provider-capacity-clear" type="button" hidden>clear scope</button>
-    </form>
-    <p id="provider-capacity-scope">Choose the repository and developer subject whose quota observation should be shown.</p>
-    <div class="provider-capacity-details" id="provider-capacity-details" hidden>
-      <div><span>Quota</span><strong id="provider-capacity-quota"></strong></div>
-      <div><span>Timing</span><strong id="provider-capacity-timing"></strong></div>
-      <div><span>Observation</span><strong id="provider-capacity-observed"></strong></div>
-      <div><span>Source</span><a id="provider-capacity-source" target="_blank" rel="noreferrer"></a></div>
-    </div>
-    <p class="provider-capacity-error" id="provider-capacity-error" role="alert" hidden></p>
-    <p class="provider-capacity-note">Read-only. This card never posts a quota query or requests a review. Automatic reviews may consume capacity after the last observation.</p>
-  </section>`;
+  </details>`;
 }

@@ -29,13 +29,14 @@ const connectedEndpoint = document.querySelector('#connected-endpoint');
 const cancelConnection = document.querySelector('#cancel-connection');
 const projectFilter = document.querySelector('#project-filter');
 const board = document.querySelector('#board');
+const boardAnnouncer = document.querySelector('#board-announcer');
 const agents = document.querySelector('#agents');
 const lastUpdated = document.querySelector('#last-updated');
 
 const columns = [
-  ['ready', 'Ready', 'available to begin'],
-  ['active', 'Active', 'being worked on now'],
-  ['blocked', 'Blocked', 'waiting on a named condition'],
+  ['blocked', 'Needs attention', 'waiting on a named condition'],
+  ['active', 'In motion', 'held and being worked now'],
+  ['ready', 'Ready next', 'available to begin'],
   ['done', 'Done', 'completed work'],
 ];
 
@@ -551,17 +552,20 @@ function render() {
       </div>
     </section>`;
   }).join('');
+  if (boardAnnouncer) {
+    const announcement = `${visible.length} ${visible.length === 1 ? 'work item' : 'work items'} loaded for ${selected || 'all projects'}.`;
+    if (boardAnnouncer.textContent !== announcement) boardAnnouncer.textContent = announcement;
+  }
 }
 
 function renderCard(item) {
   const owner = item.claimedBy ? `held by ${escapeHtml(item.claimedBy)}` : relativeTime(item.updatedAt);
   const lease = item.claimExpiresAt ? leaseTime(item.claimExpiresAt) : `v${item.version}`;
   return `<button class="card ${statusClass(item.status)}" type="button" data-item-id="${escapeHtml(item.id)}" aria-label="Open ${escapeHtml(item.title)}">
-    <div class="card-top"><span>${escapeHtml(item.kind)} · ${escapeHtml(item.project)}</span><span>p${item.priority}</span></div>
-    <h4>${escapeHtml(item.title)}</h4>
-    ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ''}
-    ${item.nextAction ? `<p>next · ${escapeHtml(item.nextAction)}</p>` : ''}
-    <div class="card-meta"><span>${owner}</span><span>${lease}</span></div>
+    <span class="card-top"><span>${escapeHtml(item.kind)} · ${escapeHtml(item.project)}</span><span>p${item.priority}</span></span>
+    <span class="card-copy"><strong class="card-title">${escapeHtml(item.title)}</strong>${item.summary ? `<span class="card-summary">${escapeHtml(item.summary)}</span>` : ''}</span>
+    <span class="card-next"><span>Next move</span><strong>${escapeHtml(item.nextAction || 'Open the work record and choose a concrete next action.')}</strong></span>
+    <span class="card-meta"><span>${owner}</span><span>${lease}</span></span>
   </button>`;
 }
 
