@@ -502,7 +502,74 @@ export default defineSchema({
   })
     .index("by_workspace_external", ["workspaceId", "externalId"])
     .index("by_item_status", ["itemId", "status", "createdAt"])
-    .index("by_project_status", ["projectId", "status", "updatedAt"]),
+    .index("by_project_status", ["projectId", "status", "updatedAt"])
+    .index("by_workspace_id_and_created_at", ["workspaceId", "createdAt"])
+    .index("by_workspace_id_and_status_and_created_at", [
+      "workspaceId",
+      "status",
+      "createdAt",
+    ])
+    .index("by_workspace_id_and_actor_external_id_and_created_at", [
+      "workspaceId",
+      "actorExternalId",
+      "createdAt",
+    ])
+    .index("by_item_id_and_created_at", ["itemId", "createdAt"])
+    .index("by_project_id_and_status_and_created_at", [
+      "projectId",
+      "status",
+      "createdAt",
+    ])
+    .index("by_workspace_id_and_status_and_next_retry_at", [
+      "workspaceId",
+      "status",
+      "nextRetryAt",
+    ])
+    .index("by_project_id_and_status_and_next_retry_at", [
+      "projectId",
+      "status",
+      "nextRetryAt",
+    ])
+    .index("by_workspace_id_and_status_and_lease_expires_at", [
+      "workspaceId",
+      "status",
+      "leaseExpiresAt",
+    ]),
+
+  runnerCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    idempotencyKey: v.string(),
+    operation: v.string(),
+    request: v.any(),
+    result: v.any(),
+    createdAt: v.number(),
+  }).index("by_workspace_id_and_idempotency_key", ["workspaceId", "idempotencyKey"]),
+
+  runnerAdapterCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    itemId: v.id("items"),
+    runId: v.id("queuedRuns"),
+    projectExternalId: v.string(),
+    itemExternalId: v.string(),
+    runExternalId: v.string(),
+    runGeneration: v.number(),
+    leaseGeneration: v.number(),
+    actorId: v.id("actors"),
+    actorExternalId: v.string(),
+    adapterId: v.string(),
+    profileId: v.string(),
+    requestFingerprint: v.string(),
+    commandId: v.string(),
+    commandFingerprint: v.string(),
+    request: v.any(),
+    stableRequest: v.any(),
+    idempotencyKey: v.string(),
+    reservedAt: v.number(),
+  })
+    .index("by_workspace_id_and_idempotency_key", ["workspaceId", "idempotencyKey"])
+    .index("by_workspace_id_and_command_id", ["workspaceId", "commandId"])
+    .index("by_run_id_and_reserved_at", ["runId", "reservedAt"]),
 
   dependencies: defineTable({
     workspaceId: v.id("workspaces"),

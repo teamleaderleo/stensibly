@@ -76,6 +76,14 @@ import {
   syncItemLeaseFromRun,
 } from "./run-item-recovery.js";
 import { transitionWorkRunWithItemProjection } from "./run-item-projection.js";
+import type {
+  ReserveRunnerAdapterCommandInput,
+  RunnerAdapterCommandLedger,
+} from "./runner-adapter-command-contracts.js";
+import {
+  ensureRunnerAdapterCommandSchema,
+  reserveSqliteRunnerAdapterCommand,
+} from "./runner-adapter-command-sqlite.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import { claimRunnerWork } from "./runner-queue.js";
 import {
@@ -95,6 +103,7 @@ export class SqliteWorkLedger implements
   CompletionContinuationLedger,
   ContinuationSupervisorLedger,
   RunnerLedger,
+  RunnerAdapterCommandLedger,
   ProjectAttachmentLedger,
   OperationReceiptLedger
 {
@@ -104,6 +113,7 @@ export class SqliteWorkLedger implements
     ensureCompletionContinuationSchema(store);
     ensureContinuationSupervisorSchema(store);
     ensureProjectAttachmentSchema(store);
+    ensureRunnerAdapterCommandSchema(store);
   }
 
   async getBrief(project: string, limit: number) {
@@ -366,6 +376,10 @@ export class SqliteWorkLedger implements
   async claimRunnerWork(input: ClaimRunnerWorkInput) {
     reconcileStaleRunItems(this.store);
     return claimRunnerWork(this.store, input);
+  }
+
+  async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
+    return reserveSqliteRunnerAdapterCommand(this.store, input);
   }
 
   async getRun(id: string) {

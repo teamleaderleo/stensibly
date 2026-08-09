@@ -181,6 +181,35 @@ describe("Convex work ledger", () => {
       project: "scrapbook",
       limit: 8,
     });
+    await ledger.claimRunnerWork({
+      actor,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      project: "scrapbook",
+      leaseSeconds: 900,
+      idempotencyKey: "runner-claim-1",
+      concurrency: { globalLimit: 4, projectLimit: 2 },
+    });
+    await ledger.getRun("run_1");
+    await ledger.listRuns({ itemId: "item_1", status: "running" });
+    await ledger.heartbeatRun({
+      id: "run_1",
+      actor,
+      expectedGeneration: 2,
+      expectedLeaseGeneration: 2,
+      leaseSeconds: 900,
+      checkpoint: "Still running.",
+      idempotencyKey: "runner-heartbeat-1",
+    });
+    await ledger.transitionRun({
+      id: "run_1",
+      actor,
+      command: "succeed",
+      expectedGeneration: 2,
+      expectedLeaseGeneration: 2,
+      outcome: "Done.",
+      idempotencyKey: "runner-succeed-1",
+    });
 
     expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
       "query:projects:brief",
@@ -212,6 +241,11 @@ describe("Convex work ledger", () => {
       "mutation:continuations:list",
       "mutation:continuations:list",
       "mutation:continuationSupervisor:runPolicy",
+      "mutation:runnerRuns:claim",
+      "mutation:runnerRuns:get",
+      "mutation:runnerRuns:list",
+      "mutation:runnerRuns:heartbeat",
+      "mutation:runnerRuns:transition",
     ]);
 
     for (const call of client.calls) {
@@ -242,6 +276,37 @@ describe("Convex work ledger", () => {
       id: "item_1",
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
+    });
+  });
+
+  test("maps runner adapter command reservation to its scoped mutation", async () => {
+    const client = new RecordingCaller();
+    const ledger = new ConvexWorkLedger({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+    });
+    const input = {
+      project: "scrapbook",
+      itemId: "item_1",
+      runId: "run_1",
+      runGeneration: 2,
+      leaseGeneration: 3,
+      actor,
+      adapterId: "vercel-ai-sdk",
+      profileId: "default",
+      requestFingerprint: `sha256:${"a".repeat(64)}`,
+      commandId: "command_1",
+      commandFingerprint: `sha256:${"b".repeat(64)}`,
+      idempotencyKey: "reserve-command-1",
+    };
+
+    await ledger.reserveRunnerAdapterCommand(input);
+
+    expect(call(client, "runnerAdapterCommands:reserve", "mutation").args).toEqual({
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+      ...input,
     });
   });
 
