@@ -12,7 +12,10 @@ async function installDeterministicApi(
   await page.addInitScript(
     ({ returningSession, initialMode, sentinel }) => {
       if (returningSession) {
-        sessionStorage.setItem("stensiblyToken", sentinel);
+        // A new tab has no sessionStorage marker. The hosted bridge must restore
+        // cookie mode before the app starts, while localStorage supplies the
+        // last-known dashboard immediately.
+        sessionStorage.removeItem("stensiblyToken");
         localStorage.setItem("stensiblyDashboardSnapshotV1", JSON.stringify({
           version: 1,
           endpoint: "https://api.stensibly.com",
@@ -206,6 +209,7 @@ test("returning session shows the last known overview before live reconciliation
   const root = page.locator("html");
   const status = page.locator("#root-connecting-status");
   await waitForRootMode(page, errors, "connected");
+  await expect(page.locator(".hero-login")).toBeHidden();
   await expect(page.locator("#dashboard")).toBeVisible();
   await expect(page.locator("#sync-state")).toContainText("Saved");
   await expect(page.locator('.overview-item[data-overview-item-id="item_cached_overview"]').first()).toBeVisible();
