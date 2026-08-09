@@ -94,6 +94,22 @@ describe("guarded dashboard publication workflow", () => {
       .toBeLessThan(position("Assign the canonical domain to the verified deployment"));
   });
 
+  test("keeps Vercel authentication ahead of the native curl option separator", () => {
+    const commandStart = position(
+      'vercel@${VERCEL_CLI_VERSION} curl "${route}"',
+    );
+    const commandEnd = workflow.indexOf('> "${output}"', commandStart);
+    expect(commandEnd).toBeGreaterThan(commandStart);
+    const command = workflow.slice(commandStart, commandEnd);
+
+    expect(command.indexOf('--deployment "${deployment_url}"'))
+      .toBeLessThan(command.indexOf('--token="${VERCEL_TOKEN}"'));
+    expect(command.indexOf('--token="${VERCEL_TOKEN}"'))
+      .toBeLessThan(command.indexOf("              -- "));
+    expect(command.indexOf("              -- "))
+      .toBeLessThan(command.indexOf("--fail --silent --show-error"));
+  });
+
   test("verifies the public root and Labs routes before recording success", () => {
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/');
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/quiet-control/');

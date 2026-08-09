@@ -360,6 +360,8 @@ jobs:
           echo "::group::[stensibly-verifier] staged dashboard HTML"
           if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
             --deployment "${DEPLOYMENT_URL}" \
+            --token="${VERCEL_TOKEN}" \
+            -- \
             --fail --silent --show-error \
             > /tmp/dashboard-index.html; then
             echo "::endgroup::"
@@ -395,6 +397,8 @@ jobs:
             if ! content_type="$(
               npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
                 --deployment "${DEPLOYMENT_URL}" \
+                --token="${VERCEL_TOKEN}" \
+                -- \
                 --fail --silent --show-error \
                 --output "${output}" \
                 --write-out '%{content_type}\n'
