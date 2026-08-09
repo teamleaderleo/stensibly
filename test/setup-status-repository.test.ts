@@ -108,6 +108,22 @@ describe("repository-aware setup status", () => {
     });
   });
 
+  test("carries the same bounded recovery when repository setup is degraded", () => {
+    const result = projectSetupStatusWithRepository({
+      setup: setup({ steps: states({ repository: "degraded" }) }),
+      project: "scrapbook",
+      attachment: null,
+      repositorySetup,
+    });
+
+    expect(result.optionalAttentionSteps).toContain("repository");
+    expect(result.repositoryRecovery).toMatchObject({
+      state: "attachment_required",
+      repository: { fullName: "teamleaderleo/scrapbook" },
+      authorizesProviderEffect: false,
+    });
+  });
+
   test("honours explicit repository deferral without surfacing an active continuation", () => {
     const result = projectSetupStatusWithRepository({
       setup: setup({ steps: states({ repository: "deferred" }) }),
