@@ -88,8 +88,6 @@ export function createServerApp(
     );
   }
 
-  app.route("/api/v1", createApiV1(authenticator, ledger, authOptions));
-  app.route("/api/v1", createContextPacketApi(authenticator, ledger, authOptions));
   if (options.setupStatusObserver) {
     app.route(
       "/api/v1",
@@ -101,6 +99,8 @@ export function createServerApp(
       ),
     );
   }
+  app.route("/api/v1", createApiV1(authenticator, ledger, authOptions));
+  app.route("/api/v1", createContextPacketApi(authenticator, ledger, authOptions));
   app.route("/", createApp(store, authOptions));
   return app;
 }
