@@ -57,6 +57,28 @@ describe("project setup status API", () => {
     expect(response.status).toBe(404);
   });
 
+  test("preserves anonymous local single-operator reads", async () => {
+    const calls: unknown[] = [];
+    const app = createServerApp(store, {
+      ledger,
+      authenticator: new FixedAuthenticator(),
+      httpAuth: { required: false },
+      setupStatusObserver: {
+        observe(input) {
+          calls.push(input);
+          return { setup: setup("missing") };
+        },
+      },
+    });
+    const response = await app.request("/api/v1/projects/scrapbook/setup-status");
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([{
+      project: "scrapbook",
+      principalKind: "anonymous",
+      hasAcceptedAttachment: false,
+    }]);
+  });
+
   test("checks project read access before observing and returns missing-context recovery", async () => {
     const calls: unknown[] = [];
     const observer: ProjectSetupStatusObserver = {
