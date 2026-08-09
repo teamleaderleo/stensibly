@@ -216,6 +216,33 @@ describe("Convex GitHub repository observation service", () => {
     });
   });
 
+  test("admits the documented 100-row verification window within a dedicated bound", async () => {
+    const observation = issueObservation();
+    const row = storedRecord(canonicalJson(observation));
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      ...row,
+      id: `observation-row-${index + 1}`,
+    }));
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          throw new Error("not used");
+        },
+        async query() {
+          return rows;
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    const records = await service.listRecentRepositoryObservations(
+      "teamleaderleo/stensibly",
+      100,
+    );
+    expect(records).toHaveLength(100);
+    expect(records[99]?.id).toBe("observation-row-100");
+  });
+
   test("rejects query accessors without invoking them", async () => {
     let getterCalls = 0;
     const hostileRows: unknown[] = [];

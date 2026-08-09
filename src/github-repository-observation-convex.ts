@@ -39,6 +39,8 @@ const storedRecordKeys = [
   "subjectExternalId",
   "subjectKind",
 ] as const;
+const maximumRecentQueryValues = 4_096;
+const maximumRecentQueryStringBytes = 1024 * 1024;
 
 export class GitHubRepositoryObservationConflictError extends Error {
   readonly code = "github_repository_observation_conflict";
@@ -192,6 +194,10 @@ function admitStoredRows(value: unknown, limit: number): ConvexObservationRecord
   const snapshot = snapshotBoundedJson(
     value,
     "GitHub repository observation query result",
+    {
+      maximumValues: maximumRecentQueryValues,
+      maximumTotalStringBytes: maximumRecentQueryStringBytes,
+    },
   );
   if (!Array.isArray(snapshot) || snapshot.length > limit) {
     throw new GitHubRepositoryObservationStorageError();
