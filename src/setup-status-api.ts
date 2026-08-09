@@ -28,6 +28,7 @@ export interface ProjectSetupStatusObserver {
   observe(input: {
     project: string;
     principalKind: SetupStatusPrincipalKind;
+    hasAcceptedAttachment: boolean;
   }): ProjectSetupStatusObservation | Promise<ProjectSetupStatusObservation>;
 }
 
@@ -67,6 +68,7 @@ export function createProjectSetupStatusApi(
       observation = await observer.observe({
         project,
         principalKind: principal.kind === "account" ? "account" : "api_token",
+        hasAcceptedAttachment: attachment !== null,
       });
     } catch {
       return context.json({
