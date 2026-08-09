@@ -17,7 +17,7 @@ describe("MCP capability policy registry", () => {
     const names = mcpCapabilityPolicyRegistry.policies.map((policy) => policy.toolName);
 
     expect(mcpCapabilityPolicyRegistry.version).toBe(1);
-    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(43);
+    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(45);
     expect(names).toEqual([...names].sort());
     expect(new Set(names).size).toBe(names.length);
     expect(mcpCapabilityPolicyRegistry.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -57,6 +57,7 @@ describe("MCP capability policy registry", () => {
       "github_create_file",
       "github_create_issue",
       "github_create_pull_request",
+      "github_publish_change",
       "github_update_file",
       "github_update_issue",
     ]) {
