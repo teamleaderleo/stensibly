@@ -94,17 +94,19 @@ describe("guarded dashboard publication workflow", () => {
       .toBeLessThan(position("Assign the canonical domain to the verified deployment"));
   });
 
-  test("keeps Vercel authentication ahead of the native curl option separator", () => {
+  test("keeps global Vercel authentication ahead of the curl subcommand", () => {
     const commandStart = position(
-      'vercel@${VERCEL_CLI_VERSION} curl "${route}"',
+      'vercel@${VERCEL_CLI_VERSION} --token="${VERCEL_TOKEN}"',
     );
     const commandEnd = workflow.indexOf('> "${output}"', commandStart);
     expect(commandEnd).toBeGreaterThan(commandStart);
     const command = workflow.slice(commandStart, commandEnd);
 
-    expect(command.indexOf('--deployment "${deployment_url}"'))
-      .toBeLessThan(command.indexOf('--token="${VERCEL_TOKEN}"'));
     expect(command.indexOf('--token="${VERCEL_TOKEN}"'))
+      .toBeLessThan(command.indexOf('curl "${route}"'));
+    expect(command.indexOf('curl "${route}"'))
+      .toBeLessThan(command.indexOf('--deployment "${deployment_url}"'));
+    expect(command.indexOf('--deployment "${deployment_url}"'))
       .toBeLessThan(command.indexOf("              -- "));
     expect(command.indexOf("              -- "))
       .toBeLessThan(command.indexOf("--fail --silent --show-error"));

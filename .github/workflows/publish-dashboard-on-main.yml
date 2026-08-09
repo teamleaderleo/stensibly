@@ -139,9 +139,9 @@ jobs:
 
           for route in / /labs/ /labs/quiet-control/ /labs/soft-companion/ /labs/field-console/; do
             output="/tmp/dashboard-$(printf '%s' "${route}" | tr '/.' '__').html"
-            npx --yes vercel@${VERCEL_CLI_VERSION} curl "${route}" \
+            npx --yes vercel@${VERCEL_CLI_VERSION} --token="${VERCEL_TOKEN}" \
+              curl "${route}" \
               --deployment "${deployment_url}" \
-              --token="${VERCEL_TOKEN}" \
               -- \
               --fail --silent --show-error \
               > "${output}"
