@@ -24,6 +24,37 @@ import {
 
 const maximumGitHubIssueNumber = 2_147_483_647;
 
+function githubPublishChangeInputSchema() {
+  return {
+    project: projectSchema(),
+    repository: repositorySchema(),
+    runId: z.string().trim().min(1).max(240),
+    branch: branchSchema(),
+    fromCommitSha: commitShaSchema(),
+    file: z.discriminatedUnion("operation", [
+      z.object({
+        operation: z.literal("create_file"),
+        path: repositoryPathSchema(),
+        content: repositoryFileContentSchema(),
+        message: commitMessageSchema(),
+      }).strict(),
+      z.object({
+        operation: z.literal("update_file"),
+        path: repositoryPathSchema(),
+        contentSha: commitShaSchema(),
+        content: repositoryFileContentSchema(),
+        message: commitMessageSchema(),
+      }).strict(),
+    ]),
+    base: branchSchema(),
+    expectedBaseSha: commitShaSchema(),
+    title: z.string().trim().min(1).max(256),
+    body: z.string().max(128 * 1024).optional(),
+    draft: z.boolean().default(true),
+    idempotencyKey: idempotencyKeySchema(),
+  };
+}
+
 export interface GitHubIssueProviderReadService {
   listIssues(input: GitHubProviderRequestContext & {
     state?: "open" | "closed" | "all";
@@ -502,34 +533,7 @@ export function registerGitHubIssueProviderTools(
     "github_publish_change",
     {
       description: "Publish one bounded GitHub change as a durable operation: create an exact branch, create or update one file through an exact-parent fence, then open an exact-head/base pull request. Every provider step is reserved before dispatch; ambiguous outcomes stop for reconciliation. Requires a current Stensibly runner lease owned by this MCP principal.",
-      inputSchema: {
-        project: projectSchema(),
-        repository: repositorySchema(),
-        runId: z.string().trim().min(1).max(240),
-        branch: branchSchema(),
-        fromCommitSha: commitShaSchema(),
-        file: z.discriminatedUnion("operation", [
-          z.object({
-            operation: z.literal("create_file"),
-            path: repositoryPathSchema(),
-            content: repositoryFileContentSchema(),
-            message: commitMessageSchema(),
-          }).strict(),
-          z.object({
-            operation: z.literal("update_file"),
-            path: repositoryPathSchema(),
-            contentSha: commitShaSchema(),
-            content: repositoryFileContentSchema(),
-            message: commitMessageSchema(),
-          }).strict(),
-        ]),
-        base: branchSchema(),
-        expectedBaseSha: commitShaSchema(),
-        title: z.string().trim().min(1).max(256),
-        body: z.string().max(128 * 1024).optional(),
-        draft: z.boolean().default(true),
-        idempotencyKey: idempotencyKeySchema(),
-      },
+      inputSchema: githubPublishChangeInputSchema(),
       annotations: { destructiveHint: false, idempotentHint: true },
     },
     async (input) => asToolResult(async () => {
@@ -550,6 +554,53 @@ export function registerGitHubIssueProviderTools(
         throw new Error("GitHub publish change run belongs to another project");
       }
       return await publishChangeService(ledger).publishChange({
+        ...identity,
+        itemId: run.itemId,
+        runId: run.id,
+        authorityFence: {
+          resource: `run:${run.id}:generation:${run.generation}`,
+          holderId: identity.actorId,
+          generation: run.leaseGeneration,
+          expiresAt: run.leaseExpiresAt,
+        },
+        branch: input.branch,
+        fromCommitSha: input.fromCommitSha,
+        file: input.file,
+        base: input.base,
+        expectedBaseSha: input.expectedBaseSha,
+        title: input.title,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        draft: input.draft,
+        idempotencyKey: input.idempotencyKey,
+      });
+    }),
+  );
+
+  server.registerTool(
+    "reconcile_github_publish_change",
+    {
+      description: "Reconcile one interrupted GitHub publish-change workflow from its durable provider receipt. Resubmit the exact original bounded request so Stensibly can recompute every digest without retaining file or pull-request bodies. This never redispatches a GitHub mutation; ambiguous provider receipts remain blocked.",
+      inputSchema: githubPublishChangeInputSchema(),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(async () => {
+      const identity = providerContext(
+        context,
+        input.project,
+        input.repository,
+        "write",
+      );
+      const runs = runnerLedger(ledger);
+      if (!runs) throw new Error("GitHub publish change reconciliation requires the runner ledger");
+      const run = await runs.getRun(input.runId);
+      if (!run.leaseExpiresAt || !run.leaseOwnerId) {
+        throw new Error("GitHub publish change reconciliation requires an active runner lease");
+      }
+      const detail = await ledger.getItem(run.itemId);
+      if (detail.item.project !== input.project) {
+        throw new Error("GitHub publish change reconciliation run belongs to another project");
+      }
+      return await publishChangeService(ledger).reconcilePublishChange({
         ...identity,
         itemId: run.itemId,
         runId: run.id,
@@ -668,11 +719,14 @@ function repositoryFileWriteService(
 
 function publishChangeService(ledger: WorkLedger): GitHubPublishChangeService {
   const publishChange = captureDataMethod(ledger, "publishChange");
-  if (!publishChange) {
+  const reconcilePublishChange = captureDataMethod(ledger, "reconcilePublishChange");
+  if (!publishChange || !reconcilePublishChange) {
     throw new Error("GitHub publish change is unavailable on this backend");
   }
   return Object.freeze({
     publishChange: publishChange as GitHubPublishChangeService["publishChange"],
+    reconcilePublishChange:
+      reconcilePublishChange as GitHubPublishChangeService["reconcilePublishChange"],
   });
 }
 

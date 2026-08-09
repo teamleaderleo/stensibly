@@ -226,7 +226,7 @@ export class GitHubRepositoryWriteProviderService {
       operation: firstPrepared.operation,
       expectedParentSha: firstPrepared.expectedParentSha,
       requestSha256: firstPrepared.requestSha256,
-      payloadSha256: payloadFingerprint(payload),
+      payloadSha256: fingerprintGitHubRepositoryWritePayload(payload),
       actorId: command.actorId,
       clientId: command.clientId,
       idempotencyKey: command.idempotencyKey,
@@ -502,7 +502,9 @@ function admitPayload(value: unknown): GitHubRepositoryWritePayload {
   throw new TypeError("Repository write payload operation is invalid");
 }
 
-function payloadFingerprint(payload: GitHubRepositoryWritePayload): string {
+export function fingerprintGitHubRepositoryWritePayload(
+  payload: GitHubRepositoryWritePayload,
+): string {
   const evidence = payload.operation === "delete_file"
     ? {
         operation: payload.operation,

@@ -50,6 +50,7 @@ export const MCP_CORE_TOOL_NAMES = [
   "list_work",
   "propose_continuation",
   "queue_continuation_for_supervisor",
+  "reconcile_github_publish_change",
   "record_event",
   "release_work",
   "renew_claim",
@@ -362,6 +363,7 @@ function isWriteTool(tool: string | undefined): boolean {
     "edit_continuation",
     "resolve_continuation",
     "queue_continuation_for_supervisor",
+    "reconcile_github_publish_change",
     "run_continuation_supervisor_policy",
   ].includes(tool);
 }
