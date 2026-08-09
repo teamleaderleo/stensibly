@@ -1,3 +1,4 @@
+import { McpServer as ModernMcpServer } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { artifactKinds } from "./artifact-contracts.js";
@@ -24,32 +25,61 @@ import {
 } from "./schemas.js";
 import { buildWorkspaceSurvey } from "./survey.js";
 
+const MCP_SERVER_INSTRUCTIONS = [
+  "Stensibly is a shared scrapbook for work in motion.",
+  "Use survey_workspace for centralized triage and repeat polling across projects.",
+  "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
+  "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
+  "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
+  "Use github_list_issues, github_search_issues, and github_get_issue only for repositories explicitly bound to the project through a server-side GitHub provider connection.",
+  "List relevant work before claiming it.",
+  "Claims are temporary leases; renew active work and release work you abandon.",
+  "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
+  "Use the same idempotency key for an exact mutation retry. When a mutation response is ambiguous, call get_operation_receipt before choosing whether to retry.",
+  "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
+  "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
+  "Record discoveries and progress as events so another actor can continue.",
+  "Use continuation proposals when useful work should survive the current run and wait for approval or dispatch.",
+  "Use get_runner_context before starting or resuming a run so execution begins from a bounded canonical handoff.",
+].join(" ");
+
 export function createMcpServer(
   ledger: WorkLedger,
   context: McpRequestContext = {},
 ): McpServer {
   const rawServer = new McpServer(
     { name: "stensibly", version: mcpToolManifestForLedger(ledger).serverVersion },
+    { instructions: MCP_SERVER_INSTRUCTIONS },
+  );
+  return configureMcpServer(rawServer, ledger, context);
+}
+
+export function createModernMcpServer(
+  ledger: WorkLedger,
+  context: McpRequestContext = {},
+): ModernMcpServer {
+  const modernServer = new ModernMcpServer(
+    { name: "stensibly", version: mcpToolManifestForLedger(ledger).serverVersion },
     {
-      instructions: [
-        "Stensibly is a shared scrapbook for work in motion.",
-        "Use survey_workspace for centralized triage and repeat polling across projects.",
-        "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
-        "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
-        "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
-        "Use github_list_issues, github_search_issues, and github_get_issue only for repositories explicitly bound to the project through a server-side GitHub provider connection.",
-        "List relevant work before claiming it.",
-        "Claims are temporary leases; renew active work and release work you abandon.",
-        "Use the current claim generation returned by the server when renewing, releasing, completing, handing off, blocking, or unblocking work.",
-        "Use the same idempotency key for an exact mutation retry. When a mutation response is ambiguous, call get_operation_receipt before choosing whether to retry.",
-        "Use handoffs, blocks, and unblocks to leave an explicit next state for other actors.",
-        "Attach artifact references for files, links, commits, logs, and other outputs another actor may need.",
-        "Record discoveries and progress as events so another actor can continue.",
-        "Use continuation proposals when useful work should survive the current run and wait for approval or dispatch.",
-        "Use get_runner_context before starting or resuming a run so execution begins from a bounded canonical handoff.",
-      ].join(" "),
+      instructions: MCP_SERVER_INSTRUCTIONS,
+      cacheHints: {
+        "server/discover": { ttlMs: 60_000, cacheScope: "private" },
+        "tools/list": { ttlMs: 60_000, cacheScope: "private" },
+      },
     },
   );
+  // Keep protocol and transport objects inside their own SDK era. The v2 server's
+  // high-level registerTool API is intentionally backward-compatible, so only the
+  // plain registration calls are shared with the existing ChatGPT/v1 catalogue.
+  configureMcpServer(modernServer as unknown as McpServer, ledger, context);
+  return modernServer;
+}
+
+function configureMcpServer(
+  rawServer: McpServer,
+  ledger: WorkLedger,
+  context: McpRequestContext,
+): McpServer {
   const registration = createMcpCapabilityRegistrationGuard(rawServer);
   const server = registration.server;
 

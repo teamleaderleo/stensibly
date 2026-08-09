@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "@openai/agents-core": "0.14.1",
     "ai": "7.0.58",
     "convex": "^1.42.3",

@@ -1,3 +1,4 @@
+import { createMcpHandler, isLegacyRequest } from "@modelcontextprotocol/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   continuationAccessProjects,
@@ -10,7 +11,7 @@ import {
   type McpCapabilityPolicy,
   type McpCapabilityScope,
 } from "./mcp-capability-policy.js";
-import { createMcpServer } from "./mcp.js";
+import { createMcpServer, createModernMcpServer } from "./mcp.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 import {
   principalCanAccessProject,
@@ -34,6 +35,7 @@ export interface McpHttpOptions {
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
   createServer?: typeof createMcpServer;
+  createModernServer?: typeof createModernMcpServer;
 }
 
 interface AccessRule {
@@ -102,6 +104,18 @@ async function handleMcpHttpRequestCore(
   const denial = await authorizePayload(options.ledger, principal, body);
   if (denial) return denial;
 
+  if (await isLegacyRequest(request, body)) {
+    return await handleLegacyMcpRequest(request, options, principal, body);
+  }
+  return await handleModernMcpRequest(request, options, principal, body);
+}
+
+async function handleLegacyMcpRequest(
+  request: Request,
+  options: McpHttpOptions,
+  principal: TokenPrincipal,
+  body: unknown,
+): Promise<Response> {
   let server: ReturnType<typeof createMcpServer> | undefined;
   let failureStage: McpFailureStage = "server_construction";
   try {
@@ -127,6 +141,66 @@ async function handleMcpHttpRequestCore(
     if (server) {
       try {
         await server.close();
+      } catch {
+        // Cleanup failure must never replace a result already produced by the MCP handler.
+      }
+    }
+  }
+}
+
+async function handleModernMcpRequest(
+  request: Request,
+  options: McpHttpOptions,
+  principal: TokenPrincipal,
+  body: unknown,
+): Promise<Response> {
+  let handler: ReturnType<typeof createMcpHandler> | undefined;
+  let factoryEntered = false;
+  let serverConstructed = false;
+  try {
+    handler = createMcpHandler(() => {
+      factoryEntered = true;
+      const server = (options.createModernServer ?? createModernMcpServer)(
+        options.ledger,
+        { principal },
+      );
+      serverConstructed = true;
+      return server;
+    }, {
+      legacy: "reject",
+    });
+    const response = await handler.fetch(request, { parsedBody: body });
+    if (response.status < 500 || response.headers.has(MCP_FAILURE_STAGE_HEADER)) {
+      return response;
+    }
+    const headers = new Headers(response.headers);
+    headers.set(
+      MCP_FAILURE_STAGE_HEADER,
+      factoryEntered && !serverConstructed ? "server_construction" : "request_execution",
+    );
+    headers.set(FAILURE_CATEGORY_HEADER, "mcp_failure");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  } catch {
+    return jsonRpcError(
+      500,
+      -32603,
+      "Internal server error",
+      requestId(body),
+      {
+        [MCP_FAILURE_STAGE_HEADER]: factoryEntered && !serverConstructed
+          ? "server_construction"
+          : "request_execution",
+      },
+      "mcp_failure",
+    );
+  } finally {
+    if (handler) {
+      try {
+        await handler.close();
       } catch {
         // Cleanup failure must never replace a result already produced by the MCP handler.
       }
