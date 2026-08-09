@@ -104,7 +104,7 @@ describe("production root connecting status", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain('aria-busy="false"');
-    expect(html).toContain("Opening project desk…");
+    expect(html).toContain("Revalidating the live picture…");
     expect(html.indexOf('/root-mode-status.css')).toBeGreaterThan(
       html.indexOf('/calm-root.css'),
     );

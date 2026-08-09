@@ -14,13 +14,13 @@ describe("production root tactile presentation", () => {
     expect(crunchIndex).toBeGreaterThan(statusIndex);
     expect(html).toContain('id="root-connecting-status"');
     expect(html).toContain('<script src="/root-mode-status-bridge.js" type="module"></script>');
-    expect(html).toContain("<h1>Shared work, made legible.</h1>");
+    expect(html).toContain("<h1>Your agents are already out there.</h1>");
     expect(html).toContain('class="brand-copy"');
     expect(html).toContain('class="hero-lede"');
     expect(html).toContain('class="hero-principles"');
-    expect(html).toContain("Ownership");
-    expect(html).toContain("Context");
-    expect(html).toContain("Continuity");
+    expect(html).toContain("Traffic");
+    expect(html).toContain("Control");
+    expect(html).toContain("Receipts");
   });
 
   test("uses static rules and offset surfaces instead of soft effects", async () => {

@@ -79,7 +79,9 @@ export function installBoardFilterController() {
   empty.hidden = true;
   feedback.append(result, error, empty);
   panel.append(controls, feedback);
-  dashboardHead.after(panel);
+  const manifestHead = board.closest('.manifest-panel')?.querySelector('.manifest-head');
+  if (manifestHead) manifestHead.after(panel);
+  else dashboardHead.after(panel);
 
   const filters = { query: '', kind: '', status: '' };
   let applyQueued = false;

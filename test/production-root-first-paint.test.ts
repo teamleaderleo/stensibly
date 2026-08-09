@@ -21,13 +21,20 @@ describe("production root first paint", () => {
     expect(bridge).not.toContain("frontend-labs-entry.css");
   });
 
-  test("keeps the root hidden only until the local mode is known", async () => {
-    const css = await readSiteFile("calm-root.css");
+  test("keeps the airfield visible while the live picture revalidates", async () => {
+    const [css, airfield] = await Promise.all([
+      readSiteFile("calm-root.css"),
+      readSiteFile("airspace-operator.css"),
+    ]);
 
     expect(css).toContain('html:not([data-root-ready="true"]) body');
     expect(css).toContain('html[data-root-ready="true"] body');
-    expect(css).toContain('html[data-app-mode="connecting"] .shell::after');
-    expect(css).toContain('content: "Opening project desk…";');
+    expect(css).not.toContain('html[data-app-mode="connecting"] .shell::after');
+    expect(css).not.toContain('content: "Opening project desk…";');
+    expect(airfield).toContain('html:not([data-root-ready="true"]) body');
+    expect(airfield).toContain("visibility: visible;");
+    expect(airfield).toContain('html[data-app-mode="connecting"] .shell::after');
+    expect(airfield).toContain("content: none;");
     expect(css).toContain('html[data-app-mode="connected"] .hero-copy');
     expect(css).toContain('html[data-app-mode="connected"] .connected-summary');
   });

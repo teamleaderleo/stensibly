@@ -10,19 +10,19 @@ describe("production operator workspace", () => {
 
     expect(crunchIndex).toBeGreaterThan(0);
     expect(operatorIndex).toBeGreaterThan(crunchIndex);
-    expect(html).toContain("<h1>Shared work, made legible.</h1>");
+    expect(html).toContain("<h1>Your agents are already out there.</h1>");
     expect(html).toContain('id="github-sign-in"');
   });
 
   test("puts operator state ahead of account mechanics", async () => {
     const html = await siteFile("index.html");
 
-    expect(html).toContain('<p class="eyebrow">Work ledger</p>');
+    expect(html).toContain('<p class="eyebrow">Studio airspace</p>');
     expect(html).toContain('class="dashboard-lede"');
     expect(html.indexOf('id="metric-blocked"')).toBeLessThan(html.indexOf('id="metric-active"'));
     expect(html.indexOf('id="metric-active"')).toBeLessThan(html.indexOf('id="metric-ready"'));
     expect(html.indexOf('id="board"')).toBeLessThan(html.indexOf('id="session-context-panel"'));
-    expect(html).toContain("Actors holding active work");
+    expect(html).toContain("Crews on frequency");
     expect(html).not.toContain("People and agents working here");
   });
 
@@ -76,5 +76,24 @@ describe("production operator workspace", () => {
     expect(html).toContain('<section class="board" id="board" aria-label="Work grouped by disposition"></section>');
     expect(html).toContain('id="board-announcer" aria-live="polite"');
     expect(app).toContain("if (boardAnnouncer.textContent !== announcement)");
+  });
+
+  test("puts the spatial field before the exact manifest", async () => {
+    const [html, app, css] = await Promise.all([
+      siteFile("index.html"),
+      siteFile("app.js"),
+      siteFile("airspace-operator.css"),
+    ]);
+
+    expect(html.indexOf('class="flight-deck"')).toBeLessThan(html.indexOf('id="board"'));
+    expect(html).toContain('id="traffic-layer"');
+    expect(html).toContain('id="tower-list"');
+    expect(app).toContain("renderAirfield(visible)");
+    expect(app).toContain("renderTower(visible)");
+    expect(app).toContain("data-flight-item-id");
+    expect(css).toContain("--sky-field: #78b978;");
+    expect(css).toContain(".flight-marker");
+    expect(css).toContain(".runway-active");
+    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 });

@@ -13,8 +13,30 @@ async function installDeterministicApi(
     ({ returningSession, initialMode, sentinel }) => {
       if (returningSession) {
         sessionStorage.setItem("stensiblyToken", sentinel);
+        localStorage.setItem("stensiblyDashboardSnapshotV1", JSON.stringify({
+          version: 1,
+          endpoint: "https://api.stensibly.com",
+          savedAt: new Date().toISOString(),
+          items: [{
+            id: "item_cached_airfield",
+            project: "stensibly",
+            kind: "task",
+            title: "Keep the last known field visible",
+            summary: "The live request is deliberately pending.",
+            nextAction: "Revalidate quietly in the background.",
+            status: "active",
+            priority: 90,
+            claimedBy: "Keel",
+            claimExpiresAt: null,
+            claimGeneration: 1,
+            version: 3,
+            createdAt: new Date(Date.now() - 60_000).toISOString(),
+            updatedAt: new Date().toISOString(),
+          }],
+        }));
       } else {
         sessionStorage.removeItem("stensiblyToken");
+        localStorage.removeItem("stensiblyDashboardSnapshotV1");
       }
       localStorage.setItem("stensiblyEndpoint", "https://api.stensibly.com");
 
@@ -145,7 +167,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   expect(response?.status()).toBe(200);
 
   await waitForRootMode(page, errors, "signed-out");
-  await expect(page.getByRole("heading", { name: "Shared work, made legible." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your agents are already out there." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue with GitHub" })).toBeVisible();
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-hidden", "true");
@@ -170,7 +192,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   expect(errors).toEqual([]);
 });
 
-test("returning session exposes a real connecting status before the compact desk", async ({ page }, testInfo) => {
+test("returning session shows the last known airfield before live reconciliation", async ({ page }, testInfo) => {
   const errors = collectBrowserErrors(page);
   await installDeterministicApi(page, { returningSession: true, itemsMode: "pending" });
 
@@ -179,12 +201,16 @@ test("returning session exposes a real connecting status before the compact desk
 
   const root = page.locator("html");
   const status = page.locator("#root-connecting-status");
-  await waitForRootMode(page, errors, "connecting");
-  await expect(status).toBeVisible();
-  await expect(status).toHaveAttribute("aria-busy", "true");
-  await expect(status).toHaveAttribute("aria-hidden", "false");
-  await expect(status).toContainText("Opening project desk…");
-  await expect(page.locator(".hero-login")).toBeHidden();
+  await waitForRootMode(page, errors, "connected");
+  await expect(page.locator("#dashboard")).toBeVisible();
+  await expect(page.locator("#airfield-freshness")).toHaveText("LAST KNOWN");
+  await expect(page.locator('.flight-marker[data-flight-item-id="item_cached_airfield"]')).toBeVisible();
+  await expect(page.getByText("Keep the last known field visible", { exact: true }).first()).toBeVisible();
+  await expect(status).toBeHidden();
+  await expect(status).toHaveAttribute("aria-busy", "false");
+  await expect(status).toHaveAttribute("aria-hidden", "true");
+
+  await attachScreenshot(page, testInfo, "production-root-last-known-airfield");
 
   await page.evaluate(() => {
     (window as unknown as { __stensiblyRootApi: { resolveItems(): void } })
@@ -193,14 +219,24 @@ test("returning session exposes a real connecting status before the compact desk
 
   await expect(root).toHaveAttribute("data-app-mode", "connected");
   await expect(page.locator("#dashboard")).toBeVisible();
+  await expect(page.locator("#airfield-freshness")).toHaveText("LIVE");
+  await expect(page.locator('[data-flight-item-id="item_cached_airfield"]')).toHaveCount(0);
   await expect(page.locator("#connect-form")).toBeHidden();
   await expect(page.locator("#connected-summary")).toBeVisible();
   await expect(status).toBeHidden();
-  await expect(status).toHaveAttribute("aria-busy", "false");
-  await expect(status).toHaveAttribute("aria-hidden", "true");
   await expect(page.locator(".hero-copy")).toBeHidden();
 
   await attachScreenshot(page, testInfo, "production-root-connected-desk");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const narrowBoundary = await page.evaluate(() => ({
+    width: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(narrowBoundary.scrollWidth).toBeLessThanOrEqual(narrowBoundary.width + 1);
+  await expect(page.locator("#airfield")).toBeVisible();
+  await attachScreenshot(page, testInfo, "production-root-connected-airfield-narrow");
+  await page.setViewportSize({ width: 1_440, height: 900 });
 
   await page.getByRole("button", { name: "change connection" }).click();
   await expect(root).toHaveAttribute("data-app-mode", "editing");
@@ -219,7 +255,7 @@ test("returning session exposes a real connecting status before the compact desk
     (window as unknown as { __stensiblyRootApi: { setItemsMode(mode: ItemsMode): void } })
       .__stensiblyRootApi.setItemsMode("network-error");
   });
-  await page.getByRole("button", { name: "refresh" }).click();
+  await page.getByRole("button", { name: "sync now" }).click();
 
   await expect(root).toHaveAttribute("data-app-mode", "degraded");
   await expect(page.locator("#dashboard")).toBeVisible();

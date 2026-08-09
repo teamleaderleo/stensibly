@@ -1,5 +1,6 @@
 import { isPlausibleToken, normalizeEndpoint } from './connection.js';
 import { installFrontendLabsEntry } from './frontend-labs-entry.js';
+import { clearDashboardSnapshot } from './dashboard-snapshot-cache.js';
 import {
   classifyHostedSessionDisconnect,
   createGithubSignInUrl,
@@ -204,6 +205,7 @@ async function signOutHostedSession(event) {
   }
 
   clearHostedDenialRecovery();
+  clearDashboardSnapshot(optionalLocalStorage());
   clearHostedMarker();
   if (restartGithubSignIn) {
     beginGithubSignIn();
@@ -230,6 +232,14 @@ function clearHostedMarker() {
     sessionStorage.removeItem(STORAGE_KEY);
   } catch {
     // The server session is already revoked; reload without treating local cleanup as logout failure.
+  }
+}
+
+function optionalLocalStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
   }
 }
 

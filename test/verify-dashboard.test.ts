@@ -9,17 +9,22 @@ import {
 
 const validHtml = `<!doctype html>
 <html><head>
-<title>Stensibly · Shared work</title>
-<meta name="description" content="Stensibly keeps shared work visible and resumable for people and agents." />
+<title>Stensibly · Studio Airfield</title>
+<meta name="description" content="Stensibly is the live control room for work moving across people, agents, providers, and deployments." />
+<meta property="og:image" content="https://www.stensibly.com/stensibly-airfield-social.png" />
+<meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="/favicon.ico" sizes="any" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/item-claim.css" />
 <link rel="stylesheet" href="/hosted-session.css" />
 <link rel="stylesheet" href="/login-scrapbook.css" />
+<link rel="stylesheet" href="/airspace-operator.css" />
 </head><body>
 <button id="github-sign-in"></button>
 <form id="connect-form"></form>
 <section id="dashboard"></section>
+<section id="airfield"></section>
+<div id="traffic-layer"></div>
 <dialog id="item-detail-dialog"></dialog>
 <p id="item-detail-announcer"></p>
 <script src="/hosted-session-bridge.js" type="module"></script>
@@ -43,8 +48,8 @@ describe("dashboard HTML verification", () => {
   });
 
   test("rejects retired shell copy, missing UI markers, and token-shaped values", () => {
-    expect(() => verifyDashboardHtml(validHtml.replace("Shared work", "Agent scrapbook")))
-      .toThrow("Shared work");
+    expect(() => verifyDashboardHtml(validHtml.replace("Studio Airfield", "Agent scrapbook")))
+      .toThrow("Studio Airfield");
     expect(() => verifyDashboardHtml(validHtml.replace('id="dashboard"', 'id="missing"')))
       .toThrow("dashboard");
     expect(() => verifyDashboardHtml(validHtml + "stn.tok_deadbeef.secret"))

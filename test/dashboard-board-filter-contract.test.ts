@@ -25,6 +25,8 @@ describe("dashboard board filter integration", () => {
     expect(controller).toContain("result.setAttribute('aria-live', 'polite')");
     expect(controller).toContain("clearButton.textContent = 'clear board filters'");
     expect(controller).toContain("event.key !== 'Escape'");
+    expect(controller).toContain("if (manifestHead) manifestHead.after(panel)");
+    expect(controller).toContain("else dashboardHead.after(panel)");
   });
 
   test("annotates existing card text instead of replacing board records", () => {

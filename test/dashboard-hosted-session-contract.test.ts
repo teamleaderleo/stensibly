@@ -214,6 +214,7 @@ describe("hosted dashboard auth URLs and logout", () => {
     expect(bridge).toContain("if (restartGithubSignIn)");
     expect(bridge).toContain("beginGithubSignIn();");
     expect(bridge).toContain("hostedSignOutButton.textContent = 'Sign out'");
+    expect(bridge).toContain("clearDashboardSnapshot(optionalLocalStorage())");
     expect(bridge).toContain("clearHostedMarker()");
   });
 
