@@ -439,13 +439,7 @@ async function verifyProduction(
       `exact health verification at ${endpoint}`,
       dependencies,
       () => verifyHealthVersion(endpoint, [candidateVersionId], dependencies),
-      endpoint === OFFICIAL_ENDPOINT
-        ? {
-          attempts: EDGE_CONVERGENCE_RETRY_ATTEMPTS,
-          retryable: (error) => error instanceof WorkerVersionMismatchError
-            && error.observedVersionId !== null,
-        }
-        : undefined,
+      edgeConvergenceRetryPolicy(),
     );
     await retry(`bearer verification at ${endpoint}`, dependencies, () => runHostedVerifier(
       endpoint,
@@ -471,15 +465,20 @@ async function verifyRecoveredBaseline(
       `recovery health verification at ${endpoint}`,
       dependencies,
       () => verifyHealthVersion(endpoint, expectedVersionIds, dependencies),
-      endpoint === OFFICIAL_ENDPOINT
-        ? {
-          attempts: EDGE_CONVERGENCE_RETRY_ATTEMPTS,
-          retryable: (error) => error instanceof WorkerVersionMismatchError
-            && error.observedVersionId !== null,
-        }
-        : undefined,
+      edgeConvergenceRetryPolicy(),
     );
   }
+}
+
+function edgeConvergenceRetryPolicy(): {
+  attempts: number;
+  retryable: (error: unknown) => boolean;
+} {
+  return {
+    attempts: EDGE_CONVERGENCE_RETRY_ATTEMPTS,
+    retryable: (error) => error instanceof WorkerVersionMismatchError
+      && error.observedVersionId !== null,
+  };
 }
 
 async function verifyHealthVersion(

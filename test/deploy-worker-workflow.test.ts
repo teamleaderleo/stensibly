@@ -104,4 +104,9 @@ describe("production Worker deployment workflow", () => {
     );
     expect(workflow).not.toContain("candidate did not remain at 100% traffic");
   });
+
+  test("budgets enough time for typed routing convergence on both hosted origins", () => {
+    const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
+    expect(deployJob).toContain("timeout-minutes: 30");
+  });
 });

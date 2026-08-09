@@ -259,6 +259,25 @@ describe("production Worker release guard", () => {
     ))).toBe(false);
   });
 
+  test("waits for fallback-domain routing convergence without rolling back a healthy candidate", async () => {
+    const harness = recoveryHarness(true, {
+      fallbackPromotionLagAttempts: 11,
+      officialPromotionLagAttempts: 0,
+    });
+
+    const result = await withCredentialEnvironment(() => runProductionRelease({
+      expectedSha: SHA,
+      oauthExpectation: "enabled",
+    }, harness.dependencies));
+
+    expect(result.recovered).toBe(false);
+    expect(harness.activeVersion()).toBe(VERSION_B);
+    expect(harness.fallbackPromotionAttempts()).toBe(12);
+    expect(harness.commands.some((command) => command.includes(
+      `wrangler versions deploy ${VERSION_A}@100%`,
+    ))).toBe(false);
+  });
+
   for (const failure of ["http_500", "missing_version", "network"] as const) {
     test(`does not treat official-domain ${failure} as a long routing-convergence wait`, async () => {
       const harness = recoveryHarness(true, { officialPromotionFailure: failure });
@@ -271,6 +290,20 @@ describe("production Worker release guard", () => {
       });
 
       expect(harness.officialPromotionAttempts()).toBe(3);
+      expect(harness.activeVersion()).toBe(VERSION_A);
+    });
+
+    test(`does not treat fallback-domain ${failure} as a long routing-convergence wait`, async () => {
+      const harness = recoveryHarness(true, { fallbackPromotionFailure: failure });
+
+      await withCredentialEnvironment(async () => {
+        await expect(runProductionRelease({
+          expectedSha: SHA,
+          oauthExpectation: "enabled",
+        }, harness.dependencies)).rejects.toThrow("previous deployment was restored");
+      });
+
+      expect(harness.fallbackPromotionAttempts()).toBe(3);
       expect(harness.activeVersion()).toBe(VERSION_A);
     });
   }
@@ -289,6 +322,23 @@ describe("production Worker release guard", () => {
     });
 
     expect(harness.officialRecoveryAttempts()).toBe(12);
+    expect(harness.activeVersion()).toBe(VERSION_A);
+  });
+
+  test("waits for fallback-domain recovery routing to return to the restored baseline", async () => {
+    const harness = recoveryHarness(true, {
+      fallbackPromotionFailure: "http_500",
+      fallbackRecoveryLagAttempts: 11,
+    });
+
+    await withCredentialEnvironment(async () => {
+      await expect(runProductionRelease({
+        expectedSha: SHA,
+        oauthExpectation: "enabled",
+      }, harness.dependencies)).rejects.toThrow("previous deployment was restored");
+    });
+
+    expect(harness.fallbackRecoveryAttempts()).toBe(12);
     expect(harness.activeVersion()).toBe(VERSION_A);
   });
 
@@ -364,6 +414,9 @@ function unusedDependencies(): ReleaseDependencies {
 function recoveryHarness(
   recoveryHealthy: boolean,
   options: {
+    fallbackPromotionLagAttempts?: number;
+    fallbackPromotionFailure?: "http_500" | "missing_version" | "network";
+    fallbackRecoveryLagAttempts?: number;
     officialPromotionLagAttempts?: number;
     officialPromotionFailure?: "http_500" | "missing_version" | "network";
     officialRecoveryLagAttempts?: number;
@@ -374,6 +427,8 @@ function recoveryHarness(
   activeVersion(): string;
   cleanupCalls(): number;
   healthAttempts(): number;
+  fallbackPromotionAttempts(): number;
+  fallbackRecoveryAttempts(): number;
   officialPromotionAttempts(): number;
   officialRecoveryAttempts(): number;
 } {
@@ -382,6 +437,8 @@ function recoveryHarness(
   let deploymentId = DEPLOYMENT_A;
   let healthAttempts = 0;
   let cleanupCalls = 0;
+  let fallbackPromotionAttempts = 0;
+  let fallbackRecoveryAttempts = 0;
   let officialPromotionAttempts = 0;
   let officialRecoveryAttempts = 0;
   const dependencies: ReleaseDependencies = {
@@ -441,6 +498,32 @@ function recoveryHarness(
       }
       if (
         activeVersion === VERSION_B
+        && (options.fallbackPromotionLagAttempts !== undefined || options.fallbackPromotionFailure)
+        && input.startsWith("https://stensibly-api.leoli-082000.workers.dev")
+      ) {
+        fallbackPromotionAttempts += 1;
+        if (options.fallbackPromotionFailure === "http_500") {
+          return new Response("failure", { status: 500 });
+        }
+        if (options.fallbackPromotionFailure === "missing_version") {
+          return new Response("healthy without identity", { status: 200 });
+        }
+        if (options.fallbackPromotionFailure === "network") {
+          throw new Error("simulated network failure");
+        }
+        if (fallbackPromotionAttempts <= (options.fallbackPromotionLagAttempts ?? 0)) {
+          return new Response("stale route", {
+            status: 200,
+            headers: { "x-stensibly-worker-version-id": VERSION_A },
+          });
+        }
+        return new Response("healthy", {
+          status: 200,
+          headers: { "x-stensibly-worker-version-id": VERSION_B },
+        });
+      }
+      if (
+        activeVersion === VERSION_B
         && (options.officialPromotionLagAttempts !== undefined || options.officialPromotionFailure)
       ) {
         if (input.startsWith("https://api.stensibly.com")) {
@@ -465,6 +548,19 @@ function recoveryHarness(
           status: 200,
           headers: { "x-stensibly-worker-version-id": VERSION_B },
         });
+      }
+      if (
+        activeVersion === VERSION_A
+        && options.fallbackRecoveryLagAttempts !== undefined
+        && input.startsWith("https://stensibly-api.leoli-082000.workers.dev")
+      ) {
+        fallbackRecoveryAttempts += 1;
+        if (fallbackRecoveryAttempts <= options.fallbackRecoveryLagAttempts) {
+          return new Response("stale candidate route", {
+            status: 200,
+            headers: { "x-stensibly-worker-version-id": VERSION_B },
+          });
+        }
       }
       if (
         activeVersion === VERSION_A
@@ -498,6 +594,8 @@ function recoveryHarness(
     activeVersion: () => activeVersion,
     cleanupCalls: () => cleanupCalls,
     healthAttempts: () => healthAttempts,
+    fallbackPromotionAttempts: () => fallbackPromotionAttempts,
+    fallbackRecoveryAttempts: () => fallbackRecoveryAttempts,
     officialPromotionAttempts: () => officialPromotionAttempts,
     officialRecoveryAttempts: () => officialRecoveryAttempts,
   };
