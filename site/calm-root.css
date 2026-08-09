@@ -242,25 +242,6 @@ button:active:not(:disabled),
   color: var(--text);
 }
 
-html[data-app-mode="connecting"] .hero-login,
-html[data-app-mode="connecting"] .dashboard,
-html[data-app-mode="connecting"] .disconnected {
-  display: none !important;
-}
-
-html[data-app-mode="connecting"] .shell::after {
-  content: "Opening project desk…";
-  display: grid;
-  place-items: center;
-  min-height: min(30rem, calc(100vh - 8rem));
-  border: 1px solid var(--line);
-  border-radius: .9rem;
-  color: var(--muted);
-  background: var(--panel);
-  font-size: .82rem;
-  letter-spacing: .01em;
-}
-
 html[data-app-mode="connected"] .hero-copy,
 html[data-app-mode="degraded"] .hero-copy {
   display: none;

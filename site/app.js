@@ -12,9 +12,15 @@ import {
   dashboardRefreshMode,
   readDashboardRefreshState,
 } from './dashboard-refresh-policy.js';
+import {
+  clearDashboardSnapshot,
+  persistDashboardSnapshot,
+  readDashboardSnapshot,
+} from './dashboard-snapshot-cache.js';
 import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
+import { isHostedSessionSentinel } from './hosted-session.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 
@@ -32,6 +38,13 @@ const board = document.querySelector('#board');
 const boardAnnouncer = document.querySelector('#board-announcer');
 const agents = document.querySelector('#agents');
 const lastUpdated = document.querySelector('#last-updated');
+const trafficLayer = document.querySelector('#traffic-layer');
+const airfieldEmpty = document.querySelector('#airfield-empty');
+const airfieldFreshness = document.querySelector('#airfield-freshness');
+const airfieldClock = document.querySelector('#airfield-clock');
+const airfieldCaption = document.querySelector('#airfield-caption');
+const towerList = document.querySelector('#tower-list');
+const towerCount = document.querySelector('#tower-count');
 
 const columns = [
   ['blocked', 'Needs attention', 'waiting on a named condition'],
@@ -41,6 +54,7 @@ const columns = [
 ];
 
 const browserSessionStorage = optionalSessionStorage();
+const browserLocalStorage = optionalLocalStorage();
 const storedRefreshState = readDashboardRefreshState(browserSessionStorage);
 let items = [];
 let refreshTimer;
@@ -51,6 +65,8 @@ let requestGeneration = 0;
 let connected = false;
 let endpoint = savedEndpoint();
 let token = readSessionValue('stensiblyToken');
+let dashboardSnapshot = null;
+let dataFreshness = 'waking';
 
 let itemDetail;
 let itemCreate;
@@ -105,8 +121,20 @@ document.querySelector('#disconnect-connection').addEventListener('click', disco
 cancelConnection.addEventListener('click', cancelConnectionChange);
 projectFilter.addEventListener('change', render);
 document.addEventListener('visibilitychange', handleVisibilityChange);
+trafficLayer?.addEventListener('click', openFlightRecord);
+towerList?.addEventListener('click', openFlightRecord);
+renderAirfieldClock();
+scheduleAirfieldClock();
 
 if (token && isPlausibleToken(token)) {
+  dashboardSnapshot = isHostedSessionSentinel(token)
+    ? readDashboardSnapshot(browserLocalStorage, { endpoint })
+    : null;
+  items = dashboardSnapshot ? [...dashboardSnapshot.items] : [];
+  connected = true;
+  dataFreshness = dashboardSnapshot ? 'cached' : 'syncing';
+  updateDashboard();
+  showConnectedState({ warming: true });
   void refreshCurrent({ initial: true });
 } else {
   if (token) clearStoredToken();
@@ -163,8 +191,10 @@ async function connect(event) {
     token = candidateToken;
     acceptRefreshResult(nextItems, { initial: true });
     connected = true;
+    dataFreshness = 'live';
     localStorage.stensiblyEndpoint = endpoint;
     writeSessionValue('stensiblyToken', token);
+    persistHostedSnapshot();
     form.elements.endpoint.value = endpoint;
     form.elements.token.value = '';
     updateDashboard();
@@ -180,6 +210,7 @@ async function connect(event) {
       && isTerminalConnectionFailure(error);
     if (failedCurrentConnection) {
       if (isCredentialFailure(error)) clearStoredToken();
+      clearPersistedSnapshot();
       connected = false;
       items = [];
       itemDetail.reset();
@@ -212,6 +243,8 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     if (!isCurrentRequest(requestId)) return;
     acceptRefreshResult(nextItems, { interactive, initial });
     connected = true;
+    dataFreshness = 'live';
+    persistHostedSnapshot();
     updateDashboard();
     showConnectedState();
     if (interactive || initial) void sessionContext.refresh();
@@ -222,6 +255,7 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
     if (!isCurrentRequest(requestId)) return;
     if (isTerminalConnectionFailure(error)) {
       if (isCredentialFailure(error)) clearStoredToken();
+      clearPersistedSnapshot();
       connected = false;
       items = [];
       itemDetail.reset();
@@ -234,6 +268,8 @@ async function refreshCurrent({ interactive = false, initial = false } = {}) {
       showConnectionForm(message);
       return;
     }
+    dataFreshness = items.length || dashboardSnapshot ? 'degraded' : 'syncing';
+    renderDataFreshness();
     showConnectedIssue(message);
     scheduleRefresh();
   }
@@ -325,6 +361,7 @@ function disconnect() {
   itemDetail.reset({ announce: 'Item detail closed because the ledger disconnected.' });
   sessionContext.reset();
   clearStoredToken();
+  clearPersistedSnapshot();
   connected = false;
   items = [];
   resetRefreshPolicy();
@@ -342,6 +379,14 @@ function clearStoredToken() {
 function optionalSessionStorage() {
   try {
     return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function optionalLocalStorage() {
+  try {
+    return window.localStorage;
   } catch {
     return null;
   }
@@ -384,16 +429,17 @@ function isCurrentRequest(requestId) {
   return requestId === requestGeneration;
 }
 
-function showConnectedState() {
+function showConnectedState({ warming = false } = {}) {
   connectionTitle.textContent = 'Project desk connected';
   form.hidden = true;
   connectedSummary.hidden = false;
   cancelConnection.hidden = true;
   connectedEndpoint.textContent = endpoint;
   hideConnectionError();
-  setConnectionStatus('connected');
+  setConnectionStatus(warming ? 'revalidating' : 'connected');
   dashboard.hidden = false;
   disconnected.hidden = true;
+  renderDataFreshness();
 }
 
 function showConnectedIssue(message) {
@@ -406,6 +452,8 @@ function showConnectedIssue(message) {
   setConnectionStatus('retrying', true);
   dashboard.hidden = false;
   disconnected.hidden = true;
+  dataFreshness = 'degraded';
+  renderDataFreshness();
 }
 
 function showConnectionForm(message = '', { keepDashboard = false, allowCancel = false } = {}) {
@@ -473,6 +521,7 @@ function updateDashboard() {
     minute: '2-digit',
   });
   itemDetail.reconcile();
+  renderDataFreshness();
 }
 
 function scheduleRefresh() {
@@ -538,6 +587,9 @@ function render() {
     ? activeActors.map((actor) => `<div class="agent">${escapeHtml(actor)}</div>`).join('')
     : '<p class="empty">Nothing active right now.</p>';
 
+  renderAirfield(visible);
+  renderTower(visible);
+
   board.innerHTML = columns.map(([status, label, hint]) => {
     const matching = visible
       .filter((item) => item.status === status)
@@ -556,6 +608,136 @@ function render() {
     const announcement = `${visible.length} ${visible.length === 1 ? 'work item' : 'work items'} loaded for ${selected || 'all projects'}.`;
     if (boardAnnouncer.textContent !== announcement) boardAnnouncer.textContent = announcement;
   }
+}
+
+function renderAirfield(visible) {
+  if (!trafficLayer || !airfieldEmpty) return;
+  const ordered = [...visible].sort((left, right) => {
+    const rank = { blocked: 0, active: 1, ready: 2, done: 3 };
+    return (rank[left.status] ?? 4) - (rank[right.status] ?? 4)
+      || right.priority - left.priority
+      || left.id.localeCompare(right.id);
+  });
+  const maximum = Math.min(ordered.length, 28);
+  const statusSlots = { blocked: 0, active: 0, ready: 0, done: 0 };
+  trafficLayer.innerHTML = ordered.slice(0, maximum).map((item, index) => {
+    const slot = statusSlots[item.status] ?? index;
+    statusSlots[item.status] = slot + 1;
+    const callsign = flightCallsign(item);
+    const detail = item.claimedBy || item.kind;
+    return `<button class="flight-marker ${statusClass(item.status)} flight-slot-${slot % 7}" type="button" data-flight-item-id="${escapeHtml(item.id)}" aria-label="Open ${escapeHtml(item.title)}">
+      <span class="flight-plane" aria-hidden="true"></span>
+      <span class="flight-label"><strong>${escapeHtml(callsign)}</strong><small>${escapeHtml(detail)} · P${item.priority}</small></span>
+    </button>`;
+  }).join('');
+  airfieldEmpty.hidden = ordered.length > 0;
+  if (airfieldCaption) {
+    const hidden = ordered.length - maximum;
+    airfieldCaption.textContent = hidden > 0
+      ? `${maximum} flights plotted · ${hidden} more on the manifest`
+      : `${ordered.length} ${ordered.length === 1 ? 'flight' : 'flights'} plotted · select one to inspect`;
+  }
+}
+
+function renderTower(visible) {
+  if (!towerList || !towerCount) return;
+  const attention = [...visible]
+    .filter((item) => item.status === 'blocked' || item.status === 'active')
+    .sort((left, right) => {
+      const rank = { blocked: 0, active: 1 };
+      return rank[left.status] - rank[right.status]
+        || right.priority - left.priority
+        || right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, 8);
+  towerCount.textContent = String(attention.length);
+  towerList.innerHTML = attention.length
+    ? attention.map((item) => `<button class="tower-flight ${statusClass(item.status)}" type="button" data-flight-item-id="${escapeHtml(item.id)}">
+        <span class="tower-flight-top"><span>${escapeHtml(flightCallsign(item))}</span><span>${escapeHtml(item.status)}</span></span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>${escapeHtml(item.nextAction || item.summary || 'Open the record and choose the next move.')}</span>
+        <span class="tower-flight-meta"><span>${escapeHtml(item.claimedBy || 'unassigned')}</span><span>P${item.priority}</span></span>
+      </button>`).join('')
+    : '<div class="tower-quiet"><strong>No intervention requested.</strong><span>Active crews can keep flying. Ready work remains staged on the field.</span></div>';
+}
+
+function openFlightRecord(event) {
+  if (!(event.target instanceof Element)) return;
+  const trigger = event.target.closest('[data-flight-item-id]');
+  if (!(trigger instanceof HTMLButtonElement)) return;
+  const itemId = trigger.dataset.flightItemId || '';
+  if (!itemId) return;
+  const card = [...board.querySelectorAll('button.card[data-item-id]')]
+    .find((candidate) => candidate.dataset.itemId === itemId);
+  card?.click();
+}
+
+function flightCallsign(item) {
+  const prefix = String(item.project || 'STN').replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+  const numeric = stableHash(String(item.id)) % 900 + 100;
+  return `${prefix} ${numeric}`;
+}
+
+function stableHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function renderAirfieldClock() {
+  if (!airfieldClock) return;
+  airfieldClock.textContent = new Date().toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function scheduleAirfieldClock() {
+  window.setTimeout(() => {
+    renderAirfieldClock();
+    scheduleAirfieldClock();
+  }, 1000);
+}
+
+function renderDataFreshness() {
+  if (!airfieldFreshness) return;
+  const labels = {
+    live: 'LIVE',
+    cached: 'LAST KNOWN',
+    syncing: 'SYNCING',
+    degraded: 'RETRYING',
+    waking: 'WAKING',
+  };
+  airfieldFreshness.dataset.state = dataFreshness;
+  airfieldFreshness.textContent = labels[dataFreshness] || 'WAKING';
+  if (airfieldCaption && dataFreshness === 'cached' && dashboardSnapshot) {
+    airfieldCaption.textContent = `Last known picture from ${formatSnapshotTime(dashboardSnapshot.savedAt)} · live sync underway`;
+  }
+}
+
+function formatSnapshotTime(value) {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'earlier';
+}
+
+function persistHostedSnapshot() {
+  if (!isHostedSessionSentinel(token)) return false;
+  const savedAt = new Date().toISOString();
+  const persisted = persistDashboardSnapshot(browserLocalStorage, { endpoint, items, savedAt });
+  if (persisted) dashboardSnapshot = { version: 1, endpoint, savedAt, items: [...items] };
+  return persisted;
+}
+
+function clearPersistedSnapshot() {
+  dashboardSnapshot = null;
+  clearDashboardSnapshot(browserLocalStorage);
 }
 
 function renderCard(item) {

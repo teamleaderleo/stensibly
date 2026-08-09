@@ -3,9 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Stensibly keeps shared work visible and resumable for people and agents." />
+    <meta name="description" content="Stensibly is the live control room for work moving across people, agents, providers, and deployments." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Stensibly Airfield" />
+    <meta property="og:description" content="Your agents are already out there." />
+    <meta property="og:image" content="https://www.stensibly.com/stensibly-airfield-social.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <title>Stensibly · Shared work</title>
+    <title>Stensibly · Studio Airfield</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/item-claim.css" />
     <link rel="stylesheet" href="/hosted-session.css" />
@@ -14,44 +21,46 @@
     <link rel="stylesheet" href="/root-mode-status.css" />
     <link rel="stylesheet" href="/crunch-root.css" />
     <link rel="stylesheet" href="/operator-root.css" />
+    <link rel="stylesheet" href="/airspace-operator.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Stensibly home">
-          <span class="mark">S</span>
+          <span class="mark">ST</span>
           <span class="brand-copy">
-            <strong>Stensibly</strong>
-            <small>coordination ledger</small>
+            <strong>Stensibly Airfield</strong>
+            <small>studio operations</small>
           </span>
         </a>
         <a class="github" href="https://github.com/teamleaderleo/stensibly">GitHub source ↗</a>
       </header>
 
       <section class="root-connecting-status" id="root-connecting-status" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
-        <span>Opening project desk…</span>
+        <span class="root-status-lamp" aria-hidden="true"></span>
+        <span>Revalidating the live picture…</span>
       </section>
 
       <section class="hero hero-login">
         <div class="hero-copy">
-          <p class="eyebrow">Coordination ledger</p>
-          <h1>Shared work, made legible.</h1>
-          <p class="hero-lede">Stensibly keeps ownership, next actions, and handoffs visible so people and agents can pick work up without guessing.</p>
+          <p class="eyebrow">One-person studio control</p>
+          <h1>Your agents are already out there.</h1>
+          <p class="hero-lede">Open the tower, see every live obligation at once, and step in only when the airspace needs you.</p>
           <ul class="hero-principles" aria-label="What Stensibly keeps visible">
             <li>
               <span aria-hidden="true">01</span>
-              <strong>Ownership</strong>
-              <small>Who holds the next move.</small>
+              <strong>Traffic</strong>
+              <small>Every workstream in one field.</small>
             </li>
             <li>
               <span aria-hidden="true">02</span>
-              <strong>Context</strong>
-              <small>Why the work is here.</small>
+              <strong>Control</strong>
+              <small>Intervene at the exact handoff.</small>
             </li>
             <li>
               <span aria-hidden="true">03</span>
-              <strong>Continuity</strong>
-              <small>Where to resume.</small>
+              <strong>Receipts</strong>
+              <small>Nothing disappears between crews.</small>
             </li>
           </ul>
         </div>
@@ -106,19 +115,78 @@
         </aside>
       </section>
 
-      <section class="dashboard" id="dashboard" hidden>
+      <section class="dashboard airfield-dashboard" id="dashboard" hidden>
         <div class="dashboard-head">
           <div>
-            <p class="eyebrow">Work ledger</p>
+            <p class="eyebrow">Studio airspace</p>
             <h2 id="ledger-name">All projects</h2>
-            <p class="dashboard-lede">Start with work that needs intervention, then follow what is already moving.</p>
+            <p class="dashboard-lede">A live field of work, crews, holds, and arrivals. Select any flight to open its durable record.</p>
           </div>
           <div class="dashboard-actions">
             <select id="project-filter" aria-label="Filter by project"><option value="">all projects</option></select>
             <button id="create-item" type="button" hidden>create item</button>
-            <button id="refresh" type="button">refresh</button>
+            <button id="refresh" type="button">sync now</button>
           </div>
         </div>
+
+        <section class="flight-deck" aria-label="Live studio airfield">
+          <article class="airfield-panel">
+            <header class="airfield-head">
+              <div class="airfield-identity">
+                <span class="airfield-kicker">STN / CONTROL</span>
+                <strong>North studio field</strong>
+              </div>
+              <div class="airfield-head-state">
+                <span id="airfield-freshness" data-state="waking">WAKING</span>
+                <time id="airfield-clock">--:--</time>
+              </div>
+            </header>
+            <div class="airfield" id="airfield">
+              <div class="terrain terrain-one" aria-hidden="true"></div>
+              <div class="terrain terrain-two" aria-hidden="true"></div>
+              <div class="river" aria-hidden="true"></div>
+              <div class="runway runway-active" aria-hidden="true"><span>09 ACTIVE 27</span></div>
+              <div class="runway runway-ready" aria-hidden="true"><span>READY / TAXI</span></div>
+              <div class="runway runway-blocked" aria-hidden="true"><span>HOLD / REVIEW</span></div>
+              <div class="apron" aria-hidden="true">
+                <span class="hangar hangar-one"></span>
+                <span class="hangar hangar-two"></span>
+                <span class="hangar hangar-three"></span>
+                <span class="tower"></span>
+              </div>
+              <div class="traffic-layer" id="traffic-layer"></div>
+              <div class="airfield-empty" id="airfield-empty" hidden>
+                <strong>Clear skies.</strong>
+                <span>No flights in the selected project.</span>
+              </div>
+              <div class="airfield-key" aria-hidden="true">
+                <span><i class="key-blocked"></i>needs you</span>
+                <span><i class="key-active"></i>in flight</span>
+                <span><i class="key-ready"></i>taxi</span>
+                <span><i class="key-done"></i>arrived</span>
+              </div>
+            </div>
+            <footer class="airfield-caption">
+              <span id="airfield-caption">Recovering the last known field picture.</span>
+              <span>fictional field · real work</span>
+            </footer>
+          </article>
+
+          <aside class="tower-panel" aria-labelledby="tower-title">
+            <header class="tower-head">
+              <div>
+                <p class="eyebrow">Controller strip</p>
+                <h3 id="tower-title">What needs a hand</h3>
+              </div>
+              <span id="tower-count">0</span>
+            </header>
+            <div class="tower-list" id="tower-list"></div>
+            <div class="tower-note">
+              <span class="tower-note-lamp" aria-hidden="true"></span>
+              <p><strong>Automatic crews remain in control.</strong> This strip stays quiet until an obligation blocks, ages, or asks for a decision.</p>
+            </div>
+          </aside>
+        </section>
 
         <section class="metrics" aria-label="Status totals">
           <article class="metric-attention"><span>needs attention</span><strong id="metric-blocked">0</strong></article>
@@ -128,11 +196,17 @@
         </section>
 
         <section class="agents-panel">
-          <div class="section-head"><h3>Actors holding active work</h3><span id="last-updated">waiting</span></div>
+          <div class="section-head"><h3>Crews on frequency</h3><span id="last-updated">recovering local picture</span></div>
           <div class="agents" id="agents"><p class="empty">Nothing active right now.</p></div>
         </section>
 
-        <section class="board" id="board" aria-label="Work grouped by disposition"></section>
+        <section class="manifest-panel" aria-labelledby="manifest-title">
+          <header class="manifest-head">
+            <div><p class="eyebrow">Flight manifest</p><h3 id="manifest-title">Every durable work record</h3></div>
+            <p>The spatial view is the glance. The manifest is the exact handoff.</p>
+          </header>
+          <section class="board" id="board" aria-label="Work grouped by disposition"></section>
+        </section>
         <p class="sr-only" id="board-announcer" aria-live="polite"></p>
 
         <details class="session-context" id="session-context-panel" data-mode="unavailable">

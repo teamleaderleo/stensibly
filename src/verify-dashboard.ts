@@ -18,8 +18,10 @@ const TOKEN_PATTERN = /stn\.tok_[A-Za-z0-9._-]+/i;
 
 export function verifyDashboardHtml(html: string): void {
   const required = [
-    "<title>Stensibly · Shared work</title>",
-    'content="Stensibly keeps shared work visible and resumable for people and agents."',
+    "<title>Stensibly · Studio Airfield</title>",
+    'content="Stensibly is the live control room for work moving across people, agents, providers, and deployments."',
+    'content="https://www.stensibly.com/stensibly-airfield-social.png"',
+    'content="summary_large_image"',
     'href="/favicon.ico"',
     'src="/hosted-session-bridge.js"',
     'src="/app.js"',
@@ -27,9 +29,12 @@ export function verifyDashboardHtml(html: string): void {
     'href="/item-claim.css"',
     'href="/hosted-session.css"',
     'href="/login-scrapbook.css"',
+    'href="/airspace-operator.css"',
     'id="github-sign-in"',
     'id="connect-form"',
     'id="dashboard"',
+    'id="airfield"',
+    'id="traffic-layer"',
     'id="item-detail-dialog"',
     'id="item-detail-announcer"',
   ];
