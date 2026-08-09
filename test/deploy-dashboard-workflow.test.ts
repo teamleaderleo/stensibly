@@ -77,10 +77,7 @@ describe("production dashboard deployment workflow", () => {
     expect(workflow).toContain("--prebuilt");
     expect(workflow).toContain("--prod");
     expect(workflow).toContain("--skip-domain");
-    expect(workflow).toContain(
-      'vercel@${VERCEL_CLI_VERSION} --token="${VERCEL_TOKEN}"',
-    );
-    expect(workflow).toContain("curl / \\");
+    expect(workflow).toContain("vercel@${VERCEL_CLI_VERSION} curl /");
     expect(workflow).toContain("--deployment \"${DEPLOYMENT_URL}\"");
     expect(workflow.match(/vercel@\$\{VERCEL_CLI_VERSION\} promote/g)).toHaveLength(1);
     expect(position("Create staged production deployment"))
@@ -89,9 +86,9 @@ describe("production dashboard deployment workflow", () => {
       .toBeLessThan(position("Promote verified deployment"));
   });
 
-  test("keeps global Vercel authentication ahead of every staged curl subcommand", () => {
+  test("uses token environment authentication without forwarding it to staged curl", () => {
     const commandStarts = [...workflow.matchAll(
-      /vercel@\$\{VERCEL_CLI_VERSION\} --token="\$\{VERCEL_TOKEN\}"/g,
+      /vercel@\$\{VERCEL_CLI_VERSION\} curl (?:\/|"\$\{asset\}")/g,
     )].map((match) => match.index);
     expect(commandStarts).toHaveLength(2);
 
@@ -102,14 +99,13 @@ describe("production dashboard deployment workflow", () => {
         ...[nextCommand, nextThen].filter((index) => index > commandStart),
       );
       const command = workflow.slice(commandStart, commandEnd);
-      const token = command.indexOf('--token="${VERCEL_TOKEN}"');
       const curl = command.indexOf("curl ");
       const deployment = command.indexOf('--deployment "${DEPLOYMENT_URL}"');
       const separator = command.indexOf("            -- ");
       const curlOptions = command.indexOf("--fail --silent --show-error");
 
-      expect(token).toBeGreaterThanOrEqual(0);
-      expect(token).toBeLessThan(curl);
+      expect(command).not.toContain("--token");
+      expect(curl).toBeGreaterThanOrEqual(0);
       expect(curl).toBeLessThan(deployment);
       expect(deployment).toBeLessThan(separator);
       expect(separator).toBeLessThan(curlOptions);
