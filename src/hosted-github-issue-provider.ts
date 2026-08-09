@@ -7,10 +7,17 @@ import {
   withGitHubIssueProviderReadService,
   withGitHubIssueProviderWriteService,
   withGitHubPublicationProviderWriteService,
+  withGitHubRepositoryFileWriteService,
   type GitHubIssueProviderReadService,
   type GitHubIssueProviderWriteService,
   type GitHubPublicationProviderWriteService,
+  type GitHubRepositoryFileWriteService,
 } from "./github-issue-provider-mcp.js";
+import {
+  admitGitHubProjectRepositoryBinding,
+  admitGitHubProviderConnection,
+  validateBindingConnection,
+} from "./github-provider-binding-admission.js";
 import type {
   GitHubProviderOperation,
   GitHubProviderAuthority,
@@ -20,11 +27,23 @@ import type {
   GitHubProviderRequestContext,
 } from "./github-provider-contracts.js";
 import { GitHubPublicationProviderService } from "./github-publication-provider-service.js";
+import { githubCapabilityRegistry } from "./github-capability-curation.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
+import {
+  GitHubRepositoryWriteProviderService,
+  type GitHubRepositoryWriteAuthorityProvider,
+  type GitHubRepositoryWriteStore,
+} from "./github-repository-write-provider-service.js";
+import {
+  repositoryWriteInstallationTokenProvider,
+} from "./github-repository-write-installation-token.js";
 import { HostedGitHubAttachmentBindingStore } from "./hosted-github-attachment-binding.js";
 import { GitHubRestIssueProviderAdapter } from "./github-rest-issue-adapter.js";
 import { GitHubRestIssueWriteAdapter } from "./github-rest-issue-write-adapter.js";
 import { GitHubRestPublicationWriteAdapter } from "./github-rest-publication-write-adapter.js";
+import { GitHubRestDelegatedReadAdapter } from "./github-rest-delegated-read-adapter.js";
+import { GitHubRestRepositoryWriteAdapter } from "./github-rest-repository-write-adapter.js";
+import { admitGitHubBranchRef } from "./github-repository-write-admission.js";
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 
@@ -72,7 +91,8 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
 ): T
   & Partial<GitHubIssueProviderReadService>
   & Partial<GitHubIssueProviderWriteService>
-  & Partial<GitHubPublicationProviderWriteService> {
+  & Partial<GitHubPublicationProviderWriteService>
+  & Partial<GitHubRepositoryFileWriteService> {
   const config = hostedGitHubIssueProviderConfig(env);
   if (!config) return ledger;
   const projects = projectAttachmentLedger(ledger);
@@ -131,7 +151,7 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
     : mountedReads;
   if (!config.publicationWritesEnabled) return mountedIssueWrites;
 
-  return withGitHubPublicationProviderWriteService(
+  const mountedPublication = withGitHubPublicationProviderWriteService(
     mountedIssueWrites,
     canonicalHostedPublicationWriteService(
       new GitHubPublicationProviderService({
@@ -143,6 +163,32 @@ export function mountHostedGitHubIssueProviderFromEnv<T extends WorkLedger>(
         now: () => new Date(now()).toISOString(),
       }),
     ),
+  );
+  const metadataAdapter = new GitHubRestDelegatedReadAdapter({
+    connectionId: bindings.connectionId,
+    installationId: config.installationId,
+    credentialRef: config.credentialRef,
+    tokenProvider: tokens,
+    apiBaseUrl: config.apiBaseUrl,
+    ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+  });
+  const repositoryWrites = new GitHubRepositoryWriteProviderService({
+    authority: new HostedGitHubRepositoryWriteAuthority(
+      config,
+      bindings,
+      metadataAdapter,
+    ),
+    adapter: new GitHubRestRepositoryWriteAdapter({
+      tokenProvider: repositoryWriteInstallationTokenProvider(tokens),
+      apiBaseUrl: config.apiBaseUrl,
+      ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+    }),
+    store: durableRepositoryWriteStore(ledger),
+    now: () => new Date(now()).toISOString(),
+  });
+  return withGitHubRepositoryFileWriteService(
+    mountedPublication,
+    canonicalHostedRepositoryFileWriteService(repositoryWrites),
   );
 }
 
@@ -251,6 +297,91 @@ class HostedGitHubAuthority implements GitHubProviderAuthority {
   }
 }
 
+class HostedGitHubRepositoryWriteAuthority
+  implements GitHubRepositoryWriteAuthorityProvider
+{
+  readonly #config: HostedGitHubIssueProviderConfig;
+  readonly #bindings: HostedGitHubAttachmentBindingStore;
+  readonly #metadata: GitHubRestDelegatedReadAdapter;
+
+  constructor(
+    config: HostedGitHubIssueProviderConfig,
+    bindings: HostedGitHubAttachmentBindingStore,
+    metadata: GitHubRestDelegatedReadAdapter,
+  ) {
+    this.#config = config;
+    this.#bindings = bindings;
+    this.#metadata = metadata;
+  }
+
+  async getRepositoryWriteAuthority(
+    input: Parameters<
+      GitHubRepositoryWriteAuthorityProvider["getRepositoryWriteAuthority"]
+    >[0],
+  ): Promise<unknown> {
+    if (
+      input.project !== this.#config.project
+      || (input.operation !== "create_file" && input.operation !== "update_file")
+    ) {
+      throw new Error("Hosted GitHub repository-file write is outside enabled authority");
+    }
+    const repositoryFullName = normalizeGitHubRepository(
+      input.repositoryFullName,
+    ).toLowerCase();
+    const bindingRaw = await this.#bindings.getGitHubProjectRepositoryBinding(
+      input.project,
+      repositoryFullName,
+    );
+    if (!bindingRaw) {
+      throw new Error("Hosted GitHub repository-file write has no active project binding");
+    }
+    const binding = admitGitHubProjectRepositoryBinding(bindingRaw);
+    const connectionRaw = await this.#bindings.getGitHubProviderConnection(
+      binding.connectionId,
+    );
+    if (!connectionRaw) {
+      throw new Error("Hosted GitHub repository-file write has no active connection");
+    }
+    const connection = admitGitHubProviderConnection(connectionRaw);
+    validateBindingConnection(binding, connection);
+    if (
+      binding.project !== input.project
+      || binding.repositoryFullName !== repositoryFullName
+      || connection.installationId !== this.#config.installationId
+      || connection.credentialRef !== this.#config.credentialRef
+    ) {
+      throw new Error("Hosted GitHub repository-file write binding changed");
+    }
+    const metadata = await this.#metadata.callReadTool({
+      tool: "get_repo",
+      arguments: {},
+      repositoryFullName,
+      connectionId: connection.id,
+      installationId: connection.installationId,
+      credentialRef: connection.credentialRef,
+      catalogueFingerprint: githubCapabilityRegistry.fingerprint,
+    });
+    const result = metadata.result;
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      throw new Error("Hosted GitHub repository metadata is unavailable");
+    }
+    const defaultBranch = admitGitHubBranchRef(
+      (result as Record<string, unknown>).defaultBranch,
+    );
+    return Object.freeze({
+      version: 1 as const,
+      repositoryFullName,
+      targetRef: admitGitHubBranchRef(input.targetRef),
+      defaultBranch,
+      authorityId: binding.id,
+      authorityGeneration: repositoryWriteAuthorityGeneration(
+        binding.attachmentSnapshotSha256,
+      ),
+      defaultBranchApprovalId: null,
+    });
+  }
+}
+
 class ReadOnlyGitHubProviderReceiptStore implements GitHubProviderReceiptStore {
   async reserveGitHubProviderReceipt(
     _receipt: GitHubProviderReceipt,
@@ -292,6 +423,48 @@ function durableReceiptStore(value: unknown): GitHubProviderReceiptStore {
   });
 }
 
+function durableRepositoryWriteStore(value: unknown): GitHubRepositoryWriteStore {
+  const reserve = captureDataMethod(value, "reserveRepositoryWrite");
+  const reject = captureDataMethod(value, "rejectAndReleaseRepositoryWrite");
+  const hold = captureDataMethod(value, "holdRepositoryWriteForReconciliation");
+  const record = captureDataMethod(value, "recordVerifiedRepositoryWrite");
+  const holdVerified = captureDataMethod(
+    value,
+    "holdVerifiedRepositoryWriteForReconciliation",
+  );
+  const release = captureDataMethod(value, "releaseVerifiedRepositoryWrite");
+  const get = captureDataMethod(value, "getRepositoryWriteReceipt");
+  if (
+    !reserve
+    || !reject
+    || !hold
+    || !record
+    || !holdVerified
+    || !release
+    || !get
+  ) {
+    throw new Error(
+      "Hosted GitHub repository-file writes require the durable exact-CAS receipt store",
+    );
+  }
+  return Object.freeze({
+    reserveRepositoryWrite:
+      reserve as GitHubRepositoryWriteStore["reserveRepositoryWrite"],
+    rejectAndReleaseRepositoryWrite:
+      reject as GitHubRepositoryWriteStore["rejectAndReleaseRepositoryWrite"],
+    holdRepositoryWriteForReconciliation:
+      hold as GitHubRepositoryWriteStore["holdRepositoryWriteForReconciliation"],
+    recordVerifiedRepositoryWrite:
+      record as GitHubRepositoryWriteStore["recordVerifiedRepositoryWrite"],
+    holdVerifiedRepositoryWriteForReconciliation:
+      holdVerified as GitHubRepositoryWriteStore["holdVerifiedRepositoryWriteForReconciliation"],
+    releaseVerifiedRepositoryWrite:
+      release as GitHubRepositoryWriteStore["releaseVerifiedRepositoryWrite"],
+    getRepositoryWriteReceipt:
+      get as GitHubRepositoryWriteStore["getRepositoryWriteReceipt"],
+  });
+}
+
 function canonicalHostedReadService(
   service: GitHubIssueProviderReadService,
 ): GitHubIssueProviderReadService {
@@ -320,6 +493,59 @@ function canonicalHostedPublicationWriteService(
     createPullRequest: (input) =>
       service.createPullRequest(canonicalRequest(input)),
   };
+}
+
+function canonicalHostedRepositoryFileWriteService(
+  service: GitHubRepositoryWriteProviderService,
+): GitHubRepositoryFileWriteService {
+  return {
+    createRepositoryFile: (input) => service.execute({
+      project: input.project,
+      actorId: input.actorId,
+      clientId: input.clientId,
+      idempotencyKey: input.idempotencyKey,
+      intent: {
+        version: 1,
+        repositoryFullName: normalizeGitHubRepository(input.repository)
+          .toLowerCase(),
+        path: input.path,
+        operation: "create_file",
+        targetRef: input.branch,
+        expectedParentSha: input.expectedParentSha,
+      },
+      payload: {
+        operation: "create_file",
+        content: input.content,
+        message: input.message,
+      },
+    }),
+    updateRepositoryFile: (input) => service.execute({
+      project: input.project,
+      actorId: input.actorId,
+      clientId: input.clientId,
+      idempotencyKey: input.idempotencyKey,
+      intent: {
+        version: 1,
+        repositoryFullName: normalizeGitHubRepository(input.repository)
+          .toLowerCase(),
+        path: input.path,
+        operation: "update_file",
+        targetRef: input.branch,
+        expectedParentSha: input.expectedParentSha,
+      },
+      payload: {
+        operation: "update_file",
+        contentSha: input.contentSha,
+        content: input.content,
+        message: input.message,
+      },
+    }),
+  };
+}
+
+function repositoryWriteAuthorityGeneration(snapshotSha256: string): number {
+  const generation = Number.parseInt(snapshotSha256.slice("sha256:".length, 19), 16);
+  return generation > 0 ? generation : 1;
 }
 
 function canonicalRequest<T extends GitHubProviderRequestContext>(input: T): T {

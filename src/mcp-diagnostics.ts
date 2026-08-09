@@ -23,12 +23,14 @@ export const MCP_CORE_TOOL_NAMES = [
   "get_continuation",
   "get_github_project_context",
   "get_github_provider_receipt",
+  "get_github_repository_write_receipt",
   "get_item",
   "get_operation_receipt",
   "get_project_attachment",
   "get_runner_context",
   "github_add_issue_comment",
   "github_create_branch",
+  "github_create_file",
   "github_create_issue",
   "github_create_pull_request",
   "github_get_issue",
@@ -37,6 +39,7 @@ export const MCP_CORE_TOOL_NAMES = [
   "github_list_toolsets",
   "github_search_issues",
   "github_search_tools",
+  "github_update_file",
   "github_update_issue",
   "handoff_work",
   "list_artifacts",
@@ -55,9 +58,9 @@ export const MCP_CORE_TOOL_NAMES = [
 ] as const;
 
 export const MCP_TOOL_NAMES = [
-  ...MCP_CORE_TOOL_NAMES.slice(0, 15),
+  ...MCP_CORE_TOOL_NAMES.slice(0, 16),
   "github_call_tool",
-  ...MCP_CORE_TOOL_NAMES.slice(15),
+  ...MCP_CORE_TOOL_NAMES.slice(16),
 ] as const;
 
 export interface McpToolManifestIdentity {
@@ -347,8 +350,10 @@ function isWriteTool(tool: string | undefined): boolean {
     "complete_work",
     "github_add_issue_comment",
     "github_create_branch",
+    "github_create_file",
     "github_create_issue",
     "github_create_pull_request",
+    "github_update_file",
     "github_update_issue",
     "propose_continuation",
     "edit_continuation",

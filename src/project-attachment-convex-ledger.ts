@@ -9,7 +9,15 @@ import {
 import type {
   GitHubIssueProviderReadService,
   GitHubIssueProviderWriteService,
+  GitHubPublicationProviderWriteService,
+  GitHubRepositoryFileWriteService,
 } from "./github-issue-provider-mcp.js";
+import {
+  withConvexGitHubRepositoryWriteStore,
+} from "./github-repository-write-convex-store.js";
+import type {
+  GitHubRepositoryWriteStore,
+} from "./github-repository-write-provider-service.js";
 import type { GitHubProviderReceiptStore } from "./github-provider-contracts.js";
 import {
   withConvexGitHubProviderReceiptStore,
@@ -104,8 +112,11 @@ export function createConvexProjectAttachmentLedgerFromEnv(
   env: Record<string, string | undefined> = Bun.env,
 ): ConvexProjectAttachmentLedger
   & GitHubProviderReceiptStore
+  & GitHubRepositoryWriteStore
   & Partial<GitHubIssueProviderReadService>
   & Partial<GitHubIssueProviderWriteService>
+  & Partial<GitHubPublicationProviderWriteService>
+  & Partial<GitHubRepositoryFileWriteService>
   & Partial<HostedGitHubDelegatedReadProvider> {
   const url = required(env.CONVEX_URL, "CONVEX_URL");
   const serviceSecret = required(
@@ -119,11 +130,19 @@ export function createConvexProjectAttachmentLedgerFromEnv(
     serviceSecret,
     workspace,
   });
-  const receiptLedger = withConvexGitHubProviderReceiptStore(ledger, {
+  const repositoryWriteLedger = withConvexGitHubRepositoryWriteStore(ledger, {
     client,
     serviceSecret,
     workspace,
   });
+  const receiptLedger = withConvexGitHubProviderReceiptStore(
+    repositoryWriteLedger,
+    {
+      client,
+      serviceSecret,
+      workspace,
+    },
+  );
   const issueProvider = mountHostedGitHubIssueProviderFromEnv(receiptLedger, env);
   return mountHostedGitHubDelegatedReadProviderFromEnv(issueProvider, env);
 }

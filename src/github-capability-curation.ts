@@ -249,11 +249,13 @@ const adminCapabilities = new Set([
 const firstPartyBindings: Record<string, string> = {
   add_comment_to_issue: "github_add_issue_comment",
   create_branch: "github_create_branch",
+  create_file: "github_create_file",
   create_issue: "github_create_issue",
   create_pull_request: "github_create_pull_request",
   list_recent_issues: "github_list_issues",
   search_issues: "github_search_issues",
   fetch_issue: "github_get_issue",
+  update_file: "github_update_file",
   update_issue: "github_update_issue",
 };
 
@@ -261,7 +263,7 @@ export const githubCapabilityRegistry = compileGitHubCapabilityRegistry({
   version: 1,
   source: "chatgpt-github-connector",
   sourceRevision: "chatgpt-github-connector:observed-2026-07-31",
-  curationRevision: "stensibly-github-curation:v3",
+  curationRevision: "stensibly-github-curation:v4",
   capabilities: capabilitySeeds,
 });
 

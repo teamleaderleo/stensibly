@@ -4,6 +4,7 @@ import {
   InMemoryGitHubProviderReceiptStore,
 } from "../src/github-provider-receipts.ts";
 import type { GitHubProviderReceiptStore } from "../src/github-provider-contracts.ts";
+import { SqliteGitHubRepositoryWriteStore } from "../src/github-repository-write-store.ts";
 import { mountHostedGitHubIssueProviderFromEnv } from "../src/hosted-github-issue-provider.ts";
 import type { WorkLedger } from "../src/ledger.ts";
 import type {
@@ -124,6 +125,8 @@ describe("private hosted GitHub publication writes", () => {
     );
     expect(typeof mounted.createBranch).toBe("function");
     expect(typeof mounted.createPullRequest).toBe("function");
+    expect(typeof mounted.createRepositoryFile).toBe("function");
+    expect(typeof mounted.updateRepositoryFile).toBe("function");
 
     const context = {
       project,
@@ -189,6 +192,60 @@ describe("private hosted GitHub publication writes", () => {
     );
     expect("createBranch" in mounted).toBe(false);
     expect("createPullRequest" in mounted).toBe(false);
+    expect("createRepositoryFile" in mounted).toBe(false);
+    expect("updateRepositoryFile" in mounted).toBe(false);
+  });
+
+  test("derives repository authority from the attachment and refuses the default branch before provider write dispatch", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const fetcher = async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.endsWith("/app/installations/98765/access_tokens")) {
+        const body = JSON.parse(String(init?.body)) as {
+          permissions: Record<string, "read" | "write">;
+        };
+        return Response.json({
+          token: "installation-metadata-read-secret",
+          expires_at: "2026-08-09T01:00:00Z",
+          permissions: body.permissions,
+          repository_selection: "selected",
+          repositories: [{ full_name: repository }],
+        }, { status: 201 });
+      }
+      if (url.endsWith(`/repos/${repository}`) && method === "GET") {
+        return Response.json(apiRepository());
+      }
+      return Response.json({ message: "unexpected request" }, { status: 500 });
+    };
+    const mounted = mountHostedGitHubIssueProviderFromEnv(
+      ledgerWithReceipts(new InMemoryGitHubProviderReceiptStore()),
+      providerEnv(),
+      { fetch: fetcher as typeof fetch, now: () => fixedNow },
+    );
+
+    await expect(mounted.createRepositoryFile!({
+      project,
+      repository,
+      actorId: "api-token:oauth_grant_publication",
+      clientId: "mcp:api-token:oauth_grant_publication",
+      path: "docs/default-branch.md",
+      branch: "main",
+      expectedParentSha: baseSha,
+      content: "refused\n",
+      message: "Refuse default-branch write",
+      idempotencyKey: "hosted-default-branch-refusal",
+    })).rejects.toThrow(
+      "Default-branch repository writes require trusted approval evidence",
+    );
+    expect(providerWriteCount(calls)).toBe(0);
+    expect(calls.some((call) => call.url.endsWith(`/repos/${repository}`))).toBe(
+      true,
+    );
   });
 
   test("fails closed on malformed activation or a missing durable receipt store", () => {
@@ -211,6 +268,7 @@ describe("private hosted GitHub publication writes", () => {
 function ledgerWithReceipts(
   receipts: GitHubProviderReceiptStore,
 ): WorkLedger & ProjectAttachmentLedger & GitHubProviderReceiptStore {
+  const repositoryWrites = new SqliteGitHubRepositoryWriteStore({ path: ":memory:" });
   return Object.assign(fakeLedger(), {
     reserveGitHubProviderReceipt:
       receipts.reserveGitHubProviderReceipt.bind(receipts),
@@ -218,6 +276,22 @@ function ledgerWithReceipts(
       receipts.updateGitHubProviderReceipt.bind(receipts),
     getGitHubProviderReceipt:
       receipts.getGitHubProviderReceipt.bind(receipts),
+    reserveRepositoryWrite:
+      repositoryWrites.reserveRepositoryWrite.bind(repositoryWrites),
+    rejectAndReleaseRepositoryWrite:
+      repositoryWrites.rejectAndReleaseRepositoryWrite.bind(repositoryWrites),
+    holdRepositoryWriteForReconciliation:
+      repositoryWrites.holdRepositoryWriteForReconciliation.bind(repositoryWrites),
+    recordVerifiedRepositoryWrite:
+      repositoryWrites.recordVerifiedRepositoryWrite.bind(repositoryWrites),
+    holdVerifiedRepositoryWriteForReconciliation:
+      repositoryWrites.holdVerifiedRepositoryWriteForReconciliation.bind(
+        repositoryWrites,
+      ),
+    releaseVerifiedRepositoryWrite:
+      repositoryWrites.releaseVerifiedRepositoryWrite.bind(repositoryWrites),
+    getRepositoryWriteReceipt:
+      repositoryWrites.getRepositoryWriteReceipt.bind(repositoryWrites),
   });
 }
 
@@ -240,9 +314,23 @@ function providerEnv(): Record<string, string> {
     STENSIBLY_GITHUB_APP_PRIVATE_KEY: privateKey,
     STENSIBLY_GITHUB_INSTALLATION_ID: "98765",
     STENSIBLY_GITHUB_PROVIDER_PROJECT: project,
-    STENSIBLY_GITHUB_PROVIDER_REPOSITORY: repository,
     STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN: "teamleaderleo",
     STENSIBLY_GITHUB_API_BASE_URL: "https://api.github.com",
+  };
+}
+
+function apiRepository() {
+  return {
+    id: 123456,
+    node_id: "R_kgDOHostedPublication",
+    full_name: repository,
+    private: true,
+    archived: false,
+    disabled: false,
+    visibility: "private",
+    default_branch: "main",
+    updated_at: "2026-08-09T00:00:00Z",
+    pushed_at: "2026-08-09T00:00:00Z",
   };
 }
 
