@@ -15,6 +15,7 @@
     { "name": "STENSIBLY_GITHUB_APP_ID", "type": "secret_text" },
     { "name": "STENSIBLY_GITHUB_APP_PRIVATE_KEY", "type": "secret_text" },
     { "name": "STENSIBLY_GITHUB_INSTALLATION_ID", "type": "secret_text" },
+    { "name": "STENSIBLY_GITHUB_WEBHOOK_SECRET", "type": "secret_text" },
     { "name": "STENSIBLY_WORKSPACE", "type": "plain_text", "text": "default" },
     { "name": "STENSIBLY_GITHUB_PROVIDER_PROJECT", "type": "plain_text", "text": "stensibly" },
     { "name": "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN", "type": "plain_text", "text": "teamleaderleo" },

@@ -45,6 +45,7 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("STENSIBLY_GITHUB_APP_ID");
     expect(workflow).toContain("STENSIBLY_GITHUB_APP_PRIVATE_KEY");
     expect(workflow).toContain("STENSIBLY_GITHUB_INSTALLATION_ID");
+    expect(workflow).toContain("STENSIBLY_GITHUB_WEBHOOK_SECRET");
     expect(workflow).not.toContain("GITHUB_OAUTH_CLIENT_SECRET");
     expect(workflow).not.toContain("STENSIBLY_OAUTH_SIGNING_SECRET");
     expect(workflow.indexOf(
