@@ -1,4 +1,4 @@
-export type DashboardAssetKind = "css" | "javascript" | "svg";
+export type DashboardAssetKind = "css" | "javascript" | "svg" | "png";
 
 export interface DashboardAssetExpectation {
   path: string;
@@ -10,15 +10,17 @@ export interface DashboardAssetExpectation {
 const cssContentTypes = ["text/css"] as const;
 const javascriptContentTypes = ["text/javascript", "application/javascript"] as const;
 const svgContentTypes = ["image/svg+xml"] as const;
+const pngContentTypes = ["image/png"] as const;
 
 export const dashboardAssets: readonly DashboardAssetExpectation[] = [
   { path: "/styles.css", kind: "css", contentTypes: cssContentTypes, marker: ".detail-activity-thread" },
   { path: "/hosted-session.css", kind: "css", contentTypes: cssContentTypes, marker: ".hosted-sign-in" },
-  { path: "/login-scrapbook.css", kind: "css", contentTypes: cssContentTypes, marker: ".login-card" },
-  { path: "/operator-root.css", kind: "css", contentTypes: cssContentTypes, marker: ".dashboard-lede" },
-  { path: "/airspace-operator.css", kind: "css", contentTypes: cssContentTypes, marker: ".flight-deck" },
+  { path: "/root-mode-status.css", kind: "css", contentTypes: cssContentTypes, marker: ".root-connecting-status" },
+  { path: "/studio-control.css", kind: "css", contentTypes: cssContentTypes, marker: ".overview-grid" },
   { path: "/provider-capacity.css", kind: "css", contentTypes: cssContentTypes, marker: ".provider-capacity" },
   { path: "/app.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "DEFAULT_ENDPOINT" },
+  { path: "/ui-preferences.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "stensiblyDashboardView" },
+  { path: "/studio-control-social.png", kind: "png", contentTypes: pngContentTypes, marker: "PNG" },
   { path: "/dashboard-snapshot-cache.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "readDashboardSnapshot" },
   { path: "/hosted-session.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "hostedSessionSentinel" },
   { path: "/hosted-session-bridge.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installProviderCapacityCard" },

@@ -115,7 +115,7 @@ describe("production dashboard deployment workflow", () => {
   test("keeps staged asset and MIME checks aligned with the production verifier", () => {
     expect(workflow).toContain("bun src/dashboard-assets.ts > /tmp/dashboard-assets.json");
     expect(workflow).toContain("jq --exit-status");
-    expect(workflow).toContain('.kind == "css" or .kind == "javascript" or .kind == "svg"');
+    expect(workflow).toContain('.kind == "css" or .kind == "javascript" or .kind == "svg" or .kind == "png"');
     expect(workflow).toContain('.contentTypes | type == "array"');
     expect(workflow).toContain("all(.contentTypes[]; type == \"string\"");
     expect(workflow).toContain("while IFS=$'\\t' read -r asset kind allowed_content_types marker; do");

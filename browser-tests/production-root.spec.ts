@@ -18,10 +18,10 @@ async function installDeterministicApi(
           endpoint: "https://api.stensibly.com",
           savedAt: new Date().toISOString(),
           items: [{
-            id: "item_cached_airfield",
+            id: "item_cached_overview",
             project: "stensibly",
             kind: "task",
-            title: "Keep the last known field visible",
+            title: "Keep the last known studio visible",
             summary: "The live request is deliberately pending.",
             nextAction: "Revalidate quietly in the background.",
             status: "active",
@@ -167,7 +167,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   expect(response?.status()).toBe(200);
 
   await waitForRootMode(page, errors, "signed-out");
-  await expect(page.getByRole("heading", { name: "Your agents are already out there." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Know what needs you." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue with GitHub" })).toBeVisible();
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator("#root-connecting-status")).toHaveAttribute("aria-hidden", "true");
@@ -179,7 +179,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
 
   await attachScreenshot(page, testInfo, "production-root-signed-out-narrow-dark");
 
-  await page.getByText("Use API token", { exact: true }).click();
+  await page.getByText("Connect another endpoint", { exact: true }).click();
   await expect(page.locator("#connect-form [name=token]")).toBeVisible();
   await expect(page.locator("#connect-form [name=endpoint]")).toBeVisible();
 
@@ -196,7 +196,7 @@ test("signed-out root stays recoverable at narrow dark reduced-motion settings",
   expect(errors).toEqual([]);
 });
 
-test("returning session shows the last known airfield before live reconciliation", async ({ page }, testInfo) => {
+test("returning session shows the last known overview before live reconciliation", async ({ page }, testInfo) => {
   const errors = collectBrowserErrors(page);
   await installDeterministicApi(page, { returningSession: true, itemsMode: "pending" });
 
@@ -207,14 +207,18 @@ test("returning session shows the last known airfield before live reconciliation
   const status = page.locator("#root-connecting-status");
   await waitForRootMode(page, errors, "connected");
   await expect(page.locator("#dashboard")).toBeVisible();
-  await expect(page.locator("#airfield-freshness")).toHaveText("LAST KNOWN");
-  await expect(page.locator('.flight-marker[data-flight-item-id="item_cached_airfield"]')).toBeVisible();
-  await expect(page.getByText("Keep the last known field visible", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("#sync-state")).toContainText("Saved");
+  await expect(page.locator('.overview-item[data-overview-item-id="item_cached_overview"]').first()).toBeVisible();
+  await expect(page.getByText("Keep the last known studio visible", { exact: true }).first()).toBeVisible();
   await expect(status).toBeHidden();
   await expect(status).toHaveAttribute("aria-busy", "false");
   await expect(status).toHaveAttribute("aria-hidden", "true");
 
-  await attachScreenshot(page, testInfo, "production-root-last-known-airfield");
+  await attachScreenshot(page, testInfo, "production-root-last-known-overview");
+  await page.locator('.overview-item[data-overview-item-id="item_cached_overview"]').first().click();
+  await expect(page.locator("#item-detail-dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Close item detail" }).click();
+  await expect(page.locator("#item-detail-dialog")).toBeHidden();
 
   await page.evaluate(() => {
     (window as unknown as { __stensiblyRootApi: { resolveItems(): void } })
@@ -223,10 +227,10 @@ test("returning session shows the last known airfield before live reconciliation
 
   await expect(root).toHaveAttribute("data-app-mode", "connected");
   await expect(page.locator("#dashboard")).toBeVisible();
-  await expect(page.locator("#airfield-freshness")).toHaveText("LIVE");
-  await expect(page.locator('[data-flight-item-id="item_cached_airfield"]')).toHaveCount(0);
+  await expect(page.locator("#sync-state")).toContainText("Live");
+  await expect(page.locator('[data-overview-item-id="item_cached_overview"]')).toHaveCount(0);
   await expect(page.locator("#connect-form")).toBeHidden();
-  await expect(page.locator("#connected-summary")).toBeVisible();
+  await expect(page.locator("#connected-summary")).toBeHidden();
   await expect(status).toBeHidden();
   await expect(page.locator(".hero-copy")).toBeHidden();
 
@@ -238,11 +242,26 @@ test("returning session shows the last known airfield before live reconciliation
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(narrowBoundary.scrollWidth).toBeLessThanOrEqual(narrowBoundary.width + 1);
-  await expect(page.locator("#airfield")).toBeVisible();
-  await attachScreenshot(page, testInfo, "production-root-connected-airfield-narrow");
+  await expect(page.locator('[data-dashboard-view-panel="overview"]')).toBeVisible();
+  await attachScreenshot(page, testInfo, "production-root-connected-overview-narrow");
   await page.setViewportSize({ width: 1_440, height: 900 });
 
-  await page.getByRole("button", { name: "change connection" }).click();
+  await page.getByRole("button", { name: "Work", exact: true }).click();
+  await expect(page.locator('[data-dashboard-view-panel="work"]')).toBeVisible();
+  await expect(page.locator("#board-filter-panel")).toBeVisible();
+  await page.reload();
+  await waitForRootMode(page, errors, "connected");
+  await expect(page.locator('[data-dashboard-view-panel="work"]')).toBeVisible();
+
+  await page.getByRole("button", { name: "Use light theme" }).click();
+  await expect(root).toHaveAttribute("data-theme", "light");
+  await page.reload();
+  await waitForRootMode(page, errors, "connected");
+  await expect(root).toHaveAttribute("data-theme", "light");
+
+  await page.getByRole("button", { name: "System", exact: true }).click();
+  await expect(page.locator("#connected-summary")).toBeVisible();
+  await page.getByRole("button", { name: "Change", exact: true }).click();
   await expect(root).toHaveAttribute("data-app-mode", "editing");
   await expect(page.locator("#dashboard")).toBeVisible();
   await expect(page.locator("#connect-form")).toBeVisible();
@@ -252,14 +271,14 @@ test("returning session shows the last known airfield before live reconciliation
   );
   expect(editingHeight).toBeLessThan(420);
 
-  await page.getByRole("button", { name: "cancel" }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(root).toHaveAttribute("data-app-mode", "connected");
 
   await page.evaluate(() => {
     (window as unknown as { __stensiblyRootApi: { setItemsMode(mode: ItemsMode): void } })
       .__stensiblyRootApi.setItemsMode("network-error");
   });
-  await page.getByRole("button", { name: "sync now" }).click();
+  await page.getByRole("button", { name: "Sync now" }).click();
 
   await expect(root).toHaveAttribute("data-app-mode", "degraded");
   await expect(page.locator("#dashboard")).toBeVisible();

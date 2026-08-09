@@ -380,7 +380,7 @@ jobs:
             and all(.[];
               (.path | type == "string")
               and (.path | test("^/[A-Za-z0-9._/-]+$"))
-              and (.kind == "css" or .kind == "javascript" or .kind == "svg")
+              and (.kind == "css" or .kind == "javascript" or .kind == "svg" or .kind == "png")
               and (.contentTypes | type == "array")
               and (.contentTypes | length > 0)
               and all(.contentTypes[]; type == "string" and test("^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"))

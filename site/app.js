@@ -30,6 +30,9 @@ const disconnected = document.querySelector('#disconnected-state');
 const connectionTitle = document.querySelector('#connection-title');
 const connectionState = document.querySelector('#connection-state');
 const connectionError = document.querySelector('#connection-error');
+const connectionPanel = document.querySelector('#connection-panel');
+const connectionLoginSlot = document.querySelector('#connection-login-slot');
+const connectionSystemSlot = document.querySelector('#connection-system-slot');
 const connectedSummary = document.querySelector('#connected-summary');
 const connectedEndpoint = document.querySelector('#connected-endpoint');
 const cancelConnection = document.querySelector('#cancel-connection');
@@ -38,13 +41,11 @@ const board = document.querySelector('#board');
 const boardAnnouncer = document.querySelector('#board-announcer');
 const agents = document.querySelector('#agents');
 const lastUpdated = document.querySelector('#last-updated');
-const trafficLayer = document.querySelector('#traffic-layer');
-const airfieldEmpty = document.querySelector('#airfield-empty');
-const airfieldFreshness = document.querySelector('#airfield-freshness');
-const airfieldClock = document.querySelector('#airfield-clock');
-const airfieldCaption = document.querySelector('#airfield-caption');
-const towerList = document.querySelector('#tower-list');
-const towerCount = document.querySelector('#tower-count');
+const syncState = document.querySelector('#sync-state');
+const focusList = document.querySelector('#focus-list');
+const focusCount = document.querySelector('#focus-count');
+const recentList = document.querySelector('#recent-list');
+const agentCount = document.querySelector('#agent-count');
 
 const columns = [
   ['blocked', 'Needs attention', 'waiting on a named condition'],
@@ -121,10 +122,8 @@ document.querySelector('#disconnect-connection').addEventListener('click', disco
 cancelConnection.addEventListener('click', cancelConnectionChange);
 projectFilter.addEventListener('change', render);
 document.addEventListener('visibilitychange', handleVisibilityChange);
-trafficLayer?.addEventListener('click', openFlightRecord);
-towerList?.addEventListener('click', openFlightRecord);
-renderAirfieldClock();
-scheduleAirfieldClock();
+focusList?.addEventListener('click', openOverviewRecord);
+recentList?.addEventListener('click', openOverviewRecord);
 
 if (token && isPlausibleToken(token)) {
   dashboardSnapshot = isHostedSessionSentinel(token)
@@ -434,7 +433,8 @@ function isCurrentRequest(requestId) {
 }
 
 function showConnectedState({ warming = false } = {}) {
-  connectionTitle.textContent = 'Project desk connected';
+  placeConnectionPanel(connectionSystemSlot);
+  connectionTitle.textContent = 'Studio connected';
   form.hidden = true;
   connectedSummary.hidden = false;
   cancelConnection.hidden = true;
@@ -447,6 +447,7 @@ function showConnectedState({ warming = false } = {}) {
 }
 
 function showConnectedIssue(message) {
+  placeConnectionPanel(connectionSystemSlot);
   connectionTitle.textContent = 'Connection needs attention';
   form.hidden = true;
   connectedSummary.hidden = false;
@@ -461,7 +462,8 @@ function showConnectedIssue(message) {
 }
 
 function showConnectionForm(message = '', { keepDashboard = false, allowCancel = false } = {}) {
-  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Open the tower';
+  placeConnectionPanel(keepDashboard ? connectionSystemSlot : connectionLoginSlot);
+  connectionTitle.textContent = allowCancel ? 'Change connection' : 'Continue to Stensibly';
   form.hidden = false;
   connectedSummary.hidden = true;
   cancelConnection.hidden = !allowCancel;
@@ -476,9 +478,14 @@ function showConnectionForm(message = '', { keepDashboard = false, allowCancel =
   if (!keepDashboard) {
     dashboard.hidden = true;
     disconnected.hidden = false;
-    disconnected.querySelector('p').textContent = 'Your project desk is ready when you are.';
-    disconnected.querySelector('span').textContent = 'Continue with GitHub, or use the advanced connection for another endpoint.';
+    disconnected.querySelector('p').textContent = 'Your studio is ready when you are.';
+    disconnected.querySelector('span').textContent = 'Continue with GitHub above. Your existing hosted session will be restored automatically.';
   }
+}
+
+function placeConnectionPanel(slot) {
+  if (!connectionPanel || !slot || connectionPanel.parentElement === slot) return;
+  slot.append(connectionPanel);
 }
 
 function showConnectionError(message) {
@@ -587,12 +594,12 @@ function render() {
   const activeActors = [...new Set(
     visible.filter((item) => item.status === 'active' && item.claimedBy).map((item) => item.claimedBy),
   )].sort();
+  if (agentCount) agentCount.textContent = `${activeActors.length} active`;
   agents.innerHTML = activeActors.length
     ? activeActors.map((actor) => `<div class="agent">${escapeHtml(actor)}</div>`).join('')
     : '<p class="empty">Nothing active right now.</p>';
 
-  renderAirfield(visible);
-  renderTower(visible);
+  renderOverview(visible);
 
   board.innerHTML = columns.map(([status, label, hint]) => {
     const matching = visible
@@ -614,114 +621,65 @@ function render() {
   }
 }
 
-function renderAirfield(visible) {
-  if (!trafficLayer || !airfieldEmpty) return;
-  const ordered = [...visible].sort((left, right) => {
-    const rank = { blocked: 0, active: 1, ready: 2, done: 3 };
-    return (rank[left.status] ?? 4) - (rank[right.status] ?? 4)
+function renderOverview(visible) {
+  const attentionRank = { blocked: 0, active: 1, ready: 2, done: 3 };
+  const attention = [...visible]
+    .filter((item) => item.status !== 'done')
+    .sort((left, right) => (attentionRank[left.status] ?? 4) - (attentionRank[right.status] ?? 4)
       || right.priority - left.priority
-      || left.id.localeCompare(right.id);
-  });
-  const maximum = Math.min(ordered.length, 28);
-  const statusSlots = { blocked: 0, active: 0, ready: 0, done: 0 };
-  trafficLayer.innerHTML = ordered.slice(0, maximum).map((item, index) => {
-    const slot = statusSlots[item.status] ?? index;
-    statusSlots[item.status] = slot + 1;
-    const callsign = flightCallsign(item);
-    const detail = item.claimedBy || item.kind;
-    return `<button class="flight-marker ${statusClass(item.status)} flight-slot-${slot % 7}" type="button" data-flight-item-id="${escapeHtml(item.id)}" aria-label="Open ${escapeHtml(item.title)}">
-      <span class="flight-plane" aria-hidden="true"></span>
-      <span class="flight-label"><strong>${escapeHtml(callsign)}</strong><small>${escapeHtml(detail)} · P${item.priority}</small></span>
-    </button>`;
-  }).join('');
-  airfieldEmpty.hidden = ordered.length > 0;
-  if (airfieldCaption) {
-    const hidden = ordered.length - maximum;
-    airfieldCaption.textContent = hidden > 0
-      ? `${maximum} flights plotted · ${hidden} more on the manifest`
-      : `${ordered.length} ${ordered.length === 1 ? 'flight' : 'flights'} plotted · select one to inspect`;
+      || right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 8);
+  const recent = [...visible]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 8);
+
+  if (focusCount) focusCount.textContent = String(attention.length);
+  if (focusList) {
+    focusList.innerHTML = attention.length
+      ? attention.map((item) => renderOverviewItem(item, { showNextAction: true })).join('')
+      : '<p class="empty">Nothing needs your attention.</p>';
+  }
+  if (recentList) {
+    recentList.innerHTML = recent.length
+      ? recent.map((item) => renderOverviewItem(item)).join('')
+      : '<p class="empty">No recent work yet.</p>';
   }
 }
 
-function renderTower(visible) {
-  if (!towerList || !towerCount) return;
-  const attention = [...visible]
-    .filter((item) => item.status === 'blocked' || item.status === 'active')
-    .sort((left, right) => {
-      const rank = { blocked: 0, active: 1 };
-      return rank[left.status] - rank[right.status]
-        || right.priority - left.priority
-        || right.updatedAt.localeCompare(left.updatedAt);
-    })
-    .slice(0, 8);
-  towerCount.textContent = String(attention.length);
-  towerList.innerHTML = attention.length
-    ? attention.map((item) => `<button class="tower-flight ${statusClass(item.status)}" type="button" data-flight-item-id="${escapeHtml(item.id)}">
-        <span class="tower-flight-top"><span>${escapeHtml(flightCallsign(item))}</span><span>${escapeHtml(item.status)}</span></span>
-        <strong>${escapeHtml(item.title)}</strong>
-        <span>${escapeHtml(item.nextAction || item.summary || 'Open the record and choose the next move.')}</span>
-        <span class="tower-flight-meta"><span>${escapeHtml(item.claimedBy || 'unassigned')}</span><span>P${item.priority}</span></span>
-      </button>`).join('')
-    : '<div class="tower-quiet"><strong>No intervention requested.</strong><span>Active crews can keep flying. Ready work remains staged on the field.</span></div>';
+function renderOverviewItem(item, { showNextAction = false } = {}) {
+  const supporting = showNextAction
+    ? item.nextAction || item.summary || 'Open the record to choose the next action.'
+    : `${item.kind} · ${item.project}${item.claimedBy ? ` · ${item.claimedBy}` : ''}`;
+  return `<button class="overview-item ${statusClass(item.status)}" type="button" data-overview-item-id="${escapeHtml(item.id)}" aria-label="Open ${escapeHtml(item.title)}">
+    <span class="overview-status" aria-hidden="true"></span>
+    <span class="overview-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(supporting)}</small></span>
+    <span class="overview-meta"><strong>${escapeHtml(item.status)}</strong><span>${relativeTime(item.updatedAt)}</span></span>
+  </button>`;
 }
 
-function openFlightRecord(event) {
+function openOverviewRecord(event) {
   if (!(event.target instanceof Element)) return;
-  const trigger = event.target.closest('[data-flight-item-id]');
+  const trigger = event.target.closest('[data-overview-item-id]');
   if (!(trigger instanceof HTMLButtonElement)) return;
-  const itemId = trigger.dataset.flightItemId || '';
+  const itemId = trigger.dataset.overviewItemId || '';
   if (!itemId) return;
   const card = [...board.querySelectorAll('button.card[data-item-id]')]
     .find((candidate) => candidate.dataset.itemId === itemId);
   card?.click();
 }
 
-function flightCallsign(item) {
-  const prefix = String(item.project || 'STN').replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
-  const numeric = stableHash(String(item.id)) % 900 + 100;
-  return `${prefix} ${numeric}`;
-}
-
-function stableHash(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function renderAirfieldClock() {
-  if (!airfieldClock) return;
-  airfieldClock.textContent = new Date().toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-}
-
-function scheduleAirfieldClock() {
-  window.setTimeout(() => {
-    renderAirfieldClock();
-    scheduleAirfieldClock();
-  }, 1000);
-}
-
 function renderDataFreshness() {
-  if (!airfieldFreshness) return;
+  if (!syncState) return;
   const labels = {
-    live: 'LIVE',
-    cached: 'LAST KNOWN',
-    syncing: 'SYNCING',
-    degraded: 'RETRYING',
-    waking: 'WAKING',
+    live: lastSuccessfulUpdateLabel ? `Live · ${lastSuccessfulUpdateLabel}` : 'Live',
+    cached: dashboardSnapshot ? `Saved · ${formatSnapshotTime(dashboardSnapshot.savedAt)}` : 'Saved view',
+    syncing: 'Syncing quietly',
+    degraded: 'Offline · showing saved data',
+    waking: 'Restoring studio',
   };
-  airfieldFreshness.dataset.state = dataFreshness;
-  airfieldFreshness.textContent = labels[dataFreshness] || 'WAKING';
-  if (airfieldCaption && dataFreshness === 'cached' && dashboardSnapshot) {
-    airfieldCaption.textContent = `Last known picture from ${formatSnapshotTime(dashboardSnapshot.savedAt)} · live sync underway`;
-  }
+  syncState.dataset.state = dataFreshness;
+  const copy = syncState.querySelector('span');
+  if (copy) copy.textContent = labels[dataFreshness] || 'Standing by';
 }
 
 function formatSnapshotTime(value) {

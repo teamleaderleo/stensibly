@@ -1,345 +1,217 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-dashboard-view="overview">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Stensibly is the live control room for work moving across people, agents, providers, and deployments." />
+    <meta name="description" content="Stensibly is the live control surface for work moving across people, agents, providers, and deployments." />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Stensibly Airfield" />
-    <meta property="og:description" content="Your agents are already out there." />
-    <meta property="og:image" content="https://www.stensibly.com/stensibly-airfield-social.png" />
+    <meta property="og:title" content="Stensibly · Studio control" />
+    <meta property="og:description" content="See what is moving, what is blocked, and where you need to step in." />
+    <meta property="og:image" content="https://www.stensibly.com/studio-control-social.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <title>Stensibly · Studio Airfield</title>
+    <title>Stensibly · Studio control</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/item-claim.css" />
     <link rel="stylesheet" href="/hosted-session.css" />
-    <link rel="stylesheet" href="/login-scrapbook.css" />
-    <link rel="stylesheet" href="/calm-root.css" />
     <link rel="stylesheet" href="/root-mode-status.css" />
-    <link rel="stylesheet" href="/crunch-root.css" />
-    <link rel="stylesheet" href="/operator-root.css" />
-    <link rel="stylesheet" href="/airspace-operator.css" />
+    <link rel="stylesheet" href="/studio-control.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Stensibly home">
-          <span class="mark">ST</span>
+          <span class="mark" aria-hidden="true">S</span>
           <span class="brand-copy">
-            <strong>Stensibly Airfield</strong>
-            <small>studio operations</small>
+            <strong>Stensibly</strong>
+            <small>studio control</small>
           </span>
         </a>
-        <a class="github" href="https://github.com/teamleaderleo/stensibly">GitHub source ↗</a>
+        <div class="topbar-actions">
+          <span class="sync-state" id="sync-state" data-state="idle" role="status" aria-live="polite">
+            <i aria-hidden="true"></i><span>Standing by</span>
+          </span>
+          <button class="icon-button" id="theme-toggle" type="button" aria-label="Use light theme" title="Change theme">
+            <svg class="theme-moon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20.3 15.3A8.6 8.6 0 0 1 8.7 3.7 8.7 8.7 0 1 0 20.3 15.3Z" /></svg>
+            <svg class="theme-sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.6" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+          </button>
+          <a class="github" href="https://github.com/teamleaderleo/stensibly">Source <span aria-hidden="true">↗</span></a>
+        </div>
       </header>
 
       <section class="root-connecting-status" id="root-connecting-status" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
-        <span class="root-status-lamp" aria-hidden="true"></span>
-        <span>Revalidating the live picture…</span>
+        <span>Restoring your studio…</span>
       </section>
 
       <section class="hero hero-login">
         <div class="hero-copy">
-          <p class="eyebrow">One-person studio control</p>
-          <h1>Your agents are already out there.</h1>
-          <p class="hero-lede">Open the tower, see every live obligation at once, and step in only when the airspace needs you.</p>
-          <ul class="hero-principles" aria-label="What Stensibly keeps visible">
-            <li>
-              <span aria-hidden="true">01</span>
-              <strong>Traffic</strong>
-              <small>Every workstream in one field.</small>
-            </li>
-            <li>
-              <span aria-hidden="true">02</span>
-              <strong>Control</strong>
-              <small>Intervene at the exact handoff.</small>
-            </li>
-            <li>
-              <span aria-hidden="true">03</span>
-              <strong>Receipts</strong>
-              <small>Nothing disappears between crews.</small>
-            </li>
-          </ul>
+          <p class="eyebrow">One studio. Many agents.</p>
+          <h1>Know what needs you.</h1>
+          <p class="hero-lede">See what is moving, what is blocked, and the exact place where your attention changes the outcome.</p>
+          <div class="hero-proof" aria-label="What Stensibly keeps visible">
+            <p><span>01</span><strong>Current work</strong><small>Live obligations across every project.</small></p>
+            <p><span>02</span><strong>Exact authority</strong><small>Who can act, and under which boundary.</small></p>
+            <p><span>03</span><strong>Durable evidence</strong><small>Receipts that survive every temporary chat.</small></p>
+          </div>
         </div>
 
+        <div class="connection-slot" id="connection-login-slot">
         <aside class="connection login-card" id="connection-panel" aria-labelledby="connection-title">
           <div class="connection-head">
-            <strong id="connection-title">Sign in</strong>
+            <div><span class="connection-kicker">Your workspace</span><strong id="connection-title">Continue to Stensibly</strong></div>
             <span id="connection-state">disconnected</span>
           </div>
           <form id="connect-form">
             <div class="hosted-sign-in" id="hosted-sign-in">
-              <p id="hosted-sign-in-state">Use your GitHub account.</p>
+              <p id="hosted-sign-in-state">Your GitHub session keeps this workspace private.</p>
               <button id="github-sign-in" type="button">
-                <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-                  <path fill="currentColor" d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.78-.25.78-.55v-2.16c-3.17.69-3.84-1.35-3.84-1.35-.52-1.31-1.27-1.66-1.27-1.66-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.53-2.53-.29-5.19-1.27-5.19-5.59 0-1.24.44-2.25 1.17-3.04-.12-.29-.51-1.44.11-3 0 0 .95-.3 3.11 1.16A10.8 10.8 0 0 1 12 6.09c.96 0 1.92.13 2.82.38 2.16-1.46 3.11-1.16 3.11-1.16.62 1.56.23 2.71.11 3 .73.79 1.17 1.8 1.17 3.04 0 4.33-2.67 5.3-5.21 5.58.41.35.77 1.05.77 2.12v3.1c0 .3.21.66.79.55A11.3 11.3 0 0 0 12 .7Z" />
-                </svg>
+                <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.78-.25.78-.55v-2.16c-3.17.69-3.84-1.35-3.84-1.35-.52-1.31-1.27-1.66-1.27-1.66-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.53-2.53-.29-5.19-1.27-5.19-5.59 0-1.24.44-2.25 1.17-3.04-.12-.29-.51-1.44.11-3 0 0 .95-.3 3.11 1.16A10.8 10.8 0 0 1 12 6.09c.96 0 1.92.13 2.82.38 2.16-1.46 3.11-1.16 3.11-1.16.62 1.56.23 2.71.11 3 .73.79 1.17 1.8 1.17 3.04 0 4.33-2.67 5.3-5.21 5.58.41.35.77 1.05.77 2.12v3.1c0 .3.21.66.79.55A11.3 11.3 0 0 0 12 .7Z" /></svg>
                 <span>Continue with GitHub</span>
               </button>
               <button class="secondary" id="hosted-sign-out" type="button" hidden>Sign out</button>
             </div>
-
             <details class="advanced-connection">
-              <summary>Use API token</summary>
+              <summary>Connect another endpoint</summary>
               <div class="advanced-connection-body">
-                <label>
-                  API URL
-                  <input name="endpoint" type="url" required placeholder="https://api.stensibly.com" autocomplete="url" autocapitalize="none" spellcheck="false" />
-                </label>
-                <label>
-                  API token
-                  <input name="token" type="password" placeholder="stn.tok_…" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-note" />
-                </label>
+                <label>API URL<input name="endpoint" type="url" required placeholder="https://api.stensibly.com" autocomplete="url" autocapitalize="none" spellcheck="false" /></label>
+                <label>API token<input name="token" type="password" placeholder="stn.tok_…" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-note" /></label>
                 <div class="connection-form-actions">
                   <button type="submit">Connect</button>
-                  <button class="secondary" id="cancel-connection" type="button" hidden>cancel</button>
+                  <button class="secondary" id="cancel-connection" type="button" hidden>Cancel</button>
                 </div>
               </div>
             </details>
           </form>
           <div class="connected-summary" id="connected-summary" hidden>
-            <div class="connected-copy">
-              <span>Connected endpoint</span>
-              <strong id="connected-endpoint"></strong>
-            </div>
+            <div class="connected-copy"><span>Connected endpoint</span><strong id="connected-endpoint"></strong></div>
             <div class="connected-actions">
-              <button class="secondary" id="change-connection" type="button">change connection</button>
-              <button class="secondary" id="disconnect-connection" type="button">disconnect</button>
+              <button class="secondary" id="change-connection" type="button">Change</button>
+              <button class="secondary" id="disconnect-connection" type="button">Disconnect</button>
             </div>
           </div>
           <p class="connection-error" id="connection-error" role="alert" hidden></p>
-          <p class="connection-note" id="connection-note">A bearer token stays in this browser session and is cleared when the session ends.</p>
+          <p class="connection-note" id="connection-note">Your hosted login is restored automatically. API tokens stay only in this browser session.</p>
         </aside>
+        </div>
       </section>
 
-      <section class="dashboard airfield-dashboard" id="dashboard" hidden>
-        <div class="dashboard-head">
-          <div>
-            <p class="eyebrow">Studio airspace</p>
-            <h2 id="ledger-name">All projects</h2>
-            <p class="dashboard-lede">A live field of work, crews, holds, and arrivals. Select any flight to open its durable record.</p>
+      <section class="dashboard" id="dashboard" hidden>
+        <header class="dashboard-head">
+          <div class="dashboard-title">
+            <p class="eyebrow">Studio overview</p>
+            <h1 id="ledger-name">All projects</h1>
+            <p class="dashboard-lede">The live obligations your studio is carrying right now.</p>
           </div>
           <div class="dashboard-actions">
-            <select id="project-filter" aria-label="Filter by project"><option value="">all projects</option></select>
-            <button id="create-item" type="button" hidden>create item</button>
-            <button id="refresh" type="button">sync now</button>
+            <label class="project-select"><span>Project</span><select id="project-filter" aria-label="Filter by project"><option value="">All projects</option></select></label>
+            <button id="create-item" type="button" hidden>New item</button>
+            <button id="refresh" type="button">Sync now</button>
           </div>
-        </div>
+        </header>
 
-        <section class="flight-deck" aria-label="Live studio airfield">
-          <article class="airfield-panel">
-            <header class="airfield-head">
-              <div class="airfield-identity">
-                <span class="airfield-kicker">STN / CONTROL</span>
-                <strong>North studio field</strong>
-              </div>
-              <div class="airfield-head-state">
-                <span id="airfield-freshness" data-state="waking">WAKING</span>
-                <time id="airfield-clock">--:--</time>
-              </div>
-            </header>
-            <div class="airfield" id="airfield">
-              <div class="terrain terrain-one" aria-hidden="true"></div>
-              <div class="terrain terrain-two" aria-hidden="true"></div>
-              <div class="river" aria-hidden="true"></div>
-              <div class="runway runway-active" aria-hidden="true"><span>09 ACTIVE 27</span></div>
-              <div class="runway runway-ready" aria-hidden="true"><span>READY / TAXI</span></div>
-              <div class="runway runway-blocked" aria-hidden="true"><span>HOLD / REVIEW</span></div>
-              <div class="apron" aria-hidden="true">
-                <span class="hangar hangar-one"></span>
-                <span class="hangar hangar-two"></span>
-                <span class="hangar hangar-three"></span>
-                <span class="tower"></span>
-              </div>
-              <div class="traffic-layer" id="traffic-layer"></div>
-              <div class="airfield-empty" id="airfield-empty" hidden>
-                <strong>Clear skies.</strong>
-                <span>No flights in the selected project.</span>
-              </div>
-              <div class="airfield-key" aria-hidden="true">
-                <span><i class="key-blocked"></i>needs you</span>
-                <span><i class="key-active"></i>in flight</span>
-                <span><i class="key-ready"></i>taxi</span>
-                <span><i class="key-done"></i>arrived</span>
-              </div>
-            </div>
-            <footer class="airfield-caption">
-              <span id="airfield-caption">Recovering the last known field picture.</span>
-              <span>fictional field · real work</span>
-            </footer>
-          </article>
+        <nav class="view-tabs" aria-label="Dashboard views">
+          <button type="button" data-dashboard-view-target="overview" aria-selected="true">Overview</button>
+          <button type="button" data-dashboard-view-target="work" aria-selected="false">Work</button>
+          <button type="button" data-dashboard-view-target="system" aria-selected="false">System</button>
+        </nav>
 
-          <aside class="tower-panel" aria-labelledby="tower-title">
-            <header class="tower-head">
-              <div>
-                <p class="eyebrow">Controller strip</p>
-                <h3 id="tower-title">What needs a hand</h3>
-              </div>
-              <span id="tower-count">0</span>
-            </header>
-            <div class="tower-list" id="tower-list"></div>
-            <div class="tower-note">
-              <span class="tower-note-lamp" aria-hidden="true"></span>
-              <p><strong>Automatic crews remain in control.</strong> This strip stays quiet until an obligation blocks, ages, or asks for a decision.</p>
-            </div>
-          </aside>
+        <section class="view-panel overview-view" data-dashboard-view-panel="overview">
+          <section class="metrics" aria-label="Status totals">
+            <article class="metric-attention"><span>Needs you</span><strong id="metric-blocked">0</strong><small>Blocked obligations</small></article>
+            <article class="metric-active"><span>In motion</span><strong id="metric-active">0</strong><small>Actively held</small></article>
+            <article class="metric-ready"><span>Ready next</span><strong id="metric-ready">0</strong><small>Available work</small></article>
+            <article class="metric-done"><span>Completed</span><strong id="metric-done">0</strong><small>Closed records</small></article>
+          </section>
+
+          <div class="overview-grid">
+            <section class="overview-panel focus-panel" aria-labelledby="focus-title">
+              <header class="panel-head"><div><p class="eyebrow">Attention queue</p><h2 id="focus-title">Needs you now</h2></div><span id="focus-count">0</span></header>
+              <div class="overview-list" id="focus-list"><p class="empty">Nothing needs your attention.</p></div>
+            </section>
+            <section class="overview-panel recent-panel" aria-labelledby="recent-title">
+              <header class="panel-head"><div><p class="eyebrow">Studio pulse</p><h2 id="recent-title">Recently changed</h2></div><span id="last-updated">Saved view</span></header>
+              <div class="overview-list" id="recent-list"><p class="empty">No recent work yet.</p></div>
+            </section>
+          </div>
+
+          <section class="agents-panel">
+            <div class="section-head"><div><p class="eyebrow">Active responsibility</p><h2>Agents holding work</h2></div><span id="agent-count">0 active</span></div>
+            <div class="agents" id="agents"><p class="empty">Nothing active right now.</p></div>
+          </section>
         </section>
 
-        <section class="metrics" aria-label="Status totals">
-          <article class="metric-attention"><span>needs attention</span><strong id="metric-blocked">0</strong></article>
-          <article class="metric-active"><span>in motion</span><strong id="metric-active">0</strong></article>
-          <article class="metric-ready"><span>ready next</span><strong id="metric-ready">0</strong></article>
-          <article class="metric-done"><span>completed</span><strong id="metric-done">0</strong></article>
-        </section>
-
-        <section class="agents-panel">
-          <div class="section-head"><h3>Crews on frequency</h3><span id="last-updated">recovering local picture</span></div>
-          <div class="agents" id="agents"><p class="empty">Nothing active right now.</p></div>
-        </section>
-
-        <section class="manifest-panel" aria-labelledby="manifest-title">
-          <header class="manifest-head">
-            <div><p class="eyebrow">Flight manifest</p><h3 id="manifest-title">Every durable work record</h3></div>
-            <p>The spatial view is the glance. The manifest is the exact handoff.</p>
-          </header>
+        <section class="view-panel work-view" data-dashboard-view-panel="work" hidden>
+          <header class="view-intro"><div><p class="eyebrow">Complete manifest</p><h2>Every durable work record</h2></div><p>Open an item to inspect its authority, activity, evidence, and next action.</p></header>
           <section class="board" id="board" aria-label="Work grouped by disposition"></section>
+          <p class="sr-only" id="board-announcer" aria-live="polite"></p>
         </section>
-        <p class="sr-only" id="board-announcer" aria-live="polite"></p>
 
-        <details class="session-context" id="session-context-panel" data-mode="unavailable">
-          <summary class="session-context-head">
-            <span class="session-context-summary-copy">
-              <span class="eyebrow">Account &amp; authority</span>
-              <strong id="session-context-title">Connection and write identity</strong>
-            </span>
-            <span id="capability-state">unavailable</span>
-          </summary>
-
-          <div class="principal-summary" id="principal-summary" hidden>
-            <div>
-              <span>Signed in as</span>
-              <strong id="principal-name"></strong>
-              <small id="principal-boundary"></small>
+        <section class="view-panel system-view" data-dashboard-view-panel="system" hidden>
+          <header class="view-intro"><div><p class="eyebrow">System context</p><h2>Connection, authority, and capacity</h2></div><p>Operational details stay here until you need them.</p></header>
+          <div class="dashboard-secondary-actions" aria-label="Additional studio views"></div>
+          <div class="connection-system-slot" id="connection-system-slot"></div>
+          <details class="session-context" id="session-context-panel" data-mode="unavailable">
+            <summary class="session-context-head">
+              <span class="session-context-summary-copy"><span class="eyebrow">Account &amp; authority</span><strong id="session-context-title">Connection and write identity</strong></span>
+              <span id="capability-state">Unavailable</span>
+            </summary>
+            <div class="principal-summary" id="principal-summary" hidden>
+              <div><span>Signed in as</span><strong id="principal-name"></strong><small id="principal-boundary"></small></div>
+              <div><span>Can do</span><strong id="principal-scopes"></strong><div class="capability-badges" id="capability-badges" aria-label="Effective capabilities"></div></div>
             </div>
-            <div>
-              <span>Can do</span>
-              <strong id="principal-scopes"></strong>
-              <div class="capability-badges" id="capability-badges" aria-label="Effective capabilities"></div>
+            <div class="actor-summary" id="actor-summary" hidden>
+              <div><span>Recording changes as</span><strong id="actor-display"></strong></div>
+              <div class="actor-actions"><button id="change-actor" type="button">Change actor</button><button id="clear-actor" type="button">Clear actor</button></div>
             </div>
-          </div>
-
-          <div class="actor-summary" id="actor-summary" hidden>
-            <div>
-              <span>Recording changes as</span>
-              <strong id="actor-display"></strong>
-            </div>
-            <div class="actor-actions">
-              <button id="change-actor" type="button">change actor</button>
-              <button id="clear-actor" type="button">clear actor</button>
-            </div>
-          </div>
-
-          <form class="actor-form" id="actor-form" hidden>
-            <label>
-              Actor ID
-              <input name="actorId" required maxlength="120" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="leo" />
-            </label>
-            <label>
-              Display name
-              <input name="actorName" required maxlength="160" autocomplete="name" placeholder="Leo" />
-            </label>
-            <label>
-              Kind
-              <select name="actorKind" aria-label="Actor kind"></select>
-            </label>
-            <div class="actor-form-actions">
-              <button type="submit">use this actor</button>
-              <button id="cancel-actor" type="button">cancel</button>
-            </div>
-            <p class="actor-error" id="actor-error" role="alert" hidden></p>
-          </form>
-
-          <p class="actor-unavailable" id="actor-unavailable">Connect a ledger to inspect account or token capability.</p>
-          <p class="session-context-error" id="session-context-error" role="alert" hidden></p>
-          <p class="session-context-note">The hosted account or bearer token grants authority. The actor identifies who or what will be recorded in ledger events. Actor context stays in this browser session.</p>
-        </details>
+            <form class="actor-form" id="actor-form" hidden>
+              <label>Actor ID<input name="actorId" required maxlength="120" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="leo" /></label>
+              <label>Display name<input name="actorName" required maxlength="160" autocomplete="name" placeholder="Leo" /></label>
+              <label>Kind<select name="actorKind" aria-label="Actor kind"></select></label>
+              <div class="actor-form-actions"><button type="submit">Use this actor</button><button id="cancel-actor" type="button">Cancel</button></div>
+              <p class="actor-error" id="actor-error" role="alert" hidden></p>
+            </form>
+            <p class="actor-unavailable" id="actor-unavailable">Connect a ledger to inspect account or token capability.</p>
+            <p class="session-context-error" id="session-context-error" role="alert" hidden></p>
+            <p class="session-context-note">The account or token grants authority. The actor identifies who or what will be recorded in ledger events.</p>
+          </details>
+        </section>
       </section>
 
       <section class="disconnected" id="disconnected-state">
-        <p>Sign in to continue.</p>
-        <span>Continue with GitHub, or use the advanced connection for another endpoint.</span>
+        <p>Your studio is ready when you are.</p>
+        <span>Continue with GitHub above. Your existing hosted session will be restored automatically.</span>
       </section>
     </main>
 
     <dialog class="item-detail-dialog" id="item-detail-dialog" aria-labelledby="item-detail-title">
       <article class="item-detail-panel">
-        <header class="item-detail-head">
-          <div>
-            <p class="eyebrow">Work record</p>
-            <h2 id="item-detail-title">Item detail</h2>
-            <p id="item-detail-subtitle"></p>
-          </div>
-          <button class="detail-close" id="item-detail-close" type="button" aria-label="Close item detail">close</button>
-        </header>
-        <div class="item-detail-toolbar">
-          <span id="item-detail-state" role="status">waiting</span>
-          <button id="item-detail-refresh" type="button">refresh detail</button>
-        </div>
-        <p class="detail-error" id="item-detail-error" role="alert" hidden></p>
-        <div class="item-detail-body" id="item-detail-body"></div>
+        <header class="item-detail-head"><div><p class="eyebrow">Work record</p><h2 id="item-detail-title">Item detail</h2><p id="item-detail-subtitle"></p></div><button class="detail-close" id="item-detail-close" type="button" aria-label="Close item detail">Close</button></header>
+        <div class="item-detail-toolbar"><span id="item-detail-state" role="status">Waiting</span><button id="item-detail-refresh" type="button">Refresh detail</button></div>
+        <p class="detail-error" id="item-detail-error" role="alert" hidden></p><div class="item-detail-body" id="item-detail-body"></div>
       </article>
     </dialog>
     <p class="sr-only" id="item-detail-announcer" aria-live="polite"></p>
 
     <dialog class="create-item-dialog" id="create-item-dialog" aria-labelledby="create-item-title">
       <article class="create-item-panel">
-        <header class="create-item-head">
-          <div>
-            <p class="eyebrow">Add to the desk</p>
-            <h2 id="create-item-title">Create item</h2>
-            <p>Creates one ready item using the active session actor.</p>
-          </div>
-          <button id="create-item-close" type="button" aria-label="Close create item">close</button>
-        </header>
+        <header class="create-item-head"><div><p class="eyebrow">Add to the studio</p><h2 id="create-item-title">Create item</h2><p>Creates one ready item using the active session actor.</p></div><button id="create-item-close" type="button" aria-label="Close create item">Close</button></header>
         <form id="create-item-form" class="create-item-form">
-          <label>
-            Project slug
-            <input name="project" required maxlength="80" pattern="[a-z0-9][a-z0-9-_]*" autocapitalize="none" spellcheck="false" placeholder="scrapbook" />
-          </label>
-          <label>
-            Kind
-            <select name="kind" aria-label="Item kind"></select>
-          </label>
-          <label>
-            Priority
-            <input name="priority" type="number" min="0" max="100" step="1" value="50" />
-          </label>
-          <label class="create-item-wide">
-            Title
-            <input name="title" required maxlength="240" />
-          </label>
-          <label class="create-item-wide">
-            Summary
-            <textarea name="summary" maxlength="10000" rows="4"></textarea>
-          </label>
-          <label class="create-item-wide">
-            Next action
-            <textarea name="nextAction" maxlength="2000" rows="3"></textarea>
-          </label>
-          <div class="create-item-actions">
-            <button id="create-item-submit" type="submit">create item</button>
-            <button id="cancel-create-item" type="button">cancel</button>
-            <span id="create-item-state" role="status">ready</span>
-          </div>
+          <label>Project slug<input name="project" required maxlength="80" pattern="[a-z0-9][a-z0-9-_]*" autocapitalize="none" spellcheck="false" placeholder="scrapbook" /></label>
+          <label>Kind<select name="kind" aria-label="Item kind"></select></label>
+          <label>Priority<input name="priority" type="number" min="0" max="100" step="1" value="50" /></label>
+          <label class="create-item-wide">Title<input name="title" required maxlength="240" /></label>
+          <label class="create-item-wide">Summary<textarea name="summary" maxlength="10000" rows="4"></textarea></label>
+          <label class="create-item-wide">Next action<textarea name="nextAction" maxlength="2000" rows="3"></textarea></label>
+          <div class="create-item-actions"><button id="create-item-submit" type="submit">Create item</button><button id="cancel-create-item" type="button">Cancel</button><span id="create-item-state" role="status">Ready</span></div>
           <p class="create-item-error" id="create-item-error" role="alert" hidden></p>
         </form>
       </article>
     </dialog>
     <p class="sr-only" id="create-item-announcer" aria-live="polite"></p>
 
+    <script src="/ui-preferences.js" type="module"></script>
     <script src="/root-mode-status-bridge.js" type="module"></script>
     <script src="/hosted-session-bridge.js" type="module"></script>
     <script src="/app.js" type="module"></script>

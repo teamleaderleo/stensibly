@@ -7,9 +7,7 @@ const ENDPOINT_STORAGE_KEY = 'stensiblyEndpoint';
 export function installProviderCapacityCard() {
   const sessionContext = document.querySelector('#session-context-panel');
   const dashboard = document.querySelector('#dashboard');
-  const lastUpdated = document.querySelector('#last-updated');
-  const connectionState = document.querySelector('#connection-state');
-  if (!sessionContext || !dashboard || !lastUpdated || !connectionState) return null;
+  if (!sessionContext || !dashboard) return null;
   if (document.querySelector('#provider-capacity-panel')) return null;
 
   installStylesheet();
@@ -23,11 +21,15 @@ export function installProviderCapacityCard() {
     }),
     reportConnectionIssue: () => {},
   });
-  const observer = new MutationObserver(() => void controller.refresh());
-  observer.observe(lastUpdated, { childList: true, characterData: true, subtree: true });
-  observer.observe(connectionState, { childList: true, characterData: true, subtree: true });
-  queueMicrotask(() => void controller.refresh());
-  return { controller, disconnect: () => observer.disconnect() };
+  const panel = document.querySelector('#provider-capacity-panel');
+  const refreshWhenOpened = () => {
+    if (panel instanceof HTMLDetailsElement && panel.open) void controller.refresh();
+  };
+  panel?.addEventListener('toggle', refreshWhenOpened);
+  return {
+    controller,
+    disconnect: () => panel?.removeEventListener('toggle', refreshWhenOpened),
+  };
 }
 
 function storedEndpoint() {

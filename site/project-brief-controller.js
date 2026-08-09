@@ -15,7 +15,8 @@ const CONNECTION_RESET_STATES = ['connecting', 'editing', 'disconnected', 'conne
 
 export function installProjectBriefController() {
   const dashboard = document.querySelector('#dashboard');
-  const actions = document.querySelector('.dashboard-actions');
+  const actions = document.querySelector('.dashboard-secondary-actions')
+    || document.querySelector('.dashboard-actions');
   const projectFilter = document.querySelector('#project-filter');
   const refreshBoardButton = document.querySelector('#refresh');
   const connectionState = document.querySelector('#connection-state');
@@ -29,7 +30,8 @@ export function installProjectBriefController() {
   openButton.type = 'button';
   openButton.className = 'secondary';
   openButton.textContent = 'project brief';
-  actions.insertBefore(openButton, refreshBoardButton);
+  if (refreshBoardButton.parentElement === actions) actions.insertBefore(openButton, refreshBoardButton);
+  else actions.append(openButton);
 
   const dialog = element('dialog', 'project-brief-dialog');
   dialog.id = 'project-brief-dialog';

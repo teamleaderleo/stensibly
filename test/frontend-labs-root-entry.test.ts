@@ -37,7 +37,7 @@ class FakeDocument {
 
   querySelector(selector: string) {
     if (selector === ".topbar") return this.topbar;
-    if (selector === ".topbar > .github") {
+    if (selector === ".topbar-actions > .github, .topbar > .github") {
       return this.sourceAvailable ? this.sourceLink : null;
     }
     return null;
@@ -65,8 +65,8 @@ describe("production frontend Labs entry", () => {
     expect(link?.id).toBe("frontend-labs-entry");
     expect(link?.className).toBe("github frontend-labs-link");
     expect(link?.href).toBe("/labs/");
-    expect(link?.textContent).toBe("interface previews");
-    expect(link?.attributes.get("aria-label")).toContain("fixture-backed");
+    expect(link?.textContent).toBe("Labs");
+    expect(link?.attributes.get("aria-label")).toContain("simulation experiments");
     expect(documentRef.topbar.children).toHaveLength(0);
   });
 
