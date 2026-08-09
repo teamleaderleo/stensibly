@@ -465,7 +465,7 @@ function assertPendingOrSettledBranchResult(
 ): void {
   if (receipt.result === null) return;
   if (
-    receipt.result.kind !== "branch"
+    !isBranchResult(receipt.result)
     || receipt.result.name !== branch
     || receipt.result.ref !== `refs/heads/${branch}`
     || receipt.result.commitSha !== fromCommitSha
@@ -490,11 +490,23 @@ function assertPendingOrSettledPullRequestResult(
   expected: ExpectedPullRequestPublication,
 ): GitHubPullRequestResult | null {
   if (receipt.result === null) return null;
-  if (receipt.result.kind !== "pull_request") {
+  if (!isPullRequestResult(receipt.result)) {
     throw new GitHubPublicationReadbackIdentityError();
   }
   assertPullRequestPublicationFields(receipt.result, expected);
   return receipt.result;
+}
+
+function isBranchResult(
+  value: NonNullable<GitHubProviderReceipt["result"]>,
+): value is GitHubBranchResult {
+  return "kind" in value && value.kind === "branch";
+}
+
+function isPullRequestResult(
+  value: NonNullable<GitHubProviderReceipt["result"]>,
+): value is GitHubPullRequestResult {
+  return "kind" in value && value.kind === "pull_request";
 }
 
 function samePullRequestIdentityAndPublication(
