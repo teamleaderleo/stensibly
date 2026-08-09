@@ -75,13 +75,20 @@ export function createProjectSetupStatusApi(
       }, 502);
     }
 
-    const setupStatus = projectSetupStatusWithRepository({
-      setup: observation.setup,
-      project,
-      attachment,
-      repositorySetup: observation.repositorySetup,
-    });
-    return context.json({ setupStatus });
+    try {
+      const setupStatus = projectSetupStatusWithRepository({
+        setup: observation.setup,
+        project,
+        attachment,
+        repositorySetup: observation.repositorySetup,
+      });
+      return context.json({ setupStatus });
+    } catch {
+      return context.json({
+        error: "Setup status observation is invalid",
+        code: "invalid_observation",
+      }, 400);
+    }
   });
 
   return app;
