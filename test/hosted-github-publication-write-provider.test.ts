@@ -127,6 +127,7 @@ describe("private hosted GitHub publication writes", () => {
     expect(typeof mounted.createPullRequest).toBe("function");
     expect(typeof mounted.createRepositoryFile).toBe("function");
     expect(typeof mounted.updateRepositoryFile).toBe("function");
+    expect("publishChange" in mounted).toBe(false);
 
     const context = {
       project,
@@ -194,6 +195,28 @@ describe("private hosted GitHub publication writes", () => {
     expect("createPullRequest" in mounted).toBe(false);
     expect("createRepositoryFile" in mounted).toBe(false);
     expect("updateRepositoryFile" in mounted).toBe(false);
+  });
+
+  test("mounts the composed operation only when its durable workflow store is present", () => {
+    const ledger = Object.assign(
+      ledgerWithReceipts(new InMemoryGitHubProviderReceiptStore()),
+      {
+        async reserveOperationWorkflow(workflow: unknown) {
+          return { outcome: "reserved" as const, workflow };
+        },
+        async transitionOperationWorkflow(input: { next: unknown }) {
+          return input.next;
+        },
+        async getOperationWorkflow() {
+          return null;
+        },
+      },
+    );
+    const mounted = mountHostedGitHubIssueProviderFromEnv(
+      ledger,
+      providerEnv(),
+    );
+    expect(typeof mounted.publishChange).toBe("function");
   });
 
   test("derives repository authority from the attachment and refuses the default branch before provider write dispatch", async () => {
