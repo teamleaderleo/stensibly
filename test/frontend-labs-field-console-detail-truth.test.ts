@@ -21,7 +21,8 @@ describe("Field Console selected-detail truth", () => {
   });
 
   test("pins the exact detail-truth implementation while preserving merged catalogue rows", () => {
-    expect(frontendLabManifest.slice(0, 4).map(({ id, status }) => ({ id, status }))).toEqual([
+    expect(frontendLabManifest.slice(0, 5).map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: "airspace-control", status: "prototype" },
       { id: "quiet-control", status: "prototype" },
       { id: "work-pulse", status: "prototype" },
       { id: "soft-companion", status: "prototype" },

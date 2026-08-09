@@ -12,6 +12,7 @@ function cloneManifest() {
 describe("frontend labs manifest", () => {
   test("publishes bounded same-origin variant identities", () => {
     expect(frontendLabManifest.map((entry) => entry.id)).toEqual([
+      "airspace-control",
       "quiet-control",
       "work-pulse",
       "soft-companion",
