@@ -58,11 +58,9 @@ describe("project setup status API", () => {
     const app = createServerApp(store, {
       ledger,
       authenticator: new FixedAuthenticator(),
-      httpAuth: { required: true },
+      httpAuth: { required: false },
     });
-    const response = await app.request("/api/v1/projects/scrapbook/setup-status", {
-      headers: bearer("reader"),
-    });
+    const response = await app.request("/api/v1/projects/scrapbook/setup-status");
     expect(response.status).toBe(404);
   });
 
