@@ -94,6 +94,35 @@ describe("GitHub repository observations", () => {
     expect(Object.isFrozen(observation.facts)).toBe(true);
   });
 
+  test("normalizes GitHub push timestamps that carry a numeric timezone offset", () => {
+    const observation = map("push", {
+      ...common(),
+      ref: "refs/heads/codex/telemetry-probe",
+      before: "0".repeat(40),
+      after,
+      created: true,
+      deleted: false,
+      forced: false,
+      size: 0,
+      base_ref: "refs/heads/main",
+      commits: [],
+      head_commit: {
+        timestamp: "2026-08-09T09:59:33+08:00",
+      },
+    })!;
+
+    expect(observation).toMatchObject({
+      sourceTime: "2026-08-09T01:59:33.000Z",
+      sourceTimeSource: "provider",
+      facts: { created: true },
+      relationships: {
+        revision: after,
+        previousRevision: null,
+        ref: "refs/heads/codex/telemetry-probe",
+      },
+    });
+  });
+
   test("uses delivery identity separately from semantic identity", () => {
     const payload = {
       ...common(),
