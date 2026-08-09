@@ -130,7 +130,8 @@ jobs:
             STENSIBLY_SERVICE_SECRET \
             STENSIBLY_GITHUB_APP_ID \
             STENSIBLY_GITHUB_APP_PRIVATE_KEY \
-            STENSIBLY_GITHUB_INSTALLATION_ID; do
+            STENSIBLY_GITHUB_INSTALLATION_ID \
+            STENSIBLY_GITHUB_WEBHOOK_SECRET; do
             if ! jq -e --arg name "$name" 'any(.[]; .name == $name)' \
               <<< "$secret_inventory" >/dev/null; then
               echo "Missing required production Worker secret: $name" >&2
