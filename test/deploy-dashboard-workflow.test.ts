@@ -86,6 +86,31 @@ describe("production dashboard deployment workflow", () => {
       .toBeLessThan(position("Promote verified deployment"));
   });
 
+  test("keeps Vercel authentication ahead of native curl options for every staged fetch", () => {
+    const commandStarts = [...workflow.matchAll(
+      /vercel@\$\{VERCEL_CLI_VERSION\} curl (?:\/|"\$\{asset\}")/g,
+    )].map((match) => match.index);
+    expect(commandStarts).toHaveLength(2);
+
+    for (const commandStart of commandStarts) {
+      const nextCommand = workflow.indexOf("\n            )", commandStart);
+      const nextThen = workflow.indexOf("; then", commandStart);
+      const commandEnd = Math.min(
+        ...[nextCommand, nextThen].filter((index) => index > commandStart),
+      );
+      const command = workflow.slice(commandStart, commandEnd);
+      const deployment = command.indexOf('--deployment "${DEPLOYMENT_URL}"');
+      const token = command.indexOf('--token="${VERCEL_TOKEN}"');
+      const separator = command.indexOf("            -- ");
+      const curlOptions = command.indexOf("--fail --silent --show-error");
+
+      expect(deployment).toBeGreaterThanOrEqual(0);
+      expect(deployment).toBeLessThan(token);
+      expect(token).toBeLessThan(separator);
+      expect(separator).toBeLessThan(curlOptions);
+    }
+  });
+
   test("keeps staged asset and MIME checks aligned with the production verifier", () => {
     expect(workflow).toContain("bun src/dashboard-assets.ts > /tmp/dashboard-assets.json");
     expect(workflow).toContain("jq --exit-status");
