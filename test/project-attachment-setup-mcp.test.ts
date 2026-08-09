@@ -107,12 +107,18 @@ async function call(argumentsValue: Record<string, unknown>): Promise<any> {
   });
   expect(response.status).toBe(200);
   const text = await response.text();
-  const dataLine = text
-    .split("\n")
-    .find((line) => line.startsWith("data: "));
-  if (!dataLine) throw new Error("MCP response omitted event data");
-  const envelope = JSON.parse(dataLine.slice("data: ".length));
+  const envelope = decodeEnvelope(text);
   const content = envelope.result?.content?.[0]?.text;
   if (typeof content !== "string") throw new Error("MCP response omitted text content");
   return JSON.parse(content);
+}
+
+function decodeEnvelope(text: string): any {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) return JSON.parse(trimmed);
+  const dataLine = text
+    .split("\n")
+    .find((line) => line.startsWith("data: "));
+  if (!dataLine) throw new Error("MCP response omitted JSON or event data");
+  return JSON.parse(dataLine.slice("data: ".length));
 }
