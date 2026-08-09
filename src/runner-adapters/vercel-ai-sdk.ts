@@ -234,6 +234,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
       yield observation(command, clock, "execution_started", 3);
       yield observation(command, clock, "tool_surface_observed", 4, { snapshot });
 
+      assertRunnerCommandAuthorityActiveV1(command, this.#invocationTime());
       const result = await this.#generate(command, {
         prompt: command.context.intent.objective,
         abortSignal: abortController.signal,
@@ -322,6 +323,7 @@ export class VercelAISDKRunnerAdapter implements RunnerAdapterV1 {
       yield observation(command, clock, "execution_started", 3);
       yield observation(command, clock, "tool_surface_observed", 4, { snapshot });
 
+      assertRunnerCommandAuthorityActiveV1(command, this.#invocationTime());
       const result = await this.#generate(command, {
         messages: [
           ...checkpoint.messages,

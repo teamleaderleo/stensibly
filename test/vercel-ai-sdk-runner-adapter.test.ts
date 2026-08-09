@@ -459,7 +459,7 @@ describe("Vercel AI SDK runner adapter", () => {
     expect(remaining.at(-1)?.type).toBe("interrupted");
   });
 
-  test("rechecks lease expiry at the unswallowed tool gate", async () => {
+  test("rechecks lease expiry before model dispatch and the unswallowed tool gate", async () => {
     let clockReads = 0;
     let authorized = 0;
     let executed = 0;
@@ -497,7 +497,7 @@ describe("Vercel AI SDK runner adapter", () => {
     expect(authorized).toBe(0);
     expect(executed).toBe(0);
     expect(observations.at(-1)?.type).toBe("failure_observed");
-    expect(model.doGenerateCalls).toHaveLength(1);
+    expect(model.doGenerateCalls).toHaveLength(0);
   });
 });
 
