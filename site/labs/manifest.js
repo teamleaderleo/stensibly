@@ -30,6 +30,17 @@ const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\
 
 const sourceManifest = [
   {
+    id: "airspace-control",
+    title: "Airspace Control",
+    thesis: "A fictional radar desk where simple traffic obligations become readable comedy when a rotating agent crew starts issuing confident toy clearances.",
+    owner: "Cinder",
+    status: "prototype",
+    revision: "a5ba805187a043eefda228728c04a87902855cb4",
+    issue: 1318,
+    path: "./airspace-control/",
+    support: ["wide", "medium", "narrow", "dark", "keyboard", "reduced-motion"],
+  },
+  {
     id: "quiet-control",
     title: "Quiet Control",
     thesis: "A restrained operator console with ranked attention, persistent evidence, and calm visual hierarchy.",
