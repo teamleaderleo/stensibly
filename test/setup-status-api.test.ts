@@ -93,7 +93,11 @@ describe("project setup status API", () => {
         containsSecrets: false,
       },
     });
-    expect(calls).toEqual([{ project: "scrapbook", principalKind: "api_token" }]);
+    expect(calls).toEqual([{
+      project: "scrapbook",
+      principalKind: "api_token",
+      hasAcceptedAttachment: false,
+    }]);
   });
 
   test("returns the advisory attachment plan from already-observed repository facts", async () => {
@@ -102,8 +106,8 @@ describe("project setup status API", () => {
       authenticator: new FixedAuthenticator(),
       httpAuth: { required: true },
       setupStatusObserver: {
-        observe: () => ({
-          setup: setup("missing"),
+        observe: ({ hasAcceptedAttachment }) => ({
+          setup: setup(hasAcceptedAttachment ? "ready" : "missing"),
           repositorySetup: {
             repositoryFullName: "teamleaderleo/scrapbook",
             defaultBranch: "main",
@@ -142,7 +146,7 @@ describe("project setup status API", () => {
     });
   });
 
-  test("keeps accepted attachment state server-owned and rejects contradictory observation", async () => {
+  test("exposes only attachment existence while keeping the attachment record server-owned", async () => {
     await ledger.acceptProjectAttachment({
       project: "scrapbook",
       snapshot: attachmentSnapshot(),
@@ -151,11 +155,17 @@ describe("project setup status API", () => {
       acceptAuthorityWidening: true,
     });
 
+    const calls: unknown[] = [];
     const readyApp = createServerApp(store, {
       ledger,
       authenticator: new FixedAuthenticator(),
       httpAuth: { required: true },
-      setupStatusObserver: { observe: () => ({ setup: setup("ready") }) },
+      setupStatusObserver: {
+        observe(input) {
+          calls.push(input);
+          return { setup: setup(input.hasAcceptedAttachment ? "ready" : "missing") };
+        },
+      },
     });
     const ready = await readyApp.request("/api/v1/projects/scrapbook/setup-status", {
       headers: bearer("reader"),
@@ -164,6 +174,11 @@ describe("project setup status API", () => {
     expect(await ready.json()).toMatchObject({
       setupStatus: { repositoryRecovery: null },
     });
+    expect(calls).toEqual([{
+      project: "scrapbook",
+      principalKind: "api_token",
+      hasAcceptedAttachment: true,
+    }]);
 
     const staleApp = createServerApp(store, {
       ledger,
