@@ -1,4 +1,5 @@
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 import type { ProjectAttachmentRecord } from "./project-attachment-ledger.js";
 
 export const repositorySetupWorkProfiles = ["read_only", "draft_pr"] as const;
@@ -243,14 +244,11 @@ function exactText(value: string, label: string, maximum: number): string {
   ) {
     throw new RangeError(`${label} must use exact printable ASCII without surrounding whitespace`);
   }
-  if (credentialShapedPattern.test(value)) {
+  if (containsRealisticRetainedCredential(value)) {
     throw new RangeError(`${label} cannot contain credential-shaped text`);
   }
   return value;
 }
-
-const credentialShapedPattern =
-  /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:env|secret):\/\/|bearer\s+[A-Za-z0-9._~+\/-]{16,})/iu;
 
 function codeUnitCompare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
