@@ -88,14 +88,14 @@ export interface HostedGitHubRepositoryObservationReader {
 export class ConvexGitHubRepositoryObservationService
   implements HostedGitHubRepositoryObservationSink,
     HostedGitHubRepositoryObservationReader {
-  readonly client: ConvexCaller;
-  readonly serviceSecret: string;
-  readonly workspace: string;
+  readonly #client: ConvexCaller;
+  readonly #serviceSecret: string;
+  readonly #workspace: string;
 
   constructor(options: ConvexGitHubRepositoryObservationServiceOptions) {
-    this.client = options.client;
-    this.serviceSecret = required(options.serviceSecret, "Convex service secret");
-    this.workspace = normalizeWorkspace(options.workspace ?? "default");
+    this.#client = options.client;
+    this.#serviceSecret = required(options.serviceSecret, "Convex service secret");
+    this.#workspace = normalizeWorkspace(options.workspace ?? "default");
   }
 
   async ingestRepositoryObservation(
@@ -103,7 +103,7 @@ export class ConvexGitHubRepositoryObservationService
   ): Promise<HostedGitHubRepositoryObservationResult> {
     const admitted = admitHostedGitHubRepositoryObservationInput(input);
     try {
-      const rawResult = await this.client.mutation(ingestRef, this.args({
+      const rawResult = await this.#client.mutation(ingestRef, this.#args({
         deliveryId: admitted.deliveryId,
         eventType: admitted.eventType,
         payloadDigest: admitted.payloadDigest,
@@ -127,7 +127,7 @@ export class ConvexGitHubRepositoryObservationService
       throw new RangeError("GitHub repository observation limit must be 1-100");
     }
     try {
-      const rawRows = await this.client.query(listRecentRef, this.args({
+      const rawRows = await this.#client.query(listRecentRef, this.#args({
         repository: canonicalRepository,
         limit,
       }));
@@ -148,11 +148,11 @@ export class ConvexGitHubRepositoryObservationService
     }
   }
 
-  private args(input: Record<string, unknown>): Record<string, unknown> {
+  #args(input: Record<string, unknown>): Record<string, unknown> {
     return {
       ...input,
-      serviceSecret: this.serviceSecret,
-      workspace: this.workspace,
+      serviceSecret: this.#serviceSecret,
+      workspace: this.#workspace,
     };
   }
 }
