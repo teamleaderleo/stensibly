@@ -2,7 +2,7 @@
 
 **Status:** active P0 rollout
 **Last reconciled:** 2026-08-10
-**Exact live base before this revision:** `3682ca3ec7e9617771d90b69b2936cde9ec12dcc`
+**Exact source base before this revision:** `f96dac9cd2af7a92884c6e5d511cbf5e82047bae`
 **Sustained-use incident:** #490
 **Programme:** #491
 **Canonical queue:** #301
@@ -29,17 +29,12 @@ recovery record.
 PR #1308 directly integrated the self-describing MCP `2026-07-28` transport
 alongside the existing Streamable HTTP flow. The modern path supports direct
 discovery, list/call, pagination, task polling, protocol headers, and the same
-authenticated capability policy. This is real repository and runtime work, not
-an unstarted “MCP v2” roadmap item.
+authenticated capability policy.
 
-At the exact base above, the hosted Worker and Convex deployment serve the v9
-contract with 45 tools. This revision stages snapshot v10 with 46 tools:
-
-- searchable `github_publish_change`;
-- read-only `get_operation_workflow`;
-- searchable `reconcile_github_publish_change`.
-
-The staged hosted names-only fingerprint is:
+The current source surface contains 46 public hosted tool names. This revision
+stages ChatGPT snapshot v11: no tool name is added, but `get_project_attachment`
+gains an optional advisory `repositorySetup` input and a deterministic recovery
+result for missing attachments. The names-only fingerprint therefore remains:
 
 ```text
 sha256:7f410756f91d18c6325fa6e1d75f41c7a5523b3e6604f5f23c1b6ce7cbced318
@@ -48,11 +43,12 @@ sha256:7f410756f91d18c6325fa6e1d75f41c7a5523b3e6604f5f23c1b6ce7cbced318
 The staged full tool-contract fingerprint is:
 
 ```text
-sha256:cd66a9a6824642e2145e6aac944d6015bc7fd3c60276030780cd81814780683e
+sha256:79bfda4e9c86585b67099c8be597fb80aa6adc4866f448cdbb7158fe9eb347ca
 ```
 
-These v10 fingerprints are not live evidence until the Worker deploy and hosted
-verification pass, then the existing ChatGPT app is refreshed in place.
+These v11 source fingerprints become hosted evidence only after the Worker
+release verification passes. Because the public input schema changed, the
+existing ChatGPT app must then be refreshed or rescanned before v11 dogfood.
 
 ### GitHub execution provider
 
@@ -65,11 +61,28 @@ The merged provider stack now has:
 - guarded delegated GitHub reads;
 - typed create-branch and create-pull-request operations;
 - exact-parent create/update-file publication with durable CAS receipts;
+- independent branch/pull-request readback reconciliation merged in #1326;
+- hosted publication-readback composition merged in #1328;
 - protected Convex and Worker deployment workflows with exact-candidate
   verification and recovery.
 
 Raw primitives remain useful and are the implementation pieces for higher-level
 operations. They are not the final product boundary.
+
+### Project attachment onboarding
+
+Dogfood on #334 exposed a concrete onboarding gap: ordinary GitHub context could
+identify `teamleaderleo/scrapbook` while project `scrapbook` had no accepted
+attachment, so guarded repository work stopped at the correct authority fence.
+
+The v11 candidate turns that missing state into a read-only continuation. With
+no repository facts, `get_project_attachment` requests the bounded context it
+needs. With already-observed GitHub facts, it returns an advisory setup plan
+containing the canonical repository/default branch, explicit runner/work
+profile, explicit checks, the `STENSIBLY.md` source path, the existing
+admin-acceptance step, and a guarded verification recipe. The plan authorizes no
+provider effect and first attachment acceptance remains explicit authority
+widening.
 
 ### Runner adapters
 
@@ -84,7 +97,7 @@ privacy, observation limits, and no blind redispatch. A durable command inbox,
 full restartable continuation, and live model/provider mounting remain follow-up
 work.
 
-## Current composite operation and this revision
+## Current composite operation
 
 `github_publish_change` composes three existing provider services under one
 durable operation:
@@ -110,19 +123,20 @@ blindly dispatches the provider call again. A monotonic heartbeat extension is
 accepted only while run, owner, run generation, and lease generation remain
 exact.
 
-The first slice is intentionally bounded to one file. This revision adds a
-receipt-driven reconciler for lost workflow settlement. The caller resubmits
-the exact original bounded request, Stensibly recomputes every retained digest,
-and an already-settled branch/file/PR receipt can advance the workflow without
-another GitHub write. Missing or ambiguous receipts remain blocked. Compensation
-is durable as a plan and lifecycle, but automated compensators are not yet mounted.
+Receipt-driven reconciliation repairs lost local settlement. Independent
+publication readback can now prove matching branch and retained-identity PR
+outcomes without another GitHub mutation. Repository-file ambiguity remains a
+separate proof lane because a moved ref alone cannot prove the exact file
+effect. Compensation is durable as a plan and lifecycle; automated compensators
+remain follow-up work.
 
 ## Required dogfood lifecycle
 
 ```text
 fresh authenticated ChatGPT conversation
-  → discover/list exact v10 tool surface
+  → discover/list exact v11 tool surface
   → read accepted GitHub project context
+  → read project attachment or its setup recovery
   → create and claim one bounded work item/run
   → call github_publish_change once
   → read operation workflow and provider receipts
@@ -132,16 +146,21 @@ fresh authenticated ChatGPT conversation
   → complete or clean up the bounded work item
 ```
 
+For an unattached project, stop before repository mutation, follow the advisory
+attachment setup plan through explicit admin acceptance, then verify the
+accepted attachment and guarded repository reads before resuming repository
+work.
+
 The exercise must preserve GitHub usability throughout. Any ambiguous result is
-reconciled from the durable operation and provider keys before another write.
+reconciled from durable operation/provider evidence before another write.
 
 ## Active lanes
 
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
-| P0 | First operation rollout (#154) | The composer is merged and live at `d7a5b89a`; receipt-driven workflow reconciliation is in this candidate | Deploy the 46-tool contract, refresh ChatGPT, and dogfood one exact branch→file→PR journey including response-loss recovery | Hosted success, reconciliation, and exact replay produce one branch, one commit, one PR, and durable readback across reconnect |
-| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, and deployment controls are materially stronger; repeated ChatGPT execution remains the proof gap | Run the complete lifecycle above in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
-| P1 | Reconciliation and compensation | Settled provider receipts can now repair lost workflow settlement without redispatch; truly ambiguous provider outcomes still require independent readback | Add exact provider readback reconciliation, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
+| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, composite publication, and publication readback are merged; repeated hosted ChatGPT execution remains the proof gap | Deploy/verify the v11 contract, refresh ChatGPT, and run the complete lifecycle in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
+| P0 | Project attachment onboarding (#334/#1329) | Scrapbook dogfood proved `repo known + attachment missing`; v11 source now returns a bounded advisory recovery plan | Merge/deploy v11, refresh ChatGPT, then repeat the Scrapbook setup journey through explicit attachment acceptance and guarded read verification | An unattached known repository leads to one clear setup continuation and becomes repository-ready only after accepted attachment + guarded read proof |
+| P1 | Reconciliation and compensation (#154/#1325) | Independent branch/retained-PR readback is merged and hosted-mounted; exact repository-file ambiguity and live hosted proof remain | Add exact file-effect readback, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
 | P1 | Operation catalogue | Raw provider reach is broad but model exposure should stay compact | Add `repo_health`, plan-only `branch_tidy`, then `land_pr` and `ci_diagnose` behind searchable capability discovery | Agents can request common outcomes without manually orchestrating long raw-tool chains |
 | P1 | Restartable runner execution | Both SDK adapters and the bounded host exist; durable command delivery and continuation remain incomplete | Add the command inbox/observation receipt and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
 
@@ -155,26 +174,31 @@ prove:
 2. raw GitHub primitives and at least one composite operation both work;
 3. each write produces a durable, attributable, project-scoped receipt;
 4. retries replay or reconcile without duplicate provider effects;
-5. the operator can see where a call was catalogued, exposed, invoked, admitted,
+5. an unattached repository already known through GitHub produces a bounded
+   setup continuation and cannot become repository-ready before explicit
+   attachment acceptance plus guarded verification;
+6. the operator can see where a call was catalogued, exposed, invoked, admitted,
    dispatched, accepted, verified, and delivered;
-6. reversible operations expose truthful compensation state;
-7. GitHub remains independently readable and writable during Stensibly
+7. reversible operations expose truthful compensation state;
+8. GitHub remains independently readable and writable during Stensibly
    degradation;
-8. a temporary chat or runner process can disappear without erasing the work,
+9. a temporary chat or runner process can disappear without erasing the work,
    authority, evidence, or next action.
 
 ## Immediate sequence
 
-1. Integrate and deploy receipt-driven workflow reconciliation.
-2. Verify the hosted v10/46 contract and refresh the existing ChatGPT app; do not
-   recreate it unless the host refuses an in-place refresh.
-3. Dogfood one bounded publish-change operation and exact replay.
-4. Add independent provider readback for receipts that remain genuinely ambiguous.
+1. Integrate the missing-attachment recovery plan and deploy/verify snapshot
+   v11/46.
+2. Refresh the existing ChatGPT app in place and repeat the Scrapbook
+   attachment/setup journey from a normal conversation.
+3. Dogfood one bounded publish-change operation, exact replay, and publication
+   response-loss recovery.
+4. Add exact repository-file readback for genuinely ambiguous file effects.
 5. Add `repo_health`, then plan-only `branch_tidy` before branch deletion.
 6. Add exact compensators and build `land_pr` from the same operation spine.
 7. Instrument catalogue → policy → registration → invocation → admission →
    dispatch → provider acceptance → verification → delivery as one traceable
    capability journey.
 
-— Keel · durable operations reconciliation
-  Intention: ship the first outcome-oriented GitHub operation and prove it through ChatGPT
+— Kite · onboarding and durable operations
+  Intention: make guarded failures lead to exact continuations while preserving explicit authority
