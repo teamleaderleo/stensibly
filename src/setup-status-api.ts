@@ -1,9 +1,7 @@
-import { Hono } from "hono";
+import type { Hono } from "hono";
 import {
-  createHttpAuthMiddleware,
   currentPrincipal,
   requireHttpAccess,
-  type HttpAuthOptions,
   type StensiblyEnv,
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
@@ -15,7 +13,6 @@ import {
   projectSetupStatusWithRepository,
 } from "./setup-status-repository.js";
 import type { SetupStatusInput } from "./setup-status.js";
-import type { ApiTokenAuthenticator } from "./token-provider.js";
 
 export type SetupStatusPrincipalKind = "account" | "api_token" | "anonymous";
 
@@ -32,15 +29,11 @@ export interface ProjectSetupStatusObserver {
   }): ProjectSetupStatusObservation | Promise<ProjectSetupStatusObservation>;
 }
 
-export function createProjectSetupStatusApi(
-  authenticator: ApiTokenAuthenticator,
+export function registerProjectSetupStatusApi(
+  app: Hono<StensiblyEnv>,
   ledger: WorkLedger,
-  authOptions: HttpAuthOptions,
   observer: ProjectSetupStatusObserver,
-): Hono<StensiblyEnv> {
-  const app = new Hono<StensiblyEnv>();
-  app.use("*", createHttpAuthMiddleware(authenticator, authOptions));
-
+): void {
   app.get("/projects/:project/setup-status", async (context) => {
     const project = context.req.param("project");
     const denied = requireHttpAccess(context, "read", project);
@@ -87,6 +80,4 @@ export function createProjectSetupStatusApi(
       }, 400);
     }
   });
-
-  return app;
 }
