@@ -32,6 +32,8 @@ Keep a compact set of frequent Stensibly workflow tools and GitHub discovery too
 - use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
 - use `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` only with one explicit idempotency key per intended effect;
 - use `github_create_branch` only for an absent branch at one exact source commit, with one explicit idempotency key;
+- production mounts branch and pull-request publication only when the guarded
+  `STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED=true` binding is present;
 - use `github_create_pull_request` only with exact expected head and base commit SHAs plus one explicit idempotency key;
 - reconcile an ambiguous or lost GitHub write through `get_github_provider_receipt` before retrying the exact request;
 - initial label and assignee changes remain outside the public GitHub write surface;
