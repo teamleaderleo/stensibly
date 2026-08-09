@@ -4,7 +4,6 @@ import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import {
   admitGitHubRepositoryObservationEnvelope,
   admitHostedGitHubRepositoryObservationInput,
-  snapshotBoundedJson,
 } from "./github-repository-observation-admission.js";
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
 import type {
@@ -20,27 +19,9 @@ const listRecentRef = makeFunctionReference<"query">(
   "githubRepositoryObservations:listRecent",
 );
 
-const mutationResultKeys = ["duplicate", "record"] as const;
-const storedRecordKeys = [
-  "action",
-  "actor",
-  "createdAt",
-  "deliveryId",
-  "eventType",
-  "id",
-  "observationId",
-  "observationJson",
-  "payloadDigest",
-  "receivedAt",
-  "repository",
-  "semanticFingerprint",
-  "sourceTime",
-  "sourceTimeSource",
-  "subjectExternalId",
-  "subjectKind",
-] as const;
-const maximumRecentQueryValues = 4_096;
 const maximumRecentQueryStringBytes = 1024 * 1024;
+const maximumMutationResultStringBytes = 128 * 1024;
+const maximumStoredStringBytes = 64 * 1024;
 
 export class GitHubRepositoryObservationConflictError extends Error {
   readonly code = "github_repository_observation_conflict";
@@ -83,6 +64,12 @@ interface ConvexObservationRecord {
   receivedAt: number;
   observationJson: string;
   createdAt: number;
+}
+
+interface ReturnAdmissionBudget {
+  stringBytes: number;
+  readonly maximumStringBytes: number;
+  readonly maximumTotalStringBytes: number;
 }
 
 export interface HostedGitHubRepositoryObservationRecord {
@@ -174,65 +161,81 @@ function admitMutationResult(value: unknown): {
   duplicate: boolean;
   record: ConvexObservationRecord;
 } {
-  const snapshot = snapshotBoundedJson(
-    value,
-    "GitHub repository observation mutation result",
-  );
-  if (!isRecord(snapshot) || !hasExactKeys(snapshot, mutationResultKeys)) {
-    throw new GitHubRepositoryObservationStorageError();
-  }
-  if (typeof snapshot.duplicate !== "boolean") {
+  const duplicate = dataProperty(value, "duplicate");
+  if (typeof duplicate !== "boolean") {
     throw new GitHubRepositoryObservationStorageError();
   }
   return {
-    duplicate: snapshot.duplicate,
-    record: admitStoredRecord(snapshot.record),
+    duplicate,
+    record: admitStoredRecord(
+      dataProperty(value, "record"),
+      returnAdmissionBudget(maximumMutationResultStringBytes),
+    ),
   };
 }
 
 function admitStoredRows(value: unknown, limit: number): ConvexObservationRecord[] {
-  const snapshot = snapshotBoundedJson(
-    value,
-    "GitHub repository observation query result",
-    {
-      maximumValues: maximumRecentQueryValues,
-      maximumTotalStringBytes: maximumRecentQueryStringBytes,
-    },
-  );
-  if (!Array.isArray(snapshot) || snapshot.length > limit) {
+  if (!Array.isArray(value)) {
     throw new GitHubRepositoryObservationStorageError();
   }
-  return snapshot.map(admitStoredRecord);
+  const rawLength = dataProperty(value, "length", false);
+  if (
+    typeof rawLength !== "number"
+    || !Number.isSafeInteger(rawLength)
+    || rawLength < 0
+    || rawLength > limit
+  ) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  const budget = returnAdmissionBudget(maximumRecentQueryStringBytes);
+  const rows: ConvexObservationRecord[] = [];
+  for (let index = 0; index < rawLength; index += 1) {
+    rows.push(admitStoredRecord(dataProperty(value, String(index)), budget));
+  }
+  return rows;
 }
 
-function admitStoredRecord(value: unknown): ConvexObservationRecord {
-  if (!isRecord(value) || !hasExactKeys(value, storedRecordKeys)) {
-    throw new GitHubRepositoryObservationStorageError();
-  }
-  const actor = value.actor === null
+function admitStoredRecord(
+  value: unknown,
+  budget: ReturnAdmissionBudget,
+): ConvexObservationRecord {
+  const actorValue = dataProperty(value, "actor");
+  const actor = actorValue === null
     ? null
-    : storageString(value.actor);
-  const sourceTimeSource = value.sourceTimeSource;
+    : storageString(actorValue, budget);
+  const sourceTimeSource = storageString(
+    dataProperty(value, "sourceTimeSource"),
+    budget,
+  );
   if (sourceTimeSource !== "provider" && sourceTimeSource !== "received") {
     throw new GitHubRepositoryObservationStorageError();
   }
   return {
-    id: storageString(value.id),
-    observationId: storageString(value.observationId),
-    deliveryId: storageString(value.deliveryId),
-    payloadDigest: storageString(value.payloadDigest),
-    semanticFingerprint: storageString(value.semanticFingerprint),
-    eventType: storageString(value.eventType),
-    action: storageString(value.action),
-    repository: storageString(value.repository),
+    id: storageString(dataProperty(value, "id"), budget),
+    observationId: storageString(dataProperty(value, "observationId"), budget),
+    deliveryId: storageString(dataProperty(value, "deliveryId"), budget),
+    payloadDigest: storageString(dataProperty(value, "payloadDigest"), budget),
+    semanticFingerprint: storageString(
+      dataProperty(value, "semanticFingerprint"),
+      budget,
+    ),
+    eventType: storageString(dataProperty(value, "eventType"), budget),
+    action: storageString(dataProperty(value, "action"), budget),
+    repository: storageString(dataProperty(value, "repository"), budget),
     actor,
-    subjectKind: storageString(value.subjectKind),
-    subjectExternalId: storageString(value.subjectExternalId),
-    sourceTime: storageTimestamp(value.sourceTime),
+    subjectKind: storageString(dataProperty(value, "subjectKind"), budget),
+    subjectExternalId: storageString(
+      dataProperty(value, "subjectExternalId"),
+      budget,
+    ),
+    sourceTime: storageTimestamp(dataProperty(value, "sourceTime")),
     sourceTimeSource,
-    receivedAt: storageTimestamp(value.receivedAt),
-    observationJson: storageString(value.observationJson),
-    createdAt: storageTimestamp(value.createdAt),
+    receivedAt: storageTimestamp(dataProperty(value, "receivedAt")),
+    observationJson: storageString(
+      dataProperty(value, "observationJson"),
+      budget,
+    ),
+    createdAt: storageTimestamp(dataProperty(value, "createdAt")),
   };
 }
 
@@ -290,11 +293,53 @@ function storageTimestamp(value: unknown): number {
   return value;
 }
 
-function storageString(value: unknown): string {
+function storageString(value: unknown, budget: ReturnAdmissionBudget): string {
   if (typeof value !== "string" || value.length < 1) {
     throw new GitHubRepositoryObservationStorageError();
   }
+  const bytes = new TextEncoder().encode(value).byteLength;
+  budget.stringBytes += bytes;
+  if (
+    bytes > budget.maximumStringBytes
+    || budget.stringBytes > budget.maximumTotalStringBytes
+  ) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
   return value;
+}
+
+function returnAdmissionBudget(
+  maximumTotalStringBytes: number,
+): ReturnAdmissionBudget {
+  return {
+    stringBytes: 0,
+    maximumStringBytes: maximumStoredStringBytes,
+    maximumTotalStringBytes,
+  };
+}
+
+function dataProperty(
+  value: unknown,
+  key: string,
+  enumerable = true,
+): unknown {
+  if (!value || typeof value !== "object") {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || descriptor.enumerable !== enumerable
+  ) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return descriptor.value;
 }
 
 function required(value: string, label: string): string {
@@ -311,22 +356,4 @@ function normalizeWorkspace(value: string): string {
     );
   }
   return value;
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expectedKeys: readonly string[],
-): boolean {
-  const actualKeys = Object.keys(value).sort(codeUnitCompare);
-  const expected = [...expectedKeys].sort(codeUnitCompare);
-  return actualKeys.length === expected.length
-    && actualKeys.every((key, index) => key === expected[index]);
-}
-
-function codeUnitCompare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

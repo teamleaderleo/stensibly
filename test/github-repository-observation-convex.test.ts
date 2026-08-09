@@ -137,6 +137,25 @@ describe("Convex GitHub repository observation service", () => {
     expect(getCalls).toBe(0);
   });
 
+  test("admits the closed mutation result without enumerating backend keys", async () => {
+    const observation = issueObservation();
+    let ownKeysCalls = 0;
+    const result = new Proxy({
+      duplicate: false,
+      record: storedRecord(canonicalJson(observation)),
+    }, {
+      ownKeys() {
+        ownKeysCalls += 1;
+        throw new Error("mutation result keys must not be enumerated");
+      },
+    });
+    const service = serviceWithMutationResult(result);
+
+    await expect(service.ingestRepositoryObservation(observationInput(observation)))
+      .resolves.toEqual({ duplicate: false });
+    expect(ownKeysCalls).toBe(0);
+  });
+
   test("does not invoke a thrown message accessor", async () => {
     const observation = issueObservation();
     let getterCalls = 0;
@@ -241,6 +260,67 @@ describe("Convex GitHub repository observation service", () => {
     );
     expect(records).toHaveLength(100);
     expect(records[99]?.id).toBe("observation-row-100");
+  });
+
+  test("admits dense query rows without enumerating array or record keys", async () => {
+    const observation = issueObservation();
+    let arrayOwnKeysCalls = 0;
+    let recordOwnKeysCalls = 0;
+    const record = new Proxy(storedRecord(canonicalJson(observation)), {
+      ownKeys() {
+        recordOwnKeysCalls += 1;
+        throw new Error("stored record keys must not be enumerated");
+      },
+    });
+    const rows = new Proxy([record], {
+      ownKeys() {
+        arrayOwnKeysCalls += 1;
+        throw new Error("query array keys must not be enumerated");
+      },
+    });
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          throw new Error("not used");
+        },
+        async query() {
+          return rows;
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await expect(service.listRecentRepositoryObservations(
+      "teamleaderleo/stensibly",
+      10,
+    )).resolves.toHaveLength(1);
+    expect(arrayOwnKeysCalls).toBe(0);
+    expect(recordOwnKeysCalls).toBe(0);
+  });
+
+  test("rejects a 100-row result that exceeds the 1 MiB aggregate text bound", async () => {
+    const observation = issueObservation();
+    const row = storedRecord(canonicalJson(observation));
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      ...row,
+      id: `${index}-${"x".repeat(11_000)}`,
+    }));
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation() {
+          throw new Error("not used");
+        },
+        async query() {
+          return rows;
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await expect(service.listRecentRepositoryObservations(
+      "teamleaderleo/stensibly",
+      100,
+    )).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
   });
 
   test("rejects query accessors without invoking them", async () => {
