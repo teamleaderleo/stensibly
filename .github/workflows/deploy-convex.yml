@@ -112,6 +112,7 @@ jobs:
           fi
 
       - name: Deploy exact production Convex functions and schema
+        id: deploy
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: >-
@@ -120,13 +121,9 @@ jobs:
           --codegen disable
           --message "GitHub Actions ${GITHUB_SHA}"
 
-      - name: Verify deployed function metadata is readable
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: bunx convex function-spec >/dev/null
-
       - name: Record post-deploy current-main evidence
         id: postdeploy
+        if: ${{ steps.deploy.conclusion == 'success' }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin refs/heads/main
@@ -149,12 +146,12 @@ jobs:
             echo "- Exact current-main check: passed immediately before deployment"
             echo "- Locked typecheck and Convex tests: passed"
             echo "- Schema analysis and bundle: passed"
-            echo "- Production function metadata readback: passed"
+            echo "- Convex CLI deployment finalization: passed"
             echo "- Current main still matched after deployment: \`${{ steps.postdeploy.outputs.current_main }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Require post-deploy current-main convergence
-        if: ${{ steps.postdeploy.outputs.current_main != 'true' }}
+        if: ${{ steps.deploy.conclusion == 'success' && steps.postdeploy.outputs.current_main != 'true' }}
         run: |
           echo "Convex deployed, but main advanced during deployment; a current-main recovery deployment is required" >&2
           exit 1

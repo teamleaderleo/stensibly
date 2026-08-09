@@ -51,9 +51,11 @@ describe("production Convex deployment workflow", () => {
     expect(workflow).toContain('--message "GitHub Actions ${GITHUB_SHA}"');
   });
 
-  test("performs a provider readback and records content-minimised evidence", () => {
-    expect(workflow).toContain("bunx convex function-spec >/dev/null");
-    expect(workflow).toContain("Production function metadata readback: passed");
+  test("uses provider finalization without requiring data-view permission", () => {
+    expect(workflow).not.toContain("convex function-spec");
+    expect(workflow).toContain("id: deploy");
+    expect(workflow).toContain("steps.deploy.conclusion == 'success'");
+    expect(workflow).toContain("Convex CLI deployment finalization: passed");
     expect(workflow).not.toContain("echo \"$CONVEX_DEPLOY_KEY\"");
   });
 });
