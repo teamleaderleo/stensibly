@@ -249,6 +249,40 @@ describe("project setup status API", () => {
     });
   });
 
+  test("contains attachment observation failures before observer execution", async () => {
+    const accepted = await ledger.acceptProjectAttachment({
+      project: "scrapbook",
+      snapshot: attachmentSnapshot(),
+      sourceRevision: "accepted-main",
+      acceptedBy: "token:operator",
+      acceptAuthorityWidening: true,
+    });
+    store.db.query("UPDATE project_attachments SET content_sha256 = ?1 WHERE id = ?2")
+      .run(`sha256:${"0".repeat(64)}`, accepted.attachment.id);
+
+    const calls: unknown[] = [];
+    const app = createServerApp(store, {
+      ledger,
+      authenticator: new FixedAuthenticator(),
+      httpAuth: { required: true },
+      setupStatusObserver: {
+        observe(input) {
+          calls.push(input);
+          return { setup: setup("ready") };
+        },
+      },
+    });
+    const response = await app.request("/api/v1/projects/scrapbook/setup-status", {
+      headers: bearer("reader"),
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "Project attachment observation failed",
+      code: "attachment_observation_failed",
+    });
+    expect(calls).toEqual([]);
+  });
+
   test("collapses observer failures to fixed non-secret output", async () => {
     const app = createServerApp(store, {
       ledger,
