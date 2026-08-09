@@ -22,6 +22,9 @@ const serializationFailure: ToolResultSerializationFailure = {
   },
 };
 
+const opaqueExecutionFailure = "Tool operation failed";
+const maximumExecutionFailureMessageBytes = 4 * 1024;
+
 export async function asToolResult(read: () => Promise<unknown>) {
   let value: unknown;
   try {
@@ -30,7 +33,7 @@ export async function asToolResult(read: () => Promise<unknown>) {
     return {
       content: [{
         type: "text" as const,
-        text: error instanceof Error ? error.message : String(error),
+        text: ownDataErrorMessage(error) ?? opaqueExecutionFailure,
       }],
       isError: true,
     };
@@ -54,4 +57,26 @@ export async function asToolResult(read: () => Promise<unknown>) {
       isError: true,
     };
   }
+}
+
+function ownDataErrorMessage(value: unknown): string | null {
+  if (value === null || typeof value !== "object") return null;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, "message");
+  } catch {
+    return null;
+  }
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || typeof descriptor.value !== "string"
+    || descriptor.value.length === 0
+  ) {
+    return null;
+  }
+  return new TextEncoder().encode(descriptor.value).byteLength
+      <= maximumExecutionFailureMessageBytes
+    ? descriptor.value
+    : null;
 }
