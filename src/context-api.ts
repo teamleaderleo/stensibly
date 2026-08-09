@@ -17,6 +17,7 @@ const contextQuerySchema = z.object({
   maxDependencies: optionalInteger(0, 100),
   maxCharacters: optionalInteger(2_000, 50_000),
 });
+const maximumErrorMessageBytes = 2 * 1024;
 
 export function createContextPacketApi(
   authenticator: ApiTokenAuthenticator,
@@ -26,11 +27,11 @@ export function createContextPacketApi(
   const app = new Hono<StensiblyEnv>();
 
   app.onError((error, context) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/does not exist|not found/i.test(message)) {
-      return context.json({ error: message, code: "not_found" }, 404);
+    const message = ownBoundedErrorMessage(error);
+    if (message && /does not exist|not found/i.test(message)) {
+      return context.json({ error: "Resource not found", code: "not_found" }, 404);
     }
-    return context.json({ error: message, code: "invalid_operation" }, 400);
+    return context.json({ error: "Invalid operation", code: "invalid_operation" }, 400);
   });
 
   app.use("*", createHttpAuthMiddleware(authenticator, options));
@@ -73,4 +74,25 @@ function validationError(
     code: "invalid_request",
     issues: issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
   }, 400);
+}
+
+function ownBoundedErrorMessage(value: unknown): string | null {
+  if (value === null || typeof value !== "object") return null;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, "message");
+  } catch {
+    return null;
+  }
+  if (
+    !descriptor
+    || !("value" in descriptor)
+    || typeof descriptor.value !== "string"
+    || descriptor.value.length === 0
+  ) {
+    return null;
+  }
+  return new TextEncoder().encode(descriptor.value).byteLength <= maximumErrorMessageBytes
+    ? descriptor.value
+    : null;
 }
