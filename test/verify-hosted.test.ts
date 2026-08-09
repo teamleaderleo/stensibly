@@ -103,7 +103,7 @@ describe("hosted verifier checks", () => {
     expect(calls).toBe(0);
   });
 
-  test("verifies health, Worker receipt, auth, CORS, items, and versioned MCP initialize", async () => {
+  test("verifies health, Worker receipt, auth, CORS, items, and both MCP eras", async () => {
     const calls: Array<{ url: URL; init: RequestInit }> = [];
     const fetchImpl: FetchLike = async (input, init = {}) => {
       const requestUrl = new URL(String(input));
@@ -147,19 +147,42 @@ describe("hosted verifier checks", () => {
         const headers = new Headers(init.headers);
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
         expect(headers.get("origin")).toBe("https://www.stensibly.com");
-        expect(headers.get("mcp-protocol-version")).toBe("2025-06-18");
         const payload = JSON.parse(String(init.body)) as { method?: string };
-        expect(payload.method).toBe("initialize");
+        if (payload.method === "initialize") {
+          expect(headers.get("mcp-protocol-version")).toBe("2025-06-18");
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "stensibly", version: MCP_SERVER_VERSION },
+            },
+          }, 200, {
+            "x-request-id": "mcp-success",
+            [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
+            [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+          });
+        }
+        expect(payload.method).toBe("server/discover");
+        expect(headers.get("mcp-protocol-version")).toBe("2026-07-28");
+        expect(headers.get("mcp-method")).toBe("server/discover");
         return jsonResponse({
           jsonrpc: "2.0",
-          id: 1,
+          id: 2,
           result: {
-            protocolVersion: "2025-06-18",
-            capabilities: {},
-            serverInfo: { name: "stensibly", version: MCP_SERVER_VERSION },
+            resultType: "complete",
+            supportedVersions: ["2026-07-28"],
+            capabilities: { tools: { listChanged: true } },
+            _meta: {
+              "io.modelcontextprotocol/serverInfo": {
+                name: "stensibly",
+                version: MCP_SERVER_VERSION,
+              },
+            },
           },
         }, 200, {
-          "x-request-id": "mcp-success",
+          "x-request-id": "mcp-discovery-success",
           [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
           [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
         });
@@ -174,14 +197,15 @@ describe("hosted verifier checks", () => {
       project: "scrapbook",
     }, fetchImpl);
 
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(6);
     expect(results.every((result) => result.ok)).toBe(true);
     expect(results[0]?.detail).toContain(
       "workerVersion=123e4567-e89b-12d3-a456-426614174000",
     );
     expect(results[4]?.detail).toContain(`version=${MCP_SERVER_VERSION}`);
     expect(results[4]?.detail).toContain(`manifest=${MCP_TOOL_MANIFEST_FINGERPRINT}`);
-    expect(calls).toHaveLength(5);
+    expect(results[5]?.detail).toContain("protocol=2026-07-28");
+    expect(calls).toHaveLength(6);
     const output = formatResults(results);
     expect(output).not.toContain(token);
     expect(output).not.toContain("requestId=");
@@ -279,8 +303,8 @@ describe("hosted verifier checks", () => {
       origin: "https://www.stensibly.com",
     }, fetchImpl);
 
-    expect(calls).toBe(5);
-    expect(results).toHaveLength(5);
+    expect(calls).toBe(6);
+    expect(results).toHaveLength(6);
     expect(results.every((result) => !result.ok)).toBe(true);
     const output = formatResults(results);
     expect(output).not.toContain(token);

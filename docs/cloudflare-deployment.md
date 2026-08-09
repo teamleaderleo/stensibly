@@ -189,7 +189,7 @@ Use a read-only API token through the environment:
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
 ```
 
-Expected output contains five passing checks:
+Expected output contains six passing checks:
 
 ```text
 [PASS] health
@@ -197,6 +197,7 @@ Expected output contains five passing checks:
 [PASS] REST CORS preflight
 [PASS] authenticated REST
 [PASS] remote MCP initialize
+[PASS] remote MCP discovery
 ```
 
 Verify the fallback independently when custom-domain diagnosis is needed:
@@ -237,7 +238,8 @@ During an incident, identify which layer failed:
 - unauthenticated request returns something other than `401`: route or authentication regression
 - CORS failure: origin allowlist or preflight handling
 - authenticated REST failure: token, scope, Worker-to-Convex call, or Convex state
-- MCP initialize failure: MCP route, protocol handling, origin, or authentication
+- MCP initialize failure: legacy/ChatGPT MCP routing, protocol handling, origin, or authentication
+- MCP discovery failure: MCP `2026-07-28` routing, self-describing request admission, or modern server construction
 
 Avoid logging Authorization headers, raw tokens, or the service secret.
 

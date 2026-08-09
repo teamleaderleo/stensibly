@@ -306,7 +306,7 @@ Confirm the endpoint is a Stensibly gateway and the client uses `/api/v1/items`.
 
 ### REST passes; MCP fails
 
-Inspect `/mcp` routing, Bearer authentication, the MCP protocol version, host restrictions, and origin restrictions. The verifier sends a real Streamable HTTP `initialize` request.
+Inspect `/mcp` routing, Bearer authentication, the MCP protocol version, host restrictions, and origin restrictions. The verifier sends both a real initialize-era Streamable HTTP request and an MCP `2026-07-28` `server/discover` request.
 
 ### Official endpoint fails; Worker fallback passes
 

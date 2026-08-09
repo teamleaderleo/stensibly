@@ -99,11 +99,17 @@ The local Bun server also mounts REST v1. Its unversioned `/api` routes remain f
 
 ## Remote MCP
 
-Remote MCP uses Streamable HTTP at `/mcp` and Bearer authentication.
+Remote MCP uses Streamable HTTP at `/mcp` and Bearer authentication. The route
+admits both the initialize-era protocol used by the current ChatGPT connector
+and self-describing MCP `2026-07-28` requests. Request classification happens
+before transport dispatch; protocol objects from the two SDK generations do not
+cross that boundary.
 
 It exposes the same ledger operations through tools. Scope and project checks run before tool invocation. Read-only tokens can initialize MCP and call read tools; write tools require write or admin scope.
 
-The server currently uses stateless JSON responses for each HTTP request. The hosted verifier performs a real authenticated `initialize` request after every deployment.
+The server uses stateless JSON responses for each HTTP request. The hosted
+verifier performs both a real authenticated legacy `initialize` and a modern
+`server/discover` request after every deployment.
 
 ## API-token model
 

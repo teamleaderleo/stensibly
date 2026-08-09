@@ -169,6 +169,13 @@ https://api.stensibly.com/mcp
 
 Remote MCP requires Bearer authentication. It exposes the same ledger operations as REST v1 and applies the same token scopes and project boundaries.
 
+The endpoint is dual-era. Existing ChatGPT connectors continue to use the
+initialize-era Streamable HTTP protocol. Clients that implement MCP
+`2026-07-28` can instead send self-describing requests, begin with
+`server/discover`, and call or list tools without a session handshake. The two
+SDK generations stay isolated at the transport boundary and share one governed
+tool catalogue.
+
 Available tools include:
 
 - `get_brief`

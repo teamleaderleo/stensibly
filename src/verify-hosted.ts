@@ -16,7 +16,8 @@ import {
 const DEFAULT_ENDPOINT = "https://api.stensibly.com";
 const DEFAULT_ORIGIN = "https://www.stensibly.com";
 const DEFAULT_TIMEOUT_MS = 10_000;
-const MCP_PROTOCOL_VERSION = "2025-06-18";
+const LEGACY_MCP_PROTOCOL_VERSION = "2025-06-18";
+const MODERN_MCP_PROTOCOL_VERSION = "2026-07-28";
 const TOKEN_PATTERN = /stn\.tok_[a-f0-9]{32}\.[A-Za-z0-9_-]{40,}/g;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DIAGNOSTIC_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
@@ -191,7 +192,7 @@ export async function verifyHosted(
         Accept: "application/json, text/event-stream",
         Authorization: `Bearer ${normalized.token}`,
         "Content-Type": "application/json",
-        "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+        "MCP-Protocol-Version": LEGACY_MCP_PROTOCOL_VERSION,
         Origin: normalized.origin,
       },
       body: JSON.stringify({
@@ -199,7 +200,7 @@ export async function verifyHosted(
         id: 1,
         method: "initialize",
         params: {
-          protocolVersion: MCP_PROTOCOL_VERSION,
+          protocolVersion: LEGACY_MCP_PROTOCOL_VERSION,
           capabilities: {},
           clientInfo: { name: "stensibly-hosted-verifier", version: "0.0.1" },
         },
@@ -225,7 +226,73 @@ export async function verifyHosted(
       );
     }
     const manifestFingerprint = requireMcpManifestReceipt(response);
-    return `200 protocol=${MCP_PROTOCOL_VERSION} server=stensibly version=${MCP_SERVER_VERSION} manifest=${manifestFingerprint}`;
+    return `200 protocol=${LEGACY_MCP_PROTOCOL_VERSION} server=stensibly version=${MCP_SERVER_VERSION} manifest=${manifestFingerprint}`;
+  }));
+
+  results.push(await runCheck("remote MCP discovery", normalized, async () => {
+    const response = await request(fetchImpl, url(normalized.endpoint, "/mcp"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${normalized.token}`,
+        "Content-Type": "application/json",
+        "MCP-Method": "server/discover",
+        "MCP-Protocol-Version": MODERN_MCP_PROTOCOL_VERSION,
+        Origin: normalized.origin,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "server/discover",
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": MODERN_MCP_PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientInfo": {
+              name: "stensibly-hosted-verifier",
+              version: "0.0.1",
+            },
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        },
+      }),
+    }, normalized.timeoutMs);
+    const body = await readJson(response);
+    expectStatus(response, 200, body);
+    const result = isRecord(body) && isRecord(body.result) ? body.result : null;
+    const serverInfo = result && isRecord(result._meta)
+      && isRecord(result._meta["io.modelcontextprotocol/serverInfo"])
+      ? result._meta["io.modelcontextprotocol/serverInfo"]
+      : null;
+    if (result?.resultType !== "complete") {
+      throw responseError(
+        response,
+        `Expected MCP discovery resultType=complete; received ${jsonPreview(body)}`,
+      );
+    }
+    if (!Array.isArray(result.supportedVersions)
+      || !result.supportedVersions.includes(MODERN_MCP_PROTOCOL_VERSION)) {
+      throw responseError(
+        response,
+        `Expected MCP discovery to support ${MODERN_MCP_PROTOCOL_VERSION}; received ${jsonPreview(result.supportedVersions)}`,
+      );
+    }
+    if (!isRecord(result.capabilities) || !isRecord(result.capabilities.tools)) {
+      throw responseError(response, "Expected MCP discovery tools capability");
+    }
+    if (serverInfo?.name !== "stensibly") {
+      throw responseError(
+        response,
+        `Expected MCP discovery serverInfo.name=stensibly; received ${jsonPreview(body)}`,
+      );
+    }
+    if (serverInfo.version !== MCP_SERVER_VERSION) {
+      throw responseError(
+        response,
+        `Expected MCP discovery serverInfo.version=${MCP_SERVER_VERSION}; received ${typeof serverInfo.version === "string" ? serverInfo.version : "missing"}`,
+      );
+    }
+    const manifestFingerprint = requireMcpManifestReceipt(response);
+    return `200 protocol=${MODERN_MCP_PROTOCOL_VERSION} server=stensibly version=${MCP_SERVER_VERSION} manifest=${manifestFingerprint}`;
   }));
 
   return results;
