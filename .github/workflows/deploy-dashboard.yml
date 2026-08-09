@@ -358,8 +358,7 @@ jobs:
           DEPLOYMENT_URL: ${{ steps.stage.outputs.deployment_url }}
         run: |
           echo "::group::[stensibly-verifier] staged dashboard HTML"
-          if ! npx --yes vercel@${VERCEL_CLI_VERSION} --token="${VERCEL_TOKEN}" \
-            curl / \
+          if ! npx --yes vercel@${VERCEL_CLI_VERSION} curl / \
             --deployment "${DEPLOYMENT_URL}" \
             -- \
             --fail --silent --show-error \
@@ -395,8 +394,7 @@ jobs:
             output="/tmp/dashboard-asset-$(printf '%s' "${asset}" | tr '/.' '__')"
             echo "::group::[vercel-cli] staged asset ${asset}"
             if ! content_type="$(
-              npx --yes vercel@${VERCEL_CLI_VERSION} --token="${VERCEL_TOKEN}" \
-                curl "${asset}" \
+              npx --yes vercel@${VERCEL_CLI_VERSION} curl "${asset}" \
                 --deployment "${DEPLOYMENT_URL}" \
                 -- \
                 --fail --silent --show-error \
