@@ -258,7 +258,7 @@ describe("dashboard project setup-status wiring", () => {
     expect(entry).toContain("method: 'PUT'");
     expect(entry).toContain("acceptAuthorityWidening");
     expect(entry).toContain("Review cancelled. No attachment action was sent.");
-    expect(entry).toContain("snapshot fingerprint");
+    expect(entry).toContain("Snapshot fingerprint");
     expect(entry).toContain('id=\"project-setup-status-panel\"');
     expect(entry).toContain("saved advisory repository proposal");
     expect(entry).toContain("Proposed repository");
