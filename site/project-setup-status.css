@@ -1,0 +1,150 @@
+.project-setup-status {
+  border: 1px solid var(--line, rgba(148, 163, 184, 0.22));
+  border-radius: 18px;
+  background: var(--panel, rgba(15, 23, 42, 0.72));
+  overflow: clip;
+}
+
+.project-setup-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+}
+
+.project-setup-status-head h3,
+.project-setup-status-head p {
+  margin: 0;
+}
+
+.project-setup-status-head > span {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted, #94a3b8);
+}
+
+.project-setup-status-content {
+  display: grid;
+  gap: 1rem;
+  padding: 0 1.1rem 1.1rem;
+}
+
+.project-setup-status-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.project-setup-status-toolbar label {
+  display: grid;
+  gap: 0.35rem;
+  flex: 1;
+  color: var(--muted, #94a3b8);
+  font-size: 0.78rem;
+}
+
+.project-setup-status-toolbar select {
+  width: 100%;
+}
+
+.project-setup-status-body {
+  display: grid;
+  gap: 1rem;
+}
+
+.project-setup-status-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 0.75rem;
+}
+
+.project-setup-status-summary > div,
+.project-setup-status-repository > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.project-setup-status-summary span,
+.project-setup-status-repository > div > span {
+  color: var(--muted, #94a3b8);
+  font-size: 0.75rem;
+}
+
+.project-setup-status-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-setup-status-steps li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line, rgba(148, 163, 184, 0.18));
+  border-radius: 12px;
+}
+
+.project-setup-status-steps li[data-state="ready"] {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.project-setup-status-steps li[data-state="degraded"] {
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.project-setup-status-steps small {
+  color: var(--muted, #94a3b8);
+}
+
+.project-setup-status-repository {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.9rem;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.project-setup-status-repository h4,
+.project-setup-status-repository p,
+.project-setup-status-repository ul {
+  margin: 0;
+}
+
+.project-setup-status-repository ul {
+  padding-left: 1.2rem;
+}
+
+.project-setup-status-repository code {
+  overflow-wrap: anywhere;
+}
+
+.project-setup-status-error {
+  margin: 0;
+  color: var(--danger, #fca5a5);
+}
+
+.project-setup-status-note,
+.project-setup-status-empty,
+.project-setup-status-loading,
+.project-setup-status-footnote {
+  color: var(--muted, #94a3b8);
+}
+
+.project-setup-status-footnote {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 620px) {
+  .project-setup-status-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
