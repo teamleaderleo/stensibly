@@ -49,6 +49,6 @@ for (const operation of ["preflight", "exchange", "identity"] as const) {
       reason: "network_exception",
     });
     expect(String(captured)).not.toContain("provider error");
-    expect(metadataTrapCalls).toBeGreaterThan(0);
+    expect(metadataTrapCalls).toBe(0);
   });
 }

@@ -24,4 +24,5 @@ export function admitProjectAttachmentReviewDiff(
   value: unknown,
   snapshotSha256: string,
   exactReplay?: boolean,
+  requiresAuthorityWidening?: boolean,
 ): ProjectAttachmentReviewDiffIdentity | null;

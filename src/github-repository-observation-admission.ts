@@ -174,15 +174,9 @@ export function admitHostedGitHubRepositoryObservationInput(
     snapshot.receivedAt,
     "GitHub repository observation receipt time",
   );
-  const observation = snapshotBoundedJson(
+  const observation = snapshotHostedGitHubRepositoryObservation(
     snapshot.observation,
-    "GitHub repository observation",
   );
-  if (!isRecord(observation)) {
-    throw new RangeError(
-      "GitHub repository observation must be a plain data record",
-    );
-  }
   return admitGitHubRepositoryObservationEnvelope({
     deliveryId,
     eventType,
@@ -403,6 +397,83 @@ function snapshotClosedRecord(
     snapshot[key] = descriptor.value;
   }
   return snapshot;
+}
+
+function snapshotHostedGitHubRepositoryObservation(
+  value: unknown,
+): Record<string, BoundedJsonValue> {
+  const label = "GitHub repository observation";
+  const shell = snapshotClosedRecord(value, topLevelKeys, label);
+  const detached: Record<string, unknown> = { ...shell };
+  detached.subject = snapshotClosedRecord(
+    shell.subject,
+    subjectKeys,
+    `${label} subject`,
+  );
+  detached.relationships = snapshotClosedRecord(
+    shell.relationships,
+    relationshipKeys,
+    `${label} relationships`,
+  );
+  detached.contentRevisions = snapshotClosedContentRevisions(
+    shell.contentRevisions,
+  );
+  detached.facts = snapshotBoundedJson(
+    shell.facts,
+    `${label} facts`,
+  );
+  const bounded = snapshotBoundedJson(detached, label);
+  if (!isRecord(bounded)) {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+  return bounded as Record<string, BoundedJsonValue>;
+}
+
+function snapshotClosedContentRevisions(value: unknown): Record<string, unknown>[] {
+  const label = "GitHub repository content revisions";
+  if (!value || typeof value !== "object") {
+    throw new RangeError(`${label} are invalid`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
+    throw new RangeError(`${label} could not be inspected`);
+  }
+  if (
+    !isArray
+    || prototype !== Array.prototype
+    || !lengthDescriptor
+    || !("value" in lengthDescriptor)
+    || typeof lengthDescriptor.value !== "number"
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0
+    || lengthDescriptor.value > contentRevisionNames.length
+  ) {
+    throw new RangeError(`${label} are invalid`);
+  }
+  const output: Record<string, unknown>[] = [];
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      throw new RangeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new RangeError(`${label} are invalid`);
+    }
+    output.push(snapshotClosedRecord(
+      descriptor.value,
+      contentRevisionKeys,
+      `GitHub repository content revision[${index}]`,
+    ));
+  }
+  return output;
 }
 
 export function snapshotBoundedJson(
