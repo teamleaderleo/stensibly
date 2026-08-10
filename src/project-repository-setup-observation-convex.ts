@@ -141,18 +141,20 @@ function exactResponse(value: unknown): {
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
     throw new Error(invalidResponse);
   }
+  let array: boolean;
   let prototype: object | null;
   let descriptors: PropertyDescriptorMap;
   try {
+    array = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new Error(invalidResponse);
   }
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (array || (prototype !== Object.prototype && prototype !== null)) {
     throw new Error(invalidResponse);
   }
   const ownKeys = Reflect.ownKeys(descriptors);
