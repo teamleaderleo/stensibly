@@ -11,6 +11,11 @@ import {
   type McpCapabilityPolicy,
   type McpCapabilityScope,
 } from "./mcp-capability-policy.js";
+import type { McpRequestContext } from "./mcp-context.js";
+import {
+  type SuccessfulMcpReadObservation,
+} from "./mcp-successful-read-observation.js";
+import type { McpSetupFirstReadRecorder } from "./mcp-setup-evidence.js";
 import { createMcpServer, createModernMcpServer } from "./mcp.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 import {
@@ -34,6 +39,8 @@ export interface McpHttpOptions {
   allowedHosts?: string[];
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
+  mcpSetupFirstReadRecorder?: Pick<McpSetupFirstReadRecorder, "recordSetupFirstRead">;
+  waitUntil?: (promise: Promise<unknown>) => void;
   createServer?: typeof createMcpServer;
   createModernServer?: typeof createModernMcpServer;
 }
@@ -119,7 +126,10 @@ async function handleLegacyMcpRequest(
   let server: ReturnType<typeof createMcpServer> | undefined;
   let failureStage: McpFailureStage = "server_construction";
   try {
-    server = (options.createServer ?? createMcpServer)(options.ledger, { principal });
+    server = (options.createServer ?? createMcpServer)(
+      options.ledger,
+      mcpRequestContext(options, principal),
+    );
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
@@ -162,7 +172,7 @@ async function handleModernMcpRequest(
       factoryEntered = true;
       const server = (options.createModernServer ?? createModernMcpServer)(
         options.ledger,
-        { principal },
+        mcpRequestContext(options, principal),
       );
       serverConstructed = true;
       return server;
@@ -206,6 +216,54 @@ async function handleModernMcpRequest(
       }
     }
   }
+}
+
+function mcpRequestContext(
+  options: McpHttpOptions,
+  principal: TokenPrincipal,
+): McpRequestContext {
+  const recorder = options.mcpSetupFirstReadRecorder;
+  if (!recorder || !principal.oauthAccountId) return { principal };
+  const accountId = principal.oauthAccountId;
+  return {
+    principal,
+    onSuccessfulReadToolCall: (observation) => {
+      const recording = (async () => {
+        const project = await resolveSuccessfulReadProject(
+          options.ledger,
+          principal,
+          observation,
+        );
+        if (!project) return;
+        await recorder.recordSetupFirstRead({ accountId, project });
+      })();
+      if (options.waitUntil) {
+        try {
+          options.waitUntil(recording.catch(() => {}));
+        } catch {
+          // Request-lifetime registration is best-effort and cannot change tool semantics.
+        }
+      }
+      return recording;
+    },
+  };
+}
+
+async function resolveSuccessfulReadProject(
+  ledger: WorkLedger,
+  principal: TokenPrincipal,
+  observation: SuccessfulMcpReadObservation,
+): Promise<string | null> {
+  const policy = getMcpCapabilityPolicy(observation.toolName);
+  if (policy?.scope !== "read") return null;
+  const args = isRecord(observation.arguments) ? observation.arguments : {};
+  const rule = await resolveAccessRule(ledger, principal, policy, args);
+  const projects = new Set<string>();
+  if (rule.project) projects.add(rule.project);
+  for (const project of rule.projects ?? []) projects.add(project);
+  if (projects.size !== 1) return null;
+  const project = [...projects][0]!;
+  return principalCanAccessProject(principal, project) ? project : null;
 }
 
 async function authorizePayload(
