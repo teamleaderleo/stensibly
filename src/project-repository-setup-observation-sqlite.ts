@@ -90,6 +90,12 @@ export function recordSqliteProjectRepositorySetupObservation(
   const transaction = store.db.transaction(() => {
     const current = getSqliteProjectRepositorySetupObservation(store, input.project);
     const prepared = prepareProjectRepositorySetupObservation(current, input);
+    if (
+      prepared.expectedCurrentObservationId !== undefined
+      && prepared.expectedCurrentObservationId !== (current?.id ?? null)
+    ) {
+      throw new Error("Repository setup observation changed before write");
+    }
     if (prepared.replay) {
       return {
         observation: prepared.replay,
