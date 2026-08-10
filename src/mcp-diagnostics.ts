@@ -30,15 +30,19 @@ export const MCP_CORE_TOOL_NAMES = [
   "get_project_attachment",
   "get_runner_context",
   "github_add_issue_comment",
+  "github_branch_tidy",
+  "github_ci_diagnose",
   "github_create_branch",
   "github_create_file",
   "github_create_issue",
   "github_create_pull_request",
   "github_get_issue",
   "github_get_tool",
+  "github_land_pr",
   "github_list_issues",
   "github_list_toolsets",
   "github_publish_change",
+  "github_repo_health",
   "github_search_issues",
   "github_search_tools",
   "github_update_file",
@@ -61,9 +65,9 @@ export const MCP_CORE_TOOL_NAMES = [
 ] as const;
 
 export const MCP_TOOL_NAMES = [
-  ...MCP_CORE_TOOL_NAMES.slice(0, 17),
+  ...MCP_CORE_TOOL_NAMES.slice(0, 18),
   "github_call_tool",
-  ...MCP_CORE_TOOL_NAMES.slice(17),
+  ...MCP_CORE_TOOL_NAMES.slice(18),
 ] as const;
 
 export interface McpToolManifestIdentity {
@@ -357,6 +361,7 @@ function isWriteTool(tool: string | undefined): boolean {
     "github_create_issue",
     "github_create_pull_request",
     "github_publish_change",
+    "github_land_pr",
     "github_update_file",
     "github_update_issue",
     "propose_continuation",

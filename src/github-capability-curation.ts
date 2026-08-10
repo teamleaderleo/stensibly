@@ -90,6 +90,7 @@ function seeds(
 
 const capabilitySeeds: CapabilitySeed[] = [
   ...seeds("essential", "github", true, [
+    "repo_health",
     "get_profile",
     "list_repositories",
     "search_repositories",
@@ -125,6 +126,7 @@ const capabilitySeeds: CapabilitySeed[] = [
     "remove_issue_assignees",
   ]),
   ...seeds("essential", "review_follow_up", false, [
+    "land_pr",
     "create_pull_request",
     "update_pull_request",
     "add_review_to_pr",
@@ -136,6 +138,7 @@ const capabilitySeeds: CapabilitySeed[] = [
     "merge_pull_request",
   ]),
   ...seeds("essential", "ci_debug", true, [
+    "ci_diagnose",
     "fetch_commit_workflow_runs",
     "fetch_workflow_run_jobs",
     "fetch_workflow_job_steps",
@@ -174,6 +177,9 @@ const capabilitySeeds: CapabilitySeed[] = [
     "fetch_pr_file_patch",
     "fetch_pr_patch",
     "download_user_content",
+  ]),
+  ...seeds("secondary", "publish_changes", true, [
+    "branch_tidy",
   ]),
 
   ...seeds("advanced", "review_follow_up", false, [
@@ -238,6 +244,7 @@ const nonRepositoryScoped = new Set([
 ]);
 
 const adminCapabilities = new Set([
+  "land_pr",
   "merge_pull_request",
   "enable_auto_merge",
   "lock_issue_conversation",
@@ -257,13 +264,17 @@ const firstPartyBindings: Record<string, string> = {
   fetch_issue: "github_get_issue",
   update_file: "github_update_file",
   update_issue: "github_update_issue",
+  repo_health: "github_repo_health",
+  branch_tidy: "github_branch_tidy",
+  ci_diagnose: "github_ci_diagnose",
+  land_pr: "github_land_pr",
 };
 
 export const githubCapabilityRegistry = compileGitHubCapabilityRegistry({
   version: 1,
   source: "chatgpt-github-connector",
   sourceRevision: "chatgpt-github-connector:observed-2026-07-31",
-  curationRevision: "stensibly-github-curation:v4",
+  curationRevision: "stensibly-github-curation:v5",
   capabilities: capabilitySeeds,
 });
 

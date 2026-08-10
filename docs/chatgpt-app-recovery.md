@@ -4,14 +4,14 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-The hosted production composition defines **46** public MCP tools with two release fingerprints:
+The hosted production composition defines **50** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:79bfda4e9c86585b67099c8be597fb80aa6adc4866f448cdbb7158fe9eb347ca
-names-only diagnostic:       sha256:7f410756f91d18c6325fa6e1d75f41c7a5523b3e6604f5f23c1b6ce7cbced318
+full ChatGPT tool contract: sha256:65d6097f8fc33bd67654f9b20359f672d312f87b0de60ceb4f4d09b415582e42
+names-only diagnostic:       sha256:bf607cf4d13eb4fcff7af26fb9764c2b2e0ebfc599a7a421677798cbe629ac2a
 ```
 
-The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 44 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
+The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 49 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
 
@@ -36,6 +36,8 @@ Keep a compact set of frequent Stensibly workflow tools and GitHub discovery too
 - production mounts branch and pull-request publication only when the guarded
   `STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED=true` binding is present;
 - use `github_create_pull_request` only with exact expected head and base commit SHAs plus one explicit idempotency key;
+- use `github_repo_health` before a new repository workflow, `github_branch_tidy` for a non-mutating exact-SHA cleanup plan, and `github_ci_diagnose` for bounded PR-to-job failure traversal;
+- use `github_land_pr` only under a current runner lease with an atomically fenced head and freshly observed base; it requires positive successful CI evidence, durably reserves the merge, rejects unresolved review threads, verifies the resulting commit's base parent, sends base races to reconciliation, and deliberately leaves branch cleanup separate;
 - reconcile an ambiguous file write through `get_github_repository_write_receipt` before retrying the exact request;
 - reconcile an ambiguous or lost GitHub write through `get_github_provider_receipt` before retrying the exact request;
 - initial label and assignee changes remain outside the public GitHub write surface;
