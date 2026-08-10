@@ -199,15 +199,11 @@ export function admitHostedGitHubRepositoryObservationInput(
 export function admitGitHubRepositoryObservationEnvelope(
   value: unknown,
 ): AdmittedGitHubRepositoryObservation {
-  const snapshot = snapshotBoundedJson(
+  const snapshot = snapshotClosedRecord(
     value,
+    envelopeKeys,
     "GitHub repository observation envelope",
   );
-  if (!isRecord(snapshot) || !hasExactKeys(snapshot, envelopeKeys)) {
-    throw new RangeError(
-      "GitHub repository observation envelope has noncanonical fields",
-    );
-  }
   const deliveryId = credentialSafe(
     exactText(snapshot.deliveryId, "GitHub delivery ID", 128, deliveryPattern),
     "GitHub delivery ID",
@@ -225,6 +221,15 @@ export function admitGitHubRepositoryObservationEnvelope(
     0,
     Number.MAX_SAFE_INTEGER,
   );
+  if (
+    typeof snapshot.observationJson === "string"
+    && new TextEncoder().encode(snapshot.observationJson).byteLength
+      > MAXIMUM_GITHUB_REPOSITORY_OBSERVATION_BYTES
+  ) {
+    throw new RangeError(
+      "GitHub repository observation envelope.observationJson contains oversized text",
+    );
+  }
   const observationJson = exactUtf8Text(
     snapshot.observationJson,
     "GitHub repository observation JSON",
@@ -363,6 +368,42 @@ export function admitGitHubRepositoryObservationEnvelope(
     sourceTime,
     sourceTimeSource,
   });
+}
+
+function snapshotClosedRecord(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw new RangeError(`${label} could not be inspected`);
+  }
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+    throw new RangeError(`${label} must be a plain data record`);
+  }
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new RangeError(`${label} could not be inspected`);
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new RangeError(`${label}.${key} must be an enumerable data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
 }
 
 export function snapshotBoundedJson(
