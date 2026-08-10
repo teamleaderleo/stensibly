@@ -29,6 +29,16 @@ export interface McpOAuthGrant {
   };
 }
 
+export interface McpSetupConnectionInput {
+  accountId: string;
+  clientId: string;
+  resource: string;
+}
+
+export interface McpSetupConnectionRecorder {
+  recordSetupConnection(input: McpSetupConnectionInput): Promise<void>;
+}
+
 export type McpOAuthRefreshExchange =
   | { status: "ok"; grant: McpOAuthGrant }
   | { status: "invalid" }
@@ -78,17 +88,14 @@ export interface McpOAuthService {
     nextSecretHash: string;
     nextExpiresAt: number;
   }): Promise<McpOAuthRefreshExchange>;
-  recordSetupConnection?(input: {
-    accountId: string;
-    clientId: string;
-    resource: string;
-  }): Promise<void>;
+  recordSetupConnection?(input: McpSetupConnectionInput): Promise<void>;
 }
 
 export interface ConvexMcpOAuthServiceOptions {
   client: ConvexCaller;
   serviceSecret: string;
   workspace: string;
+  setupConnectionRecorder?: McpSetupConnectionRecorder;
 }
 
 const registerClientRef = makeFunctionReference<"mutation">(
@@ -108,11 +115,13 @@ export class ConvexMcpOAuthService implements McpOAuthService {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
+  readonly setupConnectionRecorder: McpSetupConnectionRecorder | null;
 
   constructor(options: ConvexMcpOAuthServiceOptions) {
     this.client = options.client;
     this.serviceSecret = required(options.serviceSecret, "Convex service secret");
     this.workspace = normalizeWorkspace(options.workspace);
+    this.setupConnectionRecorder = options.setupConnectionRecorder ?? null;
   }
 
   async registerClient(input: Parameters<McpOAuthService["registerClient"]>[0]) {
@@ -156,6 +165,11 @@ export class ConvexMcpOAuthService implements McpOAuthService {
       convexApi.mcpOAuth.rotateRefreshToken,
       this.args(input),
     ) as McpOAuthRefreshExchange;
+  }
+
+  async recordSetupConnection(input: McpSetupConnectionInput): Promise<void> {
+    if (!this.setupConnectionRecorder) return;
+    await this.setupConnectionRecorder.recordSetupConnection(input);
   }
 
   private async reconcileClientLifecycle(clientId: string): Promise<void> {
