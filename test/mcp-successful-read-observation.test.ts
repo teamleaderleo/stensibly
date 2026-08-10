@@ -53,6 +53,9 @@ describe("successful MCP read observation", () => {
     const guarded = withSuccessfulMcpReadObservation(server, (observation) => {
       observations.push(observation);
     });
+    const throwingHandler = async () => {
+      throw new Error("handler failure");
+    };
 
     guarded.registerTool("create_item", {} as never, async () => ({
       content: [{ type: "text", text: "write" }],
@@ -62,9 +65,7 @@ describe("successful MCP read observation", () => {
       isError: true,
     }) as never);
     guarded.registerTool("list_work", {} as never, async () => ({}) as never);
-    guarded.registerTool("list_artifacts", {} as never, async () => {
-      throw new Error("handler failure");
-    } as never);
+    guarded.registerTool("list_artifacts", {} as never, throwingHandler as never);
 
     await registrations.get("create_item")!({ project: "scrapbook" });
     await registrations.get("get_brief")!({ project: "scrapbook" });
