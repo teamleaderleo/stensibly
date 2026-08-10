@@ -111,6 +111,10 @@ describe("public GitHub issue number ceiling", () => {
           repository,
           issueNumber: maximumGitHubIssueNumber,
           body: "exact maximum remains admissible",
+          signoff: {
+            callsign: "Kite",
+            runId: "run_issue_number_maximum_1",
+          },
           idempotencyKey: "public-issue-number-maximum-comment",
         },
       });
@@ -202,6 +206,10 @@ describe("public GitHub issue number ceiling", () => {
           repository,
           issueNumber: aboveGitHubIssueCeiling,
           body: "must remain unreachable",
+          signoff: {
+            callsign: "Kite",
+            runId: "run_issue_number_ceiling_1",
+          },
           idempotencyKey: "public-issue-number-ceiling-comment",
         },
       });
