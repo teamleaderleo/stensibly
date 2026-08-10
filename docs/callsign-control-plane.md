@@ -230,6 +230,27 @@ then call `request_callsign` before publishing its first substantive sign-off. T
 accepted callsign can be attached to the enrolment as descriptive attribution while
 claims and execution permissions continue through their existing authority paths.
 
+### Publication attribution after enrolment
+
+The hosted worker-enrolment join is owned by #557, with the publication slice in #1449
+and its rationale in `docs/decisions/557-worker-attribution-handles.md`.
+
+For remote MCP, successful durable enrolment should mint one opaque worker reference.
+Later publication tools can carry that reference and let Stensibly resolve canonical
+callsign, accepted lease generation, worker session, and run provenance before calling
+the signoff renderer. The reference identifies server-owned worker state; it grants no
+authority and must be validated together with the authenticated principal, project, and
+current lifecycle fences.
+
+For embedded runner adapters, equivalent stable attribution may be injected through
+runtime-local context instead of repeated model-visible arguments. Both paths resolve
+the same durable worker/enrolment record.
+
+Do not bind worker attribution to an MCP transport session. MCP 2026-07-28 is
+sessionless and uses explicit server-minted handles for application state across calls.
+The explicit `signoff` input added in #1444 remains the migration and recovery path
+until the durable worker-reference lookup is implemented and dogfooded.
+
 ## Reconciliation and cleanup
 
 A later reaper may expire a callsign lease when its worker enrolment expires or misses
