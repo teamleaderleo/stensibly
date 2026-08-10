@@ -3,7 +3,7 @@
   "manifestVersion": 1,
   "toolCount": 51,
   "toolManifestFingerprint": "sha256:67d8a56fe4289267afe8445bb095f17835eabb56ddf2d2334728bb0bc3e03930",
-  "toolContractFingerprint": "sha256:8ed0a0576e6e2a4cc8957e0ded2d34e661d332867c169baf640d9f4570cab404",
+  "toolContractFingerprint": "sha256:2b436568ed3949a2af6e6bad59f23b401c5c5a50d9a265781bc0742e9473a870",
   "tools": [
     "attach_artifact",
     "block_work",
