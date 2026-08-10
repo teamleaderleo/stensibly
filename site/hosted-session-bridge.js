@@ -11,6 +11,7 @@ import {
   revokeHostedSession,
 } from './hosted-session.js';
 import { installProviderCapacityCard } from './provider-capacity-entry.js';
+import { installProjectAttachmentRepositoryVerification } from './project-attachment-repository-verification-entry.js';
 import { installProjectAttachmentReviewAction } from './project-attachment-review-entry.js';
 import { installProjectSetupStatusCard } from './project-setup-status-entry.js';
 
@@ -45,6 +46,7 @@ window.fetch = installHostedSessionFetchBridge({
 installProviderCapacityCard();
 installProjectSetupStatusCard();
 installProjectAttachmentReviewAction();
+installProjectAttachmentRepositoryVerification();
 
 signInButton?.addEventListener('click', beginGithubSignIn);
 hostedSignOutButton?.addEventListener('click', signOutHostedSession, { capture: true });
