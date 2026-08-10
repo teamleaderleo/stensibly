@@ -32,7 +32,10 @@ import {
 } from "./mcp-oauth.js";
 import { ConvexMcpOAuthService } from "./mcp-oauth-service.js";
 import { ConvexMcpSetupEvidenceService } from "./mcp-setup-evidence-convex.js";
-import type { McpSetupEvidenceReader } from "./mcp-setup-evidence.js";
+import type {
+  McpSetupEvidenceReader,
+  McpSetupFirstReadRecorder,
+} from "./mcp-setup-evidence.js";
 import {
   ConvexProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-observation-convex.js";
@@ -65,6 +68,7 @@ export interface HostedAppOptions {
   allowedHosts?: string[];
   hostedAuth?: HostedAuthOptions;
   mcpOAuth?: McpOAuthOptions;
+  mcpSetupFirstReadRecorder?: Pick<McpSetupFirstReadRecorder, "recordSetupFirstRead">;
   providerCapacity?: HostedProviderCapacityOptions;
   setupStatus?: HostedSetupStatusMountOptions;
   repositorySetupObservations?: ProjectRepositorySetupObservationLedger;
@@ -137,6 +141,9 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
       authenticator: mcpAuthenticator,
       allowedOrigins,
       allowedHosts: options.allowedHosts,
+      ...(options.mcpSetupFirstReadRecorder
+        ? { mcpSetupFirstReadRecorder: options.mcpSetupFirstReadRecorder }
+        : {}),
     });
     const challenge = oauthChallenges
       ? oauthChallengeForResponse(context.req.header("authorization"), response, oauthChallenges)
@@ -206,6 +213,9 @@ export function createHostedAppFromEnv(
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
     hostedAuth,
     mcpOAuth,
+    ...(mcpOAuth && mcpSetupEvidence
+      ? { mcpSetupFirstReadRecorder: mcpSetupEvidence }
+      : {}),
     repositorySetupObservations,
     providerCapacity: hostedProviderCapacityFromEnv(ledger, env),
     ...(hostedAuth
