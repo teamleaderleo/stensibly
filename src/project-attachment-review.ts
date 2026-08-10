@@ -1,3 +1,4 @@
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 import type { ProjectAttachmentRecord } from "./project-attachment-ledger.js";
 import {
   createProjectRepositorySetupObservationRecord,
@@ -62,6 +63,9 @@ export function prepareProjectAttachmentReview(
   const sourceRevision = exactSourceRevision(input.sourceRevision);
   if (typeof input.source !== "string" || input.source.length < 1) {
     throw new RangeError("STENSIBLY.md source is required");
+  }
+  if (containsRealisticRetainedCredential(input.source)) {
+    throw new RangeError("STENSIBLY.md source contains credential-shaped material");
   }
 
   const snapshot = compileProjectContract(input.source);
