@@ -316,12 +316,9 @@ async function boundedJson(response: Response): Promise<unknown> {
   let total = 0;
   try {
     while (true) {
-      let item: ReadableStreamReadResult<Uint8Array>;
-      try {
-        item = await reader.read();
-      } catch {
+      const item = await reader.read().catch(() => {
         throw new Error("GitHub operation response stream failed");
-      }
+      });
       if (item.done) break;
       if (!(item.value instanceof Uint8Array)) {
         await reader.cancel().catch(() => undefined);
