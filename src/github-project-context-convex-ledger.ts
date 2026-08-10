@@ -574,9 +574,7 @@ function exactServiceTime(now: () => number): number {
 }
 
 function mapStorageError(error: unknown): Error {
-  if (error instanceof GitHubProjectContextConflictError) return error;
-  if (error instanceof GitHubProjectContextStorageError) return error;
-  const message = ownDataErrorMessage(error);
+  const message = detachedErrorMessage(error);
   if (
     message.includes("GITHUB_PROJECT_CONTEXT_OBSERVATION_CONFLICT")
     || message.includes("GITHUB_PROJECT_CONTEXT_SOURCE_REVISION_CONFLICT")
@@ -584,9 +582,32 @@ function mapStorageError(error: unknown): Error {
   return new GitHubProjectContextStorageError();
 }
 
-function ownDataErrorMessage(error: unknown): string {
+function detachedErrorMessage(error: unknown): string {
   if (!error || typeof error !== "object") return "";
-  const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+  let brand: string;
+  try {
+    brand = Object.prototype.toString.call(error);
+  } catch {
+    return "";
+  }
+  if (brand !== "[object Error]") return "";
+
+  let detached: unknown;
+  try {
+    detached = structuredClone(error);
+  } catch {
+    return "";
+  }
+  if (!detached || typeof detached !== "object") return "";
+  let detachedBrand: string;
+  try {
+    detachedBrand = Object.prototype.toString.call(detached);
+  } catch {
+    return "";
+  }
+  if (detachedBrand !== "[object Error]") return "";
+
+  const descriptor = Object.getOwnPropertyDescriptor(detached, "message");
   return descriptor && "value" in descriptor && typeof descriptor.value === "string"
     ? descriptor.value
     : "";
