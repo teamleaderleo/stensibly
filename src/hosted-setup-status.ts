@@ -1,10 +1,15 @@
+import {
+  admitMcpSetupEvidence,
+  type McpSetupEvidenceReader,
+} from "./mcp-setup-evidence.js";
 import type { ProjectSetupStatusObserver } from "./setup-status-api.js";
-import type { SetupStepStates } from "./setup-status.js";
+import type { SetupStep, SetupStepStates } from "./setup-status.js";
 
 export interface HostedSetupStatusObserverOptions {
   serviceOrigin: string;
   workspaceConfigured: boolean;
   oauthConfigured: boolean;
+  mcpSetupEvidence?: Pick<McpSetupEvidenceReader, "getMcpSetupEvidence">;
   now?: () => number;
 }
 
@@ -16,8 +21,14 @@ export function createHostedSetupStatusObserver(
   const now = options.now ?? Date.now;
 
   return {
-    observe({ principalKind, hasAcceptedAttachment }) {
+    async observe({ project, principalKind, accountId, hasAcceptedAttachment }) {
       const observedAt = observedTimestamp(now());
+      const evidence = principalKind === "account" && accountId && options.mcpSetupEvidence
+        ? admitMcpSetupEvidence(
+            await options.mcpSetupEvidence.getMcpSetupEvidence({ accountId, project }),
+            { accountId, project },
+          )
+        : null;
       const steps: SetupStepStates = {
         deployment: "ready",
         backend: "ready",
@@ -25,8 +36,8 @@ export function createHostedSetupStatusObserver(
         workspace: options.workspaceConfigured ? "ready" : "missing",
         project: "ready",
         oauth_discovery: options.oauthConfigured ? "ready" : "missing",
-        mcp_connection: "missing",
-        first_read: "missing",
+        mcp_connection: evidence?.connectedAt ? "ready" : "missing",
+        first_read: evidence?.firstReadAt ? "ready" : "missing",
         repository: hasAcceptedAttachment ? "ready" : "missing",
         proofwake: "deferred",
       };
@@ -37,11 +48,17 @@ export function createHostedSetupStatusObserver(
           serviceOrigin,
           mcpEndpoint,
           steps,
-          lastVerifiedStep: "project",
+          lastVerifiedStep: lastVerifiedStep(steps),
         },
       };
     },
   };
+}
+
+function lastVerifiedStep(steps: SetupStepStates): SetupStep {
+  if (steps.first_read === "ready") return "first_read";
+  if (steps.mcp_connection === "ready") return "mcp_connection";
+  return "project";
 }
 
 function hostedServiceOrigin(value: string): string {
