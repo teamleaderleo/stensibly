@@ -11,7 +11,7 @@ import {
 import {
   compileProjectContract,
   renderProjectContract,
-  type ProjectContractV1,
+  type ProjectContract,
 } from "../src/project-contract.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
@@ -262,7 +262,7 @@ describe("project attachment review API", () => {
   });
 });
 
-const baseContract: ProjectContractV1 = {
+const baseContract: ProjectContract = {
   version: 1,
   project: "scrapbook",
   repositories: ["teamleaderleo/scrapbook"],
@@ -282,7 +282,7 @@ const context = {
   escalation: "Escalate missing authority.",
 };
 
-function source(contract: ProjectContractV1): string {
+function source(contract: ProjectContract): string {
   return renderProjectContract(contract, context);
 }
 
