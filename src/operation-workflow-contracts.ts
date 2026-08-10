@@ -1,4 +1,4 @@
-export const operationWorkflowKinds = ["github_publish_change"] as const;
+export const operationWorkflowKinds = ["github_publish_change", "github_land_pr"] as const;
 
 export type OperationWorkflowKind = typeof operationWorkflowKinds[number];
 

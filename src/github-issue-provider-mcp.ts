@@ -14,6 +14,7 @@ import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import type { McpRequestContext } from "./mcp-context.js";
 import type { GitHubPublishChangeService } from "./github-publish-change-operation.js";
+import type { GitHubOperationsService } from "./github-operations.js";
 import { operationWorkflowStore } from "./operation-workflow-contracts.js";
 import { runnerLedger } from "./runner-contracts.js";
 import {
@@ -191,6 +192,103 @@ export function registerGitHubIssueProviderTools(
   context: McpRequestContext,
 ): void {
   registerGitHubCapabilityTools(server, ledger, context);
+
+  server.registerTool(
+    "github_repo_health",
+    {
+      description: "Answer whether one accepted GitHub repository is ready for agent work: live provider connectivity, attachment/binding identity, default branch and exact head, repository state, catalogue identity, and the outcome-oriented operation surface. This is read-only and authorizes no mutation.",
+      inputSchema: { project: projectSchema(), repository: repositorySchema() },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asToolResult(() => operationsService(ledger).githubRepoHealth(
+      providerContext(context, input.project, input.repository, "read"),
+    )),
+  );
+
+  server.registerTool(
+    "github_branch_tidy",
+    {
+      description: "Build a bounded, exact-SHA branch-cleanup plan. Candidates are eligible only when unprotected, fully contained in the default branch, old enough, and without an open pull request. The result includes recovery refs and never deletes a branch or authorizes mutation.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        minimumAgeDays: z.number().int().min(0).max(3650).default(14),
+        maximumBranches: z.number().int().min(1).max(50).default(25),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asToolResult(() => operationsService(ledger).githubBranchTidy({
+      ...providerContext(context, input.project, input.repository, "read"),
+      minimumAgeDays: input.minimumAgeDays,
+      maximumBranches: input.maximumBranches,
+    })),
+  );
+
+  server.registerTool(
+    "github_ci_diagnose",
+    {
+      description: "Diagnose CI for one pull request by following its exact head through combined statuses, workflow runs, failed jobs, and optionally bounded failed-step metadata. Returns stable GitHub identities and a normalized healthy, pending, or failing verdict; authorizes no mutation.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        pullRequestNumber: z.number().int().min(1).max(maximumGitHubIssueNumber),
+        includeJobSteps: z.boolean().default(true),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asToolResult(() => operationsService(ledger).githubCiDiagnose({
+      ...providerContext(context, input.project, input.repository, "read"),
+      pullRequestNumber: input.pullRequestNumber,
+      includeJobSteps: input.includeJobSteps,
+    })),
+  );
+
+  server.registerTool(
+    "github_land_pr",
+    {
+      description: "Land one pull request through a durable operation. Requires a current runner lease, an atomically fenced expected head, a freshly observed expected base, clean mergeability, positive successful CI evidence, no unresolved review threads, a pre-dispatch durable reservation, and post-merge base-parent verification. A base race requires reconciliation. Branch cleanup is separate.",
+      inputSchema: {
+        project: projectSchema(),
+        repository: repositorySchema(),
+        runId: z.string().trim().min(1).max(240),
+        pullRequestNumber: z.number().int().min(1).max(maximumGitHubIssueNumber),
+        expectedHeadSha: commitShaSchema(),
+        expectedBaseSha: commitShaSchema(),
+        method: z.enum(["merge", "squash"]).default("squash"),
+        idempotencyKey: idempotencyKeySchema(),
+      },
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async (input) => asToolResult(async () => {
+      const identity = providerContext(context, input.project, input.repository, "write");
+      const runs = runnerLedger(ledger);
+      if (!runs) throw new Error("GitHub land PR requires the runner ledger");
+      const run = await runs.getRun(input.runId);
+      if (!run.leaseExpiresAt || !run.leaseOwnerId) {
+        throw new Error("GitHub land PR requires an active runner lease");
+      }
+      const detail = await ledger.getItem(run.itemId);
+      if (detail.item.project !== input.project) {
+        throw new Error("GitHub land PR run belongs to another project");
+      }
+      return operationsService(ledger).githubLandPr({
+        ...identity,
+        itemId: run.itemId,
+        runId: run.id,
+        authorityFence: {
+          resource: `run:${run.id}:generation:${run.generation}`,
+          holderId: identity.actorId,
+          generation: run.leaseGeneration,
+          expiresAt: run.leaseExpiresAt,
+        },
+        pullRequestNumber: input.pullRequestNumber,
+        expectedHeadSha: input.expectedHeadSha,
+        expectedBaseSha: input.expectedBaseSha,
+        method: input.method,
+        idempotencyKey: input.idempotencyKey,
+      });
+    }),
+  );
 
   server.registerTool(
     "github_list_issues",
@@ -649,6 +747,22 @@ function readService(ledger: WorkLedger): GitHubIssueProviderReadService {
     );
   }
   return ledger;
+}
+
+function operationsService(ledger: WorkLedger): GitHubOperationsService {
+  const githubRepoHealth = captureDataMethod(ledger, "githubRepoHealth");
+  const githubBranchTidy = captureDataMethod(ledger, "githubBranchTidy");
+  const githubCiDiagnose = captureDataMethod(ledger, "githubCiDiagnose");
+  const githubLandPr = captureDataMethod(ledger, "githubLandPr");
+  if (!githubRepoHealth || !githubBranchTidy || !githubCiDiagnose || !githubLandPr) {
+    throw new Error("GitHub operations are unavailable on this backend");
+  }
+  return Object.freeze({
+    githubRepoHealth: githubRepoHealth as GitHubOperationsService["githubRepoHealth"],
+    githubBranchTidy: githubBranchTidy as GitHubOperationsService["githubBranchTidy"],
+    githubCiDiagnose: githubCiDiagnose as GitHubOperationsService["githubCiDiagnose"],
+    githubLandPr: githubLandPr as GitHubOperationsService["githubLandPr"],
+  });
 }
 
 function writeService(ledger: WorkLedger): GitHubIssueProviderWriteService {

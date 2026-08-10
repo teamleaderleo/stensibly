@@ -18,17 +18,21 @@ describe("live ChatGPT GitHub connector observation", () => {
   });
 
   test("reports curated capabilities missing from the live connector explicitly", () => {
-    expect(githubCapabilityRegistry.capabilities).toHaveLength(97);
+    expect(githubCapabilityRegistry.capabilities).toHaveLength(101);
     expect(githubLiveConnectorDrift.liveAndCurated).toHaveLength(89);
     expect(githubLiveConnectorDrift.liveButUncurated).toEqual([]);
     expect(githubLiveConnectorDrift.curatedButLiveMissing).toEqual([
+      "branch_tidy",
       "check_repo_initialized",
+      "ci_diagnose",
       "get_commit_diff",
       "get_repo_installation_id",
+      "land_pr",
       "list_commits",
       "list_directory",
       "oai_user_fetch",
       "oai_user_search",
+      "repo_health",
       "resolve_ref",
     ]);
     expect(Object.isFrozen(githubLiveConnectorDrift)).toBe(true);
