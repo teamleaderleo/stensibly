@@ -579,7 +579,7 @@ export default defineSchema({
     .index("by_project_id_and_status_and_created_at", [
       "projectId",
       "status",
-      "updatedAt",
+      "createdAt",
     ])
     .index("by_workspace_id_and_status_and_next_retry_at", [
       "workspaceId",
