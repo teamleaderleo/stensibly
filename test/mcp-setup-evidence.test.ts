@@ -63,7 +63,58 @@ describe("MCP setup evidence admission", () => {
     }, scope)).toThrow("predates connection evidence");
   });
 
-  test("rejects hidden, accessor, decorated, revoked, and credential-shaped input", () => {
+  test("reads only fixed fields without caller key enumeration", () => {
+    let ownKeysCalls = 0;
+    let decorationGetterCalls = 0;
+    const target = {
+      version: 1,
+      accountId: scope.accountId,
+      project: scope.project,
+      connectedAt: "2026-08-10T04:00:00.000Z",
+      firstReadAt: null,
+      containsSecrets: false,
+    } as Record<string, unknown>;
+    Object.defineProperty(target, "token", {
+      enumerable: true,
+      get() {
+        decorationGetterCalls += 1;
+        return "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+      },
+    });
+    const evidence = admitMcpSetupEvidence(new Proxy(target, {
+      ownKeys() {
+        ownKeysCalls += 1;
+        throw new Error("caller keys must stay opaque");
+      },
+    }), scope);
+    expect(evidence).toEqual({
+      version: 1,
+      accountId: scope.accountId,
+      project: scope.project,
+      connectedAt: "2026-08-10T04:00:00.000Z",
+      firstReadAt: null,
+      containsSecrets: false,
+    });
+    expect(ownKeysCalls).toBe(0);
+    expect(decorationGetterCalls).toBe(0);
+    expect(evidence).not.toHaveProperty("token");
+  });
+
+  test("rejects hidden, accessor, revoked, and credential-shaped admitted fields", () => {
+    const hidden = {
+      version: 1,
+      accountId: scope.accountId,
+      project: scope.project,
+      connectedAt: "2026-08-10T04:00:00.000Z",
+      firstReadAt: null,
+      containsSecrets: false,
+    } as Record<string, unknown>;
+    Object.defineProperty(hidden, "project", {
+      value: scope.project,
+      enumerable: false,
+    });
+    expect(() => admitMcpSetupEvidence(hidden, scope)).toThrow("evidence is invalid");
+
     let getterCalls = 0;
     const accessor = {
       version: 1,
@@ -82,16 +133,6 @@ describe("MCP setup evidence admission", () => {
     });
     expect(() => admitMcpSetupEvidence(accessor, scope)).toThrow("evidence is invalid");
     expect(getterCalls).toBe(0);
-
-    expect(() => admitMcpSetupEvidence({
-      version: 1,
-      accountId: scope.accountId,
-      project: scope.project,
-      connectedAt: null,
-      firstReadAt: null,
-      containsSecrets: false,
-      token: "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    }, scope)).toThrow("evidence is invalid");
 
     expect(() => admitMcpSetupEvidence({
       version: 1,
