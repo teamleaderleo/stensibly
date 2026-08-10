@@ -9,6 +9,7 @@ import {
   type McpSetupEvidenceReader,
   type McpSetupFirstReadRecorder,
 } from "./mcp-setup-evidence.js";
+import type { McpSetupConnectionInput } from "./mcp-oauth-service.js";
 
 export interface ConvexMcpSetupEvidenceServiceOptions {
   client: ConvexCaller;
@@ -40,11 +41,7 @@ export class ConvexMcpSetupEvidenceService implements
     this.workspace = exactWorkspace(options.workspace);
   }
 
-  async recordSetupConnection(input: {
-    accountId: string;
-    clientId: string;
-    resource: string;
-  }): Promise<void> {
+  async recordSetupConnection(input: McpSetupConnectionInput): Promise<void> {
     await this.mutate(recordConnectionRef, input);
   }
 
