@@ -1,6 +1,7 @@
 import type { StensiblyStore } from "./store.js";
 import {
   admitProjectRepositorySetupObservation,
+  compileProjectRepositorySetupObservation,
   type ProjectRepositorySetupObservation,
 } from "./project-repository-setup-observation.js";
 import {
@@ -20,6 +21,15 @@ interface ProjectRepositorySetupObservationRow {
   fingerprint: string;
   recorded_at: string;
   is_current: number;
+}
+
+interface LegacyProjectRepositorySetupObservationRow {
+  sequence: number;
+  project_id: string;
+  repository_full_name: string;
+  default_branch: string;
+  source_kind: string;
+  observed_at: string;
 }
 
 export class SqliteProjectRepositorySetupObservationLedger
@@ -47,6 +57,13 @@ export class SqliteProjectRepositorySetupObservationLedger
 export function ensureProjectRepositorySetupObservationSchema(
   store: StensiblyStore,
 ): void {
+  migrateLegacyProjectRepositorySetupObservationSchema(store);
+  createProjectRepositorySetupObservationSchema(store);
+}
+
+function createProjectRepositorySetupObservationSchema(
+  store: StensiblyStore,
+): void {
   store.db.exec(`
     CREATE TABLE IF NOT EXISTS project_repository_setup_observations (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,6 +87,86 @@ export function ensureProjectRepositorySetupObservationSchema(
     CREATE INDEX IF NOT EXISTS idx_project_repository_setup_history
       ON project_repository_setup_observations(project_id, sequence DESC);
   `);
+}
+
+function migrateLegacyProjectRepositorySetupObservationSchema(
+  store: StensiblyStore,
+): void {
+  const columns = store.db
+    .query<{ name: string }, []>(
+      "PRAGMA table_info(project_repository_setup_observations)",
+    )
+    .all()
+    .map((column) => column.name);
+  if (columns.length === 0 || columns.includes("fingerprint")) return;
+  if (!columns.includes("semantic_fingerprint")) {
+    throw new Error("Repository setup observation schema is incompatible");
+  }
+
+  const transaction = store.db.transaction(() => {
+    const rows = store.db
+      .query<LegacyProjectRepositorySetupObservationRow, []>(`
+        SELECT
+          sequence,
+          project_id,
+          repository_full_name,
+          default_branch,
+          source_kind,
+          observed_at
+        FROM project_repository_setup_observations
+        ORDER BY sequence ASC
+      `)
+      .all();
+    const currentSequenceByProject = new Map<string, number>();
+    for (const row of rows) {
+      currentSequenceByProject.set(row.project_id, row.sequence);
+    }
+
+    store.db.exec(`
+      DROP INDEX IF EXISTS idx_project_repository_setup_observations_current;
+      DROP INDEX IF EXISTS idx_project_repository_setup_observations_fingerprint;
+      ALTER TABLE project_repository_setup_observations
+        RENAME TO project_repository_setup_observations_legacy;
+    `);
+    createProjectRepositorySetupObservationSchema(store);
+
+    const insert = store.db.query(`
+      INSERT INTO project_repository_setup_observations (
+        id,
+        project_id,
+        repository_full_name,
+        default_branch,
+        source_kind,
+        observed_at,
+        fingerprint,
+        recorded_at,
+        is_current
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+    `);
+    for (const row of rows) {
+      const observation = compileProjectRepositorySetupObservation({
+        project: row.project_id,
+        repositoryFullName: row.repository_full_name,
+        defaultBranch: row.default_branch,
+        sourceKind: row.source_kind as ProjectRepositorySetupObservation["sourceKind"],
+        observedAt: row.observed_at,
+      });
+      insert.run(
+        observation.id,
+        observation.project,
+        observation.repositoryFullName,
+        observation.defaultBranch,
+        observation.sourceKind,
+        observation.observedAt,
+        observation.fingerprint,
+        observation.observedAt,
+        currentSequenceByProject.get(row.project_id) === row.sequence ? 1 : 0,
+      );
+    }
+
+    store.db.exec("DROP TABLE project_repository_setup_observations_legacy;");
+  });
+  transaction();
 }
 
 export function getSqliteProjectRepositorySetupObservation(
