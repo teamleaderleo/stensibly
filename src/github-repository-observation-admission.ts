@@ -1,3 +1,4 @@
+import { normalizeGitHubBranchName } from "./github-branch-name.js";
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
 import {
   canonicalJsonString,
@@ -598,6 +599,27 @@ function validateRelationships(
 }
 
 function validateFacts(value: unknown, eventType: EventType): ValidatedFacts {
+  let defaultBranch: string | undefined;
+  let eventFacts: unknown = value;
+  if (isRecord(value) && Object.prototype.hasOwnProperty.call(value, "defaultBranch")) {
+    if (typeof value.defaultBranch !== "string") {
+      throw new RangeError("GitHub repository default branch is invalid");
+    }
+    defaultBranch = normalizeGitHubBranchName(
+      value.defaultBranch,
+      "GitHub repository default branch",
+    );
+    const { defaultBranch: _defaultBranch, ...remainingFacts } = value;
+    eventFacts = remainingFacts;
+  }
+
+  const facts = validateEventFacts(eventFacts, eventType);
+  return defaultBranch === undefined
+    ? facts
+    : { ...facts, defaultBranch };
+}
+
+function validateEventFacts(value: unknown, eventType: EventType): ValidatedFacts {
   switch (eventType) {
     case "push": {
       const facts = exactRecord(
