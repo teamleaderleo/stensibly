@@ -136,7 +136,9 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
         recovery: Object.freeze({ kind: "recreate_branch" as const, branch: branch.name, commitSha: branch.sha }),
       });
     }));
-    evaluated.sort((left, right) => left.branch.localeCompare(right.branch));
+    evaluated.sort((left, right) =>
+      left.branch < right.branch ? -1 : left.branch > right.branch ? 1 : 0
+    );
     return Object.freeze({
       version: 1,
       repositoryFullName: repository,
@@ -314,7 +316,12 @@ async function boundedJson(response: Response): Promise<unknown> {
   let total = 0;
   try {
     while (true) {
-      const item = await reader.read();
+      let item: ReadableStreamReadResult<Uint8Array>;
+      try {
+        item = await reader.read();
+      } catch {
+        throw new Error("GitHub operation response stream failed");
+      }
       if (item.done) break;
       if (!(item.value instanceof Uint8Array)) {
         await reader.cancel().catch(() => undefined);
@@ -327,9 +334,6 @@ async function boundedJson(response: Response): Promise<unknown> {
       }
       chunks.push(item.value.slice());
     }
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("GitHub operation")) throw error;
-    throw new Error("GitHub operation response stream failed");
   } finally {
     try { reader.releaseLock(); } catch { /* best-effort standard Response cleanup */ }
   }
