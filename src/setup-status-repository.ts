@@ -4,8 +4,9 @@ import {
   type ProjectAttachmentRecovery,
   type ProjectAttachmentSetupContext,
 } from "./project-attachment-setup-plan.js";
-import type {
-  ProjectRepositorySetupObservationRecord,
+import {
+  createProjectRepositorySetupObservationRecord,
+  type ProjectRepositorySetupObservationRecord,
 } from "./project-repository-setup-observation.js";
 import {
   projectSetupStatus,
@@ -96,14 +97,24 @@ function admittedSetupObservation(
   observation: ProjectRepositorySetupObservationRecord | null,
 ): ProjectRepositorySetupObservationRecord | null {
   if (!observation) return null;
+  const admitted = createProjectRepositorySetupObservationRecord({
+    id: observation.id,
+    project: observation.project,
+    repositoryFullName: observation.repositoryFullName,
+    defaultBranch: observation.defaultBranch,
+    sourceKind: observation.sourceKind,
+    semanticFingerprint: observation.semanticFingerprint,
+    observedAt: observation.observedAt,
+  });
   if (
-    observation.project !== project
+    observation.version !== 1
     || observation.authorizesProviderEffect !== false
     || observation.containsSecrets !== false
+    || admitted.project !== project
   ) {
     throw new RangeError(
       "Repository setup observation does not match the selected project",
     );
   }
-  return observation;
+  return admitted;
 }
