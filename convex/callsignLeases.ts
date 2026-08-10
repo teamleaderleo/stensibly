@@ -1,19 +1,23 @@
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { findWorkspace, normalizeWorkspace, requireServiceSecret, type MutationContext } from "./lib/domain";
+import {
+  findWorkspace,
+  normalizeWorkspace,
+  requireServiceSecret,
+  type MutationContext,
+} from "./lib/domain";
 import { sameCanonical } from "./lib/executionEnvelope";
 import { internalMutation, mutation } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
 const expireLeaseRef = makeFunctionReference<"mutation">("callsignLeases:expireScheduled");
-
+const MAX_LEASE_SECONDS = 7 * 24 * 60 * 60;
 const MAX_CALLSIGN_LENGTH = 80;
 const MAX_WORKER_SESSION_ID_LENGTH = 160;
 const MAX_RUN_ID_LENGTH = 160;
 const MAX_REQUEST_ID_LENGTH = 240;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 240;
-const MAX_LEASE_SECONDS = 7 * 24 * 60 * 60;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const callsignDisplayPattern = /^[A-Za-z0-9][A-Za-z0-9 _-]*$/;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/;
@@ -31,6 +35,7 @@ type CommandOperation = "reserve" | "renew" | "release";
 type RejectionReason =
   | "active_collision"
   | "expired_request"
+  | "expiry_too_far"
   | "inheritance_not_supported"
   | "lease_not_found"
   | "lease_not_active"
@@ -61,48 +66,19 @@ export const reserve = mutation({
       throw new Error("Callsign reservation idempotency key must equal request ID");
     }
     const request = reserveRequest(input);
-    const replay = await replayCommand(
-      ctx,
-      workspace._id,
-      input.idempotencyKey,
-      "reserve",
-      request,
-    );
+    const replay = await replayCommand(ctx, workspace._id, input.idempotencyKey, "reserve", request);
     if (replay.found) return replay.result;
 
     const now = Date.now();
-    const active = await currentLeaseForCollision(
-      ctx,
-      workspace._id,
-      input.collisionKey,
-      now,
-    );
+    const active = await currentLeaseForCollision(ctx, workspace._id, input.collisionKey, now);
     const maximumGeneration = await maximumGenerationForCollision(
       ctx,
       workspace._id,
       input.collisionKey,
     );
-
-    if (input.inheritance !== null) {
-      const result = rejectedResult("reserve", "inheritance_not_supported", active, maximumGeneration);
-      await storeCommand(ctx, workspace._id, input.idempotencyKey, "reserve", request, result, now);
-      return result;
-    }
-    if (input.expiresAtMs <= now) {
-      const result = rejectedResult("reserve", "expired_request", active, maximumGeneration);
-      await storeCommand(ctx, workspace._id, input.idempotencyKey, "reserve", request, result, now);
-      return result;
-    }
-    if (active) {
-      const result = rejectedResult("reserve", "active_collision", active, maximumGeneration);
-      await storeCommand(ctx, workspace._id, input.idempotencyKey, "reserve", request, result, now);
-      return result;
-    }
-    if (
-      input.expectedGeneration !== null
-      && input.expectedGeneration !== maximumGeneration
-    ) {
-      const result = rejectedResult("reserve", "stale_generation", null, maximumGeneration);
+    const reason = reserveRejection(input, now, active, maximumGeneration);
+    if (reason) {
+      const result = rejectedResult("reserve", reason, active, maximumGeneration);
       await storeCommand(ctx, workspace._id, input.idempotencyKey, "reserve", request, result, now);
       return result;
     }
@@ -125,12 +101,8 @@ export const reserve = mutation({
       createdAt: now,
       updatedAt: now,
     });
-    const externalId = `csl_${leaseId}`;
-    await ctx.db.patch(leaseId, { externalId });
-    await ctx.scheduler.runAt(input.expiresAtMs, expireLeaseRef, {
-      leaseId,
-      generation,
-    });
+    await ctx.db.patch(leaseId, { externalId: `csl_${leaseId}` });
+    await ctx.scheduler.runAt(input.expiresAtMs, expireLeaseRef, { leaseId, generation });
     const lease = await ctx.db.get("callsignLeases", leaseId);
     if (!lease) throw new Error("Accepted callsign lease disappeared");
     const result = acceptedResult("reserve", lease);
@@ -155,37 +127,30 @@ export const renew = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const input = normalizeRenew(args);
     const request = renewRequest(input);
-    const replay = await replayCommand(
-      ctx,
-      workspace._id,
-      input.idempotencyKey,
-      "renew",
-      request,
-    );
+    const replay = await replayCommand(ctx, workspace._id, input.idempotencyKey, "renew", request);
     if (replay.found) return replay.result;
 
     const now = Date.now();
     let lease = await findLease(ctx, workspace._id, input.leaseId);
     if (lease) lease = await reconcileLeaseIfExpired(ctx, lease, now);
-    const rejection = validateHeldActiveLease(
+    const holderReason = validateHeldActiveLease(
       lease,
       input.workerSessionId,
       input.runId,
       input.expectedGeneration,
     );
-    if (rejection) {
-      const result = rejectedResult("renew", rejection, lease, lease?.generation ?? null);
+    if (holderReason) {
+      const result = rejectedResult("renew", holderReason, lease, lease?.generation ?? null);
       await storeCommand(ctx, workspace._id, input.idempotencyKey, "renew", request, result, now);
       return result;
     }
     if (!lease) throw new Error("Validated callsign lease unexpectedly disappeared");
-    if (input.expiresAtMs <= lease.expiresAt) {
-      const result = rejectedResult("renew", "expiry_not_extended", lease, lease.generation);
+
+    const expiryReason = renewalExpiryRejection(lease, input.expiresAtMs, now);
+    if (expiryReason) {
+      const result = rejectedResult("renew", expiryReason, lease, lease.generation);
       await storeCommand(ctx, workspace._id, input.idempotencyKey, "renew", request, result, now);
       return result;
-    }
-    if (input.expiresAtMs <= now || input.expiresAtMs - now > MAX_LEASE_SECONDS * 1_000) {
-      throw new Error(`Callsign lease expiry must be within ${MAX_LEASE_SECONDS} seconds of renewal`);
     }
 
     await ctx.db.patch(lease._id, {
@@ -220,36 +185,26 @@ export const release = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const input = normalizeRelease(args);
     const request = releaseRequest(input);
-    const replay = await replayCommand(
-      ctx,
-      workspace._id,
-      input.idempotencyKey,
-      "release",
-      request,
-    );
+    const replay = await replayCommand(ctx, workspace._id, input.idempotencyKey, "release", request);
     if (replay.found) return replay.result;
 
     const now = Date.now();
     let lease = await findLease(ctx, workspace._id, input.leaseId);
     if (lease) lease = await reconcileLeaseIfExpired(ctx, lease, now);
-    const rejection = validateHeldActiveLease(
+    const reason = validateHeldActiveLease(
       lease,
       input.workerSessionId,
       input.runId,
       input.expectedGeneration,
     );
-    if (rejection) {
-      const result = rejectedResult("release", rejection, lease, lease?.generation ?? null);
+    if (reason) {
+      const result = rejectedResult("release", reason, lease, lease?.generation ?? null);
       await storeCommand(ctx, workspace._id, input.idempotencyKey, "release", request, result, now);
       return result;
     }
     if (!lease) throw new Error("Validated callsign lease unexpectedly disappeared");
 
-    await ctx.db.patch(lease._id, {
-      status: "released",
-      releasedAt: now,
-      updatedAt: now,
-    });
+    await ctx.db.patch(lease._id, { status: "released", releasedAt: now, updatedAt: now });
     const updated = await ctx.db.get("callsignLeases", lease._id);
     if (!updated) throw new Error("Released callsign lease disappeared");
     const result = acceptedResult("release", updated);
@@ -259,26 +214,19 @@ export const release = mutation({
 });
 
 export const get = mutation({
-  args: {
-    ...serviceArgs,
-    id: v.string(),
-  },
+  args: { ...serviceArgs, id: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const id = boundedIdentifier(args.id, "Callsign lease ID", MAX_REQUEST_ID_LENGTH, identifierPattern);
     const lease = await findLease(ctx, workspace._id, id);
-    if (!lease) return null;
-    return publicLease(await reconcileLeaseIfExpired(ctx, lease, Date.now()));
+    return lease ? publicLease(await reconcileLeaseIfExpired(ctx, lease, Date.now())) : null;
   },
 });
 
 export const getCurrent = mutation({
-  args: {
-    ...serviceArgs,
-    callsign: v.string(),
-  },
+  args: { ...serviceArgs, callsign: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
@@ -290,10 +238,7 @@ export const getCurrent = mutation({
 });
 
 export const expireScheduled = internalMutation({
-  args: {
-    leaseId: v.id("callsignLeases"),
-    generation: v.number(),
-  },
+  args: { leaseId: v.id("callsignLeases"), generation: v.number() },
   returns: v.null(),
   handler: async (ctx, args) => {
     const lease = await ctx.db.get("callsignLeases", args.leaseId);
@@ -302,13 +247,38 @@ export const expireScheduled = internalMutation({
       || lease.status !== "active"
       || lease.generation !== args.generation
       || lease.expiresAt > Date.now()
-    ) {
-      return null;
-    }
+    ) return null;
     await expireLease(ctx, lease, Date.now());
     return null;
   },
 });
+
+function reserveRejection(
+  input: ReturnType<typeof normalizeReserve>,
+  now: number,
+  active: CallsignLease | null,
+  maximumGeneration: number,
+): RejectionReason | null {
+  if (input.inheritance !== null) return "inheritance_not_supported";
+  if (input.expiresAtMs <= now) return "expired_request";
+  if (input.expiresAtMs - now > MAX_LEASE_SECONDS * 1_000) return "expiry_too_far";
+  if (active) return "active_collision";
+  if (input.expectedGeneration !== null && input.expectedGeneration !== maximumGeneration) {
+    return "stale_generation";
+  }
+  return null;
+}
+
+function renewalExpiryRejection(
+  lease: CallsignLease,
+  expiresAtMs: number,
+  now: number,
+): RejectionReason | null {
+  if (expiresAtMs <= now) return "expired_request";
+  if (expiresAtMs - now > MAX_LEASE_SECONDS * 1_000) return "expiry_too_far";
+  if (expiresAtMs <= lease.expiresAt) return "expiry_not_extended";
+  return null;
+}
 
 async function requiredWorkspace(ctx: MutationContext, workspaceValue: string | undefined) {
   const workspace = await findWorkspace(ctx, normalizeWorkspace(workspaceValue));
@@ -321,13 +291,12 @@ async function findLease(
   workspaceId: WorkspaceId,
   externalId: string,
 ): Promise<CallsignLease | null> {
-  const lease = await ctx.db
+  return await ctx.db
     .query("callsignLeases")
     .withIndex("by_workspace_external", (q) =>
       q.eq("workspaceId", workspaceId).eq("externalId", externalId)
     )
-    .unique();
-  return lease ?? null;
+    .unique() ?? null;
 }
 
 async function currentLeaseForCollision(
@@ -347,9 +316,7 @@ async function currentLeaseForCollision(
     const reconciled = await reconcileLeaseIfExpired(ctx, lease, now);
     if (reconciled.status === "active") live.push(reconciled);
   }
-  if (live.length > 1) {
-    throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
-  }
+  if (live.length > 1) throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
   return live[0] ?? null;
 }
 
@@ -379,16 +346,8 @@ async function reconcileLeaseIfExpired(
   return updated;
 }
 
-async function expireLease(
-  ctx: MutationContext,
-  lease: CallsignLease,
-  now: number,
-): Promise<void> {
-  await ctx.db.patch(lease._id, {
-    status: "expired",
-    expiredAt: lease.expiresAt,
-    updatedAt: now,
-  });
+async function expireLease(ctx: MutationContext, lease: CallsignLease, now: number): Promise<void> {
+  await ctx.db.patch(lease._id, { status: "expired", expiredAt: lease.expiresAt, updatedAt: now });
 }
 
 function validateHeldActiveLease(
@@ -399,9 +358,7 @@ function validateHeldActiveLease(
 ): RejectionReason | null {
   if (!lease) return "lease_not_found";
   if (lease.status !== "active") return "lease_not_active";
-  if (lease.workerSessionId !== workerSessionId || lease.runId !== runId) {
-    return "holder_mismatch";
-  }
+  if (lease.workerSessionId !== workerSessionId || lease.runId !== runId) return "holder_mismatch";
   if (lease.generation !== expectedGeneration) return "stale_generation";
   return null;
 }
@@ -476,7 +433,6 @@ function normalizeReserve(args: {
     runId: boundedIdentifier(args.runId, "Run ID", MAX_RUN_ID_LENGTH, runIdPattern),
     requestId: boundedIdentifier(args.requestId, "Request ID", MAX_REQUEST_ID_LENGTH, identifierPattern),
     requestedAt: requestedAt.value,
-    requestedAtMs: requestedAt.milliseconds,
     expiresAt: expiresAt.value,
     expiresAtMs: expiresAt.milliseconds,
     expectedGeneration: args.expectedGeneration === undefined
@@ -653,33 +609,22 @@ function publicLease(lease: CallsignLease) {
 }
 
 function canonicalCallsign(value: string): { display: string; collisionKey: string } {
-  if (typeof value !== "string" || unsafeTextPattern.test(value)) {
-    throw new Error("Callsign contains unsupported control characters");
-  }
+  if (unsafeTextPattern.test(value)) throw new Error("Callsign contains unsupported control characters");
   const display = value.normalize("NFKC").trim().replace(/ {2,}/g, " ");
   if (display.length === 0) throw new Error("Callsign must not be empty");
   if ([...display].length > MAX_CALLSIGN_LENGTH) {
     throw new Error(`Callsign must be at most ${MAX_CALLSIGN_LENGTH} characters`);
   }
-  if (!callsignDisplayPattern.test(display)) {
-    throw new Error("Callsign contains unsupported characters");
-  }
+  if (!callsignDisplayPattern.test(display)) throw new Error("Callsign contains unsupported characters");
   const collisionKey = display.toLowerCase().replace(/[ _-]+/g, "");
-  if (collisionKey.length === 0) throw new Error("Callsign must contain a letter or number");
+  if (!collisionKey) throw new Error("Callsign must contain a letter or number");
   return { display, collisionKey };
 }
 
-function boundedIdentifier(
-  value: string,
-  label: string,
-  maximumLength: number,
-  pattern: RegExp,
-): string {
-  if (typeof value !== "string" || unsafeTextPattern.test(value)) {
-    throw new Error(`${label} contains unsupported control characters`);
-  }
+function boundedIdentifier(value: string, label: string, maximumLength: number, pattern: RegExp): string {
+  if (unsafeTextPattern.test(value)) throw new Error(`${label} contains unsupported control characters`);
   const normalized = value.trim();
-  if (normalized.length === 0) throw new Error(`${label} must not be empty`);
+  if (!normalized) throw new Error(`${label} must not be empty`);
   if ([...normalized].length > maximumLength) {
     throw new Error(`${label} must be at most ${maximumLength} characters`);
   }
@@ -695,9 +640,7 @@ function positiveGeneration(value: number, label: string): number {
 }
 
 function canonicalTimestamp(value: string, label: string): { value: string; milliseconds: number } {
-  if (typeof value !== "string" || unsafeTextPattern.test(value)) {
-    throw new Error(`${label} contains unsupported control characters`);
-  }
+  if (unsafeTextPattern.test(value)) throw new Error(`${label} contains unsupported control characters`);
   const normalized = value.trim();
   const milliseconds = Date.parse(normalized);
   if (!Number.isFinite(milliseconds)) throw new Error(`${label} must be an ISO-8601 timestamp`);
