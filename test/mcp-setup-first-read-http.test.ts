@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { handleMcpHttpRequest } from "../src/mcp-http.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import type { ApiTokenAuthenticator } from "../src/token-provider.ts";
 import type { TokenPrincipal } from "../src/token-contracts.ts";
@@ -15,10 +16,12 @@ const oauthPrincipal: TokenPrincipal = {
 };
 
 let store: StensiblyStore;
+let ledger: SqliteWorkLedger;
 
-beforeEach(() => {
+beforeEach(async () => {
   store = new StensiblyStore(":memory:");
-  store.createItem({
+  ledger = new SqliteWorkLedger(store);
+  await ledger.createItem({
     project: "scrapbook",
     kind: "task",
     title: "First read target",
@@ -34,7 +37,7 @@ describe("hosted MCP first-read evidence path", () => {
   test("records only a successful OAuth read with one server-resolved project", async () => {
     const recorded: Array<{ accountId: string; project: string }> = [];
     const options = {
-      ledger: store,
+      ledger,
       authenticator: authenticator(oauthPrincipal),
       mcpSetupFirstReadRecorder: {
         async recordSetupFirstRead(input: { accountId: string; project: string }) {
@@ -78,7 +81,7 @@ describe("hosted MCP first-read evidence path", () => {
       projects: ["scrapbook"],
     };
     const response = await call({
-      ledger: store,
+      ledger,
       authenticator: authenticator(principal),
       mcpSetupFirstReadRecorder: {
         async recordSetupFirstRead(input: unknown) {
@@ -92,7 +95,7 @@ describe("hosted MCP first-read evidence path", () => {
 
   test("keeps a successful read successful when first-read persistence fails", async () => {
     const response = await call({
-      ledger: store,
+      ledger,
       authenticator: authenticator(oauthPrincipal),
       mcpSetupFirstReadRecorder: {
         async recordSetupFirstRead() {
