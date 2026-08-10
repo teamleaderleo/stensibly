@@ -13,6 +13,9 @@ import {
   handleMcpHttpRequest,
   type McpHttpOptions,
 } from "./mcp-http.js";
+import type {
+  ProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-observation.js";
 import {
   SqliteProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-observation-sqlite.js";
@@ -40,6 +43,7 @@ export interface ServerAppOptions {
   backend?: "sqlite" | "convex";
   githubWebhook?: GitHubWebhookOptions;
   setupStatusObserver?: ProjectSetupStatusObserver;
+  repositorySetupObservations?: ProjectRepositorySetupObservationLedger | null;
 }
 
 export function createServerApp(
@@ -54,6 +58,10 @@ export function createServerApp(
     ...options.runnerMcp,
     concurrency: normalizeRunnerConcurrencyPolicy(options.runnerMcp?.concurrency),
   };
+  const repositorySetupObservations = options.repositorySetupObservations
+    ?? (options.ledger === undefined && options.backend !== "convex"
+      ? new SqliteProjectRepositorySetupObservationLedger(store)
+      : null);
 
   app.use("/api/*", createCorsMiddleware(options.corsOrigins ?? []));
 
@@ -99,7 +107,7 @@ export function createServerApp(
         ledger,
         authOptions,
         options.setupStatusObserver,
-        new SqliteProjectRepositorySetupObservationLedger(store),
+        repositorySetupObservations,
       ),
     );
   }
