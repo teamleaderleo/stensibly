@@ -63,7 +63,7 @@ describe("MCP setup evidence admission", () => {
     }, scope)).toThrow("predates connection evidence");
   });
 
-  test("rejects hidden, accessor, decorated, and secret-bearing contract claims", () => {
+  test("rejects hidden, accessor, decorated, revoked, and credential-shaped input", () => {
     let getterCalls = 0;
     const accessor = {
       version: 1,
@@ -92,5 +92,26 @@ describe("MCP setup evidence admission", () => {
       containsSecrets: false,
       token: "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     }, scope)).toThrow("evidence is invalid");
+
+    expect(() => admitMcpSetupEvidence({
+      version: 1,
+      accountId: "acct_xgithub_pat_aaaaaaaaaaaaaaaaaaaa",
+      project: scope.project,
+      connectedAt: null,
+      firstReadAt: null,
+      containsSecrets: false,
+    }, { ...scope, accountId: "acct_xgithub_pat_aaaaaaaaaaaaaaaaaaaa" }))
+      .toThrow("MCP setup account is invalid");
+
+    const { proxy, revoke } = Proxy.revocable({
+      version: 1,
+      accountId: scope.accountId,
+      project: scope.project,
+      connectedAt: null,
+      firstReadAt: null,
+      containsSecrets: false,
+    }, {});
+    revoke();
+    expect(() => admitMcpSetupEvidence(proxy, scope)).toThrow("evidence is invalid");
   });
 });
