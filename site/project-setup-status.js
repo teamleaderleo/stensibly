@@ -95,7 +95,7 @@ function repositorySetupObservation(value, project) {
     throw new TypeError('Repository setup observation project does not match the selected project.');
   }
   const id = safeText(input.id, 'Repository setup observation id', 160);
-  if (!/^repo_setup_[A-Za-z0-9-]{8,120}$/u.test(id)) {
+  if (!/^repo_setup_[A-Za-z0-9._-]{8,120}$/u.test(id)) {
     throw new TypeError('Repository setup observation id is invalid.');
   }
   const semanticFingerprint = safeText(
