@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import {
+  admitProjectAttachmentReviewSource,
+} from "../site/project-attachment-review-entry.js";
 
 const actionPath = "site/project-attachment-review-entry.js";
 
@@ -22,7 +25,7 @@ describe("dashboard project attachment review action", () => {
     expect(assets).toContain('path: "/project-attachment-review-entry.js"');
   });
 
-  test("keeps preview effect-free and uses the existing attachment PUT only after review", async () => {
+  test("keeps preview effect-free and rechecks the exact decision before the sole attachment PUT", async () => {
     const action = await readFile(actionPath, "utf8");
     const previewPath = "/attachment/review`";
     const attachmentPath = "/attachment`";
@@ -32,10 +35,15 @@ describe("dashboard project attachment review action", () => {
 
     expect(previewIndex).toBeGreaterThanOrEqual(0);
     expect(action.indexOf("method: 'POST'", previewIndex)).toBeGreaterThan(previewIndex);
+    expect(action.match(/\/attachment\/review`/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(action.match(/method: 'PUT'/g)?.length ?? 0).toBe(1);
     expect(action.indexOf(attachmentPath, previewIndex + previewPath.length)).toBeGreaterThan(previewIndex);
     expect(putIndex).toBeGreaterThan(previewIndex);
     expect(rereadIndex).toBeGreaterThan(putIndex);
-    expect(action).toContain("acceptAuthorityWidening: review.requiresAuthorityWidening");
+    expect(action).toContain("Rechecking the reviewed attachment before acceptance");
+    expect(action).toContain("freshReview.decisionFingerprint !== review.decisionFingerprint");
+    expect(action).toContain("proposalSemanticFingerprint: proposal.semanticFingerprint");
+    expect(action).toContain("acceptAuthorityWidening: freshReview.requiresAuthorityWidening");
     expect(action).toContain("readAcceptedAttachment(payload");
     expect(action).toContain("Accepted snapshot reread successfully");
   });
@@ -50,6 +58,19 @@ describe("dashboard project attachment review action", () => {
     expect(action).toContain("review.requiresAuthorityWidening && !checkbox.checked");
     expect(action).toContain("authorizesAttachmentAcceptance !== false");
     expect(action).toContain("authorizesProviderEffect !== false");
+  });
+
+  test("rejects realistic credential material before preview", () => {
+    const ordinary = "# Stensibly project contract\n\nNo credentials are retained here.";
+    const authWord = ["Author", "ization"].join("");
+    const bearerWord = ["Bear", "er"].join("");
+    expect(admitProjectAttachmentReviewSource(ordinary)).toBe(ordinary);
+    expect(() => admitProjectAttachmentReviewSource(
+      `# Stensibly project contract\n\n${bearerWord} ${"a".repeat(24)}`,
+    )).toThrow("credential-shaped material");
+    expect(() => admitProjectAttachmentReviewSource(
+      `${authWord}: ${bearerWord} ${"b".repeat(24)}`,
+    )).toThrow("credential-shaped material");
   });
 
   test("leaves repository verification visibly incomplete after accepted reread", async () => {
