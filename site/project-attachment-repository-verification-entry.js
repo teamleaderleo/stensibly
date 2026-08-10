@@ -138,6 +138,7 @@ export function installProjectAttachmentRepositoryVerification() {
       fact('Repository verification', 'verified'),
       fact('Repository', verification.repositoryFullName),
       fact('Default branch', verification.defaultBranch),
+      fact('Source path', verification.sourcePath),
       fact('Immutable commit', verification.commitSha),
       fact('Source fingerprint', verification.sourceContentSha256),
       message('Guarded get_repo and immutable fetch_file matched the accepted STENSIBLY.md source. Repository onboarding is verified.'),
@@ -182,7 +183,6 @@ export function readRepositoryVerification(payload, expected) {
     || verification.project !== expected.project
     || verification.repositoryFullName !== expected.repositoryFullName
     || verification.defaultBranch !== expected.defaultBranch
-    || verification.sourcePath !== 'STENSIBLY.md'
     || verification.verified !== true
     || verification.authorizesMutation !== false
     || verification.containsSecrets !== false
@@ -190,8 +190,10 @@ export function readRepositoryVerification(payload, expected) {
     || steps.immutableFileRead !== 'fetch_file'
     || steps.immutableReadRef !== 'exact_commit_sha'
   ) throw new TypeError('repository verification mismatch');
+  const sourcePath = exactSourcePath(verification.sourcePath);
   if (
-    typeof verification.commitSha !== 'string'
+    !sourcePath
+    || typeof verification.commitSha !== 'string'
     || !COMMIT_SHA_PATTERN.test(verification.commitSha)
     || typeof verification.sourceContentSha256 !== 'string'
     || !SHA256_PATTERN.test(verification.sourceContentSha256)
@@ -203,6 +205,7 @@ export function readRepositoryVerification(payload, expected) {
   return Object.freeze({
     repositoryFullName: verification.repositoryFullName,
     defaultBranch: verification.defaultBranch,
+    sourcePath,
     commitSha: verification.commitSha,
     sourceContentSha256: verification.sourceContentSha256,
     attachmentId: attachment.id,
@@ -272,6 +275,25 @@ function message(value) {
   element.className = 'project-setup-status-note';
   element.textContent = value;
   return element;
+}
+
+function exactSourcePath(value) {
+  if (
+    typeof value !== 'string'
+    || value.length < 1
+    || value.length > 4096
+    || value !== value.trim()
+    || value.startsWith('/')
+    || value.endsWith('/')
+    || value.includes('\\')
+    || /[\u0000-\u001f\u007f]/u.test(value)
+  ) return null;
+  const segments = value.split('/');
+  if (
+    segments.some((segment) => !segment || segment === '.' || segment === '..')
+    || segments.at(-1) !== 'STENSIBLY.md'
+  ) return null;
+  return value;
 }
 
 function record(value) {
