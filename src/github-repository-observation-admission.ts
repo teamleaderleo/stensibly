@@ -153,15 +153,11 @@ export interface AdmittedGitHubRepositoryObservation {
 export function admitHostedGitHubRepositoryObservationInput(
   value: unknown,
 ): AdmittedGitHubRepositoryObservation {
-  const snapshot = snapshotBoundedJson(
+  const snapshot = snapshotClosedRecord(
     value,
+    hostedInputKeys,
     "GitHub repository observation input",
   );
-  if (!isRecord(snapshot) || !hasExactKeys(snapshot, hostedInputKeys)) {
-    throw new RangeError(
-      "GitHub repository observation input has noncanonical fields",
-    );
-  }
   const deliveryId = requiredString(
     snapshot.deliveryId,
     "GitHub repository observation delivery ID",
@@ -178,7 +174,10 @@ export function admitHostedGitHubRepositoryObservationInput(
     snapshot.receivedAt,
     "GitHub repository observation receipt time",
   );
-  const observation = snapshot.observation;
+  const observation = snapshotBoundedJson(
+    snapshot.observation,
+    "GitHub repository observation",
+  );
   if (!isRecord(observation)) {
     throw new RangeError(
       "GitHub repository observation must be a plain data record",
