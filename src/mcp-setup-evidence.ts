@@ -1,3 +1,5 @@
+import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
+
 export interface McpSetupEvidence {
   readonly version: 1;
   readonly accountId: string;
@@ -79,11 +81,17 @@ function exactRecord(value: unknown, fields: readonly string[]): Record<string, 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("MCP setup evidence is invalid");
   }
-  const prototype = Object.getPrototypeOf(value);
+  let prototype: object | null;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new Error("MCP setup evidence is invalid");
+  }
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error("MCP setup evidence is invalid");
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
   const keys = Reflect.ownKeys(descriptors);
   if (
     keys.length !== fields.length
@@ -109,6 +117,7 @@ function exactIdentity(value: unknown, label: string, maximum: number): string {
     || value.length > maximum
     || value !== value.trim()
     || /[\u0000-\u001f\u007f]/u.test(value)
+    || containsRealisticRetainedCredential(value)
   ) throw new Error(`${label} is invalid`);
   return value;
 }
