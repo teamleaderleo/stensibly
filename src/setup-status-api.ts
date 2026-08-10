@@ -12,8 +12,9 @@ import type { ProjectAttachmentSetupContext } from "./project-attachment-setup-p
 import type {
   ProjectRepositorySetupObservation,
 } from "./project-repository-setup-observation.js";
-import type {
-  ProjectRepositorySetupObservationLedger,
+import {
+  projectRepositorySetupObservationLedger,
+  type ProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-ledger.js";
 import { projectSetupStatusWithRepository } from "./setup-status-repository.js";
 import type { SetupStatusInput } from "./setup-status.js";
@@ -43,6 +44,8 @@ export function createProjectSetupStatusApi(
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
   const route = "/projects/:project/setup-status";
+  const setupObservationLedger = repositorySetupObservations
+    ?? projectRepositorySetupObservationLedger(ledger);
   app.use(route, createHttpAuthMiddleware(authenticator, authOptions));
   app.get(route, async (context) => {
     const rawProject = context.req.param("project");
@@ -76,9 +79,9 @@ export function createProjectSetupStatusApi(
     }
 
     let repositorySetupObservation: ProjectRepositorySetupObservation | null = null;
-    if (!attachment && repositorySetupObservations) {
+    if (!attachment && setupObservationLedger) {
       try {
-        repositorySetupObservation = await repositorySetupObservations
+        repositorySetupObservation = await setupObservationLedger
           .getCurrentProjectRepositorySetupObservation(project);
       } catch {
         return context.json({
