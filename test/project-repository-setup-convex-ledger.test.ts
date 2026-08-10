@@ -20,7 +20,7 @@ class SetupCaller implements ConvexCaller {
   async query(
     reference: FunctionReference<"query">,
     args: Record<string, unknown>,
-  ) {
+  ): Promise<unknown> {
     const name = getFunctionName(reference);
     this.calls.push({ type: "query", name, args });
     if (name === "projectRepositorySetupObservations:getCurrent") {
@@ -35,7 +35,7 @@ class SetupCaller implements ConvexCaller {
   async mutation(
     reference: FunctionReference<"mutation">,
     args: Record<string, unknown>,
-  ) {
+  ): Promise<unknown> {
     const name = getFunctionName(reference);
     this.calls.push({ type: "mutation", name, args });
     if (name !== "projectRepositorySetupObservations:record") {
@@ -144,7 +144,7 @@ describe("Convex pre-attachment repository setup observation ledger", () => {
   test("fails closed on a mismatched hosted response", async () => {
     const client = new SetupCaller();
     const originalMutation = client.mutation.bind(client);
-    client.mutation = async (reference, args) => {
+    client.mutation = async (reference, args): Promise<unknown> => {
       const value = await originalMutation(reference, args) as Record<string, unknown>;
       return { ...value, replayed: true };
     };
