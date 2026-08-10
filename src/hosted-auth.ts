@@ -503,7 +503,10 @@ function readGrantedScopes(value: unknown): string[] | null {
     .filter(Boolean);
 }
 
-const providerFailureDetailsByError = new WeakMap<object, GitHubProviderFailureDetail>();
+const providerFailureDetailsByError = new WeakMap<
+  object,
+  GitHubProviderFailureDetail | null
+>();
 
 function providerNetworkFailure(
   stage: "token_exchange" | "identity_request",
@@ -962,11 +965,16 @@ function providerFailureDetails(
   error: unknown,
   fallback: GitHubProviderFailureStage,
 ): GitHubProviderFailureDetails {
-  if (!(error instanceof ProviderFailure)) return { stage: fallback };
-  const detail = providerFailureDetailsByError.get(error);
+  if (
+    !error
+    || typeof error !== "object"
+    || !providerFailureDetailsByError.has(error)
+  ) return { stage: fallback };
+  const failure = error as ProviderFailure;
+  const detail = providerFailureDetailsByError.get(failure);
   return {
-    stage: error.stage,
-    ...(error.reason ? { reason: error.reason } : {}),
+    stage: failure.stage,
+    ...(failure.reason ? { reason: failure.reason } : {}),
     ...(detail ? { detail } : {}),
   };
 }
@@ -986,5 +994,6 @@ class ProviderFailure extends Error {
     Object.defineProperty(this, "name", { value: "ProviderFailure" });
     this.stage = stage;
     if (reason) Object.defineProperty(this, "reason", { value: reason });
+    providerFailureDetailsByError.set(this, null);
   }
 }
