@@ -35,7 +35,7 @@ function createAdapter(tokenProvider: TokenProvider): GitHubRestDelegatedReadAda
     apiBaseUrl: "https://api.github.test",
     fetch: (async () => {
       throw new Error("provider dispatch must remain private");
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   });
 }
 
