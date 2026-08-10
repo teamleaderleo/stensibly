@@ -246,6 +246,20 @@ function repositorySection(setup) {
   heading.textContent = 'Repository setup';
   section.append(heading);
 
+  const proposal = setup.repositorySetupObservation;
+  if (proposal) {
+    section.append(
+      messageBlock(
+        'Stensibly has a saved advisory repository proposal for this project.',
+        'project-setup-status-note',
+      ),
+      fact('Proposed repository', proposal.repositoryFullName),
+      fact('Proposed default branch', proposal.defaultBranch),
+      fact('Proposal source', repositorySourceLabel(proposal.sourceKind)),
+      fact('Proposal observed', formatTimestamp(proposal.observedAt)),
+    );
+  }
+
   const recovery = setup.repositoryRecovery;
   if (!recovery) {
     const repositoryStep = setup.steps.find((entry) => entry.step === 'repository');
@@ -260,11 +274,14 @@ function repositorySection(setup) {
 
   if (recovery.state === 'repository_context_required') {
     section.append(messageBlock(
-      'Repository context is needed before Stensibly can prepare an attachment plan.',
+      proposal
+        ? 'The repository identity is saved. Add the remaining setup choices before Stensibly can prepare an attachment plan.'
+        : 'Repository context is needed before Stensibly can prepare an attachment plan.',
       'project-setup-status-note',
     ));
     const list = document.createElement('ul');
     for (const field of recovery.requiredFields) {
+      if (proposal && (field === 'repositoryFullName' || field === 'defaultBranch')) continue;
       const item = document.createElement('li');
       item.textContent = contextFieldLabel(field);
       list.append(item);
@@ -303,6 +320,10 @@ function repositorySection(setup) {
     ),
   );
   return section;
+}
+
+function repositorySourceLabel(sourceKind) {
+  return sourceKind === 'operator_supplied' ? 'Operator supplied' : 'GitHub conversation context';
 }
 
 function fact(label, value) {

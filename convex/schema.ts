@@ -149,6 +149,23 @@ export default defineSchema({
     .index("by_project_created", ["projectId", "acceptedAt"])
     .index("by_project_snapshot", ["projectId", "snapshotSha256", "acceptedAt"]),
 
+  projectRepositorySetupObservations: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    externalId: v.string(),
+    repositoryFullName: v.string(),
+    defaultBranch: v.string(),
+    sourceKind: v.union(
+      v.literal("operator_supplied"),
+      v.literal("github_conversation_context"),
+    ),
+    semanticFingerprint: v.string(),
+    observedAt: v.number(),
+  })
+    .index("by_external_id", ["externalId"])
+    .index("by_project", ["projectId"])
+    .index("by_project_fingerprint", ["projectId", "semanticFingerprint"]),
+
   githubProjectContexts: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),

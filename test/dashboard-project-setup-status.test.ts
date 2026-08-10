@@ -42,6 +42,22 @@ function response(repositoryRecovery: unknown, overrides: Record<string, unknown
   };
 }
 
+function repositorySetupObservation(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    id: "repo_setup_12345678",
+    project,
+    repositoryFullName: "teamleaderleo/scrapbook",
+    defaultBranch: "main",
+    sourceKind: "github_conversation_context",
+    semanticFingerprint: `sha256:${"a".repeat(64)}`,
+    observedAt: "2026-08-10T00:14:00.000Z",
+    authorizesProviderEffect: false,
+    containsSecrets: false,
+    ...overrides,
+  };
+}
+
 function contextRecovery() {
   return {
     version: 1,
@@ -114,10 +130,38 @@ describe("dashboard project setup-status reader", () => {
         nextAction: "provide_repository_context",
         authorizesProviderEffect: false,
       },
+      repositorySetupObservation: null,
       containsSecrets: false,
     });
     expect(value.repositoryRecovery).not.toHaveProperty("authorityNotice");
     expect(setupStepLabel("first_read")).toBe("First verified read");
+  });
+
+  test("admits the persisted advisory repository proposal", () => {
+    const value = readProjectSetupStatus(response(contextRecovery(), {
+      repositorySetupObservation: repositorySetupObservation(),
+    }), project);
+    expect(value.repositorySetupObservation).toEqual({
+      version: 1,
+      id: "repo_setup_12345678",
+      project,
+      repositoryFullName: "teamleaderleo/scrapbook",
+      defaultBranch: "main",
+      sourceKind: "github_conversation_context",
+      semanticFingerprint: `sha256:${"a".repeat(64)}`,
+      observedAt: "2026-08-10T00:14:00.000Z",
+      authorizesProviderEffect: false,
+      containsSecrets: false,
+    });
+
+    expect(() => readProjectSetupStatus(response(contextRecovery(), {
+      repositorySetupObservation: repositorySetupObservation({ project: "other" }),
+    }), project)).toThrow("does not match");
+    expect(() => readProjectSetupStatus(response(contextRecovery(), {
+      repositorySetupObservation: repositorySetupObservation({
+        semanticFingerprint: ["stn", "tok", "x".repeat(44)].join("."),
+      }),
+    }), project)).toThrow("fingerprint is invalid");
   });
 
   test("admits only the local fields needed to render an attachment plan", () => {
@@ -211,9 +255,10 @@ describe("dashboard project setup-status wiring", () => {
     expect(entry).not.toContain("method: 'POST'");
     expect(entry).not.toContain("method: 'PUT'");
     expect(entry).toContain('id=\"project-setup-status-panel\"');
-    expect(entry).toContain("Repository context is needed");
+    expect(entry).toContain("saved advisory repository proposal");
+    expect(entry).toContain("Proposed repository");
     expect(entry).toContain("review STENSIBLY.md");
-    expect(reader).toContain("readProjectSetupStatus");
+    expect(reader).toContain("repositorySetupObservation");
     expect(reader).not.toContain("authorityNotice:");
     expect(css).toContain(".project-setup-status-steps");
     expect(assets).toContain('path: "/project-setup-status-entry.js"');

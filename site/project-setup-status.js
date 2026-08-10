@@ -15,6 +15,7 @@ const STEP_STATES = new Set(['missing', 'ready', 'degraded', 'deferred']);
 const OVERALL_STATES = new Set(['not_configured', 'partially_configured', 'ready', 'degraded']);
 const MODES = new Set(['local', 'hosted_preview', 'production']);
 const WORK_PROFILES = new Set(['read_only', 'draft_pr']);
+const REPOSITORY_SETUP_SOURCES = new Set(['operator_supplied', 'github_conversation_context']);
 const REQUIRED_CONTEXT_FIELDS = [
   'repositoryFullName',
   'defaultBranch',
@@ -59,6 +60,7 @@ export function readProjectSetupStatus(payload, expectedProject) {
     optionalAttentionSteps,
     steps,
     repositoryRecovery: repositoryRecovery(input.repositoryRecovery, project),
+    repositorySetupObservation: repositorySetupObservation(input.repositorySetupObservation, project),
     containsSecrets: false,
   });
 }
@@ -77,6 +79,45 @@ export function setupStepLabel(step) {
     case 'proofwake': return 'ProofWake';
     default: throw new TypeError('Unknown setup step.');
   }
+}
+
+function repositorySetupObservation(value, project) {
+  if (value === null || value === undefined) return null;
+  const input = record(value, 'Repository setup observation');
+  if (
+    input.version !== 1
+    || input.authorizesProviderEffect !== false
+    || input.containsSecrets !== false
+  ) {
+    throw new TypeError('Repository setup observation metadata is incompatible.');
+  }
+  if (projectSlug(input.project) !== project) {
+    throw new TypeError('Repository setup observation project does not match the selected project.');
+  }
+  const id = safeText(input.id, 'Repository setup observation id', 160);
+  if (!/^repo_setup_[A-Za-z0-9._-]{8,120}$/u.test(id)) {
+    throw new TypeError('Repository setup observation id is invalid.');
+  }
+  const semanticFingerprint = safeText(
+    input.semanticFingerprint,
+    'Repository setup observation fingerprint',
+    71,
+  );
+  if (!/^sha256:[a-f0-9]{64}$/u.test(semanticFingerprint)) {
+    throw new TypeError('Repository setup observation fingerprint is invalid.');
+  }
+  return Object.freeze({
+    version: 1,
+    id,
+    project,
+    repositoryFullName: repositoryName(input.repositoryFullName),
+    defaultBranch: safeText(input.defaultBranch, 'Default branch', 240),
+    sourceKind: member(input.sourceKind, REPOSITORY_SETUP_SOURCES, 'Repository setup source'),
+    semanticFingerprint,
+    observedAt: timestamp(input.observedAt, 'Repository setup observation time'),
+    authorizesProviderEffect: false,
+    containsSecrets: false,
+  });
 }
 
 function repositoryRecovery(value, project) {
