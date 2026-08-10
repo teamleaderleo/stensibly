@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { sha256 } from "./canonical-json.js";
 import {
   currentPrincipal,
   requireHttpAccess,
@@ -9,6 +8,7 @@ import {
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
+import { compileProjectContract } from "./project-contract.js";
 
 const route = "/projects/:project/attachment/verify-repository";
 const requestSchema = z.object({
@@ -102,7 +102,8 @@ export function registerProjectAttachmentRepositoryVerificationApi(
     }
     const sourcePath = attachment.snapshot.source.path;
     const expectedSourceFingerprint = attachment.snapshot.source.contentSha256;
-    if (sourcePath !== "STENSIBLY.md" || !sourceFingerprintPattern.test(expectedSourceFingerprint)) {
+    const expectedSnapshotSha256 = attachment.snapshot.snapshotSha256;
+    if (!sourceFingerprintPattern.test(expectedSourceFingerprint)) {
       return context.json({
         error: "Accepted project attachment source metadata is incompatible",
         code: "verification_context_failed",
@@ -121,7 +122,7 @@ export function registerProjectAttachmentRepositoryVerificationApi(
         project,
         repositoryFullName,
         attachmentId: attachment.id,
-        attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
+        attachmentSnapshotSha256: expectedSnapshotSha256,
         expectedDefaultBranch,
       });
       const delegated = await provider.callGitHubDelegatedRead({
@@ -137,13 +138,41 @@ export function registerProjectAttachmentRepositoryVerificationApi(
         project,
         repositoryFullName,
         attachmentId: attachment.id,
-        attachmentSnapshotSha256: attachment.snapshot.snapshotSha256,
+        attachmentSnapshotSha256: expectedSnapshotSha256,
         sourcePath,
         commitSha: admittedHealth.commitSha,
       });
       const source = decodeUtf8Base64(file.contentBase64);
-      const observedSourceFingerprint = sha256(source);
-      if (observedSourceFingerprint !== expectedSourceFingerprint) {
+      let observedSnapshot;
+      try {
+        observedSnapshot = compileProjectContract(source, sourcePath);
+      } catch {
+        return context.json({
+          error: "Immutable repository source does not compile to the accepted attachment",
+          code: "repository_source_mismatch",
+          verification: {
+            version: 1,
+            project,
+            repositoryFullName,
+            defaultBranch: admittedHealth.defaultBranch,
+            commitSha: admittedHealth.commitSha,
+            sourcePath,
+            expectedSourceFingerprint,
+            expectedSnapshotSha256,
+            observedSourceFingerprint: null,
+            observedSnapshotSha256: null,
+            verified: false,
+            authorizesMutation: false,
+            containsSecrets: false,
+          },
+        }, 409);
+      }
+      const observedSourceFingerprint = observedSnapshot.source.contentSha256;
+      const observedSnapshotSha256 = observedSnapshot.snapshotSha256;
+      if (
+        observedSourceFingerprint !== expectedSourceFingerprint
+        || observedSnapshotSha256 !== expectedSnapshotSha256
+      ) {
         return context.json({
           error: "Immutable repository source does not match the accepted attachment",
           code: "repository_source_mismatch",
@@ -155,7 +184,9 @@ export function registerProjectAttachmentRepositoryVerificationApi(
             commitSha: admittedHealth.commitSha,
             sourcePath,
             expectedSourceFingerprint,
+            expectedSnapshotSha256,
             observedSourceFingerprint,
+            observedSnapshotSha256,
             verified: false,
             authorizesMutation: false,
             containsSecrets: false,
@@ -173,7 +204,7 @@ export function registerProjectAttachmentRepositoryVerificationApi(
           sourceContentSha256: observedSourceFingerprint,
           attachment: {
             id: attachment.id,
-            snapshotSha256: attachment.snapshot.snapshotSha256,
+            snapshotSha256: observedSnapshotSha256,
           },
           steps: {
             repositoryMetadata: "get_repo",
