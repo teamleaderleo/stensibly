@@ -5,19 +5,25 @@ const hostedAppSource = await Bun.file(
 ).text();
 
 describe("hosted MCP setup evidence production wiring", () => {
-  test("shares one Convex evidence service between OAuth capture and setup-status reads", () => {
+  test("shares one Convex evidence service across OAuth capture, setup reads, and first-read recording", () => {
     expect(hostedAppSource).toContain("new ConvexMcpSetupEvidenceService({");
     expect(hostedAppSource).toContain("setupConnectionRecorder: setupEvidence");
     expect(hostedAppSource).toContain("mcpSetupEvidence: options.setupStatus.mcpSetupEvidence");
+    expect(hostedAppSource).toContain("mcpSetupFirstReadRecorder: options.mcpSetupFirstReadRecorder");
+    expect(hostedAppSource).toContain("mcpSetupFirstReadRecorder: mcpSetupEvidence");
     expect(hostedAppSource).toContain("mcpOAuth && mcpSetupEvidence ? { mcpSetupEvidence } : {}");
   });
 
-  test("keeps the evidence reader out of setup status when MCP OAuth is not configured", () => {
+  test("keeps both setup evidence readers and recorders out when MCP OAuth is not configured", () => {
     const oauthConstruction = hostedAppSource.indexOf("const mcpOAuth = mcpOAuthFromEnv");
+    const gatedFirstReadRecorder = hostedAppSource.indexOf(
+      "mcpOAuth && mcpSetupEvidence\n      ? { mcpSetupFirstReadRecorder: mcpSetupEvidence }",
+    );
     const gatedSetupReader = hostedAppSource.indexOf(
       "mcpOAuth && mcpSetupEvidence ? { mcpSetupEvidence } : {}",
     );
     expect(oauthConstruction).toBeGreaterThan(-1);
+    expect(gatedFirstReadRecorder).toBeGreaterThan(oauthConstruction);
     expect(gatedSetupReader).toBeGreaterThan(oauthConstruction);
   });
 });
