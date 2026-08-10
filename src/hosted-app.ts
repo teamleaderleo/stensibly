@@ -21,6 +21,7 @@ import {
   registerHostedProviderCapacityRoutes,
   type HostedProviderCapacityOptions,
 } from "./hosted-provider-capacity-api.js";
+import { createHostedSetupStatusObserver } from "./hosted-setup-status.js";
 import type { WorkLedger } from "./ledger.js";
 import { handleMcpHttpRequest } from "./mcp-http.js";
 import {
@@ -30,6 +31,7 @@ import {
   type McpOAuthOptions,
 } from "./mcp-oauth.js";
 import { ConvexMcpOAuthService } from "./mcp-oauth-service.js";
+import { createProjectSetupStatusApi } from "./setup-status-api.js";
 import {
   ConvexTokenProvider,
   type ApiTokenAuthenticator,
@@ -41,6 +43,11 @@ import {
   type FailureCategory,
 } from "./worker-observability.js";
 
+export interface HostedSetupStatusMountOptions {
+  serviceOrigin: string;
+  now?: () => number;
+}
+
 export interface HostedAppOptions {
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
@@ -50,6 +57,7 @@ export interface HostedAppOptions {
   hostedAuth?: HostedAuthOptions;
   mcpOAuth?: McpOAuthOptions;
   providerCapacity?: HostedProviderCapacityOptions;
+  setupStatus?: HostedSetupStatusMountOptions;
 }
 
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
@@ -57,6 +65,19 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   const allowedOrigins = options.allowedOrigins ?? [];
   const sessionOrigins = options.hostedAuth?.allowedReturnOrigins ?? [];
   const hostedSession = hostedSessionOptions(options.hostedAuth);
+  const apiAuthOptions = {
+    required: true,
+    workspace: options.workspace ?? null,
+    ...(hostedSession ? { hostedSession } : {}),
+  };
+  const setupStatusObserver = options.setupStatus
+    ? createHostedSetupStatusObserver({
+        serviceOrigin: options.setupStatus.serviceOrigin,
+        workspaceConfigured: Boolean(options.workspace?.trim()),
+        oauthConfigured: Boolean(options.mcpOAuth),
+        ...(options.setupStatus.now ? { now: options.setupStatus.now } : {}),
+      })
+    : null;
   const mcpAuthenticator = options.mcpOAuth
     ? createMcpOAuthAuthenticator(options.authenticator, options.mcpOAuth)
     : options.authenticator;
@@ -118,13 +139,20 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     }
     return response;
   });
+  if (setupStatusObserver) {
+    app.route(
+      "/api/v1",
+      createProjectSetupStatusApi(
+        options.authenticator,
+        options.ledger,
+        apiAuthOptions,
+        setupStatusObserver,
+      ),
+    );
+  }
   app.route(
     "/api/v1",
-    createApiV1(options.authenticator, options.ledger, {
-      required: true,
-      workspace: options.workspace ?? null,
-      ...(hostedSession ? { hostedSession } : {}),
-    }),
+    createApiV1(options.authenticator, options.ledger, apiAuthOptions),
   );
   app.notFound((context) => context.json({
     error: "Not found",
@@ -143,6 +171,7 @@ export function createHostedAppFromEnv(
     workspace: ledger.workspace,
   });
   const hostedAuth = hostedAuthFromEnv(ledger, env);
+  const mcpOAuth = mcpOAuthFromEnv(ledger, hostedAuth, env);
   return createHostedApp({
     ledger,
     authenticator,
@@ -150,8 +179,16 @@ export function createHostedAppFromEnv(
     allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
     hostedAuth,
-    mcpOAuth: mcpOAuthFromEnv(ledger, hostedAuth, env),
+    mcpOAuth,
     providerCapacity: hostedProviderCapacityFromEnv(ledger, env),
+    ...(hostedAuth
+      ? {
+          setupStatus: {
+            serviceOrigin: hostedAuth.authOrigin,
+            ...(hostedAuth.now ? { now: hostedAuth.now } : {}),
+          },
+        }
+      : {}),
   });
 }
 
