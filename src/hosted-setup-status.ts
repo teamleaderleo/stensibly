@@ -29,6 +29,17 @@ export function createHostedSetupStatusObserver(
             { accountId, project },
           )
         : null;
+      const observedAtMillis = Date.parse(observedAt);
+      if (
+        (evidence?.connectedAt !== null
+          && evidence?.connectedAt !== undefined
+          && Date.parse(evidence.connectedAt) > observedAtMillis)
+        || (evidence?.firstReadAt !== null
+          && evidence?.firstReadAt !== undefined
+          && Date.parse(evidence.firstReadAt) > observedAtMillis)
+      ) {
+        throw new Error("MCP setup evidence is from the future");
+      }
       const steps: SetupStepStates = {
         deployment: "ready",
         backend: "ready",

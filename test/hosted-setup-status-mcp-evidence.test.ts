@@ -77,6 +77,52 @@ describe("hosted setup MCP evidence projection", () => {
     expect(observation.setup.lastVerifiedStep).toBe("first_read");
   });
 
+  test("rejects connection evidence later than the captured observation time", async () => {
+    const observer = createHostedSetupStatusObserver({
+      serviceOrigin: "https://api.stensibly.com",
+      workspaceConfigured: true,
+      oauthConfigured: true,
+      mcpSetupEvidence: new EvidenceReader({
+        version: 1,
+        accountId: "acct_owner",
+        project: "scrapbook",
+        connectedAt: "2026-08-10T04:06:00.000Z",
+        firstReadAt: null,
+        containsSecrets: false,
+      }),
+      now: () => observedAtMillis,
+    });
+    await expect(observer.observe({
+      project: "scrapbook",
+      principalKind: "account",
+      accountId: "acct_owner",
+      hasAcceptedAttachment: false,
+    })).rejects.toThrow("MCP setup evidence is from the future");
+  });
+
+  test("rejects first-read evidence later than the captured observation time", async () => {
+    const observer = createHostedSetupStatusObserver({
+      serviceOrigin: "https://api.stensibly.com",
+      workspaceConfigured: true,
+      oauthConfigured: true,
+      mcpSetupEvidence: new EvidenceReader({
+        version: 1,
+        accountId: "acct_owner",
+        project: "scrapbook",
+        connectedAt: "2026-08-10T04:04:00.000Z",
+        firstReadAt: "2026-08-10T04:06:00.000Z",
+        containsSecrets: false,
+      }),
+      now: () => observedAtMillis,
+    });
+    await expect(observer.observe({
+      project: "scrapbook",
+      principalKind: "account",
+      accountId: "acct_owner",
+      hasAcceptedAttachment: false,
+    })).rejects.toThrow("MCP setup evidence is from the future");
+  });
+
   test("never reads account-scoped evidence for API tokens or anonymous setup", async () => {
     const reader = new EvidenceReader({
       version: 1,
