@@ -1,3 +1,4 @@
+import { types as nodeUtilTypes } from "node:util";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
@@ -360,6 +361,7 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
   }
 
   async prepareExchange(): Promise<void> {
+    const signal = AbortSignal.timeout(GITHUB_TOKEN_PREFLIGHT_TIMEOUT_MS);
     try {
       await this.fetchImpl("https://github.com/login/oauth/access_token", {
         method: "GET",
@@ -367,10 +369,10 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
           accept: "application/json",
           "user-agent": "Stensibly",
         },
-        signal: AbortSignal.timeout(GITHUB_TOKEN_PREFLIGHT_TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
-      throw providerNetworkFailure("token_exchange", error);
+      throw providerNetworkFailure("token_exchange", error, signal.aborted);
     }
   }
 
@@ -379,6 +381,7 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
     redirectUri: string;
     codeVerifier: string;
   }): Promise<string> {
+    const signal = AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS);
     let response: Response;
     try {
       response = await this.fetchImpl("https://github.com/login/oauth/access_token", {
@@ -395,10 +398,10 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
           redirect_uri: input.redirectUri,
           code_verifier: input.codeVerifier,
         }).toString(),
-        signal: AbortSignal.timeout(GITHUB_TOKEN_REQUEST_TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
-      throw providerNetworkFailure("token_exchange", error);
+      throw providerNetworkFailure("token_exchange", error, signal.aborted);
     }
 
     const payload = await response.json().catch(() => null) as {
@@ -441,14 +444,15 @@ export class HttpGitHubOAuthClient implements GitHubOAuthClient {
       "user-agent": "Stensibly",
       "x-github-api-version": "2026-03-10",
     };
+    const signal = AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS);
     let userResponse: Response;
     try {
       userResponse = await this.fetchImpl("https://api.github.com/user", {
         headers,
-        signal: AbortSignal.timeout(GITHUB_IDENTITY_REQUEST_TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
-      throw providerNetworkFailure("identity_request", error);
+      throw providerNetworkFailure("identity_request", error, signal.aborted);
     }
     if (!userResponse.ok) throw new ProviderFailure("identity_request");
 
@@ -504,22 +508,27 @@ const providerFailureDetailsByError = new WeakMap<object, GitHubProviderFailureD
 function providerNetworkFailure(
   stage: "token_exchange" | "identity_request",
   error: unknown,
+  timedOut: boolean,
 ): ProviderFailure {
-  const failure = new ProviderFailure(stage, providerNetworkFailureReason(error));
-  providerFailureDetailsByError.set(failure, providerNetworkFailureDetail(error));
+  const metadata = providerErrorMetadata(error);
+  const reason = timedOut || metadata.name === "TimeoutError"
+    ? "network_timeout"
+    : "network_exception";
+  const failure = new ProviderFailure(stage, reason);
+  providerFailureDetailsByError.set(
+    failure,
+    providerNetworkFailureDetail(metadata, reason),
+  );
   return failure;
 }
 
-function providerNetworkFailureReason(error: unknown): GitHubProviderFailureReason {
-  return providerErrorName(error) === "TimeoutError"
-    ? "network_timeout"
-    : "network_exception";
-}
-
-function providerNetworkFailureDetail(error: unknown): GitHubProviderFailureDetail {
-  const name = providerErrorName(error);
-  const message = providerErrorMessage(error).toLowerCase();
-  if (name === "TimeoutError") return "timeout_error";
+function providerNetworkFailureDetail(
+  metadata: { name?: string; message: string },
+  reason: GitHubProviderFailureReason,
+): GitHubProviderFailureDetail {
+  const name = metadata.name;
+  const message = metadata.message.toLowerCase();
+  if (reason === "network_timeout") return "timeout_error";
   if (name === "AbortError") return "abort_error";
   if (message.includes("too many subrequests")) return "subrequest_limit";
   if (message.includes("different request") || message.includes("request context")) {
@@ -539,26 +548,47 @@ function providerNetworkFailureDetail(error: unknown): GitHubProviderFailureDeta
   return "non_error";
 }
 
-function providerErrorName(error: unknown): string | undefined {
+function providerErrorMetadata(error: unknown): { name?: string; message: string } {
+  const isError = (Error as typeof Error & {
+    isError?: (value: unknown) => boolean;
+  }).isError;
+  let branded = false;
   try {
-    return typeof error === "object" && error !== null && "name" in error
-      && typeof (error as { name?: unknown }).name === "string"
-      ? (error as { name: string }).name
-      : undefined;
+    branded = typeof isError === "function"
+      ? isError(error)
+      : nodeUtilTypes.isNativeError(error);
   } catch {
-    return undefined;
+    return { message: "" };
   }
-}
+  if (!branded) return { message: "" };
 
-function providerErrorMessage(error: unknown): string {
+  let prototype: object | null;
+  let nameDescriptor: PropertyDescriptor | undefined;
+  let messageDescriptor: PropertyDescriptor | undefined;
   try {
-    return typeof error === "object" && error !== null && "message" in error
-      && typeof (error as { message?: unknown }).message === "string"
-      ? (error as { message: string }).message
-      : "";
+    prototype = Object.getPrototypeOf(error as object);
+    nameDescriptor = Object.getOwnPropertyDescriptor(error as object, "name");
+    messageDescriptor = Object.getOwnPropertyDescriptor(error as object, "message");
   } catch {
-    return "";
+    return { message: "" };
   }
+
+  const ownName = nameDescriptor
+    && "value" in nameDescriptor
+    && typeof nameDescriptor.value === "string"
+    ? nameDescriptor.value
+    : undefined;
+  const name = ownName ?? (prototype === TypeError.prototype
+    ? "TypeError"
+    : prototype === Error.prototype
+    ? "Error"
+    : undefined);
+  const message = messageDescriptor
+    && "value" in messageDescriptor
+    && typeof messageDescriptor.value === "string"
+    ? messageDescriptor.value
+    : "";
+  return { ...(name ? { name } : {}), message };
 }
 
 function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {
