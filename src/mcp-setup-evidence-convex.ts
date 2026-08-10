@@ -1,4 +1,7 @@
-import { makeFunctionReference } from "convex/server";
+import {
+  makeFunctionReference,
+  type FunctionReference,
+} from "convex/server";
 import type { ConvexCaller } from "./convex-ledger.js";
 import {
   admitMcpSetupEvidence,
@@ -73,7 +76,7 @@ export class ConvexMcpSetupEvidenceService implements
   }
 
   private async mutate(
-    reference: ReturnType<typeof makeFunctionReference<"mutation">>,
+    reference: FunctionReference<"mutation">,
     input: object,
   ): Promise<void> {
     try {
