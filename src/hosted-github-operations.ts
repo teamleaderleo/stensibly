@@ -1,6 +1,7 @@
 import { captureDataMethod } from "./captured-data-method.js";
 import { exactBooleanEnv } from "./exact-boolean-env.js";
 import { GitHubAppInstallationTokenMinter } from "./github-app-installation-token.js";
+import { githubOperationRedirectFetch } from "./github-operation-redirect-fetch.js";
 import {
   DefaultGitHubOperationsService,
   type GitHubLandPrInput,
@@ -51,6 +52,7 @@ export function mountHostedGitHubOperationsFromEnv<
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
     now,
   });
+  const operationFetch = githubOperationRedirectFetch(overrides.fetch);
   const service = new DefaultGitHubOperationsService({
     delegated: (input) => Reflect.apply(callDelegated, ledger, [input]) as ReturnType<
       NonNullable<HostedGitHubDelegatedReadProvider["callGitHubDelegatedRead"]>
@@ -58,7 +60,7 @@ export function mountHostedGitHubOperationsFromEnv<
     provider: new GitHubRestOperationsAdapter({
       tokenProvider: tokens,
       apiBaseUrl: config.apiBaseUrl,
-      ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+      fetch: operationFetch,
       now,
     }),
     workflows,
