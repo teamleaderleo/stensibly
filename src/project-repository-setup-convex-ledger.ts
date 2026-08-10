@@ -19,6 +19,7 @@ const listHistoryRef = makeFunctionReference<"query">(
 const recordRef = makeFunctionReference<"mutation">(
   "projectRepositorySetupObservations:record",
 );
+const invalidHostedResponse = "Hosted repository setup observation response is invalid";
 
 export interface ConvexProjectRepositorySetupObservationLedgerOptions {
   client: ConvexCaller;
@@ -117,21 +118,31 @@ function exactResponse(value: unknown): {
   replacedFingerprint: string | null;
 } {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Hosted repository setup observation response is invalid");
+    throw new Error(invalidHostedResponse);
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+  let prototype: object | null;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new Error(invalidHostedResponse);
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(invalidHostedResponse);
+  }
   const keys = Reflect.ownKeys(descriptors);
   const expected = ["observation", "replayed", "replacedFingerprint"];
   if (
     keys.length !== expected.length
     || keys.some((key) => typeof key !== "string" || !expected.includes(key))
   ) {
-    throw new Error("Hosted repository setup observation response is invalid");
+    throw new Error(invalidHostedResponse);
   }
   const read = (key: string): unknown => {
     const descriptor = descriptors[key];
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
-      throw new Error("Hosted repository setup observation response is invalid");
+      throw new Error(invalidHostedResponse);
     }
     return descriptor.value;
   };
@@ -147,7 +158,7 @@ function exactResponse(value: unknown): {
       )
     )
   ) {
-    throw new Error("Hosted repository setup observation response is invalid");
+    throw new Error(invalidHostedResponse);
   }
   return {
     observation: read("observation"),
