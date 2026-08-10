@@ -27,6 +27,10 @@ import {
   mountHostedGitHubDelegatedReadProviderFromEnv,
   type HostedGitHubDelegatedReadProvider,
 } from "./hosted-github-delegated-read-provider.js";
+import {
+  mountHostedGitHubOperationsFromEnv,
+} from "./hosted-github-operations.js";
+import type { GitHubOperationsService } from "./github-operations.js";
 import { mountHostedGitHubIssueProviderFromEnv } from "./hosted-github-issue-provider.js";
 import {
   mountHostedGitHubPublicationReadbackFromEnv,
@@ -127,7 +131,8 @@ export function createConvexProjectAttachmentLedgerFromEnv(
   & Partial<GitHubPublicationProviderWriteService>
   & Partial<GitHubRepositoryFileWriteService>
   & Partial<GitHubPublishChangeService>
-  & Partial<HostedGitHubDelegatedReadProvider> {
+  & Partial<HostedGitHubDelegatedReadProvider>
+  & Partial<GitHubOperationsService> {
   const url = required(env.CONVEX_URL, "CONVEX_URL");
   const serviceSecret = required(
     env.STENSIBLY_SERVICE_SECRET,
@@ -163,7 +168,8 @@ export function createConvexProjectAttachmentLedgerFromEnv(
     issueProvider,
     env,
   );
-  return mountHostedGitHubDelegatedReadProviderFromEnv(publicationReadback, env);
+  const delegated = mountHostedGitHubDelegatedReadProviderFromEnv(publicationReadback, env);
+  return mountHostedGitHubOperationsFromEnv(delegated, env);
 }
 
 function mapRecord(value: unknown): ProjectAttachmentRecord {

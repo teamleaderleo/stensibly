@@ -95,10 +95,13 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   readPolicy("get_operation_receipt", directProject),
   readPolicy("get_operation_workflow", directProject),
   readPolicy("github_call_tool", directProject),
+  readPolicy("github_branch_tidy", directProject),
+  readPolicy("github_ci_diagnose", directProject),
   readPolicy("github_get_issue", directProject),
   readPolicy("github_get_tool", noProject),
   readPolicy("github_list_issues", directProject),
   readPolicy("github_list_toolsets", noProject),
+  readPolicy("github_repo_health", directProject),
   readPolicy("github_search_issues", directProject),
   readPolicy("github_search_tools", noProject),
   readPolicy("survey_workspace", optionalProject),
@@ -126,6 +129,15 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy("github_create_pull_request", directProject),
   {
     ...writePolicy("github_publish_change", directProject, "bounded_write"),
+    defaultExposure: "searchable",
+  },
+  {
+    ...writePolicy(
+      "github_land_pr",
+      directProject,
+      "consequential",
+      "tool_managed",
+    ),
     defaultExposure: "searchable",
   },
   {
