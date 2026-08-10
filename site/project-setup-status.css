@@ -63,13 +63,15 @@
 }
 
 .project-setup-status-summary > div,
-.project-setup-status-repository > div {
+.project-setup-status-repository > div,
+.project-setup-attachment-review > div {
   display: grid;
   gap: 0.2rem;
 }
 
 .project-setup-status-summary span,
-.project-setup-status-repository > div > span {
+.project-setup-status-repository > div > span,
+.project-setup-attachment-review > div > span {
   color: var(--muted, #94a3b8);
   font-size: 0.75rem;
 }
@@ -112,6 +114,7 @@
 }
 
 .project-setup-status-repository h4,
+.project-setup-status-repository h5,
 .project-setup-status-repository p,
 .project-setup-status-repository ul {
   margin: 0;
@@ -123,6 +126,66 @@
 
 .project-setup-status-repository code {
   overflow-wrap: anywhere;
+}
+
+.project-setup-attachment-action {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line, rgba(148, 163, 184, 0.18));
+}
+
+.project-setup-attachment-action > label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted, #94a3b8);
+  font-size: 0.78rem;
+}
+
+.project-setup-attachment-action textarea,
+.project-setup-attachment-action input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.project-setup-attachment-action textarea {
+  min-height: 15rem;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.project-setup-attachment-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.project-setup-attachment-result,
+.project-setup-attachment-review {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.project-setup-attachment-review {
+  padding: 0.8rem;
+  border: 1px solid var(--line, rgba(148, 163, 184, 0.18));
+  border-radius: 12px;
+}
+
+.project-setup-attachment-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 10px;
+}
+
+.project-setup-attachment-ack input {
+  margin-top: 0.15rem;
 }
 
 .project-setup-status-error {
@@ -144,6 +207,11 @@
 
 @media (max-width: 620px) {
   .project-setup-status-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-setup-attachment-controls {
     align-items: stretch;
     flex-direction: column;
   }

@@ -1,61 +1,222 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import {
+  createRepositoryAttachmentDraft,
+  localDraftSourceRevision,
+  readAcceptedProjectAttachment,
+  readProjectAttachmentAcceptance,
+  readProjectAttachmentReview,
+  reviewSource,
+} from "../site/project-attachment-review.js";
+import {
+  prepareProjectAttachmentReview,
+} from "../src/project-attachment-review.ts";
+import {
+  createProjectRepositorySetupObservationRecord,
+  projectRepositorySetupObservationFingerprint,
+} from "../src/project-repository-setup-observation.ts";
+import {
+  compileProjectContract,
+  renderProjectContract,
+  type ProjectContract,
+} from "../src/project-contract.ts";
 
-const actionPath = "site/project-attachment-review-entry.js";
+const project = "scrapbook";
+const repositoryFullName = "teamleaderleo/scrapbook";
+const semanticFingerprint = `sha256:${"a".repeat(64)}`;
+const proposal = {
+  version: 1 as const,
+  id: "repo_setup_dashboard01",
+  project,
+  repositoryFullName,
+  defaultBranch: "main",
+  sourceKind: "operator_supplied" as const,
+  semanticFingerprint,
+  observedAt: "2026-08-10T02:30:00.000Z",
+  authorizesProviderEffect: false as const,
+  containsSecrets: false as const,
+};
+const recovery = {
+  version: 1 as const,
+  state: "attachment_required" as const,
+  project,
+  repository: { fullName: repositoryFullName, defaultBranch: "main" },
+  requested: {
+    runnerProfiles: ["codex-default"],
+    workProfile: "draft_pr" as const,
+    checks: ["bun run typecheck", "bun test"],
+  },
+  sourcePath: "STENSIBLY.md" as const,
+  nextAction: {
+    kind: "review_and_accept_project_attachment" as const,
+    requiresAdmin: true as const,
+    acceptAuthorityWidening: true as const,
+  },
+  verification: {
+    repositoryMetadata: "get_repo" as const,
+    immutableFileRead: "fetch_file" as const,
+    immutableReadRef: "exact_commit_sha" as const,
+  },
+  authorizesProviderEffect: false as const,
+  containsSecrets: false as const,
+};
 
-describe("dashboard project attachment review action", () => {
-  test("installs after hosted-session fetch rewriting and setup-status card", async () => {
-    const [bridge, action, assets] = await Promise.all([
-      readFile("site/hosted-session-bridge.js", "utf8"),
-      readFile(actionPath, "utf8"),
-      readFile("src/dashboard-assets.ts", "utf8"),
-    ]);
+describe("dashboard project attachment owner-action contract", () => {
+  test("generates a deterministic local STENSIBLY.md draft from the saved repository plan", async () => {
+    const source = createRepositoryAttachmentDraft({ project, proposal, recovery });
+    const snapshot = compileProjectContract(source);
+    expect(snapshot.contract).toMatchObject({
+      project,
+      repositories: [repositoryFullName],
+      runnerProfiles: ["codex-default"],
+      autonomousActions: [
+        "inspect",
+        "propose",
+        "record_progress",
+        "attach_artifact",
+        "create_draft_pr",
+      ],
+      approvalRequired: [
+        "merge",
+        "deploy",
+        "external_message",
+        "provider_change",
+        "spend",
+        "permission_change",
+      ],
+      checks: ["bun run typecheck", "bun test"],
+    });
+    expect(snapshot.context.goal).toContain(repositoryFullName);
 
-    const fetchBridge = bridge.indexOf("window.fetch = installHostedSessionFetchBridge");
-    const setupCard = bridge.indexOf("installProjectSetupStatusCard();");
-    const reviewAction = bridge.indexOf("installProjectAttachmentReviewAction();");
-    expect(fetchBridge).toBeGreaterThanOrEqual(0);
-    expect(setupCard).toBeGreaterThan(fetchBridge);
-    expect(reviewAction).toBeGreaterThan(setupCard);
-    expect(bridge).toContain("./project-attachment-review-entry.js");
-    expect(action).toContain("installProjectAttachmentReviewAction");
-    expect(assets).toContain('path: "/project-attachment-review-entry.js"');
+    const revision = await localDraftSourceRevision(source);
+    expect(revision).toMatch(/^local-draft:sha256:[a-f0-9]{64}$/u);
+    expect(await localDraftSourceRevision(`${source}\n`)).not.toBe(revision);
   });
 
-  test("keeps preview effect-free and uses the existing attachment PUT only after review", async () => {
-    const action = await readFile(actionPath, "utf8");
-    const previewPath = "/attachment/review`";
-    const attachmentPath = "/attachment`";
-    const previewIndex = action.indexOf(previewPath);
-    const putIndex = action.indexOf("method: 'PUT'");
-    const rereadIndex = action.indexOf("method: 'GET'", putIndex);
+  test("binds preview, acceptance, and accepted-state reread to one exact owner decision", async () => {
+    const source = createRepositoryAttachmentDraft({ project, proposal, recovery });
+    const sourceRevision = await localDraftSourceRevision(source);
+    const snapshot = compileProjectContract(source);
+    const review = readProjectAttachmentReview({
+      review: {
+        version: 1,
+        project,
+        proposalId: proposal.id,
+        proposalSemanticFingerprint: proposal.semanticFingerprint,
+        repositoryFullName,
+        defaultBranch: "main",
+        sourceRevision,
+        snapshot,
+        diff: null,
+        requiresAuthorityWidening: true,
+        exactReplay: false,
+        authorizesAttachmentAcceptance: false,
+        authorizesProviderEffect: false,
+        containsSecrets: false,
+      },
+    }, {
+      project,
+      proposalId: proposal.id,
+      proposalSemanticFingerprint: proposal.semanticFingerprint,
+      repositoryFullName,
+      defaultBranch: "main",
+      sourceRevision,
+    });
 
-    expect(previewIndex).toBeGreaterThanOrEqual(0);
-    expect(action.indexOf("method: 'POST'", previewIndex)).toBeGreaterThan(previewIndex);
-    expect(action.indexOf(attachmentPath, previewIndex + previewPath.length)).toBeGreaterThan(previewIndex);
-    expect(putIndex).toBeGreaterThan(previewIndex);
-    expect(rereadIndex).toBeGreaterThan(putIndex);
-    expect(action).toContain("acceptAuthorityWidening: review.requiresAuthorityWidening");
-    expect(action).toContain("readAcceptedAttachment(payload");
-    expect(action).toContain("Accepted snapshot reread successfully");
+    expect(review).toMatchObject({
+      project,
+      repositoryFullName,
+      defaultBranch: "main",
+      sourceRevision,
+      requiresAuthorityWidening: true,
+      exactReplay: false,
+      authorizesAttachmentAcceptance: false,
+      authorizesProviderEffect: false,
+    });
+    expect(review.snapshot.snapshotSha256).toBe(snapshot.snapshotSha256);
+
+    const acceptance = readProjectAttachmentAcceptance({
+      attachment: {
+        id: "attach_dashboard01",
+        project,
+        sourceRevision,
+        snapshot,
+      },
+      replayed: false,
+    }, review);
+    expect(acceptance).toEqual({
+      attachment: {
+        id: "attach_dashboard01",
+        project,
+        sourceRevision,
+        snapshotSha256: snapshot.snapshotSha256,
+      },
+      replayed: false,
+    });
+    expect(readAcceptedProjectAttachment({
+      attachment: {
+        id: "attach_dashboard01",
+        project,
+        sourceRevision,
+        snapshot,
+      },
+    }, review)).toEqual(acceptance.attachment);
+
+    expect(() => readProjectAttachmentReview({
+      review: {
+        ...review,
+        sourceRevision: `${sourceRevision}-stale`,
+      },
+    }, {
+      project,
+      proposalId: proposal.id,
+      proposalSemanticFingerprint: proposal.semanticFingerprint,
+      repositoryFullName,
+      defaultBranch: "main",
+      sourceRevision,
+    })).toThrow("does not match the current owner action");
   });
 
-  test("invalidates stale previews, exposes cancel, and gates widening acknowledgement", async () => {
-    const action = await readFile(actionPath, "utf8");
-    expect(action).toContain("source.addEventListener('input', invalidateReview)");
-    expect(action).toContain("revision.addEventListener('input', invalidateReview)");
-    expect(action).toContain("project-attachment-review-cancel");
-    expect(action).toContain("project-attachment-review-acknowledge");
-    expect(action).toContain("acceptButton.disabled = review.requiresAuthorityWidening");
-    expect(action).toContain("review.requiresAuthorityWidening && !checkbox.checked");
-    expect(action).toContain("authorizesAttachmentAcceptance !== false");
-    expect(action).toContain("authorizesProviderEffect !== false");
-  });
+  test("rejects credential-shaped reviewed source before browser or server preview", () => {
+    const secret = `Bearer ${"a".repeat(24)}`;
+    expect(() => reviewSource(`${createRepositoryAttachmentDraft({ project, proposal, recovery })}\n${secret}`))
+      .toThrow("credential-shaped material");
 
-  test("leaves repository verification visibly incomplete after accepted reread", async () => {
-    const action = await readFile(actionPath, "utf8");
-    expect(action).toContain("accepted · verification pending");
-    expect(action).toContain("Guarded repository verification remains pending: get_repo, then fetch_file at an exact commit SHA.");
-    expect(action).not.toContain("method: 'DELETE'");
+    const semantics = {
+      project,
+      repositoryFullName,
+      defaultBranch: "main",
+      sourceKind: "operator_supplied" as const,
+    };
+    const serverProposal = createProjectRepositorySetupObservationRecord({
+      id: "repo_setup_serversecret",
+      ...semantics,
+      semanticFingerprint: projectRepositorySetupObservationFingerprint(semantics),
+      observedAt: "2026-08-10T02:31:00.000Z",
+    });
+    const contract: ProjectContract = {
+      version: 1,
+      project,
+      repositories: [repositoryFullName],
+      runnerProfiles: ["codex-default"],
+      concurrency: { project: 1, global: 1 },
+      autonomousActions: ["inspect"],
+      approvalRequired: ["merge"],
+      checks: [],
+      tags: [],
+      relatedProjects: [],
+    };
+    const source = renderProjectContract(contract, {
+      goal: "Coordinate the repository.",
+      boundaries: `Never retain ${secret}`,
+      evidenceAndHandoff: "Leave exact evidence.",
+      escalation: "Escalate authority changes.",
+    });
+    expect(() => prepareProjectAttachmentReview({
+      project,
+      proposal: serverProposal,
+      source,
+      sourceRevision: "local-draft:credential-probe",
+      currentAttachment: null,
+    })).toThrow("credential-shaped material");
   });
 });

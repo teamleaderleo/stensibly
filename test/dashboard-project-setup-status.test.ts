@@ -237,11 +237,12 @@ describe("dashboard project setup-status reader", () => {
 });
 
 describe("dashboard project setup-status wiring", () => {
-  test("installs a GET-only System card after hosted-session fetch rewriting", async () => {
-    const [bridge, entry, reader, css, assets] = await Promise.all([
+  test("installs the explicit System attachment owner action after hosted-session fetch rewriting", async () => {
+    const [bridge, entry, reader, review, css, assets] = await Promise.all([
       readFile("site/hosted-session-bridge.js", "utf8"),
       readFile("site/project-setup-status-entry.js", "utf8"),
       readFile("site/project-setup-status.js", "utf8"),
+      readFile("site/project-attachment-review.js", "utf8"),
       readFile("site/project-setup-status.css", "utf8"),
       readFile("src/dashboard-assets.ts", "utf8"),
     ]);
@@ -251,18 +252,26 @@ describe("dashboard project setup-status wiring", () => {
     expect(bridgeInstall).toBeGreaterThanOrEqual(0);
     expect(cardInstall).toBeGreaterThan(bridgeInstall);
     expect(entry).toContain('/api/v1/projects/${encodeURIComponent(project)}/setup-status');
-    expect(entry).toContain("method: 'GET'");
-    expect(entry).not.toContain("method: 'POST'");
-    expect(entry).not.toContain("method: 'PUT'");
+    expect(entry).toContain('/api/v1/projects/${encodeURIComponent(project)}/attachment/review');
+    expect(entry).toContain('/api/v1/projects/${encodeURIComponent(project)}/attachment');
+    expect(entry).toContain("method: 'POST'");
+    expect(entry).toContain("method: 'PUT'");
+    expect(entry).toContain("acceptAuthorityWidening");
+    expect(entry).toContain("Review cancelled. No attachment action was sent.");
+    expect(entry).toContain("Snapshot fingerprint");
     expect(entry).toContain('id=\"project-setup-status-panel\"');
     expect(entry).toContain("saved advisory repository proposal");
     expect(entry).toContain("Proposed repository");
     expect(entry).toContain("review STENSIBLY.md");
     expect(reader).toContain("repositorySetupObservation");
     expect(reader).not.toContain("authorityNotice:");
+    expect(review).toContain("createRepositoryAttachmentDraft");
+    expect(review).toContain("local-draft:sha256:");
+    expect(review).toContain("credential-shaped material");
     expect(css).toContain(".project-setup-status-steps");
     expect(assets).toContain('path: "/project-setup-status-entry.js"');
     expect(assets).toContain('path: "/project-setup-status.js"');
+    expect(assets).toContain('path: "/project-attachment-review.js"');
     expect(assets).toContain('path: "/project-setup-status.css"');
   });
 });

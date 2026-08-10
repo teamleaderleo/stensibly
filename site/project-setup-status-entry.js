@@ -1,3 +1,12 @@
+import {
+  createRepositoryAttachmentDraft,
+  localDraftSourceRevision,
+  readAcceptedProjectAttachment,
+  readProjectAttachmentAcceptance,
+  readProjectAttachmentReview,
+  reviewSource,
+  reviewSourceRevision,
+} from './project-attachment-review.js';
 import { readProjectSetupStatus, setupStepLabel } from './project-setup-status.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
@@ -109,12 +118,7 @@ export function installProjectSetupStatusCard() {
       return;
     }
 
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch {
-      payload = null;
-    }
+    const payload = await responseJson(response);
     if (!current(requestId, project, connection)) return;
     if (!response.ok) {
       showFailure(httpFailure(response.status));
@@ -132,6 +136,296 @@ export function installProjectSetupStatusCard() {
     refreshButton.disabled = false;
     status.textContent = stateLabel(setupStatus.state);
     renderSetupStatus(body, setupStatus);
+    wireAttachmentOwnerAction(setupStatus, project, connection, requestId);
+  }
+
+  function wireAttachmentOwnerAction(setup, project, connection, requestId) {
+    const recovery = setup.repositoryRecovery;
+    const proposal = setup.repositorySetupObservation;
+    if (recovery?.state !== 'attachment_required' || !proposal) return;
+    const action = body.querySelector('[data-project-attachment-owner-action]');
+    const source = action?.querySelector('[data-project-attachment-source]');
+    const revision = action?.querySelector('[data-project-attachment-revision]');
+    const generateButton = action?.querySelector('[data-project-attachment-generate]');
+    const reviewButton = action?.querySelector('[data-project-attachment-review]');
+    const result = action?.querySelector('[data-project-attachment-result]');
+    if (
+      !(action instanceof HTMLElement)
+      || !(source instanceof HTMLTextAreaElement)
+      || !(revision instanceof HTMLInputElement)
+      || !(generateButton instanceof HTMLButtonElement)
+      || !(reviewButton instanceof HTMLButtonElement)
+      || !(result instanceof HTMLElement)
+    ) return;
+
+    let activeReview = null;
+    let reviewedSource = '';
+    let reviewedRevision = '';
+
+    const clearReview = (message = '') => {
+      activeReview = null;
+      reviewedSource = '';
+      reviewedRevision = '';
+      result.replaceChildren(...(message
+        ? [messageBlock(message, 'project-setup-status-note')]
+        : []));
+    };
+    const invalidateReview = () => {
+      if (activeReview) clearReview('Source or revision changed. Review again before acceptance.');
+    };
+    source.addEventListener('input', invalidateReview);
+    revision.addEventListener('input', invalidateReview);
+
+    generateButton.addEventListener('click', async () => {
+      clearReview();
+      generateButton.disabled = true;
+      reviewButton.disabled = true;
+      result.replaceChildren(messageBlock('Generating a local draft…', 'project-setup-status-loading'));
+      try {
+        const draft = createRepositoryAttachmentDraft({ project, proposal, recovery });
+        const draftRevision = await localDraftSourceRevision(draft);
+        if (!current(requestId, project, connection)) return;
+        source.value = draft;
+        revision.value = draftRevision;
+        result.replaceChildren(messageBlock(
+          'Local draft generated from the saved repository plan. Read the exact source before previewing it.',
+          'project-setup-status-note',
+        ));
+      } catch {
+        if (!current(requestId, project, connection)) return;
+        result.replaceChildren(messageBlock(
+          'A safe local STENSIBLY.md draft could not be generated from the current setup plan.',
+          'project-setup-status-error',
+        ));
+      } finally {
+        if (current(requestId, project, connection)) {
+          generateButton.disabled = false;
+          reviewButton.disabled = false;
+        }
+      }
+    });
+
+    reviewButton.addEventListener('click', async () => {
+      clearReview();
+      let sourceText;
+      let sourceRevision;
+      try {
+        sourceText = reviewSource(source.value);
+        sourceRevision = reviewSourceRevision(revision.value);
+      } catch (reviewError) {
+        result.replaceChildren(messageBlock(
+          reviewError instanceof Error ? reviewError.message : 'The reviewed source is invalid.',
+          'project-setup-status-error',
+        ));
+        return;
+      }
+
+      generateButton.disabled = true;
+      reviewButton.disabled = true;
+      result.replaceChildren(messageBlock('Compiling the server-owned attachment preview…', 'project-setup-status-loading'));
+      let response;
+      try {
+        response = await window.fetch(
+          `${connection.endpoint}/api/v1/projects/${encodeURIComponent(project)}/attachment/review`,
+          {
+            method: 'POST',
+            headers: {
+              accept: 'application/json',
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ source: sourceText, sourceRevision }),
+          },
+        );
+      } catch {
+        if (!current(requestId, project, connection)) return;
+        result.replaceChildren(messageBlock(
+          'Attachment review could not reach the API. Check the connection and retry.',
+          'project-setup-status-error',
+        ));
+        generateButton.disabled = false;
+        reviewButton.disabled = false;
+        return;
+      }
+
+      const payload = await responseJson(response);
+      if (!current(requestId, project, connection)) return;
+      generateButton.disabled = false;
+      reviewButton.disabled = false;
+      if (!response.ok) {
+        result.replaceChildren(messageBlock(
+          attachmentReviewFailure(response.status),
+          'project-setup-status-error',
+        ));
+        return;
+      }
+
+      let review;
+      try {
+        review = readProjectAttachmentReview(payload, {
+          project,
+          proposalId: proposal.id,
+          proposalSemanticFingerprint: proposal.semanticFingerprint,
+          repositoryFullName: proposal.repositoryFullName,
+          defaultBranch: proposal.defaultBranch,
+          sourceRevision,
+        });
+      } catch {
+        result.replaceChildren(messageBlock(
+          'The API returned an attachment preview that does not match the current owner action.',
+          'project-setup-status-error',
+        ));
+        return;
+      }
+
+      activeReview = review;
+      reviewedSource = sourceText;
+      reviewedRevision = sourceRevision;
+      renderAttachmentReviewDecision(result, review, {
+        cancel() {
+          clearReview('Review cancelled. No attachment action was sent.');
+        },
+        async accept(acceptAuthorityWidening) {
+          if (
+            activeReview !== review
+            || source.value !== reviewedSource
+            || revision.value !== reviewedRevision
+          ) {
+            clearReview('The reviewed source became stale. Review again before acceptance.');
+            return;
+          }
+          await acceptReviewedAttachment(
+            review,
+            acceptAuthorityWidening,
+            project,
+            connection,
+            requestId,
+            result,
+          );
+        },
+      });
+    });
+  }
+
+  async function acceptReviewedAttachment(
+    review,
+    acceptAuthorityWidening,
+    project,
+    connection,
+    requestId,
+    result,
+  ) {
+    result.replaceChildren(messageBlock('Accepting the reviewed attachment…', 'project-setup-status-loading'));
+    let response;
+    try {
+      response = await window.fetch(
+        `${connection.endpoint}/api/v1/projects/${encodeURIComponent(project)}/attachment`,
+        {
+          method: 'PUT',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            snapshot: review.snapshot,
+            sourceRevision: review.sourceRevision,
+            acceptAuthorityWidening,
+          }),
+        },
+      );
+    } catch {
+      if (!current(requestId, project, connection)) return;
+      result.replaceChildren(messageBlock(
+        'Attachment acceptance could not reach the API. Review the current state before retrying.',
+        'project-setup-status-error',
+      ));
+      return;
+    }
+
+    const payload = await responseJson(response);
+    if (!current(requestId, project, connection)) return;
+    if (!response.ok) {
+      result.replaceChildren(messageBlock(
+        attachmentAcceptanceFailure(response.status),
+        'project-setup-status-error',
+      ));
+      return;
+    }
+
+    let acceptance;
+    try {
+      acceptance = readProjectAttachmentAcceptance(payload, review);
+    } catch {
+      result.replaceChildren(messageBlock(
+        'Attachment acceptance returned an incompatible success response. Reread server state before continuing.',
+        'project-setup-status-error',
+      ));
+      return;
+    }
+
+    result.replaceChildren(messageBlock('Attachment accepted. Rereading server-owned attachment state…', 'project-setup-status-loading'));
+    let rereadResponse;
+    try {
+      rereadResponse = await window.fetch(
+        `${connection.endpoint}/api/v1/projects/${encodeURIComponent(project)}/attachment`,
+        {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${connection.token}`,
+          },
+          cache: 'no-store',
+        },
+      );
+    } catch {
+      if (!current(requestId, project, connection)) return;
+      result.replaceChildren(
+        acceptanceSummary(acceptance, review),
+        messageBlock(
+          'The attachment was accepted, while the required accepted-state reread could not reach the API. Repository verification remains incomplete.',
+          'project-setup-status-error',
+        ),
+      );
+      return;
+    }
+
+    const rereadPayload = await responseJson(rereadResponse);
+    if (!current(requestId, project, connection)) return;
+    if (!rereadResponse.ok) {
+      result.replaceChildren(
+        acceptanceSummary(acceptance, review),
+        messageBlock(
+          'The attachment was accepted, while the required accepted-state reread failed. Repository verification remains incomplete.',
+          'project-setup-status-error',
+        ),
+      );
+      return;
+    }
+
+    let accepted;
+    try {
+      accepted = readAcceptedProjectAttachment(rereadPayload, review);
+    } catch {
+      result.replaceChildren(
+        acceptanceSummary(acceptance, review),
+        messageBlock(
+          'The accepted attachment reread does not match the reviewed snapshot. Repository verification remains incomplete.',
+          'project-setup-status-error',
+        ),
+      );
+      return;
+    }
+
+    result.replaceChildren(
+      acceptanceSummary(acceptance, review),
+      fact('Reread attachment', accepted.id),
+      fact('Reread snapshot', accepted.snapshotSha256),
+      messageBlock(
+        'Attachment acceptance and server-state reread are verified. Guarded get_repo plus immutable fetch_file verification still gates repository-ready.',
+        'project-setup-status-note',
+      ),
+    );
   }
 
   function current(requestId, project, connection) {
@@ -256,6 +550,7 @@ function repositorySection(setup) {
       fact('Proposed repository', proposal.repositoryFullName),
       fact('Proposed default branch', proposal.defaultBranch),
       fact('Proposal source', repositorySourceLabel(proposal.sourceKind)),
+      fact('Proposal fingerprint', proposal.semanticFingerprint),
       fact('Proposal observed', formatTimestamp(proposal.observedAt)),
     );
   }
@@ -311,13 +606,149 @@ function repositorySection(setup) {
   }
   section.append(
     messageBlock(
-      'Next: review STENSIBLY.md and accept the first attachment with admin acknowledgement.',
+      'Next: review STENSIBLY.md and accept the attachment with explicit admin acknowledgement when authority widens.',
       'project-setup-status-note',
     ),
     messageBlock(
-      'After acceptance, verify guarded repository metadata with get_repo and an immutable fetch_file read at an exact commit SHA.',
+      'After acceptance, Stensibly rereads the accepted attachment. Guarded get_repo and immutable fetch_file verification still gate repository-ready.',
       'project-setup-status-note',
     ),
+  );
+  if (proposal) section.append(attachmentActionSection());
+  else section.append(messageBlock(
+    'A saved repository proposal is required before attachment review can start.',
+    'project-setup-status-note',
+  ));
+  return section;
+}
+
+function attachmentActionSection() {
+  const section = document.createElement('section');
+  section.className = 'project-setup-attachment-action';
+  section.dataset.projectAttachmentOwnerAction = 'true';
+  const heading = document.createElement('h5');
+  heading.textContent = 'Review project attachment';
+  const note = messageBlock(
+    'Paste the exact reviewed STENSIBLY.md and source revision, or generate a local draft from the saved repository plan. Source text stays in this open card and is sent only to the review/accept flow.',
+    'project-setup-status-note',
+  );
+  const sourceLabel = document.createElement('label');
+  sourceLabel.textContent = 'STENSIBLY.md source';
+  const source = document.createElement('textarea');
+  source.dataset.projectAttachmentSource = 'true';
+  source.rows = 14;
+  source.spellcheck = false;
+  source.autocomplete = 'off';
+  source.placeholder = 'Paste the exact reviewed STENSIBLY.md source here.';
+  sourceLabel.append(source);
+  const revisionLabel = document.createElement('label');
+  revisionLabel.textContent = 'Source revision';
+  const revision = document.createElement('input');
+  revision.dataset.projectAttachmentRevision = 'true';
+  revision.type = 'text';
+  revision.maxLength = 240;
+  revision.autocomplete = 'off';
+  revision.placeholder = 'Exact commit/revision, or generate a local draft revision';
+  revisionLabel.append(revision);
+  const controls = document.createElement('div');
+  controls.className = 'project-setup-attachment-controls';
+  const generate = document.createElement('button');
+  generate.type = 'button';
+  generate.className = 'secondary';
+  generate.dataset.projectAttachmentGenerate = 'true';
+  generate.textContent = 'generate local draft';
+  const review = document.createElement('button');
+  review.type = 'button';
+  review.dataset.projectAttachmentReview = 'true';
+  review.textContent = 'review attachment';
+  controls.append(generate, review);
+  const result = document.createElement('div');
+  result.className = 'project-setup-attachment-result';
+  result.dataset.projectAttachmentResult = 'true';
+  result.setAttribute('aria-live', 'polite');
+  section.append(heading, note, sourceLabel, revisionLabel, controls, result);
+  return section;
+}
+
+function renderAttachmentReviewDecision(container, review, actions) {
+  const summary = document.createElement('section');
+  summary.className = 'project-setup-attachment-review';
+  summary.append(
+    fact('Repository', review.repositoryFullName),
+    fact('Default branch', review.defaultBranch),
+    fact('Source revision', review.sourceRevision),
+    fact('Snapshot fingerprint', review.snapshot.snapshotSha256),
+    fact('Proposal fingerprint', review.proposalSemanticFingerprint),
+    fact('Authority widening', review.requiresAuthorityWidening ? 'explicit acknowledgement required' : 'no widening acknowledgement required'),
+  );
+  if (review.exactReplay) {
+    summary.append(messageBlock(
+      'This exact snapshot and source revision already match the accepted attachment.',
+      'project-setup-status-note',
+    ));
+  } else if (review.diff) {
+    const heading = document.createElement('strong');
+    heading.textContent = 'Attachment diff';
+    const list = document.createElement('ul');
+    for (const change of review.diff.changes) {
+      const item = document.createElement('li');
+      item.textContent = `${change.field}: ${change.kind} · ${change.authorityEffect}`;
+      list.append(item);
+    }
+    summary.append(heading, list);
+  } else {
+    summary.append(messageBlock(
+      'This is the first accepted attachment for the project.',
+      'project-setup-status-note',
+    ));
+  }
+
+  const controls = document.createElement('div');
+  controls.className = 'project-setup-attachment-controls';
+  let acknowledgement = null;
+  if (review.requiresAuthorityWidening) {
+    const label = document.createElement('label');
+    label.className = 'project-setup-attachment-ack';
+    acknowledgement = document.createElement('input');
+    acknowledgement.type = 'checkbox';
+    acknowledgement.dataset.projectAttachmentWideningAck = 'true';
+    const copy = document.createElement('span');
+    copy.textContent = 'I reviewed this exact attachment and acknowledge the declared authority widening.';
+    label.append(acknowledgement, copy);
+    summary.append(label);
+  }
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'secondary';
+  cancel.textContent = 'cancel review';
+  cancel.addEventListener('click', actions.cancel);
+  const accept = document.createElement('button');
+  accept.type = 'button';
+  accept.textContent = review.exactReplay ? 'confirm exact replay' : 'accept attachment';
+  accept.disabled = review.requiresAuthorityWidening;
+  acknowledgement?.addEventListener('change', () => {
+    accept.disabled = !acknowledgement.checked;
+  });
+  accept.addEventListener('click', () => {
+    if (review.requiresAuthorityWidening && !acknowledgement?.checked) return;
+    cancel.disabled = true;
+    accept.disabled = true;
+    void actions.accept(review.requiresAuthorityWidening === true);
+  });
+  controls.append(cancel, accept);
+  summary.append(controls);
+  container.replaceChildren(summary);
+}
+
+function acceptanceSummary(acceptance, review) {
+  const section = document.createElement('section');
+  section.className = 'project-setup-attachment-review';
+  section.append(
+    fact('Accepted attachment', acceptance.attachment.id),
+    fact('Accepted source revision', acceptance.attachment.sourceRevision),
+    fact('Accepted snapshot', acceptance.attachment.snapshotSha256),
+    fact('Acceptance result', acceptance.replayed ? 'exact replay' : 'accepted'),
+    fact('Widening acknowledgement', review.requiresAuthorityWidening ? 'recorded' : 'not required'),
   );
   return section;
 }
@@ -372,6 +803,32 @@ function httpFailure(status) {
   return 'Setup status could not be read.';
 }
 
+function attachmentReviewFailure(status) {
+  if (status === 401) return 'Reconnect before reviewing a project attachment.';
+  if (status === 403) return 'Admin access for this project is required to review an attachment.';
+  if (status === 409) return 'The saved repository proposal is missing or changed. Refresh setup status before reviewing.';
+  if (status === 400) return 'The reviewed source does not match the current project and saved repository proposal.';
+  if (status >= 500) return 'The server could not prepare the attachment review. Retry after the service recovers.';
+  return 'The attachment review could not be prepared.';
+}
+
+function attachmentAcceptanceFailure(status) {
+  if (status === 401) return 'Reconnect before accepting a project attachment.';
+  if (status === 403) return 'Admin access for this project is required to accept an attachment.';
+  if (status === 409) return 'The attachment requires a fresh authority-widening acknowledgement. Review the current source again.';
+  if (status === 400) return 'The reviewed attachment is stale or invalid. Refresh setup status and review again.';
+  if (status >= 500) return 'The server could not settle attachment acceptance. Reread current state before retrying.';
+  return 'The attachment could not be accepted.';
+}
+
+async function responseJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 function readConnection() {
   return { endpoint: storedEndpoint(), token: storedToken() };
 }
@@ -424,7 +881,7 @@ function panelMarkup() {
       <div class="project-setup-status-body" id="project-setup-status-body">
         <p class="project-setup-status-empty">Open this card to read the selected project setup.</p>
       </div>
-      <p class="project-setup-status-footnote">Read-only. Attachment acceptance and provider effects stay behind their reviewed server actions.</p>
+      <p class="project-setup-status-footnote">Setup status is read-only. Attachment review and acceptance run only through explicit admin actions in this card.</p>
     </div>
   </details>`;
 }
