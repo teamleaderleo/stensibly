@@ -6,6 +6,7 @@ export interface ProjectAttachmentRepositoryVerificationController {
 export interface ProjectAttachmentRepositoryVerificationResult {
   readonly repositoryFullName: string;
   readonly defaultBranch: string;
+  readonly sourcePath: string;
   readonly commitSha: string;
   readonly sourceContentSha256: string;
   readonly attachmentId: string;
