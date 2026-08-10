@@ -34,6 +34,7 @@ export const workerEnrolmentTables = {
     causationId: v.optional(v.string()),
     requestFingerprint: v.string(),
     status: workerEnrolmentStatus,
+    callsign: v.optional(v.string()),
     callsignLeaseId: v.optional(v.id("callsignLeases")),
     callsignLeaseGeneration: v.optional(v.number()),
     acceptedAt: v.number(),
