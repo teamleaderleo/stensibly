@@ -81,6 +81,7 @@ export async function verifyAccessToken(
   return {
     tokenId: payload.jti,
     authorizationId,
+    oauthAccountId: payload.sub,
     name: payload.name,
     scopes,
     projects,
