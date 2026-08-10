@@ -17,11 +17,12 @@ const oauthPrincipal: TokenPrincipal = {
 
 let store: StensiblyStore;
 let ledger: SqliteWorkLedger;
+let itemId: string;
 
 beforeEach(async () => {
   store = new StensiblyStore(":memory:");
   ledger = new SqliteWorkLedger(store);
-  await ledger.createItem({
+  const created = await ledger.createItem({
     project: "scrapbook",
     kind: "task",
     title: "First read target",
@@ -29,6 +30,7 @@ beforeEach(async () => {
     priority: 50,
     actor: { id: "leo", name: "Leo", kind: "human" },
   });
+  itemId = created.id;
 });
 
 afterEach(() => store.close());
@@ -46,7 +48,7 @@ describe("hosted MCP first-read evidence path", () => {
       },
     };
 
-    const read = await call(options, 1, "get_brief", { project: "scrapbook" });
+    const read = await call(options, 1, "get_item", { id: itemId });
     expect(read.status).toBe(200);
     expect(recorded).toEqual([{ accountId: "acct_test", project: "scrapbook" }]);
 
@@ -88,7 +90,7 @@ describe("hosted MCP first-read evidence path", () => {
           recorded.push(input);
         },
       },
-    }, 5, "get_brief", { project: "scrapbook" });
+    }, 5, "get_item", { id: itemId });
     expect(response.status).toBe(200);
     expect(recorded).toEqual([]);
   });
@@ -102,7 +104,7 @@ describe("hosted MCP first-read evidence path", () => {
           throw new Error("private evidence backend failure");
         },
       },
-    }, 6, "get_brief", { project: "scrapbook" });
+    }, 6, "get_item", { id: itemId });
     expect(response.status).toBe(200);
     const body = await response.json() as {
       result?: { isError?: boolean };
