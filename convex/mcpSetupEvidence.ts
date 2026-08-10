@@ -23,6 +23,7 @@ export const recordConnection = mutation({
     accountId: v.string(),
     clientId: v.string(),
     resource: v.string(),
+    projects: v.union(v.array(v.string()), v.null()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -32,6 +33,7 @@ export const recordConnection = mutation({
     const accountId = exactAccountId(args.accountId);
     const clientId = exactClientId(args.clientId);
     const resource = exactMcpResource(args.resource);
+    const projects = exactProjects(args.projects);
 
     const account = await ctx.db
       .query("accounts")
@@ -49,6 +51,20 @@ export const recordConnection = mutation({
     if (!membership || membership.revokedAt !== undefined) {
       throw new Error("MCP setup account membership is unavailable");
     }
+    if (projects === null) {
+      if (membership.projects !== undefined) {
+        throw new Error("MCP setup project scope is unavailable");
+      }
+    } else {
+      for (const project of projects) {
+        if (membership.projects !== undefined && !membership.projects.includes(project)) {
+          throw new Error("MCP setup project scope is unavailable");
+        }
+        if (!(await findProject(ctx, workspace._id, project))) {
+          throw new Error("MCP setup project scope is unavailable");
+        }
+      }
+    }
     const client = await ctx.db
       .query("mcpOAuthClients")
       .withIndex("by_external_id", (q) => q.eq("externalId", clientId))
@@ -57,25 +73,41 @@ export const recordConnection = mutation({
       throw new Error("MCP setup OAuth client is unavailable");
     }
 
-    const existing = await ctx.db
+    const workspaceWide = await ctx.db
       .query("mcpSetupConnections")
-      .withIndex("by_workspace_account", (q) =>
-        q.eq("workspaceId", workspace._id).eq("accountId", account._id),
+      .withIndex("by_workspace_account_project", (q) =>
+        q.eq("workspaceId", workspace._id)
+          .eq("accountId", account._id)
+          .eq("project", null),
       )
       .unique();
-    if (existing) return null;
+    if (workspaceWide) return null;
 
+    const scopes: Array<string | null> = projects === null ? [null] : projects;
+    if (scopes.length === 0) return null;
     const connectedAt = Date.now();
     if (!Number.isSafeInteger(connectedAt) || connectedAt < 0) {
       throw new Error("MCP setup observation time is invalid");
     }
-    await ctx.db.insert("mcpSetupConnections", {
-      workspaceId: workspace._id,
-      accountId: account._id,
-      clientExternalId: clientId,
-      resource,
-      connectedAt,
-    });
+    for (const project of scopes) {
+      const existing = await ctx.db
+        .query("mcpSetupConnections")
+        .withIndex("by_workspace_account_project", (q) =>
+          q.eq("workspaceId", workspace._id)
+            .eq("accountId", account._id)
+            .eq("project", project),
+        )
+        .unique();
+      if (existing) continue;
+      await ctx.db.insert("mcpSetupConnections", {
+        workspaceId: workspace._id,
+        accountId: account._id,
+        clientExternalId: clientId,
+        resource,
+        project,
+        connectedAt,
+      });
+    }
     return null;
   },
 });
@@ -116,12 +148,25 @@ export const getEvidence = query({
     const projectRow = await findProject(ctx, workspace._id, project);
     if (!projectRow) return emptyEvidence(accountId, project);
 
-    const connection = await ctx.db
-      .query("mcpSetupConnections")
-      .withIndex("by_workspace_account", (q) =>
-        q.eq("workspaceId", workspace._id).eq("accountId", account._id),
-      )
-      .unique();
+    const [projectConnection, workspaceConnection] = await Promise.all([
+      ctx.db
+        .query("mcpSetupConnections")
+        .withIndex("by_workspace_account_project", (q) =>
+          q.eq("workspaceId", workspace._id)
+            .eq("accountId", account._id)
+            .eq("project", project),
+        )
+        .unique(),
+      ctx.db
+        .query("mcpSetupConnections")
+        .withIndex("by_workspace_account_project", (q) =>
+          q.eq("workspaceId", workspace._id)
+            .eq("accountId", account._id)
+            .eq("project", null),
+        )
+        .unique(),
+    ]);
+    const connection = earliestConnection(projectConnection, workspaceConnection);
     if (!connection) return emptyEvidence(accountId, project);
     const connectedAt = isoTimestamp(connection.connectedAt);
     return {
@@ -134,6 +179,15 @@ export const getEvidence = query({
     };
   },
 });
+
+function earliestConnection<T extends { connectedAt: number }>(
+  first: T | null,
+  second: T | null,
+): T | null {
+  if (!first) return second;
+  if (!second) return first;
+  return first.connectedAt <= second.connectedAt ? first : second;
+}
 
 function emptyEvidence(accountId: string, project: string) {
   return {
@@ -162,6 +216,16 @@ function exactClientId(value: string): string {
     || !/^oauth_client_[A-Za-z0-9_-]{12,96}$/u.test(value)
   ) throw new Error("MCP setup OAuth client identity is invalid");
   return value;
+}
+
+function exactProjects(value: string[] | null): string[] | null {
+  if (value === null) return null;
+  if (value.length > 256) throw new Error("MCP setup project scope is invalid");
+  const projects = value.map(exactProject);
+  if (new Set(projects).size !== projects.length) {
+    throw new Error("MCP setup project scope is invalid");
+  }
+  return projects;
 }
 
 function exactProject(value: string): string {

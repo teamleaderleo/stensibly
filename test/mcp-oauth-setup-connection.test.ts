@@ -21,6 +21,7 @@ type ConnectionRecord = {
   accountId: string;
   clientId: string;
   resource: string;
+  projects: string[] | null;
 };
 
 type StoredCode = {
@@ -86,7 +87,10 @@ class SetupConnectionOAuthService implements McpOAuthService {
   }
 
   async recordSetupConnection(input: ConnectionRecord): Promise<void> {
-    this.recordAttempts.push(Object.freeze({ ...input }));
+    this.recordAttempts.push(Object.freeze({
+      ...input,
+      projects: input.projects === null ? null : [...input.projects],
+    }));
     if (this.failRecorder) throw new Error("private evidence backend failure");
   }
 }
@@ -100,7 +104,7 @@ class SetupConnectionAccountService implements Pick<HostedAccountService, "authe
 }
 
 describe("MCP OAuth setup connection evidence capture", () => {
-  test("records only account, client, and resource after a successful token response", async () => {
+  test("records account, client, resource, and issuance-time projects after a successful token response", async () => {
     const fixture = await createFixture();
     const code = await fixture.approve();
     expect(fixture.service.recordAttempts).toEqual([]);
@@ -113,10 +117,12 @@ describe("MCP OAuth setup connection evidence capture", () => {
       accountId: "acct_test",
       clientId: fixture.clientId,
       resource,
+      projects: ["scrapbook"],
     }]);
     expect(Object.keys(fixture.service.recordAttempts[0] ?? {}).sort()).toEqual([
       "accountId",
       "clientId",
+      "projects",
       "resource",
     ]);
     expect(JSON.stringify(fixture.service.recordAttempts)).not.toContain("access_token");
@@ -138,6 +144,7 @@ describe("MCP OAuth setup connection evidence capture", () => {
       accountId: "acct_test",
       clientId: fixture.clientId,
       resource,
+      projects: ["scrapbook"],
     }]);
   });
 

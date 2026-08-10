@@ -33,6 +33,7 @@ export interface McpSetupConnectionInput {
   accountId: string;
   clientId: string;
   resource: string;
+  projects: string[] | null;
 }
 
 export interface McpSetupConnectionRecorder {

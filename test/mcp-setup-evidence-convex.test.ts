@@ -41,7 +41,7 @@ class EvidenceCaller implements ConvexCaller {
 }
 
 describe("Convex MCP setup evidence service", () => {
-  test("writes only connection identity and reads an admitted account/project projection", async () => {
+  test("writes issuance-time project scope and reads an admitted account/project projection", async () => {
     const client = new EvidenceCaller();
     const service = new ConvexMcpSetupEvidenceService({
       client,
@@ -53,6 +53,7 @@ describe("Convex MCP setup evidence service", () => {
       accountId: "acct_test",
       clientId: "oauth_client_abcdefghijkl",
       resource: "https://api.stensibly.com/mcp",
+      projects: ["scrapbook"],
     });
     expect(client.calls[0]).toBe("mutation:mcpSetupEvidence:recordConnection");
     expect(client.args[0]).toEqual({
@@ -61,6 +62,7 @@ describe("Convex MCP setup evidence service", () => {
       accountId: "acct_test",
       clientId: "oauth_client_abcdefghijkl",
       resource: "https://api.stensibly.com/mcp",
+      projects: ["scrapbook"],
     });
     expect(client.args[0]).not.toHaveProperty("accessToken");
     expect(client.args[0]).not.toHaveProperty("refreshToken");
@@ -70,6 +72,22 @@ describe("Convex MCP setup evidence service", () => {
       project: "scrapbook",
     })).toEqual(evidence);
     expect(client.calls[1]).toBe("query:mcpSetupEvidence:getEvidence");
+  });
+
+  test("forwards workspace-wide issuance scope explicitly", async () => {
+    const client = new EvidenceCaller();
+    const service = new ConvexMcpSetupEvidenceService({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "default",
+    });
+    await service.recordSetupConnection({
+      accountId: "acct_test",
+      clientId: "oauth_client_abcdefghijkl",
+      resource: "https://api.stensibly.com/mcp",
+      projects: null,
+    });
+    expect(client.args[0]).toMatchObject({ projects: null });
   });
 
   test("collapses backend and malformed-response failures to one fixed storage error", async () => {
@@ -84,6 +102,7 @@ describe("Convex MCP setup evidence service", () => {
       accountId: "acct_test",
       clientId: "oauth_client_abcdefghijkl",
       resource: "https://api.stensibly.com/mcp",
+      projects: ["scrapbook"],
     })).rejects.toThrow("MCP setup evidence storage failed");
 
     const readerClient = new EvidenceCaller();

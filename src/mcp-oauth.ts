@@ -429,14 +429,26 @@ async function exchangeAuthorizationCode(
   );
   const recorder = options.service.recordSetupConnection;
   if (recorder) {
+    let recording: Promise<void> | null = null;
     try {
-      await recorder.call(options.service, {
+      recording = recorder.call(options.service, {
         accountId: grant.principal.accountId,
         clientId: grant.clientId,
         resource: grant.resource,
+        projects: grant.principal.projects === null
+          ? null
+          : [...grant.principal.projects],
       });
     } catch {
-      // Setup evidence is observational; a recorder failure cannot invalidate OAuth.
+      // Setup evidence is observational; a synchronous recorder failure cannot invalidate OAuth.
+    }
+    if (recording) {
+      const settled = recording.catch(() => {});
+      try {
+        context.executionCtx.waitUntil(settled);
+      } catch {
+        // Standalone runtimes may not provide an execution context; recording remains best-effort.
+      }
     }
   }
   return response;
