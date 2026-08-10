@@ -201,13 +201,13 @@ async function upsertAccount(
   }) as any;
 }
 
-async function ensureProject(t: ReturnType<typeof convexTest>, project: string) {
-  await t.run(async (ctx) => {
-    const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q) => q.eq("slug", workspace)).unique();
+async function ensureProject(t: any, project: string) {
+  await t.run(async (ctx: any) => {
+    const ws = await ctx.db.query("workspaces").withIndex("by_slug", (q: any) => q.eq("slug", workspace)).unique();
     if (!ws) throw new Error("MCP setup workspace disappeared");
     const existing = await ctx.db
       .query("projects")
-      .withIndex("by_workspace_slug", (q) => q.eq("workspaceId", ws._id).eq("slug", project))
+      .withIndex("by_workspace_slug", (q: any) => q.eq("workspaceId", ws._id).eq("slug", project))
       .unique();
     if (existing) return;
     await ctx.db.insert("projects", {
