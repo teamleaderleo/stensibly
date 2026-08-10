@@ -27,6 +27,8 @@ export class GitHubOfficialMcpRemoteError extends Error {
   }
 }
 
+const localRemoteErrors = new WeakSet<object>();
+
 export interface GitHubOfficialMcpBearerResolver {
   resolveGitHubOfficialMcpBearer(input: {
     credentialRef: string;
@@ -168,7 +170,7 @@ export class GitHubOfficialMcpRemoteTransport {
       );
       result = Object.freeze({ result: admittedToolResult(envelope) });
     } catch (error) {
-      failure = error instanceof GitHubOfficialMcpRemoteError
+      failure = isLocalRemoteError(error)
         ? error
         : remoteError(
           "github_official_mcp_transport_failed",
@@ -500,7 +502,7 @@ function admittedToolResult(value: unknown): unknown {
   try {
     return admittedToolResultInner(value);
   } catch (error) {
-    if (error instanceof GitHubOfficialMcpRemoteError) throw error;
+    if (isLocalRemoteError(error)) throw error;
     throw invalidResult();
   }
 }
@@ -722,9 +724,17 @@ function invalidResult(): GitHubOfficialMcpRemoteError {
   );
 }
 
+function isLocalRemoteError(value: unknown): value is GitHubOfficialMcpRemoteError {
+  return typeof value === "object"
+    && value !== null
+    && localRemoteErrors.has(value);
+}
+
 function remoteError(
   code: GitHubOfficialMcpRemoteErrorCode,
   message: string,
 ): GitHubOfficialMcpRemoteError {
-  return new GitHubOfficialMcpRemoteError(code, message);
+  const error = new GitHubOfficialMcpRemoteError(code, message);
+  localRemoteErrors.add(error);
+  return error;
 }
