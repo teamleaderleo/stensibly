@@ -42,6 +42,13 @@ import {
   type ProjectAttachmentRecord,
 } from "./project-attachment-ledger.js";
 import { parseProjectAttachmentSnapshot } from "./project-contract.js";
+import {
+  ConvexProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-convex-ledger.js";
+import type {
+  ProjectRepositorySetupObservationLedger,
+  RecordProjectRepositorySetupObservationInput,
+} from "./project-repository-setup-ledger.js";
 
 const rawRecordSchema = z.object({
   id: z.string().min(1),
@@ -56,9 +63,17 @@ const rawRecordSchema = z.object({
   acceptedAt: z.string().datetime(),
 }).strict();
 
-export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements ProjectAttachmentLedger {
+export class ConvexProjectAttachmentLedger extends ConvexWorkLedger
+  implements ProjectAttachmentLedger, ProjectRepositorySetupObservationLedger {
+  readonly #repositorySetupObservations: ConvexProjectRepositorySetupObservationLedger;
+
   constructor(options: ConvexWorkLedgerOptions) {
     super(options);
+    this.#repositorySetupObservations = new ConvexProjectRepositorySetupObservationLedger({
+      client: this.client,
+      serviceSecret: this.serviceSecret,
+      workspace: this.workspace,
+    });
   }
 
   async getProjectAttachment(project: string): Promise<ProjectAttachmentRecord | null> {
@@ -107,6 +122,18 @@ export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements P
     };
   }
 
+  getCurrentProjectRepositorySetupObservation(project: string) {
+    return this.#repositorySetupObservations
+      .getCurrentProjectRepositorySetupObservation(project);
+  }
+
+  recordProjectRepositorySetupObservation(
+    input: RecordProjectRepositorySetupObservationInput,
+  ) {
+    return this.#repositorySetupObservations
+      .recordProjectRepositorySetupObservation(input);
+  }
+
   private attachmentArgs(input: object): Record<string, unknown> {
     return {
       serviceSecret: this.serviceSecret,
@@ -119,6 +146,7 @@ export class ConvexProjectAttachmentLedger extends ConvexWorkLedger implements P
 export function createConvexProjectAttachmentLedgerFromEnv(
   env: Record<string, string | undefined> = Bun.env,
 ): ConvexProjectAttachmentLedger
+  & ProjectRepositorySetupObservationLedger
   & GitHubProviderReceiptStore
   & GitHubRepositoryWriteStore
   & OperationWorkflowStore

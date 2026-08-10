@@ -9,6 +9,13 @@ import {
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 import type { ProjectAttachmentSetupContext } from "./project-attachment-setup-plan.js";
+import type {
+  ProjectRepositorySetupObservation,
+} from "./project-repository-setup-observation.js";
+import {
+  projectRepositorySetupObservationLedger,
+  type ProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-ledger.js";
 import { projectSetupStatusWithRepository } from "./setup-status-repository.js";
 import type { SetupStatusInput } from "./setup-status.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
@@ -33,9 +40,12 @@ export function createProjectSetupStatusApi(
   ledger: WorkLedger,
   authOptions: HttpAuthOptions,
   observer: ProjectSetupStatusObserver,
+  repositorySetupObservations?: ProjectRepositorySetupObservationLedger | null,
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
   const route = "/projects/:project/setup-status";
+  const setupObservationLedger = repositorySetupObservations
+    ?? projectRepositorySetupObservationLedger(ledger);
   app.use(route, createHttpAuthMiddleware(authenticator, authOptions));
   app.get(route, async (context) => {
     const rawProject = context.req.param("project");
@@ -68,6 +78,19 @@ export function createProjectSetupStatusApi(
       }, 502);
     }
 
+    let repositorySetupObservation: ProjectRepositorySetupObservation | null = null;
+    if (!attachment && setupObservationLedger) {
+      try {
+        repositorySetupObservation = await setupObservationLedger
+          .getCurrentProjectRepositorySetupObservation(project);
+      } catch {
+        return context.json({
+          error: "Repository setup observation failed",
+          code: "repository_setup_observation_failed",
+        }, 502);
+      }
+    }
+
     let observation: ProjectSetupStatusObservation;
     try {
       observation = await observer.observe({
@@ -90,6 +113,7 @@ export function createProjectSetupStatusApi(
         project,
         attachment,
         repositorySetup: observation.repositorySetup,
+        repositorySetupObservation,
       });
       return context.json({ setupStatus });
     } catch {
