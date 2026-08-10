@@ -46,6 +46,13 @@ export const convexApi = {
   runnerAdapterCommands: {
     reserve: mutationRef("runnerAdapterCommands:reserve"),
   },
+  callsignLeases: {
+    reserve: mutationRef("callsignLeases:reserve"),
+    renew: mutationRef("callsignLeases:renew"),
+    release: mutationRef("callsignLeases:release"),
+    get: mutationRef("callsignLeases:get"),
+    getCurrent: mutationRef("callsignLeases:getCurrent"),
+  },
   completionContinuations: {
     complete: mutationRef("completionContinuations:complete"),
   },

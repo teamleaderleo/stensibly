@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { callsignLeaseTables } from "./callsignLeaseSchema";
 
 const actorKind = v.union(
   v.literal("human"),
@@ -111,6 +112,8 @@ export const accountRole = v.union(
 );
 
 export default defineSchema({
+  ...callsignLeaseTables,
+
   workspaces: defineTable({
     externalId: v.string(),
     slug: v.string(),
