@@ -432,6 +432,14 @@ export default defineSchema({
     .index("by_workspace_client_created", ["workspaceId", "clientExternalId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
+  mcpSetupConnections: defineTable({
+    workspaceId: v.id("workspaces"),
+    accountId: v.id("accounts"),
+    clientExternalId: v.string(),
+    resource: v.string(),
+    connectedAt: v.number(),
+  }).index("by_workspace_account", ["workspaceId", "accountId"]),
+
   items: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
