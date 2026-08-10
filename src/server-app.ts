@@ -59,7 +59,7 @@ export function createServerApp(
     concurrency: normalizeRunnerConcurrencyPolicy(options.runnerMcp?.concurrency),
   };
   const repositorySetupObservations = options.repositorySetupObservations
-    ?? (options.ledger === undefined && options.backend !== "convex"
+    ?? (ledger instanceof SqliteWorkLedger && options.backend !== "convex"
       ? new SqliteProjectRepositorySetupObservationLedger(store)
       : null);
 
