@@ -4,6 +4,10 @@ const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const TOKEN_STORAGE_KEY = 'stensiblyToken';
 const ENDPOINT_STORAGE_KEY = 'stensiblyEndpoint';
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const DIFF_FIELD_PATTERN = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?$/u;
+const DIFF_KINDS = new Set(['added', 'removed', 'changed']);
+const DIFF_AUTHORITY_EFFECTS = new Set(['widens', 'narrows', 'neutral']);
+const MAX_DIFF_CHANGES = 32;
 const CREDENTIAL_PATTERN = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._\/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|authorization\s*:|-----BEGIN [A-Z ]*PRIVATE KEY-----)/iu;
 
 export function installProjectAttachmentReviewAction() {
@@ -287,6 +291,7 @@ function renderReviewResult({
       'Authority acknowledgement',
       review.requiresAuthorityWidening ? 'Required before acceptance' : 'No widening acknowledgement required',
     ),
+    renderReviewedChanges(review.diffIdentity, review.exactReplay),
   );
 
   const acknowledgement = document.createElement('label');
@@ -463,7 +468,7 @@ function readReview(payload, expected) {
   exactSha(source.contentSha256);
   const encoded = JSON.stringify(snapshot);
   if (encoded.length > 524_288 || CREDENTIAL_PATTERN.test(encoded)) throw new TypeError('snapshot is unsafe');
-  const diffIdentity = readDiffIdentity(review.diff, snapshotSha256, review.exactReplay);
+  const diffIdentity = admitProjectAttachmentReviewDiff(review.diff, snapshotSha256, review.exactReplay);
   const decisionFingerprint = JSON.stringify({
     proposalId: review.proposalId,
     proposalSemanticFingerprint: review.proposalSemanticFingerprint,
@@ -485,22 +490,94 @@ function readReview(payload, expected) {
     exactReplay: review.exactReplay,
     snapshotSha256,
     snapshot: JSON.parse(encoded),
+    diffIdentity,
     decisionFingerprint,
   });
 }
 
-function readDiffIdentity(value, snapshotSha256, exactReplay) {
-  if (value === null) {
-    if (exactReplay) return null;
-    return null;
-  }
+export function admitProjectAttachmentReviewDiff(value, snapshotSha256, exactReplay = false) {
+  if (value === null) return null;
   const diff = record(value);
   const from = exactSha(diff.from);
   const to = exactSha(diff.to);
-  if (to !== snapshotSha256 || typeof diff.widensAuthority !== 'boolean') {
+  if (to !== exactSha(snapshotSha256) || typeof diff.widensAuthority !== 'boolean') {
     throw new TypeError('review diff mismatch');
   }
-  return Object.freeze({ from, to, widensAuthority: diff.widensAuthority });
+  if (!Array.isArray(diff.changes) || diff.changes.length > MAX_DIFF_CHANGES) {
+    throw new TypeError('review diff changes are invalid');
+  }
+  const changes = [];
+  const fields = new Set();
+  for (let index = 0; index < diff.changes.length; index += 1) {
+    if (!(index in diff.changes)) throw new TypeError('review diff changes are invalid');
+    const change = record(diff.changes[index]);
+    const field = exactDiffField(change.field);
+    const kind = change.kind;
+    const authorityEffect = change.authorityEffect;
+    if (!DIFF_KINDS.has(kind) || !DIFF_AUTHORITY_EFFECTS.has(authorityEffect) || fields.has(field)) {
+      throw new TypeError('review diff change is invalid');
+    }
+    fields.add(field);
+    changes.push(Object.freeze({ field, kind, authorityEffect }));
+  }
+  if (changes.some((change) => change.authorityEffect === 'widens') !== diff.widensAuthority) {
+    throw new TypeError('review diff authority summary is invalid');
+  }
+  if (exactReplay && changes.length > 0) throw new TypeError('review replay diff is invalid');
+  return Object.freeze({
+    from,
+    to,
+    widensAuthority: diff.widensAuthority,
+    changes: Object.freeze(changes),
+  });
+}
+
+function renderReviewedChanges(diffIdentity, exactReplay) {
+  const section = document.createElement('section');
+  section.className = 'project-attachment-review-changes';
+  const heading = document.createElement('h6');
+  heading.textContent = 'Reviewed changes';
+  section.append(heading);
+  if (diffIdentity === null) {
+    section.append(message(
+      exactReplay
+        ? 'No attachment fields changed in this exact replay.'
+        : 'This is the first accepted attachment, so there is no prior attachment diff.',
+    ));
+    return section;
+  }
+  if (diffIdentity.changes.length === 0) {
+    section.append(message('No attachment fields changed.'));
+    return section;
+  }
+  const list = document.createElement('ul');
+  for (const change of diffIdentity.changes) {
+    const item = document.createElement('li');
+    const field = document.createElement('code');
+    field.textContent = change.field;
+    const summary = document.createElement('span');
+    summary.textContent = ` ${change.kind} · ${authorityEffectLabel(change.authorityEffect)}`;
+    item.append(field, summary);
+    list.append(item);
+  }
+  section.append(list);
+  return section;
+}
+
+function authorityEffectLabel(value) {
+  if (value === 'widens') return 'widens authority';
+  if (value === 'narrows') return 'narrows authority';
+  return 'neutral authority effect';
+}
+
+function exactDiffField(value) {
+  if (
+    typeof value !== 'string'
+    || value.length < 1
+    || value.length > 80
+    || !DIFF_FIELD_PATTERN.test(value)
+  ) throw new TypeError('review diff field is invalid');
+  return value;
 }
 
 function readAcceptedAttachment(payload, expected) {
