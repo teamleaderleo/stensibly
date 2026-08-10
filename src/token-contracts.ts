@@ -24,6 +24,8 @@ export interface TokenPrincipal extends AuthorizationPrincipal {
   tokenId: string;
   /** Stable authorization identity when the presented credential rotates. */
   authorizationId?: string;
+  /** Hosted account identity admitted from a verified OAuth access token only. */
+  oauthAccountId?: string;
 }
 
 export function principalAuthorizationId(principal: TokenPrincipal): string {
