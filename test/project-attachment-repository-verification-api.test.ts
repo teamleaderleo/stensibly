@@ -82,6 +82,29 @@ describe("project attachment repository verification API", () => {
     expect(Buffer.from(source, "utf8").toString("base64")).toBe(calls.contentBase64);
   });
 
+  test("uses the accepted source path and canonical newline normalization", async () => {
+    const sourcePath = ".stensibly/STENSIBLY.md";
+    const canonicalSource = renderProjectContract(contract, context);
+    const crlfSource = canonicalSource.replace(/\n/g, "\r\n");
+    const { app, calls, attachment } = await fixture(crlfSource, sourcePath);
+
+    const response = await verify(app, "admin");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      verification: {
+        sourcePath,
+        sourceContentSha256: attachment.snapshot.source.contentSha256,
+        attachment: { snapshotSha256: attachment.snapshot.snapshotSha256 },
+        verified: true,
+      },
+    });
+    expect(calls.delegated).toHaveLength(1);
+    expect(calls.delegated[0]).toMatchObject({
+      tool: "fetch_file",
+      arguments: { path: sourcePath, ref: commitSha },
+    });
+  });
+
   test("keeps repository-ready incomplete when immutable bytes differ", async () => {
     const { app, calls } = await fixture("# changed source\n");
     const response = await verify(app, "admin");
@@ -110,12 +133,15 @@ describe("project attachment repository verification API", () => {
   });
 });
 
-async function fixture(fileOverride?: string) {
+async function fixture(
+  fileOverride?: string,
+  sourcePath = "STENSIBLY.md",
+) {
   const store = new StensiblyStore(":memory:");
   stores.push(store);
   const ledger = new SqliteWorkLedger(store);
   const source = renderProjectContract(contract, context);
-  const snapshot = compileProjectContract(source);
+  const snapshot = compileProjectContract(source, sourcePath);
   const accepted = await ledger.acceptProjectAttachment({
     project,
     snapshot,
@@ -182,7 +208,7 @@ async function fixture(fileOverride?: string) {
         resultSha256: `sha256:${"d".repeat(64)}`,
         result: {
           repositoryFullName,
-          path: "STENSIBLY.md",
+          path: sourcePath,
           ref: commitSha,
           blobSha: "e".repeat(40),
           size: Buffer.byteLength(fileOverride ?? source, "utf8"),
