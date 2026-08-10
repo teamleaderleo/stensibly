@@ -9,6 +9,10 @@ import {
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 import type { ProjectAttachmentSetupContext } from "./project-attachment-setup-plan.js";
+import type {
+  ProjectRepositorySetupObservationLedger,
+  ProjectRepositorySetupObservationRecord,
+} from "./project-repository-setup-observation.js";
 import { projectSetupStatusWithRepository } from "./setup-status-repository.js";
 import type { SetupStatusInput } from "./setup-status.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
@@ -33,6 +37,7 @@ export function createProjectSetupStatusApi(
   ledger: WorkLedger,
   authOptions: HttpAuthOptions,
   observer: ProjectSetupStatusObserver,
+  repositorySetupObservations?: ProjectRepositorySetupObservationLedger | null,
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
   const route = "/projects/:project/setup-status";
@@ -68,6 +73,19 @@ export function createProjectSetupStatusApi(
       }, 502);
     }
 
+    let repositorySetupObservation: ProjectRepositorySetupObservationRecord | null = null;
+    if (!attachment && repositorySetupObservations) {
+      try {
+        repositorySetupObservation = await repositorySetupObservations
+          .getProjectRepositorySetupObservation(project);
+      } catch {
+        return context.json({
+          error: "Repository setup observation failed",
+          code: "repository_setup_observation_failed",
+        }, 502);
+      }
+    }
+
     let observation: ProjectSetupStatusObservation;
     try {
       observation = await observer.observe({
@@ -90,6 +108,7 @@ export function createProjectSetupStatusApi(
         project,
         attachment,
         repositorySetup: observation.repositorySetup,
+        repositorySetupObservation,
       });
       return context.json({ setupStatus });
     } catch {
