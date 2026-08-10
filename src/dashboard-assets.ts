@@ -31,6 +31,7 @@ export const dashboardAssets: readonly DashboardAssetExpectation[] = [
   { path: "/project-setup-status-entry.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installProjectSetupStatusCard" },
   { path: "/project-setup-status.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "readProjectSetupStatus" },
   { path: "/project-attachment-review-entry.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installProjectAttachmentReviewAction" },
+  { path: "/project-attachment-repository-verification-entry.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "installProjectAttachmentRepositoryVerification" },
   { path: "/item-claim.css", kind: "css", contentTypes: cssContentTypes, marker: ".detail-claim" },
   { path: "/item-claim.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "validateClaimInput" },
   { path: "/item-detail-controller.js", kind: "javascript", contentTypes: javascriptContentTypes, marker: "activityThreadSection" },
