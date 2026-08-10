@@ -122,11 +122,23 @@ describe("project attachment review", () => {
     });
     expect(review.exactReplay).toBe(false);
     expect(review.requiresAuthorityWidening).toBe(true);
-    expect(review.diff).toMatchObject({
-      repositoriesAdded: ["teamleaderleo/stensibly"],
-      autonomousActionsAdded: ["provider_write"],
-      widensAuthority: true,
-    });
+    expect(review.diff).toMatchObject({ widensAuthority: true });
+    expect(review.diff?.changes).toEqual(expect.arrayContaining([
+      {
+        field: "repositories",
+        kind: "added",
+        before: null,
+        after: "teamleaderleo/stensibly",
+        authorityEffect: "widens",
+      },
+      {
+        field: "autonomousActions",
+        kind: "added",
+        before: null,
+        after: "provider_write",
+        authorityEffect: "widens",
+      },
+    ]));
   });
 
   test("rejects project and saved-repository mismatches before preview", () => {
