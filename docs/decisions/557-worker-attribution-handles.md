@@ -9,119 +9,84 @@
 
 ## In simple words / purpose
 
-A worker should establish stable attribution once, during durable enrolment, instead of
-asking the language model to reconstruct its callsign, callsign lease generation,
-worker session, and run metadata on every publication.
+A worker should establish stable attribution once during durable enrolment. Routine
+publication should not ask the language model to reconstruct its callsign, callsign
+lease generation, worker session, and run metadata every time.
 
-Remote MCP clients should carry one opaque server-minted worker reference between
-calls. Embedded runner adapters may inject the same accepted worker record through
-runtime-local context. Both routes resolve one canonical Stensibly record before
-rendering publication attribution.
+Remote MCP clients should carry one opaque server-minted worker reference. Embedded
+runner adapters may inject the same accepted worker record through runtime-local
+context. Both routes resolve one canonical Stensibly record before rendering
+attribution.
 
-The current explicit `signoff` object on `github_add_issue_comment` remains the safe
-migration and recovery path until the durable worker-reference route exists.
+The explicit `signoff` object added to `github_add_issue_comment` in #1444 remains the
+migration and recovery path until durable worker-reference resolution exists.
 
 ## Context and evidence
 
-### Repository observations
+PR #1444 closed a real publication defect: substantive comments through the shared
+GitHub App could arrive as `stensibly-dogfood[bot]` with no worker callsign. The repair
+requires typed signoff and renders the canonical footer server-side before provider
+dispatch. That is a good fail-closed boundary, while its repeated `callsign` and `runId`
+inputs are not the desired steady-state authoring experience.
 
-PR #1444 closed a demonstrated publication-boundary defect: substantive comments
-published through the shared GitHub App could arrive as `stensibly-dogfood[bot]`
-without any worker callsign. The repair requires typed worker signoff metadata and
-renders the canonical footer server-side before provider dispatch. An otherwise valid
-unsigned call now fails before the GitHub write.
+The repository already separates the relevant concepts:
 
-That guard is intentionally stricter than the desired steady-state authoring
-experience. Its public tool input asks the language model to supply stable facts such
-as `callsign` and `runId` again for every issue comment. Those facts already belong to
-the worker lifecycle domain.
+- `src/worker-enrolment.ts` carries `workerSessionId` and optional callsign in a replayable
+  enrolment request;
+- `src/worker-signoff.ts` renders descriptive provenance without granting authority;
+- #450 binds callsign leases to exact worker-session and run identities;
+- #557 owns the hosted callsign/enrolment/dispatch join;
+- #270 treats chats as disposable and worker/run state as durable product state.
 
-The repository has the right precursor concepts but not their hosted join yet:
+Repository search on 2026-08-10 found no hosted worker-enrolment or callsign-lease
+persistence behind those pure contracts yet. That absence is an implementation fence:
+do not shorten the public tool by inventing process-local state that would become a
+second source of truth.
 
-- `src/worker-enrolment.ts` binds an ephemeral `workerSessionId` and optional callsign
-  in a replayable enrolment request;
-- `src/worker-signoff.ts` renders callsign, accepted lease generation, run, work, and
-  other descriptive provenance without granting authority;
-- #450 defines callsign leases around exact worker-session and run identities;
-- #557 owns the hosted join between callsign leasing, worker enrolment, and supervisor
-  dispatch;
-- #270 treats chats as disposable and durable worker/run identity as product state.
+### Research and protocol references
 
-### External research and protocol evidence
+These sources inform the division of labour; none specifies Stensibly's exact design.
 
-The following sources inform this decision. They are evidence for the division of
-labour, not claims that any paper or SDK specifies Stensibly's exact design.
+- **OpenAI Agents SDK — context management**  
+  https://openai.github.io/openai-agents-python/context/  
+  Local `RunContextWrapper` data is available to tools and hooks without being sent to
+  the LLM. Embedded runtimes can therefore carry stable worker metadata outside
+  repeated model-authored arguments.
 
-1. **OpenAI Agents SDK — context management**  
-   https://openai.github.io/openai-agents-python/context/  
-   The SDK distinguishes local run context from LLM-visible context. Application data
-   and dependencies can be passed to tools through `RunContextWrapper` without sending
-   that local context to the model. This is a direct fit for stable worker metadata in
-   an embedded runtime.
+- **MCP SEP-2567 — Sessionless MCP via Explicit State Handles**  
+  https://modelcontextprotocol.io/seps/2567-sessionless-mcp  
+  This Final standards-track SEP removes protocol sessions and `Mcp-Session-Id` after
+  deployed hosts gave sessions incompatible lifetimes. Stateful applications are
+  directed toward explicit server-minted handles. Authenticated servers should validate
+  `(handle, auth_context)` on every call and keep handles opaque.
 
-2. **MCP SEP-2567 — Sessionless MCP via Explicit State Handles**  
-   https://modelcontextprotocol.io/seps/2567-sessionless-mcp  
-   The final standards-track SEP removes protocol-level sessions and
-   `Mcp-Session-Id`. It records that deployed hosts assigned incompatible session
-   lifetimes, including per-tool-call behaviour, and recommends explicit server-minted
-   handles for application state that must survive across calls. It also recommends
-   opaque handles and validation of `(handle, auth_context)` on every authenticated
-   call.
+- **MCP 2026-07-28 specification release**  
+  https://blog.modelcontextprotocol.io/posts/2026-07-28/  
+  The released protocol is sessionless and recommends a tool-returned handle carried as
+  an ordinary argument across later calls.
 
-3. **MCP 2026-07-28 specification release**  
-   https://blog.modelcontextprotocol.io/posts/2026-07-28/  
-   The released protocol is sessionless. Its guidance says stateful applications can
-   mint an explicit handle from a tool and have the model pass that ordinary argument
-   on later calls; the protocol no longer supplies hidden transport session state for
-   this purpose.
+- **Lost in the Middle** — https://arxiv.org/abs/2307.03172  
+  Long-context use is position-sensitive, so a startup instruction is a weak place to
+  keep recurring clerical state.
 
-4. **Lost in the Middle: How Language Models Use Long Contexts**  
-   https://arxiv.org/abs/2307.03172  
-   The study finds strong position sensitivity in long-context retrieval, with relevant
-   information in the middle often used less reliably than information near the
-   beginning or end. A startup instruction to remember clerical attribution forever is
-   therefore weaker evidence than typed runtime state.
+- **ComplexFuncBench** — https://arxiv.org/abs/2501.10132  
+  Multi-step constrained function calling with long parameter filling remains difficult;
+  repeated non-semantic parameters should justify their cost.
 
-5. **ComplexFuncBench: Exploring Multi-Step and Constrained Function Calling under
-   Long-Context Scenario**  
-   https://arxiv.org/abs/2501.10132  
-   The benchmark exercises multi-step constrained calls, long parameter filling, and
-   parameter reasoning, and reports substantial deficiencies in then-current
-   state-of-the-art models. Repeated non-semantic parameter filling should earn its
-   place in the model-facing contract.
+- **Toolformer** — https://arxiv.org/abs/2302.04761 and **ReAct** —
+  https://arxiv.org/abs/2210.03629  
+  Both support a useful general split: the model chooses semantically meaningful actions
+  while external tools/environments perform deterministic work they can own exactly.
 
-6. **Toolformer: Language Models Can Teach Themselves to Use Tools**  
-   https://arxiv.org/abs/2302.04761  
-   Toolformer frames tool use around the model choosing when and how to invoke simple
-   external APIs. It supports the broader product principle here: let the model make
-   semantic choices while deterministic software performs bookkeeping it can own
-   exactly.
-
-7. **ReAct: Synergizing Reasoning and Acting in Language Models**  
-   https://arxiv.org/abs/2210.03629  
-   ReAct demonstrates useful interleaving of model reasoning with environment actions.
-   Stensibly should make those actions concise and semantically meaningful rather than
-   repeatedly asking the model to restate stable local identity facts.
-
-### Inference from the evidence
-
-Stable worker attribution is application state. The language model may make the
-meaningful naming choice once, but persistence, lease generation, run binding,
-authority checks, and Markdown rendering are deterministic software responsibilities.
-
-The same conclusion has two different ergonomic implementations because the execution
-surfaces differ:
-
-- an embedded runner can inject local context directly into tool implementations;
-- a remote MCP client needs one explicit durable reference because current MCP is
-  intentionally sessionless.
+The resulting inference is simple: choosing a callsign can be a language-model task;
+persisting it, binding its lease generation and run, checking authority, and formatting
+a footer are software tasks.
 
 ## Decision
 
-### One canonical worker attribution record
+### Canonical worker attribution record
 
-Durable worker enrolment owns the canonical attribution record. It should retain or
-resolve at least:
+Durable worker enrolment owns one canonical attribution record that can resolve:
 
 ```text
 worker enrolment ID
@@ -129,246 +94,126 @@ worker session ID
 current run ID when applicable
 callsign
 accepted callsign lease generation when applicable
-callsign lease ID / lifecycle evidence
-project or approved portfolio scope
-lifecycle status and expiry
+callsign lease lifecycle evidence
+project / approved portfolio scope
+worker lifecycle status and expiry
 ```
 
-The exact storage schema remains #557's implementation concern. Callsign and display
-metadata remain descriptive. They do not become the actor, claim, capability, approval,
-repository permission, or provider credential.
+This record is descriptive provenance. It does not replace actor identity, claims,
+capability grants, approval, repository permissions, or provider credentials.
 
-### Remote MCP: explicit worker reference
+### Remote MCP uses an explicit worker reference
 
 A successful durable `enrol_worker` operation will return one opaque server-minted
-worker reference. `workerRef` is the working contract name; an implementation may
-choose an equivalent final name before public release if it is materially clearer.
+worker reference. `workerRef` is the working name; #1449 may choose an equivalent final
+name before public release if it is materially clearer.
 
-Later tools that need worker attribution should accept that one reference instead of
-requiring the model to repeat stable callsign/session/run fields.
+Later tools that need worker attribution should take that reference instead of repeated
+stable callsign/session/run fields. On every use, the server must:
 
-On every use, the server must:
+1. resolve the bounded opaque reference from durable state;
+2. validate it with the independently authenticated principal and project scope;
+3. validate current worker lifecycle and any operation-specific run/lease fence;
+4. derive only provenance proved by the accepted record;
+5. render attribution through the canonical signoff renderer;
+6. dispatch the provider effect only after those checks pass.
 
-1. admit the worker reference as bounded opaque input;
-2. resolve it from durable state;
-3. validate it against the independently authenticated principal and project scope;
-4. validate current worker/enrolment lifecycle state and any operation-specific run or
-   lease fence;
-5. derive only provenance facts proved by the accepted record;
-6. render attribution with the canonical signoff renderer;
-7. dispatch the provider effect only after those checks pass.
+Possession of `workerRef` grants no authority. Models and clients must not parse or
+manufacture it.
 
-Possession of `workerRef` is not authorization. It is a resource identifier that is
-meaningful only together with current authenticated and durable state.
+### Embedded runners use runtime-local context
 
-The reference should be opaque rather than encoding callsign, project, principal, run,
-or lease generation. Models and clients must not be encouraged to parse or manufacture
-one.
+When Stensibly hosts the agent runtime directly, an adapter may inject the same accepted
+worker record through runtime-local context. Stable attribution then stays out of
+routine model-generated tool arguments entirely. The OpenAI Agents SDK
+`RunContextWrapper` is one concrete mechanism; other adapters may use equivalent local
+context while preserving the same canonical Stensibly record and checks.
 
-### Embedded runners: runtime-local attribution context
+### Keep dynamic publication meaning explicit
 
-When Stensibly directly hosts an agent runtime, the adapter may inject the same accepted
-worker attribution record through runtime-local context available to tool
-implementations. Stable attribution does not need to appear in every model-generated
-tool argument merely because the remote MCP path uses a reference.
-
-The OpenAI Agents SDK is one concrete host where local `RunContextWrapper` context can
-carry this kind of application data without putting it in LLM-visible context. Other
-adapters may use their own equivalent injection mechanism while preserving the same
-canonical Stensibly record and validation rules.
-
-### Keep semantic and dynamic publication facts visible
-
-Only stable lifecycle facts move behind the reference/context boundary. Facts that are
-specific to one publication remain explicit unless canonical state proves them safely.
-Examples include:
-
-- current intention when it adds useful context;
-- a work address that differs from the current bound item;
-- an exact reviewed revision;
-- explicit succession or handoff wording.
-
-This keeps the model responsible for meaning while software owns repetition.
+Only stable lifecycle facts move behind the reference/context boundary. Publication-
+specific facts remain explicit when canonical state cannot prove them, including an
+intention, non-default work address, exact reviewed revision, or explicit succession
+wording.
 
 ### No hidden MCP transport session
 
-Stensibly will not use `Mcp-Session-Id`, connection identity, Worker process affinity,
-or another hidden per-connection map as the worker attribution key. MCP 2026-07-28
-removed that protocol abstraction, and the deployed-host evidence in SEP-2567 makes its
-lifetime unsuitable for worker identity.
+Stensibly will not use `Mcp-Session-Id`, connection identity, process affinity, or a
+hidden per-connection map as the worker attribution key. MCP 2026-07-28 intentionally
+removed that abstraction; remote continuity belongs in durable application state with
+an explicit reference.
 
-### Migration from explicit signoff
+### Migration
 
-PR #1444 remains unchanged until a real durable worker/enrolment lookup is available.
-There will be no temporary process-local worker-reference registry merely to shorten the
-current tool schema.
-
-During rollout:
-
-1. explicit `signoff` remains accepted and server-rendered;
-2. the worker-reference path is added only when it can resolve durable canonical state;
-3. dogfood compares both paths;
-4. explicit signoff remains a recovery/debug path until reconnect, expiry, reuse, and
-   stale-reference behaviour are proven;
-5. later deprecation requires a separate compatibility decision if the public tool
-   contract would remove explicit signoff.
-
-## Rationale
-
-The model should spend tool-call attention on the intended target and semantic payload.
-Callsign text, lease generation, worker-session ID, and run identity are stable
-bookkeeping after enrolment. Asking for them repeatedly creates additional token use,
-validation opportunities, and chances for stale or mismatched provenance without adding
-new intent.
-
-A single durable reference is the smallest remote-MCP compromise. It still asks the
-model to carry one identifier, but that identifier points to server-owned state and
-survives connection boundaries. This follows the current MCP application-state pattern
-rather than building against host-specific connection behaviour.
-
-Embedded runtimes can do better because the host owns both sides of the tool boundary.
-There, local context can remove even the reference from routine model-authored
-arguments while keeping the exact same server-side record and checks.
+Keep #1444 unchanged until real hosted worker/enrolment lookup exists. Do not create a
+temporary process-local worker-reference registry just to shorten the current schema.
+During rollout, explicit `signoff` remains the fallback while the worker-reference path
+is tested across reconnect, expiry, callsign reuse, and stale/foreign references.
+Removing explicit signoff later would require its own compatibility decision.
 
 ## Alternatives considered
 
-### Require the full signoff object forever
-
-- **Why it was plausible:** typed, inspectable, already deployed, and fails closed when
-  attribution is omitted.
-- **Why declined as the steady state:** it repeatedly asks the model to restate stable
-  application state and can still accept internally inconsistent freehand values unless
-  a separate canonical lookup verifies them.
-- **Revisit if:** durable worker enrolment is abandoned entirely.
-
-### Bind attribution to an MCP transport session
-
-- **Why it was plausible:** extremely small tool inputs and familiar web-session
-  ergonomics.
-- **Why declined:** MCP 2026-07-28 intentionally removed protocol sessions after
-  inconsistent host lifetimes made them unreliable for application state.
-- **Revisit if:** a future protocol introduces a new explicit durable worker identity
-  primitive with semantics stronger than the removed transport session.
-
-### Infer the worker from OAuth client, GitHub App, or shared account identity
-
-- **Why it was plausible:** these identities are already authenticated or visible at
-  the provider boundary.
-- **Why declined:** one transport or account can represent several concurrent or
-  successive workers. The original unsigned-bot defect is direct dogfood evidence of
-  this distinction.
-- **Revisit if:** a deployment proves one authenticated principal is permanently and
-  exclusively bound to one worker, which is outside Stensibly's current many-agent
-  model.
-
-### Add a temporary standalone attribution registry before hosted enrolment
-
-- **Why it was plausible:** it could shorten the comment tool sooner.
-- **Why declined:** it would duplicate worker lifecycle state, create another expiry and
-  authorization boundary, and risk becoming a second source of truth. #557 already
-  owns the durable join.
-- **Revisit if:** the hosted enrolment programme is blocked long enough that a bounded,
-  explicitly disposable bridge has measurable product value.
+- **Full signoff forever:** safe and already deployed, but repeatedly restates stable
+  application state and can drift from canonical lifecycle facts.
+- **Hidden MCP session:** compact, but rejected because current MCP deliberately removed
+  protocol sessions after inconsistent host lifetimes.
+- **Infer from OAuth/GitHub App/shared account:** rejected because one transport identity
+  can represent several concurrent or successive workers; #490/#1444 demonstrated this
+  distinction directly.
+- **Temporary standalone attribution registry:** rejected for now because it duplicates
+  worker lifecycle, expiry, and authorization state that #557 is meant to own.
 
 ## Consequences
 
-### Benefits
+Benefits are fewer clerical model arguments, server-derived callsign generation/run
+provenance, reconnect behavior independent of transport lifetime, and one attribution
+source usable by GitHub footers, handoffs, activity views, and embedded runners.
 
-- routine publication carries less repeated model-authored metadata;
-- canonical callsign generation and run provenance come from server-owned state;
-- reconnect and new-request behaviour no longer depends on transport session lifetime;
-- embedded runners can remove stable attribution from model-visible tool arguments
-  entirely;
-- one worker lifecycle record can feed GitHub footers, activity views, handoffs, and
-  later provider surfaces consistently;
-- callsign remains pleasant display metadata without becoming a security identity.
+The main costs are one reference that remote MCP models still need to carry, a required
+durable enrolment lookup before implementation, and a later public-tool migration.
+Context compaction can also lose the reference, so the hosted design needs an
+authenticated recovery/read path rather than asking the model to guess.
 
-### Costs and accepted imperfections
-
-- remote MCP still requires the model to preserve one worker reference across calls;
-- durable worker/enrolment persistence and lookup must exist before publication can use
-  the reference safely;
-- the public ChatGPT tool contract will need another deliberate migration after that
-  prerequisite lands;
-- client context compaction can lose a worker reference, so recovery/discovery needs a
-  clear path rather than assuming perfect model memory;
-- dynamic per-publication facts still need explicit inputs when canonical state cannot
-  prove them.
-
-### Risks and mitigations
-
-- **Foreign or leaked reference:** validate reference plus authenticated principal and
-  project on every call; never treat possession as authority.
-- **Expired worker:** return a typed expiry/stale error with an enrolment recovery path.
-- **Wrong callsign generation after reuse:** derive generation only from the accepted
-  lease attached to the resolved worker record.
-- **Reference lost during compaction:** provide a bounded authenticated way to recover
-  current enrolment/reference state; do not encourage the model to guess a handle.
-- **Duplicate sources of truth during migration:** explicit signoff remains a fallback,
-  while the worker-reference path derives stable facts only from durable enrolment.
-- **Premature public schema churn:** keep #1444's current schema until the durable lookup
-  prerequisite is real and tested.
+Key safety rules remain: validate reference plus auth/project every call, return typed
+stale/expiry errors, derive callsign generation only from the accepted lease, and never
+let callsign or worker-reference possession satisfy an authority check.
 
 ## Validation
 
-### Evidence already available
-
-- #1444 proves the server can render canonical signoff before GitHub provider dispatch
-  and can reject missing attribution before an effect.
-- `worker-enrolment.ts`, #450, and #557 already separate worker/session/run/callsign
-  lifecycle from authority.
-- the current MCP HTTP implementation is already stateless per request, which is
-  compatible with explicit durable handles.
-
-### Experiment
-
 Compare three dogfood paths where the host permits them:
 
-- **A — explicit signoff:** current `callsign + runId + optional provenance` input;
-- **B — remote worker reference:** one `workerRef`, server-resolved stable attribution;
-- **C — embedded local context:** no routine model-authored stable attribution fields.
+- **A:** current explicit signoff;
+- **B:** remote `workerRef` with server-resolved stable attribution;
+- **C:** embedded local context with no routine model-authored stable attribution.
 
-Measure:
+Measure tool-input validation failures, attribution omissions/mismatches, repeated
+stable-attribution tokens, retries caused by clerical errors, human corrections,
+provider-effect success, reconnect/resume behavior, and recovery from stale or lost
+references.
 
-- tool-input validation failures;
-- omitted, stale, or mismatched attribution;
-- repeated stable-attribution characters/tokens per provider effect;
-- retries caused by clerical parameter errors;
-- human correction rate;
-- successful attribution across reconnect/resume;
-- task completion and provider-effect success;
-- recovery quality after an expired or lost reference.
+Acceptance means a worker enrols once, publishes repeatedly with the correct canonical
+footer, survives remote request/reconnect boundaries without transport-session state,
+and reuses a historical callsign only with the correct fresh lease generation and run.
+A foreign or stale reference must fail before provider dispatch.
 
-### Acceptance signal
-
-A worker can enrol once, publish repeatedly with the correct canonical callsign footer,
-reconnect or resume without transport-session dependence, and reuse a historical
-callsign only with the correct fresh lease generation and exact run provenance.
-
-### Failure signal
-
-The worker-reference path increases recovery burden enough to outweigh the removed
-metadata, allows a foreign/stale reference to reach provider dispatch, loses canonical
-attribution across reconnect, or causes the callsign/reference to become an implicit
-authority credential.
+Failure means the reference increases recovery burden enough to outweigh removed
+metadata, permits stale/foreign state to reach a provider, loses canonical provenance
+across reconnect, or starts functioning as an implicit authority credential.
 
 ## Recovery and supersession
 
 The explicit #1444 signoff path is the immediate recovery route. If worker-reference
-resolution proves unreliable, stop advertising that path and retain server-rendered
-explicit signoff while fixing #557. No provider data migration is required merely to
-return to explicit signoff.
+resolution is unreliable, stop advertising that path and retain explicit server-rendered
+signoff while fixing #557; no provider-data migration is required to return to it.
 
-A future design may supersede this record if Stensibly gains a stronger durable worker
-identity primitive that works consistently across remote MCP and embedded runtimes.
-Keep that identity separate from authority and link the superseding decision in both
-records.
+A later durable worker-identity primitive may supersede this record if it works cleanly
+across remote MCP and embedded runtimes while staying separate from authority.
 
 ## History
 
-- 2026-08-10 — accepted: use durable explicit worker references for remote MCP and
-  runtime-local context for embedded runners; retain explicit signoff as migration and
-  recovery guard. Implementation lane opened as #1449.
+- 2026-08-10 — accepted: remote MCP uses a durable explicit worker reference; embedded
+  runners may use runtime-local context; explicit signoff remains the migration and
+  recovery guard. Implementation lane: #1449.
 
 — Kite · dogfood
   Intention: let workers choose identity once and let software carry the bookkeeping
