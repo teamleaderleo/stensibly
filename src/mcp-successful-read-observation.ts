@@ -77,9 +77,11 @@ export function isSuccessfulMcpToolResult(value: unknown): boolean {
   if (
     !content
     || !("value" in content)
-    || !content.enumerable
+    || content.enumerable !== true
     || !Array.isArray(content.value)
   ) return false;
   if (isError === undefined) return true;
-  return "value" in isError && isError.enumerable && isError.value === false;
+  return "value" in isError
+    && isError.enumerable === true
+    && isError.value === false;
 }
