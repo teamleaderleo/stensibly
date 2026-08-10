@@ -15,6 +15,7 @@ import {
 } from "./mcp-capability-policy.js";
 import type { McpRequestContext } from "./mcp-context.js";
 import { mcpToolManifestForLedger } from "./mcp-diagnostics.js";
+import { withSuccessfulMcpReadObservation } from "./mcp-successful-read-observation.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
 import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
@@ -81,7 +82,10 @@ function configureMcpServer(
   context: McpRequestContext,
 ): McpServer {
   const registration = createMcpCapabilityRegistrationGuard(rawServer);
-  const server = registration.server;
+  const server = withSuccessfulMcpReadObservation(
+    registration.server,
+    context.onSuccessfulReadToolCall,
+  );
 
   server.registerTool(
     "get_brief",
