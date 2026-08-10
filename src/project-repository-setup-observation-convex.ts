@@ -49,16 +49,7 @@ export class ConvexProjectRepositorySetupObservationLedger
   async recordProjectRepositorySetupObservation(
     input: RecordProjectRepositorySetupObservationInput,
   ): Promise<ProjectRepositorySetupObservationResult> {
-    const current = await this.getProjectRepositorySetupObservation(input.project);
-    const prepared = prepareProjectRepositorySetupObservation(current, input);
-    if (prepared.replay) {
-      return {
-        observation: prepared.replay,
-        replayed: true,
-        replacedObservationId: null,
-      };
-    }
-
+    const prepared = prepareProjectRepositorySetupObservation(null, input);
     const raw = await this.#client.mutation(recordRef, this.#args({
       project: prepared.project,
       repositoryFullName: prepared.repositoryFullName,
@@ -68,16 +59,15 @@ export class ConvexProjectRepositorySetupObservationLedger
     }));
     const response = exactResponse(raw);
     const observation = admitObservation(response.observation, prepared.project);
-    if (
-      response.replayed
-      || observation.semanticFingerprint !== prepared.semanticFingerprint
-      || response.replacedObservationId !== current?.id
-    ) {
+    if (observation.semanticFingerprint !== prepared.semanticFingerprint) {
+      throw new Error("Hosted repository setup observation response does not match request");
+    }
+    if (response.replayed && response.replacedObservationId !== null) {
       throw new Error("Hosted repository setup observation response does not match request");
     }
     return {
       observation,
-      replayed: false,
+      replayed: response.replayed,
       replacedObservationId: response.replacedObservationId,
     };
   }
