@@ -94,7 +94,8 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain("Exact current-main check: passed before upload and promotion");
     expect(workflow).toContain("Uploaded production binding inventory: passed");
     expect(workflow).toContain("Candidate preview verification: passed before promotion");
-    expect(workflow).toContain("Legacy bearer verification: passed on both origins");
+    expect(workflow).toContain("Hosted API + MCP verification: passed on both origins");
+    expect(workflow).not.toContain("Legacy bearer verification: passed on both origins");
     expect(workflow).toContain("Public auth/OAuth verification: passed on both origins");
     expect(workflow).toContain("Record failed release and recovery state");
     expect(workflow).toContain("steps.release.outputs.recovered || 'false'");
