@@ -23,6 +23,19 @@ export interface DashboardSetupStep {
   required: boolean;
 }
 
+export interface DashboardRepositorySetupObservation {
+  version: 1;
+  id: string;
+  project: string;
+  repositoryFullName: string;
+  defaultBranch: string;
+  sourceKind: "operator_supplied" | "github_conversation_context";
+  semanticFingerprint: string;
+  observedAt: string;
+  authorizesProviderEffect: false;
+  containsSecrets: false;
+}
+
 export interface DashboardRepositoryContextRecovery {
   version: 1;
   state: "repository_context_required";
@@ -86,6 +99,7 @@ export interface DashboardProjectSetupStatus {
   optionalAttentionSteps: readonly ProjectSetupStep[];
   steps: readonly DashboardSetupStep[];
   repositoryRecovery: DashboardRepositoryRecovery;
+  repositorySetupObservation: DashboardRepositorySetupObservation | null;
   containsSecrets: false;
 }
 
