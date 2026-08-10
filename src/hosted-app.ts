@@ -31,6 +31,8 @@ import {
   type McpOAuthOptions,
 } from "./mcp-oauth.js";
 import { ConvexMcpOAuthService } from "./mcp-oauth-service.js";
+import { ConvexMcpSetupEvidenceService } from "./mcp-setup-evidence-convex.js";
+import type { McpSetupEvidenceReader } from "./mcp-setup-evidence.js";
 import {
   ConvexProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-observation-convex.js";
@@ -51,6 +53,7 @@ import {
 
 export interface HostedSetupStatusMountOptions {
   serviceOrigin: string;
+  mcpSetupEvidence?: Pick<McpSetupEvidenceReader, "getMcpSetupEvidence">;
   now?: () => number;
 }
 
@@ -82,6 +85,9 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
         serviceOrigin: options.setupStatus.serviceOrigin,
         workspaceConfigured: Boolean(options.workspace?.trim()),
         oauthConfigured: Boolean(options.mcpOAuth),
+        ...(options.setupStatus.mcpSetupEvidence
+          ? { mcpSetupEvidence: options.setupStatus.mcpSetupEvidence }
+          : {}),
         ...(options.setupStatus.now ? { now: options.setupStatus.now } : {}),
       })
     : null;
@@ -179,7 +185,14 @@ export function createHostedAppFromEnv(
     workspace: ledger.workspace,
   });
   const hostedAuth = hostedAuthFromEnv(ledger, env);
-  const mcpOAuth = mcpOAuthFromEnv(ledger, hostedAuth, env);
+  const mcpSetupEvidence = hostedAuth
+    ? new ConvexMcpSetupEvidenceService({
+        client: ledger.client,
+        serviceSecret: ledger.serviceSecret,
+        workspace: ledger.workspace,
+      })
+    : undefined;
+  const mcpOAuth = mcpOAuthFromEnv(ledger, hostedAuth, env, mcpSetupEvidence);
   const repositorySetupObservations = new ConvexProjectRepositorySetupObservationLedger({
     client: ledger.client,
     serviceSecret: ledger.serviceSecret,
@@ -199,6 +212,7 @@ export function createHostedAppFromEnv(
       ? {
           setupStatus: {
             serviceOrigin: hostedAuth.authOrigin,
+            ...(mcpOAuth && mcpSetupEvidence ? { mcpSetupEvidence } : {}),
             ...(hostedAuth.now ? { now: hostedAuth.now } : {}),
           },
         }
@@ -295,6 +309,7 @@ function mcpOAuthFromEnv(
   ledger: ConvexWorkLedger,
   hostedAuth: HostedAuthOptions | undefined,
   env: Record<string, string | undefined>,
+  setupEvidence: ConvexMcpSetupEvidenceService | undefined,
 ): McpOAuthOptions | undefined {
   const signingSecret = trimmed(env.STENSIBLY_OAUTH_SIGNING_SECRET);
   const configured = Boolean(
@@ -313,6 +328,7 @@ function mcpOAuthFromEnv(
       client: ledger.client,
       serviceSecret: ledger.serviceSecret,
       workspace: ledger.workspace,
+      ...(setupEvidence ? { setupConnectionRecorder: setupEvidence } : {}),
     }),
     accountService: hostedAuth.accountService,
     issuer,
