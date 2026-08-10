@@ -296,6 +296,8 @@ export function installProjectSetupStatusCard() {
           }
           await acceptReviewedAttachment(
             review,
+            reviewedSource,
+            proposal,
             acceptAuthorityWidening,
             project,
             connection,
@@ -309,12 +311,76 @@ export function installProjectSetupStatusCard() {
 
   async function acceptReviewedAttachment(
     review,
+    sourceText,
+    proposal,
     acceptAuthorityWidening,
     project,
     connection,
     requestId,
     result,
   ) {
+    result.replaceChildren(messageBlock('Rechecking the reviewed attachment before acceptance…', 'project-setup-status-loading'));
+    let reviewResponse;
+    try {
+      reviewResponse = await window.fetch(
+        `${connection.endpoint}/api/v1/projects/${encodeURIComponent(project)}/attachment/review`,
+        {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            source: sourceText,
+            sourceRevision: review.sourceRevision,
+          }),
+        },
+      );
+    } catch {
+      if (!current(requestId, project, connection)) return;
+      result.replaceChildren(messageBlock(
+        'The reviewed attachment could not be rechecked. Review the current source again before acceptance.',
+        'project-setup-status-error',
+      ));
+      return;
+    }
+
+    const reviewPayload = await responseJson(reviewResponse);
+    if (!current(requestId, project, connection)) return;
+    if (!reviewResponse.ok) {
+      result.replaceChildren(messageBlock(
+        'The repository proposal or attachment state changed before acceptance. Review the current source again.',
+        'project-setup-status-error',
+      ));
+      return;
+    }
+
+    let freshReview;
+    try {
+      freshReview = readProjectAttachmentReview(reviewPayload, {
+        project,
+        proposalId: proposal.id,
+        proposalSemanticFingerprint: proposal.semanticFingerprint,
+        repositoryFullName: proposal.repositoryFullName,
+        defaultBranch: proposal.defaultBranch,
+        sourceRevision: review.sourceRevision,
+      });
+    } catch {
+      result.replaceChildren(messageBlock(
+        'The repository proposal changed before acceptance. Refresh setup status and review the source again.',
+        'project-setup-status-error',
+      ));
+      return;
+    }
+    if (!sameAttachmentReviewDecision(review, freshReview)) {
+      result.replaceChildren(messageBlock(
+        'The attachment decision changed before acceptance. Review the current source and diff again.',
+        'project-setup-status-error',
+      ));
+      return;
+    }
+
     result.replaceChildren(messageBlock('Accepting the reviewed attachment…', 'project-setup-status-loading'));
     let response;
     try {
@@ -328,8 +394,8 @@ export function installProjectSetupStatusCard() {
             'content-type': 'application/json',
           },
           body: JSON.stringify({
-            snapshot: review.snapshot,
-            sourceRevision: review.sourceRevision,
+            snapshot: freshReview.snapshot,
+            sourceRevision: freshReview.sourceRevision,
             acceptAuthorityWidening,
           }),
         },
@@ -355,7 +421,7 @@ export function installProjectSetupStatusCard() {
 
     let acceptance;
     try {
-      acceptance = readProjectAttachmentAcceptance(payload, review);
+      acceptance = readProjectAttachmentAcceptance(payload, freshReview);
     } catch {
       result.replaceChildren(messageBlock(
         'Attachment acceptance returned an incompatible success response. Reread server state before continuing.',
@@ -381,7 +447,7 @@ export function installProjectSetupStatusCard() {
     } catch {
       if (!current(requestId, project, connection)) return;
       result.replaceChildren(
-        acceptanceSummary(acceptance, review),
+        acceptanceSummary(acceptance, freshReview),
         messageBlock(
           'The attachment was accepted, while the required accepted-state reread could not reach the API. Repository verification remains incomplete.',
           'project-setup-status-error',
@@ -394,7 +460,7 @@ export function installProjectSetupStatusCard() {
     if (!current(requestId, project, connection)) return;
     if (!rereadResponse.ok) {
       result.replaceChildren(
-        acceptanceSummary(acceptance, review),
+        acceptanceSummary(acceptance, freshReview),
         messageBlock(
           'The attachment was accepted, while the required accepted-state reread failed. Repository verification remains incomplete.',
           'project-setup-status-error',
@@ -405,10 +471,10 @@ export function installProjectSetupStatusCard() {
 
     let accepted;
     try {
-      accepted = readAcceptedProjectAttachment(rereadPayload, review);
+      accepted = readAcceptedProjectAttachment(rereadPayload, freshReview);
     } catch {
       result.replaceChildren(
-        acceptanceSummary(acceptance, review),
+        acceptanceSummary(acceptance, freshReview),
         messageBlock(
           'The accepted attachment reread does not match the reviewed snapshot. Repository verification remains incomplete.',
           'project-setup-status-error',
@@ -418,7 +484,7 @@ export function installProjectSetupStatusCard() {
     }
 
     result.replaceChildren(
-      acceptanceSummary(acceptance, review),
+      acceptanceSummary(acceptance, freshReview),
       fact('Reread attachment', accepted.id),
       fact('Reread snapshot', accepted.snapshotSha256),
       messageBlock(
@@ -738,6 +804,18 @@ function renderAttachmentReviewDecision(container, review, actions) {
   controls.append(cancel, accept);
   summary.append(controls);
   container.replaceChildren(summary);
+}
+
+function sameAttachmentReviewDecision(left, right) {
+  return left.proposalId === right.proposalId
+    && left.proposalSemanticFingerprint === right.proposalSemanticFingerprint
+    && left.repositoryFullName === right.repositoryFullName
+    && left.defaultBranch === right.defaultBranch
+    && left.sourceRevision === right.sourceRevision
+    && left.snapshot.snapshotSha256 === right.snapshot.snapshotSha256
+    && left.requiresAuthorityWidening === right.requiresAuthorityWidening
+    && left.exactReplay === right.exactReplay
+    && JSON.stringify(left.diff) === JSON.stringify(right.diff);
 }
 
 function acceptanceSummary(acceptance, review) {
