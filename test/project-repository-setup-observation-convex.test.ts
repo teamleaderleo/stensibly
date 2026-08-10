@@ -75,7 +75,7 @@ class SetupCaller implements ConvexCaller {
 }
 
 describe("Convex repository setup observation ledger", () => {
-  test("records, exactly replays, then visibly replaces the current proposal", async () => {
+  test("records, server-replays, then visibly replaces the current proposal", async () => {
     const client = new SetupCaller();
     const ledger = new ConvexProjectRepositorySetupObservationLedger({
       client,
@@ -100,7 +100,7 @@ describe("Convex repository setup observation ledger", () => {
       replayed: true,
       replacedObservationId: null,
     });
-    expect(client.calls.filter((call) => call.startsWith("mutation:"))).toHaveLength(1);
+    expect(client.calls.filter((call) => call.startsWith("mutation:"))).toHaveLength(2);
 
     const replacement = await ledger.recordProjectRepositorySetupObservation({
       ...base,
