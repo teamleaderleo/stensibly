@@ -15,6 +15,7 @@ const base = {
   defaultBranch: "main",
   sourceKind: "github_conversation_context" as const,
 };
+const invalidResponse = "Hosted repository setup observation response is invalid";
 
 class SetupCaller implements ConvexCaller {
   current: ReturnType<typeof createProjectRepositorySetupObservationRecord> | null = null;
@@ -126,5 +127,29 @@ describe("Convex repository setup observation ledger", () => {
     });
     await expect(ledger.recordProjectRepositorySetupObservation(base))
       .rejects.toThrow("response is invalid");
+  });
+
+  test("collapses revoked top-level query and mutation responses to one fixed error", async () => {
+    const queryClient = new SetupCaller();
+    const queryRevocable = Proxy.revocable({}, {});
+    queryRevocable.revoke();
+    queryClient.query = async (): Promise<unknown> => queryRevocable.proxy;
+    const queryLedger = new ConvexProjectRepositorySetupObservationLedger({
+      client: queryClient,
+      serviceSecret: "private-service-secret",
+    });
+    await expect(queryLedger.getProjectRepositorySetupObservation("scrapbook"))
+      .rejects.toThrow(invalidResponse);
+
+    const mutationClient = new SetupCaller();
+    const mutationRevocable = Proxy.revocable({}, {});
+    mutationRevocable.revoke();
+    mutationClient.mutation = async (): Promise<unknown> => mutationRevocable.proxy;
+    const mutationLedger = new ConvexProjectRepositorySetupObservationLedger({
+      client: mutationClient,
+      serviceSecret: "private-service-secret",
+    });
+    await expect(mutationLedger.recordProjectRepositorySetupObservation(base))
+      .rejects.toThrow(invalidResponse);
   });
 });
