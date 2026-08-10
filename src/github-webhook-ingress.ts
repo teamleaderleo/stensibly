@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import {
+  withObservedRepositoryDefaultBranch,
+} from "./github-repository-default-branch.js";
+import {
   digestGitHubWebhookPayload,
   mapGitHubRepositoryWebhook,
   type GitHubRepositoryObservation,
@@ -169,17 +172,20 @@ async function prepareRequest(
   const payloadDigest = digestGitHubWebhookPayload(body);
   let observation: GitHubRepositoryObservation | null;
   try {
-    observation = mapGitHubRepositoryWebhook({
-      eventType,
-      deliveryId,
-      payloadDigest,
-      payload: frozenPayload,
-      signatureVerified: true,
-      receivedAt,
-      ...(options.expectedRepository
-        ? { expectedRepository: options.expectedRepository }
-        : {}),
-    });
+    observation = withObservedRepositoryDefaultBranch(
+      mapGitHubRepositoryWebhook({
+        eventType,
+        deliveryId,
+        payloadDigest,
+        payload: frozenPayload,
+        signatureVerified: true,
+        receivedAt,
+        ...(options.expectedRepository
+          ? { expectedRepository: options.expectedRepository }
+          : {}),
+      }),
+      frozenPayload,
+    );
   } catch (error) {
     if (error instanceof RangeError) throw invalidPayload();
     throw error;
