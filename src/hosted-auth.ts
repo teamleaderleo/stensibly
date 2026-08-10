@@ -540,17 +540,25 @@ function providerNetworkFailureDetail(error: unknown): GitHubProviderFailureDeta
 }
 
 function providerErrorName(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "name" in error
-    && typeof (error as { name?: unknown }).name === "string"
-    ? (error as { name: string }).name
-    : undefined;
+  try {
+    return typeof error === "object" && error !== null && "name" in error
+      && typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function providerErrorMessage(error: unknown): string {
-  return typeof error === "object" && error !== null && "message" in error
-    && typeof (error as { message?: unknown }).message === "string"
-    ? (error as { message: string }).message
-    : "";
+  try {
+    return typeof error === "object" && error !== null && "message" in error
+      && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 function tokenExchangeFailureReason(value: unknown): GitHubProviderFailureReason | null {
