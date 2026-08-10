@@ -437,8 +437,11 @@ export default defineSchema({
     accountId: v.id("accounts"),
     clientExternalId: v.string(),
     resource: v.string(),
+    project: v.optional(v.union(v.string(), v.null())),
     connectedAt: v.number(),
-  }).index("by_workspace_account", ["workspaceId", "accountId"]),
+  })
+    .index("by_workspace_account", ["workspaceId", "accountId"])
+    .index("by_workspace_account_project", ["workspaceId", "accountId", "project"]),
 
   items: defineTable({
     workspaceId: v.id("workspaces"),
