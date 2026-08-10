@@ -94,7 +94,7 @@ export function createProjectSetupStatusApi(
         principalKind: principal
           ? principal.kind === "account" ? "account" : "api_token"
           : "anonymous",
-        accountId: principal?.kind === "account" ? principal.accountId : null,
+        ...(principal?.kind === "account" ? { accountId: principal.accountId } : {}),
         hasAcceptedAttachment: attachment !== null,
       });
     } catch {
