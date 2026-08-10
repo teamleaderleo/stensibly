@@ -1,6 +1,7 @@
 import type { ProjectAttachmentRecord } from "./project-attachment-ledger.js";
-import type {
-  ProjectRepositorySetupObservationRecord,
+import {
+  createProjectRepositorySetupObservationRecord,
+  type ProjectRepositorySetupObservationRecord,
 } from "./project-repository-setup-observation.js";
 import {
   compareProjectAttachments,
@@ -40,11 +41,21 @@ export function prepareProjectAttachmentReview(
   input: PrepareProjectAttachmentReviewInput,
 ): ProjectAttachmentReview {
   const project = exactProject(input.project);
-  const proposal = input.proposal;
+  const rawProposal = input.proposal;
+  const proposal = createProjectRepositorySetupObservationRecord({
+    id: rawProposal.id,
+    project: rawProposal.project,
+    repositoryFullName: rawProposal.repositoryFullName,
+    defaultBranch: rawProposal.defaultBranch,
+    sourceKind: rawProposal.sourceKind,
+    semanticFingerprint: rawProposal.semanticFingerprint,
+    observedAt: rawProposal.observedAt,
+  });
   if (
-    proposal.project !== project
-    || proposal.authorizesProviderEffect !== false
-    || proposal.containsSecrets !== false
+    rawProposal.version !== 1
+    || rawProposal.authorizesProviderEffect !== false
+    || rawProposal.containsSecrets !== false
+    || proposal.project !== project
   ) {
     throw new RangeError("Repository setup proposal does not match the selected project");
   }
