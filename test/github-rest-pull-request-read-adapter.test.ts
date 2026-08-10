@@ -199,7 +199,7 @@ describe("native GitHub delegated pull request reads", () => {
     }
   });
 
-  test("stops binding, argument, accessor, and unsupported-tool failures before activity", async () => {
+  test("stops binding, invalid argument, accessor, and unsupported-tool failures while discarding unrelated arguments", async () => {
     const tokenProvider = new RecordingTokenProvider();
     let providerCalls = 0;
     const adapter = createAdapter(tokenProvider, async () => {
@@ -214,10 +214,17 @@ describe("native GitHub delegated pull request reads", () => {
     await expect(adapter.callReadTool(callInput("get_pr_info", {
       pr_number: 0,
     }))).rejects.toThrow("must be a positive integer");
-    await expect(adapter.callReadTool(callInput("get_pr_info", {
+    expect(tokenProvider.requests).toEqual([]);
+    expect(providerCalls).toBe(0);
+
+    const decorated = await adapter.callReadTool(callInput("get_pr_info", {
       pr_number: pullRequestNumber,
       owner: "other",
-    }))).rejects.toThrow("has an unknown field");
+    }));
+    expect(decorated.result).toMatchObject({ repositoryFullName });
+    expect(tokenProvider.requests).toHaveLength(1);
+    expect(providerCalls).toBe(1);
+
     await expect(adapter.callReadTool(callInput("get_pr_diff", {
       pr_number: pullRequestNumber,
       format: "diff",
@@ -238,8 +245,8 @@ describe("native GitHub delegated pull request reads", () => {
       .rejects.toThrow("fields must be enumerable data properties");
 
     expect(getterCalls).toBe(0);
-    expect(tokenProvider.requests).toEqual([]);
-    expect(providerCalls).toBe(0);
+    expect(tokenProvider.requests).toHaveLength(1);
+    expect(providerCalls).toBe(1);
   });
 
   test("bounds declared responses and disposes bodies without reading", async () => {
