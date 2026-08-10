@@ -468,7 +468,12 @@ function readReview(payload, expected) {
   exactSha(source.contentSha256);
   const encoded = JSON.stringify(snapshot);
   if (encoded.length > 524_288 || CREDENTIAL_PATTERN.test(encoded)) throw new TypeError('snapshot is unsafe');
-  const diffIdentity = admitProjectAttachmentReviewDiff(review.diff, snapshotSha256, review.exactReplay);
+  const diffIdentity = admitProjectAttachmentReviewDiff(
+    review.diff,
+    snapshotSha256,
+    review.exactReplay,
+    review.requiresAuthorityWidening,
+  );
   const decisionFingerprint = JSON.stringify({
     proposalId: review.proposalId,
     proposalSemanticFingerprint: review.proposalSemanticFingerprint,
@@ -495,8 +500,28 @@ function readReview(payload, expected) {
   });
 }
 
-export function admitProjectAttachmentReviewDiff(value, snapshotSha256, exactReplay = false) {
-  if (value === null) return null;
+export function admitProjectAttachmentReviewDiff(
+  value,
+  snapshotSha256,
+  exactReplay = false,
+  requiresAuthorityWidening,
+) {
+  if (
+    requiresAuthorityWidening !== undefined
+    && typeof requiresAuthorityWidening !== 'boolean'
+  ) {
+    throw new TypeError('review diff decision is inconsistent');
+  }
+  if (value === null) {
+    if (
+      requiresAuthorityWidening !== undefined
+      && requiresAuthorityWidening !== !exactReplay
+    ) {
+      throw new TypeError('review diff decision is inconsistent');
+    }
+    return null;
+  }
+  if (exactReplay) throw new TypeError('review replay diff is invalid');
   const diff = record(value);
   const from = exactSha(diff.from);
   const to = exactSha(diff.to);
@@ -523,7 +548,12 @@ export function admitProjectAttachmentReviewDiff(value, snapshotSha256, exactRep
   if (changes.some((change) => change.authorityEffect === 'widens') !== diff.widensAuthority) {
     throw new TypeError('review diff authority summary is invalid');
   }
-  if (exactReplay && changes.length > 0) throw new TypeError('review replay diff is invalid');
+  if (
+    requiresAuthorityWidening !== undefined
+    && requiresAuthorityWidening !== diff.widensAuthority
+  ) {
+    throw new TypeError('review diff decision is inconsistent');
+  }
   return Object.freeze({
     from,
     to,
