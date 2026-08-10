@@ -3,6 +3,9 @@ import {
   compileProjectContract,
   renderProjectContract,
 } from "../src/project-contract.ts";
+import {
+  SqliteProjectRepositorySetupObservationLedger,
+} from "../src/project-repository-setup-observation-sqlite.ts";
 import { createServerApp } from "../src/server-app.ts";
 import type {
   ProjectSetupStatusObserver,
@@ -175,6 +178,7 @@ describe("project setup status API", () => {
           nextAction: "provide_repository_context",
           authorizesProviderEffect: false,
         },
+        repositorySetupObservation: null,
         containsSecrets: false,
       },
     });
@@ -183,6 +187,90 @@ describe("project setup status API", () => {
       principalKind: "api_token",
       hasAcceptedAttachment: false,
     }]);
+  });
+
+  test("returns the persisted advisory repository identity before attachment", async () => {
+    const observations = new SqliteProjectRepositorySetupObservationLedger(store);
+    const recorded = await observations.recordProjectRepositorySetupObservation({
+      project: "scrapbook",
+      repositoryFullName: "teamleaderleo/scrapbook",
+      defaultBranch: "main",
+      sourceKind: "github_conversation_context",
+    });
+    const app = createServerApp(store, {
+      ledger,
+      authenticator: new FixedAuthenticator(),
+      httpAuth: { required: true },
+      setupStatusObserver: { observe: () => ({ setup: setup("missing") }) },
+    });
+    const response = await app.request("/api/v1/projects/scrapbook/setup-status", {
+      headers: bearer("reader"),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      setupStatus: {
+        repositorySetupObservation: recorded.observation,
+        repositoryRecovery: {
+          state: "repository_context_required",
+        },
+      },
+    });
+  });
+
+  test("contains advisory read failures and skips the advisory after attachment acceptance", async () => {
+    const observations = new SqliteProjectRepositorySetupObservationLedger(store);
+    await observations.recordProjectRepositorySetupObservation({
+      project: "scrapbook",
+      repositoryFullName: "teamleaderleo/scrapbook",
+      defaultBranch: "main",
+      sourceKind: "github_conversation_context",
+    });
+    store.db.query(`
+      UPDATE project_repository_setup_observations
+      SET semantic_fingerprint = ?1
+      WHERE project_id = ?2
+    `).run(`sha256:${"0".repeat(64)}`, "scrapbook");
+
+    const broken = createServerApp(store, {
+      ledger,
+      authenticator: new FixedAuthenticator(),
+      httpAuth: { required: true },
+      setupStatusObserver: { observe: () => ({ setup: setup("missing") }) },
+    });
+    const brokenResponse = await broken.request(
+      "/api/v1/projects/scrapbook/setup-status",
+      { headers: bearer("reader") },
+    );
+    expect(brokenResponse.status).toBe(502);
+    expect(await brokenResponse.json()).toEqual({
+      error: "Repository setup observation failed",
+      code: "repository_setup_observation_failed",
+    });
+
+    await ledger.acceptProjectAttachment({
+      project: "scrapbook",
+      snapshot: attachmentSnapshot(),
+      sourceRevision: "accepted-main",
+      acceptedBy: "token:operator",
+      acceptAuthorityWidening: true,
+    });
+    const accepted = createServerApp(store, {
+      ledger,
+      authenticator: new FixedAuthenticator(),
+      httpAuth: { required: true },
+      setupStatusObserver: { observe: () => ({ setup: setup("ready") }) },
+    });
+    const acceptedResponse = await accepted.request(
+      "/api/v1/projects/scrapbook/setup-status",
+      { headers: bearer("reader") },
+    );
+    expect(acceptedResponse.status).toBe(200);
+    expect(await acceptedResponse.json()).toMatchObject({
+      setupStatus: {
+        repositoryRecovery: null,
+        repositorySetupObservation: null,
+      },
+    });
   });
 
   test("returns the advisory attachment plan from already-observed repository facts", async () => {
@@ -257,7 +345,10 @@ describe("project setup status API", () => {
     });
     expect(ready.status).toBe(200);
     expect(await ready.json()).toMatchObject({
-      setupStatus: { repositoryRecovery: null },
+      setupStatus: {
+        repositoryRecovery: null,
+        repositorySetupObservation: null,
+      },
     });
     expect(calls).toEqual([{
       project: "scrapbook",
