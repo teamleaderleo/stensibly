@@ -63,6 +63,7 @@ export const record = mutation({
     repositoryFullName: v.string(),
     defaultBranch: v.string(),
     sourceKind,
+    expectedCurrentObservationId: v.optional(v.union(v.string(), v.null())),
     externalId: v.string(),
   },
   returns: v.object({
@@ -89,7 +90,14 @@ export const record = mutation({
       repositoryFullName: args.repositoryFullName,
       defaultBranch: args.defaultBranch,
       sourceKind: args.sourceKind,
+      expectedCurrentObservationId: args.expectedCurrentObservationId,
     });
+    if (
+      prepared.expectedCurrentObservationId !== undefined
+      && prepared.expectedCurrentObservationId !== (current?.id ?? null)
+    ) {
+      throw new Error("Repository setup observation changed before write");
+    }
     if (prepared.replay) {
       return {
         observation: prepared.replay,
