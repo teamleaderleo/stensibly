@@ -177,7 +177,7 @@ jobs:
             echo "- Exact current-main check: passed before upload and promotion"
             echo "- Uploaded production binding inventory: passed"
             echo "- Candidate preview verification: passed before promotion"
-            echo "- Legacy bearer verification: passed on both origins"
+            echo "- Hosted API + MCP verification: passed on both origins"
             echo "- Public auth/OAuth verification: passed on both origins"
           } >> "$GITHUB_STEP_SUMMARY"
 
