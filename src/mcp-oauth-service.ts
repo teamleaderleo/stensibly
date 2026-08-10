@@ -78,6 +78,11 @@ export interface McpOAuthService {
     nextSecretHash: string;
     nextExpiresAt: number;
   }): Promise<McpOAuthRefreshExchange>;
+  recordSetupConnection?(input: {
+    accountId: string;
+    clientId: string;
+    resource: string;
+  }): Promise<void>;
 }
 
 export interface ConvexMcpOAuthServiceOptions {
