@@ -421,12 +421,25 @@ async function exchangeAuthorizationCode(
       "Authorization code exchange failed",
     );
   }
-  return await tokenResponse(
+  const response = await tokenResponse(
     context,
     grant,
     grant.scopes.includes("offline_access") ? refresh.raw : null,
     options,
   );
+  const recorder = options.service.recordSetupConnection;
+  if (recorder) {
+    try {
+      await recorder.call(options.service, {
+        accountId: grant.principal.accountId,
+        clientId: grant.clientId,
+        resource: grant.resource,
+      });
+    } catch {
+      // Setup evidence is observational; a recorder failure cannot invalidate OAuth.
+    }
+  }
+  return response;
 }
 
 async function exchangeRefreshToken(
