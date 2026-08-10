@@ -13,13 +13,11 @@ import { internalMutation, mutation } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
 const expireEnrolmentRef = makeFunctionReference<"mutation">("workerEnrolments:expireScheduled");
-
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const slugPattern = /^[a-z0-9][a-z0-9._:-]*$/;
 const projectPattern = /^[a-z0-9][a-z0-9_-]*$/;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/;
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/;
-const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const limits = {
   actorId: 240,
@@ -41,7 +39,7 @@ const limits = {
   stances: 16,
 } as const;
 
-const canonicalEnrolmentValidator = v.object({
+const enrolmentRequestValidator = v.object({
   version: v.literal(1),
   adapter: v.string(),
   profile: v.string(),
@@ -63,6 +61,7 @@ const canonicalEnrolmentValidator = v.object({
 type WorkerEnrolment = Doc<"workerEnrolments">;
 type WorkspaceId = Id<"workspaces">;
 type Operation = "enrol" | "heartbeat" | "release";
+type Owner = { actorId: string; clientId: string; oauthAccountId: string | null };
 type RejectionReason =
   | "callsign_join_pending"
   | "project_not_found"
@@ -77,7 +76,7 @@ export const enrol = mutation({
     actorId: v.string(),
     clientId: v.string(),
     oauthAccountId: v.optional(v.string()),
-    request: canonicalEnrolmentValidator,
+    request: enrolmentRequestValidator,
     idempotencyKey: v.string(),
   },
   returns: v.any(),
@@ -85,142 +84,69 @@ export const enrol = mutation({
     requireServiceSecret(args.serviceSecret);
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
-    const request = normalizeCanonicalEnrolment(args.request);
-    const idempotencyKey = boundedIdentifier(
-      args.idempotencyKey,
-      "Idempotency key",
-      limits.idempotencyKey,
-    );
-    const replay = await replayCommand(
+    const request = normalizeRequest(args.request);
+    const idempotencyKey = boundedIdentifier(args.idempotencyKey, "Idempotency key", limits.idempotencyKey);
+
+    return withCommand(
       ctx,
       workspace._id,
-      owner.actorId,
-      owner.clientId,
+      owner,
       idempotencyKey,
       "enrol",
       request,
+      async () => {
+        const now = Date.now();
+        if (request.callsign !== null) {
+          return rejectedResult("enrol", "callsign_join_pending", null);
+        }
+        const missingProject = await firstMissingProject(ctx, workspace._id, request.projectScope);
+        if (missingProject !== null) {
+          return { ...rejectedResult("enrol", "project_not_found", null), missingProject };
+        }
+        if (request.expiresAtMs <= now) {
+          return rejectedResult("enrol", "expired_request", null);
+        }
+        const active = await activeEnrolmentForSession(
+          ctx,
+          workspace._id,
+          owner,
+          request.workerSessionId,
+          now,
+        );
+        if (active) return rejectedResult("enrol", "active_session_exists", active);
+
+        const enrolmentId = await ctx.db.insert("workerEnrolments", {
+          workspaceId: workspace._id,
+          externalId: "pending",
+          actorId: owner.actorId,
+          clientId: owner.clientId,
+          ...(owner.oauthAccountId === null ? {} : { oauthAccountId: owner.oauthAccountId }),
+          adapter: request.adapter,
+          profile: request.profile,
+          workerSessionId: request.workerSessionId,
+          capabilities: request.capabilities,
+          toolAllowlist: request.toolAllowlist,
+          projectScope: request.projectScope,
+          preferredStances: request.preferredStances,
+          startedAt: request.startedAtMs,
+          expiresAt: request.expiresAtMs,
+          heartbeatSeconds: request.heartbeatSeconds,
+          ...(request.correlationId === null ? {} : { correlationId: request.correlationId }),
+          ...(request.causationId === null ? {} : { causationId: request.causationId }),
+          requestFingerprint: request.fingerprint,
+          status: "active",
+          acceptedAt: now,
+          lastHeartbeatAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await ctx.db.patch(enrolmentId, { externalId: `wrk_${enrolmentId}` });
+        await ctx.scheduler.runAt(request.expiresAtMs, expireEnrolmentRef, { enrolmentId });
+        const enrolment = await ctx.db.get("workerEnrolments", enrolmentId);
+        if (!enrolment) throw new Error("Accepted worker enrolment disappeared");
+        return acceptedResult("enrol", enrolment);
+      },
     );
-    if (replay.found) return replay.result;
-
-    const now = Date.now();
-    if (request.callsign !== null) {
-      const result = rejectedResult("enrol", "callsign_join_pending", null);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "enrol",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-
-    const missingProject = await firstMissingProject(ctx, workspace._id, request.projectScope);
-    if (missingProject !== null) {
-      const result = {
-        ...rejectedResult("enrol", "project_not_found", null),
-        missingProject,
-      };
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "enrol",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-
-    if (request.expiresAtMs <= now) {
-      const result = rejectedResult("enrol", "expired_request", null);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "enrol",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-
-    const active = await activeEnrolmentForSession(
-      ctx,
-      workspace._id,
-      owner.actorId,
-      owner.clientId,
-      request.workerSessionId,
-      now,
-    );
-    if (active) {
-      const result = rejectedResult("enrol", "active_session_exists", active);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "enrol",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-
-    const enrolmentId = await ctx.db.insert("workerEnrolments", {
-      workspaceId: workspace._id,
-      externalId: "pending",
-      actorId: owner.actorId,
-      clientId: owner.clientId,
-      ...(owner.oauthAccountId === null ? {} : { oauthAccountId: owner.oauthAccountId }),
-      adapter: request.adapter,
-      profile: request.profile,
-      workerSessionId: request.workerSessionId,
-      capabilities: request.capabilities,
-      toolAllowlist: request.toolAllowlist,
-      projectScope: request.projectScope,
-      preferredStances: request.preferredStances,
-      startedAt: request.startedAtMs,
-      expiresAt: request.expiresAtMs,
-      heartbeatSeconds: request.heartbeatSeconds,
-      ...(request.correlationId === null ? {} : { correlationId: request.correlationId }),
-      ...(request.causationId === null ? {} : { causationId: request.causationId }),
-      requestFingerprint: request.fingerprint,
-      status: "active",
-      acceptedAt: now,
-      lastHeartbeatAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await ctx.db.patch(enrolmentId, { externalId: `wrk_${enrolmentId}` });
-    await ctx.scheduler.runAt(request.expiresAtMs, expireEnrolmentRef, { enrolmentId });
-    const enrolment = await ctx.db.get("workerEnrolments", enrolmentId);
-    if (!enrolment) throw new Error("Accepted worker enrolment disappeared");
-    const result = acceptedResult("enrol", enrolment);
-    await storeCommand(
-      ctx,
-      workspace._id,
-      owner.actorId,
-      owner.clientId,
-      idempotencyKey,
-      "enrol",
-      request,
-      result,
-      now,
-    );
-    return result;
   },
 });
 
@@ -238,73 +164,30 @@ export const heartbeat = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
     const workerRef = boundedIdentifier(args.workerRef, "Worker reference", limits.workerRef);
-    const idempotencyKey = boundedIdentifier(
-      args.idempotencyKey,
-      "Idempotency key",
-      limits.idempotencyKey,
-    );
+    const idempotencyKey = boundedIdentifier(args.idempotencyKey, "Idempotency key", limits.idempotencyKey);
     const request = { workerRef };
-    const replay = await replayCommand(
+
+    return withCommand(
       ctx,
       workspace._id,
-      owner.actorId,
-      owner.clientId,
+      owner,
       idempotencyKey,
       "heartbeat",
       request,
+      async () => {
+        const now = Date.now();
+        let enrolment = await ownedEnrolment(ctx, workspace._id, workerRef, owner);
+        if (enrolment) enrolment = await reconcileIfExpired(ctx, enrolment, now);
+        if (!enrolment) return rejectedResult("heartbeat", "worker_not_found", null);
+        if (enrolment.status !== "active") {
+          return rejectedResult("heartbeat", "worker_not_active", enrolment);
+        }
+        await ctx.db.patch(enrolment._id, { lastHeartbeatAt: now, updatedAt: now });
+        const updated = await ctx.db.get("workerEnrolments", enrolment._id);
+        if (!updated) throw new Error("Heartbeated worker enrolment disappeared");
+        return acceptedResult("heartbeat", updated);
+      },
     );
-    if (replay.found) return replay.result;
-
-    const now = Date.now();
-    let enrolment = await ownedEnrolment(ctx, workspace._id, workerRef, owner);
-    if (enrolment) enrolment = await reconcileIfExpired(ctx, enrolment, now);
-    if (!enrolment) {
-      const result = rejectedResult("heartbeat", "worker_not_found", null);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "heartbeat",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-    if (enrolment.status !== "active") {
-      const result = rejectedResult("heartbeat", "worker_not_active", enrolment);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "heartbeat",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-
-    await ctx.db.patch(enrolment._id, { lastHeartbeatAt: now, updatedAt: now });
-    const updated = await ctx.db.get("workerEnrolments", enrolment._id);
-    if (!updated) throw new Error("Heartbeated worker enrolment disappeared");
-    const result = acceptedResult("heartbeat", updated);
-    await storeCommand(
-      ctx,
-      workspace._id,
-      owner.actorId,
-      owner.clientId,
-      idempotencyKey,
-      "heartbeat",
-      request,
-      result,
-      now,
-    );
-    return result;
   },
 });
 
@@ -322,73 +205,34 @@ export const release = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
     const workerRef = boundedIdentifier(args.workerRef, "Worker reference", limits.workerRef);
-    const idempotencyKey = boundedIdentifier(
-      args.idempotencyKey,
-      "Idempotency key",
-      limits.idempotencyKey,
-    );
+    const idempotencyKey = boundedIdentifier(args.idempotencyKey, "Idempotency key", limits.idempotencyKey);
     const request = { workerRef };
-    const replay = await replayCommand(
+
+    return withCommand(
       ctx,
       workspace._id,
-      owner.actorId,
-      owner.clientId,
+      owner,
       idempotencyKey,
       "release",
       request,
+      async () => {
+        const now = Date.now();
+        let enrolment = await ownedEnrolment(ctx, workspace._id, workerRef, owner);
+        if (enrolment) enrolment = await reconcileIfExpired(ctx, enrolment, now);
+        if (!enrolment) return rejectedResult("release", "worker_not_found", null);
+        if (enrolment.status !== "active") {
+          return rejectedResult("release", "worker_not_active", enrolment);
+        }
+        await ctx.db.patch(enrolment._id, {
+          status: "released",
+          releasedAt: now,
+          updatedAt: now,
+        });
+        const updated = await ctx.db.get("workerEnrolments", enrolment._id);
+        if (!updated) throw new Error("Released worker enrolment disappeared");
+        return acceptedResult("release", updated);
+      },
     );
-    if (replay.found) return replay.result;
-
-    const now = Date.now();
-    let enrolment = await ownedEnrolment(ctx, workspace._id, workerRef, owner);
-    if (enrolment) enrolment = await reconcileIfExpired(ctx, enrolment, now);
-    if (!enrolment) {
-      const result = rejectedResult("release", "worker_not_found", null);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "release",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-    if (enrolment.status !== "active") {
-      const result = rejectedResult("release", "worker_not_active", enrolment);
-      await storeCommand(
-        ctx,
-        workspace._id,
-        owner.actorId,
-        owner.clientId,
-        idempotencyKey,
-        "release",
-        request,
-        result,
-        now,
-      );
-      return result;
-    }
-
-    await ctx.db.patch(enrolment._id, { status: "released", releasedAt: now, updatedAt: now });
-    const updated = await ctx.db.get("workerEnrolments", enrolment._id);
-    if (!updated) throw new Error("Released worker enrolment disappeared");
-    const result = acceptedResult("release", updated);
-    await storeCommand(
-      ctx,
-      workspace._id,
-      owner.actorId,
-      owner.clientId,
-      idempotencyKey,
-      "release",
-      request,
-      result,
-      now,
-    );
-    return result;
   },
 });
 
@@ -437,13 +281,50 @@ export const expireScheduled = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const enrolment = await ctx.db.get("workerEnrolments", args.enrolmentId);
-    if (!enrolment || enrolment.status !== "active" || enrolment.expiresAt > Date.now()) {
-      return null;
-    }
+    if (!enrolment || enrolment.status !== "active" || enrolment.expiresAt > Date.now()) return null;
     await expireEnrolment(ctx, enrolment, Date.now());
     return null;
   },
 });
+
+async function withCommand(
+  ctx: MutationContext,
+  workspaceId: WorkspaceId,
+  owner: Owner,
+  idempotencyKey: string,
+  operation: Operation,
+  request: unknown,
+  execute: () => Promise<unknown>,
+): Promise<unknown> {
+  const existing = await ctx.db
+    .query("workerEnrolmentCommands")
+    .withIndex("by_workspace_owner_idempotency", (q) =>
+      q
+        .eq("workspaceId", workspaceId)
+        .eq("actorId", owner.actorId)
+        .eq("clientId", owner.clientId)
+        .eq("idempotencyKey", idempotencyKey)
+    )
+    .unique();
+  if (existing) {
+    if (existing.operation !== operation || !sameCanonical(existing.request, request)) {
+      throw new Error("Idempotency key was already used for a different worker enrolment command");
+    }
+    return existing.result;
+  }
+  const result = await execute();
+  await ctx.db.insert("workerEnrolmentCommands", {
+    workspaceId,
+    actorId: owner.actorId,
+    clientId: owner.clientId,
+    idempotencyKey,
+    operation,
+    request,
+    result,
+    createdAt: Date.now(),
+  });
+  return result;
+}
 
 async function requiredWorkspace(ctx: MutationContext, workspaceValue: string | undefined) {
   const workspace = await findWorkspace(ctx, normalizeWorkspace(workspaceValue));
@@ -465,8 +346,7 @@ async function firstMissingProject(
 async function activeEnrolmentForSession(
   ctx: MutationContext,
   workspaceId: WorkspaceId,
-  actorId: string,
-  clientId: string,
+  owner: Owner,
   workerSessionId: string,
   now: number,
 ): Promise<WorkerEnrolment | null> {
@@ -475,8 +355,8 @@ async function activeEnrolmentForSession(
     .withIndex("by_workspace_owner_session_status", (q) =>
       q
         .eq("workspaceId", workspaceId)
-        .eq("actorId", actorId)
-        .eq("clientId", clientId)
+        .eq("actorId", owner.actorId)
+        .eq("clientId", owner.clientId)
         .eq("workerSessionId", workerSessionId)
         .eq("status", "active")
     )
@@ -494,7 +374,7 @@ async function ownedEnrolment(
   ctx: MutationContext,
   workspaceId: WorkspaceId,
   workerRef: string,
-  owner: { actorId: string; clientId: string },
+  owner: Pick<Owner, "actorId" | "clientId">,
 ): Promise<WorkerEnrolment | null> {
   const enrolment = await ctx.db
     .query("workerEnrolments")
@@ -532,60 +412,11 @@ async function expireEnrolment(
   });
 }
 
-async function replayCommand(
-  ctx: MutationContext,
-  workspaceId: WorkspaceId,
-  actorId: string,
-  clientId: string,
-  idempotencyKey: string,
-  operation: Operation,
-  request: unknown,
-): Promise<{ found: boolean; result: unknown }> {
-  const existing = await ctx.db
-    .query("workerEnrolmentCommands")
-    .withIndex("by_workspace_owner_idempotency", (q) =>
-      q
-        .eq("workspaceId", workspaceId)
-        .eq("actorId", actorId)
-        .eq("clientId", clientId)
-        .eq("idempotencyKey", idempotencyKey)
-    )
-    .unique();
-  if (!existing) return { found: false, result: null };
-  if (existing.operation !== operation || !sameCanonical(existing.request, request)) {
-    throw new Error("Idempotency key was already used for a different worker enrolment command");
-  }
-  return { found: true, result: existing.result };
-}
-
-async function storeCommand(
-  ctx: MutationContext,
-  workspaceId: WorkspaceId,
-  actorId: string,
-  clientId: string,
-  idempotencyKey: string,
-  operation: Operation,
-  request: unknown,
-  result: unknown,
-  createdAt: number,
-): Promise<void> {
-  await ctx.db.insert("workerEnrolmentCommands", {
-    workspaceId,
-    actorId,
-    clientId,
-    idempotencyKey,
-    operation,
-    request,
-    result,
-    createdAt,
-  });
-}
-
 function normalizeOwner(args: {
   actorId: string;
   clientId: string;
   oauthAccountId?: string;
-}): { actorId: string; clientId: string; oauthAccountId: string | null } {
+}): Owner {
   return {
     actorId: boundedIdentifier(args.actorId, "Actor ID", limits.actorId),
     clientId: boundedIdentifier(args.clientId, "Client ID", limits.clientId),
@@ -595,7 +426,7 @@ function normalizeOwner(args: {
   };
 }
 
-function normalizeCanonicalEnrolment(value: {
+function normalizeRequest(value: {
   version: 1;
   adapter: string;
   profile: string;
@@ -613,36 +444,23 @@ function normalizeCanonicalEnrolment(value: {
   grantsAuthority: false;
   fingerprint: string;
 }) {
-  const startedAt = canonicalTimestamp(value.startedAt, "Enrolment start");
-  const expiresAt = canonicalTimestamp(value.expiresAt, "Enrolment expiry");
-  if (expiresAt.milliseconds <= startedAt.milliseconds) {
-    throw new Error("Enrolment expiry must be later than start");
-  }
-  const heartbeatSeconds = canonicalHeartbeat(value.heartbeatSeconds);
-  if (expiresAt.milliseconds - startedAt.milliseconds < heartbeatSeconds * 1_000) {
+  const startedAt = timestamp(value.startedAt, "Enrolment start");
+  const expiresAt = timestamp(value.expiresAt, "Enrolment expiry");
+  const heartbeatSeconds = heartbeat(value.heartbeatSeconds);
+  if (expiresAt.ms <= startedAt.ms) throw new Error("Enrolment expiry must be later than start");
+  if (expiresAt.ms - startedAt.ms < heartbeatSeconds * 1_000) {
     throw new Error("Enrolment lifetime must include at least one heartbeat interval");
   }
-  const callsign = value.callsign === null ? null : canonicalDisplay(value.callsign, "Worker callsign", 80);
   return {
     version: 1 as const,
-    adapter: canonicalSlug(value.adapter, "Runner adapter", limits.adapter),
-    profile: canonicalSlug(value.profile, "Runner profile", limits.profile),
-    workerSessionId: canonicalIdentifier(
-      value.workerSessionId,
-      "Worker session ID",
-      limits.workerSessionId,
-    ),
-    callsign,
-    capabilities: canonicalSlugList(
-      value.capabilities,
-      "Capability",
-      limits.capability,
-      1,
-      limits.capabilities,
-    ),
-    toolAllowlist: canonicalSlugList(value.toolAllowlist, "Tool", limits.tool, 0, limits.tools),
-    projectScope: canonicalProjectList(value.projectScope),
-    preferredStances: canonicalSlugList(
+    adapter: slug(value.adapter, "Runner adapter", limits.adapter),
+    profile: slug(value.profile, "Runner profile", limits.profile),
+    workerSessionId: boundedIdentifier(value.workerSessionId, "Worker session ID", limits.workerSessionId),
+    callsign: value.callsign === null ? null : display(value.callsign, "Worker callsign", 80),
+    capabilities: slugList(value.capabilities, "Capability", limits.capability, 1, limits.capabilities),
+    toolAllowlist: slugList(value.toolAllowlist, "Tool", limits.tool, 0, limits.tools),
+    projectScope: projectList(value.projectScope),
+    preferredStances: slugList(
       value.preferredStances,
       "Preferred stance",
       limits.stance,
@@ -650,18 +468,18 @@ function normalizeCanonicalEnrolment(value: {
       limits.stances,
     ),
     startedAt: startedAt.value,
-    startedAtMs: startedAt.milliseconds,
+    startedAtMs: startedAt.ms,
     expiresAt: expiresAt.value,
-    expiresAtMs: expiresAt.milliseconds,
+    expiresAtMs: expiresAt.ms,
     heartbeatSeconds,
     correlationId: value.correlationId === null
       ? null
-      : canonicalIdentifier(value.correlationId, "Correlation ID", limits.relationId),
+      : boundedIdentifier(value.correlationId, "Correlation ID", limits.relationId),
     causationId: value.causationId === null
       ? null
-      : canonicalIdentifier(value.causationId, "Causation ID", limits.relationId),
+      : boundedIdentifier(value.causationId, "Causation ID", limits.relationId),
     grantsAuthority: false as const,
-    fingerprint: canonicalFingerprint(value.fingerprint),
+    fingerprint: fingerprint(value.fingerprint),
   };
 }
 
@@ -676,11 +494,7 @@ function acceptedResult(operation: Operation, enrolment: WorkerEnrolment) {
   };
 }
 
-function rejectedResult(
-  operation: Operation,
-  reason: RejectionReason,
-  enrolment: WorkerEnrolment | null,
-) {
+function rejectedResult(operation: Operation, reason: RejectionReason, enrolment: WorkerEnrolment | null) {
   return {
     version: 1,
     operation,
@@ -720,7 +534,7 @@ function publicWorker(enrolment: WorkerEnrolment) {
 }
 
 function boundedIdentifier(value: string, label: string, maximumLength: number): string {
-  if (unsafeTextPattern.test(value)) throw new Error(`${label} contains unsupported control characters`);
+  safe(value, label);
   const normalized = value.trim();
   if (!normalized || [...normalized].length > maximumLength || !identifierPattern.test(normalized)) {
     throw new Error(`${label} contains unsupported characters or exceeds ${maximumLength} characters`);
@@ -728,36 +542,25 @@ function boundedIdentifier(value: string, label: string, maximumLength: number):
   return normalized;
 }
 
-function canonicalIdentifier(value: string, label: string, maximumLength: number): string {
-  const normalized = boundedIdentifier(value, label, maximumLength);
-  if (value !== normalized) throw new Error(`${label} must already be canonical`);
-  return normalized;
-}
-
-function canonicalDisplay(value: string, label: string, maximumLength: number): string {
-  if (unsafeTextPattern.test(value)) throw new Error(`${label} contains unsupported control characters`);
+function display(value: string, label: string, maximumLength: number): string {
+  safe(value, label);
   const normalized = value.trim().replace(/ {2,}/g, " ");
   if (!normalized || [...normalized].length > maximumLength) {
     throw new Error(`${label} must be between 1 and ${maximumLength} characters`);
   }
-  if (value !== normalized) throw new Error(`${label} must already be canonical`);
   return normalized;
 }
 
-function canonicalSlug(value: string, label: string, maximumLength: number): string {
-  if (unsafeTextPattern.test(value)) throw new Error(`${label} contains unsupported control characters`);
-  if (
-    value.length === 0
-    || [...value].length > maximumLength
-    || !slugPattern.test(value)
-    || value !== value.toLowerCase()
-  ) {
-    throw new Error(`${label} must already be a canonical lowercase slug`);
+function slug(value: string, label: string, maximumLength: number): string {
+  safe(value, label);
+  const normalized = value.trim().toLowerCase();
+  if ([...normalized].length > maximumLength || !slugPattern.test(normalized)) {
+    throw new Error(`${label} must be a lowercase slug`);
   }
-  return value;
+  return normalized;
 }
 
-function canonicalSlugList(
+function slugList(
   values: string[],
   label: string,
   maximumEntryLength: number,
@@ -767,58 +570,51 @@ function canonicalSlugList(
   if (values.length < minimumItems || values.length > maximumItems) {
     throw new Error(`${label} list must contain ${minimumItems} to ${maximumItems} entries`);
   }
-  const canonical = values.map((value) => canonicalSlug(value, label, maximumEntryLength));
-  return requireSortedUnique(canonical, `${label} list`);
+  return sortedUnique(values.map((value) => slug(value, label, maximumEntryLength)), label);
 }
 
-function canonicalProjectList(values: string[]): string[] {
+function projectList(values: string[]): string[] {
   if (values.length < 1 || values.length > limits.projects) {
     throw new Error(`Project scope must contain 1 to ${limits.projects} entries`);
   }
-  const canonical = values.map((value) => {
-    if (
-      unsafeTextPattern.test(value)
-      || [...value].length > limits.project
-      || !projectPattern.test(value)
-      || value !== value.toLowerCase()
-    ) {
-      throw new Error("Project scope must contain canonical lowercase project slugs");
+  return sortedUnique(values.map((value) => {
+    safe(value, "Project");
+    const normalized = value.trim().toLowerCase();
+    if ([...normalized].length > limits.project || !projectPattern.test(normalized)) {
+      throw new Error("Project must be a lowercase project slug");
     }
-    return value;
-  });
-  return requireSortedUnique(canonical, "Project scope");
+    return normalized;
+  }), "Project");
 }
 
-function requireSortedUnique(values: string[], label: string): string[] {
-  for (let index = 1; index < values.length; index += 1) {
-    if (values[index - 1] >= values[index]) {
-      throw new Error(`${label} must be sorted and unique`);
-    }
-  }
-  return values;
+function sortedUnique(values: string[], label: string): string[] {
+  const unique = [...new Set(values)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  if (unique.length !== values.length) throw new Error(`${label} list contains duplicate entries`);
+  return unique;
 }
 
-function canonicalTimestamp(value: string, label: string): { value: string; milliseconds: number } {
-  if (unsafeTextPattern.test(value) || !timestampPattern.test(value)) {
-    throw new Error(`${label} must be a canonical ISO-8601 UTC timestamp`);
-  }
-  const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
-    throw new Error(`${label} must be a valid canonical ISO-8601 UTC timestamp`);
-  }
-  return { value, milliseconds };
+function timestamp(value: string, label: string): { value: string; ms: number } {
+  safe(value, label);
+  const ms = Date.parse(value.trim());
+  if (!Number.isFinite(ms)) throw new Error(`${label} must be an ISO-8601 timestamp`);
+  return { value: new Date(ms).toISOString(), ms };
 }
 
-function canonicalHeartbeat(value: number): number {
+function heartbeat(value: number): number {
   if (!Number.isInteger(value) || value < 30 || value > 86_400) {
     throw new Error("Heartbeat interval must be an integer from 30 to 86400 seconds");
   }
   return value;
 }
 
-function canonicalFingerprint(value: string): string {
-  if (!fingerprintPattern.test(value)) {
+function fingerprint(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!fingerprintPattern.test(normalized)) {
     throw new Error("Worker enrolment fingerprint must be a SHA-256 fingerprint");
   }
-  return value;
+  return normalized;
+}
+
+function safe(value: string, label: string): void {
+  if (unsafeTextPattern.test(value)) throw new Error(`${label} contains unsupported control characters`);
 }
