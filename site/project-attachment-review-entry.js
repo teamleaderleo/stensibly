@@ -4,6 +4,7 @@ const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const TOKEN_STORAGE_KEY = 'stensiblyToken';
 const ENDPOINT_STORAGE_KEY = 'stensiblyEndpoint';
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const CREDENTIAL_PATTERN = /(?:Bearer\s+[A-Za-z0-9._~+\/-]{12,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{16,}|(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._\/-]{0,231}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|authorization\s*:|-----BEGIN [A-Z ]*PRIVATE KEY-----)/iu;
 
 export function installProjectAttachmentReviewAction() {
   const panel = document.querySelector('#project-setup-status-panel');
@@ -78,10 +79,16 @@ export function installProjectAttachmentReviewAction() {
     try { setup = readProjectSetupStatus(payload, project); }
     catch { return; }
     if (setup.repositoryRecovery?.state !== 'attachment_required') return;
+    if (!setup.repositorySetupObservation) return;
 
     const latest = readConnection();
     if (latest.endpoint !== connection.endpoint || latest.token !== connection.token) return;
-    body.append(createReviewAction({ project, connection, recovery: setup.repositoryRecovery }));
+    body.append(createReviewAction({
+      project,
+      connection,
+      recovery: setup.repositoryRecovery,
+      proposal: setup.repositorySetupObservation,
+    }));
   }
 
   return {
@@ -96,7 +103,7 @@ export function installProjectAttachmentReviewAction() {
   };
 }
 
-function createReviewAction({ project, connection, recovery }) {
+function createReviewAction({ project, connection, recovery, proposal }) {
   const section = document.createElement('section');
   section.id = 'project-attachment-review-action';
   section.className = 'project-attachment-review-action';
@@ -164,11 +171,19 @@ function createReviewAction({ project, connection, recovery }) {
     source.focus();
   });
   reviewButton.addEventListener('click', async () => {
-    const sourceBytes = source.value;
+    let sourceBytes;
+    try {
+      sourceBytes = admitProjectAttachmentReviewSource(source.value);
+    } catch (cause) {
+      invalidateReview();
+      showError(error, cause instanceof Error ? cause.message : 'Reviewed source is invalid.');
+      state.textContent = 'needs input';
+      return;
+    }
     const sourceRevision = revision.value.trim();
     revision.value = sourceRevision;
     invalidateReview();
-    if (!sourceBytes || !sourceRevision) {
+    if (!sourceRevision) {
       showError(error, 'Reviewed source and source revision are required.');
       state.textContent = 'needs input';
       return;
@@ -206,6 +221,8 @@ function createReviewAction({ project, connection, recovery }) {
     try {
       reviewed = readReview(payload, {
         project,
+        proposalId: proposal.id,
+        proposalSemanticFingerprint: proposal.semanticFingerprint,
         repositoryFullName: recovery.repository.fullName,
         defaultBranch: recovery.repository.defaultBranch,
         sourceRevision,
@@ -220,9 +237,11 @@ function createReviewAction({ project, connection, recovery }) {
     renderReviewResult({
       container: result,
       review: reviewed,
+      reviewedSource: sourceBytes,
       project,
       connection,
       recovery,
+      proposal,
       source,
       revision,
       onAccepted: () => {
@@ -247,9 +266,11 @@ function createReviewAction({ project, connection, recovery }) {
 function renderReviewResult({
   container,
   review,
+  reviewedSource,
   project,
   connection,
   recovery,
+  proposal,
   source,
   revision,
   onAccepted,
@@ -291,10 +312,63 @@ function renderReviewResult({
   acceptButton.addEventListener('click', async () => {
     if (source.disabled || revision.disabled) return;
     if (review.requiresAuthorityWidening && !checkbox.checked) return;
+    if (source.value !== reviewedSource || revision.value.trim() !== review.sourceRevision) {
+      acceptanceState.textContent = 'The reviewed source changed. Run Review attachment again.';
+      acceptButton.disabled = true;
+      checkbox.disabled = true;
+      return;
+    }
     acceptButton.disabled = true;
     checkbox.disabled = true;
-    acceptanceState.textContent = 'Accepting the reviewed snapshot…';
+    acceptanceState.textContent = 'Rechecking the reviewed attachment before acceptance…';
 
+    let freshResponse;
+    try {
+      freshResponse = await apiFetch(
+        connection,
+        `/api/v1/projects/${encodeURIComponent(project)}/attachment/review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            source: reviewedSource,
+            sourceRevision: review.sourceRevision,
+          }),
+        },
+      );
+    } catch {
+      acceptanceState.textContent = 'The reviewed attachment could not be rechecked. Run Review attachment again.';
+      acceptButton.disabled = false;
+      checkbox.disabled = false;
+      return;
+    }
+    let freshPayload = null;
+    try { freshPayload = await freshResponse.json(); }
+    catch { freshPayload = null; }
+    if (!freshResponse.ok) {
+      acceptanceState.textContent = 'The saved proposal or attachment state changed. Run Review attachment again.';
+      return;
+    }
+
+    let freshReview;
+    try {
+      freshReview = readReview(freshPayload, {
+        project,
+        proposalId: proposal.id,
+        proposalSemanticFingerprint: proposal.semanticFingerprint,
+        repositoryFullName: recovery.repository.fullName,
+        defaultBranch: recovery.repository.defaultBranch,
+        sourceRevision: review.sourceRevision,
+      });
+    } catch {
+      acceptanceState.textContent = 'The saved repository proposal changed. Refresh setup status and review again.';
+      return;
+    }
+    if (freshReview.decisionFingerprint !== review.decisionFingerprint) {
+      acceptanceState.textContent = 'The attachment decision changed. Review the current diff again.';
+      return;
+    }
+
+    acceptanceState.textContent = 'Accepting the reviewed snapshot…';
     let acceptedResponse;
     try {
       acceptedResponse = await apiFetch(
@@ -303,9 +377,9 @@ function renderReviewResult({
         {
           method: 'PUT',
           body: JSON.stringify({
-            snapshot: review.snapshot,
-            sourceRevision: review.sourceRevision,
-            acceptAuthorityWidening: review.requiresAuthorityWidening,
+            snapshot: freshReview.snapshot,
+            sourceRevision: freshReview.sourceRevision,
+            acceptAuthorityWidening: freshReview.requiresAuthorityWidening,
           }),
         },
       );
@@ -344,8 +418,8 @@ function renderReviewResult({
       readAcceptedAttachment(payload, {
         project,
         repositoryFullName: recovery.repository.fullName,
-        sourceRevision: review.sourceRevision,
-        snapshotSha256: review.snapshotSha256,
+        sourceRevision: freshReview.sourceRevision,
+        snapshotSha256: freshReview.snapshotSha256,
       });
     } catch {
       acceptanceState.textContent = 'Attachment was accepted, but the canonical reread did not match the reviewed snapshot.';
@@ -367,6 +441,8 @@ function readReview(payload, expected) {
   if (
     review.version !== 1
     || review.project !== expected.project
+    || review.proposalId !== expected.proposalId
+    || exactSha(review.proposalSemanticFingerprint) !== expected.proposalSemanticFingerprint
     || review.repositoryFullName !== expected.repositoryFullName
     || review.defaultBranch !== expected.defaultBranch
     || review.sourceRevision !== expected.sourceRevision
@@ -383,9 +459,25 @@ function readReview(payload, expected) {
   if (!Array.isArray(contract.repositories) || !contract.repositories.includes(expected.repositoryFullName)) {
     throw new TypeError('snapshot repository mismatch');
   }
+  const source = record(snapshot.source);
+  exactSha(source.contentSha256);
   const encoded = JSON.stringify(snapshot);
-  if (encoded.length > 524_288) throw new TypeError('snapshot too large');
+  if (encoded.length > 524_288 || CREDENTIAL_PATTERN.test(encoded)) throw new TypeError('snapshot is unsafe');
+  const diffIdentity = readDiffIdentity(review.diff, snapshotSha256, review.exactReplay);
+  const decisionFingerprint = JSON.stringify({
+    proposalId: review.proposalId,
+    proposalSemanticFingerprint: review.proposalSemanticFingerprint,
+    repositoryFullName: review.repositoryFullName,
+    defaultBranch: review.defaultBranch,
+    sourceRevision: review.sourceRevision,
+    snapshotSha256,
+    requiresAuthorityWidening: review.requiresAuthorityWidening,
+    exactReplay: review.exactReplay,
+    diffIdentity,
+  });
   return Object.freeze({
+    proposalId: review.proposalId,
+    proposalSemanticFingerprint: review.proposalSemanticFingerprint,
     repositoryFullName: review.repositoryFullName,
     defaultBranch: review.defaultBranch,
     sourceRevision: review.sourceRevision,
@@ -393,7 +485,22 @@ function readReview(payload, expected) {
     exactReplay: review.exactReplay,
     snapshotSha256,
     snapshot: JSON.parse(encoded),
+    decisionFingerprint,
   });
+}
+
+function readDiffIdentity(value, snapshotSha256, exactReplay) {
+  if (value === null) {
+    if (exactReplay) return null;
+    return null;
+  }
+  const diff = record(value);
+  const from = exactSha(diff.from);
+  const to = exactSha(diff.to);
+  if (to !== snapshotSha256 || typeof diff.widensAuthority !== 'boolean') {
+    throw new TypeError('review diff mismatch');
+  }
+  return Object.freeze({ from, to, widensAuthority: diff.widensAuthority });
 }
 
 function readAcceptedAttachment(payload, expected) {
@@ -411,6 +518,19 @@ function readAcceptedAttachment(payload, expected) {
     throw new TypeError('accepted attachment repository mismatch');
   }
   return attachment;
+}
+
+export function admitProjectAttachmentReviewSource(value) {
+  if (typeof value !== 'string' || !value || value.includes('\0')) {
+    throw new TypeError('Reviewed STENSIBLY.md source is required.');
+  }
+  if (new TextEncoder().encode(value).byteLength > 256_000) {
+    throw new TypeError('Reviewed STENSIBLY.md source exceeds 256 KB.');
+  }
+  if (CREDENTIAL_PATTERN.test(value)) {
+    throw new TypeError('Reviewed STENSIBLY.md source contains credential-shaped material.');
+  }
+  return value;
 }
 
 async function apiFetch(connection, path, init) {
