@@ -220,7 +220,7 @@ function renderSetupStatus(container, setup) {
     fact('Last verified', setup.lastVerifiedStep ? setupStepLabel(setup.lastVerifiedStep) : 'None yet'),
     fact('Observed', formatTimestamp(setup.observedAt)),
   );
-  fragment.append(summary);
+  fragment.append(summary, mcpEndpointSection(setup.mcpEndpoint));
 
   const steps = document.createElement('ol');
   steps.className = 'project-setup-status-steps';
@@ -237,6 +237,40 @@ function renderSetupStatus(container, setup) {
   fragment.append(steps);
   fragment.append(repositorySection(setup));
   container.replaceChildren(fragment);
+}
+
+function mcpEndpointSection(endpoint) {
+  const section = document.createElement('section');
+  section.className = 'project-setup-status-mcp';
+  const heading = document.createElement('h4');
+  heading.textContent = 'MCP endpoint';
+  const value = document.createElement('code');
+  value.textContent = endpoint;
+  const toolbar = document.createElement('div');
+  toolbar.className = 'project-setup-status-toolbar';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'secondary';
+  copy.textContent = 'copy endpoint';
+  const state = document.createElement('span');
+  state.setAttribute('role', 'status');
+  state.textContent = 'Public endpoint only';
+  copy.addEventListener('click', async () => {
+    copy.disabled = true;
+    try {
+      const clipboard = navigator.clipboard;
+      if (!clipboard || typeof clipboard.writeText !== 'function') throw new Error('clipboard unavailable');
+      await clipboard.writeText(endpoint);
+      state.textContent = 'Endpoint copied';
+    } catch {
+      state.textContent = 'Copy unavailable · select the endpoint above';
+    } finally {
+      copy.disabled = false;
+    }
+  });
+  toolbar.append(copy, state);
+  section.append(heading, value, toolbar);
+  return section;
 }
 
 function repositorySection(setup) {

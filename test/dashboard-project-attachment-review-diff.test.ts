@@ -5,6 +5,32 @@ import { admitProjectAttachmentReviewDiff } from "../site/project-attachment-rev
 const from = `sha256:${"a".repeat(64)}`;
 const to = `sha256:${"b".repeat(64)}`;
 
+const neutralDiff = {
+  from,
+  to,
+  widensAuthority: false,
+  changes: [{
+    field: "context.goal",
+    kind: "changed",
+    before: "old narrative",
+    after: "new narrative",
+    authorityEffect: "neutral",
+  }],
+};
+
+const wideningDiff = {
+  from,
+  to,
+  widensAuthority: true,
+  changes: [{
+    field: "autonomousActions",
+    kind: "added",
+    before: [],
+    after: ["create_draft_pr"],
+    authorityEffect: "widens",
+  }],
+};
+
 describe("dashboard project attachment review diff", () => {
   test("retains only field, kind, and authority effect from the server-owned diff", () => {
     const credentialShapedBefore = "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -85,6 +111,30 @@ describe("dashboard project attachment review diff", () => {
     }, to)).toThrow("review diff changes are invalid");
   });
 
+  test("admits only server-compatible replay, first-acceptance, and changed-attachment decisions", () => {
+    expect(admitProjectAttachmentReviewDiff(null, to, true, false)).toBeNull();
+    expect(admitProjectAttachmentReviewDiff(null, to, false, true)).toBeNull();
+    expect(admitProjectAttachmentReviewDiff(neutralDiff, to, false, false))
+      .toMatchObject({ widensAuthority: false });
+    expect(admitProjectAttachmentReviewDiff(wideningDiff, to, false, true))
+      .toMatchObject({ widensAuthority: true });
+
+    expect(() => admitProjectAttachmentReviewDiff(null, to, true, true))
+      .toThrow("review diff decision is inconsistent");
+    expect(() => admitProjectAttachmentReviewDiff(null, to, false, false))
+      .toThrow("review diff decision is inconsistent");
+    expect(() => admitProjectAttachmentReviewDiff(wideningDiff, to, false, false))
+      .toThrow("review diff decision is inconsistent");
+    expect(() => admitProjectAttachmentReviewDiff(neutralDiff, to, false, true))
+      .toThrow("review diff decision is inconsistent");
+    expect(() => admitProjectAttachmentReviewDiff({
+      from,
+      to,
+      widensAuthority: false,
+      changes: [],
+    }, to, true, false)).toThrow("review replay diff is invalid");
+  });
+
   test("keeps first acceptance and exact replay representable without invented changes", () => {
     expect(admitProjectAttachmentReviewDiff(null, to)).toBeNull();
     expect(() => admitProjectAttachmentReviewDiff({
@@ -99,6 +149,7 @@ describe("dashboard project attachment review diff", () => {
     const action = await readFile("site/project-attachment-review-entry.js", "utf8");
     expect(action).toContain("Reviewed changes");
     expect(action).toContain("renderReviewedChanges(review.diffIdentity, review.exactReplay)");
+    expect(action).toContain("review.requiresAuthorityWidening,");
     expect(action).toContain("diffIdentity,");
     expect(action).toContain("change.field");
     expect(action).toContain("change.kind");
