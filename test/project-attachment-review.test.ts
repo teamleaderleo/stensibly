@@ -10,7 +10,7 @@ import {
 import {
   compileProjectContract,
   renderProjectContract,
-  type ProjectContractV1,
+  type ProjectContract,
 } from "../src/project-contract.ts";
 
 const proposalSemantics = {
@@ -26,7 +26,7 @@ const proposal = createProjectRepositorySetupObservationRecord({
   observedAt: "2026-08-10T02:00:00.000Z",
 });
 
-const baseContract: ProjectContractV1 = {
+const baseContract: ProjectContract = {
   version: 1,
   project: "scrapbook",
   repositories: ["teamleaderleo/scrapbook"],
@@ -105,7 +105,7 @@ describe("project attachment review", () => {
 
   test("shows a widening diff when reviewed source adds authority", () => {
     const current = attachment(baseContract);
-    const widened: ProjectContractV1 = {
+    const widened: ProjectContract = {
       ...baseContract,
       repositories: ["teamleaderleo/scrapbook", "teamleaderleo/stensibly"],
       autonomousActions: [
@@ -185,11 +185,11 @@ describe("project attachment review", () => {
   });
 });
 
-function source(contract: ProjectContractV1): string {
+function source(contract: ProjectContract): string {
   return renderProjectContract(contract, context);
 }
 
-function attachment(contract: ProjectContractV1): ProjectAttachmentRecord {
+function attachment(contract: ProjectContract): ProjectAttachmentRecord {
   return {
     id: "attach_scrapbook",
     project: "scrapbook",
