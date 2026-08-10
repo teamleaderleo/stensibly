@@ -14,7 +14,7 @@ const signingSecret = new TextEncoder().encode(
 );
 
 describe("OAuth principal identity", () => {
-  test("survives access-token rotation and remains client-bound", async () => {
+  test("survives access-token rotation, remains client-bound, and retains the verified account", async () => {
     let randomByte = 1;
     const options = {
       issuer,
@@ -43,15 +43,23 @@ describe("OAuth principal identity", () => {
     expect(first?.authorizationId).toMatch(/^oauth_grant_[A-Za-z0-9_-]{43}$/);
     expect(second?.authorizationId).toBe(first?.authorizationId);
     expect(otherClient?.authorizationId).not.toBe(first?.authorizationId);
+    expect(first?.oauthAccountId).toBe("account_leo");
+    expect(second?.oauthAccountId).toBe("account_leo");
+    expect(otherClient?.oauthAccountId).toBe("account_leo");
   });
 
-  test("keeps durable API-token attribution on the token record identity", () => {
-    expect(principalAuthorizationId({
+  test("keeps durable API-token attribution on the token record identity without OAuth account identity", () => {
+    const principal = {
       tokenId: "tok_stable_record",
       name: "API token",
-      scopes: ["read", "write"],
+      scopes: ["read", "write"] as const,
       projects: ["stensibly"],
+    };
+    expect(principalAuthorizationId({
+      ...principal,
+      scopes: [...principal.scopes],
     })).toBe("tok_stable_record");
+    expect("oauthAccountId" in principal).toBe(false);
   });
 });
 
