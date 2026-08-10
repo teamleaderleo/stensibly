@@ -78,18 +78,20 @@ export function emptyMcpSetupEvidence(input: {
 }
 
 function exactRecord(value: unknown, fields: readonly string[]): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
     throw new Error("MCP setup evidence is invalid");
   }
+  let isArray: boolean;
   let prototype: object | null;
   let descriptors: PropertyDescriptorMap;
   try {
+    isArray = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new Error("MCP setup evidence is invalid");
   }
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
     throw new Error("MCP setup evidence is invalid");
   }
   const keys = Reflect.ownKeys(descriptors);
