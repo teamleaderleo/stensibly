@@ -1,3 +1,4 @@
+import { types as nodeUtilTypes } from "node:util";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
@@ -553,7 +554,9 @@ function providerErrorMetadata(error: unknown): { name?: string; message: string
   }).isError;
   let branded = false;
   try {
-    branded = typeof isError === "function" && isError(error);
+    branded = typeof isError === "function"
+      ? isError(error)
+      : nodeUtilTypes.isNativeError(error);
   } catch {
     return { message: "" };
   }
@@ -575,11 +578,11 @@ function providerErrorMetadata(error: unknown): { name?: string; message: string
     && typeof nameDescriptor.value === "string"
     ? nameDescriptor.value
     : undefined;
-  const name = prototype === TypeError.prototype
+  const name = ownName ?? (prototype === TypeError.prototype
     ? "TypeError"
     : prototype === Error.prototype
     ? "Error"
-    : ownName;
+    : undefined);
   const message = messageDescriptor
     && "value" in messageDescriptor
     && typeof messageDescriptor.value === "string"
