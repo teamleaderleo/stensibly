@@ -31,6 +31,12 @@ import {
   type McpOAuthOptions,
 } from "./mcp-oauth.js";
 import { ConvexMcpOAuthService } from "./mcp-oauth-service.js";
+import {
+  ConvexProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-observation-convex.js";
+import type {
+  ProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-observation.js";
 import { createProjectSetupStatusApi } from "./setup-status-api.js";
 import {
   ConvexTokenProvider,
@@ -58,6 +64,7 @@ export interface HostedAppOptions {
   mcpOAuth?: McpOAuthOptions;
   providerCapacity?: HostedProviderCapacityOptions;
   setupStatus?: HostedSetupStatusMountOptions;
+  repositorySetupObservations?: ProjectRepositorySetupObservationLedger;
 }
 
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
@@ -147,6 +154,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
         options.ledger,
         apiAuthOptions,
         setupStatusObserver,
+        options.repositorySetupObservations,
       ),
     );
   }
@@ -172,6 +180,11 @@ export function createHostedAppFromEnv(
   });
   const hostedAuth = hostedAuthFromEnv(ledger, env);
   const mcpOAuth = mcpOAuthFromEnv(ledger, hostedAuth, env);
+  const repositorySetupObservations = new ConvexProjectRepositorySetupObservationLedger({
+    client: ledger.client,
+    serviceSecret: ledger.serviceSecret,
+    workspace: ledger.workspace,
+  });
   return createHostedApp({
     ledger,
     authenticator,
@@ -180,6 +193,7 @@ export function createHostedAppFromEnv(
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
     hostedAuth,
     mcpOAuth,
+    repositorySetupObservations,
     providerCapacity: hostedProviderCapacityFromEnv(ledger, env),
     ...(hostedAuth
       ? {

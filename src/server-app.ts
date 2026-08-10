@@ -13,6 +13,9 @@ import {
   handleMcpHttpRequest,
   type McpHttpOptions,
 } from "./mcp-http.js";
+import {
+  SqliteProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-observation-sqlite.js";
 import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
 import {
   handleRunnerMcpHttpRequest,
@@ -96,6 +99,7 @@ export function createServerApp(
         ledger,
         authOptions,
         options.setupStatusObserver,
+        new SqliteProjectRepositorySetupObservationLedger(store),
       ),
     );
   }
