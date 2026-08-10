@@ -1,5 +1,6 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
+import { workerEnrolmentTables } from "./workerEnrolmentSchema";
 
 const callsignLeaseStatus = v.union(
   v.literal("active"),
@@ -13,7 +14,14 @@ const callsignLeaseOperation = v.union(
   v.literal("release"),
 );
 
+/**
+ * Hosted worker-lifecycle table bundle. The export name is retained because
+ * `schema.ts` already composes this module; individual table definitions stay
+ * in their domain-specific schema files.
+ */
 export const callsignLeaseTables = {
+  ...workerEnrolmentTables,
+
   callsignLeases: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
