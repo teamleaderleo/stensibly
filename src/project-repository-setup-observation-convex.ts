@@ -40,9 +40,14 @@ export class ConvexProjectRepositorySetupObservationLedger
     project: string,
   ): Promise<ProjectRepositorySetupObservationRecord | null> {
     const normalizedProject = exactSlug(project, "Project");
-    const raw = await this.#client.query(getCurrentRef, this.#args({
-      project: normalizedProject,
-    }));
+    let raw: unknown;
+    try {
+      raw = await this.#client.query(getCurrentRef, this.#args({
+        project: normalizedProject,
+      }));
+    } catch {
+      throw new Error(invalidResponse);
+    }
     return raw === null ? null : admitObservation(raw, normalizedProject);
   }
 
@@ -50,13 +55,18 @@ export class ConvexProjectRepositorySetupObservationLedger
     input: RecordProjectRepositorySetupObservationInput,
   ): Promise<ProjectRepositorySetupObservationResult> {
     const prepared = prepareProjectRepositorySetupObservation(null, input);
-    const raw = await this.#client.mutation(recordRef, this.#args({
-      project: prepared.project,
-      repositoryFullName: prepared.repositoryFullName,
-      defaultBranch: prepared.defaultBranch,
-      sourceKind: prepared.sourceKind,
-      externalId: `repo_setup_${randomUUID()}`,
-    }));
+    let raw: unknown;
+    try {
+      raw = await this.#client.mutation(recordRef, this.#args({
+        project: prepared.project,
+        repositoryFullName: prepared.repositoryFullName,
+        defaultBranch: prepared.defaultBranch,
+        sourceKind: prepared.sourceKind,
+        externalId: `repo_setup_${randomUUID()}`,
+      }));
+    } catch {
+      throw new Error(invalidResponse);
+    }
     const response = exactResponse(raw);
     const observation = admitObservation(response.observation, prepared.project);
     if (observation.semanticFingerprint !== prepared.semanticFingerprint) {
