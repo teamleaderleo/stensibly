@@ -446,7 +446,7 @@ function normalizeRequest(value: {
 }) {
   const startedAt = timestamp(value.startedAt, "Enrolment start");
   const expiresAt = timestamp(value.expiresAt, "Enrolment expiry");
-  const heartbeatSeconds = heartbeat(value.heartbeatSeconds);
+  const heartbeatSeconds = heartbeatInterval(value.heartbeatSeconds);
   if (expiresAt.ms <= startedAt.ms) throw new Error("Enrolment expiry must be later than start");
   if (expiresAt.ms - startedAt.ms < heartbeatSeconds * 1_000) {
     throw new Error("Enrolment lifetime must include at least one heartbeat interval");
@@ -600,7 +600,7 @@ function timestamp(value: string, label: string): { value: string; ms: number } 
   return { value: new Date(ms).toISOString(), ms };
 }
 
-function heartbeat(value: number): number {
+function heartbeatInterval(value: number): number {
   if (!Number.isInteger(value) || value < 30 || value > 86_400) {
     throw new Error("Heartbeat interval must be an integer from 30 to 86400 seconds");
   }
