@@ -150,6 +150,19 @@ describe("project attachment review", () => {
     })).toThrow("does not include the saved repository proposal");
   });
 
+  test("re-admits the saved proposal semantic identity before preview", () => {
+    expect(() => prepareProjectAttachmentReview({
+      project: "scrapbook",
+      proposal: {
+        ...proposal,
+        semanticFingerprint: `sha256:${"0".repeat(64)}`,
+      },
+      source: source(baseContract),
+      sourceRevision: "main@abc123",
+      currentAttachment: null,
+    })).toThrow("Repository setup observation fingerprint is invalid");
+  });
+
   test("rejects malformed source revision and foreign current attachment", () => {
     expect(() => prepareProjectAttachmentReview({
       project: "scrapbook",
