@@ -1,5 +1,6 @@
-import { Hono } from "hono";
+import { Hono, type Hono as HonoApp } from "hono";
 import { z } from "zod";
+import { ConvexWorkLedger } from "./convex-ledger.js";
 import {
   createHttpAuthMiddleware,
   requireHttpAccess,
@@ -9,11 +10,19 @@ import {
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 import { prepareProjectAttachmentReview } from "./project-attachment-review.js";
+import {
+  ConvexProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-observation-convex.js";
 import type {
   ProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-observation.js";
+import {
+  SqliteProjectRepositorySetupObservationLedger,
+} from "./project-repository-setup-observation-sqlite.js";
+import { SqliteWorkLedger } from "./sqlite-ledger.js";
 import type { ApiTokenAuthenticator } from "./token-provider.js";
 
+const route = "/projects/:project/attachment/review";
 const projectAttachmentReviewRequestSchema = z.object({
   source: z.string().min(1).max(262_144),
   sourceRevision: z.string().min(1).max(240),
@@ -26,8 +35,17 @@ export function createProjectAttachmentReviewApi(
   repositorySetupObservations: ProjectRepositorySetupObservationLedger,
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
-  const route = "/projects/:project/attachment/review";
   app.use(route, createHttpAuthMiddleware(authenticator, authOptions));
+  registerProjectAttachmentReviewApi(app, ledger, repositorySetupObservations);
+  return app;
+}
+
+export function registerProjectAttachmentReviewApi(
+  app: HonoApp<StensiblyEnv>,
+  ledger: WorkLedger,
+  repositorySetupObservations = repositorySetupObservationLedgerFor(ledger),
+): void {
+  if (!repositorySetupObservations) return;
   app.post(route, async (context) => {
     const project = context.req.param("project");
     const denied = requireHttpAccess(context, "admin", project);
@@ -104,7 +122,22 @@ export function createProjectAttachmentReviewApi(
       }, 400);
     }
   });
-  return app;
+}
+
+function repositorySetupObservationLedgerFor(
+  ledger: WorkLedger,
+): ProjectRepositorySetupObservationLedger | null {
+  if (ledger instanceof SqliteWorkLedger) {
+    return new SqliteProjectRepositorySetupObservationLedger(ledger.store);
+  }
+  if (ledger instanceof ConvexWorkLedger) {
+    return new ConvexProjectRepositorySetupObservationLedger({
+      client: ledger.client,
+      serviceSecret: ledger.serviceSecret,
+      workspace: ledger.workspace,
+    });
+  }
+  return null;
 }
 
 function isProjectSlug(value: string): boolean {
