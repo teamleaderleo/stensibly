@@ -13,6 +13,7 @@ import {
   handleMcpHttpRequest,
   type McpHttpOptions,
 } from "./mcp-http.js";
+import { createProjectAttachmentReviewApi } from "./project-attachment-review-api.js";
 import type {
   ProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-observation.js";
@@ -99,6 +100,17 @@ export function createServerApp(
     );
   }
 
+  if (repositorySetupObservations) {
+    app.route(
+      "/api/v1",
+      createProjectAttachmentReviewApi(
+        authenticator,
+        ledger,
+        authOptions,
+        repositorySetupObservations,
+      ),
+    );
+  }
   if (options.setupStatusObserver) {
     app.route(
       "/api/v1",
