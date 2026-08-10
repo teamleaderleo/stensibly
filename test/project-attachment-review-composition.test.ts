@@ -131,8 +131,8 @@ const context = {
   escalation: "Escalate missing authority.",
 };
 
-function review(app: ReturnType<typeof createApiV1>): Promise<Response> {
-  return app.request("/projects/scrapbook/attachment/review", {
+async function review(app: ReturnType<typeof createApiV1>): Promise<Response> {
+  return await app.request("/projects/scrapbook/attachment/review", {
     method: "POST",
     headers: {
       authorization: "Bearer admin",
