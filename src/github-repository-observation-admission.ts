@@ -221,6 +221,15 @@ export function admitGitHubRepositoryObservationEnvelope(
     0,
     Number.MAX_SAFE_INTEGER,
   );
+  if (
+    typeof snapshot.observationJson === "string"
+    && new TextEncoder().encode(snapshot.observationJson).byteLength
+      > MAXIMUM_GITHUB_REPOSITORY_OBSERVATION_BYTES
+  ) {
+    throw new RangeError(
+      "GitHub repository observation envelope.observationJson contains oversized text",
+    );
+  }
   const observationJson = exactUtf8Text(
     snapshot.observationJson,
     "GitHub repository observation JSON",
