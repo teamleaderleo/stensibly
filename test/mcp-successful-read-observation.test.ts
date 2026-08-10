@@ -85,6 +85,25 @@ describe("successful MCP read observation", () => {
     expect(await registrations.get("get_brief")!({ project: "scrapbook" })).toBe(result);
   });
 
+  test("observer non-settlement cannot delay a successful tool result", async () => {
+    const { server, registrations } = fakeServer();
+    let observerCalls = 0;
+    const neverSettles = new Promise<void>(() => {});
+    const guarded = withSuccessfulMcpReadObservation(server, () => {
+      observerCalls += 1;
+      return neverSettles;
+    });
+    const result = { content: [{ type: "text", text: "ok" }], isError: false };
+    guarded.registerTool("get_brief", {} as never, async () => result as never);
+    const outcome = await Promise.race([
+      Promise.resolve(registrations.get("get_brief")!({ project: "scrapbook" }))
+        .then((value) => ({ kind: "result" as const, value })),
+      delay(100).then(() => ({ kind: "blocked" as const })),
+    ]);
+    expect(outcome).toEqual({ kind: "result", value: result });
+    expect(observerCalls).toBe(1);
+  });
+
   test("success admission contains revoked and accessor metadata without invoking getters", () => {
     let getterCalls = 0;
     const accessor = Object.defineProperty({}, "content", {
@@ -107,3 +126,7 @@ describe("successful MCP read observation", () => {
     expect(withSuccessfulMcpReadObservation(server)).toBe(server);
   });
 });
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}

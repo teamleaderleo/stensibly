@@ -45,10 +45,11 @@ export function withSuccessfulMcpReadObservation(
           const result = await Reflect.apply(handler, this, handlerArgs);
           if (isSuccessfulMcpToolResult(result)) {
             try {
-              await observer(Object.freeze({
+              const recording = observer(Object.freeze({
                 toolName,
                 arguments: handlerArgs[0],
               }));
+              void Promise.resolve(recording).catch(() => {});
             } catch {
               // Setup evidence is observational and cannot change tool semantics.
             }
