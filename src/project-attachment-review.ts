@@ -65,7 +65,8 @@ export function prepareProjectAttachmentReview(
   if (current && current.project !== project) {
     throw new RangeError("Current project attachment does not match the selected project");
   }
-  const exactReplay = current?.snapshot.snapshotSha256 === snapshot.snapshotSha256;
+  const exactReplay = current?.snapshot.snapshotSha256 === snapshot.snapshotSha256
+    && current.sourceRevision === sourceRevision;
   const diff = current && !exactReplay
     ? compareProjectAttachments(current.snapshot, snapshot)
     : null;
