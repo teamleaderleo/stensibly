@@ -12,7 +12,6 @@ import {
   projectAttachmentLedger,
   ProjectAttachmentWideningError,
 } from "./project-attachment-ledger.js";
-import { registerProjectAttachmentReviewApi } from "./project-attachment-review-api.js";
 
 export function registerProjectAttachmentApi(
   app: Hono<StensiblyEnv>,
@@ -102,8 +101,6 @@ export function registerProjectAttachmentApi(
       throw error;
     }
   });
-
-  registerProjectAttachmentReviewApi(app, ledger);
 }
 
 function importerIdentity(principal: HttpPrincipal): string {
