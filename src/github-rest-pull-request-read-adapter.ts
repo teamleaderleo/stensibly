@@ -4,6 +4,7 @@ import type {
 import { receiverSafeFetch } from "./fetch-implementation.js";
 import type { GitHubDelegatedReadAdapter } from "./github-delegated-read.js";
 import { GitHubProviderRejectedError } from "./github-provider-contracts.js";
+import { admitGitHubDelegatedCallerRecord } from "./github-rest-delegated-caller-admission.js";
 import {
   GitHubRestDelegatedReadAdapter,
   type GitHubRestDelegatedReadAdapterOptions,
@@ -471,52 +472,13 @@ function exactDataRecord(
   requiredFields: readonly string[],
   label: string,
 ): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw rejected(
-      "github_delegated_adapter_invalid_input",
-      `${label} must be a plain object`,
-    );
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw rejected(
-      "github_delegated_adapter_invalid_input",
-      `${label} must use a plain or null prototype`,
-    );
-  }
-  if (Object.getOwnPropertySymbols(value).length > 0) {
-    throw rejected(
-      "github_delegated_adapter_invalid_input",
-      `${label} contains a symbol field`,
-    );
-  }
-  const allowed = new Set(allowedFields);
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const result = Object.create(null) as Record<string, unknown>;
-  for (const [key, descriptor] of Object.entries(descriptors)) {
-    if (!allowed.has(key)) {
-      throw rejected(
-        "github_delegated_adapter_invalid_input",
-        `${label} has an unknown field`,
-      );
-    }
-    if (!descriptor.enumerable || !("value" in descriptor)) {
-      throw rejected(
-        "github_delegated_adapter_invalid_input",
-        `${label} fields must be enumerable data properties`,
-      );
-    }
-    result[key] = descriptor.value;
-  }
-  for (const key of requiredFields) {
-    if (!Object.hasOwn(result, key)) {
-      throw rejected(
-        "github_delegated_adapter_invalid_input",
-        `${label} is missing a required field`,
-      );
-    }
-  }
-  return result;
+  return admitGitHubDelegatedCallerRecord(
+    value,
+    allowedFields,
+    requiredFields,
+    label,
+    (message) => rejected("github_delegated_adapter_invalid_input", message),
+  );
 }
 
 function exactRepository(value: unknown): string {

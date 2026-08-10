@@ -67,7 +67,23 @@ export function mountHostedGitHubOperationsFromEnv<
     assertAuthority: (input) => assertAuthority(ledger, input, now),
     now: () => new Date(now()).toISOString(),
   });
-  return withGitHubOperationsService(ledger, service);
+  return config.publicationWritesEnabled
+    ? withGitHubOperationsService(ledger, service)
+    : withHostedGitHubRepoHealth(ledger, service);
+}
+
+function withHostedGitHubRepoHealth<T extends WorkLedger>(
+  ledger: T,
+  service: Pick<GitHubOperationsService, "githubRepoHealth">,
+): T & Pick<GitHubOperationsService, "githubRepoHealth"> {
+  const decorated = Object.create(ledger) as T & Pick<GitHubOperationsService, "githubRepoHealth">;
+  Object.defineProperty(decorated, "githubRepoHealth", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: service.githubRepoHealth.bind(service),
+  });
+  return decorated;
 }
 
 async function assertAuthority(
@@ -101,7 +117,6 @@ async function assertAuthority(
 
 function configuration(env: Record<string, string | undefined>) {
   if (!exactBooleanEnv(env, "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED")) return null;
-  if (!exactBooleanEnv(env, "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED")) return null;
   const project = required(env, "STENSIBLY_GITHUB_PROVIDER_PROJECT");
   if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(project)) throw new Error("Hosted GitHub operations project is invalid");
   return {
@@ -112,6 +127,7 @@ function configuration(env: Record<string, string | undefined>) {
     privateKeyPem: required(env, "STENSIBLY_GITHUB_APP_PRIVATE_KEY", false),
     apiBaseUrl: env.STENSIBLY_GITHUB_API_BASE_URL?.trim() || "https://api.github.com",
     credentialRef: "env://STENSIBLY_GITHUB_APP_PRIVATE_KEY",
+    publicationWritesEnabled: exactBooleanEnv(env, "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED"),
   };
 }
 
