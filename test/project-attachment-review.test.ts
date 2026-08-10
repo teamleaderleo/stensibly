@@ -75,17 +75,31 @@ describe("project attachment review", () => {
     expect(Object.isFrozen(review)).toBe(true);
   });
 
-  test("recognizes an exact accepted snapshot replay", () => {
+  test("recognizes an exact accepted snapshot and source-revision replay", () => {
     const current = attachment(baseContract);
     const review = prepareProjectAttachmentReview({
       project: "scrapbook",
       proposal,
       source: source(baseContract),
-      sourceRevision: "main@same",
+      sourceRevision: "main@accepted",
       currentAttachment: current,
     });
     expect(review.exactReplay).toBe(true);
     expect(review.diff).toBeNull();
+    expect(review.requiresAuthorityWidening).toBe(false);
+  });
+
+  test("keeps an unchanged snapshot with a new source revision out of replay", () => {
+    const current = attachment(baseContract);
+    const review = prepareProjectAttachmentReview({
+      project: "scrapbook",
+      proposal,
+      source: source(baseContract),
+      sourceRevision: "main@new-revision",
+      currentAttachment: current,
+    });
+    expect(review.exactReplay).toBe(false);
+    expect(review.diff).toMatchObject({ widensAuthority: false });
     expect(review.requiresAuthorityWidening).toBe(false);
   });
 
