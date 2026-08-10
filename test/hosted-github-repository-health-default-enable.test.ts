@@ -27,7 +27,7 @@ const providerEnv = Object.freeze({
 const fixedNow = Date.parse("2026-08-10T02:58:00.000Z");
 
 describe("hosted GitHub repository-health default enablement", () => {
-  test("mounts read-only repository health without enabling publication writes", () => {
+  test("mounts read-only repository health without enabling the wider operations surface", () => {
     const mounted = mountHostedGitHubOperationsFromEnv(
       fakeLedger(),
       providerEnv,
@@ -35,11 +35,12 @@ describe("hosted GitHub repository-health default enablement", () => {
     );
 
     expect(typeof mounted.githubRepoHealth).toBe("function");
-    expect("githubPublishChange" in mounted).toBe(false);
+    expect("githubBranchTidy" in mounted).toBe(false);
+    expect("githubCiDiagnose" in mounted).toBe(false);
     expect("githubLandPr" in mounted).toBe(false);
   });
 
-  test("keeps publication methods behind their exact opt-in", () => {
+  test("keeps the wider operations surface behind its exact opt-in", () => {
     const mounted = mountHostedGitHubOperationsFromEnv(
       fakeLedger(),
       {
@@ -50,7 +51,8 @@ describe("hosted GitHub repository-health default enablement", () => {
     );
 
     expect(typeof mounted.githubRepoHealth).toBe("function");
-    expect(typeof mounted.githubPublishChange).toBe("function");
+    expect(typeof mounted.githubBranchTidy).toBe("function");
+    expect(typeof mounted.githubCiDiagnose).toBe("function");
     expect(typeof mounted.githubLandPr).toBe("function");
   });
 });
