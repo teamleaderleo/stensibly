@@ -42,7 +42,7 @@ describe("System repository verification continuation", () => {
         repositoryFullName,
         defaultBranch: "main",
         commitSha,
-        sourcePath: "STENSIBLY.md",
+        sourcePath: ".stensibly/STENSIBLY.md",
         sourceContentSha256,
         attachment: {
           id: "attach_repository_verify01",
@@ -64,6 +64,7 @@ describe("System repository verification continuation", () => {
     })).toEqual({
       repositoryFullName,
       defaultBranch: "main",
+      sourcePath: ".stensibly/STENSIBLY.md",
       commitSha,
       sourceContentSha256,
       attachmentId: "attach_repository_verify01",
@@ -97,5 +98,33 @@ describe("System repository verification continuation", () => {
       repositoryFullName,
       defaultBranch: "main",
     })).toThrow("repository verification mismatch");
+
+    expect(() => readRepositoryVerification({
+      verification: {
+        version: 1,
+        project,
+        repositoryFullName,
+        defaultBranch: "main",
+        commitSha,
+        sourcePath: "../STENSIBLY.md",
+        sourceContentSha256,
+        attachment: {
+          id: "attach_repository_verify01",
+          snapshotSha256: attachmentSnapshotSha256,
+        },
+        steps: {
+          repositoryMetadata: "get_repo",
+          immutableFileRead: "fetch_file",
+          immutableReadRef: "exact_commit_sha",
+        },
+        verified: true,
+        authorizesMutation: false,
+        containsSecrets: false,
+      },
+    }, {
+      project,
+      repositoryFullName,
+      defaultBranch: "main",
+    })).toThrow("repository verification identity mismatch");
   });
 });
