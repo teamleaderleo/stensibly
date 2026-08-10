@@ -29,7 +29,7 @@ export function registerProjectAttachmentTools(
   server.registerTool(
     "remember_project_repository_setup",
     {
-      description: "Durably remember one non-authorizing repository/default-branch proposal for a project before attachment acceptance. Use github_conversation_context when the repository facts came from the current conversation and operator_supplied for explicit operator configuration. Exact replay is idempotent. Replacing a different saved proposal requires the current observation id returned by get_project_attachment. This grants zero provider or attachment authority.",
+      description: "Durably remember one non-authorizing repository/default-branch proposal for a project before attachment acceptance. Use github_conversation_context when the repository facts came from the current conversation and operator_supplied for explicit operator configuration. Exact replay is idempotent. Replacing a different saved proposal requires the current observation id returned by get_project_attachment. The write is compare-and-swap fenced to that observed state and grants zero provider or attachment authority.",
       inputSchema: {
         project: projectSlug,
         repositoryFullName: z.string().min(3).max(140),
@@ -71,7 +71,10 @@ export function registerProjectAttachmentTools(
       if (!current && replaceObservationId) {
         throw new Error("Repository setup proposal replacement requires a current observation");
       }
-      const result = await observations.recordProjectRepositorySetupObservation(input);
+      const result = await observations.recordProjectRepositorySetupObservation({
+        ...input,
+        expectedCurrentObservationId: current?.id ?? null,
+      });
       return {
         project,
         observation: result.observation,
