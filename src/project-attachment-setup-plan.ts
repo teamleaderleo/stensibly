@@ -1,3 +1,4 @@
+import { normalizeGitHubBranchName } from "./github-branch-name.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import { containsRealisticRetainedCredential } from "./github-retained-credential-policy.js";
 import type { ProjectAttachmentRecord } from "./project-attachment-ledger.js";
@@ -105,7 +106,10 @@ export function projectAttachmentRecovery(
   const repositoryFullName = normalizeGitHubRepository(
     exactText(setupContext.repositoryFullName, "Repository full name", 140),
   );
-  const defaultBranch = branchName(setupContext.defaultBranch);
+  const defaultBranch = normalizeGitHubBranchName(
+    setupContext.defaultBranch,
+    "Default branch",
+  );
   const runnerProfiles = canonicalIdentifiers(
     setupContext.runnerProfiles,
     "Runner profile",
@@ -171,35 +175,6 @@ function projectSlug(value: string): string {
     throw new RangeError("Project must be an exact lowercase project slug");
   }
   return project;
-}
-
-function branchName(value: string): string {
-  const branch = exactText(value, "Default branch", 240);
-  if (
-    branch === "@"
-    || branch === "HEAD"
-    || branch.startsWith("refs/heads/")
-    || branch.startsWith("/")
-    || branch.endsWith("/")
-    || branch.startsWith("-")
-    || branch.includes("//")
-    || branch.includes("..")
-    || branch.includes("@{")
-    || /[~^:?*\[\\\s]/u.test(branch)
-  ) {
-    throw new RangeError("Default branch is invalid");
-  }
-  if (branch.split("/").some((segment) =>
-    !segment
-    || segment === "."
-    || segment === ".."
-    || segment.startsWith(".")
-    || segment.endsWith(".")
-    || segment.endsWith(".lock")
-  )) {
-    throw new RangeError("Default branch is invalid");
-  }
-  return branch;
 }
 
 function canonicalIdentifiers(
