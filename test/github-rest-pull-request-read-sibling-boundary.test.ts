@@ -34,7 +34,7 @@ function createAdapter(tokenProvider: TokenProvider): GitHubRestPullRequestReadA
     apiBaseUrl: "https://api.github.test",
     fetch: (async () => {
       throw new Error("provider dispatch must remain unreachable");
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   });
 }
 
