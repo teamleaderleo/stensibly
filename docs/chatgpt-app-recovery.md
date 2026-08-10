@@ -7,7 +7,7 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 The hosted production composition defines **51** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:8ed0a0576e6e2a4cc8957e0ded2d34e661d332867c169baf640d9f4570cab404
+full ChatGPT tool contract: sha256:2b436568ed3949a2af6e6bad59f23b401c5c5a50d9a265781bc0742e9473a870
 names-only diagnostic:       sha256:67d8a56fe4289267afe8445bb095f17835eabb56ddf2d2334728bb0bc3e03930
 ```
 

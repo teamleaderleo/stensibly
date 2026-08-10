@@ -258,10 +258,25 @@ describe("GitHub issue provider write composition", () => {
           repository,
           issueNumber: 921,
           body: "Comment through public MCP",
+          signoff: {
+            callsign: "Kite",
+            runId: "run_public_comment_1",
+            intention: "prove public MCP attribution",
+          },
           idempotencyKey: "public-comment-1",
         },
       );
       expect(commented.operation).toBe("github_add_issue_comment");
+      expect(calls[3]).toMatchObject({
+        operation: "comment",
+        body: [
+          "Comment through public MCP",
+          "",
+          "— Kite",
+          "  Intention: prove public MCP attribution",
+          "  Run: run_public_comment_1",
+        ].join("\n"),
+      });
       expect(calls).toHaveLength(4);
 
       const found = await call<GitHubProviderReceipt | null>(
@@ -301,6 +316,10 @@ describe("GitHub issue provider write composition", () => {
           repository,
           issueNumber: 0,
           body: "must not dispatch",
+          signoff: {
+            callsign: "Kite",
+            runId: "run_malformed_comment_1",
+          },
           idempotencyKey: "malformed-comment",
         },
       });

@@ -22,6 +22,10 @@ import {
   principalCanAccessProject,
   principalHasScope,
 } from "./token-contracts.js";
+import {
+  buildWorkerSignoff,
+  type WorkerSignoffInput,
+} from "./worker-signoff.js";
 
 const maximumGitHubIssueNumber = 2_147_483_647;
 
@@ -425,12 +429,13 @@ export function registerGitHubIssueProviderTools(
   server.registerTool(
     "github_add_issue_comment",
     {
-      description: "Add one bounded comment to an exact GitHub issue. Requires write scope and an explicit idempotency key; the returned durable receipt omits the comment body.",
+      description: "Add one bounded worker-authored comment to an exact GitHub issue. Requires write scope, an explicit idempotency key, and descriptive worker signoff metadata; Stensibly appends the canonical callsign footer before provider dispatch. The returned durable receipt omits the comment body.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
         issueNumber: issueNumberSchema(),
         body: z.string().min(1).max(64 * 1024),
+        signoff: workerSignoffSchema(),
         idempotencyKey: idempotencyKeySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: true },
@@ -438,7 +443,7 @@ export function registerGitHubIssueProviderTools(
     async (input) => asToolResult(() => writeService(ledger).addIssueComment({
       ...providerContext(context, input.project, input.repository, "write"),
       issueNumber: input.issueNumber,
-      body: input.body,
+      body: withWorkerSignoff(input.body, input.signoff),
       idempotencyKey: input.idempotencyKey,
     })),
   );
@@ -914,6 +919,29 @@ function assertProjectAccess(
   if (!principalCanAccessProject(principal, project)) {
     throw new Error("Operation workflow is outside this principal's project scope");
   }
+}
+
+function workerSignoffSchema() {
+  return z.object({
+    callsign: z.string().trim().min(1).max(80),
+    callsignLeaseGeneration: z.number().int().min(1).max(1_000_000_000).optional(),
+    pod: z.string().trim().min(1).max(120).optional(),
+    intention: z.string().trim().min(1).max(240).optional(),
+    runId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(160)
+      .regex(/^run_[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    work: z.string().trim().min(1).max(320).optional(),
+  }).strict();
+}
+
+function withWorkerSignoff(body: string, signoff: WorkerSignoffInput): string {
+  const footer = buildWorkerSignoff(signoff).markdown;
+  const trimmed = body.trimEnd();
+  if (trimmed.endsWith(footer)) return trimmed;
+  return `${trimmed}\n\n${footer}`;
 }
 
 function projectSchema() {
