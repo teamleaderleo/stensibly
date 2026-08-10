@@ -62,6 +62,9 @@ export class ConvexProjectRepositorySetupObservationLedger
         repositoryFullName: prepared.repositoryFullName,
         defaultBranch: prepared.defaultBranch,
         sourceKind: prepared.sourceKind,
+        ...(prepared.expectedCurrentObservationId !== undefined
+          ? { expectedCurrentObservationId: prepared.expectedCurrentObservationId }
+          : {}),
         externalId: `repo_setup_${randomUUID()}`,
       }));
     } catch {

@@ -55,7 +55,23 @@ describe("pre-attachment repository setup observation contract", () => {
     expect(Object.isFrozen(record)).toBe(true);
   });
 
-  test("rejects malformed or credential-shaped project, repository, branch, and source values", () => {
+  test("admits an exact optional current-observation fence without changing semantic identity", () => {
+    const unfenced = prepareProjectRepositorySetupObservation(null, scrapbook);
+    const firstWrite = prepareProjectRepositorySetupObservation(null, {
+      ...scrapbook,
+      expectedCurrentObservationId: null,
+    });
+    const replacement = prepareProjectRepositorySetupObservation(null, {
+      ...scrapbook,
+      expectedCurrentObservationId: "repo_setup_12345678",
+    });
+    expect(firstWrite.expectedCurrentObservationId).toBeNull();
+    expect(replacement.expectedCurrentObservationId).toBe("repo_setup_12345678");
+    expect(firstWrite.semanticFingerprint).toBe(unfenced.semanticFingerprint);
+    expect(replacement.semanticFingerprint).toBe(unfenced.semanticFingerprint);
+  });
+
+  test("rejects malformed or credential-shaped project, repository, branch, source, and fence values", () => {
     expect(() => prepareProjectRepositorySetupObservation(null, {
       ...scrapbook,
       project: "Scrapbook",
@@ -72,6 +88,10 @@ describe("pre-attachment repository setup observation contract", () => {
       ...scrapbook,
       sourceKind: "webhook_guess" as any,
     })).toThrow("source kind is invalid");
+    expect(() => prepareProjectRepositorySetupObservation(null, {
+      ...scrapbook,
+      expectedCurrentObservationId: "wrong",
+    })).toThrow("observation id is invalid");
 
     const credentialBranch = ["secret://", "branch"].join("");
     expect(() => prepareProjectRepositorySetupObservation(null, {
@@ -121,6 +141,38 @@ describe("SQLite pre-attachment repository setup observations", () => {
 
     const current = await ledger.getProjectRepositorySetupObservation("scrapbook");
     expect(current?.id).toBe(replaced.observation.id);
+    expect(store.db.query(`
+      SELECT COUNT(*) AS count
+      FROM project_repository_setup_observations
+      WHERE project_id = ?1
+    `).get("scrapbook")).toEqual({ count: 2 });
+  });
+
+  test("compare-and-swap fences first writes and stale replacements inside the transaction", async () => {
+    const first = await ledger.recordProjectRepositorySetupObservation({
+      ...scrapbook,
+      expectedCurrentObservationId: null,
+    });
+    const second = await ledger.recordProjectRepositorySetupObservation({
+      ...scrapbook,
+      defaultBranch: "develop",
+      expectedCurrentObservationId: first.observation.id,
+    });
+
+    await expect(ledger.recordProjectRepositorySetupObservation({
+      ...scrapbook,
+      defaultBranch: "trunk",
+      expectedCurrentObservationId: first.observation.id,
+    })).rejects.toThrow("changed before write");
+    await expect(ledger.recordProjectRepositorySetupObservation({
+      ...scrapbook,
+      defaultBranch: "release",
+      expectedCurrentObservationId: null,
+    })).rejects.toThrow("changed before write");
+
+    const current = await ledger.getProjectRepositorySetupObservation("scrapbook");
+    expect(current?.id).toBe(second.observation.id);
+    expect(current?.defaultBranch).toBe("develop");
     expect(store.db.query(`
       SELECT COUNT(*) AS count
       FROM project_repository_setup_observations

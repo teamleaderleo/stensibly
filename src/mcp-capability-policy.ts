@@ -121,6 +121,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy("unblock_work", itemId),
   writePolicy("release_work", itemId),
   writePolicy("record_event", itemId),
+  writePolicy("remember_project_repository_setup", directProject),
   writePolicy("complete_work", itemId),
   writePolicy("github_add_issue_comment", directProject),
   writePolicy("github_create_branch", directProject),

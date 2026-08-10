@@ -27,6 +27,7 @@ export interface RecordProjectRepositorySetupObservationInput {
   repositoryFullName: string;
   defaultBranch: string;
   sourceKind: ProjectRepositorySetupObservationSourceKind;
+  expectedCurrentObservationId?: string | null;
 }
 
 export interface ProjectRepositorySetupObservationResult {
@@ -50,6 +51,7 @@ export interface PreparedProjectRepositorySetupObservation {
   defaultBranch: string;
   sourceKind: ProjectRepositorySetupObservationSourceKind;
   semanticFingerprint: string;
+  expectedCurrentObservationId: string | null | undefined;
   replay: ProjectRepositorySetupObservationRecord | null;
 }
 
@@ -66,6 +68,11 @@ export function prepareProjectRepositorySetupObservation(
     "Repository default branch",
   );
   const sourceKind = normalizeSourceKind(input.sourceKind);
+  const expectedCurrentObservationId = input.expectedCurrentObservationId === undefined
+    ? undefined
+    : input.expectedCurrentObservationId === null
+      ? null
+      : normalizeObservationId(input.expectedCurrentObservationId);
   const semanticFingerprint = projectRepositorySetupObservationFingerprint({
     project,
     repositoryFullName,
@@ -78,6 +85,7 @@ export function prepareProjectRepositorySetupObservation(
     defaultBranch,
     sourceKind,
     semanticFingerprint,
+    expectedCurrentObservationId,
     replay: current?.semanticFingerprint === semanticFingerprint ? current : null,
   };
 }
