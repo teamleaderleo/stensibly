@@ -12,6 +12,7 @@ import {
   projectAttachmentLedger,
   ProjectAttachmentWideningError,
 } from "./project-attachment-ledger.js";
+import { registerProjectAttachmentRepositoryVerificationApi } from "./project-attachment-repository-verification-api.js";
 import { registerProjectAttachmentReviewApi } from "./project-attachment-review-api.js";
 
 export function registerProjectAttachmentApi(
@@ -104,6 +105,7 @@ export function registerProjectAttachmentApi(
   });
 
   registerProjectAttachmentReviewApi(app, ledger);
+  registerProjectAttachmentRepositoryVerificationApi(app, ledger);
 }
 
 function importerIdentity(principal: HttpPrincipal): string {
