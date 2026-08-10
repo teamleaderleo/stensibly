@@ -11,6 +11,7 @@ import {
   revokeHostedSession,
 } from './hosted-session.js';
 import { installProviderCapacityCard } from './provider-capacity-entry.js';
+import { installProjectSetupStatusCard } from './project-setup-status-entry.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 const STORAGE_KEY = 'stensiblyToken';
@@ -41,6 +42,7 @@ window.fetch = installHostedSessionFetchBridge({
   onHostedSessionRejected: preserveHostedSessionRecovery,
 });
 installProviderCapacityCard();
+installProjectSetupStatusCard();
 
 signInButton?.addEventListener('click', beginGithubSignIn);
 hostedSignOutButton?.addEventListener('click', signOutHostedSession, { capture: true });
