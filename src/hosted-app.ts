@@ -31,7 +31,6 @@ import {
   type McpOAuthOptions,
 } from "./mcp-oauth.js";
 import { ConvexMcpOAuthService } from "./mcp-oauth-service.js";
-import { createProjectAttachmentReviewApi } from "./project-attachment-review-api.js";
 import {
   ConvexProjectRepositorySetupObservationLedger,
 } from "./project-repository-setup-observation-convex.js";
@@ -147,17 +146,6 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     }
     return response;
   });
-  if (options.repositorySetupObservations) {
-    app.route(
-      "/api/v1",
-      createProjectAttachmentReviewApi(
-        options.authenticator,
-        options.ledger,
-        apiAuthOptions,
-        options.repositorySetupObservations,
-      ),
-    );
-  }
   if (setupStatusObserver) {
     app.route(
       "/api/v1",
