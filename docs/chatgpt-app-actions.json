@@ -1,9 +1,9 @@
 {
   "snapshotVersion": 12,
   "manifestVersion": 1,
-  "toolCount": 50,
-  "toolManifestFingerprint": "sha256:bf607cf4d13eb4fcff7af26fb9764c2b2e0ebfc599a7a421677798cbe629ac2a",
-  "toolContractFingerprint": "sha256:65d6097f8fc33bd67654f9b20359f672d312f87b0de60ceb4f4d09b415582e42",
+  "toolCount": 51,
+  "toolManifestFingerprint": "sha256:67d8a56fe4289267afe8445bb095f17835eabb56ddf2d2334728bb0bc3e03930",
+  "toolContractFingerprint": "sha256:8ed0a0576e6e2a4cc8957e0ded2d34e661d332867c169baf640d9f4570cab404",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -50,6 +50,7 @@
     "reconcile_github_publish_change",
     "record_event",
     "release_work",
+    "remember_project_repository_setup",
     "renew_claim",
     "resolve_continuation",
     "run_continuation_supervisor_policy",

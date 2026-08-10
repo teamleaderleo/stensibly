@@ -20,6 +20,7 @@ const invalidResponse = "Hosted repository setup observation response is invalid
 class SetupCaller implements ConvexCaller {
   current: ReturnType<typeof createProjectRepositorySetupObservationRecord> | null = null;
   readonly calls: string[] = [];
+  readonly mutationArgs: Record<string, unknown>[] = [];
   private clock = 0;
 
   async query(
@@ -40,6 +41,7 @@ class SetupCaller implements ConvexCaller {
   ): Promise<unknown> {
     const name = getFunctionName(reference);
     this.calls.push(`mutation:${name}`);
+    this.mutationArgs.push({ ...args });
     if (name !== "projectRepositorySetupObservations:record") {
       throw new Error(`Unexpected mutation ${name}`);
     }
@@ -48,7 +50,18 @@ class SetupCaller implements ConvexCaller {
       repositoryFullName: String(args.repositoryFullName),
       defaultBranch: String(args.defaultBranch),
       sourceKind: args.sourceKind as typeof base.sourceKind,
+      ...(Object.hasOwn(args, "expectedCurrentObservationId")
+        ? {
+          expectedCurrentObservationId: args.expectedCurrentObservationId as string | null,
+        }
+        : {}),
     });
+    if (
+      prepared.expectedCurrentObservationId !== undefined
+      && prepared.expectedCurrentObservationId !== (this.current?.id ?? null)
+    ) {
+      throw new Error("stale repository setup observation");
+    }
     if (prepared.replay) {
       return {
         observation: prepared.replay,
@@ -94,6 +107,7 @@ describe("Convex repository setup observation ledger", () => {
       authorizesProviderEffect: false,
       containsSecrets: false,
     });
+    expect(client.mutationArgs[0]).not.toHaveProperty("expectedCurrentObservationId");
 
     const replay = await ledger.recordProjectRepositorySetupObservation(base);
     expect(replay).toEqual({
@@ -112,6 +126,37 @@ describe("Convex repository setup observation ledger", () => {
     expect(replacement.observation.defaultBranch).toBe("develop");
     expect(await ledger.getProjectRepositorySetupObservation("scrapbook"))
       .toEqual(replacement.observation);
+  });
+
+  test("forwards null and exact-id compare-and-swap fences and rejects a stale writer", async () => {
+    const client = new SetupCaller();
+    const ledger = new ConvexProjectRepositorySetupObservationLedger({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "default",
+    });
+
+    const first = await ledger.recordProjectRepositorySetupObservation({
+      ...base,
+      expectedCurrentObservationId: null,
+    });
+    expect(client.mutationArgs.at(-1)?.expectedCurrentObservationId).toBeNull();
+
+    const second = await ledger.recordProjectRepositorySetupObservation({
+      ...base,
+      defaultBranch: "develop",
+      expectedCurrentObservationId: first.observation.id,
+    });
+    expect(client.mutationArgs.at(-1)?.expectedCurrentObservationId)
+      .toBe(first.observation.id);
+
+    await expect(ledger.recordProjectRepositorySetupObservation({
+      ...base,
+      defaultBranch: "trunk",
+      expectedCurrentObservationId: first.observation.id,
+    })).rejects.toThrow(invalidResponse);
+    expect(client.current?.id).toBe(second.observation.id);
+    expect(client.current?.defaultBranch).toBe("develop");
   });
 
   test("rejects a decorated hosted response before trusting it", async () => {
