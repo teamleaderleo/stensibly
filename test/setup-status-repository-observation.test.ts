@@ -71,6 +71,19 @@ describe("repository setup observation in setup status", () => {
     });
   });
 
+  test("re-admits advisory identity before returning setup status", () => {
+    const malformed = {
+      ...advisory,
+      repositoryFullName: "teamleaderleo/other",
+    } as typeof advisory;
+    expect(() => projectSetupStatusWithRepository({
+      setup: setup(),
+      project: "scrapbook",
+      attachment: null,
+      repositorySetupObservation: malformed,
+    })).toThrow("Repository setup observation identity is invalid");
+  });
+
   test("requires full setup context to agree with the advisory repository identity", () => {
     expect(() => projectSetupStatusWithRepository({
       setup: setup(),
