@@ -3,6 +3,7 @@ import {
   getSqliteProjectRepositorySetupObservation,
   listSqliteProjectRepositorySetupObservationHistory,
   recordSqliteProjectRepositorySetupObservation,
+  SqliteProjectRepositorySetupObservationLedger,
 } from "../src/project-repository-setup-sqlite.ts";
 import {
   ProjectRepositorySetupObservationConflictError,
@@ -85,6 +86,82 @@ describe("SQLite pre-attachment repository setup observations", () => {
 
     expect(getSqliteProjectRepositorySetupObservation(db, "scrapbook"))
       .toEqual(first.observation);
+  });
+
+  test("migrates the merged #1356 SQLite schema without losing history", async () => {
+    const db = open();
+    db.db.exec(`
+      CREATE TABLE project_repository_setup_observations (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        repository_full_name TEXT NOT NULL,
+        default_branch TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        semantic_fingerprint TEXT NOT NULL,
+        observed_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_project_repository_setup_observations_current
+        ON project_repository_setup_observations(project_id, sequence DESC);
+      CREATE INDEX idx_project_repository_setup_observations_fingerprint
+        ON project_repository_setup_observations(
+          project_id,
+          semantic_fingerprint,
+          sequence DESC
+        );
+    `);
+    db.db.query(`
+      INSERT INTO projects (id, name, created_at)
+      VALUES ('scrapbook', 'scrapbook', '2026-08-10T00:29:00.000Z')
+    `).run();
+    const legacyInsert = db.db.query(`
+      INSERT INTO project_repository_setup_observations (
+        id,
+        project_id,
+        repository_full_name,
+        default_branch,
+        source_kind,
+        semantic_fingerprint,
+        observed_at
+      ) VALUES (?1, 'scrapbook', 'teamleaderleo/scrapbook', ?2,
+        'github_conversation_context', ?3, ?4)
+    `);
+    legacyInsert.run(
+      "repo_setup_legacy-main",
+      "main",
+      `sha256:${"1".repeat(64)}`,
+      "2026-08-10T00:30:00.000Z",
+    );
+    legacyInsert.run(
+      "repo_setup_legacy-develop",
+      "develop",
+      `sha256:${"2".repeat(64)}`,
+      "2026-08-10T00:31:00.000Z",
+    );
+
+    const ledger = new SqliteProjectRepositorySetupObservationLedger(db);
+    const current = await ledger.getCurrentProjectRepositorySetupObservation("scrapbook");
+    expect(current).toMatchObject({
+      repositoryFullName: "teamleaderleo/scrapbook",
+      defaultBranch: "develop",
+      observedAt: "2026-08-10T00:31:00.000Z",
+      authorizesProviderEffect: false,
+      containsSecrets: false,
+    });
+    expect(listSqliteProjectRepositorySetupObservationHistory(db, "scrapbook")
+      .map((observation) => observation.defaultBranch))
+      .toEqual(["develop", "main"]);
+
+    const columns = db.db
+      .query<{ name: string }, []>(
+        "PRAGMA table_info(project_repository_setup_observations)",
+      )
+      .all()
+      .map((column) => column.name);
+    expect(columns).toContain("fingerprint");
+    expect(columns).toContain("recorded_at");
+    expect(columns).toContain("is_current");
+    expect(columns).not.toContain("semantic_fingerprint");
   });
 
   test("keeps projects isolated", () => {
