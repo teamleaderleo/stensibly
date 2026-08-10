@@ -98,10 +98,11 @@ describe("GitHub repository default branch observation", () => {
   });
 
   test("rejects malformed present default branches through the fixed ingress error", async () => {
-    for (const defaultBranch of ["HEAD", "refs/heads/main", "bad branch", ".hidden"]) {
+    const invalidBranches = ["HEAD", "refs/heads/main", "bad branch", ".hidden"];
+    for (const [index, defaultBranch] of invalidBranches.entries()) {
       await expect(ingress(
         pushPayload(defaultBranch),
-        `delivery-invalid-${String(defaultBranch).replaceAll("/", "-")}`,
+        `delivery-invalid-${index + 1}`,
       )).rejects.toMatchObject({
         name: "GitHubWebhookIngressError",
         status: 400,
