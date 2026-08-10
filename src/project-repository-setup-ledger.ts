@@ -1,3 +1,4 @@
+import type { WorkLedger } from "./ledger.js";
 import {
   compileProjectRepositorySetupObservation,
   type ProjectRepositorySetupObservation,
@@ -35,6 +36,16 @@ export class ProjectRepositorySetupObservationConflictError extends Error {
     super(message);
     this.name = "ProjectRepositorySetupObservationConflictError";
   }
+}
+
+export function projectRepositorySetupObservationLedger(
+  ledger: WorkLedger,
+): ProjectRepositorySetupObservationLedger | null {
+  const candidate = ledger as WorkLedger & Partial<ProjectRepositorySetupObservationLedger>;
+  return typeof candidate.getCurrentProjectRepositorySetupObservation === "function"
+    && typeof candidate.recordProjectRepositorySetupObservation === "function"
+    ? candidate as ProjectRepositorySetupObservationLedger
+    : null;
 }
 
 export function prepareProjectRepositorySetupObservationReplacement(
