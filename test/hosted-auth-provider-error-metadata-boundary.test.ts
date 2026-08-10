@@ -29,7 +29,7 @@ for (const operation of ["preflight", "exchange", "identity"] as const) {
       clientSecret: "github-client-secret-sentinel",
       fetch: (async () => {
         throw hostileError;
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     let captured: unknown;
