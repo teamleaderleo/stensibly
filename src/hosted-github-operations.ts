@@ -67,10 +67,9 @@ export function mountHostedGitHubOperationsFromEnv<
     assertAuthority: (input) => assertAuthority(ledger, input, now),
     now: () => new Date(now()).toISOString(),
   });
-  const healthLedger = withHostedGitHubRepoHealth(ledger, service);
   return config.publicationWritesEnabled
-    ? withGitHubOperationsService(healthLedger, service)
-    : healthLedger;
+    ? withGitHubOperationsService(ledger, service)
+    : withHostedGitHubRepoHealth(ledger, service);
 }
 
 function withHostedGitHubRepoHealth<T extends WorkLedger>(
