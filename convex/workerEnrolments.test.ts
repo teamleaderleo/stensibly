@@ -152,12 +152,15 @@ describe("durable worker enrolments", () => {
     expect((await rawState(t)).enrolments).toHaveLength(1);
   });
 
-  test("heartbeats and releases only the current owned enrolment", async () => {
+  test("heartbeats and releases only the current owned enrolment and its callsign", async () => {
     const t = convexTest(schema, modules);
     await seedWorkspaceAndProjects(t, ["stensibly"]);
     const accepted = await t.mutation(
       convexApi.workerEnrolments.enrol,
-      enrolInput(enrolmentRequest({ workerSessionId: "chatgpt.kite.lifecycle" }), "worker:lifecycle:enrol"),
+      enrolInput(
+        enrolmentRequest({ workerSessionId: "chatgpt.kite.lifecycle", callsign: "Kite" }),
+        "worker:lifecycle:enrol",
+      ),
     ) as any;
     const heartbeatInput = {
       serviceSecret: secret,
@@ -201,6 +204,14 @@ describe("durable worker enrolments", () => {
       ...heartbeatInput,
       idempotencyKey: "worker:lifecycle:heartbeat:after-release",
     })).toMatchObject({ outcome: "rejected", reason: "worker_not_active" });
+    expect((await rawState(t)).leases).toEqual([
+      expect.objectContaining({
+        callsign: "Kite",
+        workerEnrolmentId: expect.any(String),
+        status: "released",
+        releasedAt: expect.any(Number),
+      }),
+    ]);
   });
 
   test("reconciles expiry out of current resolution while preserving history", async () => {
@@ -208,7 +219,10 @@ describe("durable worker enrolments", () => {
     await seedWorkspaceAndProjects(t, ["stensibly"]);
     const accepted = await t.mutation(
       convexApi.workerEnrolments.enrol,
-      enrolInput(enrolmentRequest({ workerSessionId: "chatgpt.kite.expiry" }), "worker:expiry:enrol"),
+      enrolInput(
+        enrolmentRequest({ workerSessionId: "chatgpt.kite.expiry", callsign: "Kite" }),
+        "worker:expiry:enrol",
+      ),
     ) as any;
     const expiredAt = Date.now() - 1_000;
     await t.run(async (ctx) => {
@@ -216,6 +230,8 @@ describe("durable worker enrolments", () => {
         .find((entry) => entry.externalId === accepted.worker.workerRef);
       if (!enrolment) throw new Error("Worker enrolment fixture disappeared");
       await ctx.db.patch(enrolment._id, { expiresAt: expiredAt });
+      if (!enrolment.callsignLeaseId) throw new Error("Worker callsign fixture disappeared");
+      await ctx.db.patch(enrolment.callsignLeaseId, { expiresAt: expiredAt });
     });
 
     expect(await t.mutation(convexApi.workerEnrolments.resolveCurrent, {
@@ -243,28 +259,125 @@ describe("durable worker enrolments", () => {
       workerRef: accepted.worker.workerRef,
       idempotencyKey: "worker:expiry:heartbeat",
     })).toMatchObject({ outcome: "rejected", reason: "worker_not_active" });
+    expect((await rawState(t)).leases).toEqual([
+      expect.objectContaining({
+        callsign: "Kite",
+        status: "expired",
+        expiredAt,
+      }),
+    ]);
   });
 
-  test("keeps callsign-bearing enrolment pending until the atomic hosted lease join exists", async () => {
+  test("atomically joins a canonical callsign lease and replays the same worker", async () => {
     const t = convexTest(schema, modules);
     await seedWorkspaceAndProjects(t, ["stensibly"]);
     const request = enrolmentRequest({
       workerSessionId: "chatgpt.kite.callsign",
       callsign: "Kite",
     });
-    const input = enrolInput(request, "worker:callsign:pending");
-    const rejected = await t.mutation(convexApi.workerEnrolments.enrol, input) as any;
+    const input = enrolInput(request, "worker:callsign:joined");
+    const accepted = await t.mutation(convexApi.workerEnrolments.enrol, input) as any;
+    expect(accepted).toMatchObject({
+      operation: "enrol",
+      outcome: "accepted",
+      reason: null,
+      worker: {
+        workerRef: expect.stringMatching(/^wrk_/),
+        callsign: "Kite",
+        callsignLeaseId: expect.stringMatching(/^csl_/),
+        callsignLeaseGeneration: 1,
+      },
+      grantsAuthority: false,
+    });
+    expect(await t.mutation(convexApi.workerEnrolments.enrol, input)).toEqual(accepted);
+    const state = await rawState(t);
+    expect(state.enrolments).toEqual([
+      expect.objectContaining({
+        externalId: accepted.worker.workerRef,
+        callsign: "Kite",
+        callsignLeaseGeneration: 1,
+      }),
+    ]);
+    expect(state.leases).toEqual([
+      expect.objectContaining({
+        externalId: accepted.worker.callsignLeaseId,
+        callsign: "Kite",
+        collisionKey: "kite",
+        workerSessionId: "chatgpt.kite.callsign",
+        workerEnrolmentId: state.enrolments[0]._id,
+        generation: 1,
+        status: "active",
+        reservationRequestId: "worker:callsign:joined",
+        reservationFingerprint: request.fingerprint,
+      }),
+    ]);
+    expect(state.commands).toHaveLength(1);
+  });
+
+  test("rejects a colliding callsign without leaving an orphan worker or lease", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspaceAndProjects(t, ["stensibly"]);
+    await t.mutation(
+      convexApi.workerEnrolments.enrol,
+      enrolInput(
+        enrolmentRequest({ workerSessionId: "chatgpt.kite.first", callsign: "Kite" }),
+        "worker:callsign:first",
+      ),
+    );
+
+    const rejected = await t.mutation(
+      convexApi.workerEnrolments.enrol,
+      enrolInput(
+        enrolmentRequest({ workerSessionId: "chatgpt.kite.second", callsign: "kite" }),
+        "worker:callsign:collision",
+      ),
+    ) as any;
     expect(rejected).toMatchObject({
       operation: "enrol",
       outcome: "rejected",
-      reason: "callsign_join_pending",
+      reason: "callsign_active_collision",
       worker: null,
       grantsAuthority: false,
     });
-    expect(await t.mutation(convexApi.workerEnrolments.enrol, input)).toEqual(rejected);
+    const state = await rawState(t);
+    expect(state.enrolments).toHaveLength(1);
+    expect(state.leases).toHaveLength(1);
+  });
+
+  test("rejects invalid or overlong callsign joins without durable partial state", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspaceAndProjects(t, ["stensibly"]);
+
+    const invalid = await t.mutation(
+      convexApi.workerEnrolments.enrol,
+      enrolInput(
+        enrolmentRequest({ workerSessionId: "chatgpt.kite.invalid", callsign: "Kite!" }),
+        "worker:callsign:invalid",
+      ),
+    ) as any;
+    expect(invalid).toMatchObject({ outcome: "rejected", reason: "callsign_invalid", worker: null });
+
+    const tooLong = await t.mutation(
+      convexApi.workerEnrolments.enrol,
+      enrolInput(
+        enrolmentRequest({
+          workerSessionId: "chatgpt.kite.too-long",
+          callsign: "Kite",
+          lifetimeMs: 8 * 24 * 60 * 60 * 1_000,
+        }),
+        "worker:callsign:too-long",
+      ),
+    ) as any;
+    expect(tooLong).toMatchObject({
+      outcome: "rejected",
+      reason: "callsign_lifetime_too_long",
+      worker: null,
+    });
+
     const state = await rawState(t);
     expect(state.enrolments).toHaveLength(0);
-    expect(state.commands).toHaveLength(1);
+    expect(state.leases).toHaveLength(0);
+    expect(state.commands).toHaveLength(2);
   });
 });
 
@@ -273,6 +386,7 @@ function enrolmentRequest(options: {
   profile?: string;
   projectScope?: string[];
   callsign?: string;
+  lifetimeMs?: number;
 }) {
   const now = Date.now();
   return buildWorkerEnrolmentRequest({
@@ -285,7 +399,7 @@ function enrolmentRequest(options: {
     projectScope: options.projectScope ?? ["stensibly"],
     preferredStances: ["review"],
     startedAt: new Date(now).toISOString(),
-    expiresAt: new Date(now + 2 * 60 * 60 * 1_000).toISOString(),
+    expiresAt: new Date(now + (options.lifetimeMs ?? 2 * 60 * 60 * 1_000)).toISOString(),
     heartbeatSeconds: 300,
     correlationId: "corr_worker_test",
     causationId: "cause_worker_test",
@@ -328,6 +442,7 @@ async function seedWorkspaceAndProjects(t: ReturnType<typeof convexTest>, projec
 async function rawState(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => ({
     enrolments: await ctx.db.query("workerEnrolments").collect(),
+    leases: await ctx.db.query("callsignLeases").collect(),
     commands: await ctx.db.query("workerEnrolmentCommands").collect(),
   }));
 }

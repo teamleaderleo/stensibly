@@ -418,14 +418,12 @@ async function activeEnrolmentForSession(
         .eq("workerSessionId", workerSessionId)
         .eq("status", "active")
     )
-    .collect();
-  const active: WorkerEnrolment[] = [];
-  for (const candidate of candidates) {
-    const reconciled = await reconcileIfExpired(ctx, candidate, now);
-    if (reconciled.status === "active") active.push(reconciled);
-  }
-  if (active.length > 1) throw new Error("Worker session enrolment invariant violated");
-  return active[0] ?? null;
+    .take(2);
+  if (candidates.length > 1) throw new Error("Worker session enrolment invariant violated");
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  const reconciled = await reconcileIfExpired(ctx, candidate, now);
+  return reconciled.status === "active" ? reconciled : null;
 }
 
 async function ownedEnrolment(
@@ -512,21 +510,19 @@ async function currentCallsignLease(
     .withIndex("by_workspace_collision_status", (q) =>
       q.eq("workspaceId", workspaceId).eq("collisionKey", collisionKey).eq("status", "active")
     )
-    .collect();
-  const active: CallsignLease[] = [];
-  for (const candidate of candidates) {
-    if (candidate.expiresAt <= now) {
-      await ctx.db.patch(candidate._id, {
-        status: "expired",
-        expiredAt: candidate.expiresAt,
-        updatedAt: now,
-      });
-    } else {
-      active.push(candidate);
-    }
+    .take(2);
+  if (candidates.length > 1) {
+    throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
   }
-  if (active.length > 1) throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
-  return active[0] ?? null;
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  if (candidate.expiresAt > now) return candidate;
+  await ctx.db.patch(candidate._id, {
+    status: "expired",
+    expiredAt: candidate.expiresAt,
+    updatedAt: now,
+  });
+  return null;
 }
 
 async function maximumCallsignGeneration(
@@ -534,13 +530,14 @@ async function maximumCallsignGeneration(
   workspaceId: WorkspaceId,
   collisionKey: string,
 ): Promise<number> {
-  const leases = await ctx.db
+  const latest = await ctx.db
     .query("callsignLeases")
     .withIndex("by_workspace_collision_generation", (q) =>
       q.eq("workspaceId", workspaceId).eq("collisionKey", collisionKey)
     )
-    .collect();
-  return leases.reduce((maximum, lease) => Math.max(maximum, lease.generation), 0);
+    .order("desc")
+    .first();
+  return latest?.generation ?? 0;
 }
 
 async function insertEnrolmentCallsignLease(
