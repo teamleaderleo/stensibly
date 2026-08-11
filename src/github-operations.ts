@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { GitHubCapabilityCatalogueService } from "./github-capability-service.js";
-import type { GitHubDelegatedReadReceipt } from "./github-delegated-read.js";
+import {
+  GitHubDelegatedProjectAttachmentRequiredError,
+  type GitHubDelegatedReadReceipt,
+} from "./github-delegated-read.js";
 import type { HostedGitHubDelegatedReadInput } from "./hosted-github-delegated-read-provider.js";
 import { sha256, stableJson } from "./canonical-json.js";
 import {
@@ -87,6 +90,22 @@ export interface GitHubOperationsServiceDependencies {
   now?: () => string;
 }
 
+const githubOperationSurface = Object.freeze([
+  "github_repo_health",
+  "github_branch_tidy",
+  "github_ci_diagnose",
+  "github_land_pr",
+] as const);
+
+const githubLandPrCandidatePrerequisites = Object.freeze([
+  "current_runner_lease",
+  "expected_head_sha",
+  "fresh_expected_base_sha",
+  "clean_mergeability",
+  "successful_ci",
+  "no_unresolved_review_threads",
+] as const);
+
 export interface GitHubOperationIdentity {
   project: string;
   repository: string;
@@ -141,7 +160,13 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
   }
 
   async githubRepoHealth(input: GitHubOperationIdentity): Promise<unknown> {
-    const repo = await this.#read(input, "get_repo", {});
+    let repo: GitHubDelegatedReadReceipt;
+    try {
+      repo = await this.#read(input, "get_repo", {});
+    } catch (error) {
+      if (!(error instanceof GitHubDelegatedProjectAttachmentRequiredError)) throw error;
+      return this.#blockedRepoHealth(input);
+    }
     const metadata = record(repo.result, "repository metadata");
     const defaultBranch = text(metadata.defaultBranch, "default branch");
     const defaultBranchSha = await this.#dependencies.provider.readBranchHead(
@@ -169,14 +194,32 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
         connectivity: "ready",
       }),
       repository: Object.freeze({ ...metadata, defaultBranchSha }),
-      operationSurface: Object.freeze([
-        "github_repo_health",
-        "github_branch_tidy",
-        "github_ci_diagnose",
-        "github_land_pr",
-      ]),
+      operationSurface: githubOperationSurface,
+      operationAvailability: operationAvailability("ready"),
       catalogueFingerprint: this.#catalogue.registry.fingerprint,
       attention: Object.freeze(attention),
+      authorizesMutation: false,
+    });
+  }
+
+  #blockedRepoHealth(input: GitHubOperationIdentity): unknown {
+    return Object.freeze({
+      version: 1,
+      project: input.project,
+      repositoryFullName: input.repository,
+      observedAt: this.#now(),
+      health: "blocked",
+      attachment: null,
+      provider: Object.freeze({ connectivity: "blocked" }),
+      repository: null,
+      operationSurface: githubOperationSurface,
+      operationAvailability: operationAvailability("blocked"),
+      catalogueFingerprint: this.#catalogue.registry.fingerprint,
+      attention: Object.freeze(["project_attachment_required"]),
+      recovery: Object.freeze({
+        inspectWith: "get_project_attachment",
+        nextAction: "review_and_accept_project_attachment",
+      }),
       authorizesMutation: false,
     });
   }
@@ -446,6 +489,23 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       catalogueFingerprint: this.#catalogue.registry.fingerprint,
     });
   }
+}
+
+function operationAvailability(binding: "ready" | "blocked") {
+  const availability = (operationBinding: "ready" | "blocked") => Object.freeze({
+    capability: "present" as const,
+    binding: operationBinding,
+    blockedBy: operationBinding === "blocked" ? "project_attachment" as const : null,
+  });
+  return Object.freeze({
+    github_repo_health: availability("ready"),
+    github_branch_tidy: availability(binding),
+    github_ci_diagnose: availability(binding),
+    github_land_pr: Object.freeze({
+      ...availability(binding),
+      candidatePrerequisites: githubLandPrCandidatePrerequisites,
+    }),
+  });
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

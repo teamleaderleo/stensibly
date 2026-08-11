@@ -4,7 +4,11 @@ import {
   type GitHubLandInspection,
   type GitHubOperationsProvider,
 } from "../src/github-operations.js";
-import type { GitHubDelegatedReadReceipt } from "../src/github-delegated-read.js";
+import {
+  GitHubDelegatedBindingError,
+  GitHubDelegatedProjectAttachmentRequiredError,
+  type GitHubDelegatedReadReceipt,
+} from "../src/github-delegated-read.js";
 import type { OperationWorkflow, OperationWorkflowStore } from "../src/operation-workflow-contracts.js";
 import { operationWorkflowStableRequestJson } from "../src/operation-workflow-admission.js";
 
@@ -21,7 +25,56 @@ describe("GitHub outcome operations", () => {
     expect(result.operationSurface).toEqual([
       "github_repo_health", "github_branch_tidy", "github_ci_diagnose", "github_land_pr",
     ]);
+    expect(result.operationAvailability.github_land_pr).toEqual({
+      capability: "present",
+      binding: "ready",
+      blockedBy: null,
+      candidatePrerequisites: [
+        "current_runner_lease",
+        "expected_head_sha",
+        "fresh_expected_base_sha",
+        "clean_mergeability",
+        "successful_ci",
+        "no_unresolved_review_threads",
+      ],
+    });
     expect(result.authorizesMutation).toBe(false);
+    fixture.close();
+  });
+
+  test("keeps merge capability visible while a project attachment is missing", async () => {
+    const fixture = makeFixture({ attachmentMissing: true });
+    const result = await fixture.service.githubRepoHealth(identity()) as Record<string, any>;
+    expect(result).toMatchObject({
+      health: "blocked",
+      project: "stensibly",
+      repositoryFullName: "teamleaderleo/stensibly",
+      attachment: null,
+      provider: { connectivity: "blocked" },
+      repository: null,
+      attention: ["project_attachment_required"],
+      recovery: {
+        inspectWith: "get_project_attachment",
+        nextAction: "review_and_accept_project_attachment",
+      },
+      authorizesMutation: false,
+    });
+    expect(result.operationSurface).toContain("github_land_pr");
+    expect(result.operationAvailability.github_land_pr).toMatchObject({
+      capability: "present",
+      binding: "blocked",
+      blockedBy: "project_attachment",
+    });
+    fixture.close();
+  });
+
+  test("does not turn other binding failures into attachment setup guidance", async () => {
+    const fixture = makeFixture({
+      delegatedFailure: new GitHubDelegatedBindingError("binding is stale"),
+    });
+    await expect(fixture.service.githubRepoHealth(identity())).rejects.toThrow(
+      "binding is stale",
+    );
     fixture.close();
   });
 
@@ -109,6 +162,8 @@ function makeFixture(options: {
   unresolved?: boolean;
   noCi?: boolean;
   racedBase?: boolean;
+  attachmentMissing?: boolean;
+  delegatedFailure?: Error;
 } = {}) {
   const workflows = new MemoryWorkflowStore();
   let merged = false;
@@ -164,7 +219,15 @@ function makeFixture(options: {
     },
   };
   const service = new DefaultGitHubOperationsService({
-    delegated: async (input) => receipt(input.tool, delegatedResult(input.tool, options)),
+    delegated: async (input) => {
+      if (options.delegatedFailure) throw options.delegatedFailure;
+      if (options.attachmentMissing) {
+        throw new GitHubDelegatedProjectAttachmentRequiredError(
+          "Project stensibly has no accepted repository attachment",
+        );
+      }
+      return receipt(input.tool, delegatedResult(input.tool, options));
+    },
     provider,
     workflows,
     assertAuthority: async () => undefined,
