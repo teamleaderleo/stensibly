@@ -1,9 +1,13 @@
-import { makeFunctionReference } from "convex/server";
+import {
+  makeFunctionReference,
+  type FunctionReference,
+} from "convex/server";
 import type { ConvexCaller } from "./convex-ledger.js";
 import {
   admitMcpSetupEvidence,
   type McpSetupEvidence,
   type McpSetupEvidenceReader,
+  type McpSetupFirstReadRecorder,
 } from "./mcp-setup-evidence.js";
 import type { McpSetupConnectionInput } from "./mcp-oauth-service.js";
 
@@ -16,11 +20,17 @@ export interface ConvexMcpSetupEvidenceServiceOptions {
 const recordConnectionRef = makeFunctionReference<"mutation">(
   "mcpSetupEvidence:recordConnection",
 );
+const recordFirstReadRef = makeFunctionReference<"mutation">(
+  "mcpSetupEvidence:recordFirstRead",
+);
 const getEvidenceRef = makeFunctionReference<"query">(
   "mcpSetupEvidence:getEvidence",
 );
 
-export class ConvexMcpSetupEvidenceService implements McpSetupEvidenceReader {
+export class ConvexMcpSetupEvidenceService implements
+  McpSetupEvidenceReader,
+  McpSetupFirstReadRecorder
+{
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
   readonly workspace: string;
@@ -32,14 +42,14 @@ export class ConvexMcpSetupEvidenceService implements McpSetupEvidenceReader {
   }
 
   async recordSetupConnection(input: McpSetupConnectionInput): Promise<void> {
-    try {
-      await this.client.mutation(
-        recordConnectionRef,
-        this.args(input),
-      );
-    } catch {
-      throw new Error("MCP setup evidence storage failed");
-    }
+    await this.mutate(recordConnectionRef, input);
+  }
+
+  async recordSetupFirstRead(input: {
+    accountId: string;
+    project: string;
+  }): Promise<void> {
+    await this.mutate(recordFirstReadRef, input);
   }
 
   async getMcpSetupEvidence(input: {
@@ -57,6 +67,17 @@ export class ConvexMcpSetupEvidenceService implements McpSetupEvidenceReader {
     }
     try {
       return admitMcpSetupEvidence(result, input);
+    } catch {
+      throw new Error("MCP setup evidence storage failed");
+    }
+  }
+
+  private async mutate(
+    reference: FunctionReference<"mutation">,
+    input: object,
+  ): Promise<void> {
+    try {
+      await this.client.mutation(reference, this.args(input));
     } catch {
       throw new Error("MCP setup evidence storage failed");
     }

@@ -446,6 +446,13 @@ export default defineSchema({
     .index("by_workspace_account", ["workspaceId", "accountId"])
     .index("by_workspace_account_project", ["workspaceId", "accountId", "project"]),
 
+  mcpSetupFirstReads: defineTable({
+    workspaceId: v.id("workspaces"),
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    firstReadAt: v.number(),
+  }).index("by_workspace_account_project", ["workspaceId", "accountId", "projectId"]),
+
   items: defineTable({
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),

@@ -16,6 +16,13 @@ export interface McpSetupEvidenceReader {
   }): Promise<McpSetupEvidence>;
 }
 
+export interface McpSetupFirstReadRecorder {
+  recordSetupFirstRead(input: {
+    accountId: string;
+    project: string;
+  }): Promise<void>;
+}
+
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 export function admitMcpSetupEvidence(

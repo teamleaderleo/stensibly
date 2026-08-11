@@ -85,10 +85,7 @@ export const recordConnection = mutation({
 
     const scopes: Array<string | null> = projects === null ? [null] : projects;
     if (scopes.length === 0) return null;
-    const connectedAt = Date.now();
-    if (!Number.isSafeInteger(connectedAt) || connectedAt < 0) {
-      throw new Error("MCP setup observation time is invalid");
-    }
+    const connectedAt = currentObservationTime();
     for (const project of scopes) {
       const existing = await ctx.db
         .query("mcpSetupConnections")
@@ -108,6 +105,88 @@ export const recordConnection = mutation({
         connectedAt,
       });
     }
+    return null;
+  },
+});
+
+export const recordFirstRead = mutation({
+  args: {
+    ...serviceArgs,
+    accountId: v.string(),
+    project: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) throw new Error("MCP setup workspace is unavailable");
+    const accountId = exactAccountId(args.accountId);
+    const project = exactProject(args.project);
+
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_external_id", (q) => q.eq("externalId", accountId))
+      .unique();
+    if (!account || account.disabledAt !== undefined) {
+      throw new Error("MCP setup account is unavailable");
+    }
+    const membership = await ctx.db
+      .query("workspaceMemberships")
+      .withIndex("by_account_workspace", (q) =>
+        q.eq("accountId", account._id).eq("workspaceId", workspace._id),
+      )
+      .unique();
+    if (!membership || membership.revokedAt !== undefined) {
+      throw new Error("MCP setup account membership is unavailable");
+    }
+    if (membership.projects !== undefined && !membership.projects.includes(project)) {
+      throw new Error("MCP setup project access is unavailable");
+    }
+    const projectRow = await findProject(ctx, workspace._id, project);
+    if (!projectRow) throw new Error("MCP setup project is unavailable");
+
+    const [projectConnection, workspaceConnection] = await Promise.all([
+      ctx.db
+        .query("mcpSetupConnections")
+        .withIndex("by_workspace_account_project", (q) =>
+          q.eq("workspaceId", workspace._id)
+            .eq("accountId", account._id)
+            .eq("project", project),
+        )
+        .unique(),
+      ctx.db
+        .query("mcpSetupConnections")
+        .withIndex("by_workspace_account_project", (q) =>
+          q.eq("workspaceId", workspace._id)
+            .eq("accountId", account._id)
+            .eq("project", null),
+        )
+        .unique(),
+    ]);
+    const connection = earliestConnection(projectConnection, workspaceConnection);
+    if (!connection) throw new Error("MCP setup connection evidence is unavailable");
+
+    const existing = await ctx.db
+      .query("mcpSetupFirstReads")
+      .withIndex("by_workspace_account_project", (q) =>
+        q
+          .eq("workspaceId", workspace._id)
+          .eq("accountId", account._id)
+          .eq("projectId", projectRow._id),
+      )
+      .unique();
+    if (existing) return null;
+
+    const firstReadAt = currentObservationTime();
+    if (firstReadAt < connection.connectedAt) {
+      throw new Error("MCP setup first-read time predates connection evidence");
+    }
+    await ctx.db.insert("mcpSetupFirstReads", {
+      workspaceId: workspace._id,
+      accountId: account._id,
+      projectId: projectRow._id,
+      firstReadAt,
+    });
     return null;
   },
 });
@@ -168,13 +247,25 @@ export const getEvidence = query({
     ]);
     const connection = earliestConnection(projectConnection, workspaceConnection);
     if (!connection) return emptyEvidence(accountId, project);
-    const connectedAt = isoTimestamp(connection.connectedAt);
+
+    const firstRead = await ctx.db
+      .query("mcpSetupFirstReads")
+      .withIndex("by_workspace_account_project", (q) =>
+        q
+          .eq("workspaceId", workspace._id)
+          .eq("accountId", account._id)
+          .eq("projectId", projectRow._id),
+      )
+      .unique();
+    if (firstRead && firstRead.firstReadAt < connection.connectedAt) {
+      throw new Error("Stored MCP setup first-read evidence is invalid");
+    }
     return {
       version: 1 as const,
       accountId,
       project,
-      connectedAt,
-      firstReadAt: null,
+      connectedAt: isoTimestamp(connection.connectedAt),
+      firstReadAt: firstRead ? isoTimestamp(firstRead.firstReadAt) : null,
       containsSecrets: false as const,
     };
   },
@@ -259,6 +350,14 @@ function exactMcpResource(value: string): string {
     throw new Error("MCP setup resource is invalid");
   }
   return value;
+}
+
+function currentObservationTime(): number {
+  const now = Date.now();
+  if (!Number.isSafeInteger(now) || now < 0) {
+    throw new Error("MCP setup observation time is invalid");
+  }
+  return now;
 }
 
 function isoTimestamp(value: number): string {
