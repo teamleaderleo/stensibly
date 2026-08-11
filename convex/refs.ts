@@ -38,6 +38,7 @@ export const convexApi = {
   },
   runnerRuns: {
     claim: mutationRef("runnerRuns:claim"),
+    reconcile: mutationRef("runnerRuns:reconcile"),
     get: mutationRef("runnerRuns:get"),
     list: mutationRef("runnerRuns:list"),
     heartbeat: mutationRef("runnerRuns:heartbeat"),

@@ -379,6 +379,7 @@ describe("hosted runner ledger parity", () => {
       itemStatus: "active",
       itemHolder: supervisor.id,
     });
+    expect(await expiryT.mutation(convexApi.runnerRuns.reconcile, baseArgs)).toBeNull();
     const reconciled = await expiryT.mutation(convexApi.runnerRuns.get, {
       ...baseArgs,
       id: expired.runId,
