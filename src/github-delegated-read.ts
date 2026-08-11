@@ -259,7 +259,7 @@ export class GitHubDelegatedReadService {
       input.project,
     );
     if (!attachment) {
-      throw new GitHubDelegatedBindingError(
+      throw new GitHubDelegatedProjectAttachmentRequiredError(
         `Project ${input.project} has no accepted repository attachment`,
       );
     }
@@ -338,6 +338,14 @@ export class GitHubDelegatedBindingError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GitHubDelegatedBindingError";
+  }
+}
+
+export class GitHubDelegatedProjectAttachmentRequiredError
+  extends GitHubDelegatedBindingError {
+  constructor(message: string) {
+    super(message);
+    this.name = "GitHubDelegatedProjectAttachmentRequiredError";
   }
 }
 
