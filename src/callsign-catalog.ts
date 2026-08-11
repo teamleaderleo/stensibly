@@ -4,7 +4,7 @@ import {
   callsignCollisionKey,
   callsignPools,
   type BaseCallsignCategory,
-} from "./callsign-suggestions.ts";
+} from "./callsign-suggestions.js";
 
 export const callsignAvailabilityStates = [
   "available",
