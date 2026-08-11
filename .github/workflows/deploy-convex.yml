@@ -94,7 +94,7 @@ jobs:
       - name: Analyze the exact Convex schema and bundle
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: bunx convex codegen --dry-run --typecheck disable
+        run: bunx convex codegen --dry-run --typecheck enable
 
       - name: Require unchanged current main immediately before deployment
         run: |

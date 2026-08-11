@@ -44,7 +44,7 @@ describe("production Convex deployment workflow", () => {
     expect(workflow).toContain("bun install --frozen-lockfile");
     expect(workflow).toContain("bun run typecheck");
     expect(workflow).toContain("bun run test:convex");
-    expect(workflow).toContain("bunx convex codegen --dry-run --typecheck disable");
+    expect(workflow).toContain("bunx convex codegen --dry-run --typecheck enable");
     expect(workflow).toContain("bunx convex deploy");
     expect(workflow).toContain("--typecheck enable");
     expect(workflow).toContain("--codegen disable");
