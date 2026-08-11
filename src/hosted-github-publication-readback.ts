@@ -17,6 +17,9 @@ import {
   GitHubPublishChangeReadbackService,
 } from "./github-publish-change-readback.js";
 import type {
+  GitHubRepositoryFileWriteService,
+} from "./github-issue-provider-mcp.js";
+import type {
   GitHubPublishChangeService,
 } from "./github-publish-change-operation.js";
 import { GitHubRestPublicationWriteAdapter } from "./github-rest-publication-write-adapter.js";
@@ -191,11 +194,15 @@ function repositoryWriteReceiptReader(value: unknown): {
     project: string,
     idempotencyKey: string,
   ): Promise<GitHubRepositoryWriteReceipt | null>;
+  reconcileRepositoryFile: NonNullable<
+    GitHubRepositoryFileWriteService["reconcileRepositoryFile"]
+  >;
 } {
   const get = captureDataMethod(value, "getRepositoryWriteReceipt");
-  if (!get) {
+  const reconcile = captureDataMethod(value, "reconcileRepositoryFile");
+  if (!get || !reconcile) {
     throw new Error(
-      "Hosted GitHub publication readback requires the repository-write receipt store",
+      "Hosted GitHub publication readback requires the repository-write reconciliation service",
     );
   }
   return {
@@ -203,6 +210,9 @@ function repositoryWriteReceiptReader(value: unknown): {
       project: string,
       idempotencyKey: string,
     ) => Promise<GitHubRepositoryWriteReceipt | null>,
+    reconcileRepositoryFile: reconcile as NonNullable<
+      GitHubRepositoryFileWriteService["reconcileRepositoryFile"]
+    >,
   };
 }
 

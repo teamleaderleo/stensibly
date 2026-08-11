@@ -147,6 +147,28 @@ export interface GitHubRepositoryFileWriteService {
     message: string;
     idempotencyKey: string;
   }): Promise<GitHubRepositoryWriteReceipt>;
+  /** Internal durable reconciliation; it is deliberately not registered as an MCP tool. */
+  reconcileRepositoryFile?(input: GitHubProviderRequestContext & (
+    | {
+        operation: "create_file";
+        path: string;
+        branch: string;
+        expectedParentSha: string;
+        content: string;
+        message: string;
+        idempotencyKey: string;
+      }
+    | {
+        operation: "update_file";
+        path: string;
+        branch: string;
+        expectedParentSha: string;
+        contentSha: string;
+        content: string;
+        message: string;
+        idempotencyKey: string;
+      }
+  )): Promise<GitHubRepositoryWriteReceipt>;
 }
 
 export function withGitHubRepositoryFileWriteService<T extends object>(
@@ -156,6 +178,12 @@ export function withGitHubRepositoryFileWriteService<T extends object>(
   return Object.assign(target, {
     createRepositoryFile: service.createRepositoryFile.bind(service),
     updateRepositoryFile: service.updateRepositoryFile.bind(service),
+    ...(service.reconcileRepositoryFile
+      ? {
+          reconcileRepositoryFile:
+            service.reconcileRepositoryFile.bind(service),
+        }
+      : {}),
   });
 }
 

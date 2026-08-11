@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sha256, stableJson } from "./canonical-json.js";
 import {
   admitGitHubBranchRef,
@@ -61,6 +62,35 @@ export interface RepositoryWriteRefReader {
     commitSha: string;
   }): Promise<readonly string[]>;
 }
+
+export interface RepositoryWriteTreeEntry {
+  path: string;
+  mode: "100644" | "100755" | "120000" | "160000";
+  type: "blob" | "commit";
+  sha: string;
+}
+
+export interface RepositoryWriteCommitTreeSnapshot {
+  version: 1;
+  repositoryFullName: string;
+  commitSha: string;
+  parentShas: readonly string[];
+  messageSha256: string;
+  treeSha: string;
+  entries: readonly RepositoryWriteTreeEntry[];
+}
+
+export interface RepositoryWriteReadbackReader extends RepositoryWriteRefReader {
+  getCommitTreeSnapshot(input: {
+    repositoryFullName: string;
+    commitSha: string;
+  }): Promise<unknown>;
+}
+
+export type RepositoryWriteReadbackPayload =
+  | { operation: "create_file"; content: string; message: string }
+  | { operation: "update_file"; content: string; contentSha: string; message: string }
+  | { operation: "delete_file"; contentSha: string; message: string };
 
 export interface VerifiedRepositoryWrite {
   version: 1;
@@ -320,6 +350,347 @@ export async function verifyRepositoryWriteResult(input: {
     verifiedAt,
     authorizesRetry: false,
   });
+}
+
+/**
+ * Proves an ambiguous exact-CAS write from complete canonical Git trees. The
+ * candidate must be the current direct-child head and its complete non-tree
+ * entry set must differ from the expected parent at exactly the requested path.
+ */
+export async function verifyRepositoryWriteReadback(input: {
+  prepared: unknown;
+  payload: unknown;
+  refs: RepositoryWriteReadbackReader;
+  now?: () => string;
+}): Promise<VerifiedRepositoryWrite> {
+  const prepared = admitPrepared(input.prepared);
+  const payload = admitReadbackPayload(input.payload, prepared);
+
+  let headValue: string | null;
+  try {
+    headValue = await input.refs.getRefHead({
+      repositoryFullName: prepared.repositoryFullName,
+      targetRef: prepared.targetRef,
+    });
+  } catch {
+    throw readbackPending(prepared, "repository_write_readback_unavailable");
+  }
+  if (headValue === null) {
+    throw readbackPending(prepared, "repository_write_readback_effect_not_proven");
+  }
+
+  let head: string;
+  try {
+    head = exactCommitSha(headValue, "Repository write readback head");
+  } catch {
+    throw readbackPending(prepared, "repository_write_readback_invalid");
+  }
+  if (head === prepared.expectedParentSha) {
+    throw readbackPending(prepared, "repository_write_readback_effect_not_proven");
+  }
+
+  let parentSnapshot: RepositoryWriteCommitTreeSnapshot;
+  let candidateSnapshot: RepositoryWriteCommitTreeSnapshot;
+  try {
+    [parentSnapshot, candidateSnapshot] = await Promise.all([
+      input.refs.getCommitTreeSnapshot({
+        repositoryFullName: prepared.repositoryFullName,
+        commitSha: prepared.expectedParentSha,
+      }).then((value) => admitCommitTreeSnapshot(value, prepared.expectedParentSha)),
+      input.refs.getCommitTreeSnapshot({
+        repositoryFullName: prepared.repositoryFullName,
+        commitSha: head,
+      }).then((value) => admitCommitTreeSnapshot(value, head)),
+    ]);
+  } catch {
+    throw readbackPending(prepared, "repository_write_readback_unavailable");
+  }
+  if (
+    parentSnapshot.repositoryFullName !== prepared.repositoryFullName
+    || candidateSnapshot.repositoryFullName !== prepared.repositoryFullName
+    || candidateSnapshot.parentShas.length !== 1
+    || candidateSnapshot.parentShas[0] !== prepared.expectedParentSha
+    || candidateSnapshot.messageSha256 !== sha256(payload.message)
+  ) {
+    throw readbackPending(prepared, "repository_write_readback_identity_mismatch");
+  }
+
+  const parentEntries = entryMap(parentSnapshot.entries);
+  const candidateEntries = entryMap(candidateSnapshot.entries);
+  const prior = parentEntries.get(prepared.path) ?? null;
+  const expected = new Map(parentEntries);
+  if (payload.operation === "create_file") {
+    if (prior !== null) {
+      throw readbackPending(prepared, "repository_write_readback_precondition_mismatch");
+    }
+    expected.set(prepared.path, {
+      path: prepared.path,
+      mode: "100644",
+      type: "blob",
+      sha: gitBlobObjectId(payload.content, head.length),
+    });
+  } else {
+    if (
+      prior === null
+      || prior.type !== "blob"
+      || (prior.mode !== "100644" && prior.mode !== "100755")
+      || prior.sha !== payload.contentSha
+    ) {
+      throw readbackPending(prepared, "repository_write_readback_precondition_mismatch");
+    }
+    if (payload.operation === "delete_file") {
+      expected.delete(prepared.path);
+    } else {
+      expected.set(prepared.path, {
+        path: prepared.path,
+        mode: prior.mode,
+        type: "blob",
+        sha: gitBlobObjectId(payload.content, head.length),
+      });
+    }
+  }
+  if (!sameEntryMaps(expected, candidateEntries)) {
+    throw readbackPending(prepared, "repository_write_readback_tree_mismatch");
+  }
+
+  return await verifyRepositoryWriteResult({
+    prepared,
+    providerResult: {
+      commitSha: head,
+      targetRef: prepared.targetRef,
+      parentSha: prepared.expectedParentSha,
+    },
+    refs: {
+      getRefHead: async () => head,
+      getCommitParents: async () => candidateSnapshot.parentShas,
+    },
+    ...(input.now ? { now: input.now } : {}),
+  });
+}
+
+function admitReadbackPayload(
+  value: unknown,
+  prepared: PreparedRepositoryWrite,
+): RepositoryWriteReadbackPayload {
+  try {
+    const operationRecord = exactRecord(value, ["operation"], [
+      "content",
+      "contentSha",
+      "message",
+    ], () => {
+      throw new RangeError("invalid readback payload");
+    });
+    if (operationRecord.operation !== prepared.operation) {
+      throw new RangeError("readback operation mismatch");
+    }
+    const message = readbackMessage(operationRecord.message);
+    if (prepared.operation === "create_file") {
+      requireReadbackKeys(operationRecord, ["operation", "content", "message"]);
+      return Object.freeze({
+        operation: prepared.operation,
+        content: readbackContent(operationRecord.content),
+        message,
+      });
+    }
+    requireReadbackKeys(
+      operationRecord,
+      prepared.operation === "update_file"
+        ? ["operation", "content", "contentSha", "message"]
+        : ["operation", "contentSha", "message"],
+    );
+    const contentSha = exactCommitSha(
+      operationRecord.contentSha,
+      "Repository write readback content SHA",
+    );
+    if (prepared.operation === "delete_file") {
+      return Object.freeze({ operation: prepared.operation, contentSha, message });
+    }
+    return Object.freeze({
+      operation: prepared.operation,
+      content: readbackContent(operationRecord.content),
+      contentSha,
+      message,
+    });
+  } catch {
+    throw readbackPending(prepared, "repository_write_readback_payload_invalid");
+  }
+}
+
+function admitCommitTreeSnapshot(
+  value: unknown,
+  expectedCommitSha: string,
+): RepositoryWriteCommitTreeSnapshot {
+  const fail = () => {
+    throw new RangeError("invalid commit tree snapshot");
+  };
+  const record = exactRecord(value, [
+    "version",
+    "repositoryFullName",
+    "commitSha",
+    "parentShas",
+    "messageSha256",
+    "treeSha",
+    "entries",
+  ], [], fail);
+  if (record.version !== 1) fail();
+  const repositoryFullName = exactRepository(record.repositoryFullName);
+  const commitSha = exactCommitSha(record.commitSha, "Commit tree snapshot SHA");
+  const parentShas = exactCommitParents(record.parentShas);
+  const messageSha256 = exactReadbackSha256(record.messageSha256);
+  const treeSha = exactCommitSha(record.treeSha, "Commit tree snapshot tree SHA");
+  if (
+    commitSha !== expectedCommitSha
+    || !sameGitObjectFormat(commitSha, treeSha, ...parentShas)
+  ) fail();
+
+  const rawEntries = exactDataArray(record.entries, 100_000, fail);
+  const entries: RepositoryWriteTreeEntry[] = [];
+  const paths = new Set<string>();
+  for (const raw of rawEntries) {
+    const entry = exactRecord(raw, ["path", "mode", "type", "sha"], [], fail);
+    const path = exactRepositoryPath(entry.path);
+    if (paths.has(path)) fail();
+    paths.add(path);
+    const type = entry.type;
+    const mode = entry.mode;
+    if (
+      (type !== "blob" && type !== "commit")
+      || (type === "blob"
+        ? mode !== "100644" && mode !== "100755" && mode !== "120000"
+        : mode !== "160000")
+    ) fail();
+    const sha = exactCommitSha(entry.sha, "Commit tree entry SHA");
+    if (!sameGitObjectFormat(commitSha, sha)) fail();
+    entries.push({ path, mode, type, sha } as RepositoryWriteTreeEntry);
+  }
+  entries.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  return Object.freeze({
+    version: 1,
+    repositoryFullName,
+    commitSha,
+    parentShas,
+    messageSha256,
+    treeSha,
+    entries: Object.freeze(entries.map((entry) => Object.freeze(entry))),
+  });
+}
+
+function exactDataArray(
+  value: unknown,
+  maximumLength: number,
+  fail: () => never,
+): readonly unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) fail();
+  if (Object.getOwnPropertySymbols(value).length > 0) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>;
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : null;
+  if (
+    typeof length !== "number"
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > maximumLength
+  ) fail();
+  for (const key of Object.keys(descriptors)) {
+    if (key === "length") continue;
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= length) fail();
+  }
+  const result: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) fail();
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
+function requireReadbackKeys(
+  record: Record<string, unknown>,
+  expected: readonly string[],
+): void {
+  const actual = Object.keys(record).sort();
+  const sortedExpected = [...expected].sort();
+  if (
+    actual.length !== sortedExpected.length
+    || actual.some((key, index) => key !== sortedExpected[index])
+  ) throw new RangeError("invalid readback payload keys");
+}
+
+function readbackContent(value: unknown): string {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 10 * 1024 * 1024) {
+    throw new RangeError("invalid readback content");
+  }
+  return value;
+}
+
+function readbackMessage(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value.length < 1
+    || value.length > 256
+    || value !== value.trim()
+    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(value)
+  ) throw new RangeError("invalid readback message");
+  return value;
+}
+
+function exactReadbackSha256(value: unknown): string {
+  if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(value)) {
+    throw new RangeError("invalid readback message digest");
+  }
+  return value;
+}
+
+function entryMap(
+  entries: readonly RepositoryWriteTreeEntry[],
+): Map<string, RepositoryWriteTreeEntry> {
+  return new Map(entries.map((entry) => [entry.path, entry]));
+}
+
+function sameEntryMaps(
+  expected: ReadonlyMap<string, RepositoryWriteTreeEntry>,
+  actual: ReadonlyMap<string, RepositoryWriteTreeEntry>,
+): boolean {
+  if (expected.size !== actual.size) return false;
+  for (const [path, entry] of expected) {
+    const observed = actual.get(path);
+    if (
+      !observed
+      || observed.path !== entry.path
+      || observed.mode !== entry.mode
+      || observed.type !== entry.type
+      || observed.sha !== entry.sha
+    ) return false;
+  }
+  return true;
+}
+
+function gitBlobObjectId(content: string, objectIdLength: number): string {
+  const algorithm = objectIdLength === 40
+    ? "sha1"
+    : objectIdLength === 64
+      ? "sha256"
+      : null;
+  if (!algorithm) throw new RangeError("invalid Git object format");
+  const bytes = Buffer.from(content, "utf8");
+  return createHash(algorithm)
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
+}
+
+function readbackPending(
+  prepared: PreparedRepositoryWrite,
+  code: string,
+): RepositoryWriteFenceError {
+  return pending(
+    code,
+    "Repository write readback did not prove the exact requested effect",
+    prepared,
+    null,
+  );
 }
 
 interface AdmittedIntent {

@@ -75,6 +75,79 @@ describe("native GitHub repository file write adapter", () => {
     expect(tokens).toEqual(["read", "read"]);
   });
 
+  test("returns one bounded complete commit-tree snapshot for canonical readback", async () => {
+    const tokens: Array<"read" | "write"> = [];
+    const requests: string[] = [];
+    const adapter = new GitHubRestRepositoryWriteAdapter({
+      tokenProvider: tokenProvider(tokens),
+      apiBaseUrl,
+      fetch: (async (request: RequestInfo | URL) => {
+        const url = String(request);
+        requests.push(url);
+        if (url === commitUrl(commitSha)) {
+          return Response.json({
+            sha: commitSha,
+            url: commitUrl(commitSha),
+            message: "Exact candidate message\n\nwith detail",
+            tree: { sha: treeSha, url: treeUrl(treeSha) },
+            parents: [{ sha: parentSha, url: commitUrl(parentSha) }],
+          });
+        }
+        if (url === recursiveTreeUrl(treeSha)) {
+          return Response.json({
+            sha: treeSha,
+            url: treeUrl(treeSha),
+            truncated: false,
+            tree: [
+              { path: "docs", mode: "040000", type: "tree", sha: parentTreeSha, url: treeUrl(parentTreeSha) },
+              { path, mode: "100644", type: "blob", sha: blobSha, url: blobUrl(blobSha) },
+            ],
+          });
+        }
+        throw new Error("unexpected request");
+      }) as typeof fetch,
+    });
+
+    const result = await adapter.getCommitTreeSnapshot({
+      repositoryFullName,
+      commitSha,
+    });
+
+    expect(result).toEqual({
+      version: 1,
+      repositoryFullName,
+      commitSha,
+      parentShas: [parentSha],
+      messageSha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      treeSha,
+      entries: [{ path, mode: "100644", type: "blob", sha: blobSha }],
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.entries)).toBe(true);
+    expect(tokens).toEqual(["read", "read"]);
+    expect(requests).toEqual([commitUrl(commitSha), recursiveTreeUrl(treeSha)]);
+  });
+
+  test("refuses a truncated recursive tree instead of proving a partial diff", async () => {
+    const responses = [
+      Response.json({
+        sha: commitSha,
+        message: "Exact candidate message",
+        tree: { sha: treeSha },
+        parents: [{ sha: parentSha }],
+      }),
+      Response.json({ sha: treeSha, truncated: true, tree: [] }),
+    ];
+    const adapter = new GitHubRestRepositoryWriteAdapter({
+      tokenProvider: tokenProvider([]),
+      apiBaseUrl,
+      fetch: (async () => responses.shift()!) as unknown as typeof fetch,
+    });
+
+    await expect(adapter.getCommitTreeSnapshot({ repositoryFullName, commitSha }))
+      .rejects.toThrow("GitHub complete tree response was incomplete");
+  });
+
   test("drops a credential-shaped request ID after exact-CAS publication", async () => {
     const adapter = new GitHubRestRepositoryWriteAdapter({
       tokenProvider: tokenProvider([]),

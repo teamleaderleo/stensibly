@@ -204,6 +204,9 @@ function fakeLedger(receipts: Map<string, GitHubProviderReceipt>) {
     async getRepositoryWriteReceipt() {
       return null;
     },
+    async reconcileRepositoryFile() {
+      throw new Error("unexpected repository-file readback");
+    },
   };
   return ledger as typeof ledger & WorkLedger;
 }

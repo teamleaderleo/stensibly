@@ -556,48 +556,64 @@ function canonicalHostedPublicationWriteService(
 function canonicalHostedRepositoryFileWriteService(
   service: GitHubRepositoryWriteProviderService,
 ): GitHubRepositoryFileWriteService {
+  const providerCommand = (input: GitHubProviderRequestContext & {
+    operation: "create_file" | "update_file";
+    path: string;
+    branch: string;
+    expectedParentSha: string;
+    content: string;
+    contentSha?: string;
+    message: string;
+    idempotencyKey: string;
+  }) => ({
+    project: input.project,
+    actorId: input.actorId,
+    clientId: input.clientId,
+    idempotencyKey: input.idempotencyKey,
+    intent: {
+      version: 1,
+      repositoryFullName: normalizeGitHubRepository(input.repository)
+        .toLowerCase(),
+      path: input.path,
+      operation: input.operation,
+      targetRef: input.branch,
+      expectedParentSha: input.expectedParentSha,
+    },
+    payload: input.operation === "create_file"
+      ? {
+          operation: input.operation,
+          content: input.content,
+          message: input.message,
+        }
+      : {
+          operation: input.operation,
+          contentSha: input.contentSha,
+          content: input.content,
+          message: input.message,
+        },
+  });
   return {
-    createRepositoryFile: (input) => service.execute({
-      project: input.project,
-      actorId: input.actorId,
-      clientId: input.clientId,
-      idempotencyKey: input.idempotencyKey,
-      intent: {
-        version: 1,
-        repositoryFullName: normalizeGitHubRepository(input.repository)
-          .toLowerCase(),
-        path: input.path,
-        operation: "create_file",
-        targetRef: input.branch,
-        expectedParentSha: input.expectedParentSha,
-      },
-      payload: {
-        operation: "create_file",
-        content: input.content,
-        message: input.message,
-      },
-    }),
-    updateRepositoryFile: (input) => service.execute({
-      project: input.project,
-      actorId: input.actorId,
-      clientId: input.clientId,
-      idempotencyKey: input.idempotencyKey,
-      intent: {
-        version: 1,
-        repositoryFullName: normalizeGitHubRepository(input.repository)
-          .toLowerCase(),
-        path: input.path,
-        operation: "update_file",
-        targetRef: input.branch,
-        expectedParentSha: input.expectedParentSha,
-      },
-      payload: {
-        operation: "update_file",
-        contentSha: input.contentSha,
-        content: input.content,
-        message: input.message,
-      },
-    }),
+    createRepositoryFile: (input) => service.execute(providerCommand({
+      ...canonicalRequest(input),
+      operation: "create_file",
+    })),
+    updateRepositoryFile: (input) => service.execute(providerCommand({
+      ...canonicalRequest(input),
+      operation: "update_file",
+    })),
+    reconcileRepositoryFile: (input) => service.reconcile(providerCommand({
+      ...canonicalRequest(input),
+      ...(input.operation === "create_file"
+        ? {
+            operation: input.operation,
+            content: input.content,
+          }
+        : {
+            operation: input.operation,
+            content: input.content,
+            contentSha: input.contentSha,
+          }),
+    })),
   };
 }
 

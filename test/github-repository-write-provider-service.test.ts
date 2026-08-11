@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
+import { sha256 } from "../src/canonical-json.ts";
 import {
   GitHubRepositoryWritePendingReconciliationError,
   GitHubRepositoryWriteProviderService,
@@ -381,6 +383,151 @@ describe("durable GitHub repository write provider service", () => {
     store.close();
   });
 
+  test("settles an ambiguous provider effect from an exact canonical tree readback", async () => {
+    const store = memoryStore();
+    let applied = false;
+    let dispatches = 0;
+    let treeReads = 0;
+    const content = "{}\n";
+    const adapter: GitHubRepositoryWriteProviderAdapter = {
+      async getRefHead() { return applied ? commit : parent; },
+      async getCommitParents() { return [parent]; },
+      async getCommitTreeSnapshot(input) {
+        treeReads += 1;
+        return input.commitSha === parent
+          ? treeSnapshot(parent, [], "d".repeat(40), [])
+          : treeSnapshot(commit, [parent], "e".repeat(40), [{
+              path: "docs/write-receipt.json",
+              mode: "100644",
+              type: "blob",
+              sha: blobSha(content),
+            }], "Record exact write receipt");
+      },
+      async dispatchRepositoryWrite() {
+        dispatches += 1;
+        applied = true;
+        throw new Error("response was lost after the exact ref update");
+      },
+    };
+    const service = new GitHubRepositoryWriteProviderService({
+      authority: authorityProvider(),
+      adapter,
+      store,
+      now: clock(),
+      idFactory: () => "ghrw_readback_success",
+    });
+
+    await caught(
+      service.execute(command()),
+      GitHubRepositoryWritePendingReconciliationError,
+    );
+    const receipt = await service.reconcile(command());
+
+    expect(receipt).toMatchObject({
+      id: "ghrw_readback_success",
+      state: "succeeded",
+      dispatchCount: 1,
+      verified: {
+        commitSha: commit,
+        providerRequestId: null,
+        authorizesRetry: false,
+      },
+    });
+    expect(dispatches).toBe(1);
+    expect(treeReads).toBe(2);
+    await expect(service.reconcile(command())).resolves.toEqual(receipt);
+    expect(treeReads).toBe(2);
+    store.close();
+  });
+
+  test("rejects changed reconciliation identity before canonical provider reads", async () => {
+    for (const changed of [
+      command({ actorId: "actor_other" }),
+      command({ payload: {
+        operation: "create_file",
+        content: "changed\n",
+        message: "Record exact write receipt",
+      } }),
+    ]) {
+      const store = memoryStore();
+      let applied = false;
+      let providerReads = 0;
+      const adapter: GitHubRepositoryWriteProviderAdapter = {
+        async getRefHead() {
+          if (applied) providerReads += 1;
+          return applied ? commit : parent;
+        },
+        async getCommitParents() { return [parent]; },
+        async getCommitTreeSnapshot() {
+          providerReads += 1;
+          throw new Error("must not observe changed reconciliation identity");
+        },
+        async dispatchRepositoryWrite() {
+          applied = true;
+          throw new Error("ambiguous");
+        },
+      };
+      const service = new GitHubRepositoryWriteProviderService({
+        authority: authorityProvider(),
+        adapter,
+        store,
+        now: clock(),
+        idFactory: () => "ghrw_readback_identity",
+      });
+      await caught(
+        service.execute(command()),
+        GitHubRepositoryWritePendingReconciliationError,
+      );
+      await expect(service.reconcile(changed)).rejects.toMatchObject({
+        code: "github_repository_write_reconciliation_identity_mismatch",
+      });
+      expect(providerReads).toBe(0);
+      store.close();
+    }
+  });
+
+  test("rejects changed reconciliation authority before canonical provider reads", async () => {
+    const store = memoryStore();
+    let applied = false;
+    let providerReads = 0;
+    const adapter: GitHubRepositoryWriteProviderAdapter = {
+      async getRefHead() {
+        if (applied) providerReads += 1;
+        return applied ? commit : parent;
+      },
+      async getCommitParents() { return [parent]; },
+      async getCommitTreeSnapshot() {
+        providerReads += 1;
+        throw new Error("must not observe changed authority");
+      },
+      async dispatchRepositoryWrite() {
+        applied = true;
+        throw new Error("ambiguous");
+      },
+    };
+    const service = new GitHubRepositoryWriteProviderService({
+      authority: authorityProvider([
+        authority(),
+        authority(),
+        authority({ authorityGeneration: 8 }),
+      ]),
+      adapter,
+      store,
+      now: clock(),
+      idFactory: () => "ghrw_readback_authority",
+    });
+    await caught(
+      service.execute(command()),
+      GitHubRepositoryWritePendingReconciliationError,
+    );
+
+    await expect(service.reconcile(command())).rejects.toMatchObject({
+      code: "github_repository_write_reconciliation_identity_mismatch",
+    });
+    expect(providerReads).toBe(0);
+    store.close();
+  });
+
   test("persists verified fallback evidence when primary receipt persistence fails", async () => {
     const durable = memoryStore();
     const store = delegatingStore(durable, {
@@ -466,6 +613,46 @@ describe("durable GitHub repository write provider service", () => {
     durable.close();
   });
 
+  test("releases durable verified evidence during reconciliation without provider reads", async () => {
+    const durable = memoryStore();
+    let releaseCalls = 0;
+    const store = delegatingStore(durable, {
+      async releaseVerifiedRepositoryWrite(input) {
+        releaseCalls += 1;
+        if (releaseCalls === 1) throw new Error("injected first release failure");
+        return await durable.releaseVerifiedRepositoryWrite(input);
+      },
+    });
+    let treeReads = 0;
+    const adapter = successfulAdapter();
+    adapter.getCommitTreeSnapshot = async () => {
+      treeReads += 1;
+      throw new Error("verified settlement must not read GitHub");
+    };
+    const service = new GitHubRepositoryWriteProviderService({
+      authority: authorityProvider(),
+      adapter,
+      store,
+      now: clock(),
+      idFactory: () => "ghrw_release_reconciliation",
+    });
+    await caught(
+      service.execute(command()),
+      GitHubRepositoryWriteSettlementError,
+    );
+
+    const receipt = await service.reconcile(command());
+    expect(receipt).toMatchObject({
+      state: "succeeded",
+      dispatchCount: 1,
+      verified: { commitSha: commit },
+    });
+    expect(releaseCalls).toBe(2);
+    expect(adapter.dispatches).toBe(1);
+    expect(treeReads).toBe(0);
+    durable.close();
+  });
+
   test("rejects credential-shaped durable command identities before authority", async () => {
     const store = memoryStore();
     const authoritySource = authorityProvider();
@@ -484,3 +671,29 @@ describe("durable GitHub repository write provider service", () => {
     store.close();
   });
 });
+
+function treeSnapshot(
+  commitSha: string,
+  parentShas: string[],
+  treeSha: string,
+  entries: Array<{ path: string; mode: string; type: string; sha: string }>,
+  message = "parent message",
+): unknown {
+  return {
+    version: 1,
+    repositoryFullName: "teamleaderleo/stensibly",
+    commitSha,
+    parentShas,
+    messageSha256: sha256(message),
+    treeSha,
+    entries,
+  };
+}
+
+function blobSha(content: string): string {
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`, "utf8")
+    .update(bytes)
+    .digest("hex");
+}

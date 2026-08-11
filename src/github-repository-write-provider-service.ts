@@ -4,6 +4,7 @@ import {
   prepareRepositoryWrite,
   RepositoryWriteFenceError,
   verifyRepositoryWriteResult,
+  verifyRepositoryWriteReadback,
   type PreparedRepositoryWrite,
   type RepositoryWriteOperation,
   type VerifiedRepositoryWrite,
@@ -118,6 +119,10 @@ export interface GitHubRepositoryWriteProviderAdapter {
     repositoryFullName: string;
     commitSha: string;
   }): Promise<readonly string[]>;
+  getCommitTreeSnapshot?(input: {
+    repositoryFullName: string;
+    commitSha: string;
+  }): Promise<unknown>;
   dispatchRepositoryWrite(input: {
     repositoryFullName: string;
     path: string;
@@ -193,6 +198,15 @@ export class GitHubRepositoryWriteSettlementError extends Error {
     this.code = input.code;
     this.receipt = input.receipt;
     this.verified = input.verified;
+  }
+}
+
+export class GitHubRepositoryWriteReconciliationIdentityError extends Error {
+  readonly code = "github_repository_write_reconciliation_identity_mismatch";
+
+  constructor() {
+    super("GitHub repository write reconciliation identity changed");
+    this.name = "GitHubRepositoryWriteReconciliationIdentityError";
   }
 }
 
@@ -329,22 +343,87 @@ export class GitHubRepositoryWriteProviderService {
       throw new GitHubRepositoryWritePendingReconciliationError(pending);
     }
 
+    return await this.#settleVerified(receiptWithDispatch(receipt), verified);
+  }
+
+  async reconcile(commandInput: unknown): Promise<GitHubRepositoryWriteReceipt> {
+    const command = admitCommand(commandInput);
+    const payload = admitPayload(command.payload);
+    const prepared = await this.#prepare(command, payload.operation);
+    const receipt = await this.#store.getRepositoryWriteReceipt(
+      command.project,
+      command.idempotencyKey,
+    );
+    if (!receipt) throw new GitHubRepositoryWriteReconciliationIdentityError();
+    assertReconciliationIdentity(receipt, command, prepared, payload);
+    if (receipt.state === "succeeded") return receipt;
+    if (receipt.state === "rejected") {
+      throw new GitHubRepositoryWriteRejectedError(
+        receipt.error?.code ?? "repository_write_rejected",
+        receipt,
+      );
+    }
+    if (receipt.state === "verified_pending_release" && receipt.verified) {
+      try {
+        return await this.#store.releaseVerifiedRepositoryWrite({
+          receipt,
+          releasedAt: exactTimestamp(this.#now(), "Repository write release time"),
+        });
+      } catch {
+        throw new GitHubRepositoryWriteSettlementError({
+          code: "repository_write_verified_lane_release_failed",
+          receipt,
+          verified: receipt.verified,
+        });
+      }
+    }
+    if (
+      receipt.state !== "pending_reconciliation"
+      || receipt.dispatchCount !== 1
+      || receipt.verified !== null
+      || !this.#adapter.getCommitTreeSnapshot
+    ) return receipt;
+
+    let verified: VerifiedRepositoryWrite;
+    try {
+      verified = await verifyRepositoryWriteReadback({
+        prepared,
+        payload,
+        refs: {
+          getRefHead: (input) => this.#adapter.getRefHead(input),
+          getCommitParents: (input) => this.#adapter.getCommitParents(input),
+          getCommitTreeSnapshot: (input) =>
+            this.#adapter.getCommitTreeSnapshot!(input),
+        },
+        now: this.#now,
+      });
+    } catch (error) {
+      if (error instanceof RepositoryWriteFenceError) return receipt;
+      throw error;
+    }
+    return await this.#settleVerified(receipt, verified);
+  }
+
+  async #settleVerified(
+    receipt: GitHubRepositoryWriteReceipt,
+    verified: VerifiedRepositoryWrite,
+  ): Promise<GitHubRepositoryWriteReceipt> {
     let recorded: GitHubRepositoryWriteReceipt;
     try {
       recorded = await this.#store.recordVerifiedRepositoryWrite({
-        receipt: receiptWithDispatch(receipt),
+        receipt,
         verified,
       });
     } catch {
       const code = "repository_write_verified_receipt_persistence_failed";
       let recovered = receiptWithVerified(
-        receiptWithDispatch(receipt),
+        receipt,
         verified,
         code,
       );
       try {
         recovered = await this.#store.holdVerifiedRepositoryWriteForReconciliation({
-          receipt: receiptWithDispatch(receipt),
+          receipt,
           verified,
           code,
           heldAt: exactTimestamp(
@@ -521,6 +600,30 @@ export function fingerprintGitHubRepositoryWritePayload(
         messageSha256: sha256(payload.message),
       };
   return sha256(stableJson(evidence));
+}
+
+function assertReconciliationIdentity(
+  receipt: GitHubRepositoryWriteReceipt,
+  command: AdmittedCommand,
+  prepared: PreparedRepositoryWrite,
+  payload: GitHubRepositoryWritePayload,
+): void {
+  if (
+    receipt.version !== 1
+    || receipt.project !== command.project
+    || receipt.repositoryFullName !== prepared.repositoryFullName
+    || receipt.targetRef !== prepared.targetRef
+    || receipt.path !== prepared.path
+    || receipt.operation !== prepared.operation
+    || receipt.expectedParentSha !== prepared.expectedParentSha
+    || receipt.requestSha256 !== prepared.requestSha256
+    || receipt.payloadSha256 !== fingerprintGitHubRepositoryWritePayload(payload)
+    || receipt.actorId !== command.actorId
+    || receipt.clientId !== command.clientId
+    || receipt.idempotencyKey !== command.idempotencyKey
+  ) {
+    throw new GitHubRepositoryWriteReconciliationIdentityError();
+  }
 }
 
 function receiptWithDispatch(
