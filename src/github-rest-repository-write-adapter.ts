@@ -1,4 +1,5 @@
 import type { GitHubInstallationToken } from "./github-app-installation-token.js";
+import { sha256 } from "./canonical-json.js";
 import { receiverSafeFetch } from "./fetch-implementation.js";
 import type {
   GitHubRepositoryWritePayload,
@@ -14,6 +15,10 @@ import {
   admitGitObjectId,
   sameGitObjectFormat,
 } from "./github-repository-write-admission.js";
+import type {
+  RepositoryWriteCommitTreeSnapshot,
+  RepositoryWriteTreeEntry,
+} from "./repository-write-fence.js";
 
 export interface GitHubRepositoryWriteTokenProvider {
   getRepositoryContentsToken(input: {
@@ -131,6 +136,80 @@ export class GitHubRestRepositoryWriteAdapter
       "GitHub commit URL",
     );
     return Object.freeze(parents);
+  }
+
+  async getCommitTreeSnapshot(input: {
+    repositoryFullName: string;
+    commitSha: string;
+  }): Promise<RepositoryWriteCommitTreeSnapshot> {
+    const repositoryFullName = exactRepository(input.repositoryFullName);
+    const commitSha = exactCommitSha(input.commitSha, "GitHub commit SHA");
+    const commitResponse = await this.#request({
+      repositoryFullName,
+      access: "read",
+      method: "GET",
+      url: commitUrl(this.#apiBaseUrl, repositoryFullName, commitSha),
+      operation: "read commit tree identity",
+    });
+    requireOk(commitResponse, "read commit tree identity");
+    const commit = exactRecord(
+      await readJson(commitResponse, "read commit tree identity"),
+      "GitHub commit tree response",
+    );
+    if (responseObjectId(commit.sha, "GitHub commit response SHA") !== commitSha) {
+      throw invalidResponse("GitHub commit tree response identity changed");
+    }
+    const parents = exactParents(commit.parents, "GitHub commit parents");
+    const tree = exactRecord(commit.tree, "GitHub commit tree identity");
+    const treeSha = responseObjectId(tree.sha, "GitHub commit tree SHA");
+    if (!sameGitObjectFormat(commitSha, treeSha, ...parents)) {
+      throw invalidResponse("GitHub commit tree response mixed object formats");
+    }
+    assertOptionalExactApiUrl(
+      tree.url,
+      treeUrl(this.#apiBaseUrl, repositoryFullName, treeSha),
+      "GitHub commit tree URL",
+    );
+    const message = boundedCommitMessage(commit.message);
+
+    const treeResponse = await this.#request({
+      repositoryFullName,
+      access: "read",
+      method: "GET",
+      url: recursiveTreeUrl(this.#apiBaseUrl, repositoryFullName, treeSha),
+      operation: "read complete commit tree",
+    });
+    requireOk(treeResponse, "read complete commit tree");
+    const treeRecord = exactRecord(
+      await readJson(treeResponse, "read complete commit tree"),
+      "GitHub complete tree response",
+    );
+    if (
+      responseObjectId(treeRecord.sha, "GitHub complete tree SHA") !== treeSha
+      || treeRecord.truncated !== false
+    ) {
+      throw invalidResponse("GitHub complete tree response was incomplete");
+    }
+    assertOptionalExactApiUrl(
+      treeRecord.url,
+      treeUrl(this.#apiBaseUrl, repositoryFullName, treeSha),
+      "GitHub complete tree URL",
+    );
+    const entries = exactTreeEntries(
+      treeRecord.tree,
+      this.#apiBaseUrl,
+      repositoryFullName,
+      commitSha,
+    );
+    return Object.freeze({
+      version: 1,
+      repositoryFullName,
+      commitSha,
+      parentShas: Object.freeze(parents),
+      messageSha256: sha256(message),
+      treeSha,
+      entries,
+    });
   }
 
   async dispatchRepositoryWrite(input: {
@@ -347,6 +426,36 @@ function commitUrl(
   );
 }
 
+function treeUrl(
+  apiBaseUrl: string,
+  repositoryFullName: string,
+  treeSha: string,
+): URL {
+  return new URL(
+    `${repositoryUrl(apiBaseUrl, repositoryFullName)}/git/trees/${treeSha}`,
+  );
+}
+
+function recursiveTreeUrl(
+  apiBaseUrl: string,
+  repositoryFullName: string,
+  treeSha: string,
+): URL {
+  const url = treeUrl(apiBaseUrl, repositoryFullName, treeSha);
+  url.searchParams.set("recursive", "1");
+  return url;
+}
+
+function blobUrl(
+  apiBaseUrl: string,
+  repositoryFullName: string,
+  blobSha: string,
+): URL {
+  return new URL(
+    `${repositoryUrl(apiBaseUrl, repositoryFullName)}/git/blobs/${blobSha}`,
+  );
+}
+
 function repositoryUrl(apiBaseUrl: string, repositoryFullName: string): string {
   const [owner, repository] = repositoryParts(repositoryFullName);
   return `${apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
@@ -408,6 +517,100 @@ function exactParents(value: unknown, label: string): string[] {
     const parent = exactRecord(entry, "GitHub commit parent");
     return responseObjectId(parent.sha, "GitHub commit parent SHA");
   });
+}
+
+function exactTreeEntries(
+  value: unknown,
+  apiBaseUrl: string,
+  repositoryFullName: string,
+  commitSha: string,
+): readonly RepositoryWriteTreeEntry[] {
+  const values = exactArray(value, "GitHub complete tree entries", 100_000);
+  const paths = new Set<string>();
+  const entries: RepositoryWriteTreeEntry[] = [];
+  for (const value of values) {
+    const record = exactRecord(value, "GitHub complete tree entry");
+    const path = exactPath(record.path);
+    if (paths.has(path)) {
+      throw invalidResponse("GitHub complete tree contained a duplicate path");
+    }
+    paths.add(path);
+    const type = record.type;
+    const mode = record.mode;
+    const sha = responseObjectId(record.sha, "GitHub complete tree entry SHA");
+    if (!sameGitObjectFormat(commitSha, sha)) {
+      throw invalidResponse("GitHub complete tree entry mixed object formats");
+    }
+    if (type === "tree") {
+      if (mode !== "040000") {
+        throw invalidResponse("GitHub complete tree entry mode was invalid");
+      }
+      assertOptionalExactApiUrl(
+        record.url,
+        treeUrl(apiBaseUrl, repositoryFullName, sha),
+        "GitHub subtree URL",
+      );
+      continue;
+    }
+    if (
+      (type !== "blob" && type !== "commit")
+      || (type === "blob"
+        ? mode !== "100644" && mode !== "100755" && mode !== "120000"
+        : mode !== "160000")
+    ) {
+      throw invalidResponse("GitHub complete tree entry type was invalid");
+    }
+    assertOptionalExactApiUrl(
+      record.url,
+      type === "blob"
+        ? blobUrl(apiBaseUrl, repositoryFullName, sha)
+        : commitUrl(apiBaseUrl, repositoryFullName, sha),
+      "GitHub complete tree entry URL",
+    );
+    entries.push({ path, mode, type, sha } as RepositoryWriteTreeEntry);
+  }
+  entries.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  return Object.freeze(entries.map((entry) => Object.freeze(entry)));
+}
+
+function exactArray(value: unknown, label: string, maximumLength: number): unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw invalidResponse(`${label} were malformed`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>;
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : null;
+  if (
+    typeof length !== "number"
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > maximumLength
+  ) throw invalidResponse(`${label} were malformed`);
+  for (const key of Object.keys(descriptors)) {
+    if (key === "length") continue;
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= length) {
+      throw invalidResponse(`${label} were malformed`);
+    }
+  }
+  const result: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw invalidResponse(`${label} were malformed`);
+    }
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
+function boundedCommitMessage(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || Buffer.byteLength(value, "utf8") > maximumResponseBytes
+  ) throw invalidResponse("GitHub commit message was invalid");
+  return value;
 }
 
 function exactRecord(value: unknown, label: string): Record<string, unknown> {

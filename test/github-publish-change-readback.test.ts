@@ -65,6 +65,9 @@ describe("GitHub publish-change readback bridge", () => {
         getRepositoryWriteReceipt: async () => {
           throw new Error("unexpected file receipt read");
         },
+        reconcileRepositoryFile: async () => {
+          throw new Error("unexpected file readback");
+        },
       },
     });
 
@@ -99,6 +102,9 @@ describe("GitHub publish-change readback bridge", () => {
       repositoryFiles: {
         getRepositoryWriteReceipt: async (_project, key) =>
           succeededWriteReceipt(key),
+        reconcileRepositoryFile: async () => {
+          throw new Error("unexpected file readback");
+        },
       },
     });
 
@@ -121,10 +127,11 @@ describe("GitHub publish-change readback bridge", () => {
     }]);
   });
 
-  test("leaves repository-file ambiguity with the existing reconciler", async () => {
+  test("reconciles the exact pending repository-file request and re-enters the workflow", async () => {
     const pending = workflow(2);
     const delegate = new FakeDelegate(pending);
     let publicationReads = 0;
+    const fileReads: unknown[] = [];
     const service = new GitHubPublishChangeReadbackService({
       delegate,
       publicationReadback: {
@@ -139,14 +146,31 @@ describe("GitHub publish-change readback bridge", () => {
       },
       repositoryFiles: {
         getRepositoryWriteReceipt: async () => null,
+        reconcileRepositoryFile: async (request) => {
+          fileReads.push(request);
+          return succeededWriteReceipt(request.idempotencyKey);
+        },
       },
     });
 
-    await expect(service.reconcilePublishChange(input)).rejects.toBeInstanceOf(
-      OperationWorkflowPendingReconciliationError,
-    );
-    expect(delegate.reconcileCalls).toBe(1);
+    await expect(service.reconcilePublishChange(input)).resolves.toMatchObject({
+      state: "succeeded",
+    });
+    expect(delegate.reconcileCalls).toBe(2);
     expect(publicationReads).toBe(0);
+    expect(fileReads).toEqual([{
+      project: input.project,
+      repository: input.repository,
+      actorId: input.actorId,
+      clientId: input.clientId,
+      operation: "create_file",
+      path: input.file.path,
+      content: input.file.content,
+      message: input.file.message,
+      branch: input.branch,
+      expectedParentSha: input.fromCommitSha,
+      idempotencyKey: "provider-step-2",
+    }]);
   });
 
   test("rejects a changed file receipt before PR provider observation", async () => {
@@ -166,6 +190,9 @@ describe("GitHub publish-change readback bridge", () => {
           ...succeededWriteReceipt(key),
           actorId: "another_actor",
         }),
+        reconcileRepositoryFile: async () => {
+          throw new Error("unexpected file readback");
+        },
       },
     });
 

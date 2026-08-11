@@ -22,13 +22,24 @@ export interface GitHubPublishChangeReadbackDependencies {
       project: string,
       idempotencyKey: string,
     ): Promise<GitHubRepositoryWriteReceipt | null>;
+    reconcileRepositoryFile(input: GitHubPublishChangeInput["file"] & {
+      project: string;
+      repository: string;
+      actorId: string;
+      clientId: string;
+      branch: string;
+      expectedParentSha: string;
+      idempotencyKey: string;
+    }): Promise<GitHubRepositoryWriteReceipt>;
   };
 }
 
 /**
  * Adds provider observation to the existing durable publish-change reconciler.
  * The delegate remains the only component allowed to mutate workflow state.
- * This bridge performs provider reads only and then re-enters the delegate.
+ * This bridge performs provider reads and settles existing durable receipts,
+ * but never dispatches a replacement provider mutation. It then re-enters the
+ * delegate, which remains the only component allowed to mutate workflow state.
  */
 export class GitHubPublishChangeReadbackService
   implements GitHubPublishChangeService
@@ -100,6 +111,21 @@ export class GitHubPublishChangeReadbackService
         expectedHeadSha,
         expectedBaseSha: input.expectedBaseSha,
         draft: input.draft ?? false,
+        idempotencyKey: step.providerIdempotencyKey,
+      });
+      return await this.#delegate.reconcilePublishChange(input);
+    }
+
+    if (
+      step.kind === "github_create_file"
+      || step.kind === "github_update_file"
+    ) {
+      await this.#repositoryFiles.reconcileRepositoryFile({
+        ...context,
+        ...input.file,
+        repository: input.repository,
+        branch: input.branch,
+        expectedParentSha: input.fromCommitSha,
         idempotencyKey: step.providerIdempotencyKey,
       });
       return await this.#delegate.reconcilePublishChange(input);

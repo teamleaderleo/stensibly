@@ -127,6 +127,7 @@ describe("private hosted GitHub publication writes", () => {
     expect(typeof mounted.createPullRequest).toBe("function");
     expect(typeof mounted.createRepositoryFile).toBe("function");
     expect(typeof mounted.updateRepositoryFile).toBe("function");
+    expect(typeof mounted.reconcileRepositoryFile).toBe("function");
     expect("publishChange" in mounted).toBe(false);
 
     const context = {
