@@ -2,6 +2,10 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  canonicalHostedCallsign,
+  MAX_HOSTED_CALLSIGN_LEASE_SECONDS,
+} from "./lib/callsign";
+import {
   findProject,
   findWorkspace,
   normalizeWorkspace,
@@ -13,6 +17,7 @@ import { internalMutation, mutation } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
 const expireEnrolmentRef = makeFunctionReference<"mutation">("workerEnrolments:expireScheduled");
+const expireCallsignLeaseRef = makeFunctionReference<"mutation">("callsignLeases:expireScheduled");
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const slugPattern = /^[a-z0-9][a-z0-9._:-]*$/;
 const projectPattern = /^[a-z0-9][a-z0-9_-]*$/;
@@ -59,16 +64,24 @@ const enrolmentRequestValidator = v.object({
 });
 
 type WorkerEnrolment = Doc<"workerEnrolments">;
+type CallsignLease = Doc<"callsignLeases">;
 type WorkspaceId = Id<"workspaces">;
 type Operation = "enrol" | "heartbeat" | "release";
 type Owner = { actorId: string; clientId: string; oauthAccountId: string | null };
 type RejectionReason =
-  | "callsign_join_pending"
   | "project_not_found"
   | "expired_request"
   | "active_session_exists"
+  | "callsign_invalid"
+  | "callsign_active_collision"
+  | "callsign_lifetime_too_long"
   | "worker_not_found"
   | "worker_not_active";
+type CallsignPlan = {
+  display: string;
+  collisionKey: string;
+  generation: number;
+};
 
 export const enrol = mutation({
   args: {
@@ -85,7 +98,11 @@ export const enrol = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
     const request = normalizeRequest(args.request);
-    const idempotencyKey = boundedIdentifier(args.idempotencyKey, "Idempotency key", limits.idempotencyKey);
+    const idempotencyKey = boundedIdentifier(
+      args.idempotencyKey,
+      "Idempotency key",
+      limits.idempotencyKey,
+    );
 
     return withCommand(
       ctx,
@@ -96,9 +113,6 @@ export const enrol = mutation({
       request,
       async () => {
         const now = Date.now();
-        if (request.callsign !== null) {
-          return rejectedResult("enrol", "callsign_join_pending", null);
-        }
         const missingProject = await firstMissingProject(ctx, workspace._id, request.projectScope);
         if (missingProject !== null) {
           return { ...rejectedResult("enrol", "project_not_found", null), missingProject };
@@ -115,6 +129,22 @@ export const enrol = mutation({
         );
         if (active) return rejectedResult("enrol", "active_session_exists", active);
 
+        const callsignPlan = request.callsign === null
+          ? { outcome: "none" as const }
+          : await planCallsign(
+            ctx,
+            workspace._id,
+            request.callsign,
+            request.expiresAtMs,
+            now,
+          );
+        if (callsignPlan.outcome === "rejected") {
+          return rejectedResult("enrol", callsignPlan.reason, null);
+        }
+
+        const acceptedCallsign = callsignPlan.outcome === "accepted"
+          ? callsignPlan.plan.display
+          : null;
         const enrolmentId = await ctx.db.insert("workerEnrolments", {
           workspaceId: workspace._id,
           externalId: "pending",
@@ -135,12 +165,31 @@ export const enrol = mutation({
           ...(request.causationId === null ? {} : { causationId: request.causationId }),
           requestFingerprint: request.fingerprint,
           status: "active",
+          ...(acceptedCallsign === null ? {} : { callsign: acceptedCallsign }),
           acceptedAt: now,
           lastHeartbeatAt: now,
           createdAt: now,
           updatedAt: now,
         });
         await ctx.db.patch(enrolmentId, { externalId: `wrk_${enrolmentId}` });
+
+        if (callsignPlan.outcome === "accepted") {
+          const leaseId = await insertEnrolmentCallsignLease(ctx, {
+            workspaceId: workspace._id,
+            workerEnrolmentId: enrolmentId,
+            workerSessionId: request.workerSessionId,
+            reservationRequestId: idempotencyKey,
+            reservationFingerprint: request.fingerprint,
+            expiresAtMs: request.expiresAtMs,
+            now,
+            plan: callsignPlan.plan,
+          });
+          await ctx.db.patch(enrolmentId, {
+            callsignLeaseId: leaseId,
+            callsignLeaseGeneration: callsignPlan.plan.generation,
+          });
+        }
+
         await ctx.scheduler.runAt(request.expiresAtMs, expireEnrolmentRef, { enrolmentId });
         const enrolment = await ctx.db.get("workerEnrolments", enrolmentId);
         if (!enrolment) throw new Error("Accepted worker enrolment disappeared");
@@ -164,7 +213,11 @@ export const heartbeat = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
     const workerRef = boundedIdentifier(args.workerRef, "Worker reference", limits.workerRef);
-    const idempotencyKey = boundedIdentifier(args.idempotencyKey, "Idempotency key", limits.idempotencyKey);
+    const idempotencyKey = boundedIdentifier(
+      args.idempotencyKey,
+      "Idempotency key",
+      limits.idempotencyKey,
+    );
     const request = { workerRef };
 
     return withCommand(
@@ -205,7 +258,11 @@ export const release = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
     const workerRef = boundedIdentifier(args.workerRef, "Worker reference", limits.workerRef);
-    const idempotencyKey = boundedIdentifier(args.idempotencyKey, "Idempotency key", limits.idempotencyKey);
+    const idempotencyKey = boundedIdentifier(
+      args.idempotencyKey,
+      "Idempotency key",
+      limits.idempotencyKey,
+    );
     const request = { workerRef };
 
     return withCommand(
@@ -223,6 +280,7 @@ export const release = mutation({
         if (enrolment.status !== "active") {
           return rejectedResult("release", "worker_not_active", enrolment);
         }
+        await settleAttachedCallsign(ctx, enrolment, "released", now);
         await ctx.db.patch(enrolment._id, {
           status: "released",
           releasedAt: now,
@@ -360,14 +418,12 @@ async function activeEnrolmentForSession(
         .eq("workerSessionId", workerSessionId)
         .eq("status", "active")
     )
-    .collect();
-  const active: WorkerEnrolment[] = [];
-  for (const candidate of candidates) {
-    const reconciled = await reconcileIfExpired(ctx, candidate, now);
-    if (reconciled.status === "active") active.push(reconciled);
-  }
-  if (active.length > 1) throw new Error("Worker session enrolment invariant violated");
-  return active[0] ?? null;
+    .take(2);
+  if (candidates.length > 1) throw new Error("Worker session enrolment invariant violated");
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  const reconciled = await reconcileIfExpired(ctx, candidate, now);
+  return reconciled.status === "active" ? reconciled : null;
 }
 
 async function ownedEnrolment(
@@ -405,9 +461,150 @@ async function expireEnrolment(
   enrolment: WorkerEnrolment,
   now: number,
 ): Promise<void> {
+  await settleAttachedCallsign(ctx, enrolment, "expired", now);
   await ctx.db.patch(enrolment._id, {
     status: "expired",
     expiredAt: enrolment.expiresAt,
+    updatedAt: now,
+  });
+}
+
+async function planCallsign(
+  ctx: MutationContext,
+  workspaceId: WorkspaceId,
+  requestedCallsign: string,
+  enrolmentExpiresAt: number,
+  now: number,
+): Promise<
+  | { outcome: "accepted"; plan: CallsignPlan }
+  | { outcome: "rejected"; reason: "callsign_invalid" | "callsign_active_collision" | "callsign_lifetime_too_long" }
+> {
+  let canonical: ReturnType<typeof canonicalHostedCallsign>;
+  try {
+    canonical = canonicalHostedCallsign(requestedCallsign);
+  } catch {
+    return { outcome: "rejected", reason: "callsign_invalid" };
+  }
+  if (enrolmentExpiresAt - now > MAX_HOSTED_CALLSIGN_LEASE_SECONDS * 1_000) {
+    return { outcome: "rejected", reason: "callsign_lifetime_too_long" };
+  }
+  const active = await currentCallsignLease(ctx, workspaceId, canonical.collisionKey, now);
+  if (active) return { outcome: "rejected", reason: "callsign_active_collision" };
+  return {
+    outcome: "accepted",
+    plan: {
+      ...canonical,
+      generation: await maximumCallsignGeneration(ctx, workspaceId, canonical.collisionKey) + 1,
+    },
+  };
+}
+
+async function currentCallsignLease(
+  ctx: MutationContext,
+  workspaceId: WorkspaceId,
+  collisionKey: string,
+  now: number,
+): Promise<CallsignLease | null> {
+  const candidates = await ctx.db
+    .query("callsignLeases")
+    .withIndex("by_workspace_collision_status", (q) =>
+      q.eq("workspaceId", workspaceId).eq("collisionKey", collisionKey).eq("status", "active")
+    )
+    .take(2);
+  if (candidates.length > 1) {
+    throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
+  }
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  if (candidate.expiresAt > now) return candidate;
+  await ctx.db.patch(candidate._id, {
+    status: "expired",
+    expiredAt: candidate.expiresAt,
+    updatedAt: now,
+  });
+  return null;
+}
+
+async function maximumCallsignGeneration(
+  ctx: MutationContext,
+  workspaceId: WorkspaceId,
+  collisionKey: string,
+): Promise<number> {
+  const latest = await ctx.db
+    .query("callsignLeases")
+    .withIndex("by_workspace_collision_generation", (q) =>
+      q.eq("workspaceId", workspaceId).eq("collisionKey", collisionKey)
+    )
+    .order("desc")
+    .first();
+  return latest?.generation ?? 0;
+}
+
+async function insertEnrolmentCallsignLease(
+  ctx: MutationContext,
+  input: {
+    workspaceId: WorkspaceId;
+    workerEnrolmentId: Id<"workerEnrolments">;
+    workerSessionId: string;
+    reservationRequestId: string;
+    reservationFingerprint: string;
+    expiresAtMs: number;
+    now: number;
+    plan: CallsignPlan;
+  },
+): Promise<Id<"callsignLeases">> {
+  const leaseId = await ctx.db.insert("callsignLeases", {
+    workspaceId: input.workspaceId,
+    externalId: "pending",
+    callsign: input.plan.display,
+    collisionKey: input.plan.collisionKey,
+    workerSessionId: input.workerSessionId,
+    workerEnrolmentId: input.workerEnrolmentId,
+    generation: input.plan.generation,
+    status: "active",
+    reservationRequestId: input.reservationRequestId,
+    reservationFingerprint: input.reservationFingerprint,
+    acceptedAt: input.now,
+    expiresAt: input.expiresAtMs,
+    lastHeartbeatAt: input.now,
+    createdAt: input.now,
+    updatedAt: input.now,
+  });
+  await ctx.db.patch(leaseId, { externalId: `csl_${leaseId}` });
+  await ctx.scheduler.runAt(input.expiresAtMs, expireCallsignLeaseRef, {
+    leaseId,
+    generation: input.plan.generation,
+  });
+  return leaseId;
+}
+
+async function settleAttachedCallsign(
+  ctx: MutationContext,
+  enrolment: WorkerEnrolment,
+  outcome: "released" | "expired",
+  now: number,
+): Promise<void> {
+  if (enrolment.callsignLeaseId === undefined || enrolment.callsignLeaseGeneration === undefined) return;
+  const lease = await ctx.db.get("callsignLeases", enrolment.callsignLeaseId);
+  if (!lease || lease.status !== "active") return;
+  if (
+    lease.workerEnrolmentId !== enrolment._id
+    || lease.workerSessionId !== enrolment.workerSessionId
+    || lease.generation !== enrolment.callsignLeaseGeneration
+  ) {
+    throw new Error("Worker callsign lease binding invariant violated");
+  }
+  if (lease.expiresAt <= now || outcome === "expired") {
+    await ctx.db.patch(lease._id, {
+      status: "expired",
+      expiredAt: lease.expiresAt,
+      updatedAt: now,
+    });
+    return;
+  }
+  await ctx.db.patch(lease._id, {
+    status: "released",
+    releasedAt: now,
     updatedAt: now,
   });
 }
@@ -526,9 +723,9 @@ function publicWorker(enrolment: WorkerEnrolment) {
     lastHeartbeatAt: new Date(enrolment.lastHeartbeatAt).toISOString(),
     releasedAt: enrolment.releasedAt === undefined ? null : new Date(enrolment.releasedAt).toISOString(),
     expiredAt: enrolment.expiredAt === undefined ? null : new Date(enrolment.expiredAt).toISOString(),
-    callsign: null,
-    callsignLeaseId: null,
-    callsignLeaseGeneration: null,
+    callsign: enrolment.callsign ?? null,
+    callsignLeaseId: enrolment.callsignLeaseId === undefined ? null : `csl_${enrolment.callsignLeaseId}`,
+    callsignLeaseGeneration: enrolment.callsignLeaseGeneration ?? null,
     grantsAuthority: false as const,
   };
 }

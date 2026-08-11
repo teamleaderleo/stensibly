@@ -2,6 +2,10 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  canonicalHostedCallsign,
+  MAX_HOSTED_CALLSIGN_LEASE_SECONDS,
+} from "./lib/callsign";
+import {
   findWorkspace,
   normalizeWorkspace,
   requireServiceSecret,
@@ -12,14 +16,11 @@ import { internalMutation, mutation } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
 const expireLeaseRef = makeFunctionReference<"mutation">("callsignLeases:expireScheduled");
-const MAX_LEASE_SECONDS = 7 * 24 * 60 * 60;
-const MAX_CALLSIGN_LENGTH = 80;
 const MAX_WORKER_SESSION_ID_LENGTH = 160;
 const MAX_RUN_ID_LENGTH = 160;
 const MAX_REQUEST_ID_LENGTH = 240;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 240;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
-const callsignDisplayPattern = /^[A-Za-z0-9][A-Za-z0-9 _-]*$/;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/;
 const runIdPattern = /^run_[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/;
@@ -231,7 +232,7 @@ export const getCurrent = mutation({
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const workspace = await requiredWorkspace(ctx, args.workspace);
-    const { collisionKey } = canonicalCallsign(args.callsign);
+    const { collisionKey } = canonicalHostedCallsign(args.callsign);
     const lease = await currentLeaseForCollision(ctx, workspace._id, collisionKey, Date.now());
     return lease ? publicLease(lease) : null;
   },
@@ -261,7 +262,7 @@ function reserveRejection(
 ): RejectionReason | null {
   if (input.inheritance !== null) return "inheritance_not_supported";
   if (input.expiresAtMs <= now) return "expired_request";
-  if (input.expiresAtMs - now > MAX_LEASE_SECONDS * 1_000) return "expiry_too_far";
+  if (input.expiresAtMs - now > MAX_HOSTED_CALLSIGN_LEASE_SECONDS * 1_000) return "expiry_too_far";
   if (active) return "active_collision";
   if (input.expectedGeneration !== null && input.expectedGeneration !== maximumGeneration) {
     return "stale_generation";
@@ -275,7 +276,7 @@ function renewalExpiryRejection(
   now: number,
 ): RejectionReason | null {
   if (expiresAtMs <= now) return "expired_request";
-  if (expiresAtMs - now > MAX_LEASE_SECONDS * 1_000) return "expiry_too_far";
+  if (expiresAtMs - now > MAX_HOSTED_CALLSIGN_LEASE_SECONDS * 1_000) return "expiry_too_far";
   if (expiresAtMs <= lease.expiresAt) return "expiry_not_extended";
   return null;
 }
@@ -310,14 +311,14 @@ async function currentLeaseForCollision(
     .withIndex("by_workspace_collision_status", (q) =>
       q.eq("workspaceId", workspaceId).eq("collisionKey", collisionKey).eq("status", "active")
     )
-    .collect();
-  const live: CallsignLease[] = [];
-  for (const lease of active) {
-    const reconciled = await reconcileLeaseIfExpired(ctx, lease, now);
-    if (reconciled.status === "active") live.push(reconciled);
+    .take(2);
+  if (active.length > 1) {
+    throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
   }
-  if (live.length > 1) throw new Error(`Callsign collision invariant violated for ${collisionKey}`);
-  return live[0] ?? null;
+  const candidate = active[0];
+  if (!candidate) return null;
+  const reconciled = await reconcileLeaseIfExpired(ctx, candidate, now);
+  return reconciled.status === "active" ? reconciled : null;
 }
 
 async function maximumGenerationForCollision(
@@ -325,13 +326,14 @@ async function maximumGenerationForCollision(
   workspaceId: WorkspaceId,
   collisionKey: string,
 ): Promise<number> {
-  const leases = await ctx.db
+  const latest = await ctx.db
     .query("callsignLeases")
     .withIndex("by_workspace_collision_generation", (q) =>
       q.eq("workspaceId", workspaceId).eq("collisionKey", collisionKey)
     )
-    .collect();
-  return leases.reduce((maximum, lease) => Math.max(maximum, lease.generation), 0);
+    .order("desc")
+    .first();
+  return latest?.generation ?? 0;
 }
 
 async function reconcileLeaseIfExpired(
@@ -414,12 +416,14 @@ function normalizeReserve(args: {
   fingerprint: string;
   idempotencyKey: string;
 }) {
-  const callsign = canonicalCallsign(args.requestedCallsign);
+  const callsign = canonicalHostedCallsign(args.requestedCallsign);
   const requestedAt = canonicalTimestamp(args.requestedAt, "Callsign request time");
   const expiresAt = canonicalTimestamp(args.expiresAt, "Callsign lease expiry");
   const leaseSeconds = (expiresAt.milliseconds - requestedAt.milliseconds) / 1_000;
-  if (leaseSeconds <= 0 || leaseSeconds > MAX_LEASE_SECONDS) {
-    throw new Error(`Callsign reservation lifetime must be from 1 to ${MAX_LEASE_SECONDS} seconds`);
+  if (leaseSeconds <= 0 || leaseSeconds > MAX_HOSTED_CALLSIGN_LEASE_SECONDS) {
+    throw new Error(
+      `Callsign reservation lifetime must be from 1 to ${MAX_HOSTED_CALLSIGN_LEASE_SECONDS} seconds`,
+    );
   }
   return {
     callsign: callsign.display,
@@ -606,19 +610,6 @@ function publicLease(lease: CallsignLease) {
     grantsIdentityContinuity: false as const,
     grantsAuthority: false as const,
   };
-}
-
-function canonicalCallsign(value: string): { display: string; collisionKey: string } {
-  if (unsafeTextPattern.test(value)) throw new Error("Callsign contains unsupported control characters");
-  const display = value.normalize("NFKC").trim().replace(/ {2,}/g, " ");
-  if (display.length === 0) throw new Error("Callsign must not be empty");
-  if ([...display].length > MAX_CALLSIGN_LENGTH) {
-    throw new Error(`Callsign must be at most ${MAX_CALLSIGN_LENGTH} characters`);
-  }
-  if (!callsignDisplayPattern.test(display)) throw new Error("Callsign contains unsupported characters");
-  const collisionKey = display.toLowerCase().replace(/[ _-]+/g, "");
-  if (!collisionKey) throw new Error("Callsign must contain a letter or number");
-  return { display, collisionKey };
 }
 
 function boundedIdentifier(value: string, label: string, maximumLength: number, pattern: RegExp): string {
