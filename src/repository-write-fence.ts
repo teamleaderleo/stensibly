@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { sha256, stableJson } from "./canonical-json.js";
 import {
   admitGitHubBranchRef,
@@ -7,6 +6,8 @@ import {
   admitGitObjectId,
   sameGitObjectFormat,
 } from "./github-repository-write-admission.js";
+import { sha1Hex } from "./sha1.js";
+import { sha256Hex } from "./sha256.js";
 
 export const repositoryWriteOperations = [
   "create_file",
@@ -619,7 +620,10 @@ function requireReadbackKeys(
 }
 
 function readbackContent(value: unknown): string {
-  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 10 * 1024 * 1024) {
+  if (
+    typeof value !== "string"
+    || new TextEncoder().encode(value).byteLength > 10 * 1024 * 1024
+  ) {
     throw new RangeError("invalid readback content");
   }
   return value;
@@ -668,17 +672,11 @@ function sameEntryMaps(
 }
 
 function gitBlobObjectId(content: string, objectIdLength: number): string {
-  const algorithm = objectIdLength === 40
-    ? "sha1"
-    : objectIdLength === 64
-      ? "sha256"
-      : null;
-  if (!algorithm) throw new RangeError("invalid Git object format");
-  const bytes = Buffer.from(content, "utf8");
-  return createHash(algorithm)
-    .update(`blob ${bytes.byteLength}\0`, "utf8")
-    .update(bytes)
-    .digest("hex");
+  const byteLength = new TextEncoder().encode(content).byteLength;
+  const object = `blob ${byteLength}\0${content}`;
+  if (objectIdLength === 40) return sha1Hex(object);
+  if (objectIdLength === 64) return sha256Hex(object);
+  throw new RangeError("invalid Git object format");
 }
 
 function readbackPending(
