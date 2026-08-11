@@ -17,6 +17,36 @@ const commitSha = "e".repeat(40);
 const apiBaseUrl = "https://api.github.test";
 
 describe("native GitHub repository file write adapter", () => {
+  test("invokes a stored native-style fetch without rebinding its receiver", async () => {
+    const tokens: Array<"read" | "write"> = [];
+    const requests: string[] = [];
+    const receiverSensitiveFetch = (function (
+      this: unknown,
+      input: RequestInfo | URL,
+    ) {
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      requests.push(String(input));
+      return Promise.resolve(Response.json({
+        ref: `refs/heads/${targetRef}`,
+        object: {
+          type: "commit",
+          sha: parentSha,
+          url: commitUrl(parentSha),
+        },
+      }));
+    }) as typeof fetch;
+    const adapter = new GitHubRestRepositoryWriteAdapter({
+      tokenProvider: tokenProvider(tokens),
+      apiBaseUrl,
+      fetch: receiverSensitiveFetch,
+    });
+
+    await expect(adapter.getRefHead({ repositoryFullName, targetRef }))
+      .resolves.toBe(parentSha);
+    expect(tokens).toEqual(["read"]);
+    expect(requests).toEqual([`${root()}/git/ref/heads/feature/repository-write`]);
+  });
+
   test("returns null for an absent ref and validates commit parent identity", async () => {
     const tokens: Array<"read" | "write"> = [];
     let cancelled = false;
