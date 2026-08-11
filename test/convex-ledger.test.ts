@@ -368,6 +368,12 @@ describe("Convex work ledger", () => {
       request,
       idempotencyKey: `enrol_worker:v1:${"a".repeat(64)}`,
     });
+    await ledger.resolveWorkerEnrolment({
+      actorId: "api-token:oauth-grant-worker",
+      clientId: "mcp:api-token:oauth-grant-worker",
+      project: "scrapbook",
+      workerRef: "wrk_worker",
+    });
 
     expect(call(client, "workerEnrolments:enrol", "mutation").args).toEqual({
       serviceSecret: "private-service-secret",
@@ -378,6 +384,15 @@ describe("Convex work ledger", () => {
       request,
       idempotencyKey: `enrol_worker:v1:${"a".repeat(64)}`,
     });
+    expect(call(client, "workerEnrolments:resolveCurrent", "mutation").args)
+      .toEqual({
+        serviceSecret: "private-service-secret",
+        workspace: "shared-work",
+        actorId: "api-token:oauth-grant-worker",
+        clientId: "mcp:api-token:oauth-grant-worker",
+        project: "scrapbook",
+        workerRef: "wrk_worker",
+      });
   });
 
   test("rejects incomplete or unsafe configuration", () => {

@@ -59,6 +59,8 @@ import type {
 import type {
   WorkerEnrolmentProvider,
   WorkerEnrolmentProviderInput,
+  WorkerEnrolmentResolutionInput,
+  WorkerEnrolmentResolver,
 } from "./worker-enrolment-mcp.js";
 
 const HISTORY_CONTRACT_VERSION = 1;
@@ -114,7 +116,8 @@ export class ConvexWorkLedger implements
   GitHubProjectContextLedger,
   RunnerLedger,
   RunnerAdapterCommandLedger,
-  WorkerEnrolmentProvider
+  WorkerEnrolmentProvider,
+  WorkerEnrolmentResolver
 {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -306,6 +309,15 @@ export class ConvexWorkLedger implements
   async enrolWorker(input: WorkerEnrolmentProviderInput): Promise<unknown> {
     return await this.client.mutation(
       convexApi.workerEnrolments.enrol,
+      this.args(input),
+    );
+  }
+
+  async resolveWorkerEnrolment(
+    input: WorkerEnrolmentResolutionInput,
+  ): Promise<unknown> {
+    return await this.client.mutation(
+      convexApi.workerEnrolments.resolveCurrent,
       this.args(input),
     );
   }

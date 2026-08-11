@@ -320,6 +320,7 @@ export const resolveCurrent = mutation({
     actorId: v.string(),
     clientId: v.string(),
     workerRef: v.string(),
+    project: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -327,10 +328,14 @@ export const resolveCurrent = mutation({
     const workspace = await requiredWorkspace(ctx, args.workspace);
     const owner = normalizeOwner(args);
     const workerRef = boundedIdentifier(args.workerRef, "Worker reference", limits.workerRef);
+    const project = args.project === undefined ? null : boundedProject(args.project);
     let enrolment = await ownedEnrolment(ctx, workspace._id, workerRef, owner);
     if (!enrolment) return null;
     enrolment = await reconcileIfExpired(ctx, enrolment, Date.now());
-    return enrolment.status === "active" ? publicWorker(enrolment) : null;
+    return enrolment.status === "active"
+      && (project === null || enrolment.projectScope.includes(project))
+      ? publicWorker(enrolment)
+      : null;
   },
 });
 
@@ -739,6 +744,15 @@ function boundedIdentifier(value: string, label: string, maximumLength: number):
   return normalized;
 }
 
+function boundedProject(value: string): string {
+  safe(value, "Project");
+  const normalized = value.trim().toLowerCase();
+  if ([...normalized].length > limits.project || !projectPattern.test(normalized)) {
+    throw new Error("Project must be a lowercase project slug");
+  }
+  return normalized;
+}
+
 function display(value: string, label: string, maximumLength: number): string {
   safe(value, label);
   const normalized = value.trim().replace(/ {2,}/g, " ");
@@ -774,14 +788,7 @@ function projectList(values: string[]): string[] {
   if (values.length < 1 || values.length > limits.projects) {
     throw new Error(`Project scope must contain 1 to ${limits.projects} entries`);
   }
-  return sortedUnique(values.map((value) => {
-    safe(value, "Project");
-    const normalized = value.trim().toLowerCase();
-    if ([...normalized].length > limits.project || !projectPattern.test(normalized)) {
-      throw new Error("Project must be a lowercase project slug");
-    }
-    return normalized;
-  }), "Project");
+  return sortedUnique(values.map(boundedProject), "Project");
 }
 
 function sortedUnique(values: string[], label: string): string[] {

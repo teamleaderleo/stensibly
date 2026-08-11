@@ -91,6 +91,23 @@ describe("durable worker enrolments", () => {
     expect(await t.mutation(convexApi.workerEnrolments.resolveCurrent, {
       serviceSecret: secret,
       workspace,
+      actorId,
+      clientId,
+      workerRef: accepted.worker.workerRef,
+      project: "outside-scope",
+    })).toBeNull();
+    expect(await t.mutation(convexApi.workerEnrolments.resolveCurrent, {
+      serviceSecret: secret,
+      workspace,
+      actorId,
+      clientId,
+      workerRef: accepted.worker.workerRef,
+      project: "stensibly",
+    })).toMatchObject({ workerRef: accepted.worker.workerRef, status: "active" });
+
+    expect(await t.mutation(convexApi.workerEnrolments.resolveCurrent, {
+      serviceSecret: secret,
+      workspace,
       actorId: "api-token:oauth_grant_other_client",
       clientId: "mcp:api-token:oauth_grant_other_client",
       workerRef: accepted.worker.workerRef,

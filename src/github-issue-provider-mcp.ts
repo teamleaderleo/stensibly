@@ -26,6 +26,7 @@ import {
   buildWorkerSignoff,
   type WorkerSignoffInput,
 } from "./worker-signoff.js";
+import { resolveWorkerAttribution } from "./worker-enrolment-mcp.js";
 
 const maximumGitHubIssueNumber = 2_147_483_647;
 
@@ -429,23 +430,40 @@ export function registerGitHubIssueProviderTools(
   server.registerTool(
     "github_add_issue_comment",
     {
-      description: "Add one bounded worker-authored comment to an exact GitHub issue. Requires write scope, an explicit idempotency key, and descriptive worker signoff metadata; Stensibly appends the canonical callsign footer before provider dispatch. The returned durable receipt omits the comment body.",
+      description: "Add one bounded worker-authored comment to an exact GitHub issue. Requires write scope and an explicit idempotency key. Prefer an active server-minted workerRef plus the current run ID; Stensibly resolves canonical callsign attribution before dispatch. Explicit signoff remains a migration and recovery fallback. The returned durable receipt omits the comment body.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
         issueNumber: issueNumberSchema(),
         body: z.string().min(1).max(64 * 1024),
-        signoff: workerSignoffSchema(),
+        workerRef: z.string().trim().min(1).max(240)
+          .regex(/^wrk_[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional(),
+        runId: workerRunIdSchema().optional(),
+        intention: z.string().trim().min(1).max(240).optional(),
+        work: z.string().trim().min(1).max(320).optional(),
+        signoff: workerSignoffSchema().optional(),
         idempotencyKey: idempotencyKeySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async (input) => asToolResult(() => writeService(ledger).addIssueComment({
-      ...providerContext(context, input.project, input.repository, "write"),
-      issueNumber: input.issueNumber,
-      body: withWorkerSignoff(input.body, input.signoff),
-      idempotencyKey: input.idempotencyKey,
-    })),
+    async (input) => asToolResult(async () => {
+      const identity = providerContext(context, input.project, input.repository, "write");
+      return await writeService(ledger).addIssueComment({
+        ...identity,
+        issueNumber: input.issueNumber,
+        body: await withIssueCommentAttribution({
+          ledger,
+          identity,
+          body: input.body,
+          workerRef: input.workerRef,
+          runId: input.runId,
+          intention: input.intention,
+          work: input.work,
+          signoff: input.signoff,
+        }),
+        idempotencyKey: input.idempotencyKey,
+      });
+    }),
   );
 
   server.registerTool(
@@ -927,14 +945,54 @@ function workerSignoffSchema() {
     callsignLeaseGeneration: z.number().int().min(1).max(1_000_000_000).optional(),
     pod: z.string().trim().min(1).max(120).optional(),
     intention: z.string().trim().min(1).max(240).optional(),
-    runId: z
-      .string()
-      .trim()
-      .min(1)
-      .max(160)
-      .regex(/^run_[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    runId: workerRunIdSchema(),
     work: z.string().trim().min(1).max(320).optional(),
   }).strict();
+}
+
+function workerRunIdSchema() {
+  return z.string().trim().min(1).max(160)
+    .regex(/^run_[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+}
+
+async function withIssueCommentAttribution(input: {
+  ledger: WorkLedger;
+  identity: GitHubProviderRequestContext;
+  body: string;
+  workerRef?: string;
+  runId?: string;
+  intention?: string;
+  work?: string;
+  signoff?: WorkerSignoffInput;
+}): Promise<string> {
+  if ((input.workerRef === undefined) === (input.signoff === undefined)) {
+    throw new Error("GitHub issue comments require exactly one workerRef or explicit signoff");
+  }
+  if (input.signoff) {
+    if (input.runId !== undefined || input.intention !== undefined || input.work !== undefined) {
+      throw new Error("WorkerRef attribution fields cannot accompany explicit signoff");
+    }
+    return withWorkerSignoff(input.body, input.signoff);
+  }
+  if (!input.workerRef || !input.runId) {
+    throw new Error("WorkerRef attribution requires the current runId");
+  }
+  const worker = await resolveWorkerAttribution(input.ledger, {
+    actorId: input.identity.actorId,
+    clientId: input.identity.clientId,
+    project: input.identity.project,
+    workerRef: input.workerRef,
+  });
+  if (!worker) {
+    throw new Error("WorkerRef is foreign, inactive, expired, or outside this project");
+  }
+  return withWorkerSignoff(input.body, {
+    callsign: worker.callsign,
+    callsignLeaseGeneration: worker.callsignLeaseGeneration,
+    runId: input.runId,
+    ...(input.intention === undefined ? {} : { intention: input.intention }),
+    ...(input.work === undefined ? {} : { work: input.work }),
+  });
 }
 
 function withWorkerSignoff(body: string, signoff: WorkerSignoffInput): string {
