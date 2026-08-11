@@ -15,7 +15,7 @@ const project = "stensibly";
 const repository = "teamleaderleo/stensibly";
 
 describe("GitHub issue comment worker attribution", () => {
-  test("renders a callsign footer before dispatch and rejects unsigned comments", async () => {
+  test("resolves workerRef attribution, preserves explicit fallback, and rejects unsigned comments", async () => {
     const store = new StensiblyStore(":memory:");
     const bodies: string[] = [];
     const service: GitHubIssueProviderWriteService = {
@@ -35,10 +35,17 @@ describe("GitHub issue comment worker attribution", () => {
         );
       },
     };
-    const ledger = withGitHubIssueProviderWriteService(
+    const resolutions: unknown[] = [];
+    const ledger = Object.assign(withGitHubIssueProviderWriteService(
       new SqliteWorkLedger(store),
       service,
-    );
+    ), {
+      async resolveWorkerEnrolment(input: Record<string, unknown>) {
+        resolutions.push(input);
+        if (input.workerRef === "wrk_foreign") return null;
+        return activeWorker(String(input.workerRef));
+      },
+    });
     const server = createMcpServer(ledger, { principal: writePrincipal() });
     const client = new Client(
       { name: "github-comment-signoff-test", version: "0.0.1" },
@@ -50,31 +57,57 @@ describe("GitHub issue comment worker attribution", () => {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
 
-      const signed = await client.callTool({
+      const resolved = await client.callTool({
         name: "github_add_issue_comment",
         arguments: {
           project,
           repository,
           issueNumber: 490,
           body: "Fresh dogfood checkpoint.",
-          signoff: {
-            callsign: "Kite",
-            runId: "run_kite_signoff_1",
-            intention: "keep GitHub App comments attributable",
-          },
+          workerRef: "wrk_kite_1",
+          runId: "run_kite_signoff_1",
+          intention: "keep GitHub App comments attributable",
           idempotencyKey: "signed-comment-1",
         },
       });
-      expect(signed.isError).toBeFalsy();
+      expect(resolved.isError).toBeFalsy();
+      expect(resolutions).toEqual([{
+        actorId: "api-token:github-comment-signoff-grant",
+        clientId: "mcp:api-token:github-comment-signoff-grant",
+        project,
+        workerRef: "wrk_kite_1",
+      }]);
       expect(bodies).toEqual([
         [
           "Fresh dogfood checkpoint.",
           "",
-          "— Kite",
+          "— Kite g3",
           "  Intention: keep GitHub App comments attributable",
           "  Run: run_kite_signoff_1",
         ].join("\n"),
       ]);
+
+      const fallback = await client.callTool({
+        name: "github_add_issue_comment",
+        arguments: {
+          project,
+          repository,
+          issueNumber: 490,
+          body: "Recovery checkpoint.",
+          signoff: {
+            callsign: "Harbor",
+            runId: "run_harbor_recovery_1",
+          },
+          idempotencyKey: "fallback-comment-1",
+        },
+      });
+      expect(fallback.isError).toBeFalsy();
+      expect(bodies[1]).toBe([
+        "Recovery checkpoint.",
+        "",
+        "— Harbor",
+        "  Run: run_harbor_recovery_1",
+      ].join("\n"));
 
       const unsigned = await client.callTool({
         name: "github_add_issue_comment",
@@ -87,7 +120,57 @@ describe("GitHub issue comment worker attribution", () => {
         },
       });
       expect(unsigned.isError).toBe(true);
-      expect(bodies).toHaveLength(1);
+      expect(bodies).toHaveLength(2);
+
+      const ambiguous = await client.callTool({
+        name: "github_add_issue_comment",
+        arguments: {
+          project,
+          repository,
+          issueNumber: 490,
+          body: "Ambiguous checkpoint.",
+          workerRef: "wrk_kite_1",
+          runId: "run_kite_signoff_1",
+          signoff: {
+            callsign: "Harbor",
+            runId: "run_harbor_recovery_1",
+          },
+          idempotencyKey: "ambiguous-comment-1",
+        },
+      });
+      expect(ambiguous.isError).toBe(true);
+      expect(resolutions).toHaveLength(1);
+      expect(bodies).toHaveLength(2);
+
+      const missingRun = await client.callTool({
+        name: "github_add_issue_comment",
+        arguments: {
+          project,
+          repository,
+          issueNumber: 490,
+          body: "Missing-run checkpoint.",
+          workerRef: "wrk_kite_1",
+          idempotencyKey: "missing-run-comment-1",
+        },
+      });
+      expect(missingRun.isError).toBe(true);
+      expect(resolutions).toHaveLength(1);
+      expect(bodies).toHaveLength(2);
+
+      const foreign = await client.callTool({
+        name: "github_add_issue_comment",
+        arguments: {
+          project,
+          repository,
+          issueNumber: 490,
+          body: "Foreign checkpoint.",
+          workerRef: "wrk_foreign",
+          runId: "run_foreign_1",
+          idempotencyKey: "foreign-comment-1",
+        },
+      });
+      expect(foreign.isError).toBe(true);
+      expect(bodies).toHaveLength(2);
     } finally {
       await client.close();
       await server.close();
@@ -95,6 +178,34 @@ describe("GitHub issue comment worker attribution", () => {
     }
   });
 });
+
+function activeWorker(workerRef: string) {
+  return {
+    workerRef,
+    adapter: "remote-mcp",
+    profile: "authenticated-generalist",
+    workerSessionId: "chat.session-kite",
+    capabilities: ["coordination"],
+    toolAllowlist: [],
+    projectScope: [project],
+    preferredStances: [],
+    startedAt: "2026-08-11T00:00:00.000Z",
+    expiresAt: "2099-08-13T00:00:00.000Z",
+    heartbeatSeconds: 3_600,
+    correlationId: null,
+    causationId: null,
+    requestFingerprint: `sha256:${"a".repeat(64)}`,
+    status: "active",
+    acceptedAt: "2026-08-11T00:00:00.000Z",
+    lastHeartbeatAt: "2026-08-11T00:00:00.000Z",
+    releasedAt: null,
+    expiredAt: null,
+    callsign: "Kite",
+    callsignLeaseId: "csl_kite_3",
+    callsignLeaseGeneration: 3,
+    grantsAuthority: false,
+  };
+}
 
 function writePrincipal(): TokenPrincipal {
   return {

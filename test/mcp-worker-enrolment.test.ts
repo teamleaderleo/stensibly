@@ -7,6 +7,7 @@ import { StensiblyStore } from "../src/store.ts";
 import type { TokenPrincipal } from "../src/token-contracts.ts";
 import {
   buildRemoteMcpWorkerEnrolment,
+  resolveWorkerAttribution,
   type WorkerEnrolmentProviderInput,
 } from "../src/worker-enrolment-mcp.ts";
 
@@ -198,6 +199,52 @@ describe("authenticated MCP worker enrolment", () => {
       ...base,
       context: { principal: { ...writePrincipal(), projects: ["other"] } },
     })).toThrow("outside this principal's project scope");
+  });
+
+  test("resolves only an exact active owned-project attribution snapshot", async () => {
+    const prepared = buildRemoteMcpWorkerEnrolment({
+      project,
+      workerSessionId: "chat.session-42",
+      callsign: "Keel",
+      context: { principal: writePrincipal() },
+      now,
+    });
+    const worker = (backendResult(prepared, "accepted") as {
+      worker: Record<string, unknown>;
+    }).worker;
+    const input = {
+      actorId: prepared.actorId,
+      clientId: prepared.clientId,
+      project,
+      workerRef: "wrk_test",
+    };
+    expect(await resolveWorkerAttribution({
+      async resolveWorkerEnrolment() {
+        return worker;
+      },
+    }, input, now)).toEqual({
+      workerRef: "wrk_test",
+      workerSessionId: "chat.session-42",
+      callsign: "Keel",
+      callsignLeaseGeneration: 1,
+      expiresAt: prepared.request.expiresAt,
+    });
+    expect(await resolveWorkerAttribution({
+      async resolveWorkerEnrolment() {
+        return null;
+      },
+    }, input, now)).toBeNull();
+    await expect(resolveWorkerAttribution({
+      async resolveWorkerEnrolment() {
+        return { ...worker, projectScope: ["another-project"] };
+      },
+    }, input, now)).rejects.toThrow("does not match the authenticated request");
+    await expect(resolveWorkerAttribution({
+      async resolveWorkerEnrolment() {
+        return worker;
+      },
+    }, input, Date.parse(prepared.request.expiresAt))).rejects
+      .toThrow("does not match the authenticated request");
   });
 });
 

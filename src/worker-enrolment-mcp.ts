@@ -33,6 +33,25 @@ export interface WorkerEnrolmentProvider {
   enrolWorker(input: WorkerEnrolmentProviderInput): Promise<unknown>;
 }
 
+export interface WorkerEnrolmentResolutionInput {
+  actorId: string;
+  clientId: string;
+  project: string;
+  workerRef: string;
+}
+
+export interface WorkerEnrolmentResolver {
+  resolveWorkerEnrolment(input: WorkerEnrolmentResolutionInput): Promise<unknown>;
+}
+
+export interface ResolvedWorkerAttribution {
+  workerRef: string;
+  workerSessionId: string;
+  callsign: string;
+  callsignLeaseGeneration: number;
+  expiresAt: string;
+}
+
 export interface RemoteMcpWorkerEnrolment {
   actorId: string;
   clientId: string;
@@ -199,6 +218,38 @@ export function registerWorkerEnrolmentTools(
 
 export function hasWorkerEnrolmentProvider(value: unknown): boolean {
   return workerEnrolmentProvider(value) !== null;
+}
+
+export async function resolveWorkerAttribution(
+  value: unknown,
+  input: WorkerEnrolmentResolutionInput,
+  now: number = Date.now(),
+): Promise<ResolvedWorkerAttribution | null> {
+  const resolve = captureDataMethod(value, "resolveWorkerEnrolment");
+  if (!resolve) throw new Error("Durable worker attribution is unavailable on this backend");
+  const raw = await Promise.resolve(resolve(input));
+  if (raw === null) return null;
+  const worker = backendWorkerSchema.parse(raw);
+  if (
+    worker.workerRef !== input.workerRef
+    || worker.status !== "active"
+    || worker.grantsAuthority !== false
+    || !worker.projectScope.includes(input.project)
+    || worker.callsign === null
+    || worker.callsignLeaseId === null
+    || worker.callsignLeaseGeneration === null
+    || !Number.isFinite(now)
+    || Date.parse(worker.expiresAt) <= now
+  ) {
+    throw new Error("Hosted worker attribution does not match the authenticated request");
+  }
+  return Object.freeze({
+    workerRef: worker.workerRef,
+    workerSessionId: worker.workerSessionId,
+    callsign: worker.callsign,
+    callsignLeaseGeneration: worker.callsignLeaseGeneration,
+    expiresAt: worker.expiresAt,
+  });
 }
 
 function workerEnrolmentProvider(value: unknown): WorkerEnrolmentProvider | null {
