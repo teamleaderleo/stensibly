@@ -79,10 +79,12 @@ import { transitionWorkRunWithItemProjection } from "./run-item-projection.js";
 import type {
   ReserveRunnerAdapterCommandInput,
   RunnerAdapterCommandLedger,
+  SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
 import {
   ensureRunnerAdapterCommandSchema,
   reserveSqliteRunnerAdapterCommand,
+  settleSqliteRunnerAdapterCommand,
 } from "./runner-adapter-command-sqlite.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import { claimRunnerWork } from "./runner-queue.js";
@@ -380,6 +382,10 @@ export class SqliteWorkLedger implements
 
   async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
     return reserveSqliteRunnerAdapterCommand(this.store, input);
+  }
+
+  async settleRunnerAdapterCommand(input: SettleRunnerAdapterCommandInput) {
+    return settleSqliteRunnerAdapterCommand(this.store, input);
   }
 
   async getRun(id: string) {

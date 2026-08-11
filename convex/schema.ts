@@ -634,6 +634,9 @@ export default defineSchema({
     stableRequest: v.any(),
     idempotencyKey: v.string(),
     reservedAt: v.number(),
+    settlement: v.optional(v.any()),
+    outcomeSha256: v.optional(v.string()),
+    settledAt: v.optional(v.number()),
   })
     .index("by_workspace_id_and_idempotency_key", ["workspaceId", "idempotencyKey"])
     .index("by_workspace_id_and_command_id", ["workspaceId", "commandId"])

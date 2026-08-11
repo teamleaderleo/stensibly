@@ -2,7 +2,7 @@
 
 **Status:** active P0 rollout
 **Last reconciled:** 2026-08-11
-**Exact source base before this revision:** `8132983c8f836c119eade98b72da230c057f6c77`
+**Exact source base before this revision:** `ed35efd36149aabb086168872b9e05e0c5dce2ee`
 **Sustained-use incident:** #490
 **Programme:** #491
 **Canonical queue:** #301
@@ -31,8 +31,8 @@ alongside the existing Streamable HTTP flow. The modern path supports direct
 discovery, list/call, pagination, task polling, protocol headers, and the same
 authenticated capability policy.
 
-The current production composition contains 52 public hosted tool names. This
-revision stages ChatGPT snapshot v14 with four outcome-oriented GitHub operations:
+The current production composition contains 52 public hosted tool names at
+snapshot v14, including four outcome-oriented GitHub operations:
 `github_repo_health`, plan-only `github_branch_tidy`, `github_ci_diagnose`, and
 durable head-fenced `github_land_pr`, plus server-owned `enrol_worker` for
 short-lived, non-authoritative worker presence. Issue comments can then resolve
@@ -43,15 +43,15 @@ explicit signoff as fallback. The names-only fingerprint is:
 sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745
 ```
 
-The staged full tool-contract fingerprint is:
+The full tool-contract fingerprint is:
 
 ```text
 sha256:7bfd0624af4cc911fdcd72ff27212358aae0504d03808a815e993828981e4bb2
 ```
 
-These v14 source fingerprints become hosted evidence only after the Worker
-release verification passes. The existing ChatGPT app must then be refreshed
-or rescanned before v14 dogfood.
+Both v14 fingerprints passed the protected Worker release verification at
+`ed35efd36149aabb086168872b9e05e0c5dce2ee`. The existing ChatGPT app must still
+be refreshed or rescanned before host-level v14 dogfood.
 
 ### GitHub execution provider
 
@@ -96,9 +96,12 @@ ledger contracts; neither SDK is a second product direction.
 
 The current host slice is deliberately model-free and bounded. It proves exact
 capability binding, lease authority, atomic dispatch reservation, checkpoint
-privacy, observation limits, and no blind redispatch. A durable command inbox,
-full restartable continuation, and live model/provider mounting remain follow-up
-work.
+privacy, observation limits, and no blind redispatch. The first command-inbox
+slice now also settles a completed bounded episode with content-minimised outcome
+evidence and replays that exact settlement after response loss without another
+model call. A reservation left unsettled by a crash remains explicitly ambiguous
+and cannot redispatch. Durable command recovery, full restartable continuation,
+and live model/provider mounting remain follow-up work.
 
 ## Current composite operation
 
@@ -128,10 +131,11 @@ exact.
 
 Receipt-driven reconciliation repairs lost local settlement. Independent
 publication readback can now prove matching branch and retained-identity PR
-outcomes without another GitHub mutation. Repository-file ambiguity remains a
-separate proof lane because a moved ref alone cannot prove the exact file
-effect. Compensation is durable as a plan and lifecycle; automated compensators
-remain follow-up work.
+outcomes without another GitHub mutation. Exact repository-file tree readback
+now proves the complete single-file commit effect without another provider
+mutation, including parent, message, tree, blob, and sibling-leaf identity.
+Compensation is durable as a plan and lifecycle; automated compensators remain
+follow-up work.
 
 `github_land_pr` now reuses that operation spine for one consequential merge.
 It requires a current runner lease, an atomically fenced head, a freshly
@@ -171,11 +175,11 @@ reconciled from durable operation/provider evidence before another write.
 
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
-| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, composite publication, publication readback, and worker-reference attribution are merged or staged; repeated hosted ChatGPT execution remains the proof gap | Deploy/verify the v14 contract, refresh ChatGPT once, enrol the chat, and run the complete lifecycle in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
+| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, composite publication/readback, and worker-reference attribution are live at v14/52; repeated hosted ChatGPT execution remains the proof gap | Refresh ChatGPT once, enrol the chat, and run the complete lifecycle in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
 | P0 | Project attachment onboarding (#334/#1329) | Scrapbook dogfood proved `repo known + attachment missing`; v11 recovery is merged | Repeat the Scrapbook setup journey through explicit attachment acceptance and guarded read verification | An unattached known repository leads to one clear setup continuation and becomes repository-ready only after accepted attachment + guarded read proof |
-| P1 | Reconciliation and compensation (#154/#1325) | Independent branch/retained-PR readback is merged and hosted-mounted; exact repository-file ambiguity and live hosted proof remain | Add exact file-effect readback, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
-| P1 | Operation catalogue | The first four outcome tools are implemented in snapshot v14 | Deploy, refresh ChatGPT, and dogfood `repo_health`, `branch_tidy`, and `ci_diagnose`; land only a dedicated safe PR under a runner lease | Agents can request common outcomes without manually orchestrating long raw-tool chains |
-| P1 | Restartable runner execution | Both SDK adapters and the bounded host exist; durable command delivery and continuation remain incomplete | Add the command inbox/observation receipt and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
+| P1 | Reconciliation and compensation (#154/#1325) | Branch, retained-PR, and complete repository-file tree readback are merged and live | Add exact-SHA branch deletion/restoration and PR-close/file-restore compensators; use runner Git CAS because GitHub REST ref deletion has no expected-old-SHA fence | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
+| P1 | Operation catalogue | The first four outcome tools are live in snapshot v14 | Refresh ChatGPT and dogfood `repo_health`, `branch_tidy`, and `ci_diagnose`; land only a dedicated safe PR under a runner lease | Agents can request common outcomes without manually orchestrating long raw-tool chains |
+| P1 | Restartable runner execution (#1470) | Both SDK adapters, the bounded host, atomic command reservation, and terminal settlement/replay exist; an unsettled reservation still requires explicit recovery | Add recovery ownership and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
 
 ## Definition of done for the wave
 
@@ -200,15 +204,15 @@ prove:
 
 ## Immediate sequence
 
-1. Integrate, deploy, and verify snapshot v14/52.
-2. Refresh the existing ChatGPT app in place and repeat the Scrapbook
+1. Refresh the existing ChatGPT app in place and repeat the Scrapbook
    attachment/setup journey from a normal conversation.
-3. Dogfood one bounded publish-change operation, exact replay, and publication
+2. Dogfood one bounded publish-change operation, exact replay, and publication
    response-loss recovery.
-4. Add exact repository-file readback for genuinely ambiguous file effects.
-5. Dogfood `repo_health`, plan-only `branch_tidy`, and `ci_diagnose` in ChatGPT.
-6. Add exact branch delete/restore compensators before any branch-tidy apply mode.
-7. Instrument catalogue → policy → registration → invocation → admission →
+3. Dogfood `repo_health`, plan-only `branch_tidy`, and `ci_diagnose` in ChatGPT.
+4. Add recovery ownership and checkpoint lineage for reservations that never settle.
+5. Add a runner-backed exact-SHA branch delete/restore compensator before any
+   branch-tidy apply mode; do not emulate CAS with REST read-then-delete.
+6. Instrument catalogue → policy → registration → invocation → admission →
    dispatch → provider acceptance → verification → delivery as one traceable
    capability journey.
 

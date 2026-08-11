@@ -12,6 +12,12 @@ import {
 import { sameCanonical } from "./lib/executionEnvelope";
 import { mutation } from "./lib/server";
 import { actorValidator, serviceArgs, type ActorInput } from "./lib/validators";
+import {
+  admitRunnerAdapterCommandSettlementRecord,
+  normalizeRunnerAdapterCommandSettlement,
+  runnerAdapterCommandOutcomeSha256,
+  type RunnerAdapterCommandSettlementRecord,
+} from "../src/runner-adapter-command-contracts";
 
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/u;
 
@@ -51,7 +57,13 @@ export const reserve = mutation({
           "Runner adapter command idempotency key was already used for a different command",
         );
       }
-      return publicReservation("replayed", false, replay.request, replay.reservedAt);
+      return publicReservation(
+        "replayed",
+        false,
+        replay.request,
+        replay.reservedAt,
+        admittedStoredSettlement(replay),
+      );
     }
 
     const commandReuse = await ctx.db
@@ -103,7 +115,63 @@ export const reserve = mutation({
       idempotencyKey: input.idempotencyKey,
       reservedAt,
     });
-    return publicReservation("reserved", true, input, reservedAt);
+    return publicReservation("reserved", true, input, reservedAt, null);
+  },
+});
+
+export const settle = mutation({
+  args: {
+    ...serviceArgs,
+    commandId: v.string(),
+    commandFingerprint: v.string(),
+    outcome: v.any(),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const input = normalizeRunnerAdapterCommandSettlement({
+      commandId: args.commandId,
+      commandFingerprint: args.commandFingerprint,
+      outcome: args.outcome,
+    });
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) {
+      throw new Error("Runner adapter command cannot settle without a durable reservation");
+    }
+    const row = await ctx.db
+      .query("runnerAdapterCommands")
+      .withIndex("by_workspace_id_and_command_id", (q) =>
+        q.eq("workspaceId", workspace._id).eq("commandId", input.commandId)
+      )
+      .unique();
+    if (!row) {
+      throw new Error("Runner adapter command cannot settle without a durable reservation");
+    }
+    if (row.commandFingerprint !== input.commandFingerprint) {
+      throw new Error("Runner adapter command settlement fingerprint changed");
+    }
+    const outcomeSha256 = runnerAdapterCommandOutcomeSha256(input.outcome);
+    if (row.settlement !== undefined) {
+      const existing = admittedStoredSettlement(row);
+      if (!existing) throw new Error("Runner adapter command settlement storage is incomplete");
+      if (
+        row.outcomeSha256 !== outcomeSha256
+        || !sameCanonical(existing.outcome, input.outcome)
+        || existing.commandId !== input.commandId
+        || existing.commandFingerprint !== input.commandFingerprint
+      ) {
+        throw new Error("Runner adapter command was already settled with another outcome");
+      }
+      return { outcome: "replayed", settlement: existing };
+    }
+    const settledAt = Date.now();
+    const settlement: RunnerAdapterCommandSettlementRecord = {
+      ...input,
+      outcomeSha256,
+      settledAt: new Date(settledAt).toISOString(),
+    };
+    await ctx.db.patch(row._id, { settlement, outcomeSha256, settledAt });
+    return { outcome: "settled", settlement };
   },
 });
 
@@ -190,6 +258,7 @@ function publicReservation(
   dispatchAuthorized: boolean,
   request: unknown,
   reservedAt: number,
+  settlement: unknown,
 ) {
   return {
     outcome,
@@ -198,7 +267,36 @@ function publicReservation(
       ...(request as ReservationInput),
       reservedAt: new Date(reservedAt).toISOString(),
     },
+    settlement,
   };
+}
+
+function admittedStoredSettlement(row: {
+  settlement?: unknown;
+  outcomeSha256?: string;
+  settledAt?: number;
+}): RunnerAdapterCommandSettlementRecord | null {
+  const absent = row.settlement === undefined
+    && row.outcomeSha256 === undefined
+    && row.settledAt === undefined;
+  if (absent) return null;
+  if (
+    row.settlement === undefined
+    || row.outcomeSha256 === undefined
+    || row.settledAt === undefined
+  ) {
+    throw new Error("Runner adapter command settlement storage is incomplete");
+  }
+  const settlement = admitRunnerAdapterCommandSettlementRecord(
+    row.settlement as RunnerAdapterCommandSettlementRecord,
+  );
+  if (
+    settlement.outcomeSha256 !== row.outcomeSha256
+    || Date.parse(settlement.settledAt) !== row.settledAt
+  ) {
+    throw new Error("Runner adapter command settlement storage is invalid");
+  }
+  return settlement;
 }
 
 function fingerprint(value: string, label: string): string {

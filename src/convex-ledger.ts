@@ -50,6 +50,7 @@ import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type {
   ReserveRunnerAdapterCommandInput,
   RunnerAdapterCommandLedger,
+  SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
 import type {
   HeartbeatWorkRunInput,
@@ -304,6 +305,13 @@ export class ConvexWorkLedger implements
       convexApi.runnerAdapterCommands.reserve,
       this.args(input),
     ) as Awaited<ReturnType<RunnerAdapterCommandLedger["reserveRunnerAdapterCommand"]>>;
+  }
+
+  async settleRunnerAdapterCommand(input: SettleRunnerAdapterCommandInput) {
+    return await this.client.mutation(
+      convexApi.runnerAdapterCommands.settle,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerAdapterCommandLedger["settleRunnerAdapterCommand"]>>;
   }
 
   async enrolWorker(input: WorkerEnrolmentProviderInput): Promise<unknown> {

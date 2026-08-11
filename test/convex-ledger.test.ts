@@ -311,7 +311,7 @@ describe("Convex work ledger", () => {
     ]);
   });
 
-  test("maps runner adapter command reservation to its scoped mutation", async () => {
+  test("maps runner adapter command reservation and settlement to scoped mutations", async () => {
     const client = new RecordingCaller();
     const ledger = new ConvexWorkLedger({
       client,
@@ -334,11 +334,33 @@ describe("Convex work ledger", () => {
     };
 
     await ledger.reserveRunnerAdapterCommand(input);
+    const settlement = {
+      commandId: input.commandId,
+      commandFingerprint: input.commandFingerprint,
+      outcome: {
+        version: 1 as const,
+        kind: "bounded_episode_completed" as const,
+        observationCount: 1,
+        observationsSha256: `sha256:${"c".repeat(64)}`,
+        terminalObservationId: "observation_1",
+        terminalObservationType: "interrupted",
+        latestCheckpointExternalId: null,
+        latestCheckpointSha256: null,
+        containsPrivateContent: false as const,
+        containsCredentials: false as const,
+      },
+    };
+    await ledger.settleRunnerAdapterCommand(settlement);
 
     expect(call(client, "runnerAdapterCommands:reserve", "mutation").args).toEqual({
       serviceSecret: "private-service-secret",
       workspace: "shared-work",
       ...input,
+    });
+    expect(call(client, "runnerAdapterCommands:settle", "mutation").args).toEqual({
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+      ...settlement,
     });
   });
 

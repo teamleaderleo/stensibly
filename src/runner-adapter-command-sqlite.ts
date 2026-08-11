@@ -1,11 +1,17 @@
 import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 import {
+  admitRunnerAdapterCommandSettlementRecord,
   normalizeRunnerAdapterCommandReservation,
+  normalizeRunnerAdapterCommandSettlement,
+  runnerAdapterCommandOutcomeSha256,
   runnerAdapterCommandStableRequest,
   RunnerAdapterCommandConflictError,
   type ReserveRunnerAdapterCommandInput,
   type RunnerAdapterCommandReservation,
   type RunnerAdapterCommandReservationRecord,
+  type RunnerAdapterCommandSettlement,
+  type RunnerAdapterCommandSettlementRecord,
+  type SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
 import { ensureRunSchema } from "./runs.js";
 import type { StensiblyStore } from "./store.js";
@@ -14,6 +20,8 @@ interface ReservationRow {
   request_json: string;
   stable_request_json: string;
   reserved_at: string;
+  settlement_json: string | null;
+  settled_at: string | null;
 }
 
 interface AuthorityRow {
@@ -46,13 +54,28 @@ export function ensureRunnerAdapterCommandSchema(store: StensiblyStore): void {
       command_fingerprint TEXT NOT NULL,
       request_json TEXT NOT NULL,
       stable_request_json TEXT NOT NULL,
-      reserved_at TEXT NOT NULL
+      reserved_at TEXT NOT NULL,
+      settlement_json TEXT,
+      settled_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runner_adapter_commands_run
       ON runner_adapter_commands(run_id, reserved_at);
   `);
+  ensureSettlementColumns(store);
   initializedStores.add(store);
+}
+
+function ensureSettlementColumns(store: StensiblyStore): void {
+  const columns = store.db
+    .query<{ name: string }, []>("PRAGMA table_info(runner_adapter_commands)")
+    .all();
+  if (!columns.some((column) => column.name === "settlement_json")) {
+    store.db.exec("ALTER TABLE runner_adapter_commands ADD COLUMN settlement_json TEXT");
+  }
+  if (!columns.some((column) => column.name === "settled_at")) {
+    store.db.exec("ALTER TABLE runner_adapter_commands ADD COLUMN settled_at TEXT");
+  }
 }
 
 export function reserveSqliteRunnerAdapterCommand(
@@ -119,7 +142,52 @@ export function reserveSqliteRunnerAdapterCommand(
       stableRequestJson,
       reservedAt,
     );
-    return reservation("reserved", true, input, reservedAt);
+    return reservation("reserved", true, input, reservedAt, null);
+  });
+  return transaction.immediate();
+}
+
+export function settleSqliteRunnerAdapterCommand(
+  store: StensiblyStore,
+  rawInput: SettleRunnerAdapterCommandInput,
+  now = new Date(),
+): RunnerAdapterCommandSettlement {
+  ensureRunnerAdapterCommandSchema(store);
+  const input = normalizeRunnerAdapterCommandSettlement(rawInput);
+  const outcomeSha256 = runnerAdapterCommandOutcomeSha256(input.outcome);
+  const settledAt = now.toISOString();
+  const transaction = store.db.transaction(() => {
+    const row = reservationByCommandId(store, input.commandId);
+    if (!row) {
+      throw new RunnerAdapterCommandConflictError(
+        "Runner adapter command cannot settle without a durable reservation",
+      );
+    }
+    const request = JSON.parse(row.request_json) as ReserveRunnerAdapterCommandInput;
+    if (request.commandFingerprint !== input.commandFingerprint) {
+      throw new RunnerAdapterCommandConflictError(
+        "Runner adapter command settlement fingerprint changed",
+      );
+    }
+    const requested = settlementRecord(input, outcomeSha256, settledAt);
+    if (row.settlement_json !== null) {
+      const existing = parseSettlement(row);
+      if (canonicalJsonString(existing) !== canonicalJsonString({
+        ...requested,
+        settledAt: existing.settledAt,
+      })) {
+        throw new RunnerAdapterCommandConflictError(
+          "Runner adapter command was already settled with another outcome",
+        );
+      }
+      return Object.freeze({ outcome: "replayed", settlement: existing });
+    }
+    store.db.query(`
+      UPDATE runner_adapter_commands
+      SET settlement_json = ?1, settled_at = ?2
+      WHERE command_id = ?3 AND settlement_json IS NULL
+    `).run(canonicalJsonString(requested), settledAt, input.commandId);
+    return Object.freeze({ outcome: "settled", settlement: requested });
   });
   return transaction.immediate();
 }
@@ -129,7 +197,7 @@ function reservationByIdempotencyKey(
   idempotencyKey: string,
 ): ReservationRow | null {
   return store.db.query<ReservationRow, [string]>(`
-    SELECT request_json, stable_request_json, reserved_at
+    SELECT request_json, stable_request_json, reserved_at, settlement_json, settled_at
     FROM runner_adapter_commands
     WHERE idempotency_key = ?1
   `).get(idempotencyKey) ?? null;
@@ -140,7 +208,7 @@ function reservationByCommandId(
   commandId: string,
 ): ReservationRow | null {
   return store.db.query<ReservationRow, [string]>(`
-    SELECT request_json, stable_request_json, reserved_at
+    SELECT request_json, stable_request_json, reserved_at, settlement_json, settled_at
     FROM runner_adapter_commands
     WHERE command_id = ?1
   `).get(commandId) ?? null;
@@ -153,7 +221,13 @@ function replay(row: ReservationRow, stableRequestJson: string): RunnerAdapterCo
     );
   }
   const input = JSON.parse(row.request_json) as ReserveRunnerAdapterCommandInput;
-  return reservation("replayed", false, input, row.reserved_at);
+  return reservation(
+    "replayed",
+    false,
+    input,
+    row.reserved_at,
+    row.settlement_json === null ? null : parseSettlement(row),
+  );
 }
 
 function requireAuthority(
@@ -191,11 +265,48 @@ function reservation<TOutcome extends "reserved" | "replayed", TAuthorized exten
   dispatchAuthorized: TAuthorized,
   input: ReserveRunnerAdapterCommandInput,
   reservedAt: string,
+  settlement: RunnerAdapterCommandSettlementRecord | null,
 ): RunnerAdapterCommandReservation {
   const command: RunnerAdapterCommandReservationRecord = Object.freeze({
     ...input,
     actor: Object.freeze({ ...input.actor }),
     reservedAt,
   });
-  return Object.freeze({ outcome, dispatchAuthorized, command }) as RunnerAdapterCommandReservation;
+  return Object.freeze({
+    outcome,
+    dispatchAuthorized,
+    command,
+    settlement,
+  }) as RunnerAdapterCommandReservation;
+}
+
+function settlementRecord(
+  input: SettleRunnerAdapterCommandInput,
+  outcomeSha256: string,
+  settledAt: string,
+): RunnerAdapterCommandSettlementRecord {
+  return Object.freeze({
+    commandId: input.commandId,
+    commandFingerprint: input.commandFingerprint,
+    outcome: Object.freeze({ ...input.outcome }),
+    outcomeSha256,
+    settledAt,
+  });
+}
+
+function parseSettlement(row: ReservationRow): RunnerAdapterCommandSettlementRecord {
+  if (row.settlement_json === null || row.settled_at === null) {
+    throw new RunnerAdapterCommandConflictError(
+      "Runner adapter command settlement storage is incomplete",
+    );
+  }
+  const value = admitRunnerAdapterCommandSettlementRecord(
+    JSON.parse(row.settlement_json) as RunnerAdapterCommandSettlementRecord,
+  );
+  if (value.settledAt !== row.settled_at) {
+    throw new RunnerAdapterCommandConflictError(
+      "Runner adapter command settlement storage is invalid",
+    );
+  }
+  return value;
 }

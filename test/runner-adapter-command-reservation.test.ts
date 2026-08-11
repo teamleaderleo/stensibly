@@ -96,6 +96,48 @@ describe("runner adapter command reservation", () => {
           commandId: "altered-stable-binding",
           commandFingerprint: `sha256:${"f".repeat(64)}`,
         })).rejects.toBeInstanceOf(RunnerAdapterCommandConflictError);
+        const winner = results[0]!.command;
+        const outcome = {
+          version: 1 as const,
+          kind: "bounded_episode_completed" as const,
+          observationCount: 6,
+          observationsSha256: `sha256:${"1".repeat(64)}`,
+          terminalObservationId: "observation-terminal",
+          terminalObservationType: "interrupted",
+          latestCheckpointExternalId: "checkpoint-opaque-1",
+          latestCheckpointSha256: `sha256:${"2".repeat(64)}`,
+          containsPrivateContent: false as const,
+          containsCredentials: false as const,
+        };
+        const settled = await replayLedger.settleRunnerAdapterCommand({
+          commandId: winner.commandId,
+          commandFingerprint: winner.commandFingerprint,
+          outcome,
+        });
+        expect(settled).toMatchObject({
+          outcome: "settled",
+          settlement: { outcome, outcomeSha256: expect.stringMatching(/^sha256:/) },
+        });
+        expect(await replayLedger.settleRunnerAdapterCommand({
+          commandId: winner.commandId,
+          commandFingerprint: winner.commandFingerprint,
+          outcome,
+        })).toEqual({ ...settled, outcome: "replayed" });
+        const settledReplay = await replayLedger.reserveRunnerAdapterCommand({
+          ...base,
+          commandId: "another-rebuilt-command",
+          commandFingerprint: `sha256:${"9".repeat(64)}`,
+        });
+        expect(settledReplay).toMatchObject({
+          outcome: "replayed",
+          dispatchAuthorized: false,
+          settlement: settled.settlement,
+        });
+        await expect(replayLedger.settleRunnerAdapterCommand({
+          commandId: winner.commandId,
+          commandFingerprint: winner.commandFingerprint,
+          outcome: { ...outcome, observationCount: 5 },
+        })).rejects.toBeInstanceOf(RunnerAdapterCommandConflictError);
         expect(replayStore.db.query<{ count: number }, []>(`
           SELECT COUNT(*) AS count FROM runner_adapter_commands
         `).get()?.count).toBe(1);
