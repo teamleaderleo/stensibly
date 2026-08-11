@@ -40,6 +40,19 @@ class RecordingCaller implements ConvexCaller {
   }
 }
 
+class FailedReconciliationCaller extends RecordingCaller {
+  override async mutation(
+    reference: FunctionReference<"mutation">,
+    args: Record<string, unknown>,
+  ) {
+    if (getFunctionName(reference) === "runnerRuns:reconcile") {
+      this.calls.push({ type: "mutation", name: "runnerRuns:reconcile", args });
+      throw new Error("runner_reconciliation_incomplete");
+    }
+    return await super.mutation(reference, args);
+  }
+}
+
 describe("Convex work ledger", () => {
   test("maps work and continuation contracts to scoped Convex functions", async () => {
     const client = new RecordingCaller();
@@ -213,6 +226,7 @@ describe("Convex work ledger", () => {
 
     expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
       "query:projects:brief",
+      "mutation:runnerRuns:reconcile",
       "query:items:list",
       "query:historyCapabilities:get",
       "query:itemControl:get",
@@ -268,6 +282,8 @@ describe("Convex work ledger", () => {
       id: "item_1",
       now: expect.any(Number),
     });
+    expect(client.calls.findIndex((entry) => entry.name === "runnerRuns:reconcile"))
+      .toBeLessThan(client.calls.findIndex((entry) => entry.name === "items:list"));
     expect(call(client, "itemReservations:list").args).toMatchObject({
       itemId: "item_1",
       now: expect.any(Number),
@@ -277,6 +293,21 @@ describe("Convex work ledger", () => {
       leaseSeconds: 900,
       idempotencyKey: "claim-1",
     });
+  });
+
+  test("fails listWork closed before reading items when runner reconciliation fails", async () => {
+    const client = new FailedReconciliationCaller();
+    const ledger = new ConvexWorkLedger({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+    });
+
+    await expect(ledger.listWork({ project: "scrapbook" }))
+      .rejects.toThrow("runner_reconciliation_incomplete");
+    expect(client.calls.map(({ type, name }) => `${type}:${name}`)).toEqual([
+      "mutation:runnerRuns:reconcile",
+    ]);
   });
 
   test("maps runner adapter command reservation to its scoped mutation", async () => {

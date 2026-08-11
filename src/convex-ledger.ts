@@ -153,6 +153,7 @@ export class ConvexWorkLedger implements
   }
 
   async listWork(input: ListWorkInput = {}) {
+    await this.client.mutation(convexApi.runnerRuns.reconcile, this.args({}));
     return await this.client.query(convexApi.items.list, this.args(input)) as Awaited<ReturnType<WorkLedger["listWork"]>>;
   }
 

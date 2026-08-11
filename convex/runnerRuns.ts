@@ -244,6 +244,18 @@ export const get = mutation({
   },
 });
 
+export const reconcile = mutation({
+  args: serviceArgs,
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) return null;
+    await reconcileExpiredRuns(ctx, workspace._id, Date.now());
+    return null;
+  },
+});
+
 export const list = mutation({
   args: {
     ...serviceArgs,
