@@ -25,12 +25,14 @@ import {
   itemStatuses,
 } from "./schemas.js";
 import { buildWorkspaceSurvey } from "./survey.js";
+import { registerWorkerEnrolmentTools } from "./worker-enrolment-mcp.js";
 
 const MCP_SERVER_INSTRUCTIONS = [
   "Stensibly is a shared scrapbook for work in motion.",
   "Use survey_workspace for centralized triage and repeat polling across projects.",
   "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
   "Start with get_brief when entering an existing project, then use get_project_attachment to read its accepted repository policy and durable context.",
+  "When participating as a worker, call enrol_worker once with a stable session ID so your presence can survive this chat without granting authority.",
   "Treat the accepted project attachment as declared policy, not a claim, run lease, approval, or live authority grant.",
   "Use github_list_issues, github_search_issues, and github_get_issue only for repositories explicitly bound to the project through a server-side GitHub provider connection.",
   "List relevant work before claiming it.",
@@ -321,6 +323,7 @@ function configureMcpServer(
   registerGitHubIssueProviderTools(server, ledger, context);
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
+  registerWorkerEnrolmentTools(server, ledger, context);
   registration.complete();
   return rawServer;
 }
