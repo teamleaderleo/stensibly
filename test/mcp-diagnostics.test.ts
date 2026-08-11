@@ -5,12 +5,15 @@ import {
   MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
   MCP_CORE_TOOL_MANIFEST_REVISION,
   MCP_CORE_TOOL_NAMES,
+  MCP_ENROLMENT_TOOL_MANIFEST,
+  MCP_GITHUB_TOOL_MANIFEST,
   MCP_FAILURE_STAGE_HEADER,
   MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
   MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
   MCP_TOOL_NAMES,
+  mcpToolManifestForLedger,
   withMcpDiagnostics,
 } from "../src/mcp-diagnostics.ts";
 import { createServerApp } from "../src/server-app.ts";
@@ -22,7 +25,11 @@ import {
   mcpRequest,
   toolsListMessage,
 } from "./support/mcp-http.ts";
-import { withHostedGitHubDelegatedReadProvider } from "./support/hosted-mcp-ledger.ts";
+import {
+  withHostedGitHubDelegatedReadProvider,
+  withHostedMcpProviders,
+  withHostedWorkerEnrolmentProvider,
+} from "./support/hosted-mcp-ledger.ts";
 
 const diagnosticsClient = { clientName: "mcp-diagnostics-test" };
 
@@ -154,14 +161,14 @@ describe("MCP connector diagnostics", () => {
     });
   });
 
-  test("publishes the hosted manifest only when delegated GitHub dispatch is mounted", async () => {
+  test("publishes the full hosted manifest only when its optional providers are mounted", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const token = createApiToken(store, {
         name: "Hosted manifest diagnostics reader",
         scopes: ["read"],
       });
-      const ledger = withHostedGitHubDelegatedReadProvider(new SqliteWorkLedger(store));
+      const ledger = withHostedMcpProviders(new SqliteWorkLedger(store));
       const app = createServerApp(store, { ledger });
       const initialized = await mcpRequest(
         app,
@@ -192,6 +199,7 @@ describe("MCP connector diagnostics", () => {
         .sort();
       expect(names).toEqual([...MCP_TOOL_NAMES]);
       expect(names).toContain("github_call_tool");
+      expect(names).toContain("enrol_worker");
       expect(listed.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
         MCP_TOOL_MANIFEST_FINGERPRINT,
       );
@@ -200,6 +208,22 @@ describe("MCP connector diagnostics", () => {
       );
     } finally {
       store.close();
+    }
+  });
+
+  test("keeps optional-provider manifest identities truthful for partial compositions", () => {
+    const githubStore = new StensiblyStore(":memory:");
+    const enrolmentStore = new StensiblyStore(":memory:");
+    try {
+      expect(mcpToolManifestForLedger(withHostedGitHubDelegatedReadProvider(
+        new SqliteWorkLedger(githubStore),
+      ))).toBe(MCP_GITHUB_TOOL_MANIFEST);
+      expect(mcpToolManifestForLedger(withHostedWorkerEnrolmentProvider(
+        new SqliteWorkLedger(enrolmentStore),
+      ))).toBe(MCP_ENROLMENT_TOOL_MANIFEST);
+    } finally {
+      githubStore.close();
+      enrolmentStore.close();
     }
   });
 });

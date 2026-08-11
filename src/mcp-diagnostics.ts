@@ -5,6 +5,7 @@ import {
   type FailureCategory,
 } from "./worker-observability.js";
 import { hasGitHubDelegatedReadProvider } from "./github-capability-mcp.js";
+import { hasWorkerEnrolmentProvider } from "./worker-enrolment-mcp.js";
 
 export const MCP_TOOL_MANIFEST_VERSION = 1;
 export const MCP_TOOL_MANIFEST_FINGERPRINT_HEADER =
@@ -65,8 +66,22 @@ export const MCP_CORE_TOOL_NAMES = [
   "unblock_work",
 ] as const;
 
-export const MCP_TOOL_NAMES = [
+export const MCP_GITHUB_TOOL_NAMES = [
   ...MCP_CORE_TOOL_NAMES.slice(0, 18),
+  "github_call_tool",
+  ...MCP_CORE_TOOL_NAMES.slice(18),
+] as const;
+
+export const MCP_ENROLMENT_TOOL_NAMES = [
+  ...MCP_CORE_TOOL_NAMES.slice(0, 6),
+  "enrol_worker",
+  ...MCP_CORE_TOOL_NAMES.slice(6),
+] as const;
+
+export const MCP_TOOL_NAMES = [
+  ...MCP_CORE_TOOL_NAMES.slice(0, 6),
+  "enrol_worker",
+  ...MCP_CORE_TOOL_NAMES.slice(6, 18),
   "github_call_tool",
   ...MCP_CORE_TOOL_NAMES.slice(18),
 ] as const;
@@ -96,6 +111,10 @@ function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity
 }
 
 export const MCP_CORE_TOOL_MANIFEST = toolManifestIdentity(MCP_CORE_TOOL_NAMES);
+export const MCP_GITHUB_TOOL_MANIFEST = toolManifestIdentity(MCP_GITHUB_TOOL_NAMES);
+export const MCP_ENROLMENT_TOOL_MANIFEST = toolManifestIdentity(
+  MCP_ENROLMENT_TOOL_NAMES,
+);
 export const MCP_TOOL_MANIFEST = toolManifestIdentity(MCP_TOOL_NAMES);
 
 export const MCP_CORE_TOOL_MANIFEST_FINGERPRINT = MCP_CORE_TOOL_MANIFEST.fingerprint;
@@ -106,9 +125,12 @@ export const MCP_TOOL_MANIFEST_REVISION = MCP_TOOL_MANIFEST.revision;
 export const MCP_SERVER_VERSION = MCP_TOOL_MANIFEST.serverVersion;
 
 export function mcpToolManifestForLedger(ledger: unknown): McpToolManifestIdentity {
-  return hasGitHubDelegatedReadProvider(ledger)
-    ? MCP_TOOL_MANIFEST
-    : MCP_CORE_TOOL_MANIFEST;
+  const github = hasGitHubDelegatedReadProvider(ledger);
+  const enrolment = hasWorkerEnrolmentProvider(ledger);
+  if (github && enrolment) return MCP_TOOL_MANIFEST;
+  if (github) return MCP_GITHUB_TOOL_MANIFEST;
+  if (enrolment) return MCP_ENROLMENT_TOOL_MANIFEST;
+  return MCP_CORE_TOOL_MANIFEST;
 }
 
 export type McpFailureStage =

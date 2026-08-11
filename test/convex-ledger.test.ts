@@ -4,6 +4,7 @@ import {
   ConvexWorkLedger,
   type ConvexCaller,
 } from "../src/convex-ledger.ts";
+import { buildWorkerEnrolmentRequest } from "../src/worker-enrolment.ts";
 
 const actor = { id: "agent-1", name: "Agent One", kind: "agent" as const };
 const supervisor = {
@@ -338,6 +339,44 @@ describe("Convex work ledger", () => {
       serviceSecret: "private-service-secret",
       workspace: "shared-work",
       ...input,
+    });
+  });
+
+  test("maps server-owned worker enrolment to its scoped mutation", async () => {
+    const client = new RecordingCaller();
+    const ledger = new ConvexWorkLedger({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+    });
+    const request = buildWorkerEnrolmentRequest({
+      adapter: "remote-mcp",
+      profile: "authenticated-generalist",
+      workerSessionId: "chat.session-42",
+      callsign: "Keel",
+      capabilities: ["coordination"],
+      projectScope: ["scrapbook"],
+      startedAt: "2026-08-11T00:00:00.000Z",
+      expiresAt: "2026-08-13T00:00:00.000Z",
+      heartbeatSeconds: 3_600,
+    });
+
+    await ledger.enrolWorker({
+      actorId: "api-token:oauth-grant-worker",
+      clientId: "mcp:api-token:oauth-grant-worker",
+      oauthAccountId: "acct-worker",
+      request,
+      idempotencyKey: `enrol_worker:v1:${"a".repeat(64)}`,
+    });
+
+    expect(call(client, "workerEnrolments:enrol", "mutation").args).toEqual({
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+      actorId: "api-token:oauth-grant-worker",
+      clientId: "mcp:api-token:oauth-grant-worker",
+      oauthAccountId: "acct-worker",
+      request,
+      idempotencyKey: `enrol_worker:v1:${"a".repeat(64)}`,
     });
   });
 

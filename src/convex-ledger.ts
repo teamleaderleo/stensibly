@@ -56,6 +56,10 @@ import type {
   ListWorkRunsInput,
   TransitionWorkRunInput,
 } from "./runs.js";
+import type {
+  WorkerEnrolmentProvider,
+  WorkerEnrolmentProviderInput,
+} from "./worker-enrolment-mcp.js";
 
 const HISTORY_CONTRACT_VERSION = 1;
 const ITEM_DETAIL_EVENT_LIMIT = 100;
@@ -109,7 +113,8 @@ export class ConvexWorkLedger implements
   OperationReceiptLedger,
   GitHubProjectContextLedger,
   RunnerLedger,
-  RunnerAdapterCommandLedger
+  RunnerAdapterCommandLedger,
+  WorkerEnrolmentProvider
 {
   readonly client: ConvexCaller;
   readonly serviceSecret: string;
@@ -296,6 +301,13 @@ export class ConvexWorkLedger implements
       convexApi.runnerAdapterCommands.reserve,
       this.args(input),
     ) as Awaited<ReturnType<RunnerAdapterCommandLedger["reserveRunnerAdapterCommand"]>>;
+  }
+
+  async enrolWorker(input: WorkerEnrolmentProviderInput): Promise<unknown> {
+    return await this.client.mutation(
+      convexApi.workerEnrolments.enrol,
+      this.args(input),
+    );
   }
 
   async getRun(id: string) {

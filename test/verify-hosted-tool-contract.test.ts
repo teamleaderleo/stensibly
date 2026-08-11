@@ -13,7 +13,7 @@ import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import { verifyHostedToolContract } from "../src/verify-hosted-tool-contract.ts";
 import type { FetchLike } from "../src/verify-hosted.ts";
-import { withHostedGitHubDelegatedReadProvider } from "./support/hosted-mcp-ledger.ts";
+import { withHostedMcpProviders } from "./support/hosted-mcp-ledger.ts";
 
 const token = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
 const snapshot = JSON.parse(
@@ -29,7 +29,7 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
 
 async function currentTools(): Promise<unknown[]> {
   const store = new StensiblyStore(":memory:");
-  const server = createMcpServer(withHostedGitHubDelegatedReadProvider(
+  const server = createMcpServer(withHostedMcpProviders(
     new SqliteWorkLedger(store),
   ));
   const client = new Client(

@@ -17,7 +17,7 @@ describe("MCP capability policy registry", () => {
     const names = mcpCapabilityPolicyRegistry.policies.map((policy) => policy.toolName);
 
     expect(mcpCapabilityPolicyRegistry.version).toBe(1);
-    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(51);
+    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(52);
     expect(names).toEqual([...names].sort());
     expect(new Set(names).size).toBe(names.length);
     expect(mcpCapabilityPolicyRegistry.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -63,6 +63,15 @@ describe("MCP capability policy registry", () => {
       riskClass: "consequential",
       defaultExposure: "searchable",
       approvalPolicy: "tool_managed",
+      receiptPolicy: "tool_managed",
+      reconciliationPolicy: "tool_managed",
+    });
+    expect(getMcpCapabilityPolicy("enrol_worker")).toMatchObject({
+      scope: "write",
+      riskClass: "bounded_write",
+      defaultExposure: "core",
+      projectResolution: { kind: "project_argument", argument: "project" },
+      approvalPolicy: "none",
       receiptPolicy: "tool_managed",
       reconciliationPolicy: "tool_managed",
     });

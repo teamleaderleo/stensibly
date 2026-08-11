@@ -153,6 +153,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy("github_update_issue", directProject),
   writePolicy("propose_continuation", sourceItemId),
   writePolicy("edit_continuation", continuationId),
+  writePolicy("enrol_worker", directProject),
   writePolicy("resolve_continuation", continuationId),
   writePolicy(
     "queue_continuation_for_supervisor",

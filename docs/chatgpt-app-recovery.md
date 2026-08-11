@@ -4,14 +4,14 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current release
 
-The hosted production composition defines **51** public MCP tools with two release fingerprints:
+The hosted production composition defines **52** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:2b436568ed3949a2af6e6bad59f23b401c5c5a50d9a265781bc0742e9473a870
-names-only diagnostic:       sha256:67d8a56fe4289267afe8445bb095f17835eabb56ddf2d2334728bb0bc3e03930
+full ChatGPT tool contract: sha256:e7b90d6d1af9ec8ec32dc3d6b3dd3909ab31a6d5111d51335b5e3e880779360d
+names-only diagnostic:       sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745
 ```
 
-The hosted contract includes `github_call_tool`, which is registered only when the guarded delegated GitHub provider is mounted. An unmounted local/core server has 50 tools and reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact hosted tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
+The hosted contract includes `github_call_tool`, registered only when the guarded delegated GitHub provider is mounted, and `enrol_worker`, registered only when the durable worker-enrolment provider is mounted. An unmounted local/core server has 50 tools; a server with only one optional provider has 51; the production composition has both and reports 52. Each composition reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact production tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
 
 Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
 
@@ -30,6 +30,7 @@ Before a dogfood run begins:
 Keep a compact set of frequent Stensibly workflow tools and GitHub discovery tools immediately visible. Group the broader GitHub surface by workflow and retrieve it on demand.
 
 - use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
+- use `enrol_worker` once per participating chat with a stable session ID; the server derives ownership, project scope, replay protection, and short expiry, and the resulting presence record grants no work or provider authority;
 - use `remember_project_repository_setup` to durably save a pre-attachment repository/default-branch proposal after those facts are observed in the conversation; the saved proposal grants zero provider or attachment authority, and replacing a different proposal requires the current observation id;
 - use `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` only with one explicit idempotency key per intended effect;
 - use `github_create_branch` only for an absent branch at one exact source commit, with one explicit idempotency key;

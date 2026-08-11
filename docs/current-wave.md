@@ -1,8 +1,8 @@
 # Current dogfood wave: durable agent operations
 
 **Status:** active P0 rollout
-**Last reconciled:** 2026-08-10
-**Exact source base before this revision:** `4f79434ab130a4591fcb04b6dab73f2d4c61a51a`
+**Last reconciled:** 2026-08-11
+**Exact source base before this revision:** `1c978d9cede2886c201cdad71d3533fdf82d4a5a`
 **Sustained-use incident:** #490
 **Programme:** #491
 **Canonical queue:** #301
@@ -31,24 +31,25 @@ alongside the existing Streamable HTTP flow. The modern path supports direct
 discovery, list/call, pagination, task polling, protocol headers, and the same
 authenticated capability policy.
 
-The current source surface contains 50 public hosted tool names. This revision
-stages ChatGPT snapshot v12 with four outcome-oriented GitHub operations:
+The current production composition contains 52 public hosted tool names. This
+revision stages ChatGPT snapshot v13 with four outcome-oriented GitHub operations:
 `github_repo_health`, plan-only `github_branch_tidy`, `github_ci_diagnose`, and
-durable head-fenced `github_land_pr`. The names-only fingerprint is:
+durable head-fenced `github_land_pr`, plus server-owned `enrol_worker` for
+short-lived, non-authoritative worker presence. The names-only fingerprint is:
 
 ```text
-sha256:bf607cf4d13eb4fcff7af26fb9764c2b2e0ebfc599a7a421677798cbe629ac2a
+sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745
 ```
 
 The staged full tool-contract fingerprint is:
 
 ```text
-sha256:65d6097f8fc33bd67654f9b20359f672d312f87b0de60ceb4f4d09b415582e42
+sha256:e7b90d6d1af9ec8ec32dc3d6b3dd3909ab31a6d5111d51335b5e3e880779360d
 ```
 
-These v12 source fingerprints become hosted evidence only after the Worker
+These v13 source fingerprints become hosted evidence only after the Worker
 release verification passes. The existing ChatGPT app must then be refreshed
-or rescanned before v12 dogfood.
+or rescanned before v13 dogfood.
 
 ### GitHub execution provider
 
@@ -143,7 +144,8 @@ separate.
 
 ```text
 fresh authenticated ChatGPT conversation
-  → discover/list exact v12 tool surface
+  → discover/list exact v13 tool surface
+  → enrol this chat once with a stable worker session ID
   → read accepted GitHub project context
   → read project attachment or its setup recovery
   → create and claim one bounded work item/run
@@ -167,10 +169,10 @@ reconciled from durable operation/provider evidence before another write.
 
 | Priority | Lane | Current fact | Next executable action | Clearing condition |
 | --- | --- | --- | --- | --- |
-| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, composite publication, and publication readback are merged; repeated hosted ChatGPT execution remains the proof gap | Deploy/verify the v12 contract, refresh ChatGPT, and run the complete lifecycle in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
+| P0 | Sustained-use incident (#490) | Transport, diagnostics, provider receipts, composite publication, and publication readback are merged; repeated hosted ChatGPT execution remains the proof gap | Deploy/verify the v13 contract, refresh ChatGPT, enrol the chat, and run the complete lifecycle in a fresh authenticated conversation | Repeated same-session and reconnect operations remain available with typed outcomes |
 | P0 | Project attachment onboarding (#334/#1329) | Scrapbook dogfood proved `repo known + attachment missing`; v11 recovery is merged | Repeat the Scrapbook setup journey through explicit attachment acceptance and guarded read verification | An unattached known repository leads to one clear setup continuation and becomes repository-ready only after accepted attachment + guarded read proof |
 | P1 | Reconciliation and compensation (#154/#1325) | Independent branch/retained-PR readback is merged and hosted-mounted; exact repository-file ambiguity and live hosted proof remain | Add exact file-effect readback, then exact-SHA branch deletion/restoration and PR-close/file-restore compensators | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
-| P1 | Operation catalogue | The first four outcome tools are implemented in snapshot v12 | Deploy, refresh ChatGPT, and dogfood `repo_health`, `branch_tidy`, and `ci_diagnose`; land only a dedicated safe PR under a runner lease | Agents can request common outcomes without manually orchestrating long raw-tool chains |
+| P1 | Operation catalogue | The first four outcome tools are implemented in snapshot v13 | Deploy, refresh ChatGPT, and dogfood `repo_health`, `branch_tidy`, and `ci_diagnose`; land only a dedicated safe PR under a runner lease | Agents can request common outcomes without manually orchestrating long raw-tool chains |
 | P1 | Restartable runner execution | Both SDK adapters and the bounded host exist; durable command delivery and continuation remain incomplete | Add the command inbox/observation receipt and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
 
 ## Definition of done for the wave
@@ -196,7 +198,7 @@ prove:
 
 ## Immediate sequence
 
-1. Integrate, deploy, and verify snapshot v12/50.
+1. Integrate, deploy, and verify snapshot v13/52.
 2. Refresh the existing ChatGPT app in place and repeat the Scrapbook
    attachment/setup journey from a normal conversation.
 3. Dogfood one bounded publish-change operation, exact replay, and publication

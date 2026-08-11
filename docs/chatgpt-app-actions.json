@@ -1,9 +1,9 @@
 {
-  "snapshotVersion": 12,
+  "snapshotVersion": 13,
   "manifestVersion": 1,
-  "toolCount": 51,
-  "toolManifestFingerprint": "sha256:67d8a56fe4289267afe8445bb095f17835eabb56ddf2d2334728bb0bc3e03930",
-  "toolContractFingerprint": "sha256:2b436568ed3949a2af6e6bad59f23b401c5c5a50d9a265781bc0742e9473a870",
+  "toolCount": 52,
+  "toolManifestFingerprint": "sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745",
+  "toolContractFingerprint": "sha256:e7b90d6d1af9ec8ec32dc3d6b3dd3909ab31a6d5111d51335b5e3e880779360d",
   "tools": [
     "attach_artifact",
     "block_work",
@@ -11,6 +11,7 @@
     "complete_work",
     "create_item",
     "edit_continuation",
+    "enrol_worker",
     "get_brief",
     "get_continuation",
     "get_github_project_context",
