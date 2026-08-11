@@ -46,6 +46,7 @@ export const convexApi = {
   },
   runnerAdapterCommands: {
     reserve: mutationRef("runnerAdapterCommands:reserve"),
+    settle: mutationRef("runnerAdapterCommands:settle"),
   },
   workerEnrolments: {
     enrol: mutationRef("workerEnrolments:enrol"),

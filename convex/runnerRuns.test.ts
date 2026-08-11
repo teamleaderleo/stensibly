@@ -545,6 +545,50 @@ describe("hosted runner ledger parity", () => {
       outcome: "replayed",
       dispatchAuthorized: false,
     });
+    const outcome = {
+      version: 1,
+      kind: "bounded_episode_completed",
+      observationCount: 6,
+      observationsSha256: `sha256:${"1".repeat(64)}`,
+      terminalObservationId: "hosted-terminal-observation",
+      terminalObservationType: "interrupted",
+      latestCheckpointExternalId: "hosted-checkpoint-opaque",
+      latestCheckpointSha256: `sha256:${"2".repeat(64)}`,
+      containsPrivateContent: false,
+      containsCredentials: false,
+    };
+    const settled = await t.mutation(convexApi.runnerAdapterCommands.settle, {
+      ...baseArgs,
+      commandId: reserved.command.commandId,
+      commandFingerprint: reserved.command.commandFingerprint,
+      outcome,
+    }) as any;
+    expect(settled).toMatchObject({
+      outcome: "settled",
+      settlement: { outcome, outcomeSha256: expect.stringMatching(/^sha256:/) },
+    });
+    expect(await t.mutation(convexApi.runnerAdapterCommands.settle, {
+      ...baseArgs,
+      commandId: reserved.command.commandId,
+      commandFingerprint: reserved.command.commandFingerprint,
+      outcome,
+    })).toEqual({ ...settled, outcome: "replayed" });
+    const settledReservation = await t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...input,
+      commandId: "rebuilt-after-settlement",
+      commandFingerprint: `sha256:${"e".repeat(64)}`,
+    }) as any;
+    expect(settledReservation).toMatchObject({
+      outcome: "replayed",
+      dispatchAuthorized: false,
+      settlement: settled.settlement,
+    });
+    await expect(t.mutation(convexApi.runnerAdapterCommands.settle, {
+      ...baseArgs,
+      commandId: reserved.command.commandId,
+      commandFingerprint: reserved.command.commandFingerprint,
+      outcome: { ...outcome, observationCount: 5 },
+    })).rejects.toThrow("another outcome");
     await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
       ...input,
       requestFingerprint: `sha256:${"d".repeat(64)}`,

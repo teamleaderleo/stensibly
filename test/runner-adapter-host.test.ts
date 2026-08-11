@@ -63,6 +63,17 @@ describe("runner adapter host v1", () => {
         throw new Error("Expected one executed host result with a checkpoint");
       }
       expect(result.disposition).toBe("executed");
+      expect(result.settlement).toMatchObject({
+        commandId: result.command.commandId,
+        outcome: {
+          kind: "bounded_episode_completed",
+          observationCount: 6,
+          terminalObservationType: "interrupted",
+          latestCheckpointExternalId: result.latestCheckpoint.externalId,
+          containsPrivateContent: false,
+          containsCredentials: false,
+        },
+      });
       expect(result.run).toMatchObject({
         status: "starting",
         generation: result.command.runGeneration,
@@ -118,9 +129,10 @@ describe("runner adapter host v1", () => {
 
       expect(first?.disposition).toBe("executed");
       expect(replay).toMatchObject({
-        disposition: "already_dispatched",
+        disposition: "settled_replay",
         command: null,
         observations: [],
+        settlement: first?.settlement,
       });
       expect(fixture.model.doGenerateCalls).toHaveLength(1);
       const detail = await fixture.ledger.getItem(fixture.itemId);
@@ -130,6 +142,59 @@ describe("runner adapter host v1", () => {
       expect(detail.events.filter(
         (event) => event.type === "run.adapter.observation",
       )).toHaveLength(6);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("replays a committed settlement after the host loses its settlement response", async () => {
+    const fixture = createFixture();
+    let loseFirstResponse = true;
+    const unreliableLedger = new Proxy(fixture.ledger, {
+      get(target, property, receiver) {
+        if (property === "settleRunnerAdapterCommand") {
+          return async (
+            input: Parameters<typeof target.settleRunnerAdapterCommand>[0],
+          ) => {
+            const result = await target.settleRunnerAdapterCommand(input);
+            if (loseFirstResponse) {
+              loseFirstResponse = false;
+              throw new Error("simulated settlement response loss");
+            }
+            return result;
+          };
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const unreliableHost = new RunnerAdapterHostV1({
+      ledger: unreliableLedger,
+      adapter: fixture.adapter,
+      actor: runner,
+      profileId: VERCEL_AI_SDK_PROFILE_ID,
+      requiredCapabilities: [{ class: "host_dynamic", id: "readOnlyProbe" }],
+      leaseSeconds: 300,
+      now: fixture.now,
+    });
+    const input = {
+      operationId: "ai-sdk-host-settlement-response-loss",
+      project: "runner_host",
+    };
+    try {
+      await expect(unreliableHost.startNext(input)).rejects.toThrow(
+        "simulated settlement response loss",
+      );
+      const replay = await fixture.host.startNext(input);
+      expect(replay).toMatchObject({
+        disposition: "settled_replay",
+        command: null,
+        observations: [],
+        settlement: {
+          outcome: { kind: "bounded_episode_completed", observationCount: 6 },
+        },
+      });
+      expect(fixture.model.doGenerateCalls).toHaveLength(1);
     } finally {
       fixture.store.close();
     }
@@ -215,10 +280,10 @@ describe("runner adapter host v1", () => {
         host(secondLedger, secondModel).startNext(input),
       ]);
 
-      expect([first?.disposition, second?.disposition].sort()).toEqual([
-        "already_dispatched",
-        "executed",
-      ]);
+      expect(first?.disposition === "executed" || second?.disposition === "executed").toBe(true);
+      expect([first?.disposition, second?.disposition]).toContainEqual(
+        expect.stringMatching(/^(?:already_dispatched|settled_replay)$/),
+      );
       expect(firstModel.doGenerateCalls.length + secondModel.doGenerateCalls.length).toBe(1);
       const detail = await firstLedger.getItem(item.id);
       expect(detail.events.filter(

@@ -27,7 +27,11 @@ import {
   VercelAISDKRunnerAdapter,
 } from "./runner-adapters/vercel-ai-sdk.js";
 import { assertRunnerCommandAuthorityActiveV1 } from "./runner-command-authority.js";
-import type { RunnerAdapterCommandLedger } from "./runner-adapter-command-contracts.js";
+import type {
+  RunnerAdapterCommandLedger,
+  RunnerAdapterCommandSettlementRecord,
+} from "./runner-adapter-command-contracts.js";
+import { admitRunnerAdapterCommandSettlementRecord } from "./runner-adapter-command-contracts.js";
 import { runAuthorityFence } from "./authority-fence.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type { ActorInput } from "./schemas.js";
@@ -68,10 +72,11 @@ export interface RunnerAdapterHostStartInputV1 {
 
 export interface RunnerAdapterHostExecutionV1 {
   version: typeof RUNNER_ADAPTER_HOST_V1;
-  disposition: "executed" | "already_dispatched";
+  disposition: "executed" | "already_dispatched" | "settled_replay";
   command: RunnerStartCommandV1 | null;
   observations: readonly RunnerObservationV1[];
   latestCheckpoint: RunnerExternalReferenceV1 | null;
+  settlement: RunnerAdapterCommandSettlementRecord | null;
   run: WorkRun;
 }
 
@@ -186,7 +191,26 @@ export class RunnerAdapterHostV1 {
       idempotencyKey: commandReceiptKey,
     });
     if (!reservation.dispatchAuthorized) {
-      return executionResult("already_dispatched", null, [], null, run);
+      const settlement = reservation.settlement === null
+        ? null
+        : admitRunnerAdapterCommandSettlementRecord(reservation.settlement);
+      if (
+        settlement !== null
+        && (
+          settlement.commandId !== reservation.command.commandId
+          || settlement.commandFingerprint !== reservation.command.commandFingerprint
+        )
+      ) {
+        throw new RangeError("Runner adapter command replay settlement changed command identity");
+      }
+      return executionResult(
+        settlement === null ? "already_dispatched" : "settled_replay",
+        null,
+        [],
+        null,
+        settlement,
+        run,
+      );
     }
     if (
       reservation.command.commandId !== command.commandId
@@ -247,11 +271,34 @@ export class RunnerAdapterHostV1 {
       now: this.#options.now,
     });
     const consumed = await consumer.consume(this.#options.start(command));
+    const terminal = consumed.observations.at(-1);
+    if (!terminal) {
+      throw new RangeError("Runner adapter episode cannot settle without observations");
+    }
+    const settlement = await this.#options.ledger.settleRunnerAdapterCommand({
+      commandId: command.commandId,
+      commandFingerprint,
+      outcome: {
+        version: 1,
+        kind: "bounded_episode_completed",
+        observationCount: consumed.observations.length,
+        observationsSha256: digest(consumed.observations),
+        terminalObservationId: terminal.observationId,
+        terminalObservationType: terminal.type,
+        latestCheckpointExternalId: consumed.latestCheckpoint?.externalId ?? null,
+        latestCheckpointSha256: consumed.latestCheckpoint === null
+          ? null
+          : digest(consumed.latestCheckpoint),
+        containsPrivateContent: false,
+        containsCredentials: false,
+      },
+    });
     return executionResult(
       "executed",
       command,
       consumed.observations,
       consumed.latestCheckpoint,
+      settlement.settlement,
       consumed.run,
     );
   }
@@ -624,6 +671,7 @@ function executionResult(
   command: RunnerAdapterHostExecutionV1["command"],
   observations: readonly RunnerObservationV1[],
   latestCheckpoint: RunnerExternalReferenceV1 | null,
+  settlement: RunnerAdapterCommandSettlementRecord | null,
   run: WorkRun,
 ): RunnerAdapterHostExecutionV1 {
   return Object.freeze({
@@ -632,6 +680,7 @@ function executionResult(
     command,
     observations: Object.freeze([...observations]),
     latestCheckpoint,
+    settlement,
     run,
   });
 }
