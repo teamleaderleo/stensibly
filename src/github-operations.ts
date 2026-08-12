@@ -324,15 +324,14 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
           failedJobs: Object.freeze(detailsWithCoverage.map((value) => value.detail)),
         }),
         gaps: Object.freeze(
-          detailsWithCoverage
-            .map((value) => value.gap)
-            .filter((value): value is string => value !== null),
+          detailsWithCoverage.flatMap((value) => value.gap === null ? [] : [value.gap]),
         ),
       });
     }));
     const coverageGaps = jobGroups
       .flatMap((group) => group.gaps)
-      .toSorted();
+      .slice()
+      .sort();
     const requestedCoverage = input.includeJobSteps
       ? [...ciSummaryCoverage, "failed_job_steps"]
       : ciSummaryCoverage;
