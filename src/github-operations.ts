@@ -19,6 +19,13 @@ import {
   settleOperationWorkflowStep,
 } from "./operation-workflow-machine.js";
 
+export interface GitHubObservationCoverage {
+  version: 1;
+  state: "complete" | "partial" | "blocked";
+  requested: readonly string[];
+  gaps: readonly string[];
+}
+
 export interface GitHubBranchTidyPlan {
   version: 1;
   repositoryFullName: string;
@@ -106,6 +113,18 @@ const githubLandPrCandidatePrerequisites = Object.freeze([
   "no_unresolved_review_threads",
 ] as const);
 
+const repoHealthCoverage = Object.freeze([
+  "repository_metadata",
+  "default_branch_head",
+] as const);
+
+const ciSummaryCoverage = Object.freeze([
+  "pull_request",
+  "combined_status",
+  "workflow_runs",
+  "failed_jobs",
+] as const);
+
 export interface GitHubOperationIdentity {
   project: string;
   repository: string;
@@ -183,6 +202,7 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       repositoryFullName: repo.repositoryFullName,
       observedAt: this.#now(),
       health: attention.length === 0 ? "healthy" : "attention",
+      coverage: observationCoverage("complete", repoHealthCoverage, []),
       attachment: Object.freeze({
         id: repo.attachmentId,
         snapshotSha256: repo.attachmentSnapshotSha256,
@@ -209,6 +229,11 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       repositoryFullName: input.repository,
       observedAt: this.#now(),
       health: "blocked",
+      coverage: observationCoverage("blocked", repoHealthCoverage, [
+        "project_attachment",
+        "repository_metadata",
+        "default_branch_head",
+      ]),
       attachment: null,
       provider: Object.freeze({ connectivity: "blocked" }),
       repository: null,
@@ -272,20 +297,45 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
         return job.status === "completed" && job.conclusion !== "success"
           && job.conclusion !== "neutral" && job.conclusion !== "skipped";
       }).slice(0, 20);
-      const details = input.includeJobSteps
+      const detailsWithCoverage = input.includeJobSteps
         ? await Promise.all(failedJobs.map(async (candidate) => {
           const job = record(candidate, "workflow job");
           const jobId = integer(job.id, "workflow job ID");
           try {
             const steps = await this.#read(input, "fetch_workflow_job_steps", { job_id: jobId });
-            return Object.freeze({ job, steps: steps.result });
+            return Object.freeze({
+              detail: Object.freeze({ job, steps: steps.result }),
+              gap: null,
+            });
           } catch {
-            return Object.freeze({ job, steps: null, detailState: "unavailable" });
+            return Object.freeze({
+              detail: Object.freeze({ job, steps: null, detailState: "unavailable" }),
+              gap: `workflow_job_steps:${jobId}`,
+            });
           }
         }))
-        : failedJobs.map((job) => Object.freeze({ job, steps: null }));
-      return Object.freeze({ run, failedJobs: Object.freeze(details) });
+        : failedJobs.map((job) => Object.freeze({
+          detail: Object.freeze({ job, steps: null }),
+          gap: null,
+        }));
+      return Object.freeze({
+        failureGroup: Object.freeze({
+          run,
+          failedJobs: Object.freeze(detailsWithCoverage.map((value) => value.detail)),
+        }),
+        gaps: Object.freeze(
+          detailsWithCoverage
+            .map((value) => value.gap)
+            .filter((value): value is string => value !== null),
+        ),
+      });
     }));
+    const coverageGaps = jobGroups
+      .flatMap((group) => group.gaps)
+      .toSorted();
+    const requestedCoverage = input.includeJobSteps
+      ? [...ciSummaryCoverage, "failed_job_steps"]
+      : ciSummaryCoverage;
     const statusResult = record(statuses.result, "combined status");
     const statusState = text(statusResult.state, "combined status state");
     const pending = runs.some((value) => record(value, "workflow run").status !== "completed")
@@ -299,11 +349,16 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       repositoryFullName: pr.repositoryFullName,
       observedAt: this.#now(),
       verdict,
+      coverage: observationCoverage(
+        coverageGaps.length === 0 ? "complete" : "partial",
+        requestedCoverage,
+        coverageGaps,
+      ),
       pullRequest,
       headSha,
       combinedStatus: statuses.result,
       workflowRuns: workflows.result,
-      failures: Object.freeze(jobGroups),
+      failures: Object.freeze(jobGroups.map((group) => group.failureGroup)),
       authorizesMutation: false,
     });
   }
@@ -489,6 +544,19 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       catalogueFingerprint: this.#catalogue.registry.fingerprint,
     });
   }
+}
+
+function observationCoverage(
+  state: GitHubObservationCoverage["state"],
+  requested: readonly string[],
+  gaps: readonly string[],
+): GitHubObservationCoverage {
+  return Object.freeze({
+    version: 1,
+    state,
+    requested: Object.freeze([...requested]),
+    gaps: Object.freeze([...gaps]),
+  });
 }
 
 function operationAvailability(binding: "ready" | "blocked") {
