@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dispatchNextWork } from "../src/dispatcher.ts";
-import {
-  claimSqliteRunnerAdapterCommandRecovery,
-  type ClaimRunnerAdapterCommandRecoveryInput,
-  type RunnerAdapterCommandRecoveryClaim,
+import type {
+  ClaimRunnerAdapterCommandRecoveryInput,
+  RunnerAdapterCommandRecoveryClaim,
 } from "../src/runner-adapter-command-recovery.ts";
+import { claimSqliteRunnerAdapterCommandRecovery } from "../src/runner-adapter-command-recovery-sqlite.ts";
 import { RunnerAdapterCommandConflictError } from "../src/runner-adapter-command-contracts.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";

@@ -1,7 +1,5 @@
-import {
-  claimSqliteRunnerAdapterCommandRecovery,
-  type ClaimRunnerAdapterCommandRecoveryInput,
-} from "../../src/runner-adapter-command-recovery.ts";
+import type { ClaimRunnerAdapterCommandRecoveryInput } from "../../src/runner-adapter-command-recovery.ts";
+import { claimSqliteRunnerAdapterCommandRecovery } from "../../src/runner-adapter-command-recovery-sqlite.ts";
 import { StensiblyStore } from "../../src/store.ts";
 
 const databasePath = process.argv[2];
