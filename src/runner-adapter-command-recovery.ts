@@ -5,9 +5,9 @@ import {
   type ReserveRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
 import {
-  parseRunnerExternalReferenceV1,
-  type RunnerExternalReferenceV1,
-} from "./runner-adapter-v1.js";
+  parseRunnerExternalReferencePortableV1,
+  type RunnerExternalReferencePortableV1,
+} from "./runner-external-reference-portable.js";
 import { actorSchema, type ActorInput } from "./schemas.js";
 import { sha256Hex } from "./sha256.js";
 
@@ -157,9 +157,9 @@ export function runnerAdapterCommandCheckpointLineage(
       "Durable runner checkpoint cannot be admitted for command recovery",
     );
   }
-  let reference: RunnerExternalReferenceV1;
+  let reference: RunnerExternalReferencePortableV1;
   try {
-    reference = parseRunnerExternalReferenceV1(decoded);
+    reference = parseRunnerExternalReferencePortableV1(decoded);
   } catch {
     throw new RunnerAdapterCommandConflictError(
       "Durable runner checkpoint cannot be admitted for command recovery",
