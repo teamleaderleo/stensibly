@@ -20,6 +20,12 @@ describe("GitHub outcome operations", () => {
     const fixture = makeFixture();
     const result = await fixture.service.githubRepoHealth(identity()) as Record<string, any>;
     expect(result.health).toBe("healthy");
+    expect(result.coverage).toEqual({
+      version: 1,
+      state: "complete",
+      requested: ["repository_metadata", "default_branch_head"],
+      gaps: [],
+    });
     expect(result.repository.defaultBranchSha).toBe(commit("a"));
     expect(result.attachment.snapshotSha256).toBe(`sha256:${"1".repeat(64)}`);
     expect(result.operationSurface).toEqual([
@@ -49,6 +55,12 @@ describe("GitHub outcome operations", () => {
       health: "blocked",
       project: "stensibly",
       repositoryFullName: "teamleaderleo/stensibly",
+      coverage: {
+        version: 1,
+        state: "blocked",
+        requested: ["repository_metadata", "default_branch_head"],
+        gaps: ["project_attachment", "repository_metadata", "default_branch_head"],
+      },
       attachment: null,
       provider: { connectivity: "blocked" },
       repository: null,
@@ -101,10 +113,60 @@ describe("GitHub outcome operations", () => {
       ...identity(), pullRequestNumber: 42, includeJobSteps: true,
     }) as Record<string, any>;
     expect(result.verdict).toBe("failing");
+    expect(result.coverage).toEqual({
+      version: 1,
+      state: "complete",
+      requested: [
+        "pull_request", "combined_status", "workflow_runs", "failed_jobs", "failed_job_steps",
+      ],
+      gaps: [],
+    });
     expect(result.failures[0].run.id).toBe(9001);
     expect(result.failures[0].failedJobs[0].job.id).toBe(7001);
     expect(result.failures[0].failedJobs[0].steps.failedStepCount).toBe(1);
     expect(result.authorizesMutation).toBe(false);
+    fixture.close();
+  });
+
+  test("keeps a failing verdict while exposing unavailable requested job-step coverage", async () => {
+    const fixture = makeFixture({ failingCi: true, jobStepsUnavailable: true });
+    const result = await fixture.service.githubCiDiagnose({
+      ...identity(), pullRequestNumber: 42, includeJobSteps: true,
+    }) as Record<string, any>;
+
+    expect(result.verdict).toBe("failing");
+    expect(result.coverage).toEqual({
+      version: 1,
+      state: "partial",
+      requested: [
+        "pull_request", "combined_status", "workflow_runs", "failed_jobs", "failed_job_steps",
+      ],
+      gaps: ["workflow_job_steps:7001"],
+    });
+    expect(result.failures[0].failedJobs[0]).toMatchObject({
+      job: { id: 7001 },
+      steps: null,
+      detailState: "unavailable",
+    });
+    expect(result.authorizesMutation).toBe(false);
+    fixture.close();
+  });
+
+  test("summary-only CI diagnosis is complete without requesting job-step detail", async () => {
+    const fixture = makeFixture({ failingCi: true, jobStepsUnavailable: true });
+    const result = await fixture.service.githubCiDiagnose({
+      ...identity(), pullRequestNumber: 42, includeJobSteps: false,
+    }) as Record<string, any>;
+
+    expect(result.verdict).toBe("failing");
+    expect(result.coverage).toEqual({
+      version: 1,
+      state: "complete",
+      requested: ["pull_request", "combined_status", "workflow_runs", "failed_jobs"],
+      gaps: [],
+    });
+    expect(result.failures[0].failedJobs[0]).toMatchObject({ job: { id: 7001 }, steps: null });
+    expect(result.failures[0].failedJobs[0].detailState).toBeUndefined();
     fixture.close();
   });
 
@@ -164,6 +226,7 @@ function makeFixture(options: {
   racedBase?: boolean;
   attachmentMissing?: boolean;
   delegatedFailure?: Error;
+  jobStepsUnavailable?: boolean;
 } = {}) {
   const workflows = new MemoryWorkflowStore();
   let merged = false;
@@ -225,6 +288,9 @@ function makeFixture(options: {
         throw new GitHubDelegatedProjectAttachmentRequiredError(
           "Project stensibly has no accepted repository attachment",
         );
+      }
+      if (input.tool === "fetch_workflow_job_steps" && options.jobStepsUnavailable) {
+        throw new Error("workflow job steps unavailable");
       }
       return receipt(input.tool, delegatedResult(input.tool, options));
     },
