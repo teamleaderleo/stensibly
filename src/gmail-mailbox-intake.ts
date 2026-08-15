@@ -58,7 +58,7 @@ export interface GmailMailboxReconciliationResult {
   readonly duplicateNotification: boolean;
   readonly state: MailboxSubscriptionState;
   readonly observations: readonly MailboxObservation[];
-  readonly recoveryAction: "full_sync_required" | null;
+  readonly recoveryAction: "full_sync_required" | "renew_watch" | null;
 }
 
 export interface ReconcileGmailMailboxInput {
@@ -150,28 +150,11 @@ export async function reconcileGmailMailbox(
     throw new RangeError("Gmail notification mailbox binding mismatch");
   }
 
-  if (notification?.notificationId === input.state.lastNotificationId) {
-    return frozenResult({
-      complete: true,
-      duplicateNotification: true,
-      state: input.state,
-      observations: [],
-      recoveryAction: null,
-    });
-  }
-
   const currentCursor = input.state.cursor.value;
-  if (notification && compareHistoryIds(notification.targetHistoryId, currentCursor) <= 0) {
-    return frozenResult({
-      complete: true,
-      duplicateNotification: false,
-      state: replaceState(input.state, {
-        lastNotificationId: notification.notificationId,
-      }),
-      observations: [],
-      recoveryAction: null,
-    });
-  }
+  const duplicateNotification = notification?.notificationId
+    === input.state.lastNotificationId;
+  const notificationAlreadyCovered = notification !== null
+    && compareHistoryIds(notification.targetHistoryId, currentCursor) <= 0;
 
   const renewalWindowMs = input.renewalWindowMs ?? defaultRenewalWindowMs;
   if (!Number.isSafeInteger(renewalWindowMs) || renewalWindowMs < 0) {
@@ -188,7 +171,7 @@ export async function reconcileGmailMailbox(
   const renewalDue = expirationMs === null || expirationMs - nowMs <= renewalWindowMs;
   let emitRecovered = workingState.subscription.health !== "healthy";
 
-  if (expired) {
+  if (expired && workingState.subscription.health === "healthy") {
     observations.push(subscriptionObservation({
       state: workingState,
       eventType: "mail.subscription.degraded",
@@ -206,10 +189,39 @@ export async function reconcileGmailMailbox(
   }
 
   if (renewalDue) {
-    const renewed = await input.client.renewWatch({
-      labelIds: [workingState.scope.externalId],
-      labelFilterBehavior: "include",
-    });
+    let renewed: { historyId: string; expiration: string };
+    try {
+      renewed = await input.client.renewWatch({
+        labelIds: [workingState.scope.externalId],
+        labelFilterBehavior: "include",
+      });
+    } catch {
+      const alreadyRenewalFailed = workingState.subscription.health === "degraded"
+        && workingState.subscription.recoveryReason === "watch_renewal_failed";
+      if (observations.length === 0 && !alreadyRenewalFailed) {
+        observations.push(subscriptionObservation({
+          state: workingState,
+          eventType: "mail.subscription.degraded",
+          sourceEventId: `watch-renewal-failed:${workingState.subscription.expiresAt ?? "unknown"}:${now}`,
+          now,
+        }));
+      }
+      const degradedState = replaceState(workingState, {
+        subscription: {
+          ...workingState.subscription,
+          health: "degraded",
+          recoveryReason: "watch_renewal_failed",
+        },
+      });
+      return frozenResult({
+        complete: false,
+        duplicateNotification,
+        state: degradedState,
+        observations,
+        recoveryAction: "renew_watch",
+      });
+    }
+
     const renewedHistoryId = gmailHistoryId(
       renewed.historyId,
       "Gmail renewed watch history ID",
@@ -229,6 +241,33 @@ export async function reconcileGmailMailbox(
           ? workingState.subscription.recoveryReason
           : null,
       },
+    });
+  }
+
+  if (notificationAlreadyCovered) {
+    workingState = replaceState(workingState, {
+      subscription: {
+        ...workingState.subscription,
+        health: "healthy",
+        recoveryReason: null,
+      },
+      lastNotificationId: notification?.notificationId
+        ?? workingState.lastNotificationId,
+    });
+    if (emitRecovered) {
+      observations.push(subscriptionObservation({
+        state: workingState,
+        eventType: "mail.subscription.recovered",
+        sourceEventId: `watch-recovered:${workingState.subscription.expiresAt ?? now}`,
+        now,
+      }));
+    }
+    return frozenResult({
+      complete: true,
+      duplicateNotification,
+      state: workingState,
+      observations,
+      recoveryAction: null,
     });
   }
 
@@ -275,24 +314,29 @@ export async function reconcileGmailMailbox(
     }
   } catch (error) {
     if (error instanceof GmailHistoryCursorExpiredError) {
-      const degradedState = replaceState(input.state, {
+      const alreadyCursorExpired = input.state.subscription.health === "degraded"
+        && input.state.subscription.recoveryReason === "history_cursor_expired";
+      const degradedState = replaceState(workingState, {
         coverage: "unknown",
         subscription: {
-          ...input.state.subscription,
+          ...workingState.subscription,
           health: "degraded",
           recoveryReason: "history_cursor_expired",
         },
       });
-      return frozenResult({
-        complete: false,
-        duplicateNotification: false,
-        state: degradedState,
-        observations: [subscriptionObservation({
+      if (observations.length === 0 && !alreadyCursorExpired) {
+        observations.push(subscriptionObservation({
           state: degradedState,
           eventType: "mail.subscription.degraded",
           sourceEventId: `history-cursor-expired:${currentCursor}`,
           now,
-        })],
+        }));
+      }
+      return frozenResult({
+        complete: false,
+        duplicateNotification: false,
+        state: degradedState,
+        observations,
         recoveryAction: "full_sync_required",
       });
     }
@@ -333,7 +377,7 @@ export async function reconcileGmailMailbox(
 
   return frozenResult({
     complete: true,
-    duplicateNotification: false,
+    duplicateNotification,
     state: workingState,
     observations,
     recoveryAction: null,
