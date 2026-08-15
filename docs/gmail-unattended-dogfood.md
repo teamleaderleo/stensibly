@@ -14,14 +14,21 @@ The hosted Worker owns two entry points:
   Pub/Sub pushes carrying a valid Google-signed OIDC JWT for the configured audience
   and exact push service-account email;
 - hourly Worker cron (`7 * * * *`) — bootstraps `users.watch` when the durable mailbox
-  binding does not exist, renews the watch before expiry, and reconciles missed history
-  from the durable Gmail `historyId` cursor.
+  binding does not exist, renews the watch before expiry, reconciles missed history
+  from the durable Gmail `historyId` cursor, and repairs quiet-mail Inbox hygiene.
 
 The Worker watches only `Label_5`. Reconciliation uses the merged #1495 contracts and
-commits the next cursor plus admitted observations atomically in Convex. After a message
-is durably admitted, the default policy removes only Gmail's `INBOX` label. A later
-material-attention sink may keep one exact provider message in Inbox by positively
-marking that message ID as operator attention.
+commits the next cursor plus admitted observations atomically in Convex. A downstream
+mail/GitHub bridge consumes durable `wakeEligible + ordinary` observation rows by
+observation identity; Pub/Sub delivery is never the only chance to process a material
+reply.
+
+`Stensibly/Handoffs` is the quiet agent-continuation lane. Every runtime pass performs a
+bounded Gmail query for messages carrying both `Label_5` and `INBOX`, then removes
+`INBOX` and `UNREAD` from those messages while preserving `Label_5` and the mail object.
+The same sweep runs on covered duplicate pushes, so a failed archive after a durable
+cursor commit is recoverable. Genuine operator-attention mail belongs in a distinct
+attention projection/view and is outside this watched auto-archive lane.
 
 ## Fixed checked-in bindings
 
@@ -108,13 +115,18 @@ The integration worker can complete the remainder under `STENSIBLY.md`:
 5. create or update one bounded `Stensibly/Handoffs` message; authenticated Pub/Sub
    delivery must return HTTP 204 only after history reconciliation and durable Convex
    commit;
-6. replay the same push and confirm no duplicate observation/effect;
-7. confirm the admitted handoff message is still labeled/searchable and absent from
-   Inbox unless an explicit operator-attention classifier retained it;
-8. after #1497's outbound provider is integrated, record its exact provider message IDs
-   as known outbound IDs so the returning mailbox observation classifies as self-echo;
-9. then use #1496's exact reply classifier/GitHub projection only after transiently
-   reading the admitted reply and refreshing its bound GitHub state.
+6. replay the same push and confirm no duplicate observation while the quiet-mail sweep
+   still leaves `Label_5 + INBOX` empty;
+7. confirm the admitted handoff remains labeled/searchable, read, and outside Inbox;
+8. drain the durable material-observation projection by observation ID. Only after a
+   durable row names an exact provider message should a consumer fetch that one Gmail
+   message body transiently for #1496 reply classification;
+9. after #1497's outbound provider is integrated, supply its exact provider message IDs
+   to the reconciliation seam so the returning mailbox observation classifies as
+   `self_echo` and stays out of the material drain;
+10. for a real human/worker reply, refresh the bound GitHub object and apply #1496's
+    exact current-state classification/projection. Persist the continuation or perform
+    the bounded GitHub projection only through the existing current authority path.
 
 ## Recovery
 
@@ -125,4 +137,4 @@ stored cursor; a stale/invalid Gmail cursor follows #1495's explicit full-sync r
 path rather than inventing continuity.
 
 — Harbor · Gmail closed-loop lane
-  Intention: make the first unattended Gmail handoff survive with exact provider identity, durable cursor truth, and a quiet Inbox
+  Intention: make the first unattended Gmail handoff survive with exact provider identity, durable cursor truth, recoverable material evidence, and a quiet Inbox
