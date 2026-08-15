@@ -88,7 +88,7 @@ describe("GitHubRepositoryFileCompensationService", () => {
       .execute(compensationInput(source));
 
     expect(workflow.state).toBe("succeeded");
-    expect(adapter.blobReads).toEqual([oldBlobSha, oldBlobSha]);
+    expect(adapter.blobReads).toEqual([oldBlobSha]);
     expect(adapter.dispatches[0]).toMatchObject({
       expectedCurrent: { kind: "blob", mode: "100755", blobSha: newBlobSha },
       restored: { kind: "blob", mode: "100755", blobSha: oldBlobSha },
@@ -518,7 +518,7 @@ class FakeAdapter implements GitHubRepositoryFileCompensationAdapter {
       compensationCommitSha,
       [sourceCommitSha],
       parentTreeSha,
-      this.parentSnapshot().entries,
+      [...this.parentSnapshot().entries],
       "Stensibly repository-file compensation opw_file_comp_fixture",
     );
   }
