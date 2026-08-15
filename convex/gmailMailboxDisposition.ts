@@ -1,9 +1,5 @@
 import { v } from "convex/values";
 import { stableJson } from "../src/canonical-json";
-import {
-  freezeMailDeliveryReceipt,
-  type MailDeliveryReceipt,
-} from "../src/mail-provider";
 import type {
   CurrentDurableStnMailboxState,
   GmailMailboxDispositionEffect,
@@ -11,6 +7,12 @@ import type {
   GmailMailboxDispositionReconciliationPhase,
   GmailMailboxDispositionSettledOutcome,
 } from "../src/gmail-mailbox-disposition-effect";
+import {
+  freezeMailDeliveryReceipt,
+  type MailDeliveryReceipt,
+} from "../src/mail-provider";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   findWorkspace,
   normalizeWorkspace,
@@ -21,13 +23,13 @@ import { serviceArgs } from "./lib/validators";
 
 const maximumJsonBytes = 64 * 1024;
 const encoder = new TextEncoder();
+type ReadCtx = Pick<QueryCtx, "db">;
+type WriteCtx = Pick<MutationCtx, "db">;
 
 export const putCurrentState = mutation({
   args: { ...serviceArgs, stateJson: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
-    if (!workspace) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+    const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const state = admitCurrentStateJson(args.stateJson);
     const stateJson = stableJson(state);
     const existing = await ctx.db
@@ -39,16 +41,10 @@ export const putCurrentState = mutation({
     if (existing) {
       const current = admitCurrentStateJson(existing.stateJson);
       if (current.revision === state.revision) {
-        if (stableJson(current) !== stateJson) {
-          throw new Error("GMAIL_DISPOSITION_STATE_REVISION_CONFLICT");
-        }
+        if (stableJson(current) !== stateJson) throw new Error("GMAIL_DISPOSITION_STATE_REVISION_CONFLICT");
         return { stateJson: existing.stateJson, duplicate: true };
       }
-      await ctx.db.patch(existing._id, {
-        revision: state.revision,
-        stateJson,
-        updatedAt: Date.now(),
-      });
+      await ctx.db.patch(existing._id, { revision: state.revision, stateJson, updatedAt: Date.now() });
       return { stateJson, duplicate: false };
     }
     const now = Date.now();
@@ -67,8 +63,7 @@ export const putCurrentState = mutation({
 export const getCurrentState = query({
   args: { ...serviceArgs, stnThreadId: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
+    const workspace = await optionalWorkspace(ctx, args.serviceSecret, args.workspace);
     if (!workspace) return null;
     const stnThreadId = identifier(args.stnThreadId, "STN thread ID", 240);
     const row = await ctx.db
@@ -84,9 +79,7 @@ export const getCurrentState = query({
 export const recordSettledDelivery = mutation({
   args: { ...serviceArgs, receiptJson: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
-    if (!workspace) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+    const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const receipt = admitSettledGmailReceipt(args.receiptJson);
     const receiptJson = stableJson(receipt);
     const existing = await ctx.db
@@ -101,17 +94,11 @@ export const recordSettledDelivery = mutation({
         || existing.accountBinding !== receipt.accountBinding
         || existing.mailboxAddress !== receipt.mailboxAddress
         || existing.providerThreadId !== receipt.providerThreadId
-      ) {
-        throw new Error("GMAIL_DISPOSITION_TARGET_IDENTITY_CONFLICT");
-      }
+      ) throw new Error("GMAIL_DISPOSITION_TARGET_IDENTITY_CONFLICT");
       const comparison = Date.parse(receipt.attemptedAt) - Date.parse(existing.attemptedAt);
-      if (comparison < 0) {
-        return { receiptJson: existing.receiptJson, outcome: "stale" as const };
-      }
+      if (comparison < 0) return { receiptJson: existing.receiptJson, outcome: "stale" as const };
       if (comparison === 0) {
-        if (existing.receiptJson !== receiptJson) {
-          throw new Error("GMAIL_DISPOSITION_TARGET_RECEIPT_CONFLICT");
-        }
+        if (existing.receiptJson !== receiptJson) throw new Error("GMAIL_DISPOSITION_TARGET_RECEIPT_CONFLICT");
         return { receiptJson, outcome: "replay" as const };
       }
       await ctx.db.patch(existing._id, {
@@ -143,8 +130,7 @@ export const recordSettledDelivery = mutation({
 export const getSettledDelivery = query({
   args: { ...serviceArgs, stnThreadId: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
+    const workspace = await optionalWorkspace(ctx, args.serviceSecret, args.workspace);
     if (!workspace) return null;
     const stnThreadId = identifier(args.stnThreadId, "STN thread ID", 240);
     const row = await ctx.db
@@ -160,8 +146,7 @@ export const getSettledDelivery = query({
 export const getEffect = query({
   args: { ...serviceArgs, effectId: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
+    const workspace = await optionalWorkspace(ctx, args.serviceSecret, args.workspace);
     if (!workspace) return null;
     const row = await effectById(ctx, workspace._id, identifier(args.effectId, "Gmail disposition effect ID", 4096));
     return row ? stableJson(recordFromEffectRow(row)) : null;
@@ -177,20 +162,10 @@ export const findOutstanding = query({
     providerMessageId: v.string(),
   },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
+    const workspace = await optionalWorkspace(ctx, args.serviceSecret, args.workspace);
     if (!workspace) return null;
-    const identity = targetIdentity(args);
-    const lane = await ctx.db
-      .query("gmailMailboxDispositionLanes")
-      .withIndex("by_workspace_id_and_provider_and_account_binding_and_mailbox_address_and_provider_thread_id_and_provider_message_id", (q) => q
-        .eq("workspaceId", workspace._id)
-        .eq("provider", "gmail")
-        .eq("accountBinding", identity.accountBinding)
-        .eq("mailboxAddress", identity.mailboxAddress)
-        .eq("providerThreadId", identity.providerThreadId)
-        .eq("providerMessageId", identity.providerMessageId))
-      .unique();
+    const target = targetIdentity(args);
+    const lane = await laneByTarget(ctx, workspace._id, target);
     if (!lane) return null;
     const row = await effectById(ctx, workspace._id, lane.effectId);
     if (!row) throw new Error("GMAIL_DISPOSITION_LANE_EFFECT_MISSING");
@@ -203,27 +178,21 @@ export const findOutstanding = query({
 export const reserveEffect = mutation({
   args: { ...serviceArgs, effectJson: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
-    if (!workspace) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+    const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const effect = admitEffectJson(args.effectJson);
     const effectJson = stableJson(effect);
     const existing = await effectById(ctx, workspace._id, effect.effectId);
     if (existing) {
       const record = recordFromEffectRow(existing);
-      if (record.effect && stableJson(record.effect) !== effectJson) {
-        throw new Error("GMAIL_DISPOSITION_EFFECT_IDENTITY_CONFLICT");
-      }
+      if (stableJson(record.effect) !== effectJson) throw new Error("GMAIL_DISPOSITION_EFFECT_IDENTITY_CONFLICT");
       return { outcome: "existing" as const, recordJson: stableJson(record) };
     }
-
     const lane = await laneByTarget(ctx, workspace._id, effect.binding);
     if (lane) {
       const row = await effectById(ctx, workspace._id, lane.effectId);
       if (!row) throw new Error("GMAIL_DISPOSITION_LANE_EFFECT_MISSING");
       return { outcome: "blocked" as const, recordJson: stableJson(recordFromEffectRow(row)) };
     }
-
     const now = Date.now();
     await ctx.db.insert("gmailMailboxDispositionEffects", {
       workspaceId: workspace._id,
@@ -254,19 +223,14 @@ export const reserveEffect = mutation({
       createdAt: now,
       updatedAt: now,
     });
-    return {
-      outcome: "reserved" as const,
-      recordJson: stableJson(recordFromValues(effect, "reserved", null, null)),
-    };
+    return { outcome: "reserved" as const, recordJson: stableJson(recordFromValues(effect, "reserved", null, null)) };
   },
 });
 
 export const markReconciliationRequired = mutation({
   args: { ...serviceArgs, effectId: v.string(), phase: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
-    if (!workspace) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+    const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const effectId = identifier(args.effectId, "Gmail disposition effect ID", 4096);
     const phase = admitPhase(args.phase);
     const row = await requiredEffect(ctx, workspace._id, effectId);
@@ -287,9 +251,7 @@ export const markReconciliationRequired = mutation({
 export const markSettled = mutation({
   args: { ...serviceArgs, effectId: v.string(), outcome: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
-    if (!workspace) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+    const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const effectId = identifier(args.effectId, "Gmail disposition effect ID", 4096);
     const outcome = admitSettledOutcome(args.outcome);
     const row = await requiredEffect(ctx, workspace._id, effectId);
@@ -313,9 +275,7 @@ export const markSettled = mutation({
 export const releasePreconditionRetry = mutation({
   args: { ...serviceArgs, effectId: v.string() },
   handler: async (ctx, args) => {
-    const workspaceSlug = authorizedWorkspace(args.serviceSecret, args.workspace);
-    const workspace = await findWorkspace(ctx, workspaceSlug);
-    if (!workspace) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+    const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const effectId = identifier(args.effectId, "Gmail disposition effect ID", 4096);
     const row = await requiredEffect(ctx, workspace._id, effectId);
     const record = recordFromEffectRow(row);
@@ -329,17 +289,21 @@ export const releasePreconditionRetry = mutation({
   },
 });
 
-function authorizedWorkspace(serviceSecret: string, workspace: string): string {
+async function requiredWorkspace(ctx: ReadCtx, serviceSecret: string | undefined, workspace: string) {
+  const value = await optionalWorkspace(ctx, serviceSecret, workspace);
+  if (!value) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
+  return value;
+}
+
+async function optionalWorkspace(ctx: ReadCtx, serviceSecret: string | undefined, workspace: string) {
   requireServiceSecret(serviceSecret);
-  return normalizeWorkspace(workspace);
+  return await findWorkspace(ctx, normalizeWorkspace(workspace));
 }
 
 function admitCurrentStateJson(value: string): CurrentDurableStnMailboxState {
   const source = jsonRecord(value, "current STN state");
   if (source.source !== "durable_stn_state") throw new Error("GMAIL_DISPOSITION_STATE_PROVENANCE_INVALID");
-  if (source.state !== "active" && source.state !== "waiting" && source.state !== "resolved") {
-    throw new Error("GMAIL_DISPOSITION_STATE_INVALID");
-  }
+  if (source.state !== "active" && source.state !== "waiting" && source.state !== "resolved") throw new Error("GMAIL_DISPOSITION_STATE_INVALID");
   if (!isAttentionClass(source.attentionClass) || typeof source.operatorAttentionRequired !== "boolean") {
     throw new Error("GMAIL_DISPOSITION_ATTENTION_STATE_INVALID");
   }
@@ -359,16 +323,14 @@ function admitEffectJson(value: string): GmailMailboxDispositionEffect {
     throw new Error("GMAIL_DISPOSITION_EFFECT_VERSION_INVALID");
   }
   const binding = objectRecord(source.binding, "Gmail disposition binding");
-  if (binding.source !== "settled_gmail_message_binding" || binding.provider !== "gmail") {
-    throw new Error("GMAIL_DISPOSITION_EFFECT_BINDING_INVALID");
-  }
+  if (binding.source !== "settled_gmail_message_binding" || binding.provider !== "gmail") throw new Error("GMAIL_DISPOSITION_EFFECT_BINDING_INVALID");
   const disposition = objectRecord(source.disposition, "Gmail disposition policy");
-  if (typeof disposition.archive !== "boolean" || typeof disposition.markRead !== "boolean") {
-    throw new Error("GMAIL_DISPOSITION_EFFECT_POLICY_INVALID");
-  }
-  if (!isDispositionReason(disposition.reason) || disposition.label !== "Stensibly") {
-    throw new Error("GMAIL_DISPOSITION_EFFECT_POLICY_INVALID");
-  }
+  if (
+    disposition.label !== "Stensibly"
+    || typeof disposition.archive !== "boolean"
+    || typeof disposition.markRead !== "boolean"
+    || !isDispositionReason(disposition.reason)
+  ) throw new Error("GMAIL_DISPOSITION_EFFECT_POLICY_INVALID");
   return Object.freeze({
     version: "gmail-mailbox-disposition-effect/v1",
     effectId: identifier(source.effectId, "Gmail disposition effect ID", 4096),
@@ -383,12 +345,7 @@ function admitEffectJson(value: string): GmailMailboxDispositionEffect {
       stensiblyLabelId: identifier(binding.stensiblyLabelId, "Stensibly label ID", 160),
     }),
     stnStateRevision: identifier(source.stnStateRevision, "STN state revision", 320),
-    disposition: Object.freeze({
-      label: "Stensibly",
-      archive: disposition.archive,
-      markRead: disposition.markRead,
-      reason: disposition.reason,
-    }),
+    disposition: Object.freeze({ label: "Stensibly", archive: disposition.archive, markRead: disposition.markRead, reason: disposition.reason }),
     requiredLabelIds: labels(source.requiredLabelIds, "required Gmail labels"),
     forbiddenLabelIds: labels(source.forbiddenLabelIds, "forbidden Gmail labels"),
     authorizesMailSend: false,
@@ -406,12 +363,7 @@ function admitSettledGmailReceipt(value: string): MailDeliveryReceipt {
   return receipt;
 }
 
-function recordFromEffectRow(row: {
-  effectJson: string;
-  status: "reserved" | "reconciliation_required" | "settled";
-  reconciliationPhase: string | null;
-  settledOutcome: string | null;
-}): GmailMailboxDispositionEffectRecord {
+function recordFromEffectRow(row: Doc<"gmailMailboxDispositionEffects">): GmailMailboxDispositionEffectRecord {
   return recordFromValues(
     admitEffectJson(row.effectJson),
     row.status,
@@ -429,36 +381,40 @@ function recordFromValues(
   return Object.freeze({ effect, status, reconciliationPhase, settledOutcome });
 }
 
-async function effectById(ctx: any, workspaceId: any, effectId: string) {
+async function effectById(ctx: ReadCtx, workspaceId: Id<"workspaces">, effectId: string) {
   return await ctx.db
     .query("gmailMailboxDispositionEffects")
-    .withIndex("by_workspace_id_and_effect_id", (q: any) => q.eq("workspaceId", workspaceId).eq("effectId", effectId))
+    .withIndex("by_workspace_id_and_effect_id", (q) => q.eq("workspaceId", workspaceId).eq("effectId", effectId))
     .unique();
 }
 
-async function requiredEffect(ctx: any, workspaceId: any, effectId: string) {
+async function requiredEffect(ctx: ReadCtx, workspaceId: Id<"workspaces">, effectId: string): Promise<Doc<"gmailMailboxDispositionEffects">> {
   const row = await effectById(ctx, workspaceId, effectId);
   if (!row) throw new Error("GMAIL_DISPOSITION_EFFECT_NOT_FOUND");
   return row;
 }
 
-async function laneByTarget(ctx: any, workspaceId: any, binding: GmailMailboxDispositionEffect["binding"]) {
+async function laneByTarget(
+  ctx: ReadCtx,
+  workspaceId: Id<"workspaces">,
+  target: { accountBinding: string; mailboxAddress: string; providerThreadId: string; providerMessageId: string },
+) {
   return await ctx.db
     .query("gmailMailboxDispositionLanes")
-    .withIndex("by_workspace_id_and_provider_and_account_binding_and_mailbox_address_and_provider_thread_id_and_provider_message_id", (q: any) => q
+    .withIndex("by_workspace_id_and_provider_and_account_binding_and_mailbox_address_and_provider_thread_id_and_provider_message_id", (q) => q
       .eq("workspaceId", workspaceId)
       .eq("provider", "gmail")
-      .eq("accountBinding", binding.accountBinding)
-      .eq("mailboxAddress", binding.mailboxAddress)
-      .eq("providerThreadId", binding.providerThreadId)
-      .eq("providerMessageId", binding.providerMessageId))
+      .eq("accountBinding", target.accountBinding)
+      .eq("mailboxAddress", target.mailboxAddress)
+      .eq("providerThreadId", target.providerThreadId)
+      .eq("providerMessageId", target.providerMessageId))
     .unique();
 }
 
-async function requiredLaneByEffect(ctx: any, workspaceId: any, effectId: string) {
+async function requiredLaneByEffect(ctx: ReadCtx, workspaceId: Id<"workspaces">, effectId: string) {
   const lane = await ctx.db
     .query("gmailMailboxDispositionLanes")
-    .withIndex("by_workspace_id_and_effect_id", (q: any) => q.eq("workspaceId", workspaceId).eq("effectId", effectId))
+    .withIndex("by_workspace_id_and_effect_id", (q) => q.eq("workspaceId", workspaceId).eq("effectId", effectId))
     .unique();
   if (!lane) throw new Error("GMAIL_DISPOSITION_LANE_NOT_FOUND");
   return lane;
@@ -497,9 +453,7 @@ function labels(value: unknown, label: string): readonly string[] {
 }
 
 function jsonRecord(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "string" || value.length < 2 || encoder.encode(value).byteLength > maximumJsonBytes) {
-    throw new Error(`${label} JSON invalid`);
-  }
+  if (typeof value !== "string" || value.length < 2 || encoder.encode(value).byteLength > maximumJsonBytes) throw new Error(`${label} JSON invalid`);
   try {
     return objectRecord(JSON.parse(value), label);
   } catch {
@@ -513,8 +467,12 @@ function objectRecord(value: unknown, label: string): Record<string, unknown> {
 }
 
 function identifier(value: unknown, label: string, maximumBytes: number): string {
-  if (typeof value !== "string" || value.length < 1 || value !== value.trim() || /[\r\n\u0000]/u.test(value) || encoder.encode(value).byteLength > maximumBytes) {
-    throw new Error(`${label} invalid`);
-  }
+  if (
+    typeof value !== "string"
+    || value.length < 1
+    || value !== value.trim()
+    || /[\r\n\u0000]/u.test(value)
+    || encoder.encode(value).byteLength > maximumBytes
+  ) throw new Error(`${label} invalid`);
   return value;
 }
