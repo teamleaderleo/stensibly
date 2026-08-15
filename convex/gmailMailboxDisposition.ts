@@ -12,19 +12,18 @@ import {
   type MailDeliveryReceipt,
 } from "../src/mail-provider";
 import type { Doc, Id } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   findWorkspace,
   normalizeWorkspace,
   requireServiceSecret,
+  type QueryContext,
 } from "./lib/domain";
 import { mutation, query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
 
 const maximumJsonBytes = 64 * 1024;
 const encoder = new TextEncoder();
-type ReadCtx = Pick<QueryCtx, "db">;
-type WriteCtx = Pick<MutationCtx, "db">;
+type ReadCtx = QueryContext;
 
 export const putCurrentState = mutation({
   args: { ...serviceArgs, stateJson: v.string() },
@@ -289,13 +288,13 @@ export const releasePreconditionRetry = mutation({
   },
 });
 
-async function requiredWorkspace(ctx: ReadCtx, serviceSecret: string | undefined, workspace: string) {
+async function requiredWorkspace(ctx: ReadCtx, serviceSecret: string, workspace: string | undefined) {
   const value = await optionalWorkspace(ctx, serviceSecret, workspace);
   if (!value) throw new Error("GMAIL_DISPOSITION_WORKSPACE_NOT_FOUND");
   return value;
 }
 
-async function optionalWorkspace(ctx: ReadCtx, serviceSecret: string | undefined, workspace: string) {
+async function optionalWorkspace(ctx: ReadCtx, serviceSecret: string, workspace: string | undefined) {
   requireServiceSecret(serviceSecret);
   return await findWorkspace(ctx, normalizeWorkspace(workspace));
 }
