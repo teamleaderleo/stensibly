@@ -5,7 +5,9 @@ import {
 
 export const githubDelegatedReadContractToolNames = [
   "get_repo",
+  "list_directory",
   "fetch_file",
+  "resolve_ref",
   "get_pr_info",
   "get_pr_diff",
   "list_pull_request_review_threads",
@@ -32,7 +34,7 @@ const repositorySelectorKeys = new Set([
 ]);
 
 /**
- * Validates the exact caller-controlled arguments for the initial delegated-read release.
+ * Validates the exact caller-controlled arguments for guarded delegated reads.
  * Repository identity is supplied separately by the accepted Stensibly binding.
  */
 export function parseGitHubDelegatedReadArguments(
@@ -58,12 +60,21 @@ export function parseGitHubDelegatedReadArguments(
     case "get_repo":
       exactKeys(value, []);
       return boundedArguments({});
+    case "list_directory":
+      exactKeys(value, ["path", "ref"]);
+      return boundedArguments({
+        path: repositoryDirectoryPath(value.path),
+        ref: commitSha(value.ref),
+      });
     case "fetch_file":
       exactKeys(value, ["path", "ref"]);
       return boundedArguments({
         path: repositoryPath(value.path),
         ref: commitSha(value.ref),
       });
+    case "resolve_ref":
+      exactKeys(value, ["ref"]);
+      return boundedArguments({ ref: qualifiedGitRef(value.ref) });
     case "get_pr_info":
     case "list_pull_request_review_threads":
       exactKeys(value, ["pr_number"]);
@@ -186,6 +197,11 @@ function exactKeys(
   }
 }
 
+function repositoryDirectoryPath(value: unknown): string {
+  if (value === "") return "";
+  return repositoryPath(value);
+}
+
 function repositoryPath(value: unknown): string {
   if (typeof value !== "string") {
     throw new GitHubDelegatedReadContractError(
@@ -207,6 +223,49 @@ function repositoryPath(value: unknown): string {
     );
   }
   return path;
+}
+
+function qualifiedGitRef(value: unknown): string {
+  const ref = exactAsciiText(value, "GitHub ref", 240);
+  const prefix = ref.startsWith("refs/heads/")
+    ? "refs/heads/"
+    : ref.startsWith("refs/tags/")
+    ? "refs/tags/"
+    : null;
+  if (prefix === null) {
+    throw new GitHubDelegatedReadContractError(
+      "GitHub ref must be fully qualified under refs/heads/ or refs/tags/",
+    );
+  }
+  const tail = ref.slice(prefix.length);
+  if (
+    tail === "@"
+    || tail === "HEAD"
+    || !tail
+    || tail.startsWith("/")
+    || tail.endsWith("/")
+    || tail.startsWith("-")
+    || tail.includes("//")
+    || tail.includes("..")
+    || tail.includes("@{")
+    || /[~^:?*\[\\\s]/u.test(tail)
+  ) {
+    throw new GitHubDelegatedReadContractError("GitHub ref is invalid");
+  }
+  const segments = tail.split("/");
+  if (
+    segments.some((segment) =>
+      !segment
+      || segment === "."
+      || segment === ".."
+      || segment.startsWith(".")
+      || segment.endsWith(".")
+      || segment.endsWith(".lock")
+    )
+  ) {
+    throw new GitHubDelegatedReadContractError("GitHub ref is invalid");
+  }
+  return ref;
 }
 
 function commitSha(value: unknown): string {
