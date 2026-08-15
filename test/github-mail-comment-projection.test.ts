@@ -72,6 +72,7 @@ function effectFor(body: string): GitHubConversationCommentEffect {
       threadId: thread.threadId,
       provider: "gmail",
       mailboxBindingId: "mailbox_primary",
+      expectedMailboxAddress: "operator@example.com",
       providerThreadId: "gmail-thread-1491",
       expectedInReplyToMessageId: "gmail-message-root",
       messageDisposition: "direct_human_reply",
