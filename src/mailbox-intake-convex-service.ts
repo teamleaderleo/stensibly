@@ -25,7 +25,7 @@ export interface DurableMailboxObservationProjection {
   readonly providerCursor: string;
   readonly providerMessageId: string | null;
   readonly providerThreadId: string | null;
-  readonly providerLabelId: string | null;
+  readonly providerScopeId: string | null;
   readonly observedAt: string;
   readonly receivedAt: string;
   readonly wakeEligible: boolean;
@@ -58,7 +58,9 @@ export class HostedMailboxIntakeService {
     const subscription = record(row.subscription);
     const scope = record(row.scope);
     const provider = row.provider;
-    if (provider !== "gmail" && provider !== "outlook") throw new Error("Mailbox intake storage returned an invalid provider");
+    if (provider !== "gmail" && provider !== "outlook") {
+      throw new Error("Mailbox intake storage returned an invalid provider");
+    }
     const cursorValue = text(row.cursorValue, "Mailbox cursor");
     const state = createMailboxSubscriptionState({
       mailboxBindingId: text(row.mailboxBindingId, "Mailbox binding ID"),
@@ -127,9 +129,13 @@ export class HostedMailboxIntakeService {
       mailboxBindingId,
       limit,
     }));
-    if (!Array.isArray(raw)) throw new Error("Mailbox intake storage returned an invalid observation list");
+    if (!Array.isArray(raw)) {
+      throw new Error("Mailbox intake storage returned an invalid observation list");
+    }
     const material = raw.map((value) => durableObservation(value))
-      .filter((observation) => observation.wakeEligible && observation.loopDisposition === "ordinary");
+      .filter((observation) =>
+        observation.wakeEligible && observation.loopDisposition === "ordinary"
+      );
     return Object.freeze(material);
   }
 
@@ -153,8 +159,8 @@ function durableObservation(value: unknown): DurableMailboxObservationProjection
     eventType !== "mail.message.created"
     && eventType !== "mail.message.updated"
     && eventType !== "mail.message.deleted"
-    && eventType !== "mail.label.added"
-    && eventType !== "mail.label.removed"
+    && eventType !== "mail.scope.added"
+    && eventType !== "mail.scope.removed"
     && eventType !== "mail.subscription.degraded"
     && eventType !== "mail.subscription.recovered"
   ) throw new Error("Mailbox observation event type is invalid");
@@ -175,7 +181,7 @@ function durableObservation(value: unknown): DurableMailboxObservationProjection
     providerCursor: text(row.providerCursor, "Mailbox observation cursor"),
     providerMessageId: nullableText(row.providerMessageId, "Mailbox provider message ID"),
     providerThreadId: nullableText(row.providerThreadId, "Mailbox provider thread ID"),
-    providerLabelId: nullableText(row.providerLabelId, "Mailbox provider label ID"),
+    providerScopeId: nullableText(row.providerScopeId, "Mailbox provider scope ID"),
     observedAt: text(row.observedAt, "Mailbox observation time"),
     receivedAt: text(row.receivedAt, "Mailbox receipt time"),
     wakeEligible: row.wakeEligible === true,
@@ -186,12 +192,16 @@ function durableObservation(value: unknown): DurableMailboxObservationProjection
 }
 
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Mailbox intake storage returned an invalid response");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Mailbox intake storage returned an invalid response");
+  }
   return value as Record<string, unknown>;
 }
 
 function text(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 4096) throw new Error(`${label} is invalid`);
+  if (typeof value !== "string" || value.length < 1 || value.length > 4096) {
+    throw new Error(`${label} is invalid`);
+  }
   return value;
 }
 
@@ -201,12 +211,19 @@ function nullableText(value: unknown, label: string): string | null {
 }
 
 function positiveRevision(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new Error("Mailbox intake revision is invalid");
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error("Mailbox intake revision is invalid");
+  }
   return value;
 }
 
 function required(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > 64 * 1024) {
+  if (
+    typeof value !== "string"
+    || value.trim() !== value
+    || value.length < 1
+    || value.length > 64 * 1024
+  ) {
     throw new RangeError(`${label} is required`);
   }
   return value;
