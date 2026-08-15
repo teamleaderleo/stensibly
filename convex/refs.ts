@@ -45,6 +45,7 @@ export const convexApi = {
     transition: mutationRef("runnerRuns:transition"),
   },
   runnerAdapterCommands: {
+    getByIdempotencyKey: queryRef("runnerAdapterCommands:getByIdempotencyKey"),
     reserve: mutationRef("runnerAdapterCommands:reserve"),
     settle: mutationRef("runnerAdapterCommands:settle"),
   },
