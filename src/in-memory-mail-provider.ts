@@ -107,14 +107,19 @@ export class InMemoryMailProvider implements MailProvider {
     this.#assertProvider(binding);
     const candidates = (this.#byRfcMessageId.get(input.rfcMessageId) ?? [])
       .filter((candidate) => candidate.binding.accountBinding === binding.accountBinding)
-      .filter((candidate) => candidate.message.outboundEffectId === input.outboundEffectId)
-      .filter((candidate) => input.expectedProviderThreadId === null
-        || candidate.result.providerThreadId === input.expectedProviderThreadId);
+      .filter((candidate) => candidate.message.outboundEffectId === input.outboundEffectId);
     if (candidates.length === 0) return { status: "missing", coverage: "complete" };
     if (candidates.length > 1) {
       return { status: "ambiguous", candidateCount: candidates.length };
     }
-    return { status: "found", result: candidates[0]!.result };
+    const candidate = candidates[0]!;
+    if (
+      input.expectedProviderThreadId !== null
+      && candidate.result.providerThreadId !== input.expectedProviderThreadId
+    ) {
+      return { status: "ambiguous", candidateCount: 1 };
+    }
+    return { status: "found", result: candidate.result };
   }
 
   #send(
