@@ -17,6 +17,7 @@ import {
   type RunnerAdapterCommandSettlementRecord,
   type SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import { admitRunnerAdapterCommandLookup } from "./runner-adapter-command-read.js";
 import { ensureRunSchema } from "./runs.js";
 import type { StensiblyStore } from "./store.js";
 
@@ -90,7 +91,7 @@ export function getSqliteRunnerAdapterCommand(
   const input = normalizeRunnerAdapterCommandLookupInput(rawInput);
   const row = reservationByIdempotencyKey(store, input.idempotencyKey);
   if (!row) return null;
-  return Object.freeze({
+  return admitRunnerAdapterCommandLookup({
     command: parseReservation(row),
     settlement: row.settlement_json === null ? null : parseSettlement(row),
   });
@@ -243,12 +244,14 @@ function replay(row: ReservationRow, stableRequestJson: string): RunnerAdapterCo
       "Runner adapter command idempotency key was already used for a different command",
     );
   }
-  const command = parseReservation(row);
+  const lookup = admitRunnerAdapterCommandLookup({
+    command: parseReservation(row),
+    settlement: row.settlement_json === null ? null : parseSettlement(row),
+  });
   return Object.freeze({
     outcome: "replayed" as const,
     dispatchAuthorized: false as const,
-    command,
-    settlement: row.settlement_json === null ? null : parseSettlement(row),
+    ...lookup,
   });
 }
 
