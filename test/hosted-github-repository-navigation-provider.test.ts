@@ -208,7 +208,7 @@ describe("hosted GitHub repository navigation", () => {
         fetch: (async () => {
           providerCalls += 1;
           return Response.json({});
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
       },
     );
 
