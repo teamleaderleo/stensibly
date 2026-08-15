@@ -35,11 +35,11 @@ describe("Outlook-compatible mailbox intake contract", () => {
       mailboxBindingId: "mailbox_operator_primary",
       sourceSchema: "outlook-delta",
       sourceEventId: "delta_event_1",
-      eventType: "mail.message.updated",
+      eventType: "mail.scope.added",
       providerCursor: "cursor_ref_delta_2",
       providerMessageId: "AAMkAGI2THVSBBB=",
       providerThreadId: "AAQkAGI2THVSCCC=",
-      providerLabelId: null,
+      providerScopeId: "AAMkAGI2THVSAAA=",
       observedAt: "2026-08-15T12:01:00.000Z",
       receivedAt: "2026-08-15T12:01:01.000Z",
       wakeEligible: true,
@@ -47,14 +47,16 @@ describe("Outlook-compatible mailbox intake contract", () => {
     });
     expect(observation).toMatchObject({
       provider: "outlook",
+      eventType: "mail.scope.added",
       providerMessageId: "AAMkAGI2THVSBBB=",
       providerThreadId: "AAQkAGI2THVSCCC=",
+      providerScopeId: "AAMkAGI2THVSAAA=",
       containsRawContent: false,
       grantsAuthority: false,
     });
   });
 
-  test("keeps subscription health events free of message, thread, and label identities", () => {
+  test("keeps subscription health events free of message, thread, and scope identities", () => {
     expect(() => createMailboxObservation({
       provider: "outlook",
       mailboxBindingId: "mailbox_operator_primary",
@@ -64,13 +66,13 @@ describe("Outlook-compatible mailbox intake contract", () => {
       providerCursor: "cursor_ref_delta_2",
       providerMessageId: null,
       providerThreadId: "AAQkAGI2THVSCCC=",
-      providerLabelId: null,
+      providerScopeId: null,
       observedAt: "2026-08-15T12:01:00.000Z",
       receivedAt: "2026-08-15T12:01:01.000Z",
       wakeEligible: false,
       loopDisposition: "automatic",
     })).toThrow(
-      "Mailbox subscription observations cannot bind message, thread, or label identities",
+      "Mailbox subscription observations cannot bind message, thread, or scope identities",
     );
   });
 });
