@@ -31,8 +31,25 @@ export const githubMailReplyClasses = [
   "mail.github_review_proposal",
 ] as const;
 
+export const githubMailEffectCapabilities = [
+  "coordination_only",
+  "github_conversation_comment",
+  "github_formal_review",
+] as const;
+
+export const githubMailMessageDispositions = [
+  "direct_human_reply",
+  "automatic",
+  "bounce",
+  "forwarded",
+] as const;
+
 export type GitHubMailReplyClass = typeof githubMailReplyClasses[number];
 export type GitHubFormalReviewVerdict = "APPROVE" | "REQUEST_CHANGES";
+export type GitHubMailEffectCapability = typeof githubMailEffectCapabilities[number];
+export type GitHubMailMessageDisposition = typeof githubMailMessageDispositions[number];
+
+const credentialShapedMailTextPattern = /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/iu;
 
 export interface GitHubMailThreadBinding {
   readonly version: typeof GITHUB_MAIL_BRIDGE_VERSION;
@@ -50,6 +67,26 @@ export interface GitHubMailCausalContext {
   readonly predecessorId: string | null;
   readonly depth: number;
   readonly fanOut: number;
+}
+
+/**
+ * Server-owned binding for an effect-bearing mail reply. Visible sender text,
+ * quoted body content, attachment names, and arbitrary mail headers are absent
+ * by design; they can contribute evidence but never provider-operation authority.
+ */
+export interface GitHubMailReplyAuthorityBinding {
+  readonly version: typeof GITHUB_MAIL_BRIDGE_VERSION;
+  readonly threadId: string;
+  readonly provider: "gmail" | "outlook";
+  readonly mailboxBindingId: string;
+  readonly providerThreadId: string;
+  readonly expectedInReplyToMessageId: string;
+  readonly messageDisposition: GitHubMailMessageDisposition;
+  readonly effectCapability: GitHubMailEffectCapability;
+  readonly expectedTargetSourceRevision: string;
+  readonly expectedHeadRevision: string | null;
+  readonly formalReviewVerdict: GitHubFormalReviewVerdict | null;
+  readonly causal: GitHubMailCausalContext;
 }
 
 export type GitHubTerminalStatusConclusion =
@@ -157,6 +194,7 @@ export interface GitHubMailReplyInput {
   readonly expectedHeadRevision: string | null;
   readonly formalReviewVerdict?: GitHubFormalReviewVerdict;
   readonly causal: GitHubMailCausalContext;
+  readonly authority?: GitHubMailReplyAuthorityBinding;
   readonly previousAdmission?: GitHubMailReplyAdmission;
 }
 
@@ -213,6 +251,9 @@ export interface GitHubMailReplyAdmission {
   readonly bodySha256: string;
   readonly bodyByteLength: number;
   readonly replyFingerprint: string;
+  readonly authorityFingerprint: string | null;
+  readonly messageDisposition: GitHubMailMessageDisposition | null;
+  readonly effectCapability: GitHubMailEffectCapability | null;
   readonly replay: boolean;
   readonly effect: GitHubMailReplyEffect | null;
   readonly containsRawMailBody: false;
@@ -340,16 +381,46 @@ export function classifyGitHubMailReply(
     "Mail reply class",
   );
   const body = boundedBody(input.body, "Mail reply body", MAX_GITHUB_MAIL_REPLY_BYTES);
-  const expectedTargetSourceRevision = identity(
-    input.expectedTargetSourceRevision,
-    "Expected GitHub target source revision",
-    512,
-  );
-  const expectedHeadRevision = input.expectedHeadRevision === null
+  const effectBearing = replyClass === "mail.github_comment_proposal"
+    || replyClass === "mail.github_review_proposal";
+  const authority = effectBearing
+    ? validateReplyAuthority({
+        authority: input.authority,
+        thread,
+        provider,
+        mailboxBindingId,
+        providerThreadId,
+        inReplyToMessageId,
+        replyClass,
+      })
+    : null;
+  const expectedTargetSourceRevision = authority
+    ? authority.binding.expectedTargetSourceRevision
+    : identity(
+        input.expectedTargetSourceRevision,
+        "Expected GitHub target source revision",
+        512,
+      );
+  const expectedHeadRevision = authority
+    ? authority.binding.expectedHeadRevision
+    : input.expectedHeadRevision === null
     ? null
     : fullRevision(input.expectedHeadRevision, "Expected pull request head revision");
-  const causal = validateCausal(input.causal);
+  const causal = authority ? authority.binding.causal : validateCausal(input.causal);
+  const formalReviewVerdict = authority?.binding.formalReviewVerdict
+    ?? input.formalReviewVerdict
+    ?? null;
+  if (
+    authority
+    && input.formalReviewVerdict !== undefined
+    && input.formalReviewVerdict !== authority.binding.formalReviewVerdict
+  ) {
+    throw new RangeError("Mail body semantics cannot change the authorized formal review verdict");
+  }
   const canonical = canonicalBody(body);
+  if (effectBearing && credentialShapedMailTextPattern.test(canonical)) {
+    throw new RangeError("Mail reply effect body contains credential-shaped text");
+  }
   const bodySha256 = sha256(canonical);
   const bodyByteLength = Buffer.byteLength(canonical, "utf8");
   const replyFingerprint = fingerprintCanonicalRequest({
@@ -364,7 +435,8 @@ export function classifyGitHubMailReply(
     bodyByteLength,
     expectedTargetSourceRevision,
     expectedHeadRevision,
-    formalReviewVerdict: input.formalReviewVerdict ?? null,
+    formalReviewVerdict,
+    authorityFingerprint: authority?.fingerprint ?? null,
   });
   const replyId = `stn-mail-reply:${digestSuffix(fingerprintCanonicalRequest({
     provider,
@@ -383,11 +455,11 @@ export function classifyGitHubMailReply(
     replay = true;
   }
 
-  const nextCausal = deriveCausalEffect(causal, replyId);
   let semantic: GitHubMailReplyAdmission["semantic"] = "private_coordination";
   let effect: GitHubMailReplyEffect | null = null;
 
   if (replyClass === "mail.github_comment_proposal") {
+    const nextCausal = deriveCausalEffect(causal, replyId);
     semantic = "conversation_comment_proposal";
     const effectIdentity = fingerprintCanonicalRequest({
       kind: "github_conversation_comment",
@@ -399,6 +471,7 @@ export function classifyGitHubMailReply(
       expectedHeadRevision,
       bodySha256,
       bodyByteLength,
+      authorityFingerprint: authority!.fingerprint,
     });
     const effectId = `stn-gh-comment:${digestSuffix(effectIdentity)}`;
     effect = deepFreeze({
@@ -420,12 +493,13 @@ export function classifyGitHubMailReply(
       causal: nextCausal,
     });
   } else if (replyClass === "mail.github_review_proposal") {
+    const nextCausal = deriveCausalEffect(causal, replyId);
     semantic = "formal_review_proposal";
     if (expectedHeadRevision === null) {
       throw new RangeError("Formal GitHub review proposals require an exact head revision");
     }
     const verdict = closedValue(
-      input.formalReviewVerdict,
+      formalReviewVerdict,
       ["APPROVE", "REQUEST_CHANGES"] as const,
       "Formal GitHub review verdict",
     );
@@ -440,6 +514,7 @@ export function classifyGitHubMailReply(
       verdict,
       bodySha256,
       bodyByteLength,
+      authorityFingerprint: authority!.fingerprint,
     });
     effect = deepFreeze({
       kind: "github_formal_review",
@@ -476,6 +551,9 @@ export function classifyGitHubMailReply(
     bodySha256,
     bodyByteLength,
     replyFingerprint,
+    authorityFingerprint: authority?.fingerprint ?? null,
+    messageDisposition: authority?.binding.messageDisposition ?? null,
+    effectCapability: authority?.binding.effectCapability ?? null,
     replay,
     effect,
     containsRawMailBody: false,
@@ -836,6 +914,103 @@ function validateThread(input: GitHubMailThreadBinding): GitHubMailThreadBinding
     pullRequestNumber,
     currentHeadRevision,
     continuesFromThreadId,
+  });
+}
+
+function validateReplyAuthority(input: {
+  authority: GitHubMailReplyAuthorityBinding | undefined;
+  thread: GitHubMailThreadBinding;
+  provider: "gmail" | "outlook";
+  mailboxBindingId: string;
+  providerThreadId: string;
+  inReplyToMessageId: string;
+  replyClass: GitHubMailReplyClass;
+}): { binding: GitHubMailReplyAuthorityBinding; fingerprint: string } {
+  const raw = input.authority;
+  if (!raw || raw.version !== GITHUB_MAIL_BRIDGE_VERSION) {
+    throw new RangeError("Effect-bearing mail replies require a server-owned authority binding");
+  }
+  const threadId = identity(raw.threadId, "Authorized STN thread ID", 240);
+  const provider = closedValue(raw.provider, ["gmail", "outlook"] as const, "Authorized mail provider");
+  const mailboxBindingId = identity(raw.mailboxBindingId, "Authorized mailbox binding ID", 240);
+  const providerThreadId = identity(raw.providerThreadId, "Authorized provider mail thread ID", 512);
+  const expectedInReplyToMessageId = identity(
+    raw.expectedInReplyToMessageId,
+    "Authorized provider mail parent message ID",
+    512,
+  );
+  const messageDisposition = closedValue(
+    raw.messageDisposition,
+    githubMailMessageDispositions,
+    "Mail message disposition",
+  );
+  const effectCapability = closedValue(
+    raw.effectCapability,
+    githubMailEffectCapabilities,
+    "Mail effect capability",
+  );
+  const expectedTargetSourceRevision = identity(
+    raw.expectedTargetSourceRevision,
+    "Authorized GitHub target source revision",
+    512,
+  );
+  const expectedHeadRevision = raw.expectedHeadRevision === null
+    ? null
+    : fullRevision(raw.expectedHeadRevision, "Authorized pull request head revision");
+  const formalReviewVerdict = raw.formalReviewVerdict === null
+    ? null
+    : closedValue(
+        raw.formalReviewVerdict,
+        ["APPROVE", "REQUEST_CHANGES"] as const,
+        "Authorized formal GitHub review verdict",
+      );
+  const causal = validateCausal(raw.causal);
+
+  if (
+    threadId !== input.thread.threadId
+    || provider !== input.provider
+    || mailboxBindingId !== input.mailboxBindingId
+    || providerThreadId !== input.providerThreadId
+    || expectedInReplyToMessageId !== input.inReplyToMessageId
+  ) {
+    throw new RangeError("Mail reply authority binding does not match the observed provider reply");
+  }
+  if (messageDisposition !== "direct_human_reply") {
+    throw new RangeError("Automatic, bounce, and forwarded mail cannot authorize GitHub effects");
+  }
+  const requiredCapability = input.replyClass === "mail.github_comment_proposal"
+    ? "github_conversation_comment"
+    : "github_formal_review";
+  if (effectCapability !== requiredCapability) {
+    throw new RangeError("Mail text cannot select a GitHub provider operation outside its authority binding");
+  }
+  if (expectedHeadRevision === null || expectedHeadRevision !== input.thread.currentHeadRevision) {
+    throw new RangeError("Mail effect authority is stale for the current pull request head");
+  }
+  if (effectCapability === "github_formal_review" && formalReviewVerdict === null) {
+    throw new RangeError("Formal review authority requires an explicit trusted verdict");
+  }
+  if (effectCapability !== "github_formal_review" && formalReviewVerdict !== null) {
+    throw new RangeError("Conversation-comment authority cannot carry a formal review verdict");
+  }
+
+  const binding = deepFreeze({
+    version: GITHUB_MAIL_BRIDGE_VERSION,
+    threadId,
+    provider,
+    mailboxBindingId,
+    providerThreadId,
+    expectedInReplyToMessageId,
+    messageDisposition,
+    effectCapability,
+    expectedTargetSourceRevision,
+    expectedHeadRevision,
+    formalReviewVerdict,
+    causal,
+  });
+  return deepFreeze({
+    binding,
+    fingerprint: fingerprintCanonicalRequest(binding),
   });
 }
 
