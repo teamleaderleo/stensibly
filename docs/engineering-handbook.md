@@ -2,7 +2,7 @@
 
 **Status:** living contributor guide  
 **Owner:** #693  
-**Last reviewed against `main`:** `e6a586a0d5d8f0693b295680e89bca699ce41417`
+**Last reviewed against `main`:** `9c5fea6520cbc902c7d9221c5172228833e083a8`
 
 ## In simple words / purpose
 
@@ -88,25 +88,57 @@ boundary is untrusted until runtime admission succeeds.
 
 Use a named admission function that:
 
-1. inspects the original runtime value;
-2. rejects unsupported prototypes and decorated containers;
-3. snapshots own enumerable data descriptors without invoking accessors;
-4. validates required and unknown fields;
-5. validates original bytes where identity is authority-bearing;
-6. performs only the intended canonicalization;
-7. validates relationships and current status;
-8. returns a frozen admitted value.
+1. inspects the original runtime value through primitives appropriate to its trust
+   boundary;
+2. chooses and documents the caller key-set model when decorations or unknown fields
+   are relevant;
+3. rejects unsupported prototypes and invalid declared fields;
+4. snapshots admitted data without invoking accessors, callbacks, iterators, or other
+   caller-controlled behavior;
+5. applies unknown-field rejection only where the complete key set is safely and
+   deliberately observable;
+6. validates original bytes where identity is authority-bearing;
+7. performs only the intended canonicalization;
+8. validates relationships and current status;
+9. returns a frozen admitted value.
 
 Re-admit a structurally typed value received through an exported boundary. TypeScript
 shape proves compile-time compatibility inside a trusted compilation unit; it does not
 prove runtime provenance.
 
+### Caller key-set policy
+
+An arbitrary caller-owned object cannot both avoid caller key enumeration and prove
+that no undeclared own fields exist. Pick the boundary model explicitly:
+
+- **Closed after trusted key-set establishment:** unknown fields are invalid, and exact
+  keys are checked only after a bounded parser, decoder, or compiler-owned detached
+  record makes the complete key set safely observable.
+- **Projection-style fixed-descriptor admission:** inspect only declared own enumerable
+  data descriptors, ignore unrelated decorations, and keep those decorations out of
+  identity, authority, persistence, fingerprints, and output.
+- **Bounded enumerated caller admission:** enumerate the caller key set deliberately
+  under an explicit source/key/byte bound, contain enumeration failures, and reject
+  unknown fields when the contract is closed.
+
+Reading every known descriptor proves the known fields; it does not prove the absence
+of unknown fields. Changing a public or versioned input from unknown-field rejection to
+decoration discard is a compatibility decision, not an inspection-only refactor.
+
+Missing, accessor-backed, non-enumerable, malformed, or prototype-incompatible declared
+fields remain independently rejectable in every model. Arrays make the same separate
+choice for non-index decorations after length and direct-index admission.
+
+See [the caller-admission boundary decision](decisions/1247-caller-admission-boundaries.md)
+for rationale, examples, and test guidance.
+
 ### Why descriptors appear often
 
 Direct property reads, spreads, iteration, `Object.values`, and caller-controlled array
 methods may execute getters or inherited code. `Object.keys` ignores symbols and hidden
-fields. When those differences can alter authority, identity, persistence, or a public
-fixture contract, inspect `Object.getOwnPropertyDescriptors` and the prototype first.
+fields and also invokes caller key enumeration. Direct descriptor reads are useful when
+a boundary needs fixed-field projection without executing accessors or `ownKeys`; exact
+unknown-field rejection requires a separate complete-key-set decision.
 
 Use simpler validation for genuinely internal values whose creator and lifetime are
 already controlled by the same module.
@@ -237,7 +269,8 @@ unbounded content.
   would invalidate validation or hashing.
 - Snapshot accepted provider results into plain frozen JSON graphs.
 - Reject sparse arrays, accessor entries, custom prototypes, symbol fields, and array
-  decoration when index identity carries meaning.
+  decoration when index identity carries meaning and the chosen boundary policy makes
+  those fields invalid.
 - Normalize `-0`, reject non-finite numbers, bound node count, depth, and UTF-8 bytes,
   then serialize deterministically.
 - Sort canonical sets with an explicit comparator before fingerprinting or duplicate
@@ -290,8 +323,10 @@ These are repository conventions unless a stronger contract applies.
 
 ### Required proof by boundary
 
-- **Admission:** accepted canonical case, first rejected edge, unknown/hidden/symbol
-  fields, accessor counter, custom prototype, sparse/decorated arrays, duplicate aliases.
+- **Admission:** accepted canonical case, first rejected edge, declared-field
+  accessor/non-enumerable/prototype controls, and the chosen decoration/unknown-field
+  policy; for arrays also cover sparse/direct-index behavior and the applicable
+  decoration rule.
 - **Authority:** current holder, stale holder, exact issue time, exact expiry, later
   expiry, invalid trusted clock, revoked/suspended state, mismatched scope.
 - **Retry:** same command/same fingerprint replay, same command/different fingerprint
@@ -322,7 +357,7 @@ These are repository conventions unless a stronger contract applies.
 | --- | --- | --- |
 | Trimming or NFKC-normalizing an authority identity before validation | Admit exact source bytes first, then apply intentional provider equivalence | [Binding admission](code-atlas.md#1-strict-github-provider-binding-admission) |
 | Reading untrusted properties directly | Inspect descriptors and snapshot data properties without invoking accessors | [Binding admission](code-atlas.md#1-strict-github-provider-binding-admission) |
-| Using `Object.keys` as a complete record check | Reject symbols and hidden fields through descriptors | [Delegated read boundary](code-atlas.md#4-guarded-delegated-github-read-boundary) |
+| Treating fixed-descriptor projection or `Object.keys` as complete unknown-field proof | Choose closed-after-trusted-key-set, projection-style, or bounded-enumerated admission explicitly; require a complete key-set boundary when rejecting unknown fields | [Caller-admission decision](decisions/1247-caller-admission-boundaries.md) |
 | Trusting a TypeScript shape at runtime | Re-admit values crossing exported, provider, or persistence boundaries | [Delegated read boundary](code-atlas.md#4-guarded-delegated-github-read-boundary) |
 | Treating HTTP 2xx as exact provider authority | Verify the complete returned permission and repository scope before use or cache | [Provider guidance](#provider-credentials-and-returned-scope) |
 | Returning mutable validated objects | Snapshot and deeply freeze admitted records and result graphs | [Binding admission](code-atlas.md#1-strict-github-provider-binding-admission) |
