@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { runAuthorityFence } from "./authority-fence.js";
+import { runAuthorityFence, type RunAuthorityFence } from "./authority-fence.js";
 import { sha256, stableJson } from "./canonical-json.js";
+import { editContinuation } from "./continuation-edit.js";
 import { getRunnerContextPacket } from "./context-packets.js";
 import { getContinuation, type ContinuationProposal } from "./continuations.js";
 import type {
@@ -116,6 +117,17 @@ export interface RunnerAuthoritativeResumeInputV1 {
   expectedResumeFenceFingerprint: string;
 }
 
+export interface RunnerAuthoritativeResumeTerminalObservationV1 {
+  observationId: string;
+  type: RunnerObservationV1["type"];
+}
+
+export interface RunnerAuthoritativeResumeRunProjectionV1 {
+  status: WorkRun["status"];
+  generation: number;
+  leaseGeneration: number;
+}
+
 export interface RunnerAuthoritativeResumeResultV1 {
   version: typeof RUNNER_AUTHORITATIVE_RESUME_V1;
   disposition: "executed" | "settled_replay" | "waiting_reconciliation";
@@ -123,10 +135,12 @@ export interface RunnerAuthoritativeResumeResultV1 {
   commandId: string;
   commandFingerprint: string;
   resumeFenceFingerprint: string;
-  observations: readonly RunnerObservationV1[];
+  observationCount: number;
+  observationsSha256: string;
+  terminalObservation: RunnerAuthoritativeResumeTerminalObservationV1 | null;
   latestCheckpoint: RunnerExternalReferenceV1 | null;
   settlement: RunnerAdapterCommandSettlementRecord | null;
-  run: WorkRun;
+  run: RunnerAuthoritativeResumeRunProjectionV1;
   containsPrivateContent: false;
   containsCredentials: false;
 }
@@ -166,14 +180,27 @@ interface Candidate {
   project: string;
   checkpoint: RunnerExternalReferenceV1;
   prior: RunnerAdapterCommandLookup;
+  unresolvedPriorCommands: readonly RunnerAdapterCommandLookup[];
   inspection: RunnerResumeInspectionReceiptV1;
   fence: string;
 }
 
+interface RunnerCommandState {
+  latest: RunnerAdapterCommandLookup | null;
+  unresolved: readonly RunnerAdapterCommandLookup[];
+}
+
 const executableStatuses = new Set(["starting", "running", "waiting"]);
 const closedContinuationStatuses = new Set(["rejected", "cancelled", "superseded", "expired"]);
+const terminalObservationTypes = new Set<RunnerObservationV1["type"]>([
+  "paused",
+  "completion_proposed",
+  "failure_observed",
+  "interrupted",
+]);
 const maxObservations = 32;
 const maxObservationBytes = 256 * 1024;
+const maxPriorCommands = 64;
 
 /**
  * Authority-bearing resume stays separate from the read-only Control Room receipt.
@@ -204,7 +231,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
       inspectionFingerprint: candidate.inspection.receiptFingerprint,
       commandId: candidate.command.commandId,
       consequences: Object.freeze([
-        "Reserve one exact durable resume command under the current run authority fence.",
+        "Reserve one exact durable resume command under the current run authority generation.",
         "Invoke the admitted adapter resume path at most once for this command identity.",
         "Retain only bounded observation fingerprints, checkpoint references, and terminal settlement evidence.",
         "Leave any reserved command without proven settlement in reconciliation-required state.",
@@ -269,7 +296,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
       idempotencyKey: candidate.prior.command.idempotencyKey,
     });
     if (!sourcePrior) throw conflict("prior_command_disappeared", "Prior runner command disappeared after resume reservation");
-    const rechecked = await this.#evaluate(candidate.command, sourcePrior);
+    const rechecked = await this.#evaluate(candidate.command, sourcePrior, []);
     requireFence(input.expectedResumeFenceFingerprint, rechecked);
     requireEligible(rechecked.inspection);
     await this.#assertDispatchState(candidate.command, input.idempotencyKey, commandFingerprint);
@@ -302,6 +329,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
     });
 
     const consumer = new ResumeConsumer({
+      store: this.#o.store,
       ledger: this.#o.ledger,
       descriptor: this.#o.descriptor,
       command: candidate.command,
@@ -320,26 +348,58 @@ export class RunnerAuthoritativeResumeServiceV1 {
         candidate.command.commandId,
         commandFingerprint,
         input.expectedResumeFenceFingerprint,
-        [],
+        0,
+        digest([]),
+        null,
         null,
         null,
         await this.#o.ledger.getRun(candidate.command.runId),
       );
     }
-    const terminal = consumed.observations.at(-1);
-    if (!terminal) {
+
+    const observationsSha256 = digest(consumed.observations);
+    const terminal = consumed.observations.at(-1) ?? null;
+    if (
+      terminal === null
+      || !terminalObservationTypes.has(terminal.type)
+      || !(await this.#hasDurableTerminalObservation(candidate.command, terminal))
+      || !terminalCheckpointLineageIsComplete(candidate.command, terminal, consumed.latestCheckpoint)
+    ) {
       return result(
         "waiting_reconciliation",
         candidate.command.runId,
         candidate.command.commandId,
         commandFingerprint,
         input.expectedResumeFenceFingerprint,
-        [],
+        consumed.observations.length,
+        observationsSha256,
+        null,
         consumed.latestCheckpoint,
         null,
         consumed.run,
       );
     }
+
+    if (terminal.type === "interrupted") {
+      try {
+        await this.#advanceContinuationAfterInterruption(candidate.command, terminal);
+      } catch {
+        return result(
+          "waiting_reconciliation",
+          candidate.command.runId,
+          candidate.command.commandId,
+          commandFingerprint,
+          input.expectedResumeFenceFingerprint,
+          consumed.observations.length,
+          observationsSha256,
+          terminalProjection(terminal),
+          consumed.latestCheckpoint,
+          null,
+          await this.#o.ledger.getRun(candidate.command.runId),
+        );
+      }
+    }
+
     const settled = await this.#o.ledger.settleRunnerAdapterCommand({
       commandId: candidate.command.commandId,
       commandFingerprint,
@@ -347,7 +407,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
         version: 1,
         kind: "bounded_episode_completed",
         observationCount: consumed.observations.length,
-        observationsSha256: digest(consumed.observations),
+        observationsSha256,
         terminalObservationId: terminal.observationId,
         terminalObservationType: terminal.type,
         latestCheckpointExternalId: consumed.latestCheckpoint?.externalId ?? null,
@@ -362,7 +422,9 @@ export class RunnerAuthoritativeResumeServiceV1 {
       candidate.command.commandId,
       commandFingerprint,
       input.expectedResumeFenceFingerprint,
-      consumed.observations,
+      consumed.observations.length,
+      observationsSha256,
+      terminalProjection(terminal),
       consumed.latestCheckpoint,
       settled.settlement,
       consumed.run,
@@ -401,17 +463,35 @@ export class RunnerAuthoritativeResumeServiceV1 {
   ): Promise<RunnerAuthoritativeResumeResultV1> {
     const run = await this.#o.ledger.getRun(runId);
     if (!settlement) {
-      return result("waiting_reconciliation", runId, commandId, commandFingerprint, fence, [], null, null, run);
+      return result(
+        "waiting_reconciliation",
+        runId,
+        commandId,
+        commandFingerprint,
+        fence,
+        0,
+        digest([]),
+        null,
+        null,
+        null,
+        run,
+      );
     }
+    const admitted = admitRunnerAdapterCommandSettlementRecord(settlement);
     return result(
       "settled_replay",
       runId,
       commandId,
       commandFingerprint,
       fence,
-      [],
+      admitted.outcome.observationCount,
+      admitted.outcome.observationsSha256,
+      Object.freeze({
+        observationId: admitted.outcome.terminalObservationId,
+        type: admitted.outcome.terminalObservationType as RunnerObservationV1["type"],
+      }),
       null,
-      admitRunnerAdapterCommandSettlementRecord(settlement),
+      admitted,
       run,
     );
   }
@@ -424,12 +504,17 @@ export class RunnerAuthoritativeResumeServiceV1 {
     const checkpoint = currentCheckpoint(run);
     const continuation = currentContinuation(this.#o.store, run);
     const command = await this.#command(run, detail.item.project, checkpoint, continuation, idempotencyKey, observedAt);
-    const prior = latestRunnerCommand(this.#o.store, run.id);
-    if (!prior) throw conflict("prior_command_missing", "Runner resume requires a latest durable prior runner command");
-    return await this.#evaluate(command, prior);
+    const commandState = runnerCommandState(this.#o.store, run.id);
+    if (!commandState.latest) throw conflict("prior_command_missing", "Runner resume requires a durable prior runner command");
+    const prior = commandState.unresolved[0] ?? commandState.latest;
+    return await this.#evaluate(command, prior, commandState.unresolved);
   }
 
-  async #evaluate(command: RunnerResumeCommandV1, prior: RunnerAdapterCommandLookup): Promise<Candidate> {
+  async #evaluate(
+    command: RunnerResumeCommandV1,
+    prior: RunnerAdapterCommandLookup,
+    unresolvedPriorCommands: readonly RunnerAdapterCommandLookup[],
+  ): Promise<Candidate> {
     const observedAt = time(this.#o.now).toISOString();
     const run = await this.#o.ledger.getRun(command.runId);
     const detail = await this.#o.ledger.getItem(run.itemId);
@@ -442,9 +527,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
       || run.leaseGeneration !== command.leaseGeneration
     ) throw conflict("run_identity_changed", "Runner resume run, item, project, or generation changed");
     const authority = runAuthorityFence(run);
-    if (!authority || stableJson(authority) !== stableJson(command.authority)) {
-      throw conflict("authority_changed", "Runner resume authority fence changed");
-    }
+    requireCompatibleAuthority(command.authority, authority, observedAt, true, "authority_changed");
     const checkpoint = currentCheckpoint(run);
     if (stableJson(checkpoint) !== stableJson(command.checkpointRef)) {
       throw conflict("checkpoint_changed", "Runner resume checkpoint reference changed");
@@ -473,9 +556,19 @@ export class RunnerAuthoritativeResumeServiceV1 {
       observedAt,
       traceId: command.correlationId,
     });
-    const adapterSnapshot = await this.#o.adapter.inspectCapabilities(probe);
+    let adapterSnapshot: EffectiveToolSurfaceSnapshot;
+    try {
+      adapterSnapshot = await this.#o.adapter.inspectCapabilities(probe);
+    } catch {
+      throw conflict("capability_inspection_failed", "Runner resume capability inspection failed");
+    }
     const capabilityBinding = bindSnapshot(this.#o.descriptor, probe, adapterSnapshot, command);
-    const evidence = await this.#o.evidenceSource.read({ command, run, checkpoint, observedAt });
+    let evidence: RunnerAuthoritativeResumeEvidenceV1;
+    try {
+      evidence = await this.#o.evidenceSource.read({ command, run, checkpoint, observedAt });
+    } catch {
+      throw conflict("evidence_unavailable", "Runner resume authoritative evidence read failed");
+    }
     let inspection: RunnerResumeInspectionReceiptV1;
     try {
       inspection = compileRunnerResumeInspectionV1({
@@ -487,7 +580,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
         currentContinuation: continuation,
         checkpointToolSurface: evidence.checkpointToolSurface,
         currentCapabilityBinding: capabilityBinding,
-        currentAuthority: authority,
+        currentAuthority: command.authority,
         grantRefs: evidence.grantRefs,
         requiredApprovalRefs: evidence.requiredApprovalRefs,
         approvalRefs: evidence.approvalRefs,
@@ -496,8 +589,8 @@ export class RunnerAuthoritativeResumeServiceV1 {
         latestEvidenceRefs: evidence.latestEvidenceRefs ?? [],
         observedAt,
       });
-    } catch (error) {
-      throw conflict("evidence_malformed", error instanceof Error ? error.message : "Runner resume evidence is malformed");
+    } catch {
+      throw conflict("evidence_malformed", "Runner resume authoritative evidence is malformed");
     }
     return {
       command,
@@ -505,6 +598,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
       project,
       checkpoint,
       prior,
+      unresolvedPriorCommands: Object.freeze([...unresolvedPriorCommands]),
       inspection,
       fence: fenceFingerprint({
         run,
@@ -516,6 +610,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
         capabilityBinding,
         evidence,
         prior,
+        unresolvedPriorCommands,
         requiredCapabilities: command.requiredCapabilities,
         capabilityGrantRefs: command.capabilityGrantRefs,
       }),
@@ -579,31 +674,94 @@ export class RunnerAuthoritativeResumeServiceV1 {
   }
 
   async #assertDispatchState(command: RunnerResumeCommandV1, idempotencyKey: string, commandFingerprint: string): Promise<void> {
+    const observedAt = time(this.#o.now).toISOString();
     const run = await this.#o.ledger.getRun(command.runId);
     const detail = await this.#o.ledger.getItem(run.itemId);
-    this.#assertRun(run, detail.item.project, time(this.#o.now).toISOString());
+    this.#assertRun(run, detail.item.project, observedAt);
+    requireCompatibleAuthority(command.authority, runAuthorityFence(run), observedAt, true, "dispatch_fence_changed");
     if (
       run.itemId !== command.itemId
       || detail.item.project !== command.project
       || run.generation !== command.runGeneration
       || run.leaseGeneration !== command.leaseGeneration
-      || stableJson(runAuthorityFence(run)) !== stableJson(command.authority)
       || stableJson(currentCheckpoint(run)) !== stableJson(command.checkpointRef)
       || stableJson(currentContinuation(this.#o.store, run)) !== stableJson(command.continuation)
     ) throw conflict("dispatch_fence_changed", "Runner resume decisive run evidence changed before dispatch");
-    const latest = latestRunnerCommand(this.#o.store, command.runId);
+    const commandState = runnerCommandState(this.#o.store, command.runId);
     const reserved = await this.#o.ledger.getRunnerAdapterCommand({ idempotencyKey });
+    const otherUnresolved = commandState.unresolved.filter((entry) => entry.command.commandId !== command.commandId);
     if (
-      latest?.command.commandId !== command.commandId
+      commandState.latest?.command.commandId !== command.commandId
+      || otherUnresolved.length > 0
       || !reserved
       || reserved.command.commandId !== command.commandId
       || reserved.command.commandFingerprint !== commandFingerprint
       || reserved.settlement !== null
-    ) throw conflict("reservation_changed", "Runner resume reservation changed before dispatch");
+    ) throw conflict("reservation_changed", "Runner resume reservation or outstanding command state changed before dispatch");
+  }
+
+  async #hasDurableTerminalObservation(
+    command: RunnerResumeCommandV1,
+    terminal: RunnerObservationV1,
+  ): Promise<boolean> {
+    let detail: Awaited<ReturnType<RunnerAuthoritativeResumeLedgerV1["getItem"]>>;
+    try {
+      detail = await this.#o.ledger.getItem(command.itemId);
+    } catch {
+      return false;
+    }
+    const terminalFingerprint = digest(terminal);
+    return detail.events.some((event) => {
+      const payload = event.payload;
+      return event.actorId === this.#o.actor.id
+        && event.type === "run.adapter.observation"
+        && payload.version === RUNNER_AUTHORITATIVE_RESUME_V1
+        && payload.observationId === terminal.observationId
+        && payload.observationType === terminal.type
+        && payload.observationFingerprint === terminalFingerprint
+        && payload.commandId === command.commandId
+        && payload.runId === command.runId
+        && payload.runGeneration === command.runGeneration
+        && payload.leaseGeneration === command.leaseGeneration
+        && payload.adapterId === command.adapterId
+        && payload.adapterVersion === command.adapterVersion
+        && payload.profileId === command.profileId
+        && payload.profileVersion === command.profileVersion
+        && payload.containsPrivateContent === false
+        && payload.containsCredentials === false;
+    });
+  }
+
+  async #advanceContinuationAfterInterruption(
+    command: RunnerResumeCommandV1,
+    terminal: Extract<RunnerObservationV1, { type: "interrupted" }>,
+  ): Promise<void> {
+    const current = getContinuation(this.#o.store, command.continuation.id);
+    if (
+      current.generation !== command.continuation.generation
+      || (current.status !== "proposed" && current.status !== "deferred")
+    ) throw conflict("continuation_changed", "Runner resume continuation changed before interruption settlement");
+    const advanced = editContinuation(this.#o.store, {
+      id: current.id,
+      actor: this.#o.actor,
+      expectedGeneration: current.generation,
+      instruction: current.instruction,
+      note: "Advance continuation lineage after a durable runner interruption.",
+      idempotencyKey: deterministicId("resume-continuation", command.commandId, terminal.observationId),
+    });
+    if (advanced.generation !== command.continuation.generation + 1) {
+      throw conflict("continuation_lineage_not_advanced", "Runner resume interruption did not advance continuation lineage exactly once");
+    }
+    const run = await this.#o.ledger.getRun(command.runId);
+    const durable = currentContinuation(this.#o.store, run);
+    if (durable.id !== command.continuation.id || durable.generation !== advanced.generation) {
+      throw conflict("continuation_lineage_not_durable", "Runner resume interruption continuation lineage was not durably readable");
+    }
   }
 }
 
 class ResumeConsumer {
+  readonly #store: StensiblyStore;
   readonly #ledger: RunnerAuthoritativeResumeLedgerV1;
   readonly #descriptor: RunnerAdapterDescriptorV1;
   readonly #command: RunnerResumeCommandV1;
@@ -617,6 +775,7 @@ class ResumeConsumer {
   #bytes = 0;
 
   constructor(input: {
+    store: StensiblyStore;
     ledger: RunnerAuthoritativeResumeLedgerV1;
     descriptor: RunnerAdapterDescriptorV1;
     command: RunnerResumeCommandV1;
@@ -625,6 +784,7 @@ class ResumeConsumer {
     leaseSeconds: number;
     now: () => Date;
   }) {
+    this.#store = input.store;
     this.#ledger = input.ledger;
     this.#descriptor = parseRunnerAdapterDescriptorV1(input.descriptor);
     this.#command = parseRunnerResumeCommandV1(input.command);
@@ -648,7 +808,7 @@ class ResumeConsumer {
         const canonical = stableJson(observation);
         const existing = this.#seen.get(observation.observationId);
         if (existing !== undefined) {
-          if (existing !== canonical) throw new RangeError(`Runner observation ${observation.observationId} was replayed with different content`);
+          if (existing !== canonical) throw new RangeError("Runner observation replay changed content");
           continue;
         }
         if (this.#seen.size >= maxObservations) throw new RangeError("Runner resume episode exceeds the observation count bound");
@@ -670,24 +830,36 @@ class ResumeConsumer {
   }
 
   async #refresh(): Promise<void> {
-    if (Date.parse(this.#command.authority.expiresAt) <= time(this.#now).getTime()) {
-      throw conflict("authority_expired_during_resume", "Runner resume authority expired during adapter execution");
-    }
     this.#run = await this.#ledger.getRun(this.#command.runId);
     this.#assertRun(this.#run);
   }
 
   #assertRun(run: WorkRun): void {
-    const authority = runAuthorityFence(run);
+    const observedAt = time(this.#now).toISOString();
     if (
       !executableStatuses.has(run.status)
       || run.id !== this.#command.runId
       || run.itemId !== this.#command.itemId
       || run.generation !== this.#command.runGeneration
       || run.leaseGeneration !== this.#command.leaseGeneration
-      || stableJson(authority) !== stableJson(this.#command.authority)
-      || authority?.holderId !== this.#actor.id
-    ) throw conflict("authority_changed_during_resume", "Runner resume no longer matches current durable authority");
+    ) throw conflict("authority_changed_during_resume", "Runner resume no longer matches current durable run authority");
+    requireCompatibleAuthority(
+      this.#command.authority,
+      runAuthorityFence(run),
+      observedAt,
+      false,
+      "authority_changed_during_resume",
+    );
+    if (stableJson(currentContinuation(this.#store, run)) !== stableJson(this.#command.continuation)) {
+      throw conflict("continuation_changed_during_resume", "Runner resume continuation changed during adapter execution");
+    }
+    if (stableJson(currentCheckpoint(run)) !== stableJson(this.#latestCheckpoint)) {
+      throw conflict("checkpoint_changed_during_resume", "Runner resume checkpoint changed without an admitted adapter observation");
+    }
+    const state = runnerCommandState(this.#store, run.id);
+    if (state.latest?.command.commandId !== this.#command.commandId) {
+      throw conflict("command_changed_during_resume", "Runner resume command is no longer the latest durable command");
+    }
   }
 
   async #receipt(observation: RunnerObservationV1): Promise<void> {
@@ -750,7 +922,7 @@ class ResumeConsumer {
   }
 
   #checkpoint(reference: RunnerExternalReferenceV1, requireNewer: boolean): void {
-    const previous = this.#command.checkpointRef?.generation;
+    const previous = this.#latestCheckpoint?.generation;
     if (
       reference.kind !== "checkpoint"
       || reference.adapterId !== this.#command.adapterId
@@ -763,7 +935,9 @@ class ResumeConsumer {
   }
 
   #remainingLease(): number {
-    const seconds = Math.floor((Date.parse(this.#command.authority.expiresAt) - time(this.#now).getTime()) / 1_000);
+    const expiresAt = runAuthorityFence(this.#run)?.expiresAt;
+    if (!expiresAt) throw conflict("authority_missing_during_resume", "Runner resume authority disappeared during adapter execution");
+    const seconds = Math.floor((Date.parse(expiresAt) - time(this.#now).getTime()) / 1_000);
     return Math.max(30, Math.min(this.#leaseSeconds, seconds));
   }
 }
@@ -843,13 +1017,26 @@ function currentCheckpoint(run: WorkRun): RunnerExternalReferenceV1 {
   return checkpoint;
 }
 
-function latestRunnerCommand(store: StensiblyStore, runId: string): RunnerAdapterCommandLookup | null {
+function runnerCommandState(store: StensiblyStore, runId: string): RunnerCommandState {
   ensureRunnerAdapterCommandSchema(store);
-  const row = store.db.query<{ idempotency_key: string }, [string]>(`
+  const rows = store.db.query<{ idempotency_key: string }, [string, number]>(`
     SELECT idempotency_key FROM runner_adapter_commands
-    WHERE run_id = ?1 ORDER BY reserved_at DESC, command_id DESC LIMIT 1
-  `).get(runId);
-  return row ? getSqliteRunnerAdapterCommand(store, { idempotencyKey: row.idempotency_key }) : null;
+    WHERE run_id = ?1
+    ORDER BY reserved_at DESC, command_id DESC
+    LIMIT ?2
+  `).all(runId, maxPriorCommands + 1);
+  if (rows.length > maxPriorCommands) {
+    throw conflict("prior_command_history_unbounded", "Runner resume prior command history exceeds the bounded authoritative scan");
+  }
+  const commands = rows.map((row) => getSqliteRunnerAdapterCommand(store, { idempotencyKey: row.idempotency_key }));
+  if (commands.some((entry) => entry === null)) {
+    throw conflict("prior_command_missing", "Runner resume prior command lookup became incomplete");
+  }
+  const admitted = commands as RunnerAdapterCommandLookup[];
+  return Object.freeze({
+    latest: admitted[0] ?? null,
+    unresolved: Object.freeze(admitted.filter((entry) => entry.settlement === null)),
+  });
 }
 
 function bindSnapshot(
@@ -889,6 +1076,7 @@ function fenceFingerprint(input: {
   capabilityBinding: RunnerCapabilityCommandBindingV1;
   evidence: RunnerAuthoritativeResumeEvidenceV1;
   prior: RunnerAdapterCommandLookup;
+  unresolvedPriorCommands: readonly RunnerAdapterCommandLookup[];
   requiredCapabilities: readonly ToolSurfaceCapabilityRequirementInput[];
   capabilityGrantRefs: readonly string[];
 }): string {
@@ -900,7 +1088,7 @@ function fenceFingerprint(input: {
     runId: input.run.id,
     runGeneration: input.run.generation,
     leaseGeneration: input.run.leaseGeneration,
-    authority: runAuthorityFence(input.run),
+    authority: authorityGeneration(runAuthorityFence(input.run)),
     checkpoint: input.checkpoint,
     continuation: input.continuation,
     adapter: {
@@ -928,14 +1116,70 @@ function fenceFingerprint(input: {
     grants: input.evidence.grantRefs,
     requiredApprovalRefs: [...input.evidence.requiredApprovalRefs],
     approvals: input.evidence.approvalRefs,
-    priorCommand: {
-      commandId: input.prior.command.commandId,
-      commandFingerprint: input.prior.command.commandFingerprint,
-      idempotencyKey: input.prior.command.idempotencyKey,
-      settlementOutcomeSha256: input.prior.settlement?.outcomeSha256 ?? null,
-    },
+    priorCommand: commandIdentity(input.prior),
+    unresolvedPriorCommands: input.unresolvedPriorCommands.map(commandIdentity),
     interruption: input.evidence.interruption,
   });
+}
+
+function commandIdentity(input: RunnerAdapterCommandLookup) {
+  return {
+    commandId: input.command.commandId,
+    commandFingerprint: input.command.commandFingerprint,
+    idempotencyKey: input.command.idempotencyKey,
+    runGeneration: input.command.runGeneration,
+    leaseGeneration: input.command.leaseGeneration,
+    settlementOutcomeSha256: input.settlement?.outcomeSha256 ?? null,
+  };
+}
+
+function authorityGeneration(authority: RunAuthorityFence | null) {
+  return authority === null
+    ? null
+    : {
+      resource: authority.resource,
+      holderId: authority.holderId,
+      generation: authority.generation,
+    };
+}
+
+function requireCompatibleAuthority(
+  expected: RunAuthorityFence,
+  current: RunAuthorityFence | null,
+  observedAt: string,
+  requireNoExpiryNarrowing: boolean,
+  reason: string,
+): void {
+  const observedMs = Date.parse(observedAt);
+  if (
+    current === null
+    || current.resource !== expected.resource
+    || current.holderId !== expected.holderId
+    || current.generation !== expected.generation
+    || current.generation < 1
+    || Date.parse(current.expiresAt) <= observedMs
+    || (requireNoExpiryNarrowing && Date.parse(current.expiresAt) < Date.parse(expected.expiresAt))
+  ) throw conflict(reason, "Runner resume authoritative lease generation, holder, or freshness changed");
+}
+
+function terminalCheckpointLineageIsComplete(
+  command: RunnerResumeCommandV1,
+  terminal: RunnerObservationV1,
+  latestCheckpoint: RunnerExternalReferenceV1 | null,
+): boolean {
+  if (terminal.type !== "interrupted") return true;
+  const checkpoint = terminal.checkpointRef;
+  const priorGeneration = command.checkpointRef?.generation;
+  return checkpoint !== null
+    && latestCheckpoint !== null
+    && checkpoint.kind === "checkpoint"
+    && checkpoint.externalId !== null
+    && checkpoint.digest !== null
+    && checkpoint.generation !== null
+    && priorGeneration !== null
+    && priorGeneration !== undefined
+    && checkpoint.generation > priorGeneration
+    && stableJson(checkpoint) === stableJson(latestCheckpoint);
 }
 
 function requireFence(expected: string, candidate: Candidate): void {
@@ -948,13 +1192,27 @@ function requireEligible(receipt: RunnerResumeInspectionReceiptV1): void {
   throw conflict(failed?.code ?? "resume_not_eligible", failed?.summary ?? "Runner resume evidence is not fully eligible");
 }
 
+function terminalProjection(terminal: RunnerObservationV1): RunnerAuthoritativeResumeTerminalObservationV1 {
+  return Object.freeze({ observationId: terminal.observationId, type: terminal.type });
+}
+
+function publicRun(run: WorkRun): RunnerAuthoritativeResumeRunProjectionV1 {
+  return Object.freeze({
+    status: run.status,
+    generation: run.generation,
+    leaseGeneration: run.leaseGeneration,
+  });
+}
+
 function result(
   disposition: RunnerAuthoritativeResumeResultV1["disposition"],
   runId: string,
   commandId: string,
   commandFingerprint: string,
   resumeFenceFingerprint: string,
-  observations: readonly RunnerObservationV1[],
+  observationCount: number,
+  observationsSha256: string,
+  terminalObservation: RunnerAuthoritativeResumeTerminalObservationV1 | null,
   latestCheckpoint: RunnerExternalReferenceV1 | null,
   settlement: RunnerAdapterCommandSettlementRecord | null,
   run: WorkRun,
@@ -966,10 +1224,12 @@ function result(
     commandId,
     commandFingerprint,
     resumeFenceFingerprint,
-    observations: Object.freeze([...observations]),
+    observationCount,
+    observationsSha256,
+    terminalObservation,
     latestCheckpoint,
     settlement,
-    run,
+    run: publicRun(run),
     containsPrivateContent: false,
     containsCredentials: false,
   });
