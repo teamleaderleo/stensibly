@@ -71,9 +71,11 @@ export interface ReconcileGmailMailboxInput {
 }
 
 const historyIdPattern = /^[1-9][0-9]{0,39}$/u;
-const pubSubIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,1023}$/u;
+const providerIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/+=-]{0,1023}$/u;
 const maximumPubSubDataBytes = 16 * 1024;
 const maximumHistoryPages = 32;
+const maximumHistoryRecordsPerPage = 500;
+const maximumChangeItemsPerRecord = 500;
 const defaultRenewalWindowMs = 24 * 60 * 60_000;
 
 export function parseGmailPubSubNotification(
@@ -86,11 +88,16 @@ export function parseGmailPubSubNotification(
 ): GmailPubSubNotification {
   const envelope = record(value, "Gmail Pub/Sub envelope");
   const message = record(envelope.message, "Gmail Pub/Sub message");
-  const data = exactText(message.data, "Gmail Pub/Sub data", maximumPubSubDataBytes * 2);
+  const data = exactText(
+    message.data,
+    "Gmail Pub/Sub data",
+    maximumPubSubDataBytes * 2,
+  );
   const decoded = decodeBase64Url(data);
   if (decoded.byteLength > maximumPubSubDataBytes) {
     throw new RangeError("Gmail Pub/Sub data exceeds the configured bound");
   }
+
   let payload: unknown;
   try {
     payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decoded));
@@ -98,24 +105,36 @@ export function parseGmailPubSubNotification(
     throw new RangeError("Gmail Pub/Sub data must be UTF-8 JSON");
   }
   const body = record(payload, "Gmail Pub/Sub data");
-  const expectedMailbox = canonicalMailboxAddress(input.expectedMailboxAddress);
-  const observedMailbox = canonicalMailboxAddress(body.emailAddress);
-  if (observedMailbox !== expectedMailbox) {
+  if (
+    canonicalMailboxAddress(body.emailAddress)
+    !== canonicalMailboxAddress(input.expectedMailboxAddress)
+  ) {
     throw new RangeError("Gmail Pub/Sub mailbox binding mismatch");
   }
-  const mailboxBindingId = safeProviderId(input.mailboxBindingId, "Mailbox binding ID");
-  const notificationId = safeProviderId(message.messageId, "Gmail Pub/Sub message ID");
-  const targetHistoryId = gmailHistoryId(body.historyId, "Gmail notification history ID");
-  const publishedAt = canonicalTimestamp(message.publishTime, "Gmail Pub/Sub publish time");
-  const receivedAt = canonicalTimestamp(input.receivedAt, "Gmail notification receipt time");
+
+  const publishedAt = normalizedTimestamp(
+    message.publishTime,
+    "Gmail Pub/Sub publish time",
+  );
+  const receivedAt = normalizedTimestamp(
+    input.receivedAt,
+    "Gmail notification receipt time",
+  );
   if (Date.parse(publishedAt) > Date.parse(receivedAt) + 5 * 60_000) {
     throw new RangeError("Gmail Pub/Sub publish time is too far in the future");
   }
+
   return Object.freeze({
     provider: "gmail" as const,
-    mailboxBindingId,
-    notificationId,
-    targetHistoryId,
+    mailboxBindingId: safeProviderId(input.mailboxBindingId, "Mailbox binding ID"),
+    notificationId: safeProviderId(
+      message.messageId,
+      "Gmail Pub/Sub message ID",
+    ),
+    targetHistoryId: gmailHistoryId(
+      body.historyId,
+      "Gmail notification history ID",
+    ),
     publishedAt,
     receivedAt,
   });
@@ -125,7 +144,7 @@ export async function reconcileGmailMailbox(
   input: ReconcileGmailMailboxInput,
 ): Promise<GmailMailboxReconciliationResult> {
   assertGmailState(input.state);
-  const now = canonicalTimestamp(input.now, "Gmail reconciliation time");
+  const now = normalizedTimestamp(input.now, "Gmail reconciliation time");
   const notification = input.notification;
   if (notification && notification.mailboxBindingId !== input.state.mailboxBindingId) {
     throw new RangeError("Gmail notification mailbox binding mismatch");
@@ -154,13 +173,13 @@ export async function reconcileGmailMailbox(
     });
   }
 
-  const observations: MailboxObservation[] = [];
-  let workingState = input.state;
   const renewalWindowMs = input.renewalWindowMs ?? defaultRenewalWindowMs;
   if (!Number.isSafeInteger(renewalWindowMs) || renewalWindowMs < 0) {
     throw new RangeError("Gmail watch renewal window is invalid");
   }
 
+  const observations: MailboxObservation[] = [];
+  let workingState = input.state;
   const expirationMs = workingState.subscription.expiresAt === null
     ? null
     : Date.parse(workingState.subscription.expiresAt);
@@ -191,24 +210,31 @@ export async function reconcileGmailMailbox(
       labelIds: [workingState.scope.externalId],
       labelFilterBehavior: "include",
     });
-    const renewedHistoryId = gmailHistoryId(renewed.historyId, "Gmail renewed watch history ID");
+    const renewedHistoryId = gmailHistoryId(
+      renewed.historyId,
+      "Gmail renewed watch history ID",
+    );
     if (compareHistoryIds(renewedHistoryId, currentCursor) < 0) {
       throw new RangeError("Gmail renewed watch cursor regressed");
     }
-    const expiration = epochMillisToIso(renewed.expiration, "Gmail watch expiration");
     workingState = replaceState(workingState, {
       subscription: {
         externalId: null,
-        expiresAt: expiration,
+        expiresAt: epochMillisToIso(
+          renewed.expiration,
+          "Gmail watch expiration",
+        ),
         health: emitRecovered ? "recovering" : "healthy",
-        recoveryReason: emitRecovered ? workingState.subscription.recoveryReason : null,
+        recoveryReason: emitRecovered
+          ? workingState.subscription.recoveryReason
+          : null,
       },
     });
   }
 
-  let pageToken: string | undefined;
-  let finalHistoryId = currentCursor;
   const admittedById = new Map<string, MailboxObservation>();
+  let finalHistoryId = currentCursor;
+  let pageToken: string | undefined;
   try {
     for (let pageIndex = 0; pageIndex < maximumHistoryPages; pageIndex += 1) {
       const page = await input.client.listHistory({
@@ -216,27 +242,35 @@ export async function reconcileGmailMailbox(
         labelId: workingState.scope.externalId,
         ...(pageToken ? { pageToken } : {}),
       });
-      const pageHistoryId = gmailHistoryId(page.historyId, "Gmail history page cursor");
+      const pageHistoryId = gmailHistoryId(
+        page.historyId,
+        "Gmail history page cursor",
+      );
       if (compareHistoryIds(pageHistoryId, currentCursor) < 0) {
         throw new RangeError("Gmail history cursor regressed");
       }
       if (compareHistoryIds(pageHistoryId, finalHistoryId) > 0) {
         finalHistoryId = pageHistoryId;
       }
+
       for (const observation of mapHistoryPage({
         page,
+        pageHistoryId,
         state: workingState,
         observedAt: notification?.publishedAt ?? now,
         receivedAt: now,
         knownOutboundProviderMessageIds:
-          input.knownOutboundProviderMessageIds ?? new Set<string>(),
+          input.knownOutboundProviderMessageIds ?? emptyProviderIds,
       })) {
         admittedById.set(observation.observationId, observation);
       }
-      pageToken = page.nextPageToken;
+
+      pageToken = optionalPageToken(page.nextPageToken);
       if (!pageToken) break;
       if (pageIndex === maximumHistoryPages - 1) {
-        throw new RangeError("Gmail history reconciliation exceeded the page bound");
+        throw new RangeError(
+          "Gmail history reconciliation exceeded the page bound",
+        );
       }
     }
   } catch (error) {
@@ -263,6 +297,15 @@ export async function reconcileGmailMailbox(
       });
     }
     throw error;
+  }
+
+  if (
+    notification
+    && compareHistoryIds(finalHistoryId, notification.targetHistoryId) < 0
+  ) {
+    throw new RangeError(
+      "Gmail history reconciliation did not reach notification cursor",
+    );
   }
 
   observations.push(...admittedById.values());
@@ -297,18 +340,36 @@ export async function reconcileGmailMailbox(
   });
 }
 
+const emptyProviderIds = new Set<string>();
+
 function mapHistoryPage(input: {
   page: GmailHistoryPage;
+  pageHistoryId: string;
   state: MailboxSubscriptionState;
   observedAt: string;
   receivedAt: string;
   knownOutboundProviderMessageIds: ReadonlySet<string>;
 }): MailboxObservation[] {
+  const records = boundedArray(
+    input.page.history,
+    maximumHistoryRecordsPerPage,
+    "Gmail history records",
+  );
   const observations: MailboxObservation[] = [];
-  for (const entry of input.page.history ?? []) {
+  for (const entry of records) {
     const historyId = gmailHistoryId(entry.id, "Gmail history entry ID");
-    for (const item of entry.messagesAdded ?? []) {
-      if (!hasLabel(item.message, input.state.scope.externalId)) continue;
+    if (compareHistoryIds(historyId, input.pageHistoryId) > 0) {
+      throw new RangeError("Gmail history entry exceeds the page cursor");
+    }
+
+    for (const item of boundedArray(
+      entry.messagesAdded,
+      maximumChangeItemsPerRecord,
+      "Gmail messages-added records",
+    )) {
+      if (!messageMatchesVerifiedScope(item.message, input.state.scope.externalId)) {
+        continue;
+      }
       observations.push(messageObservation({
         state: input.state,
         historyId,
@@ -320,8 +381,15 @@ function mapHistoryPage(input: {
         knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
       }));
     }
-    for (const item of entry.messagesDeleted ?? []) {
-      if (!hasLabel(item.message, input.state.scope.externalId)) continue;
+
+    for (const item of boundedArray(
+      entry.messagesDeleted,
+      maximumChangeItemsPerRecord,
+      "Gmail messages-deleted records",
+    )) {
+      if (!messageMatchesVerifiedScope(item.message, input.state.scope.externalId)) {
+        continue;
+      }
       observations.push(messageObservation({
         state: input.state,
         historyId,
@@ -333,7 +401,12 @@ function mapHistoryPage(input: {
         knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
       }));
     }
-    for (const item of entry.labelsAdded ?? []) {
+
+    for (const item of boundedArray(
+      entry.labelsAdded,
+      maximumChangeItemsPerRecord,
+      "Gmail labels-added records",
+    )) {
       if (!item.labelIds?.includes(input.state.scope.externalId)) continue;
       observations.push(labelObservation({
         state: input.state,
@@ -346,7 +419,12 @@ function mapHistoryPage(input: {
         knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
       }));
     }
-    for (const item of entry.labelsRemoved ?? []) {
+
+    for (const item of boundedArray(
+      entry.labelsRemoved,
+      maximumChangeItemsPerRecord,
+      "Gmail labels-removed records",
+    )) {
       if (!item.labelIds?.includes(input.state.scope.externalId)) continue;
       observations.push(labelObservation({
         state: input.state,
@@ -366,7 +444,7 @@ function mapHistoryPage(input: {
 function messageObservation(input: {
   state: MailboxSubscriptionState;
   historyId: string;
-  action: string;
+  action: "messageAdded" | "messageDeleted";
   eventType: "mail.message.created" | "mail.message.deleted";
   message: GmailHistoryMessageRef;
   observedAt: string;
@@ -385,7 +463,10 @@ function messageObservation(input: {
     eventType: input.eventType,
     providerCursor: input.historyId,
     providerMessageId: messageId,
-    providerThreadId: optionalProviderId(input.message.threadId, "Gmail thread ID"),
+    providerThreadId: optionalProviderId(
+      input.message.threadId,
+      "Gmail thread ID",
+    ),
     providerLabelId: null,
     observedAt: input.observedAt,
     receivedAt: input.receivedAt,
@@ -398,7 +479,7 @@ function messageObservation(input: {
 function labelObservation(input: {
   state: MailboxSubscriptionState;
   historyId: string;
-  action: string;
+  action: "labelAdded" | "labelRemoved";
   eventType: "mail.label.added" | "mail.label.removed";
   message: GmailHistoryMessageRef;
   observedAt: string;
@@ -417,11 +498,15 @@ function labelObservation(input: {
     eventType: input.eventType,
     providerCursor: input.historyId,
     providerMessageId: messageId,
-    providerThreadId: optionalProviderId(input.message.threadId, "Gmail thread ID"),
+    providerThreadId: optionalProviderId(
+      input.message.threadId,
+      "Gmail thread ID",
+    ),
     providerLabelId: input.state.scope.externalId,
     observedAt: input.observedAt,
     receivedAt: input.receivedAt,
-    wakeEligible: false,
+    wakeEligible: input.eventType === "mail.label.added"
+      && loopDisposition === "ordinary",
     loopDisposition,
   });
 }
@@ -451,7 +536,10 @@ function subscriptionObservation(input: {
 
 function replaceState(
   state: MailboxSubscriptionState,
-  changes: Partial<Omit<MailboxSubscriptionState, "version" | "provider" | "mailboxBindingId" | "scope">>,
+  changes: Partial<Omit<
+    MailboxSubscriptionState,
+    "version" | "provider" | "mailboxBindingId" | "scope"
+  >>,
 ): MailboxSubscriptionState {
   return createMailboxSubscriptionState({
     mailboxBindingId: state.mailboxBindingId,
@@ -477,13 +565,34 @@ function assertGmailState(state: MailboxSubscriptionState): void {
     || state.scope.kind !== "label"
     || state.cursor.kind !== "gmail_history_id"
   ) {
-    throw new RangeError("Gmail reconciliation requires label-scoped Gmail state");
+    throw new RangeError(
+      "Gmail reconciliation requires label-scoped Gmail state",
+    );
   }
   gmailHistoryId(state.cursor.value, "Gmail history cursor");
 }
 
-function hasLabel(message: GmailHistoryMessageRef, labelId: string): boolean {
-  return Array.isArray(message.labelIds) && message.labelIds.includes(labelId);
+function messageMatchesVerifiedScope(
+  message: GmailHistoryMessageRef,
+  labelId: string,
+): boolean {
+  if (message.labelIds === undefined) return true;
+  if (!Array.isArray(message.labelIds)) {
+    throw new RangeError("Gmail message label IDs are invalid");
+  }
+  return message.labelIds.includes(labelId);
+}
+
+function boundedArray<T>(
+  value: T[] | undefined,
+  maximumLength: number,
+  label: string,
+): T[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > maximumLength) {
+    throw new RangeError(`${label} exceed the configured bound`);
+  }
+  return value;
 }
 
 function compareHistoryIds(left: string, right: string): number {
@@ -497,15 +606,24 @@ function gmailHistoryId(value: unknown, label: string): string {
 }
 
 function safeProviderId(value: unknown, label: string): string {
-  return exactText(value, label, 1_024, pubSubIdPattern);
+  return exactText(value, label, 1_024, providerIdPattern);
 }
 
 function optionalProviderId(value: unknown, label: string): string | null {
-  return value === undefined || value === null ? null : safeProviderId(value, label);
+  return value === undefined || value === null
+    ? null
+    : safeProviderId(value, label);
+}
+
+function optionalPageToken(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  return exactText(value, "Gmail history page token", 4_096);
 }
 
 function canonicalMailboxAddress(value: unknown): string {
-  if (typeof value !== "string") throw new RangeError("Gmail mailbox address is invalid");
+  if (typeof value !== "string") {
+    throw new RangeError("Gmail mailbox address is invalid");
+  }
   const canonical = value.trim().toLowerCase();
   if (
     canonical.length < 3
@@ -530,6 +648,7 @@ function exactText(
     || value.length < 1
     || value.length > maximumLength
     || value !== value.trim()
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(value)
     || (pattern && !pattern.test(value))
   ) {
     throw new RangeError(`${label} is invalid`);
@@ -537,15 +656,13 @@ function exactText(
   return value;
 }
 
-function canonicalTimestamp(value: unknown, label: string): string {
+function normalizedTimestamp(value: unknown, label: string): string {
   if (typeof value !== "string" || value !== value.trim()) {
     throw new RangeError(`${label} is invalid`);
   }
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) throw new RangeError(`${label} is invalid`);
-  const canonical = new Date(parsed).toISOString();
-  if (canonical !== value) throw new RangeError(`${label} must be canonical ISO time`);
-  return canonical;
+  return new Date(parsed).toISOString();
 }
 
 function epochMillisToIso(value: unknown, label: string): string {
@@ -569,7 +686,8 @@ function record(value: unknown, label: string): Record<string, unknown> {
 function decodeBase64Url(value: string): Uint8Array {
   const normalized = value.replace(/-/gu, "+").replace(/_/gu, "/");
   const remainder = normalized.length % 4;
-  const padded = normalized + (remainder === 0 ? "" : "=".repeat(4 - remainder));
+  const padded = normalized
+    + (remainder === 0 ? "" : "=".repeat(4 - remainder));
   let binary: string;
   try {
     binary = atob(padded);
