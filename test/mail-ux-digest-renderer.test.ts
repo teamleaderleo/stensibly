@@ -29,11 +29,12 @@ function thread(
 }
 
 describe("mail UX digest renderer", () => {
-  test("starts with one reusable boot line and keeps source expansion behind compact rows", () => {
+  test("starts with one reusable boot line and carries state before source expansion", () => {
     const digest = compileMailDigest([
       thread("STN-REVIEW:Q7MP", {
         attentionClass: "review",
         title: "Review compact continuation fixture",
+        current: "PR #1494 requires human review",
         actionableAt: "2026-08-15T04:00:00.000Z",
       }),
       thread("STN-HANDOFF:K8RY", {
@@ -48,8 +49,9 @@ describe("mail UX digest renderer", () => {
     );
     expect(message.body).toContain("HOT · STN-REVIEW:Q7MP · 2h");
     expect(message.body).toContain("ACTIVE · STN-HANDOFF:K8RY · 0h");
+    expect(message.body).toContain("State: PR #1494 requires human review");
     expect(message.body).toContain("Source: github:teamleaderleo/stensibly#1493");
-    expect(message.bodyBytes).toBeLessThan(700);
+    expect(message.bodyBytes).toBeLessThan(800);
     expect(message.authorizesOperation).toBe(false);
     expect(message.authorizesMutation).toBe(false);
   });
