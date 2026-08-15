@@ -21,6 +21,7 @@ import {
   type RunnerAdapterCommandReservationRecord,
   type RunnerAdapterCommandSettlementRecord,
 } from "../src/runner-adapter-command-contracts";
+import { admitRunnerAdapterCommandLookup } from "../src/runner-adapter-command-read";
 
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/u;
 
@@ -48,10 +49,10 @@ export const get = query({
       ...(row.request as ReservationInput),
       reservedAt: new Date(row.reservedAt).toISOString(),
     } as RunnerAdapterCommandReservationRecord);
-    return {
+    return admitRunnerAdapterCommandLookup({
       command,
       settlement: admittedStoredSettlement(row),
-    };
+    });
   },
 });
 
@@ -294,14 +295,17 @@ function publicReservation(
   reservedAt: number,
   settlement: unknown,
 ) {
-  return {
-    outcome,
-    dispatchAuthorized,
+  const lookup = admitRunnerAdapterCommandLookup({
     command: {
       ...(request as ReservationInput),
       reservedAt: new Date(reservedAt).toISOString(),
     },
     settlement,
+  });
+  return {
+    outcome,
+    dispatchAuthorized,
+    ...lookup,
   };
 }
 
