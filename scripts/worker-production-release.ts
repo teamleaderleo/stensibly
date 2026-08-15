@@ -671,7 +671,11 @@ async function loadProductionBindingContract(): Promise<ProductionBindingContrac
         && binding.type !== "ratelimit"
         && binding.type !== "secret_text"
       )
-      || (binding.type === "plain_text" && typeof binding.text !== "string")
+      || (
+        binding.type === "plain_text"
+        && binding.text !== undefined
+        && typeof binding.text !== "string"
+      )
       || (binding.type !== "plain_text" && binding.text !== undefined)
     ) {
       throw new Error("Production Worker binding contract has an invalid requirement");

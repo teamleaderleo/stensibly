@@ -82,6 +82,47 @@ test("acknowledges only after authenticated durable reconciliation returns", asy
   expect(received).toEqual(envelope);
 });
 
+test("cancels an undeclared Gmail push body as soon as it exceeds 64 KiB", async () => {
+  let cancelled = false;
+  let runtimeCalls = 0;
+  const oversizedChunk = new Uint8Array(64 * 1024 + 1).fill(0x20);
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(oversizedChunk);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const mount = {
+    verifier: {
+      verifyAuthorizationHeader: async () => ({
+        issuer: "https://accounts.google.com",
+        audience: callback,
+        email: "push@example.iam.gserviceaccount.com",
+        subject: "123",
+      }),
+    } as unknown as GooglePubSubOidcVerifier,
+    runtime: {
+      receivePubSubEnvelope: async () => {
+        runtimeCalls += 1;
+        throw new Error("runtime must stay unreachable");
+      },
+    } as unknown as GmailUnattendedRuntime,
+  } satisfies GmailUnattendedMount;
+
+  const response = await handleGmailPubSubRequest(new Request(callback, {
+    method: "POST",
+    headers: { authorization: "Bearer accepted" },
+    body,
+    duplex: "half",
+  } as RequestInit), mount);
+
+  expect(response?.status).toBe(400);
+  expect(cancelled).toBe(true);
+  expect(runtimeCalls).toBe(0);
+});
+
 test("scheduled reconciliation bootstraps or catches up through the same runtime", async () => {
   let calls = 0;
   const mount = {

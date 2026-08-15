@@ -160,8 +160,19 @@ export async function handleGmailPubSubRequest(
   }
   let envelope: unknown;
   try {
-    const bytes = new Uint8Array(await request.arrayBuffer());
-    if (bytes.byteLength < 2 || bytes.byteLength > maximumPushBodyBytes) {
+    const declaredLength = request.headers.get("content-length");
+    if (declaredLength !== null) {
+      const parsedLength = Number(declaredLength);
+      if (
+        !Number.isSafeInteger(parsedLength)
+        || parsedLength < 2
+        || parsedLength > maximumPushBodyBytes
+      ) {
+        return new Response("Invalid push envelope", { status: 400 });
+      }
+    }
+    const bytes = await readBoundedRequestBytes(request, maximumPushBodyBytes);
+    if (bytes.byteLength < 2) {
       return new Response("Invalid push envelope", { status: 400 });
     }
     envelope = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -193,6 +204,49 @@ export async function runGmailScheduledReconciliation(
 ): Promise<void> {
   if (!mount) return;
   await mount.runtime.bootstrapOrCatchUp();
+}
+
+async function readBoundedRequestBytes(
+  request: Request,
+  maximumBytes: number,
+): Promise<Uint8Array> {
+  if (request.bodyUsed || !request.body) throw new Error("Invalid Gmail push body");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      length += next.value.byteLength;
+      if (length > maximumBytes) {
+        try {
+          await reader.cancel("Gmail push envelope exceeds the configured bound");
+        } catch {
+          // The stream may already be closed or errored.
+        }
+        throw new Error("Invalid Gmail push body");
+      }
+      chunks.push(next.value.slice());
+    }
+  } catch (error) {
+    try {
+      await reader.cancel("Gmail push envelope could not be read");
+    } catch {
+      // The stream may already be closed or errored.
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 const gmailConfigNames = [

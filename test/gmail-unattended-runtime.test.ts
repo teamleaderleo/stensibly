@@ -26,8 +26,12 @@ test("bootstraps users.watch, durably admits material push, and sweeps Label_5 o
       historyId: "100",
       expiration: String(Date.parse("2026-08-22T06:45:00.000Z")),
     }),
+    listLabelMessages: async () => [],
     listHistory: async () => {
       listHistoryCalls += 1;
+      if (listHistoryCalls === 1) {
+        return { historyId: "100", history: [] };
+      }
       return {
         historyId: "101",
         history: [{
@@ -74,7 +78,7 @@ test("bootstraps users.watch, durably admits material push, and sweeps Label_5 o
 
   const bootstrapped = await runtime.bootstrapOrCatchUp();
   expect(bootstrapped).toMatchObject({
-    revision: 1,
+    revision: 2,
     cursor: "100",
     admittedObservations: 0,
     archivedMessages: 0,
@@ -83,13 +87,13 @@ test("bootstraps users.watch, durably admits material push, and sweeps Label_5 o
   now = "2026-08-15T06:46:00.000Z";
   const pushed = await runtime.receivePubSubEnvelope(pubsubEnvelope("101"));
   expect(pushed).toMatchObject({
-    revision: 2,
+    revision: 3,
     cursor: "101",
     admittedObservations: 1,
     materialObservations: 1,
     archivedMessages: 1,
   });
-  expect(listHistoryCalls).toBe(1);
+  expect(listHistoryCalls).toBe(2);
   expect(hygieneLabels).toEqual([
     [labelId, "INBOX"],
     [labelId, "INBOX"],

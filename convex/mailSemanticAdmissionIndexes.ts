@@ -1,0 +1,2 @@
+export const mailSemanticAdmissionProviderMessageIndex =
+  "by_workspace_id_provider_mailbox_binding_id_provider_message_id" as const;

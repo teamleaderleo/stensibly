@@ -10,6 +10,11 @@ import {
   type GmailUnattendedEnvironment,
 } from "./gmail-unattended-worker.js";
 import {
+  handleOutlookNotificationRequest,
+  requireOutlookGraphBindings,
+  runOutlookScheduledReconciliation,
+} from "./outlook-graph-runtime.js";
+import {
   observeWorkerRequest,
   type WorkerVersionReceipt,
 } from "./worker-observability.js";
@@ -50,22 +55,56 @@ export interface CloudflareBindings extends GmailUnattendedEnvironment {
   STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED?: string;
   STENSIBLY_GITHUB_DELEGATED_READS_ENABLED?: string;
   STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED?: string;
+  STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID?: string;
+  STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN?: string;
+  STENSIBLY_OUTLOOK_CLIENT_STATE?: string;
+  STENSIBLY_OUTLOOK_FOLDER_ID?: string;
+  STENSIBLY_OUTLOOK_MAILBOX?: string;
+  STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID?: string;
+  STENSIBLY_OUTLOOK_NOTIFICATION_URL?: string;
   OAUTH_REGISTRATION_RATE_LIMITER?: OAuthRegistrationRateLimiter;
   CF_VERSION_METADATA?: CloudflareWorkerVersionMetadata;
 }
 
-interface WaitUntilContext {
+interface CloudflareExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
 const worker = {
-  async fetch(request: Request, env: CloudflareBindings): Promise<Response> {
-    const gmailMount = createGmailUnattendedMountFromEnv(env);
-    const gmailResponse = await handleGmailPubSubRequest(request, gmailMount);
-    if (gmailResponse) return gmailResponse;
+  async fetch(
+    request: Request,
+    env: CloudflareBindings,
+    context?: CloudflareExecutionContext,
+  ): Promise<Response> {
     return await observeWorkerRequest(
       request,
       async (observedRequest) => {
+        const pathname = new URL(observedRequest.url).pathname;
+        if (pathname === "/internal/gmail/pubsub") {
+          try {
+            const gmailResponse = await handleGmailPubSubRequest(
+              observedRequest,
+              createGmailUnattendedMountFromEnv(env),
+            );
+            return gmailResponse ?? new Response("Not Found", { status: 404 });
+          } catch {
+            return new Response("Service Unavailable", { status: 503 });
+          }
+        }
+
+        if (pathname === "/internal/outlook/notifications") {
+          try {
+            const bindings = requireOutlookGraphBindings(outlookEnvironment(env));
+            return await handleOutlookNotificationRequest(observedRequest, bindings, {
+              ...(context === undefined
+                ? {}
+                : { waitUntil: (promise) => context.waitUntil(promise) }),
+            });
+          } catch {
+            return new Response("Service Unavailable", { status: 503 });
+          }
+        }
+
         const admissionRejection = await enforceOAuthRegistrationAdmission(
           observedRequest,
           {
@@ -87,11 +126,19 @@ const worker = {
   async scheduled(
     _controller: unknown,
     env: CloudflareBindings,
-    context: WaitUntilContext,
+    context: CloudflareExecutionContext,
   ): Promise<void> {
-    const mount = createGmailUnattendedMountFromEnv(env);
-    if (!mount) return;
-    context.waitUntil(runGmailScheduledReconciliation(mount));
+    context.waitUntil((async () => {
+      const outlookBindings = requireOutlookGraphBindings(outlookEnvironment(env));
+      const gmailMount = createGmailUnattendedMountFromEnv(env);
+      const results = await Promise.allSettled([
+        runOutlookScheduledReconciliation(outlookBindings),
+        runGmailScheduledReconciliation(gmailMount),
+      ]);
+      if (results.some((result) => result.status === "rejected")) {
+        throw new Error("Scheduled mailbox reconciliation failed");
+      }
+    })());
   },
 };
 
@@ -151,6 +198,21 @@ export function stringEnvironment(env: CloudflareBindings): Record<string, strin
       env.STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED,
     STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: env.STENSIBLY_GITHUB_DELEGATED_READS_ENABLED,
     STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: env.STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED,
+  };
+}
+
+function outlookEnvironment(env: CloudflareBindings): Record<string, string | undefined> {
+  return {
+    CONVEX_URL: env.CONVEX_URL,
+    STENSIBLY_SERVICE_SECRET: env.STENSIBLY_SERVICE_SECRET,
+    STENSIBLY_WORKSPACE: env.STENSIBLY_WORKSPACE,
+    STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID: env.STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID,
+    STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN: env.STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN,
+    STENSIBLY_OUTLOOK_CLIENT_STATE: env.STENSIBLY_OUTLOOK_CLIENT_STATE,
+    STENSIBLY_OUTLOOK_FOLDER_ID: env.STENSIBLY_OUTLOOK_FOLDER_ID,
+    STENSIBLY_OUTLOOK_MAILBOX: env.STENSIBLY_OUTLOOK_MAILBOX,
+    STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID: env.STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID,
+    STENSIBLY_OUTLOOK_NOTIFICATION_URL: env.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
   };
 }
 

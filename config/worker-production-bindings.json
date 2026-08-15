@@ -37,9 +37,19 @@
     { "name": "STENSIBLY_GMAIL_PUBSUB_TOPIC", "type": "secret_text" },
     { "name": "STENSIBLY_GMAIL_PUBSUB_SUBSCRIPTION", "type": "secret_text" },
     { "name": "STENSIBLY_GMAIL_PUBSUB_SERVICE_ACCOUNT", "type": "secret_text" },
-    { "name": "STENSIBLY_GMAIL_PUBSUB_AUDIENCE", "type": "plain_text", "text": "https://api.stensibly.com/internal/gmail/pubsub" }
+    { "name": "STENSIBLY_GMAIL_PUBSUB_AUDIENCE", "type": "plain_text", "text": "https://api.stensibly.com/internal/gmail/pubsub" },
+    { "name": "STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID", "type": "secret_text" },
+    { "name": "STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN", "type": "secret_text" },
+    { "name": "STENSIBLY_OUTLOOK_CLIENT_STATE", "type": "secret_text" },
+    { "name": "STENSIBLY_OUTLOOK_FOLDER_ID", "type": "secret_text" },
+    { "name": "STENSIBLY_OUTLOOK_MAILBOX", "type": "plain_text", "text": "cheerleaderleo@outlook.com" },
+    { "name": "STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID", "type": "plain_text", "text": "outlook_operator_primary" },
+    { "name": "STENSIBLY_OUTLOOK_NOTIFICATION_URL", "type": "plain_text", "text": "https://api.stensibly.com/internal/outlook/notifications" }
   ],
   "forbiddenBindings": [
-    "STENSIBLY_GITHUB_PROVIDER_REPOSITORY"
+    "STENSIBLY_GITHUB_PROVIDER_REPOSITORY",
+    "STENSIBLY_OUTLOOK_OAUTH_CLIENT_SECRET",
+    "STENSIBLY_OUTLOOK_OAUTH_TENANT",
+    "STENSIBLY_OUTLOOK_SUBSCRIPTION_ID"
   ]
 }

@@ -30,7 +30,7 @@
     "test": "bun test ./test/*.test.ts",
     "test:browser": "playwright test",
     "test:browser:report": "playwright show-report artifacts/playwright-report",
-    "test:runtime-parity": "bun scripts/verify-runtime-parity.mjs",
+    "test:runtime-parity": "bun scripts/verify-runtime-parity.mjs && bun test/runtime/run-mail-thread-handle-runtime.ts && node --experimental-strip-types test/runtime/run-mail-thread-handle-runtime.ts",
     "test:convex": "vitest run",
     "typecheck": "bunx tsc --noEmit",
     "typecheck:browser": "bunx tsc --noEmit -p tsconfig.browser.json"

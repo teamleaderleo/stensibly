@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createApiV1 } from "./api-v1.js";
 import { createApp } from "./app.js";
 import { createContextPacketApi } from "./context-api.js";
+import type { ControlRoomResumeEvidenceSourceV1 } from "./control-room-resume-inspection.js";
 import { createControlRoomResumeInspectionRoutes } from "./control-room-resume-routes.js";
 import { createCorsMiddleware } from "./cors.js";
 import {
@@ -45,6 +46,7 @@ export interface ServerAppOptions {
   githubWebhook?: GitHubWebhookOptions;
   setupStatusObserver?: ProjectSetupStatusObserver;
   repositorySetupObservations?: ProjectRepositorySetupObservationLedger | null;
+  controlRoomResumeEvidenceSource?: ControlRoomResumeEvidenceSourceV1 | null;
 }
 
 export function createServerApp(
@@ -118,7 +120,12 @@ export function createServerApp(
   if (localSqliteBackend) {
     app.route(
       "/",
-      createControlRoomResumeInspectionRoutes(store, authenticator, authOptions),
+      createControlRoomResumeInspectionRoutes(
+        store,
+        authenticator,
+        authOptions,
+        options.controlRoomResumeEvidenceSource ?? null,
+      ),
     );
   }
   app.route("/", createApp(store, authOptions));

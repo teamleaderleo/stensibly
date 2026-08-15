@@ -7,7 +7,7 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 The hosted production composition defines **52** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:7bfd0624af4cc911fdcd72ff27212358aae0504d03808a815e993828981e4bb2
+full ChatGPT tool contract: sha256:f82210e43b894db93d456595d4bb1d1c7d4731cdf2fca1996cb999c2415455af
 names-only diagnostic:       sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745
 ```
 
@@ -46,6 +46,7 @@ Keep a compact set of frequent Stensibly workflow tools and GitHub discovery too
 - initial label and assignee changes remain outside the public GitHub write surface;
 - use host-native tool search or deferred loading when the host supports it;
 - keep `github_list_toolsets`, `github_search_tools`, and `github_get_tool` as the ChatGPT-compatible discovery fallback;
+- through guarded `github_call_tool`, use `list_directory` only with an exact immutable commit SHA and an explicit root `""` or canonical relative directory, and use `resolve_ref` only with a fully-qualified `refs/heads/...` or `refs/tags/...` identity before consuming the returned immutable commit SHA;
 - load or return exact schemas before execution;
 - validate a delegated call against the catalogue schema, project binding, repository scope, authority, approval policy, and provider budget;
 - keep write and admin operations approval-aware;
