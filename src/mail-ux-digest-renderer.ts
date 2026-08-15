@@ -15,7 +15,7 @@ export function renderMailDigestMessage(
 ): MaterialDigestMessage {
   const launchLine = "Read the latest Stensibly digest and continue one useful lane.";
   const rows = digest.rows.map((row) =>
-    `${row.temperature.toUpperCase()} · ${row.handle} · ${row.ageHours}h · ${row.title}\nNext: ${row.nextAction}\nSource: ${row.strongestSource}`
+    `${row.temperature.toUpperCase()} · ${row.handle} · ${row.ageHours}h · ${row.title}\nState: ${row.current}\nNext: ${row.nextAction}\nSource: ${row.strongestSource}`
   );
   const body = [
     launchLine,
