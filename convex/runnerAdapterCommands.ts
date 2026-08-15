@@ -10,7 +10,7 @@ import {
   upsertActor,
 } from "./lib/domain";
 import { sameCanonical } from "./lib/executionEnvelope";
-import { mutation } from "./lib/server";
+import { mutation, query } from "./lib/server";
 import { actorValidator, serviceArgs, type ActorInput } from "./lib/validators";
 import {
   admitRunnerAdapterCommandSettlementRecord,
@@ -18,6 +18,10 @@ import {
   runnerAdapterCommandOutcomeSha256,
   type RunnerAdapterCommandSettlementRecord,
 } from "../src/runner-adapter-command-contracts";
+import {
+  admitRunnerAdapterCommandReadResult,
+  normalizeRunnerAdapterCommandReadInput,
+} from "../src/runner-adapter-command-read";
 
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/u;
 
@@ -116,6 +120,34 @@ export const reserve = mutation({
       reservedAt,
     });
     return publicReservation("reserved", true, input, reservedAt, null);
+  },
+});
+
+export const getByIdempotencyKey = query({
+  args: {
+    ...serviceArgs,
+    idempotencyKey: v.string(),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const input = normalizeRunnerAdapterCommandReadInput({
+      idempotencyKey: args.idempotencyKey,
+    });
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) return null;
+    const row = await ctx.db
+      .query("runnerAdapterCommands")
+      .withIndex("by_workspace_id_and_idempotency_key", (q) =>
+        q.eq("workspaceId", workspace._id).eq("idempotencyKey", input.idempotencyKey)
+      )
+      .unique();
+    if (!row) return null;
+    return admitRunnerAdapterCommandReadResult({
+      request: row.request,
+      reservedAt: new Date(row.reservedAt).toISOString(),
+      settlement: admittedStoredSettlement(row),
+    });
   },
 });
 
