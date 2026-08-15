@@ -292,8 +292,23 @@ const gmailConfigNames = [
 ] as const satisfies readonly (keyof GmailUnattendedEnvironment)[];
 
 const knownReconciliationFailures: Readonly<Record<string, string>> = Object.freeze({
+  "Gmail Pub/Sub envelope must be a record": "gmail_push_envelope_invalid",
+  "Gmail Pub/Sub expected subscription is invalid": "gmail_push_expected_subscription_invalid",
+  "Gmail Pub/Sub subscription is invalid": "gmail_push_subscription_invalid",
   "Gmail Pub/Sub subscription binding mismatch": "gmail_push_subscription_mismatch",
+  "Gmail Pub/Sub message must be a record": "gmail_push_message_invalid",
+  "Gmail Pub/Sub data is invalid": "gmail_push_data_invalid",
+  "Gmail Pub/Sub data exceeds the configured bound": "gmail_push_data_too_large",
+  "Gmail Pub/Sub data must be base64url": "gmail_push_data_encoding_invalid",
+  "Gmail Pub/Sub data must be UTF-8 JSON": "gmail_push_data_json_invalid",
+  "Gmail mailbox address is invalid": "gmail_push_mailbox_invalid",
   "Gmail Pub/Sub mailbox binding mismatch": "gmail_push_mailbox_mismatch",
+  "Gmail Pub/Sub publish time is invalid": "gmail_push_publish_time_invalid",
+  "Gmail notification receipt time is invalid": "gmail_push_receipt_time_invalid",
+  "Gmail Pub/Sub publish time is too far in the future": "gmail_push_publish_time_future",
+  "Mailbox binding ID is invalid": "gmail_push_binding_id_invalid",
+  "Gmail Pub/Sub message ID is invalid": "gmail_push_message_id_invalid",
+  "Gmail notification history ID is invalid": "gmail_push_history_id_invalid",
   "Gmail mailbox binding must be bootstrapped before push delivery":
     "gmail_binding_not_bootstrapped",
   "Authenticated Gmail push generation does not match the deployed binding generation":
