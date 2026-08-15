@@ -36,9 +36,7 @@ export class GmailMailboxActionClient {
   }
 
   async archiveMessage(messageIdInput: string): Promise<void> {
-    const messageId = providerId(messageIdInput);
-    const token = await this.#accessToken();
-    await this.#modifyMessage(messageId, token);
+    await this.#modifyMessage(providerId(messageIdInput));
   }
 
   async archiveMessagesWithLabels(labelIdsInput: readonly string[]): Promise<number> {
@@ -47,16 +45,15 @@ export class GmailMailboxActionClient {
       throw new RangeError("Gmail archive label set is invalid");
     }
     let archived = 0;
-    const token = await this.#accessToken();
     for (let round = 0; round < maximumArchiveRounds; round += 1) {
-      const messageIds = await this.#listMessageIds(labelIds, token);
+      const messageIds = await this.#listMessageIds(labelIds);
       if (messageIds.length === 0) return archived;
       for (const messageId of messageIds) {
-        await this.#modifyMessage(messageId, token);
+        await this.#modifyMessage(messageId);
         archived += 1;
       }
     }
-    const remaining = await this.#listMessageIds(labelIds, token);
+    const remaining = await this.#listMessageIds(labelIds);
     if (remaining.length > 0) throw new GmailMailboxActionError();
     return archived;
   }
@@ -69,22 +66,48 @@ export class GmailMailboxActionClient {
     }
   }
 
-  async #listMessageIds(labelIds: readonly string[], token: string): Promise<readonly string[]> {
-    const url = new URL(`${this.#apiBaseUrl}/gmail/v1/users/me/messages`);
-    url.searchParams.set("maxResults", "100");
-    url.searchParams.set("includeSpamTrash", "false");
-    for (const labelId of labelIds) url.searchParams.append("labelIds", labelId);
-    let response: Response;
+  async #request(url: string | URL, init: RequestInit): Promise<Response> {
+    let token = await this.#accessToken();
+    let response = await this.#dispatch(url, init, token);
+    if (
+      (response.status === 401 || response.status === 403)
+      && typeof this.#tokens.invalidateAccessToken === "function"
+    ) {
+      try {
+        await this.#tokens.invalidateAccessToken(token);
+      } catch {
+        throw new GmailMailboxActionError();
+      }
+      token = await this.#accessToken();
+      response = await this.#dispatch(url, init, token);
+    }
+    return response;
+  }
+
+  async #dispatch(
+    url: string | URL,
+    init: RequestInit,
+    token: string,
+  ): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.set("Accept", "application/json");
+    headers.set("Authorization", `Bearer ${token}`);
     try {
-      response = await this.#fetch(url, {
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+      return await this.#fetch(url, {
+        ...init,
+        headers,
       });
     } catch {
       throw new GmailMailboxActionError();
     }
+  }
+
+  async #listMessageIds(labelIds: readonly string[]): Promise<readonly string[]> {
+    const url = new URL(`${this.#apiBaseUrl}/gmail/v1/users/me/messages`);
+    url.searchParams.set("maxResults", "100");
+    url.searchParams.set("includeSpamTrash", "false");
+    for (const labelId of labelIds) url.searchParams.append("labelIds", labelId);
+    const response = await this.#request(url, { method: "GET" });
     if (!response.ok) throw new GmailMailboxActionError();
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > maximumListResponseBytes) throw new GmailMailboxActionError();
@@ -105,24 +128,17 @@ export class GmailMailboxActionClient {
     return Object.freeze(ids);
   }
 
-  async #modifyMessage(messageId: string, token: string): Promise<void> {
-    let response: Response;
-    try {
-      response = await this.#fetch(
-        `${this.#apiBaseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ removeLabelIds: ["INBOX", "UNREAD"] }),
+  async #modifyMessage(messageId: string): Promise<void> {
+    const response = await this.#request(
+      `${this.#apiBaseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
-    } catch {
-      throw new GmailMailboxActionError();
-    }
+        body: JSON.stringify({ removeLabelIds: ["INBOX", "UNREAD"] }),
+      },
+    );
     if (!response.ok) throw new GmailMailboxActionError();
   }
 }
