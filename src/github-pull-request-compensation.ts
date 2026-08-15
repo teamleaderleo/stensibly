@@ -92,10 +92,9 @@ export class GitHubPullRequestCompensationAuthorityUnavailableError extends Erro
 }
 
 /**
- * Closes one exact pull request created by a verified github_publish_change
- * workflow. The original publication workflow and provider receipt are read-only
- * source evidence. Close compensation is a separate durable operation with its
- * own idempotency identity and exact provider readback.
+ * Closes one exact PR created by a verified github_publish_change workflow.
+ * The source workflow and publication receipt remain immutable evidence. The
+ * close is a separate durable effect with its own idempotency and authority.
  */
 export class GitHubPullRequestCompensationService {
   readonly #dependencies: GitHubPullRequestCompensationDependencies;
@@ -109,9 +108,9 @@ export class GitHubPullRequestCompensationService {
   async execute(input: GitHubPullRequestCompensationInput): Promise<OperationWorkflow> {
     const source = await this.#admitSource(input);
     await this.#assertAuthority(input, null);
-
-    const candidate = this.#build(input, source);
-    const reservation = await this.#dependencies.workflows.reserveOperationWorkflow(candidate);
+    const reservation = await this.#dependencies.workflows.reserveOperationWorkflow(
+      this.#build(input, source),
+    );
     if (reservation.outcome === "conflict") {
       throw new OperationWorkflowConflictError(
         "GitHub pull-request compensation idempotency key was reused by another request",
@@ -141,20 +140,7 @@ export class GitHubPullRequestCompensationService {
     }
 
     await this.#assertAuthority(input, workflow);
-    let before: GitHubPullRequestCompensationObservation;
-    try {
-      before = admitObservation(
-        await this.#dependencies.adapter.getPullRequestForCompensation({
-          repositoryFullName: source.repositoryFullName,
-          pullRequestNumber: source.pullRequest.number,
-        }),
-      );
-    } catch {
-      return await this.#rejectPlanned(
-        workflow,
-        "github_pull_request_compensation_observation_unavailable",
-      );
-    }
+    const before = await this.#readBefore(source, workflow);
     if (!samePullRequest(before, source.pullRequest, "open")) {
       return await this.#rejectPlanned(
         workflow,
@@ -178,7 +164,6 @@ export class GitHubPullRequestCompensationService {
     }
 
     let providerReceiptRef: string | null = null;
-    let responseExact = false;
     let ambiguous = false;
     try {
       const mutation = await this.#dependencies.adapter.closePullRequest({
@@ -191,22 +176,22 @@ export class GitHubPullRequestCompensationService {
         "GitHub pull-request close request ID",
         240,
       )}`;
-      responseExact = samePullRequest(
+      ambiguous = !samePullRequest(
         admitObservation(mutation.pullRequest),
         source.pullRequest,
         "closed",
       );
-      ambiguous = !responseExact;
     } catch (error) {
       if (error instanceof GitHubPullRequestCompensationProviderRejectedError) {
-        return await this.#reject(
-          workflow,
-          error.code,
-        );
+        return await this.#reject(workflow, error.code);
       }
       ambiguous = true;
     }
 
+    // A provider effect may already exist here. Losing authority therefore
+    // leaves the dispatch-reserved step unresolved for read-only reconciliation;
+    // it never authorizes a second close dispatch.
+    await this.#assertAuthority(input, workflow);
     return await this.#readbackAfterMutation(
       source,
       workflow,
@@ -220,11 +205,7 @@ export class GitHubPullRequestCompensationService {
     input: GitHubPullRequestCompensationInput,
   ): Promise<AdmittedSource> {
     const repositoryFullName = normalizeGitHubRepository(input.repository);
-    const sourceOperationId = exactIdentifier(
-      input.sourceOperationId,
-      "Source operation ID",
-      160,
-    );
+    const sourceId = exactIdentifier(input.sourceOperationId, "Source operation ID", 160);
     const sourceKey = exactIdentifier(
       input.sourceOperationIdempotencyKey,
       "Source operation idempotency key",
@@ -236,7 +217,7 @@ export class GitHubPullRequestCompensationService {
     );
     if (
       !source
-      || source.id !== sourceOperationId
+      || source.id !== sourceId
       || source.kind !== "github_publish_change"
       || source.state !== "succeeded"
       || source.steps.length !== 3
@@ -245,24 +226,21 @@ export class GitHubPullRequestCompensationService {
         "github_pull_request_compensation_source_conflict",
       );
     }
-    const pullRequestStep = source.steps[2]!;
-    if (
-      pullRequestStep.kind !== "github_create_pull_request"
-      || pullRequestStep.state !== "verified"
-    ) {
+    const step = source.steps[2]!;
+    if (step.kind !== "github_create_pull_request" || step.state !== "verified") {
       throw new GitHubPullRequestCompensationConflictError(
         "github_pull_request_compensation_source_pr_unverified",
       );
     }
 
-    const rawReceipt = await this.#dependencies.getGitHubProviderReceipt(
-      input.project,
-      pullRequestStep.providerIdempotencyKey,
-    );
     let receipt: GitHubProviderReceipt;
     try {
-      if (!rawReceipt) throw new Error("missing receipt");
-      receipt = admitGitHubProviderReceipt(rawReceipt);
+      const raw = await this.#dependencies.getGitHubProviderReceipt(
+        input.project,
+        step.providerIdempotencyKey,
+      );
+      if (!raw) throw new Error("missing receipt");
+      receipt = admitGitHubProviderReceipt(raw);
     } catch {
       throw new GitHubPullRequestCompensationConflictError(
         "github_pull_request_compensation_source_receipt_conflict",
@@ -272,10 +250,10 @@ export class GitHubPullRequestCompensationService {
       receipt.project !== source.project
       || receipt.repositoryFullName !== repositoryFullName
       || receipt.operation !== "github_create_pull_request"
-      || receipt.idempotencyKey !== pullRequestStep.providerIdempotencyKey
+      || receipt.idempotencyKey !== step.providerIdempotencyKey
       || receipt.actorId !== source.actorId
       || receipt.clientId !== source.clientId
-      || (receipt.state !== "succeeded" && receipt.state !== "reconciled")
+      || !["succeeded", "reconciled"].includes(receipt.state)
       || receipt.verification.state !== "passed"
       || receipt.result === null
       || !("kind" in receipt.result)
@@ -288,8 +266,7 @@ export class GitHubPullRequestCompensationService {
     const retained = receipt.result;
     if (
       retained.state !== "open"
-      || receipt.target
-        !== `${repositoryFullName}:pull:new:${retained.head}->${retained.base}`
+      || receipt.target !== `${repositoryFullName}:pull:new:${retained.head}->${retained.base}`
       || source.target !== `${repositoryFullName}:refs/heads/${retained.head}`
       || receipt.verification.sourceRevision !== retained.sourceRevision
     ) {
@@ -298,9 +275,8 @@ export class GitHubPullRequestCompensationService {
       );
     }
     if (
-      pullRequestStep.compensation.kind
-        !== "github_close_created_pull_request_if_open"
-      || pullRequestStep.compensation.commandSha256 !== sha256(stableJson({
+      step.compensation.kind !== "github_close_created_pull_request_if_open"
+      || step.compensation.commandSha256 !== sha256(stableJson({
         repository: repositoryFullName,
         head: retained.head,
         base: retained.base,
@@ -311,12 +287,7 @@ export class GitHubPullRequestCompensationService {
         "github_pull_request_compensation_source_plan_conflict",
       );
     }
-
-    return Object.freeze({
-      workflow: source,
-      repositoryFullName,
-      pullRequest: retained,
-    });
+    return Object.freeze({ workflow: source, repositoryFullName, pullRequest: retained });
   }
 
   #build(
@@ -324,17 +295,6 @@ export class GitHubPullRequestCompensationService {
     source: AdmittedSource,
   ): OperationWorkflow {
     const retained = source.pullRequest;
-    const request = {
-      version: 1,
-      action: "close_pull_request" as const,
-      repositoryFullName: source.repositoryFullName,
-      pullRequestNumber: retained.number,
-      providerNodeId: retained.providerNodeId,
-      canonicalUrl: retained.canonicalUrl,
-      sourcePullRequestRevision: retained.sourceRevision,
-      sourceOperationId: source.workflow.id,
-      sourceOperationIdempotencyKey: source.workflow.idempotencyKey,
-    };
     const identity = pullRequestIdentityEvidence(retained);
     const generatedId = this.#dependencies.idFactory?.();
     return buildOperationWorkflow({
@@ -346,7 +306,17 @@ export class GitHubPullRequestCompensationService {
       clientId: input.clientId,
       kind: "github_pull_request_compensation",
       target: `${source.repositoryFullName}:pull:${retained.number}`,
-      request,
+      request: {
+        version: 1,
+        action: "close_pull_request",
+        repositoryFullName: source.repositoryFullName,
+        pullRequestNumber: retained.number,
+        providerNodeId: retained.providerNodeId,
+        canonicalUrl: retained.canonicalUrl,
+        sourcePullRequestRevision: retained.sourceRevision,
+        sourceOperationId: source.workflow.id,
+        sourceOperationIdempotencyKey: source.workflow.idempotencyKey,
+      },
       idempotencyKey: input.idempotencyKey,
       authorityFence: input.authorityFence,
       steps: [{
@@ -368,6 +338,25 @@ export class GitHubPullRequestCompensationService {
       }],
       now: this.#now(),
     });
+  }
+
+  async #readBefore(
+    source: AdmittedSource,
+    workflow: OperationWorkflow,
+  ): Promise<GitHubPullRequestCompensationObservation> {
+    try {
+      return admitObservation(
+        await this.#dependencies.adapter.getPullRequestForCompensation({
+          repositoryFullName: source.repositoryFullName,
+          pullRequestNumber: source.pullRequest.number,
+        }),
+      );
+    } catch {
+      return await this.#rejectPlanned(
+        workflow,
+        "github_pull_request_compensation_observation_unavailable",
+      );
+    }
   }
 
   async #readbackAfterMutation(
@@ -393,13 +382,7 @@ export class GitHubPullRequestCompensationService {
       );
     }
     if (samePullRequest(after, source.pullRequest, "closed")) {
-      return await this.#verify(
-        workflow,
-        before,
-        after,
-        providerReceiptRef,
-        ambiguous,
-      );
+      return await this.#verify(workflow, before, after, providerReceiptRef, ambiguous);
     }
     if (samePullRequest(after, source.pullRequest, "open")) {
       return await this.#hold(
@@ -434,33 +417,33 @@ export class GitHubPullRequestCompensationService {
     } catch {
       throw new GitHubPullRequestCompensationPendingReconciliationError(workflow);
     }
-    if (samePullRequest(observation, source.pullRequest, "closed")) {
-      const step = workflow.steps[0]!;
-      const next = settleOperationWorkflowStep(workflow, {
-        stepId: step.id,
-        outcome: "verified",
-        settledAt: this.#now(),
-        providerReceiptRef: step.providerReceiptRef
-          ?? `github-pr-close-reconciled:${workflow.id}`,
-        before: { state: "unknown_due_to_interrupted_settlement" },
-        after: observation,
-        verification: {
-          state: "reconciled_from_readback",
-          sourceRevision: observation.sourceRevision,
-        },
-      });
-      return await this.#dependencies.workflows.transitionOperationWorkflow({
-        current: workflow,
-        next,
-      });
-    }
     if (samePullRequest(observation, source.pullRequest, "open")) {
       throw new GitHubPullRequestCompensationPendingReconciliationError(workflow);
     }
-    throw new GitHubPullRequestCompensationConflictError(
-      "github_pull_request_compensation_identity_drift_during_reconciliation",
-      workflow,
-    );
+    if (!samePullRequest(observation, source.pullRequest, "closed")) {
+      throw new GitHubPullRequestCompensationConflictError(
+        "github_pull_request_compensation_identity_drift_during_reconciliation",
+        workflow,
+      );
+    }
+    const step = workflow.steps[0]!;
+    const next = settleOperationWorkflowStep(workflow, {
+      stepId: step.id,
+      outcome: "verified",
+      settledAt: this.#now(),
+      providerReceiptRef: step.providerReceiptRef
+        ?? `github-pr-close-reconciled:${workflow.id}`,
+      before: { state: "unknown_due_to_interrupted_settlement" },
+      after: observation,
+      verification: {
+        state: "reconciled_from_readback",
+        sourceRevision: observation.sourceRevision,
+      },
+    });
+    return await this.#dependencies.workflows.transitionOperationWorkflow({
+      current: workflow,
+      next,
+    });
   }
 
   async #verify(
@@ -474,8 +457,7 @@ export class GitHubPullRequestCompensationService {
       stepId: workflow.steps[0]!.id,
       outcome: "verified",
       settledAt: this.#now(),
-      providerReceiptRef: providerReceiptRef
-        ?? `github-pr-close-reconciled:${workflow.id}`,
+      providerReceiptRef: providerReceiptRef ?? `github-pr-close-reconciled:${workflow.id}`,
       before,
       after,
       verification: {
@@ -489,17 +471,10 @@ export class GitHubPullRequestCompensationService {
     });
   }
 
-  async #rejectPlanned(
-    workflow: OperationWorkflow,
-    code: string,
-  ): Promise<never> {
+  async #rejectPlanned(workflow: OperationWorkflow, code: string): Promise<never> {
     const reserved = await this.#dependencies.workflows.transitionOperationWorkflow({
       current: workflow,
-      next: reserveOperationWorkflowStep(
-        workflow,
-        workflow.steps[0]!.id,
-        this.#now(),
-      ),
+      next: reserveOperationWorkflowStep(workflow, workflow.steps[0]!.id, this.#now()),
     });
     return await this.#reject(reserved, code);
   }
@@ -523,10 +498,7 @@ export class GitHubPullRequestCompensationService {
     throw new GitHubPullRequestCompensationPendingReconciliationError(persisted);
   }
 
-  async #reject(
-    workflow: OperationWorkflow,
-    code: string,
-  ): Promise<never> {
+  async #reject(workflow: OperationWorkflow, code: string): Promise<never> {
     const next = settleOperationWorkflowStep(workflow, {
       stepId: workflow.steps[0]!.id,
       outcome: "rejected",
@@ -575,11 +547,8 @@ function pullRequestIdentityEvidence(result: GitHubPullRequestResult) {
 function admitObservation(
   value: GitHubPullRequestCompensationObservation,
 ): GitHubPullRequestCompensationObservation {
-  if (!value || typeof value !== "object") {
+  if (!value || typeof value !== "object" || value.kind !== "pull_request") {
     throw new RangeError("GitHub pull-request compensation observation is invalid");
-  }
-  if (value.kind !== "pull_request") {
-    throw new RangeError("GitHub pull-request compensation observation kind is invalid");
   }
   const number = positiveInteger(value.number, "GitHub pull request number");
   const providerNodeId = value.providerNodeId === null
@@ -596,11 +565,7 @@ function admitObservation(
   if (value.state !== "open" && value.state !== "closed") {
     throw new RangeError("GitHub pull request state is invalid");
   }
-  const canonicalUrl = boundedText(
-    value.canonicalUrl,
-    "GitHub pull request canonical URL",
-    4_096,
-  );
+  const canonicalUrl = boundedText(value.canonicalUrl, "GitHub pull request canonical URL", 4_096);
   const createdAt = exactTimestamp(value.createdAt, "GitHub pull request created time");
   const updatedAt = exactTimestamp(value.updatedAt, "GitHub pull request updated time");
   if (Date.parse(updatedAt) < Date.parse(createdAt)) {
@@ -621,9 +586,8 @@ function admitObservation(
   if (value.containsBody !== false) {
     throw new RangeError("GitHub pull request observation retained provider body");
   }
-  const sourceRevision = exactSha256(value.sourceRevision);
-  return Object.freeze({
-    kind: "pull_request",
+  const retained = {
+    kind: "pull_request" as const,
     number,
     providerNodeId,
     title,
@@ -637,9 +601,13 @@ function admitObservation(
     createdAt,
     updatedAt,
     bodyRevision,
-    sourceRevision,
-    containsBody: false,
-  });
+    containsBody: false as const,
+  };
+  const sourceRevision = exactSha256(value.sourceRevision);
+  if (sourceRevision !== sha256(stableJson(retained))) {
+    throw new RangeError("GitHub pull request observation source revision is invalid");
+  }
+  return Object.freeze({ ...retained, sourceRevision });
 }
 
 function samePullRequest(
