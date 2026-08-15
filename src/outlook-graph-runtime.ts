@@ -277,19 +277,20 @@ export async function runOutlookReconciliation(
     });
 
     if (!result.complete && result.recoveryAction === "full_sync_required") {
+      const expiredResult = result;
       const resetState = createMailboxSubscriptionState({
-        mailboxBindingId: result.state.mailboxBindingId,
+        mailboxBindingId: expiredResult.state.mailboxBindingId,
         provider: "outlook",
-        scope: result.state.scope,
+        scope: expiredResult.state.scope,
         cursor: {
           kind: "outlook_delta_ref",
           value: initialDeltaRef(bindings.STENSIBLY_OUTLOOK_FOLDER_ID),
         },
         coverage: "unknown",
-        subscription: result.state.subscription,
+        subscription: expiredResult.state.subscription,
         lastNotificationId: effectiveNotification?.notificationId
-          ?? result.state.lastNotificationId,
-        lastSuccessfulReconciliationAt: result.state.lastSuccessfulReconciliationAt,
+          ?? expiredResult.state.lastNotificationId,
+        lastSuccessfulReconciliationAt: expiredResult.state.lastSuccessfulReconciliationAt,
       });
       const recovered = await reconcileOutlookMailbox({
         state: resetState,
@@ -299,17 +300,43 @@ export async function runOutlookReconciliation(
         knownOutboundProviderMessageIds: knownOutbound,
         knownInScopeProviderMessageIds: knownInScope,
       });
-      result = Object.freeze({
-        ...recovered,
-        observations: Object.freeze([
-          ...result.observations,
-          ...recovered.observations,
-        ]),
-      });
+      const combinedObservations = Object.freeze([
+        ...expiredResult.observations,
+        ...recovered.observations,
+      ]);
+      if (recovered.complete) {
+        result = Object.freeze({
+          ...recovered,
+          observations: combinedObservations,
+        });
+      } else {
+        const preservedState = createMailboxSubscriptionState({
+          mailboxBindingId: recovered.state.mailboxBindingId,
+          provider: "outlook",
+          scope: recovered.state.scope,
+          cursor: expiredResult.state.cursor,
+          coverage: "unknown",
+          subscription: recovered.state.subscription,
+          lastNotificationId: expiredResult.state.lastNotificationId,
+          lastSuccessfulReconciliationAt: expiredResult.state.lastSuccessfulReconciliationAt,
+        });
+        result = Object.freeze({
+          ...recovered,
+          state: preservedState,
+          observations: combinedObservations,
+        });
+      }
     }
 
     if (result.observations.length > MAXIMUM_RECONCILIATION_OBSERVATIONS) {
       throw new OutlookRuntimeRecoverableError("OUTLOOK_RECONCILIATION_BATCH_TOO_LARGE");
+    }
+    if (
+      result.duplicateNotification
+      && result.observations.length === 0
+      && canonicalJsonString(result.state) === canonicalJsonString(loaded.state)
+    ) {
+      return result;
     }
 
     try {
@@ -562,7 +589,7 @@ class MicrosoftGraphMailboxClient implements OutlookMailboxClient {
         changeType: "created,updated,deleted",
         notificationUrl: this.bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
         lifecycleNotificationUrl: this.bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
-        resource: `me/mailFolders/${this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID}/messages`,
+        resource: `me/mailFolders/${encodeURIComponent(this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID)}/messages`,
         expirationDateTime,
         clientState: this.bindings.STENSIBLY_OUTLOOK_CLIENT_STATE,
       }),
@@ -655,7 +682,11 @@ class MicrosoftGraphMailboxClient implements OutlookMailboxClient {
       throw new OutlookRuntimeRecoverableError("OUTLOOK_OAUTH_REFRESH_INVALID");
     }
 
-    if (typeof payload.refresh_token === "string" && payload.refresh_token.length > 0) {
+    if (
+      typeof payload.refresh_token === "string"
+      && payload.refresh_token.length > 0
+      && payload.refresh_token !== refreshToken
+    ) {
       const sealedRefreshToken = await sealRefreshToken(
         payload.refresh_token,
         this.bindings.STENSIBLY_SERVICE_SECRET,
@@ -931,9 +962,9 @@ async function sealRefreshToken(
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt({
     name: "AES-GCM",
-    iv,
-    additionalData: refreshTokenAad(mailboxBindingId),
-  }, key, new TextEncoder().encode(value));
+    iv: cryptoBuffer(iv),
+    additionalData: cryptoBuffer(refreshTokenAad(mailboxBindingId)),
+  }, key, cryptoBuffer(new TextEncoder().encode(value)));
   return `v1.${bytesToBase64Url(iv)}.${bytesToBase64Url(new Uint8Array(encrypted))}`;
 }
 
@@ -950,9 +981,9 @@ async function unsealRefreshToken(
     const key = await refreshTokenKey(serviceSecret);
     const decrypted = await crypto.subtle.decrypt({
       name: "AES-GCM",
-      iv: base64UrlToBytes(parts[1]!),
-      additionalData: refreshTokenAad(mailboxBindingId),
-    }, key, base64UrlToBytes(parts[2]!));
+      iv: cryptoBuffer(base64UrlToBytes(parts[1]!)),
+      additionalData: cryptoBuffer(refreshTokenAad(mailboxBindingId)),
+    }, key, cryptoBuffer(base64UrlToBytes(parts[2]!)));
     const token = new TextDecoder().decode(decrypted);
     if (token.length < 1) throw new Error("empty");
     return token;
@@ -976,6 +1007,12 @@ function refreshTokenAad(mailboxBindingId: string): Uint8Array {
   return new TextEncoder().encode(
     `stensibly/outlook-refresh-token/v1:${mailboxBindingId}`,
   );
+}
+
+function cryptoBuffer(value: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy.buffer;
 }
 
 async function protectedEqual(left: string, right: string): Promise<boolean> {
