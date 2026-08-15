@@ -59,12 +59,21 @@ describe("Outlook production Worker binding contract", () => {
 
   test("checks in the exact live custom domain and non-secret Outlook variables", () => {
     const wrangler = JSON.parse(readFileSync("wrangler.jsonc", "utf8")) as {
-      routes?: Array<{ pattern?: string; custom_domain?: boolean }>;
+      routes?: Array<{
+        pattern?: string;
+        zone_name?: string;
+        custom_domain?: boolean;
+        enabled?: boolean;
+        previews_enabled?: boolean;
+      }>;
       vars?: Record<string, string>;
     };
     expect(wrangler.routes).toContainEqual({
       pattern: "api.stensibly.com",
+      zone_name: "stensibly.com",
       custom_domain: true,
+      enabled: true,
+      previews_enabled: false,
     });
     expect(wrangler.vars).toMatchObject({
       STENSIBLY_OUTLOOK_MAILBOX: "cheerleaderleo@outlook.com",

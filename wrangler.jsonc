@@ -10,7 +10,10 @@
   "routes": [
     {
       "pattern": "api.stensibly.com",
-      "custom_domain": true
+      "zone_name": "stensibly.com",
+      "custom_domain": true,
+      "enabled": true,
+      "previews_enabled": false
     }
   ],
   "version_metadata": {
