@@ -56,12 +56,12 @@ export const mailOutboundTables = {
     updatedAt: v.number(),
   })
     .index("by_workspace_effect_id", ["workspaceId", "outboundEffectId"])
-    .index("by_workspace_thread_provider_account_attempt", [
+    .index("by_workspace_thread_provider_account_created", [
       "workspaceId",
       "threadId",
       "provider",
       "accountBinding",
-      "attemptNumber",
+      "createdAt",
     ])
     .index("by_workspace_material_attempt", [
       "workspaceId",
