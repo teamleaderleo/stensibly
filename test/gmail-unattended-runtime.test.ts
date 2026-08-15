@@ -21,6 +21,7 @@ test("bootstraps users.watch, durably admits material push, and sweeps Label_5 o
   const hygieneLabels: string[][] = [];
   const hygieneResults = [0, 1];
   const gmail = {
+    verifyMailboxAddress: async (address: string) => expect(address).toBe(mailbox),
     renewWatch: async () => ({
       historyId: "100",
       expiration: String(Date.parse("2026-08-22T06:45:00.000Z")),
@@ -118,6 +119,7 @@ test("a duplicate PubSub retry still repairs quiet Inbox state after cursor adva
     labelId,
     pubsubSubscription: subscription,
     gmail: {
+      verifyMailboxAddress: async (address: string) => expect(address).toBe(mailbox),
       renewWatch: async () => {
         throw new Error("watch renewal should stay quiet");
       },
@@ -160,6 +162,7 @@ test("deletion-only history remains non-material while hygiene stays label-scope
   let snapshot: MailboxIntakeSnapshot | null = { state, revision: 1 };
   const hygieneLabels: string[][] = [];
   const gmail = {
+    verifyMailboxAddress: async (address: string) => expect(address).toBe(mailbox),
     renewWatch: async () => ({
       historyId: "100",
       expiration: String(Date.parse("2026-08-22T06:45:00.000Z")),
