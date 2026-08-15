@@ -42,6 +42,8 @@ export type GitHubOfficialMcpReadResultContract =
   | "workflow_job_exact";
 
 export type GitHubOfficialMcpReadUnsupportedReason =
+  | "directory_listing_unavailable"
+  | "exact_ref_resolution_unavailable"
   | "patch_format_unavailable"
   | "review_threads_require_pagination_contract"
   | "commit_status_requires_pull_request"
@@ -112,6 +114,13 @@ const mappingPolicyDefinition = {
         githubOfficialMcpReadSource.toolSnapshots.search_repositories,
       ],
     },
+    list_directory: {
+      state: "unsupported",
+      reason: "directory_listing_unavailable",
+      sourceToolSnapshotBlobShas: [
+        githubOfficialMcpReadSource.toolSnapshots.get_file_contents,
+      ],
+    },
     fetch_file: {
       state: "mapped",
       officialToolset: "repos",
@@ -122,6 +131,13 @@ const mappingPolicyDefinition = {
       maximumResultItems: 1,
       sourceToolSnapshotBlobShas: [
         githubOfficialMcpReadSource.toolSnapshots.get_file_contents,
+      ],
+    },
+    resolve_ref: {
+      state: "unsupported",
+      reason: "exact_ref_resolution_unavailable",
+      sourceToolSnapshotBlobShas: [
+        githubOfficialMcpReadSource.toolSnapshots.get_commit,
       ],
     },
     get_pr_info: {
@@ -298,6 +314,10 @@ export function mapGitHubDelegatedReadToOfficialMcp(
       return mapped(stensiblyTool, repositoryFullName, {
         query: `repo:${repositoryFullName}`,
       });
+
+    case "list_directory":
+    case "resolve_ref":
+      return unsupported(stensiblyTool, repositoryFullName);
 
     case "fetch_file":
       return mapped(stensiblyTool, repositoryFullName, {
@@ -642,6 +662,8 @@ function assertDynamicArguments(
         }
         return;
       }
+      case "list_directory":
+      case "resolve_ref":
       case "list_pull_request_review_threads":
       case "get_commit_combined_status":
       case "fetch_commit_workflow_runs":
