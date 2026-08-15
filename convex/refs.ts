@@ -52,6 +52,17 @@ export const convexApi = {
   runnerAdapterCommandRecoveries: {
     claim: mutationRef("runnerAdapterCommandRecoveries:claim"),
   },
+  mailOutbound: {
+    reserveThread: mutationRef("mailOutbound:reserveThread"),
+    getThreadByHandle: queryRef("mailOutbound:getThreadByHandle"),
+    getThreadBySource: queryRef("mailOutbound:getThreadBySource"),
+    updateThread: mutationRef("mailOutbound:updateThread"),
+    getProviderProjection: queryRef("mailOutbound:getProviderProjection"),
+    reserveEffect: mutationRef("mailOutbound:reserveEffect"),
+    settleEffect: mutationRef("mailOutbound:settleEffect"),
+    getEffect: queryRef("mailOutbound:getEffect"),
+    getEffectByProviderMessage: queryRef("mailOutbound:getEffectByProviderMessage"),
+  },
   workerEnrolments: {
     enrol: mutationRef("workerEnrolments:enrol"),
     heartbeat: mutationRef("workerEnrolments:heartbeat"),

@@ -46,6 +46,7 @@ function notification(
     mailboxBindingId: bindingId,
     notificationId: id,
     subscriptionId: "graph_subscription_1",
+    clientStateVerified: true,
     lifecycleEvent,
     observedAt: "2026-08-15T06:44:59.000Z",
     receivedAt: now,

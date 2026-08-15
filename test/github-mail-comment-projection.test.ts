@@ -23,7 +23,7 @@ const base = "f".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491_projection",
-  handle: "STN-REVIEW:1491PROJECTION",
+  handle: "STN-REVIEW:P7R5",
   project: "stensibly",
   repository,
   pullRequestNumber: 1491,

@@ -9,6 +9,7 @@ import type {
   OperationAuthorityFence,
   OperationCompensationDisposition,
   OperationWorkflow,
+  OperationWorkflowKind,
   OperationWorkflowStep,
 } from "./operation-workflow-contracts.js";
 
@@ -19,7 +20,7 @@ export interface BuildOperationWorkflowInput {
   runId: string;
   actorId: string;
   clientId: string;
-  kind: "github_publish_change" | "github_land_pr";
+  kind: OperationWorkflowKind;
   target: string;
   request: unknown;
   idempotencyKey: string;

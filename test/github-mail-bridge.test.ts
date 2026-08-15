@@ -34,7 +34,7 @@ const base = "c".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491",
-  handle: "STN-REVIEW:1491",
+  handle: "STN-REVIEW:R5V7",
   project: "stensibly",
   repository,
   pullRequestNumber: 1491,

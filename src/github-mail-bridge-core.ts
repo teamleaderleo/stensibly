@@ -15,6 +15,7 @@ import {
 } from "./github-provider-validation.js";
 import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
+import { parseMailThreadHandle } from "./mail-thread-contract.js";
 
 export const GITHUB_MAIL_BRIDGE_VERSION = 1 as const;
 export const MAX_GITHUB_MAIL_CAUSAL_DEPTH = 8;
@@ -890,9 +891,7 @@ function validateThread(input: GitHubMailThreadBinding): GitHubMailThreadBinding
     throw new RangeError("GitHub mail thread binding version is unsupported");
   }
   const threadId = identity(input.threadId, "STN thread ID", 240);
-  if (!/^STN-(?:HANDOFF|REVIEW|DECISION|INCIDENT):[A-Z0-9]{4,32}$/u.test(input.handle)) {
-    throw new RangeError("STN mail handle is invalid");
-  }
+  const handle = parseMailThreadHandle(input.handle);
   const project = identity(input.project, "Project", 80);
   const repository = normalizeGitHubRepository(input.repository);
   const pullRequestNumber = positiveInteger(
@@ -908,7 +907,7 @@ function validateThread(input: GitHubMailThreadBinding): GitHubMailThreadBinding
   return deepFreeze({
     version: GITHUB_MAIL_BRIDGE_VERSION,
     threadId,
-    handle: input.handle,
+    handle,
     project,
     repository,
     pullRequestNumber,

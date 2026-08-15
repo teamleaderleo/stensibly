@@ -66,13 +66,15 @@ describe("Gmail mail provider", () => {
     const provider = new GmailMailProvider(client);
 
     const rootMessage = message();
+    if (rootMessage.rfcMessageId === null) throw new Error("Gmail fixture requires RFC Message-ID");
+    const rootRfcMessageId = rootMessage.rfcMessageId;
     const root = await provider.createThread(binding, rootMessage);
     expect(root.providerThreadId).toBe("gmail_thread_1");
     expect(root.providerMessageId).toBe("gmail_message_root");
     expect(sends[0]!.threadId).toBeUndefined();
     const rootMime = decodeRaw(sends[0]!.raw);
     expect(rootMime).toContain("To: operator@example.com\r\n");
-    expect(rootMime).toContain(`Message-ID: ${rootMessage.rfcMessageId}\r\n`);
+    expect(rootMime).toContain(`Message-ID: ${rootRfcMessageId}\r\n`);
     expect(rootMime).toContain("Auto-Submitted: auto-generated\r\n");
     expect(rootMime).toContain("X-Stensibly-Thread: mail_thread_1492\r\n");
     expect(rootMime).toContain("X-Stensibly-Handle: STN-HANDOFF:7K3Q\r\n");
@@ -87,8 +89,8 @@ describe("Gmail mail provider", () => {
       providerThreadId: "gmail_thread_1",
       rootProviderMessageId: "gmail_message_root",
       latestProviderMessageId: "gmail_message_root",
-      rootRfcMessageId: rootMessage.rfcMessageId,
-      latestRfcMessageId: rootMessage.rfcMessageId,
+      rootRfcMessageId,
+      latestRfcMessageId: rootRfcMessageId,
       latestSentFingerprint: rootMessage.contentFingerprint,
       lastVerifiedSubject: rootMessage.subject,
       lastVerifiedReferences: [],
@@ -99,15 +101,15 @@ describe("Gmail mail provider", () => {
       contentFingerprint: sha256("mail-content-2"),
       rfcMessageId: "<stn.abcdef1234567890@mail.stensibly.com>",
       body: "What changed\nCandidate repaired.\n\nContinue STN-HANDOFF:7K3Q.",
-      inReplyTo: rootMessage.rfcMessageId,
-      references: [rootMessage.rfcMessageId],
+      inReplyTo: rootRfcMessageId,
+      references: [rootRfcMessageId],
     });
     const reply = await provider.replyThread(binding, projection, replyMessage);
     expect(reply.providerThreadId).toBe("gmail_thread_1");
     expect(sends[1]!.threadId).toBe("gmail_thread_1");
     const replyMime = decodeRaw(sends[1]!.raw);
-    expect(replyMime).toContain(`In-Reply-To: ${rootMessage.rfcMessageId}\r\n`);
-    expect(replyMime).toContain(`References: ${rootMessage.rfcMessageId}\r\n`);
+    expect(replyMime).toContain(`In-Reply-To: ${rootRfcMessageId}\r\n`);
+    expect(replyMime).toContain(`References: ${rootRfcMessageId}\r\n`);
     expect(replyMime).toContain(`Message-ID: ${replyMessage.rfcMessageId}\r\n`);
     expect(replyMime).toContain("Candidate repaired.");
     expect(replyMime).not.toContain("Candidate ready.");

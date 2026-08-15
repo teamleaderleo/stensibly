@@ -38,36 +38,26 @@ export interface GmailLocatedMessage {
 }
 
 export interface GmailOutboundClient {
-  sendRaw(input: {
-    raw: string;
-    threadId?: string;
-  }): Promise<unknown>;
-  findMessagesByRfcMessageId(input: {
-    rfcMessageId: string;
-  }): Promise<readonly unknown[]>;
+  sendRaw(input: { raw: string; threadId?: string }): Promise<unknown>;
+  findMessagesByRfcMessageId(input: { rfcMessageId: string }): Promise<readonly unknown[]>;
 }
 
 const maximumReconciliationCandidates = 64;
 
 export class GmailMailProvider implements MailProvider {
   readonly provider = "gmail";
+  readonly rfcMessageIdMode = "caller_assigned" as const;
   readonly #client: GmailOutboundClient;
   readonly #now: () => string;
 
-  constructor(
-    client: GmailOutboundClient,
-    options: { now?: () => string } = {},
-  ) {
+  constructor(client: GmailOutboundClient, options: { now?: () => string } = {}) {
     this.#client = client;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
 
-  async createThread(
-    bindingInput: MailboxBinding,
-    messageInput: MailProviderMessage,
-  ): Promise<MailProviderSendResult> {
+  async createThread(bindingInput: MailboxBinding, messageInput: MailProviderMessage): Promise<MailProviderSendResult> {
     const binding = this.#binding(bindingInput);
-    const message = freezeMailProviderMessage(messageInput);
+    const message = this.#message(messageInput);
     if (message.inReplyTo !== null || message.references.length !== 0) {
       throw new MailProviderDefiniteFailure("gmail_root_has_reply_ancestry");
     }
@@ -81,7 +71,7 @@ export class GmailMailProvider implements MailProvider {
   ): Promise<MailProviderSendResult> {
     const binding = this.#binding(bindingInput);
     const projection = freezeMailProviderProjection(projectionInput);
-    const message = freezeMailProviderMessage(messageInput);
+    const message = this.#message(messageInput);
     if (
       projection.provider !== "gmail"
       || projection.accountBinding !== binding.accountBinding
@@ -93,7 +83,8 @@ export class GmailMailProvider implements MailProvider {
       throw new MailProviderDefiniteFailure("gmail_reply_subject_changed");
     }
     if (
-      message.inReplyTo !== projection.latestRfcMessageId
+      projection.latestRfcMessageId === null
+      || message.inReplyTo !== projection.latestRfcMessageId
       || message.references.at(-1) !== projection.latestRfcMessageId
     ) {
       throw new MailProviderDefiniteFailure("gmail_reply_ancestry_mismatch");
@@ -103,35 +94,24 @@ export class GmailMailProvider implements MailProvider {
 
   async getDeliveryProjection(
     bindingInput: MailboxBinding,
-    input: {
-      outboundEffectId: string;
-      rfcMessageId: string;
-      expectedProviderThreadId: string | null;
-    },
+    input: { outboundEffectId: string; rfcMessageId: string | null; expectedProviderThreadId: string | null },
   ): Promise<MailProviderDeliveryLookup> {
     this.#binding(bindingInput);
-    const outboundEffectId = exactMailThreadIdentifier(
-      input.outboundEffectId,
-      "Gmail reconciliation outbound effect ID",
-      240,
-    );
+    const outboundEffectId = exactMailThreadIdentifier(input.outboundEffectId, "Gmail reconciliation outbound effect ID", 240);
+    if (input.rfcMessageId === null) {
+      throw new MailProviderDefiniteFailure("gmail_reconciliation_requires_rfc_message_id");
+    }
     const rfcMessageId = exactRfcMessageId(input.rfcMessageId);
     const expectedProviderThreadId = input.expectedProviderThreadId === null
       ? null
-      : exactMailThreadIdentifier(
-          input.expectedProviderThreadId,
-          "Gmail reconciliation provider thread ID",
-          320,
-        );
+      : exactMailThreadIdentifier(input.expectedProviderThreadId, "Gmail reconciliation provider thread ID", 320);
     let rawCandidates: readonly unknown[];
     try {
       rawCandidates = await this.#client.findMessagesByRfcMessageId({ rfcMessageId });
     } catch {
       return { status: "missing", coverage: "unknown" };
     }
-    if (!Array.isArray(rawCandidates)) {
-      return { status: "missing", coverage: "unknown" };
-    }
+    if (!Array.isArray(rawCandidates)) return { status: "missing", coverage: "unknown" };
     if (rawCandidates.length > maximumReconciliationCandidates) {
       return { status: "ambiguous", candidateCount: rawCandidates.length };
     }
@@ -139,25 +119,15 @@ export class GmailMailProvider implements MailProvider {
     for (const candidate of rawCandidates) {
       try {
         const located = admitLocatedMessage(candidate, this.#now);
-        if (
-          located.rfcMessageId === rfcMessageId
-          && located.outboundEffectId === outboundEffectId
-        ) {
-          candidates.push(located);
-        }
+        if (located.rfcMessageId === rfcMessageId && located.outboundEffectId === outboundEffectId) candidates.push(located);
       } catch {
         return { status: "ambiguous", candidateCount: Math.max(2, rawCandidates.length) };
       }
     }
     if (candidates.length === 0) return { status: "missing", coverage: "complete" };
-    if (candidates.length > 1) {
-      return { status: "ambiguous", candidateCount: candidates.length };
-    }
+    if (candidates.length > 1) return { status: "ambiguous", candidateCount: candidates.length };
     const candidate = candidates[0]!;
-    if (
-      expectedProviderThreadId !== null
-      && candidate.threadId !== expectedProviderThreadId
-    ) {
+    if (expectedProviderThreadId !== null && candidate.threadId !== expectedProviderThreadId) {
       return { status: "ambiguous", candidateCount: 1 };
     }
     return {
@@ -167,26 +137,20 @@ export class GmailMailProvider implements MailProvider {
         providerMessageId: candidate.id,
         providerRequestId: candidate.requestId ?? null,
         rfcMessageId: candidate.rfcMessageId,
-        acceptedAt: candidate.acceptedAt ?? exactMailThreadTimestamp(
-          this.#now(),
-          "Gmail reconciliation time",
-        ),
+        acceptedAt: candidate.acceptedAt ?? exactMailThreadTimestamp(this.#now(), "Gmail reconciliation time"),
       }),
     };
   }
 
   async #dispatch(
     binding: MailboxBinding,
-    message: MailProviderMessage,
+    message: MailProviderMessage & { rfcMessageId: string },
     providerThreadId: string | null,
   ): Promise<MailProviderSendResult> {
     const raw = buildGmailRawMessage(binding, message);
     let providerResult: unknown;
     try {
-      providerResult = await this.#client.sendRaw({
-        raw,
-        ...(providerThreadId === null ? {} : { threadId: providerThreadId }),
-      });
+      providerResult = await this.#client.sendRaw({ raw, ...(providerThreadId === null ? {} : { threadId: providerThreadId }) });
     } catch {
       throw new MailProviderAmbiguousFailure("gmail_send_outcome_ambiguous");
     }
@@ -204,31 +168,30 @@ export class GmailMailProvider implements MailProvider {
       providerMessageId: admitted.id,
       providerRequestId: admitted.requestId ?? null,
       rfcMessageId: message.rfcMessageId,
-      acceptedAt: admitted.acceptedAt ?? exactMailThreadTimestamp(
-        this.#now(),
-        "Gmail acceptance time",
-      ),
+      acceptedAt: admitted.acceptedAt ?? exactMailThreadTimestamp(this.#now(), "Gmail acceptance time"),
     });
   }
 
   #binding(input: MailboxBinding): MailboxBinding {
     const binding = freezeMailboxBinding(input);
-    if (binding.provider !== "gmail") {
-      throw new MailProviderDefiniteFailure("gmail_provider_binding_mismatch");
-    }
+    if (binding.provider !== "gmail") throw new MailProviderDefiniteFailure("gmail_provider_binding_mismatch");
     return binding;
+  }
+
+  #message(input: MailProviderMessage): MailProviderMessage & { rfcMessageId: string } {
+    const message = freezeMailProviderMessage(input);
+    if (message.rfcMessageId === null) {
+      throw new MailProviderDefiniteFailure("gmail_requires_caller_assigned_rfc_message_id");
+    }
+    return message as MailProviderMessage & { rfcMessageId: string };
   }
 }
 
-export function buildGmailRawMessage(
-  bindingInput: MailboxBinding,
-  messageInput: MailProviderMessage,
-): string {
+export function buildGmailRawMessage(bindingInput: MailboxBinding, messageInput: MailProviderMessage): string {
   const binding = freezeMailboxBinding(bindingInput);
-  if (binding.provider !== "gmail") {
-    throw new TypeError("Gmail raw message requires a Gmail mailbox binding");
-  }
+  if (binding.provider !== "gmail") throw new TypeError("Gmail raw message requires a Gmail mailbox binding");
   const message = freezeMailProviderMessage(messageInput);
+  if (message.rfcMessageId === null) throw new TypeError("Gmail raw message requires a caller-assigned RFC Message-ID");
   const headers = [
     `To: ${binding.mailboxAddress}`,
     `Subject: ${encodeHeaderValue(message.subject)}`,
@@ -245,11 +208,7 @@ export function buildGmailRawMessage(
   if (message.inReplyTo !== null) headers.push(`In-Reply-To: ${message.inReplyTo}`);
   if (message.references.length > 0) headers.push(`References: ${message.references.join(" ")}`);
   const mime = `${headers.join("\r\n")}\r\n\r\n${message.body.replace(/\r?\n/gu, "\r\n")}`;
-  return Buffer.from(mime, "utf8")
-    .toString("base64")
-    .replace(/\+/gu, "-")
-    .replace(/\//gu, "_")
-    .replace(/=+$/gu, "");
+  return Buffer.from(mime, "utf8").toString("base64").replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
 }
 
 function encodeHeaderValue(value: string): string {
@@ -259,14 +218,11 @@ function encodeHeaderValue(value: string): string {
 
 function admitSendResult(value: unknown, now: () => string): GmailSendRawResult {
   const record = snapshotRecord(value, "Gmail send result");
-  const allowed = new Set(["id", "threadId", "requestId", "acceptedAt"]);
-  rejectUnknownKeys(record, allowed, "Gmail send result");
+  rejectUnknownKeys(record, new Set(["id", "threadId", "requestId", "acceptedAt"]), "Gmail send result");
   return Object.freeze({
     id: exactMailThreadIdentifier(record.id, "Gmail message ID", 320),
     threadId: exactMailThreadIdentifier(record.threadId, "Gmail thread ID", 320),
-    requestId: record.requestId === undefined || record.requestId === null
-      ? null
-      : exactMailThreadIdentifier(record.requestId, "Gmail request ID", 320),
+    requestId: record.requestId === undefined || record.requestId === null ? null : exactMailThreadIdentifier(record.requestId, "Gmail request ID", 320),
     acceptedAt: record.acceptedAt === undefined || record.acceptedAt === null
       ? exactMailThreadTimestamp(now(), "Gmail acceptance time")
       : exactMailThreadTimestamp(record.acceptedAt, "Gmail acceptance time"),
@@ -275,35 +231,17 @@ function admitSendResult(value: unknown, now: () => string): GmailSendRawResult 
 
 function admitLocatedMessage(value: unknown, now: () => string): GmailLocatedMessage {
   const record = snapshotRecord(value, "Gmail located message");
-  const allowed = new Set([
-    "id",
-    "threadId",
-    "rfcMessageId",
-    "outboundEffectId",
-    "subject",
-    "references",
-    "requestId",
-    "acceptedAt",
-  ]);
-  rejectUnknownKeys(record, allowed, "Gmail located message");
+  rejectUnknownKeys(record, new Set(["id", "threadId", "rfcMessageId", "outboundEffectId", "subject", "references", "requestId", "acceptedAt"]), "Gmail located message");
   const referencesRaw = record.references ?? [];
-  if (!Array.isArray(referencesRaw) || referencesRaw.length > 32) {
-    throw new TypeError("Gmail located message references are invalid");
-  }
+  if (!Array.isArray(referencesRaw) || referencesRaw.length > 32) throw new TypeError("Gmail located message references are invalid");
   return Object.freeze({
     id: exactMailThreadIdentifier(record.id, "Gmail located message ID", 320),
     threadId: exactMailThreadIdentifier(record.threadId, "Gmail located thread ID", 320),
     rfcMessageId: exactRfcMessageId(record.rfcMessageId),
-    outboundEffectId: exactMailThreadIdentifier(
-      record.outboundEffectId,
-      "Gmail located effect ID",
-      240,
-    ),
+    outboundEffectId: exactMailThreadIdentifier(record.outboundEffectId, "Gmail located effect ID", 240),
     subject: exactMailDisplayText(record.subject, "Gmail located subject", 320),
     references: Object.freeze(referencesRaw.map((entry) => exactRfcMessageId(entry))),
-    requestId: record.requestId === undefined || record.requestId === null
-      ? null
-      : exactMailThreadIdentifier(record.requestId, "Gmail located request ID", 320),
+    requestId: record.requestId === undefined || record.requestId === null ? null : exactMailThreadIdentifier(record.requestId, "Gmail located request ID", 320),
     acceptedAt: record.acceptedAt === undefined || record.acceptedAt === null
       ? exactMailThreadTimestamp(now(), "Gmail located message time")
       : exactMailThreadTimestamp(record.acceptedAt, "Gmail located message time"),
@@ -311,32 +249,17 @@ function admitLocatedMessage(value: unknown, now: () => string): GmailLocatedMes
 }
 
 function snapshotRecord(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`${label} is invalid`);
-  }
-  if (Object.getPrototypeOf(value) !== Object.prototype) {
-    throw new TypeError(`${label} must use the ordinary object prototype`);
-  }
-  if (Object.getOwnPropertySymbols(value).length !== 0) {
-    throw new TypeError(`${label} cannot contain symbol fields`);
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(`${label} is invalid`);
+  if (Object.getPrototypeOf(value) !== Object.prototype) throw new TypeError(`${label} must use the ordinary object prototype`);
+  if (Object.getOwnPropertySymbols(value).length !== 0) throw new TypeError(`${label} cannot contain symbol fields`);
   const entries: [string, unknown][] = [];
-  for (const [key, descriptor] of Object.entries(descriptors)) {
-    if (!descriptor.enumerable || !("value" in descriptor)) {
-      throw new TypeError(`${label} contains an unsupported field`);
-    }
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (!descriptor.enumerable || !("value" in descriptor)) throw new TypeError(`${label} contains an unsupported field`);
     entries.push([key, descriptor.value]);
   }
   return Object.fromEntries(entries);
 }
 
-function rejectUnknownKeys(
-  record: Record<string, unknown>,
-  allowed: ReadonlySet<string>,
-  label: string,
-): void {
-  for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) throw new TypeError(`${label} contains an unsupported field`);
-  }
+function rejectUnknownKeys(record: Record<string, unknown>, allowed: ReadonlySet<string>, label: string): void {
+  for (const key of Object.keys(record)) if (!allowed.has(key)) throw new TypeError(`${label} contains an unsupported field`);
 }

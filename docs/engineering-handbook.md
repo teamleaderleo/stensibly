@@ -2,7 +2,7 @@
 
 **Status:** living contributor guide  
 **Owner:** #693  
-**Last reviewed against `main`:** `bad18b0a7b60ceb864fa0881a1b8b6a2b9ab0644`
+**Last reviewed against `main`:** `9c5fea6520cbc902c7d9221c5172228833e083a8`
 
 ## In simple words / purpose
 
@@ -351,14 +351,13 @@ These are repository conventions unless a stronger contract applies.
   composition and hosted verification.
 - Treat generated or fixture contract tests as executable documentation.
 
-## Recurring pitfalls
+## Ten recurring pitfalls
 
 | Pitfall | Prevention rule | Current example |
 | --- | --- | --- |
 | Trimming or NFKC-normalizing an authority identity before validation | Admit exact source bytes first, then apply intentional provider equivalence | [Binding admission](code-atlas.md#1-strict-github-provider-binding-admission) |
 | Reading untrusted properties directly | Inspect descriptors and snapshot data properties without invoking accessors | [Binding admission](code-atlas.md#1-strict-github-provider-binding-admission) |
-| Treating fixed-descriptor projection as proof that unknown fields are absent | Choose closed-after-trusted-key-set, projection-style, or bounded-enumerated admission explicitly | [Caller-admission decision](decisions/1247-caller-admission-boundaries.md) |
-| Using `Object.keys` as a complete record check | Reject symbols and hidden fields through a complete, deliberately chosen key-set boundary | [Caller-admission decision](decisions/1247-caller-admission-boundaries.md) |
+| Treating fixed-descriptor projection or `Object.keys` as complete unknown-field proof | Choose closed-after-trusted-key-set, projection-style, or bounded-enumerated admission explicitly; require a complete key-set boundary when rejecting unknown fields | [Caller-admission decision](decisions/1247-caller-admission-boundaries.md) |
 | Trusting a TypeScript shape at runtime | Re-admit values crossing exported, provider, or persistence boundaries | [Delegated read boundary](code-atlas.md#4-guarded-delegated-github-read-boundary) |
 | Treating HTTP 2xx as exact provider authority | Verify the complete returned permission and repository scope before use or cache | [Provider guidance](#provider-credentials-and-returned-scope) |
 | Returning mutable validated objects | Snapshot and deeply freeze admitted records and result graphs | [Binding admission](code-atlas.md#1-strict-github-provider-binding-admission) |
