@@ -12,6 +12,7 @@ import {
 } from "./mail-thread-contract.js";
 import {
   renderMailOutboundEnvelope,
+  type MailContinuationRoute,
   type MailOutboundEnvelope,
   type MailSourceReference,
 } from "./mail-outbound-envelope.js";
@@ -47,7 +48,7 @@ export interface PublishMailThreadCommand {
   blocker?: string | null;
   resolutionCondition: string;
   threadState: MailThreadState;
-  continuationRoute?: string | null;
+  continuationRoute?: MailContinuationRoute | null;
   references?: readonly MailSourceReference[];
   continuesFromHandle?: string | null;
   mailbox: MailboxBinding;
