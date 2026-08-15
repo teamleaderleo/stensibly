@@ -64,6 +64,11 @@ export interface GmailMailboxDisposition {
   reason: GmailMailboxDispositionReason;
 }
 
+export interface GmailMailboxDispositionState {
+  state: MailThreadState;
+  operatorAttentionRequired: boolean;
+}
+
 export interface RelayMeasurement {
   workerIsolation: RelayWorkerIsolation;
   operatorTaps: number;
@@ -191,13 +196,18 @@ export function gmailViewLabel(_temperature: MailThreadTemperature): "Stensibly"
   return "Stensibly";
 }
 
-// The operator Inbox is an attention view. Every STN message remains durable under one label.
-// Only unresolved work explicitly requiring the operator stays visible and unread.
-export function gmailMailboxDisposition(
-  thread: MailThreadSnapshot,
+// Narrow provider-facing policy seam. Semantic class is deliberately absent: only current
+// lifecycle state plus the explicit human-attention bit can control Inbox visibility.
+export function gmailMailboxDispositionForState(
+  input: GmailMailboxDispositionState,
 ): GmailMailboxDisposition {
-  assertThread(thread);
-  if (thread.state === "resolved") {
+  if (input.state !== "active" && input.state !== "waiting" && input.state !== "resolved") {
+    throw new TypeError("mailbox disposition state must be active, waiting, or resolved");
+  }
+  if (typeof input.operatorAttentionRequired !== "boolean") {
+    throw new TypeError("operatorAttentionRequired must be boolean");
+  }
+  if (input.state === "resolved") {
     return Object.freeze({
       label: "Stensibly",
       archive: true,
@@ -205,7 +215,7 @@ export function gmailMailboxDisposition(
       reason: "resolved",
     });
   }
-  if (thread.state === "waiting") {
+  if (input.state === "waiting") {
     return Object.freeze({
       label: "Stensibly",
       archive: true,
@@ -213,7 +223,7 @@ export function gmailMailboxDisposition(
       reason: "waiting",
     });
   }
-  if (thread.operatorAttentionRequired) {
+  if (input.operatorAttentionRequired) {
     return Object.freeze({
       label: "Stensibly",
       archive: false,
@@ -227,6 +237,15 @@ export function gmailMailboxDisposition(
     markRead: true,
     reason: "routine",
   });
+}
+
+// The operator Inbox is an attention view. Every STN message remains durable under one label.
+// Only unresolved work explicitly requiring the operator stays visible and unread.
+export function gmailMailboxDisposition(
+  thread: MailThreadSnapshot,
+): GmailMailboxDisposition {
+  assertThread(thread);
+  return gmailMailboxDispositionForState(thread);
 }
 
 export function relayContextReduction(
