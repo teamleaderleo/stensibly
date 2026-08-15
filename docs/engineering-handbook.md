@@ -2,7 +2,7 @@
 
 **Status:** living contributor guide  
 **Owner:** #693  
-**Last reviewed against `main`:** `b056e8e42583b6cf94a7edee8b2e2fa140f1ed6c`
+**Last reviewed against `main`:** `bad18b0a7b60ceb864fa0881a1b8b6a2b9ab0644`
 
 ## In simple words / purpose
 
