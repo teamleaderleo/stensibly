@@ -22,6 +22,9 @@ export function consumeExistingGitHubFormalReviewProposal(
     || admission.replyClass !== "mail.github_review_proposal"
     || admission.semantic !== "formal_review_proposal"
     || admission.effect?.kind !== "github_formal_review"
+    || admission.authorityFingerprint === null
+    || admission.messageDisposition !== "direct_human_reply"
+    || admission.effectCapability !== "github_formal_review"
   ) {
     throw new RangeError(
       "Existing mail admission is not a typed GitHub formal-review proposal",
@@ -42,6 +45,9 @@ export function consumeExistingGitHubFormalReviewProposal(
     bodySha256: admission.bodySha256,
     bodyByteLength: admission.bodyByteLength,
     replyFingerprint: admission.replyFingerprint,
+    authorityFingerprint: admission.authorityFingerprint,
+    messageDisposition: admission.messageDisposition,
+    effectCapability: admission.effectCapability,
     replay: admission.replay,
     effect,
     containsRawMailBody: false as const,

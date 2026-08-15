@@ -44,6 +44,12 @@ const policy = {
 };
 
 function effectFor(body: string): GitHubConversationCommentEffect {
+  const causal = {
+    rootId: "github:pull_request:projection-root",
+    predecessorId: "mail:gmail-message-root",
+    depth: 1,
+    fanOut: 0,
+  };
   const admission = classifyGitHubMailReply({
     thread,
     provider: "gmail",
@@ -53,13 +59,28 @@ function effectFor(body: string): GitHubConversationCommentEffect {
     inReplyToMessageId: "gmail-message-root",
     replyClass: "mail.github_comment_proposal",
     body,
-    expectedTargetSourceRevision: "issue-rev-1",
-    expectedHeadRevision: head,
+    expectedTargetSourceRevision: "untrusted-legacy-revision",
+    expectedHeadRevision: null,
     causal: {
-      rootId: "github:pull_request:projection-root",
-      predecessorId: "mail:gmail-message-root",
-      depth: 1,
+      rootId: "mail:untrusted-root",
+      predecessorId: null,
+      depth: 0,
       fanOut: 0,
+    },
+    authority: {
+      version: 1,
+      threadId: thread.threadId,
+      provider: "gmail",
+      mailboxBindingId: "mailbox_primary",
+      expectedMailboxAddress: "operator@example.com",
+      providerThreadId: "gmail-thread-1491",
+      expectedInReplyToMessageId: "gmail-message-root",
+      messageDisposition: "direct_human_reply",
+      effectCapability: "github_conversation_comment",
+      expectedTargetSourceRevision: "issue-rev-1",
+      expectedHeadRevision: head,
+      formalReviewVerdict: null,
+      causal,
     },
   });
   return admission.effect as GitHubConversationCommentEffect;

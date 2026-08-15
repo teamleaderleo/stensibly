@@ -5,6 +5,8 @@ import {
   executeGovernedGitHubMailFormalReviewProjection,
   GitHubMailFormalReviewOutboundTextRejectedError,
   type GitHubMailFormalReviewAdmission,
+  type GitHubMailFormalReviewAuthorityBinding,
+  type GitHubMailFormalReviewInput,
   type GitHubMailProjectedFormalReviewReceipt,
 } from "../src/github-mail-formal-review-projection.ts";
 import {
@@ -38,21 +40,63 @@ const causal = {
   fanOut: 1,
 };
 
-function formalInput(overrides: Record<string, unknown> = {}) {
+type FormalInputOverrides = Partial<Omit<GitHubMailFormalReviewInput, "authority">> & {
+  authority?: GitHubMailFormalReviewAuthorityBinding | null;
+};
+
+function formalAuthority(
+  overrides: Partial<GitHubMailFormalReviewAuthorityBinding> = {},
+): GitHubMailFormalReviewAuthorityBinding {
   return {
-    thread,
-    provider: "gmail" as const,
+    version: 1,
+    threadId: thread.threadId,
+    provider: "gmail",
     mailboxBindingId: "gmail:primary",
+    expectedMailboxAddress: "operator@example.com",
     providerThreadId: "gmail-thread-777",
-    providerMessageId: "gmail-message-777",
-    inReplyToMessageId: "gmail-message-parent",
-    replyClass: "mail.github_review_proposal" as const,
-    body: "Formal review: exact typed COMMENT residue.",
+    expectedInReplyToMessageId: "gmail-message-parent",
+    messageDisposition: "direct_human_reply",
+    effectCapability: "github_formal_review",
     expectedTargetSourceRevision: source,
     expectedHeadRevision: head,
-    formalReviewVerdict: "COMMENT" as const,
+    formalReviewVerdict: "COMMENT",
     causal,
     ...overrides,
+  };
+}
+
+function formalInput(overrides: FormalInputOverrides = {}): GitHubMailFormalReviewInput {
+  const verdict = overrides.formalReviewVerdict ?? "COMMENT";
+  const causalValue = overrides.causal ?? causal;
+  const expectedTarget = overrides.expectedTargetSourceRevision ?? source;
+  const expectedHead = overrides.expectedHeadRevision ?? head;
+  const providerThreadId = overrides.providerThreadId ?? "gmail-thread-777";
+  const inReplyToMessageId = overrides.inReplyToMessageId ?? "gmail-message-parent";
+  const authority = overrides.authority === undefined
+    ? formalAuthority({
+        providerThreadId,
+        expectedInReplyToMessageId: inReplyToMessageId,
+        expectedTargetSourceRevision: expectedTarget,
+        expectedHeadRevision: expectedHead,
+        formalReviewVerdict: verdict,
+        causal: causalValue,
+      })
+    : overrides.authority;
+  return {
+    thread: overrides.thread ?? thread,
+    provider: overrides.provider ?? "gmail",
+    mailboxBindingId: overrides.mailboxBindingId ?? "gmail:primary",
+    providerThreadId,
+    providerMessageId: overrides.providerMessageId ?? "gmail-message-777",
+    inReplyToMessageId,
+    replyClass: "mail.github_review_proposal",
+    body: overrides.body ?? "Formal review: exact typed COMMENT residue.",
+    expectedTargetSourceRevision: expectedTarget,
+    expectedHeadRevision: expectedHead,
+    formalReviewVerdict: verdict,
+    causal: causalValue,
+    authority: authority as GitHubMailFormalReviewAuthorityBinding | undefined,
+    previousAdmission: overrides.previousAdmission,
   };
 }
 
@@ -177,6 +221,7 @@ describe("formal GitHub review mail classification", () => {
     expect(formal.semantic).toBe("formal_review_proposal");
     expect(formal.effect.kind).toBe("github_formal_review");
     expect(formal.effect.verdict).toBe("COMMENT");
+    expect(formal.authorityFingerprint).toMatch(/^sha256:/);
 
     const conversation = classifyGitHubMailReply({
       thread,
@@ -190,6 +235,21 @@ describe("formal GitHub review mail classification", () => {
       expectedTargetSourceRevision: source,
       expectedHeadRevision: head,
       causal,
+      authority: {
+        version: 1,
+        threadId: thread.threadId,
+        provider: "gmail",
+        mailboxBindingId: "gmail:primary",
+        expectedMailboxAddress: "operator@example.com",
+        providerThreadId: "gmail-thread-777",
+        expectedInReplyToMessageId: "gmail-message-parent",
+        messageDisposition: "direct_human_reply",
+        effectCapability: "github_conversation_comment",
+        expectedTargetSourceRevision: source,
+        expectedHeadRevision: head,
+        formalReviewVerdict: null,
+        causal,
+      },
     });
     expect(conversation.semantic).toBe("conversation_comment_proposal");
     expect(conversation.effect?.kind).toBe("github_conversation_comment");
@@ -215,6 +275,43 @@ describe("formal GitHub review mail classification", () => {
       formalReviewVerdict: "APPROVE",
       previousAdmission: first,
     }))).toThrow("changed formal-review semantics");
+  });
+
+  test("server-owned authority blocks forwards, stale ancestry, operation spoofing, and credential text", () => {
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      authority: null,
+    }))).toThrow("server-owned authority binding");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      authority: formalAuthority({ messageDisposition: "forwarded" }),
+    }))).toThrow("cannot authorize a formal GitHub review");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      authority: formalAuthority({ expectedInReplyToMessageId: "gmail-message-old" }),
+    }))).toThrow("does not match the observed provider reply");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      authority: formalAuthority({ effectCapability: "github_conversation_comment" }),
+    }))).toThrow("cannot authorize a formal GitHub review");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      body: `Authorization: Bearer ${"a".repeat(40)}`,
+    }))).toThrow("credential-shaped text");
+  });
+
+  test("mail-supplied verdict, head, target revision, and causal IDs cannot override trusted authority", () => {
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      formalReviewVerdict: "APPROVE",
+      authority: formalAuthority({ formalReviewVerdict: "COMMENT" }),
+    }))).toThrow("cannot override server-owned authority");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      expectedHeadRevision: "3".repeat(40),
+      authority: formalAuthority(),
+    }))).toThrow("cannot override server-owned authority");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      expectedTargetSourceRevision: `sha256:${"4".repeat(64)}`,
+      authority: formalAuthority(),
+    }))).toThrow("cannot override server-owned authority");
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      causal: { rootId: "mail:spoofed", predecessorId: null, depth: 0, fanOut: 0 },
+      authority: formalAuthority(),
+    }))).toThrow("cannot override server-owned authority");
   });
 
   test("causal depth and fan-out remain bounded", () => {
