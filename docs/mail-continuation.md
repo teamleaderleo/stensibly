@@ -35,6 +35,13 @@ handoff, highest-value eligible review, or one useful digest lane, follow
 metadata, current GitHub readbacks, deterministic selection, and only then one selected
 mail body.
 
+Selection ends at recommendation. When a product surface supports explicit worker
+acceptance, follow [`MAIL-SELECTION-CLAIMS.md`](MAIL-SELECTION-CLAIMS.md): bind the exact
+current item version/claim generation and recommendation fingerprint, then let the
+server atomically admit one current worker claim. Recommendation, workerRef, and mail
+state grant zero responsibility or authority by themselves. A losing concurrent worker
+refreshes and selects again before acting.
+
 A useful agent checkpoint contains only what the successor needs: the launch line,
 `STN-*` handle, exact source identity, what changed, current observation, next action,
 resolution condition, and a blocker when one exists. Prefer standalone material
