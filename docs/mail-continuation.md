@@ -29,6 +29,12 @@ without an old chat transcript.
    leave a compact material checkpoint that lets another disposable chat repeat this
    sequence.
 
+For a fresh chat that starts without an exact handle and asks for the oldest actionable
+handoff, highest-value eligible review, or one useful digest lane, follow
+[`MAIL-UX-SELECTION.md`](MAIL-UX-SELECTION.md). That path uses bounded Gmail checkpoint
+metadata, current GitHub readbacks, deterministic selection, and only then one selected
+mail body.
+
 A useful agent checkpoint contains only what the successor needs: the launch line,
 `STN-*` handle, exact source identity, what changed, current observation, next action,
 resolution condition, and a blocker when one exists. Prefer standalone material
