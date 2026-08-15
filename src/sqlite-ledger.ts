@@ -77,12 +77,22 @@ import {
 } from "./run-item-recovery.js";
 import { transitionWorkRunWithItemProjection } from "./run-item-projection.js";
 import type {
+  GetRunnerAdapterCommandInput,
   ReserveRunnerAdapterCommandInput,
   RunnerAdapterCommandLedger,
   SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import type {
+  ClaimRunnerAdapterCommandRecoveryInput,
+  RunnerAdapterCommandRecoveryLedger,
+} from "./runner-adapter-command-recovery.js";
+import {
+  claimSqliteRunnerAdapterCommandRecovery,
+  ensureRunnerAdapterCommandRecoverySchema,
+} from "./runner-adapter-command-recovery-sqlite.js";
 import {
   ensureRunnerAdapterCommandSchema,
+  getSqliteRunnerAdapterCommand,
   reserveSqliteRunnerAdapterCommand,
   settleSqliteRunnerAdapterCommand,
 } from "./runner-adapter-command-sqlite.js";
@@ -106,6 +116,7 @@ export class SqliteWorkLedger implements
   ContinuationSupervisorLedger,
   RunnerLedger,
   RunnerAdapterCommandLedger,
+  RunnerAdapterCommandRecoveryLedger,
   ProjectAttachmentLedger,
   OperationReceiptLedger
 {
@@ -116,6 +127,7 @@ export class SqliteWorkLedger implements
     ensureContinuationSupervisorSchema(store);
     ensureProjectAttachmentSchema(store);
     ensureRunnerAdapterCommandSchema(store);
+    ensureRunnerAdapterCommandRecoverySchema(store);
   }
 
   async getBrief(project: string, limit: number) {
@@ -380,12 +392,20 @@ export class SqliteWorkLedger implements
     return claimRunnerWork(this.store, input);
   }
 
+  async getRunnerAdapterCommand(input: GetRunnerAdapterCommandInput) {
+    return getSqliteRunnerAdapterCommand(this.store, input);
+  }
+
   async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
     return reserveSqliteRunnerAdapterCommand(this.store, input);
   }
 
   async settleRunnerAdapterCommand(input: SettleRunnerAdapterCommandInput) {
     return settleSqliteRunnerAdapterCommand(this.store, input);
+  }
+
+  async claimRunnerAdapterCommandRecovery(input: ClaimRunnerAdapterCommandRecoveryInput) {
+    return claimSqliteRunnerAdapterCommandRecovery(this.store, input);
   }
 
   async getRun(id: string) {
