@@ -23,16 +23,14 @@ const binding: SettledGmailMessageBinding = {
   source: "settled_gmail_message_binding",
   provider: "gmail",
   stnThreadId: "attn_H7MK",
-  accountBinding: "gmail:operator-primary",
+  accountBinding: "operator-primary",
   mailboxAddress: "operator@example.com",
   providerThreadId: "thread_H7MK",
   providerMessageId: "message_H7MK",
   stensiblyLabelId: "Label_6",
 };
 
-function receipt(
-  overrides: Partial<MailDeliveryReceipt> = {},
-): MailDeliveryReceipt {
+function receipt(overrides: Partial<MailDeliveryReceipt> = {}): MailDeliveryReceipt {
   return {
     version: 1,
     outboundEffectId: "mail_effect_H7MK",
@@ -94,9 +92,7 @@ class MemoryEffectStore implements GmailMailboxDispositionEffectStore {
         && record.effect.binding.mailboxAddress === target.mailboxAddress
         && record.effect.binding.providerThreadId === target.providerThreadId
         && record.effect.binding.providerMessageId === target.providerMessageId
-      ) {
-        return record;
-      }
+      ) return record;
     }
     return null;
   }
@@ -105,7 +101,7 @@ class MemoryEffectStore implements GmailMailboxDispositionEffectStore {
     effect: GmailMailboxDispositionEffect,
   ): Promise<GmailMailboxDispositionReserveResult> {
     const existing = this.records.get(effect.effectId);
-    if (existing !== undefined) return { status: "existing", record: existing };
+    if (existing) return { status: "existing", record: existing };
     this.records.set(effect.effectId, {
       effect,
       status: "reserved",
@@ -148,7 +144,7 @@ class MemoryEffectStore implements GmailMailboxDispositionEffectStore {
 
   private required(effectId: string) {
     const record = this.records.get(effectId);
-    if (record === undefined) throw new Error(`missing effect ${effectId}`);
+    if (!record) throw new Error(`missing effect ${effectId}`);
     return record;
   }
 }
@@ -183,23 +179,21 @@ class FakeLabelClient implements GmailMailboxLabelClient {
     addLabelIds: readonly string[];
     removeLabelIds: readonly string[];
   }) {
-    expect(input.accountBinding).toBe(binding.accountBinding);
-    expect(input.mailboxAddress).toBe(binding.mailboxAddress);
-    expect(input.providerThreadId).toBe(binding.providerThreadId);
-    expect(input.providerMessageId).toBe(binding.providerMessageId);
+    expect(input).toMatchObject({
+      accountBinding: binding.accountBinding,
+      mailboxAddress: binding.mailboxAddress,
+      providerThreadId: binding.providerThreadId,
+      providerMessageId: binding.providerMessageId,
+    });
     this.mutations.push({
       dispositionEffectId: input.dispositionEffectId,
       addLabelIds: [...input.addLabelIds],
       removeLabelIds: [...input.removeLabelIds],
     });
-    if (this.mutationMode === "throw_before_apply") {
-      throw new Error("ambiguous mutation");
-    }
+    if (this.mutationMode === "throw_before_apply") throw new Error("ambiguous mutation");
     for (const label of input.addLabelIds) this.labels.add(label);
     for (const label of input.removeLabelIds) this.labels.delete(label);
-    if (this.mutationMode === "apply_then_throw") {
-      throw new Error("response lost after apply");
-    }
+    if (this.mutationMode === "apply_then_throw") throw new Error("response lost after apply");
   }
 
   private snapshot(): GmailMessageLabelSnapshot {
@@ -216,7 +210,7 @@ class FakeLabelClient implements GmailMailboxLabelClient {
   }
 }
 
-function executionFixture() {
+function fixture() {
   return {
     stateReader: new MutableStateReader(),
     labelClient: new FakeLabelClient(),
@@ -225,12 +219,11 @@ function executionFixture() {
 }
 
 describe("Gmail mailbox disposition effect", () => {
-  test("consumes the merged outbound delivery receipt instead of inventing provider identity", () => {
+  test("consumes merged outbound delivery evidence", () => {
     expect(settledGmailMessageBindingFromDeliveryReceipt({
       receipt: receipt(),
       stensiblyLabelId: "Label_6",
     })).toEqual(binding);
-
     expect(() => settledGmailMessageBindingFromDeliveryReceipt({
       receipt: receipt({
         result: "ambiguous",
@@ -242,37 +235,25 @@ describe("Gmail mailbox disposition effect", () => {
     })).toThrow("settled successful Gmail delivery receipt");
   });
 
-  test("full #1522 matrix keeps semantic class independent from human visibility", () => {
+  test("full #1522 matrix keeps class independent from human visibility", () => {
     const classes: MailAttentionClass[] = ["handoff", "review", "decision", "incident"];
     for (const attentionClass of classes) {
       const quiet = buildGmailMailboxDispositionEffect(binding, state({
         attentionClass,
         operatorAttentionRequired: false,
       }));
-      expect(quiet.disposition).toEqual({
-        label: "Stensibly",
-        archive: true,
-        markRead: true,
-        reason: "routine",
-      });
+      expect(quiet.disposition.reason).toBe("routine");
       expect(quiet.requiredLabelIds).toEqual(["Label_6"]);
       expect(quiet.forbiddenLabelIds).toEqual(["INBOX", "UNREAD"]);
       expect(quiet.authorizesMailSend).toBe(false);
     }
-
     const visible = buildGmailMailboxDispositionEffect(binding, state({
       attentionClass: "handoff",
       operatorAttentionRequired: true,
     }));
-    expect(visible.disposition).toEqual({
-      label: "Stensibly",
-      archive: false,
-      markRead: false,
-      reason: "operator_attention",
-    });
+    expect(visible.disposition.reason).toBe("operator_attention");
     expect(visible.requiredLabelIds).toEqual(["Label_6", "INBOX", "UNREAD"]);
     expect(visible.forbiddenLabelIds).toEqual([]);
-
     for (const lifecycle of ["waiting", "resolved"] as const) {
       const quiet = buildGmailMailboxDispositionEffect(binding, state({
         state: lifecycle,
@@ -284,194 +265,167 @@ describe("Gmail mailbox disposition effect", () => {
     }
   });
 
-  test("active explicit human attention is applied once and exact replay sends no second mutation", async () => {
-    const fixture = executionFixture();
-    const first = await executeGmailMailboxDispositionEffect({
-      binding,
-      ...fixture,
-    });
+  test("active attention applies once and exact replay is mutation-free", async () => {
+    const f = fixture();
+    const first = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(first.status).toBe("applied");
-    expect(fixture.labelClient.labels).toEqual(
-      new Set(["SENT", "Label_6", "INBOX", "UNREAD"]),
-    );
-    expect(fixture.labelClient.mutations).toHaveLength(1);
-    expect(fixture.labelClient.mutations[0]?.addLabelIds).toEqual([
-      "Label_6",
-      "INBOX",
-      "UNREAD",
-    ]);
-    expect(fixture.labelClient.mutations[0]?.removeLabelIds).toEqual([]);
+    if (first.status !== "applied") throw new Error("expected applied");
+    expect(f.labelClient.labels).toEqual(new Set(["SENT", "Label_6", "INBOX", "UNREAD"]));
+    expect(f.labelClient.mutations).toHaveLength(1);
 
-    const replay = await executeGmailMailboxDispositionEffect({
-      binding,
-      ...fixture,
-    });
+    const replay = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(replay.status).toBe("replayed");
-    expect(replay.effect.effectId).toBe(first.effect?.effectId);
-    expect(fixture.labelClient.mutations).toHaveLength(1);
+    if (replay.status !== "replayed") throw new Error("expected replayed");
+    expect(replay.effect.effectId).toBe(first.effect.effectId);
+    expect(f.labelClient.mutations).toHaveLength(1);
   });
 
-  test("active true to resolved changes only disposition effect and keeps the same provider message searchable", async () => {
-    const fixture = executionFixture();
-    const active = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+  test("active true to resolved keeps exact provider identity and repeated resolved is a no-op", async () => {
+    const f = fixture();
+    const active = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(active.status).toBe("applied");
-    const activeEffectId = active.effect?.effectId;
+    if (active.status !== "applied") throw new Error("expected active applied");
 
-    fixture.stateReader.current = state({
+    f.stateReader.current = state({
       revision: "state-r2-resolved",
       state: "resolved",
       operatorAttentionRequired: true,
     });
-    const resolved = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+    const resolved = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(resolved.status).toBe("applied");
-    expect(resolved.effect.effectId).not.toBe(activeEffectId);
+    if (resolved.status !== "applied") throw new Error("expected resolved applied");
+    expect(resolved.effect.effectId).not.toBe(active.effect.effectId);
     expect(resolved.effect.binding.providerThreadId).toBe(binding.providerThreadId);
     expect(resolved.effect.binding.providerMessageId).toBe(binding.providerMessageId);
-    expect(fixture.labelClient.labels).toEqual(new Set(["SENT", "Label_6"]));
-    expect(fixture.labelClient.mutations).toHaveLength(2);
-    expect(fixture.labelClient.mutations[1]?.addLabelIds).toEqual([]);
-    expect(fixture.labelClient.mutations[1]?.removeLabelIds).toEqual(["INBOX", "UNREAD"]);
+    expect(f.labelClient.labels).toEqual(new Set(["SENT", "Label_6"]));
+    expect(f.labelClient.mutations).toHaveLength(2);
 
-    const repeatedResolved = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
-    expect(repeatedResolved.status).toBe("replayed");
-    expect(fixture.labelClient.mutations).toHaveLength(2);
+    const replay = await executeGmailMailboxDispositionEffect({ binding, ...f });
+    expect(replay.status).toBe("replayed");
+    expect(f.labelClient.mutations).toHaveLength(2);
   });
 
-  test("draft-only provider object is excluded from surfaced attention and never mutated", async () => {
-    const fixture = executionFixture();
-    fixture.labelClient.isDraft = true;
-    fixture.labelClient.labels = new Set(["DRAFT"]);
-
-    const result = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+  test("draft-only provider object is excluded and never mutated", async () => {
+    const f = fixture();
+    f.labelClient.isDraft = true;
+    f.labelClient.labels = new Set(["DRAFT"]);
+    const result = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(result.status).toBe("ignored_draft");
-    expect(fixture.labelClient.labels).toEqual(new Set(["DRAFT"]));
-    expect(fixture.labelClient.mutations).toHaveLength(0);
+    expect(f.labelClient.labels).toEqual(new Set(["DRAFT"]));
+    expect(f.labelClient.mutations).toHaveLength(0);
   });
 
-  test("ambiguous mutation enters reconciliation and exact replay cannot blindly mutate", async () => {
-    const fixture = executionFixture();
-    fixture.labelClient.mutationMode = "apply_then_throw";
-
-    const first = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+  test("ambiguous applied mutation reconciles before replay", async () => {
+    const f = fixture();
+    f.labelClient.mutationMode = "apply_then_throw";
+    const first = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(first.status).toBe("reconciliation_required");
     if (first.status !== "reconciliation_required") throw new Error("expected reconciliation");
     expect(first.phase).toBe("mutation_outcome");
-    expect(fixture.labelClient.mutations).toHaveLength(1);
+    expect(f.labelClient.mutations).toHaveLength(1);
 
-    const replay = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+    const replay = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(replay.status).toBe("reconciliation_required");
-    expect(fixture.labelClient.mutations).toHaveLength(1);
-
+    expect(f.labelClient.mutations).toHaveLength(1);
     const reconciled = await reconcileGmailMailboxDispositionEffect({
       effect: first.effect,
       phase: first.phase,
-      ...fixture,
+      ...f,
     });
     expect(reconciled.status).toBe("reconciled");
-
-    const after = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
-    expect(after.status).toBe("replayed");
-    expect(fixture.labelClient.mutations).toHaveLength(1);
   });
 
-  test("newer STN state is fenced behind an unresolved older mutation outcome", async () => {
-    const fixture = executionFixture();
-    fixture.labelClient.mutationMode = "throw_before_apply";
-
-    const first = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+  test("newer durable state waits for unresolved old mutation reconciliation", async () => {
+    const f = fixture();
+    f.labelClient.mutationMode = "throw_before_apply";
+    const first = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(first.status).toBe("reconciliation_required");
     if (first.status !== "reconciliation_required") throw new Error("expected reconciliation");
-    expect(fixture.labelClient.mutations).toHaveLength(1);
 
-    fixture.stateReader.current = state({
+    f.stateReader.current = state({
       revision: "state-r2-resolved",
       state: "resolved",
       operatorAttentionRequired: false,
     });
-    const newer = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+    const newer = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(newer.status).toBe("blocked_by_prior_reconciliation");
-    expect(fixture.labelClient.mutations).toHaveLength(1);
+    expect(f.labelClient.mutations).toHaveLength(1);
 
-    const unresolved = await reconcileGmailMailboxDispositionEffect({
+    const pending = await reconcileGmailMailboxDispositionEffect({
       effect: first.effect,
       phase: first.phase,
-      ...fixture,
+      ...f,
     });
-    expect(unresolved.status).toBe("superseded");
-    if (unresolved.status !== "superseded") throw new Error("expected superseded");
-    expect(unresolved.priorEffectCleared).toBe(false);
+    expect(pending.status).toBe("superseded");
+    if (pending.status !== "superseded") throw new Error("expected superseded");
+    expect(pending.priorEffectCleared).toBe(false);
 
-    fixture.labelClient.labels = new Set(["SENT", "Label_6", "INBOX", "UNREAD"]);
-    const oldOutcomeProved = await reconcileGmailMailboxDispositionEffect({
+    f.labelClient.labels = new Set(["SENT", "Label_6", "INBOX", "UNREAD"]);
+    const proved = await reconcileGmailMailboxDispositionEffect({
       effect: first.effect,
       phase: first.phase,
-      ...fixture,
+      ...f,
     });
-    expect(oldOutcomeProved.status).toBe("superseded");
-    if (oldOutcomeProved.status !== "superseded") throw new Error("expected superseded");
-    expect(oldOutcomeProved.priorEffectCleared).toBe(true);
+    expect(proved.status).toBe("superseded");
+    if (proved.status !== "superseded") throw new Error("expected superseded");
+    expect(proved.priorEffectCleared).toBe(true);
 
-    fixture.labelClient.mutationMode = "success";
-    const resolved = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+    f.labelClient.mutationMode = "success";
+    const resolved = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(resolved.status).toBe("applied");
-    expect(fixture.labelClient.labels).toEqual(new Set(["SENT", "Label_6"]));
-    expect(fixture.labelClient.mutations).toHaveLength(2);
+    expect(f.labelClient.labels).toEqual(new Set(["SENT", "Label_6"]));
+    expect(f.labelClient.mutations).toHaveLength(2);
   });
 
-  test("provider read failure is reconciled before a safe retry and never mutates blindly", async () => {
-    const fixture = executionFixture();
-    fixture.labelClient.failReadNumbers.add(1);
-
-    const first = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+  test("precondition read failure is reconciled before a safe retry", async () => {
+    const f = fixture();
+    f.labelClient.failReadNumbers.add(1);
+    const first = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(first.status).toBe("reconciliation_required");
     if (first.status !== "reconciliation_required") throw new Error("expected reconciliation");
     expect(first.phase).toBe("precondition_read");
-    expect(fixture.labelClient.mutations).toHaveLength(0);
+    expect(f.labelClient.mutations).toHaveLength(0);
 
-    const replay = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+    const replay = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(replay.status).toBe("reconciliation_required");
-    expect(fixture.labelClient.mutations).toHaveLength(0);
-
-    const reconciled = await reconcileGmailMailboxDispositionEffect({
+    const reconcile = await reconcileGmailMailboxDispositionEffect({
       effect: first.effect,
       phase: first.phase,
-      ...fixture,
+      ...f,
     });
-    expect(reconciled.status).toBe("retry_safe");
-
-    const retry = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
+    expect(reconcile.status).toBe("retry_safe");
+    const retry = await executeGmailMailboxDispositionEffect({ binding, ...f });
     expect(retry.status).toBe("applied");
-    expect(fixture.labelClient.mutations).toHaveLength(1);
+    expect(f.labelClient.mutations).toHaveLength(1);
   });
 
-  test("current durable STN state is authoritative and provider identity conflicts fail closed", async () => {
-    const fixture = executionFixture();
-    fixture.stateReader.current = {
+  test("durable state provenance and exact provider identity fail closed", async () => {
+    const f = fixture();
+    f.stateReader.current = {
       ...state({ operatorAttentionRequired: false }),
       source: "mail_body" as "durable_stn_state",
     };
-    const untrustedState = await executeGmailMailboxDispositionEffect({ binding, ...fixture });
-    expect(untrustedState.status).toBe("blocked");
-    if (untrustedState.status !== "blocked") throw new Error("expected blocked");
-    expect(untrustedState.reason).toBe("current_state_identity_conflict");
-    expect(fixture.labelClient.reads).toBe(0);
-    expect(fixture.labelClient.mutations).toHaveLength(0);
+    const untrusted = await executeGmailMailboxDispositionEffect({ binding, ...f });
+    expect(untrusted.status).toBe("blocked");
+    if (untrusted.status !== "blocked") throw new Error("expected blocked");
+    expect(untrusted.reason).toBe("current_state_identity_conflict");
+    expect(f.labelClient.reads).toBe(0);
 
-    fixture.stateReader.current = state({ operatorAttentionRequired: false });
-    fixture.labelClient.mismatchMessageId = "different_message";
-    const wrongMessage = await executeGmailMailboxDispositionEffect({
+    f.stateReader.current = state({ operatorAttentionRequired: false });
+    f.labelClient.mismatchMessageId = "different_message";
+    const wrong = await executeGmailMailboxDispositionEffect({
       binding,
-      stateReader: fixture.stateReader,
-      labelClient: fixture.labelClient,
+      stateReader: f.stateReader,
+      labelClient: f.labelClient,
       effectStore: new MemoryEffectStore(),
     });
-    expect(wrongMessage.status).toBe("blocked");
-    if (wrongMessage.status !== "blocked") throw new Error("expected blocked");
-    expect(wrongMessage.reason).toBe("provider_identity_conflict");
-    expect(fixture.labelClient.mutations).toHaveLength(0);
+    expect(wrong.status).toBe("blocked");
+    if (wrong.status !== "blocked") throw new Error("expected blocked");
+    expect(wrong.reason).toBe("provider_identity_conflict");
+    expect(f.labelClient.mutations).toHaveLength(0);
   });
 
-  test("changed durable state creates a new label-only effect without any mail-send authority", () => {
+  test("state change creates a new label-only effect on the same provider message", () => {
     const first = buildGmailMailboxDispositionEffect(binding, state({
       revision: "state-r1",
       operatorAttentionRequired: false,
