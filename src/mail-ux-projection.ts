@@ -3,6 +3,7 @@ export const MAIL_UX_PROJECTION_VERSION = "mail-ux-projection/v0" as const;
 export type MailAttentionClass = "handoff" | "review" | "decision" | "incident";
 export type MailThreadState = "active" | "waiting" | "resolved";
 export type MailThreadTemperature = "hot" | "active" | "waiting" | "resolved" | "stranded";
+export type RelayWorkerIsolation = "same_chat_protocol_replay" | "fresh_chat";
 
 export interface MailThreadSnapshot {
   handle: string;
@@ -50,6 +51,7 @@ export interface MailDigestProjection {
 }
 
 export interface RelayMeasurement {
+  workerIsolation: RelayWorkerIsolation;
   operatorTaps: number;
   turnsToUsefulAction: number;
   mailMessagesFetched: number;
@@ -132,7 +134,10 @@ export function compileMailDigest(
   const rows = threads.map((thread) => {
     const temperature = classifyMailThreadTemperature(thread, asOf, strandedAfterHours);
     const ageFrom = thread.actionableAt ?? thread.updatedAt;
-    const ageFromMs = parseTimestamp(ageFrom, thread.actionableAt === null ? "updatedAt" : "actionableAt");
+    const ageFromMs = parseTimestamp(
+      ageFrom,
+      thread.actionableAt === null ? "updatedAt" : "actionableAt",
+    );
     const age = ageFromMs > now ? 0 : Math.floor((now - ageFromMs) / 3_600_000);
     return {
       handle: thread.handle,
