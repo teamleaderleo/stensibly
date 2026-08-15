@@ -55,7 +55,7 @@ export interface MailboxSubscriptionState {
 }
 
 export interface MailboxObservation {
-  readonly version: 1;
+  readonly version: 2;
   readonly provider: MailboxProvider;
   readonly mailboxBindingId: string;
   readonly sourceSchema: MailboxObservationSourceSchema;
@@ -204,7 +204,7 @@ export function createMailboxObservation(
   );
 
   const canonicalSemantics = {
-    version: 1 as const,
+    version: 2 as const,
     provider,
     mailboxBindingId,
     sourceSchema,
@@ -223,7 +223,7 @@ export function createMailboxObservation(
   };
   const semanticFingerprint = fingerprintCanonicalRequest(canonicalSemantics);
   const identityDigest = fingerprintCanonicalRequest({
-    version: 1,
+    version: 2,
     provider,
     mailboxBindingId,
     sourceSchema,
