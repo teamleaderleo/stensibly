@@ -82,7 +82,7 @@ export function renderMailOutboundEnvelope(
   const materialFingerprint = sha256(stableJson(semantics));
   const launchLine = semantics.continuationRoute === null
     ? `Continue ${thread.handle}.`
-    : `Continue ${thread.handle} via ${semantics.continuationRoute.mailProvider} + ${semantics.continuationRoute.sourceSystem} only.`;
+    : `In ${semantics.continuationRoute.mailProvider}, continue ${thread.handle}. Then refresh the referenced ${semantics.continuationRoute.sourceSystem} state.`;
   const subject = `[${thread.handle}] ${thread.canonicalSubject}`;
   const body = renderBody(semantics, launchLine);
   if (Buffer.byteLength(body, "utf8") > maxBodyBytes) {
