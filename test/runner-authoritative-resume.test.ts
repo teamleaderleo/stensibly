@@ -843,7 +843,10 @@ class ModelFreeResumeAdapter implements RunnerAdapterV1 {
       });
       return;
     }
-    yield observation(command, "heartbeat", sequence++, { usage: {}, checkpointRef: command.checkpointRef });
+    yield observation(command, "heartbeat", sequence++, {
+      usage: { inputTokens: 0, outputTokens: 0, toolCalls: 0, childAgents: 0 },
+      checkpointRef: command.checkpointRef,
+    });
     if (this.omitTerminal) return;
     yield observation(command, "completion_proposed", sequence++, {
       outcome: "The model-free resume fixture completed.",
