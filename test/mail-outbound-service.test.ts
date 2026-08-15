@@ -107,8 +107,10 @@ describe("outbound mail service", () => {
 
     const messages = provider.messagesForThread(first.receipt.providerThreadId!);
     expect(messages).toHaveLength(2);
-    expect(messages[1]!.inReplyTo).toBe(messages[0]!.rfcMessageId);
-    expect(messages[1]!.references).toEqual([messages[0]!.rfcMessageId]);
+    const rootRfcMessageId = messages[0]!.rfcMessageId;
+    if (rootRfcMessageId === null) throw new Error("In-memory fixture requires RFC Message-ID");
+    expect(messages[1]!.inReplyTo).toBe(rootRfcMessageId);
+    expect(messages[1]!.references).toEqual([rootRfcMessageId]);
 
     const resolved = await service.publish(command({
       sourceFingerprint: sha256("attention-3"),
