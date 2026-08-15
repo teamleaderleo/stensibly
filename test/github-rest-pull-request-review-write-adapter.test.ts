@@ -33,6 +33,24 @@ describe("GitHubRestPullRequestReviewWriteAdapter", () => {
     const permissions: unknown[] = [];
     const requests: Array<{ url: string; method: string; body: unknown }> = [];
     const providerBody = "Formal review body.\n\n<!-- stensibly-review-effect:stn-gh-review:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->";
+    const fetchMock = (async (url: URL | RequestInfo, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const rawBody = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ url: String(url), method, body: rawBody });
+      if (method === "GET" && String(url).endsWith("/pulls/777")) {
+        return json(prPayload());
+      }
+      if (method === "POST" && String(url).endsWith("/pulls/777/reviews")) {
+        return json(reviewPayload(providerBody), "request-create-review");
+      }
+      if (method === "GET" && String(url).endsWith("/pulls/777/reviews/9876")) {
+        return json(reviewPayload(providerBody));
+      }
+      if (method === "GET" && String(url).includes("/pulls/777/reviews?")) {
+        return json([reviewPayload(providerBody)]);
+      }
+      throw new Error(`unexpected ${method} ${String(url)}`);
+    }) as typeof fetch;
     const adapter = new GitHubRestPullRequestReviewWriteAdapter({
       tokenProvider: {
         async getInstallationToken(input) {
@@ -40,24 +58,7 @@ describe("GitHubRestPullRequestReviewWriteAdapter", () => {
           return { token: "provider-token", expiresAt: "2026-08-15T07:45:00.000Z" };
         },
       },
-      fetch: async (url, init) => {
-        const method = init?.method ?? "GET";
-        const rawBody = typeof init?.body === "string" ? JSON.parse(init.body) : null;
-        requests.push({ url: String(url), method, body: rawBody });
-        if (method === "GET" && String(url).endsWith("/pulls/777")) {
-          return json(prPayload());
-        }
-        if (method === "POST" && String(url).endsWith("/pulls/777/reviews")) {
-          return json(reviewPayload(providerBody), "request-create-review");
-        }
-        if (method === "GET" && String(url).endsWith("/pulls/777/reviews/9876")) {
-          return json(reviewPayload(providerBody));
-        }
-        if (method === "GET" && String(url).includes("/pulls/777/reviews?")) {
-          return json([reviewPayload(providerBody)]);
-        }
-        throw new Error(`unexpected ${method} ${String(url)}`);
-      },
+      fetch: fetchMock,
     });
 
     const target = await adapter.getPullRequest({
