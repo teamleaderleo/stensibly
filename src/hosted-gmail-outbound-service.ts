@@ -51,7 +51,10 @@ export interface HostedGmailOutboundBinding {
 
 export interface HostedGmailMailboxDispositionStore
 extends CurrentDurableStnMailboxStateReader, GmailMailboxDispositionEffectStore {
-  putCurrentState(state: CurrentDurableStnMailboxState): Promise<CurrentDurableStnMailboxState>;
+  putCurrentState(
+    state: CurrentDurableStnMailboxState,
+    expectedRevision?: string | null,
+  ): Promise<CurrentDurableStnMailboxState>;
   recordSettledDelivery(receipt: MailDeliveryReceipt): Promise<MailDeliveryReceipt>;
   getSettledDelivery(stnThreadId: string): Promise<MailDeliveryReceipt | null>;
   getEffectRecord(effectId: string): Promise<GmailMailboxDispositionEffectRecord | null>;
@@ -169,6 +172,7 @@ export class HostedGmailOutboundService {
       });
     } catch (error) {
       if (error instanceof MailDeliveryPendingReconciliationError) {
+        // Seed-only: a different durable revision that arrived while delivery was in flight wins.
         await this.#mailboxDispositionStore.putCurrentState(currentState(
           error.effect.threadId,
           outboundMaterial.threadClass,
@@ -178,6 +182,8 @@ export class HostedGmailOutboundService {
       throw error;
     }
 
+    // Seed-only after settlement. If a newer durable revision already exists, it is retained;
+    // consumeGmailMailboxDisposition will reread and converge that durable winner.
     await this.#mailboxDispositionStore.putCurrentState(currentState(
       result.thread.threadId,
       outboundMaterial.threadClass,
@@ -204,7 +210,13 @@ export class HostedGmailOutboundService {
   async updateCurrentMailboxState(
     stateInput: CurrentDurableStnMailboxState,
   ): Promise<HostedGmailMailboxDispositionReceipt> {
-    const state = await this.#mailboxDispositionStore.putCurrentState(stateInput);
+    const prior = await this.#mailboxDispositionStore.readCurrentState({
+      stnThreadId: stateInput.stnThreadId,
+    });
+    const state = await this.#mailboxDispositionStore.putCurrentState(
+      stateInput,
+      prior?.revision ?? null,
+    );
     const receipt = await this.#mailboxDispositionStore.getSettledDelivery(state.stnThreadId);
     if (receipt === null) {
       return Object.freeze({
