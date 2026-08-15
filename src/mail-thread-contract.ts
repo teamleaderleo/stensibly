@@ -51,8 +51,9 @@ export interface CreateMailThreadRecordInput {
 
 const classSet = new Set<string>(mailThreadClasses);
 const stateSet = new Set<string>(mailThreadStates);
-const handleAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-const handlePattern = /^STN-(HANDOFF|REVIEW|DECISION|INCIDENT):([23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4,12})$/u;
+// Match the landed #1494 human-copyable alphabet: omit 0/O and 1/I/L.
+const handleAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const handlePattern = /^STN-(HANDOFF|REVIEW|DECISION|INCIDENT):([23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4,8})$/u;
 const sha256Pattern = /^sha256:[a-f0-9]{64}$/u;
 const controlPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u;
 const credentialShapedPattern = /(?:^|[\s:./=,;'"()\[\]{}@#_-])(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|stn\.(?:tok|svc)_[A-Za-z0-9._-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{24,}|bearer\s+[A-Za-z0-9._~+\/-]{16,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/iu;
@@ -75,7 +76,7 @@ export function createMailThreadHandle(
   const normalized = token.toUpperCase();
   if (
     normalized.length < 4
-    || normalized.length > 12
+    || normalized.length > 8
     || [...normalized].some((character) => !handleAlphabet.includes(character))
   ) {
     throw new TypeError("Mail thread handle token is invalid");
@@ -88,7 +89,7 @@ export function generateMailThreadHandle(
   tokenLength = 6,
   entropy: Uint8Array = randomBytes(tokenLength),
 ): MailThreadHandle {
-  if (!Number.isInteger(tokenLength) || tokenLength < 4 || tokenLength > 12) {
+  if (!Number.isInteger(tokenLength) || tokenLength < 4 || tokenLength > 8) {
     throw new RangeError("Mail thread handle length is invalid");
   }
   if (!(entropy instanceof Uint8Array) || entropy.byteLength < tokenLength) {
