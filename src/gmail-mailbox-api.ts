@@ -9,6 +9,12 @@ import {
 
 export interface GmailAccessTokenProvider {
   getAccessToken(): Promise<string>;
+  invalidateAccessToken?(rejectedToken: string): void | Promise<void>;
+}
+
+export interface GmailLabelSnapshotMessage {
+  readonly id: string;
+  readonly threadId: string;
 }
 
 export interface GmailMailboxApiClientOptions {
@@ -19,7 +25,14 @@ export interface GmailMailboxApiClientOptions {
 }
 
 export class GmailMailboxProviderError extends Error {
-  readonly operation: "history" | "watch" | "credential" | "transport" | "response";
+  readonly operation:
+    | "history"
+    | "watch"
+    | "profile"
+    | "snapshot"
+    | "credential"
+    | "transport"
+    | "response";
   readonly status: number | null;
 
   constructor(input: {
@@ -43,6 +56,8 @@ const maximumProviderJsonBytes = 2 * 1024 * 1024;
 const maximumHistoryRecords = 500;
 const maximumChangeItems = 500;
 const maximumLabels = 256;
+const maximumLabelSnapshotPages = 32;
+const maximumLabelSnapshotMessagesPerPage = 500;
 const historyIdPattern = /^[1-9][0-9]{0,39}$/u;
 const providerIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/+=-]{0,1023}$/u;
 const pageTokenPattern = /^[^\u0000-\u001f\u007f-\u009f]{1,4096}$/u;
@@ -58,6 +73,7 @@ export class GmailMailboxApiClient implements GmailHistoryClient {
   readonly #topicName: string;
   readonly #apiBaseUrl: string;
   readonly #fetch: typeof fetch;
+  #verifiedMailboxAddress: string | null = null;
 
   constructor(options: GmailMailboxApiClientOptions) {
     if (!options || typeof options !== "object") {
@@ -73,6 +89,91 @@ export class GmailMailboxApiClient implements GmailHistoryClient {
     this.#topicName = topicName(options.topicName);
     this.#apiBaseUrl = apiBaseUrl(options.apiBaseUrl ?? defaultApiBaseUrl);
     this.#fetch = receiverSafeFetch(options.fetch);
+  }
+
+  async verifyMailboxAddress(expectedMailboxAddressInput: string): Promise<void> {
+    const expectedMailboxAddress = mailboxAddress(
+      expectedMailboxAddressInput,
+      "Gmail configured mailbox address",
+    );
+    if (this.#verifiedMailboxAddress === expectedMailboxAddress) return;
+    const response = await this.#request(
+      new URL(`${this.#apiBaseUrl}/gmail/v1/users/me/profile`),
+      { method: "GET" },
+    );
+    if (!response.ok) {
+      throw new GmailMailboxProviderError({
+        operation: "profile",
+        status: response.status,
+      });
+    }
+    const profile = record(await readProviderJson(response), "Gmail profile response");
+    const observedMailboxAddress = mailboxAddress(
+      profile.emailAddress,
+      "Gmail provider mailbox address",
+    );
+    if (observedMailboxAddress !== expectedMailboxAddress) {
+      throw new GmailMailboxProviderError({ operation: "profile" });
+    }
+    this.#verifiedMailboxAddress = expectedMailboxAddress;
+  }
+
+  async listLabelMessages(labelIdInput: string): Promise<readonly GmailLabelSnapshotMessage[]> {
+    const labelId = providerId(labelIdInput, "Gmail snapshot label ID");
+    const messages = new Map<string, GmailLabelSnapshotMessage>();
+    const seenPageTokens = new Set<string>();
+    let nextPageToken: string | undefined;
+
+    for (let pageIndex = 0; pageIndex < maximumLabelSnapshotPages; pageIndex += 1) {
+      const url = new URL(`${this.#apiBaseUrl}/gmail/v1/users/me/messages`);
+      url.searchParams.set("maxResults", String(maximumLabelSnapshotMessagesPerPage));
+      url.searchParams.set("includeSpamTrash", "false");
+      url.searchParams.append("labelIds", labelId);
+      if (nextPageToken !== undefined) url.searchParams.set("pageToken", nextPageToken);
+
+      const response = await this.#request(url, { method: "GET" });
+      if (!response.ok) {
+        throw new GmailMailboxProviderError({
+          operation: "snapshot",
+          status: response.status,
+        });
+      }
+      const page = record(await readProviderJson(response), "Gmail label snapshot response");
+      const pageMessages = page.messages === undefined
+        ? []
+        : boundedArray(
+            page.messages,
+            maximumLabelSnapshotMessagesPerPage,
+            "Gmail label snapshot messages",
+          );
+      for (const entry of pageMessages) {
+        const message = record(entry, "Gmail label snapshot message");
+        const id = providerId(message.id, "Gmail snapshot message ID");
+        const threadId = providerId(message.threadId, "Gmail snapshot thread ID");
+        const prior = messages.get(id);
+        if (prior && prior.threadId !== threadId) {
+          throw new GmailMailboxProviderError({ operation: "response" });
+        }
+        messages.set(id, Object.freeze({ id, threadId }));
+      }
+
+      if (page.nextPageToken === undefined) {
+        return Object.freeze(
+          [...messages.values()].sort((left, right) =>
+            left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+          ),
+        );
+      }
+      nextPageToken = pageToken(page.nextPageToken);
+      if (seenPageTokens.has(nextPageToken)) {
+        throw new GmailMailboxProviderError({ operation: "response" });
+      }
+      seenPageTokens.add(nextPageToken);
+      if (pageIndex === maximumLabelSnapshotPages - 1) {
+        throw new GmailMailboxProviderError({ operation: "response" });
+      }
+    }
+    throw new GmailMailboxProviderError({ operation: "response" });
   }
 
   async listHistory(request: {
@@ -154,13 +255,32 @@ export class GmailMailboxApiClient implements GmailHistoryClient {
   }
 
   async #request(url: URL, init: RequestInit): Promise<Response> {
-    let token: string;
+    let token = await this.#accessToken();
+    let response = await this.#dispatch(url, init, token);
+    if (
+      (response.status === 401 || response.status === 403)
+      && typeof this.#tokens.invalidateAccessToken === "function"
+    ) {
+      try {
+        await this.#tokens.invalidateAccessToken(token);
+      } catch {
+        throw new GmailMailboxProviderError({ operation: "credential" });
+      }
+      token = await this.#accessToken();
+      response = await this.#dispatch(url, init, token);
+    }
+    return response;
+  }
+
+  async #accessToken(): Promise<string> {
     try {
-      token = accessToken(await this.#tokens.getAccessToken());
+      return accessToken(await this.#tokens.getAccessToken());
     } catch {
       throw new GmailMailboxProviderError({ operation: "credential" });
     }
+  }
 
+  async #dispatch(url: URL, init: RequestInit, token: string): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
     headers.set("Authorization", `Bearer ${token}`);
@@ -214,7 +334,7 @@ function mapHistoryRecord(value: unknown): GmailHistoryRecord {
     source.labelsAdded,
     "Gmail labels-added records",
     (entry) => {
-      const item = record(entry, "Gmail labels-added record");
+      const item = record(entry, "Gmail label-added record");
       return Object.freeze({
         message: mapMessageRef(item.message),
         labelIds: mapLabelIds(item.labelIds),
@@ -225,7 +345,7 @@ function mapHistoryRecord(value: unknown): GmailHistoryRecord {
     source.labelsRemoved,
     "Gmail labels-removed records",
     (entry) => {
-      const item = record(entry, "Gmail labels-removed record");
+      const item = record(entry, "Gmail label-removed record");
       return Object.freeze({
         message: mapMessageRef(item.message),
         labelIds: mapLabelIds(item.labelIds),
@@ -374,6 +494,19 @@ function pageToken(value: unknown): string {
 
 function epochMillis(value: unknown, label: string): string {
   return exactText(value, label, 16, /^\d{1,16}$/u);
+}
+
+function mailboxAddress(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || value !== value.trim()
+    || value.length < 3
+    || value.length > 320
+    || !/^[^\s@]+@[^\s@]+$/u.test(value)
+  ) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return value.toLowerCase();
 }
 
 function exactText(
