@@ -82,11 +82,23 @@ export function parseGmailPubSubNotification(
   value: unknown,
   input: {
     expectedMailboxAddress: string;
+    expectedSubscription: string;
     mailboxBindingId: string;
     receivedAt: string;
   },
 ): GmailPubSubNotification {
   const envelope = record(value, "Gmail Pub/Sub envelope");
+  const expectedSubscription = safeProviderId(
+    input.expectedSubscription,
+    "Gmail Pub/Sub expected subscription",
+  );
+  const observedSubscription = safeProviderId(
+    envelope.subscription,
+    "Gmail Pub/Sub subscription",
+  );
+  if (observedSubscription !== expectedSubscription) {
+    throw new RangeError("Gmail Pub/Sub subscription binding mismatch");
+  }
   const message = record(envelope.message, "Gmail Pub/Sub message");
   const data = exactText(
     message.data,
