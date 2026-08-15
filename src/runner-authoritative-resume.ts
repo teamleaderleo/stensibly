@@ -35,6 +35,7 @@ import {
   admitRunnerAdapterCommandSettlementRecord,
   type RunnerAdapterCommandLedger,
   type RunnerAdapterCommandLookup,
+  type RunnerAdapterCommandReservationRecord,
   type RunnerAdapterCommandSettlementRecord,
 } from "./runner-adapter-command-contracts.js";
 import {
@@ -190,6 +191,12 @@ interface RunnerCommandState {
   unresolved: readonly RunnerAdapterCommandLookup[];
 }
 
+interface DurableObservationEventRow {
+  actor_id: string | null;
+  type: string;
+  payload_json: string;
+}
+
 const executableStatuses = new Set(["starting", "running", "waiting"]);
 const closedContinuationStatuses = new Set(["rejected", "cancelled", "superseded", "expired"]);
 const terminalObservationTypes = new Set<RunnerObservationV1["type"]>([
@@ -284,10 +291,8 @@ export class RunnerAuthoritativeResumeServiceV1 {
     });
     if (!reservation.dispatchAuthorized) {
       return await this.#reservationResult(
-        candidate.run.id,
+        reservation.command,
         input.expectedResumeFenceFingerprint,
-        reservation.command.commandId,
-        reservation.command.commandFingerprint,
         reservation.settlement,
       );
     }
@@ -362,7 +367,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
     if (
       terminal === null
       || !terminalObservationTypes.has(terminal.type)
-      || !(await this.#hasDurableTerminalObservation(candidate.command, terminal))
+      || !this.#hasDurableTerminalObservation(candidate.command, terminal)
       || !terminalCheckpointLineageIsComplete(candidate.command, terminal, consumed.latestCheckpoint)
     ) {
       return result(
@@ -446,28 +451,24 @@ export class RunnerAuthoritativeResumeServiceV1 {
       throw conflict("idempotency_conflict", "Runner resume idempotency key belongs to a different command request");
     }
     return await this.#reservationResult(
-      existing.command.runId,
+      existing.command,
       input.expectedResumeFenceFingerprint,
-      existing.command.commandId,
-      existing.command.commandFingerprint,
       existing.settlement,
     );
   }
 
   async #reservationResult(
-    runId: string,
+    command: RunnerAdapterCommandReservationRecord,
     fence: string,
-    commandId: string,
-    commandFingerprint: string,
     settlement: RunnerAdapterCommandSettlementRecord | null,
   ): Promise<RunnerAuthoritativeResumeResultV1> {
-    const run = await this.#o.ledger.getRun(runId);
+    const run = await this.#o.ledger.getRun(command.runId);
     if (!settlement) {
       return result(
         "waiting_reconciliation",
-        runId,
-        commandId,
-        commandFingerprint,
+        command.runId,
+        command.commandId,
+        command.commandFingerprint,
         fence,
         0,
         digest([]),
@@ -478,11 +479,26 @@ export class RunnerAuthoritativeResumeServiceV1 {
       );
     }
     const admitted = admitRunnerAdapterCommandSettlementRecord(settlement);
+    if (!this.#hasDurableSettlementTerminalObservation(command, admitted)) {
+      return result(
+        "waiting_reconciliation",
+        command.runId,
+        command.commandId,
+        command.commandFingerprint,
+        fence,
+        admitted.outcome.observationCount,
+        admitted.outcome.observationsSha256,
+        null,
+        null,
+        null,
+        run,
+      );
+    }
     return result(
       "settled_replay",
-      runId,
-      commandId,
-      commandFingerprint,
+      command.runId,
+      command.commandId,
+      command.commandFingerprint,
       fence,
       admitted.outcome.observationCount,
       admitted.outcome.observationsSha256,
@@ -700,36 +716,108 @@ export class RunnerAuthoritativeResumeServiceV1 {
     ) throw conflict("reservation_changed", "Runner resume reservation or outstanding command state changed before dispatch");
   }
 
-  async #hasDurableTerminalObservation(
+  #hasDurableTerminalObservation(
     command: RunnerResumeCommandV1,
     terminal: RunnerObservationV1,
-  ): Promise<boolean> {
-    let detail: Awaited<ReturnType<RunnerAuthoritativeResumeLedgerV1["getItem"]>>;
+  ): boolean {
+    return this.#hasDurableTerminalEvent(
+      {
+        itemId: command.itemId,
+        actorId: this.#o.actor.id,
+        commandId: command.commandId,
+        runId: command.runId,
+        runGeneration: command.runGeneration,
+        leaseGeneration: command.leaseGeneration,
+        adapterId: command.adapterId,
+        adapterVersion: command.adapterVersion,
+        profileId: command.profileId,
+        profileVersion: command.profileVersion,
+      },
+      terminal.observationId,
+      terminal.type,
+      digest(terminal),
+    );
+  }
+
+  #hasDurableSettlementTerminalObservation(
+    command: RunnerAdapterCommandReservationRecord,
+    settlement: RunnerAdapterCommandSettlementRecord,
+  ): boolean {
+    const type = settlement.outcome.terminalObservationType;
+    if (!terminalObservationTypes.has(type as RunnerObservationV1["type"])) return false;
+    if (
+      type === "interrupted"
+      && (settlement.outcome.latestCheckpointExternalId === null || settlement.outcome.latestCheckpointSha256 === null)
+    ) return false;
+    return this.#hasDurableTerminalEvent(
+      {
+        itemId: command.itemId,
+        actorId: command.actor.id,
+        commandId: command.commandId,
+        runId: command.runId,
+        runGeneration: command.runGeneration,
+        leaseGeneration: command.leaseGeneration,
+        adapterId: command.adapterId,
+        adapterVersion: this.#o.descriptor.adapterVersion,
+        profileId: command.profileId,
+        profileVersion: this.#o.profile.version,
+      },
+      settlement.outcome.terminalObservationId,
+      type,
+      null,
+    );
+  }
+
+  #hasDurableTerminalEvent(
+    identity: {
+      itemId: string;
+      actorId: string;
+      commandId: string;
+      runId: string;
+      runGeneration: number;
+      leaseGeneration: number;
+      adapterId: string;
+      adapterVersion: string;
+      profileId: string;
+      profileVersion: string;
+    },
+    observationId: string,
+    observationType: string,
+    expectedObservationFingerprint: string | null,
+  ): boolean {
+    const key = `runner-resume-observation:${identity.commandId}:${observationId}`;
+    const row = this.#o.store.db.query<DurableObservationEventRow, [string, string]>(`
+      SELECT actor_id, type, payload_json
+      FROM events
+      WHERE item_id = ?1 AND idempotency_key = ?2
+      LIMIT 1
+    `).get(identity.itemId, key);
+    if (!row || row.actor_id !== identity.actorId || row.type !== "run.adapter.observation") return false;
+    let payload: unknown;
     try {
-      detail = await this.#o.ledger.getItem(command.itemId);
+      payload = JSON.parse(row.payload_json) as unknown;
     } catch {
       return false;
     }
-    const terminalFingerprint = digest(terminal);
-    return detail.events.some((event) => {
-      const payload = event.payload;
-      return event.actorId === this.#o.actor.id
-        && event.type === "run.adapter.observation"
-        && payload.version === RUNNER_AUTHORITATIVE_RESUME_V1
-        && payload.observationId === terminal.observationId
-        && payload.observationType === terminal.type
-        && payload.observationFingerprint === terminalFingerprint
-        && payload.commandId === command.commandId
-        && payload.runId === command.runId
-        && payload.runGeneration === command.runGeneration
-        && payload.leaseGeneration === command.leaseGeneration
-        && payload.adapterId === command.adapterId
-        && payload.adapterVersion === command.adapterVersion
-        && payload.profileId === command.profileId
-        && payload.profileVersion === command.profileVersion
-        && payload.containsPrivateContent === false
-        && payload.containsCredentials === false;
-    });
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const value = payload as Record<string, unknown>;
+    const observationFingerprint = value.observationFingerprint;
+    return value.version === RUNNER_AUTHORITATIVE_RESUME_V1
+      && value.observationId === observationId
+      && value.observationType === observationType
+      && typeof observationFingerprint === "string"
+      && /^sha256:[a-f0-9]{64}$/u.test(observationFingerprint)
+      && (expectedObservationFingerprint === null || observationFingerprint === expectedObservationFingerprint)
+      && value.commandId === identity.commandId
+      && value.runId === identity.runId
+      && value.runGeneration === identity.runGeneration
+      && value.leaseGeneration === identity.leaseGeneration
+      && value.adapterId === identity.adapterId
+      && value.adapterVersion === identity.adapterVersion
+      && value.profileId === identity.profileId
+      && value.profileVersion === identity.profileVersion
+      && value.containsPrivateContent === false
+      && value.containsCredentials === false;
   }
 
   async #advanceContinuationAfterInterruption(
