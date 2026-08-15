@@ -132,7 +132,6 @@ export class GmailMailProvider implements MailProvider {
         if (
           located.rfcMessageId === rfcMessageId
           && located.outboundEffectId === outboundEffectId
-          && (expectedProviderThreadId === null || located.threadId === expectedProviderThreadId)
         ) {
           candidates.push(located);
         }
@@ -145,6 +144,12 @@ export class GmailMailProvider implements MailProvider {
       return { status: "ambiguous", candidateCount: candidates.length };
     }
     const candidate = candidates[0]!;
+    if (
+      expectedProviderThreadId !== null
+      && candidate.threadId !== expectedProviderThreadId
+    ) {
+      return { status: "ambiguous", candidateCount: 1 };
+    }
     return {
       status: "found",
       result: freezeMailProviderSendResult({
