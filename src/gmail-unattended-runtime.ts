@@ -1,3 +1,4 @@
+import { GmailMailboxActionClient } from "./gmail-mailbox-actions.js";
 import { GmailMailboxApiClient } from "./gmail-mailbox-api.js";
 import {
   parseGmailPubSubNotification,
@@ -10,11 +11,15 @@ import {
   type MailboxObservation,
 } from "./mailbox-intake-contract.js";
 
+export interface GmailMaterialObservationSinkResult {
+  readonly operatorAttentionMessageIds: ReadonlySet<string>;
+}
+
 export interface GmailMaterialObservationSink {
   admitMaterialObservations(input: {
     readonly observations: readonly MailboxObservation[];
     readonly mailboxBindingId: string;
-  }): Promise<void>;
+  }): Promise<GmailMaterialObservationSinkResult>;
 }
 
 export interface GmailUnattendedRuntimeOptions {
@@ -23,6 +28,7 @@ export interface GmailUnattendedRuntimeOptions {
   labelId: string;
   pubsubSubscription: string;
   gmail: GmailMailboxApiClient;
+  actions: GmailMailboxActionClient;
   intake: HostedMailboxIntakeService;
   materialSink?: GmailMaterialObservationSink;
   knownOutboundProviderMessageIds?: () => Promise<ReadonlySet<string>>;
@@ -35,6 +41,7 @@ export interface GmailUnattendedResult {
   readonly cursor: string;
   readonly admittedObservations: number;
   readonly materialObservations: number;
+  readonly archivedMessages: number;
   readonly recoveryAction: GmailMailboxReconciliationResult["recoveryAction"];
 }
 
@@ -44,6 +51,7 @@ export class GmailUnattendedRuntime {
   readonly #labelId: string;
   readonly #pubsubSubscription: string;
   readonly #gmail: GmailMailboxApiClient;
+  readonly #actions: GmailMailboxActionClient;
   readonly #intake: HostedMailboxIntakeService;
   readonly #materialSink: GmailMaterialObservationSink | undefined;
   readonly #knownOutbound: (() => Promise<ReadonlySet<string>>) | undefined;
@@ -55,6 +63,7 @@ export class GmailUnattendedRuntime {
     this.#labelId = identity(options.labelId, "Gmail watched label ID");
     this.#pubsubSubscription = identity(options.pubsubSubscription, "Gmail Pub/Sub subscription");
     this.#gmail = options.gmail;
+    this.#actions = options.actions;
     this.#intake = options.intake;
     this.#materialSink = options.materialSink;
     this.#knownOutbound = options.knownOutboundProviderMessageIds;
@@ -85,7 +94,7 @@ export class GmailUnattendedRuntime {
         lastSuccessfulReconciliationAt: now,
       });
       snapshot = await this.#intake.initialize(state);
-      return freezeResult(snapshot.revision, state.cursor.value, 0, 0, false, null);
+      return freezeResult(snapshot.revision, state.cursor.value, 0, 0, 0, false, null);
     }
     return await this.#reconcile(snapshot, null, `gmail-periodic:${snapshot.state.cursor.value}:${this.#now()}`);
   }
@@ -102,11 +111,7 @@ export class GmailUnattendedRuntime {
     if (!snapshot) {
       throw new Error("Gmail mailbox binding must be bootstrapped before push delivery");
     }
-    return await this.#reconcile(
-      snapshot,
-      notification,
-      `gmail-push:${notification.notificationId}`,
-    );
+    return await this.#reconcile(snapshot, notification, `gmail-push:${notification.notificationId}`);
   }
 
   async #reconcile(
@@ -129,14 +134,7 @@ export class GmailUnattendedRuntime {
       && result.observations.length === 0
       && canonicalState(result.state) === canonicalState(snapshot.state)
     ) {
-      return freezeResult(
-        snapshot.revision,
-        snapshot.state.cursor.value,
-        0,
-        0,
-        true,
-        result.recoveryAction,
-      );
+      return freezeResult(snapshot.revision, snapshot.state.cursor.value, 0, 0, 0, true, result.recoveryAction);
     }
     const committed = await this.#intake.commit({
       previous: snapshot,
@@ -147,17 +145,29 @@ export class GmailUnattendedRuntime {
     const material = result.observations.filter((observation) =>
       observation.wakeEligible && observation.loopDisposition === "ordinary"
     );
-    if (material.length > 0 && this.#materialSink) {
-      await this.#materialSink.admitMaterialObservations({
-        observations: Object.freeze([...material]),
-        mailboxBindingId: this.#mailboxBindingId,
-      });
+    const sinkResult = material.length > 0 && this.#materialSink
+      ? await this.#materialSink.admitMaterialObservations({
+          observations: Object.freeze([...material]),
+          mailboxBindingId: this.#mailboxBindingId,
+        })
+      : { operatorAttentionMessageIds: new Set<string>() };
+    let archivedMessages = 0;
+    const messageIds = new Set(
+      result.observations
+        .map((observation) => observation.providerMessageId)
+        .filter((value): value is string => value !== null),
+    );
+    for (const messageId of messageIds) {
+      if (sinkResult.operatorAttentionMessageIds.has(messageId)) continue;
+      await this.#actions.archiveMessage(messageId);
+      archivedMessages += 1;
     }
     return freezeResult(
       committed.revision,
       committed.state.cursor.value,
       result.observations.length,
       material.length,
+      archivedMessages,
       result.duplicateNotification,
       result.recoveryAction,
     );
@@ -169,6 +179,7 @@ function freezeResult(
   cursor: string,
   admittedObservations: number,
   materialObservations: number,
+  archivedMessages: number,
   duplicate: boolean,
   recoveryAction: GmailUnattendedResult["recoveryAction"],
 ): GmailUnattendedResult {
@@ -178,6 +189,7 @@ function freezeResult(
     cursor,
     admittedObservations,
     materialObservations,
+    archivedMessages,
     recoveryAction,
   });
 }
