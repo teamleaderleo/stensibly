@@ -33,14 +33,15 @@ function readback(
 ) {
   return {
     sourceRef: "github:teamleaderleo/stensibly#1493",
-    checkedAt: "2026-08-15T06:45:00.000Z",
+    checkedAt: "2026-08-15T06:50:00.000Z",
+    githubCheckedAt: "2026-08-15T06:49:00.000Z",
     disposition,
     valueTier,
-    currentRevision: "6e0076f25e1cba1b3de535a68e48c484385072c2",
+    currentRevision: "37c0175f45774c65bc8f62acf90b469e0f064044",
     currentAction: disposition === "actionable"
       ? "Take one executable current-source action."
       : "Preserve the current disposition.",
-    reason: `Current GitHub reread classifies this checkpoint as ${disposition}.`,
+    reason: `Current evidence classifies this checkpoint as ${disposition}.`,
   } as const;
 }
 
@@ -109,18 +110,39 @@ function liveDogfoodCheckpoints(): MailSelectionCheckpoint[] {
         sourceRef: "github:teamleaderleo/stensibly#1487",
         currentRevision: "11273c03a9726ed67be392ebe72763b4453cd2af",
         currentAction: "Inspect the failing Bun-test evidence, then repair/rebase the exact candidate before any land decision.",
-        reason: "PR #1487 is open, 10 commits ahead and 3 behind current main; exact-head CI failed in the Bun test step, so repair work is executable now.",
+        reason: "PR #1487 is open and diverged 10 commits ahead / 4 behind refreshed main; exact-head CI failed in the Bun test step, so repair work is executable now.",
+      },
+    }),
+    checkpoint("STN-HANDOFF:6X7N", {
+      providerMessageId: "1a0042906fe7ad02",
+      providerThreadId: "1a0042906fe7ad02",
+      surface: "inbox",
+      messageAt: "2026-08-15T06:43:12.000Z",
+      actionableAt: "2026-08-15T06:43:12.000Z",
+      sourceReadback: null,
+    }),
+    checkpoint("STN-HANDOFF:6X7N", {
+      providerMessageId: "1a00429f4d9b7a37",
+      providerThreadId: "1a0042906fe7ad02",
+      surface: "inbox",
+      messageAt: "2026-08-15T06:44:13.000Z",
+      actionableAt: "2026-08-15T06:44:13.000Z",
+      sourceReadback: {
+        ...readback("resolved", "normal"),
+        sourceRef: "gmail:thread:1a0042906fe7ad02",
+        currentRevision: "6efc06ac7e4aa8aa3b9daec8f5da897f4c63f3b8",
+        currentAction: "No further handoff action; exact-handle search verified root plus material update in one Gmail thread.",
+        reason: "The raced Inbox handoff was selected after refreshing #1492/PR #1497; Gmail then proved both material messages share the same provider thread, satisfying its resolution condition.",
       },
     }),
   ];
 }
 
-function withSelectedBody(
+function withSelectedReviewBody(
   checkpoints: MailSelectionCheckpoint[],
-  handle: string,
   bodyBytes: number,
 ): MailSelectionCheckpoint[] {
-  return checkpoints.map((item) => item.handle === handle && item.providerMessageId === "1a00425848c3e8a3"
+  return checkpoints.map((item) => item.providerMessageId === "1a00425848c3e8a3"
     ? { ...item, bodyFetched: true, bodyBytes }
     : item);
 }
@@ -151,7 +173,7 @@ describe("mail UX broad-entrypoint selection", () => {
 
   test("fetches only the selected review body before action", () => {
     const result = selectMailContinuation(
-      withSelectedBody(liveDogfoodCheckpoints(), "STN-REVIEW:R7MK", 1_318),
+      withSelectedReviewBody(liveDogfoodCheckpoints(), 1_318),
       "highest_value_eligible_review",
     );
 
@@ -162,7 +184,7 @@ describe("mail UX broad-entrypoint selection", () => {
     expect(result.bodyContextBytes).toBe(1_318);
   });
 
-  test("oldest actionable handoff stays empty without fetching waiting or superseded bodies", () => {
+  test("oldest actionable handoff is empty after the raced Inbox handoff is resolved", () => {
     const result = selectMailContinuation(
       liveDogfoodCheckpoints(),
       "oldest_actionable_handoff",
@@ -171,13 +193,18 @@ describe("mail UX broad-entrypoint selection", () => {
     expect(result.selected).toBeNull();
     expect(result.bodyMessagesFetched).toBe(0);
     expect(result.bodyContextBytes).toBe(0);
+    expect(result.currentSourceReads).toBe(3);
+    expect(result.rejectedByCurrentSource).toBe(3);
     expect(result.rejections.some((item) =>
       item.handle === "STN-HANDOFF:K8R4" && item.reason === "waiting"
     )).toBe(true);
     expect(result.rejections.some((item) =>
       item.handle === "STN-HANDOFF:Q7MP" && item.reason === "superseded"
     )).toBe(true);
-    expect(result.rejections.filter((item) => item.reason === "older_checkpoint")).toHaveLength(2);
+    expect(result.rejections.some((item) =>
+      item.handle === "STN-HANDOFF:6X7N" && item.reason === "resolved"
+    )).toBe(true);
+    expect(result.rejections.filter((item) => item.reason === "older_checkpoint")).toHaveLength(3);
   });
 
   test("useful-lane fallback picks the same repair from current checkpoint metadata", () => {
@@ -185,11 +212,11 @@ describe("mail UX broad-entrypoint selection", () => {
 
     expect(result.selected?.handle).toBe("STN-REVIEW:R7MK");
     expect(result.selectedNeedsBodyFetch).toBe(true);
-    expect(result.latestHandlesSeen).toBe(4);
+    expect(result.latestHandlesSeen).toBe(5);
     expect(result.bodyMessagesFetched).toBe(0);
     expect(result.bodyContextBytes).toBe(0);
-    expect(result.currentSourceReads).toBe(4);
-    expect(result.rejectedByCurrentSource).toBe(3);
+    expect(result.currentSourceReads).toBe(5);
+    expect(result.rejectedByCurrentSource).toBe(4);
   });
 
   test("stranded work remains eligible and outranks equally valued fresh work", () => {
@@ -207,7 +234,7 @@ describe("mail UX broad-entrypoint selection", () => {
     expect(result.selected?.handle).toBe("STN-REVIEW:BCDE");
   });
 
-  test("refuses a source readback older than the mail checkpoint", () => {
+  test("refuses stale disposition evidence", () => {
     const result = selectMailContinuation([
       checkpoint("STN-REVIEW:ABCD", {
         messageAt: "2026-08-15T06:40:00.000Z",
@@ -222,7 +249,23 @@ describe("mail UX broad-entrypoint selection", () => {
     expect(result.rejections[0]?.reason).toBe("stale_source_readback");
   });
 
-  test("measures the live useful-action body cost and wrong selections explicitly", () => {
+  test("requires a GitHub reread newer than the mail even when other evidence is current", () => {
+    const result = selectMailContinuation([
+      checkpoint("STN-REVIEW:ABCD", {
+        messageAt: "2026-08-15T06:40:00.000Z",
+        sourceReadback: {
+          ...readback("actionable", "urgent"),
+          checkedAt: "2026-08-15T06:41:00.000Z",
+          githubCheckedAt: "2026-08-15T06:39:59.000Z",
+        },
+      }),
+    ], "highest_value_eligible_review");
+
+    expect(result.selected).toBeNull();
+    expect(result.rejections[0]?.reason).toBe("stale_github_readback");
+  });
+
+  test("measures useful-action body cost and wrong selections explicitly", () => {
     expect(measureMailSelectionRun({
       messagesFetched: 1,
       contextBytes: 1_318,
@@ -235,6 +278,14 @@ describe("mail UX broad-entrypoint selection", () => {
       turnsToUsefulAction: 1,
       wrongSelections: 0,
     });
+
+    expect(measureMailSelectionRun({
+      messagesFetched: 1,
+      contextBytes: 1_665,
+      turnsToUsefulAction: 1,
+      selectedHandle: "STN-HANDOFF:6X7N",
+      expectedHandle: "STN-HANDOFF:6X7N",
+    }).wrongSelections).toBe(0);
 
     expect(measureMailSelectionRun({
       messagesFetched: 1,
