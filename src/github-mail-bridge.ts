@@ -32,7 +32,10 @@ export function classifyGitHubMailReply(
     return core.classifyGitHubMailReply(input);
   }
   const authority = input.authority;
-  if (!authority || typeof authority.expectedMailboxAddress !== "string") {
+  if (!authority) {
+    throw new RangeError("Effect-bearing mail replies require a server-owned authority binding");
+  }
+  if (typeof authority.expectedMailboxAddress !== "string") {
     throw new RangeError(
       "Effect-bearing mail replies require an exact server-owned mailbox destination",
     );
