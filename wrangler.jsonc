@@ -46,7 +46,11 @@
     "STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID": "outlook_operator_primary",
     "STENSIBLY_OUTLOOK_NOTIFICATION_URL": "https://api.stensibly.com/internal/outlook/notifications",
     "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app",
-    "STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS": "https://chatgpt.com"
+    "STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS": "https://chatgpt.com",
+    "STENSIBLY_GMAIL_MAILBOX": "leoli.4u@gmail.com",
+    "STENSIBLY_GMAIL_MAILBOX_BINDING_ID": "gmail_operator_primary",
+    "STENSIBLY_GMAIL_WATCH_LABEL_ID": "Label_5",
+    "STENSIBLY_GMAIL_PUBSUB_AUDIENCE": "https://api.stensibly.com/internal/gmail/pubsub"
   },
   "ratelimits": [
     {
@@ -65,7 +69,17 @@
       "STENSIBLY_GITHUB_APP_ID",
       "STENSIBLY_GITHUB_APP_PRIVATE_KEY",
       "STENSIBLY_GITHUB_INSTALLATION_ID",
-      "STENSIBLY_GITHUB_WEBHOOK_SECRET"
+      "STENSIBLY_GITHUB_WEBHOOK_SECRET",
+      "STENSIBLY_GMAIL_OAUTH_CLIENT_ID",
+      "STENSIBLY_GMAIL_OAUTH_CLIENT_SECRET",
+      "STENSIBLY_GMAIL_OAUTH_REFRESH_TOKEN",
+      "STENSIBLY_GMAIL_PUBSUB_TOPIC",
+      "STENSIBLY_GMAIL_PUBSUB_SUBSCRIPTION",
+      "STENSIBLY_GMAIL_PUBSUB_SERVICE_ACCOUNT",
+      "STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID",
+      "STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN",
+      "STENSIBLY_OUTLOOK_CLIENT_STATE",
+      "STENSIBLY_OUTLOOK_FOLDER_ID"
     ]
   }
 }

@@ -4,6 +4,12 @@ import {
   type OAuthRegistrationRateLimiter,
 } from "./mcp-oauth-registration-admission.js";
 import {
+  createGmailUnattendedMountFromEnv,
+  handleGmailPubSubRequest,
+  runGmailScheduledReconciliation,
+  type GmailUnattendedEnvironment,
+} from "./gmail-unattended-worker.js";
+import {
   handleOutlookNotificationRequest,
   requireOutlookGraphBindings,
   runOutlookScheduledReconciliation,
@@ -19,7 +25,7 @@ export interface CloudflareWorkerVersionMetadata {
   timestamp?: string;
 }
 
-export interface CloudflareBindings {
+export interface CloudflareBindings extends GmailUnattendedEnvironment {
   CONVEX_URL: string;
   STENSIBLY_SERVICE_SECRET: string;
   STENSIBLY_WORKSPACE?: string;
@@ -73,7 +79,20 @@ const worker = {
     return await observeWorkerRequest(
       request,
       async (observedRequest) => {
-        if (new URL(observedRequest.url).pathname === "/internal/outlook/notifications") {
+        const pathname = new URL(observedRequest.url).pathname;
+        if (pathname === "/internal/gmail/pubsub") {
+          try {
+            const gmailResponse = await handleGmailPubSubRequest(
+              observedRequest,
+              createGmailUnattendedMountFromEnv(env),
+            );
+            return gmailResponse ?? new Response("Not Found", { status: 404 });
+          } catch {
+            return new Response("Service Unavailable", { status: 503 });
+          }
+        }
+
+        if (pathname === "/internal/outlook/notifications") {
           try {
             const bindings = requireOutlookGraphBindings(outlookEnvironment(env));
             return await handleOutlookNotificationRequest(observedRequest, bindings, {
@@ -110,8 +129,15 @@ const worker = {
     context: CloudflareExecutionContext,
   ): Promise<void> {
     context.waitUntil((async () => {
-      const bindings = requireOutlookGraphBindings(outlookEnvironment(env));
-      await runOutlookScheduledReconciliation(bindings);
+      const outlookBindings = requireOutlookGraphBindings(outlookEnvironment(env));
+      const gmailMount = createGmailUnattendedMountFromEnv(env);
+      const results = await Promise.allSettled([
+        runOutlookScheduledReconciliation(outlookBindings),
+        runGmailScheduledReconciliation(gmailMount),
+      ]);
+      if (results.some((result) => result.status === "rejected")) {
+        throw new Error("Scheduled mailbox reconciliation failed");
+      }
     })());
   },
 };
