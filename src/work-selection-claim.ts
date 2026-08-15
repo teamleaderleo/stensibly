@@ -15,8 +15,10 @@ export interface WorkSelectionRecommendation {
   itemId: string;
   itemVersion: number;
   claimGeneration: number;
-  workFingerprint: string;
+  priority: number;
+  nextAction: string | null;
   sourceFingerprint: string;
+  workFingerprint: string;
   responsibilityRole: WorkResponsibilityRole;
   independenceKey: string | null;
   recommendationFingerprint: string;
@@ -96,6 +98,9 @@ export function compileWorkSelectionRecommendation(input: {
   }
   assertPositiveInteger(input.item.version, "item version");
   assertNonNegativeInteger(input.item.claimGeneration, "claim generation");
+  if (!Number.isInteger(input.item.priority) || input.item.priority < 0 || input.item.priority > 100) {
+    throw new TypeError("priority must be an integer from 0 to 100");
+  }
   assertFingerprint(input.sourceFingerprint, "source fingerprint");
 
   const workIdentity = {
@@ -104,7 +109,7 @@ export function compileWorkSelectionRecommendation(input: {
     itemId: boundedIdentity(input.item.id, "item id"),
     itemVersion: input.item.version,
     claimGeneration: input.item.claimGeneration,
-    status: input.item.status,
+    status: "ready" as const,
     priority: input.item.priority,
     nextAction: input.item.nextAction,
     sourceFingerprint: input.sourceFingerprint,
@@ -127,8 +132,10 @@ export function compileWorkSelectionRecommendation(input: {
     itemId: workIdentity.itemId,
     itemVersion: workIdentity.itemVersion,
     claimGeneration: workIdentity.claimGeneration,
-    workFingerprint,
+    priority: workIdentity.priority,
+    nextAction: workIdentity.nextAction,
     sourceFingerprint: input.sourceFingerprint,
+    workFingerprint,
     responsibilityRole: role,
     independenceKey,
     recommendationFingerprint: fingerprintCanonicalRequest(semantics),
@@ -140,6 +147,9 @@ export function compileWorkSelectionRecommendation(input: {
 export function verifyWorkSelectionRecommendation(
   value: WorkSelectionRecommendation,
 ): WorkSelectionRecommendation {
+  if (value.version !== WORK_SELECTION_RECOMMENDATION_VERSION) {
+    throw new TypeError("recommendation version is invalid");
+  }
   const rebuilt = compileWorkSelectionRecommendation({
     selectedHandle: value.selectedHandle,
     item: {
@@ -148,44 +158,22 @@ export function verifyWorkSelectionRecommendation(
       status: "ready",
       version: value.itemVersion,
       claimGeneration: value.claimGeneration,
-      priority: extractWorkIdentityPriority(value.workFingerprint),
-      nextAction: extractWorkIdentityNextAction(value.workFingerprint),
+      priority: value.priority,
+      nextAction: value.nextAction,
     },
     sourceFingerprint: value.sourceFingerprint,
     responsibilityRole: value.responsibilityRole,
     independenceKey: value.independenceKey,
   });
-  // The recommendation intentionally does not carry priority/nextAction separately.
-  // Those fields are already sealed into workFingerprint, so admission verifies the
-  // outer recommendation fingerprint directly and the server separately checks the
-  // current item snapshot against workFingerprint.
-  if (!fingerprintPattern.test(value.workFingerprint)) {
-    throw new TypeError("work fingerprint is invalid");
-  }
-  if (!fingerprintPattern.test(value.recommendationFingerprint)) {
-    throw new TypeError("recommendation fingerprint is invalid");
-  }
-  const semantics = {
-    version: value.version,
-    selectedHandle: value.selectedHandle,
-    version: value.version,
-    project: value.project,
-    itemId: value.itemId,
-    itemVersion: value.itemVersion,
-    claimGeneration: value.claimGeneration,
-    status: "ready",
-    sourceFingerprint: value.sourceFingerprint,
-    workFingerprint: value.workFingerprint,
-    responsibilityRole: value.responsibilityRole,
-    independenceKey: value.independenceKey,
-    grantsResponsibility: false,
-    grantsAuthority: false,
-  };
-  void rebuilt;
-  if (value.recommendationFingerprint !== fingerprintCanonicalRequest(semantics)) {
+  if (
+    rebuilt.workFingerprint !== value.workFingerprint
+    || rebuilt.recommendationFingerprint !== value.recommendationFingerprint
+    || value.grantsResponsibility !== false
+    || value.grantsAuthority !== false
+  ) {
     throw new Error("recommendation fingerprint does not match its semantics");
   }
-  return value;
+  return Object.freeze({ ...value });
 }
 
 export function currentWorkFingerprint(input: {
@@ -231,14 +219,4 @@ function assertPositiveInteger(value: number, field: string): void {
 
 function assertNonNegativeInteger(value: number, field: string): void {
   if (!Number.isInteger(value) || value < 0) throw new TypeError(`${field} must be non-negative`);
-}
-
-// Admission cannot recover sealed fields from a digest. These helpers deliberately
-// throw if used; verifyWorkSelectionRecommendation validates the outer fingerprint,
-// while the durable mutation recomputes workFingerprint from the current item.
-function extractWorkIdentityPriority(_fingerprint: string): never {
-  throw new Error("work fingerprint fields are verified against current durable work");
-}
-function extractWorkIdentityNextAction(_fingerprint: string): never {
-  throw new Error("work fingerprint fields are verified against current durable work");
 }
