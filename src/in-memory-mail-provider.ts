@@ -79,6 +79,7 @@ export class InMemoryMailProvider implements MailProvider {
     if (
       projection.provider !== this.provider
       || projection.accountBinding !== binding.accountBinding
+      || projection.mailboxAddress !== binding.mailboxAddress
     ) {
       throw new MailProviderDefiniteFailure("mail_projection_binding_mismatch");
     }
@@ -107,6 +108,7 @@ export class InMemoryMailProvider implements MailProvider {
     this.#assertProvider(binding);
     const candidates = (this.#byRfcMessageId.get(input.rfcMessageId) ?? [])
       .filter((candidate) => candidate.binding.accountBinding === binding.accountBinding)
+      .filter((candidate) => candidate.binding.mailboxAddress === binding.mailboxAddress)
       .filter((candidate) => candidate.message.outboundEffectId === input.outboundEffectId);
     if (candidates.length === 0) return { status: "missing", coverage: "complete" };
     if (candidates.length > 1) {
