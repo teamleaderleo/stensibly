@@ -61,6 +61,10 @@ export class GoogleOAuthRefreshTokenProvider implements GmailAccessTokenProvider
     }
   }
 
+  invalidateAccessToken(rejectedToken: string): void {
+    if (this.#cached?.value === rejectedToken) this.#cached = null;
+  }
+
   async #refresh(): Promise<string> {
     const body = new URLSearchParams({
       client_id: this.#clientId,
