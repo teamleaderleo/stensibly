@@ -34,7 +34,7 @@ const base = "c".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491",
-  handle: "STN-REVIEW:1491",
+  handle: "STN-REVIEW:R5V7",
   project: "stensibly",
   repository,
   pullRequestNumber: 1491,
@@ -153,6 +153,7 @@ function authorityInput(
     threadId: thread.threadId,
     provider: "gmail",
     mailboxBindingId: "mailbox_primary",
+    expectedMailboxAddress: "operator@example.com",
     providerThreadId: "gmail-thread-1491",
     expectedInReplyToMessageId: "gmail-message-root",
     messageDisposition: "direct_human_reply",
@@ -475,6 +476,14 @@ describe("GitHub mail bridge", () => {
     }))).toThrow("replayed with changed semantics");
   });
 
+  test("same provider message cannot replay under a different exact mailbox destination", () => {
+    const first = classifyGitHubMailReply(replyInput());
+    expect(() => classifyGitHubMailReply(replyInput({
+      previousAdmission: first,
+      authority: authorityInput({ expectedMailboxAddress: "operator+other@example.com" }),
+    }))).toThrow("replayed with changed semantics");
+  });
+
   test("executes one exact conversation comment through current provider authority and readback", async () => {
     const admission = classifyGitHubMailReply(replyInput());
     const effect = admission.effect as GitHubConversationCommentEffect;
@@ -517,7 +526,6 @@ describe("GitHub mail bridge", () => {
         updated_at: "2026-08-15T06:31:00.000Z",
       },
     }, "delivery-returning-comment");
-
     const reconciled = compileGitHubMailAttention({
       thread: { ...thread, currentHeadRevision: headB },
       signal: { kind: "repository_observation", observation: returning },

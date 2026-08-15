@@ -23,7 +23,7 @@ const base = "f".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491_projection",
-  handle: "STN-REVIEW:1491PROJECTION",
+  handle: "STN-REVIEW:P7R5",
   project: "stensibly",
   repository,
   pullRequestNumber: 1491,
@@ -72,6 +72,7 @@ function effectFor(body: string): GitHubConversationCommentEffect {
       threadId: thread.threadId,
       provider: "gmail",
       mailboxBindingId: "mailbox_primary",
+      expectedMailboxAddress: "operator@example.com",
       providerThreadId: "gmail-thread-1491",
       expectedInReplyToMessageId: "gmail-message-root",
       messageDisposition: "direct_human_reply",

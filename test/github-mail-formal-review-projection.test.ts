@@ -25,8 +25,8 @@ const head = "1111111111111111111111111111111111111111";
 const source = `sha256:${"2".repeat(64)}`;
 const thread: GitHubMailThreadBinding = {
   version: 1,
-  threadId: "STN-REVIEW:FORMAL1",
-  handle: "STN-REVIEW:FORMAL1",
+  threadId: "STN-REVIEW:F7RM",
+  handle: "STN-REVIEW:F7RM",
   project: "stensibly",
   repository: "teamleaderleo/stensibly",
   pullRequestNumber: 777,
@@ -52,6 +52,7 @@ function formalAuthority(
     threadId: thread.threadId,
     provider: "gmail",
     mailboxBindingId: "gmail:primary",
+    expectedMailboxAddress: "operator@example.com",
     providerThreadId: "gmail-thread-777",
     expectedInReplyToMessageId: "gmail-message-parent",
     messageDisposition: "direct_human_reply",
@@ -239,6 +240,7 @@ describe("formal GitHub review mail classification", () => {
         threadId: thread.threadId,
         provider: "gmail",
         mailboxBindingId: "gmail:primary",
+        expectedMailboxAddress: "operator@example.com",
         providerThreadId: "gmail-thread-777",
         expectedInReplyToMessageId: "gmail-message-parent",
         messageDisposition: "direct_human_reply",

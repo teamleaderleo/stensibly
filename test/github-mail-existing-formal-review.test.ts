@@ -32,6 +32,7 @@ function authority(
     threadId: thread.threadId,
     provider: "gmail",
     mailboxBindingId: "gmail:primary",
+    expectedMailboxAddress: "operator@example.com",
     providerThreadId: input.providerThreadId,
     expectedInReplyToMessageId: input.parentMessageId,
     messageDisposition: "direct_human_reply",

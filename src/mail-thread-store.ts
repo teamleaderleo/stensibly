@@ -681,7 +681,9 @@ function retryEffect(
     ...base,
     outboundEffectId: `mailfx_${hex.slice(0, 40)}`,
     attemptNumber,
-    rfcMessageId: `<stn.${hex}@mail.stensibly.com>`,
+    rfcMessageId: base.rfcMessageId === null
+      ? null
+      : `<stn.${hex}@mail.stensibly.com>`,
     state: "reserved",
     receipt: null,
   });
@@ -766,7 +768,7 @@ function freezeEffect(input: MailOutboundEffectRecord): MailOutboundEffectRecord
     || !Number.isInteger(input.attemptNumber)
     || input.attemptNumber < 1
     || typeof input.contentFingerprint !== "string"
-    || typeof input.rfcMessageId !== "string"
+    || (input.rfcMessageId !== null && typeof input.rfcMessageId !== "string")
     || typeof input.reservedAt !== "string"
     || !["reserved", "sent", "ambiguous", "failed", "reconciled"].includes(input.state)
   ) {
