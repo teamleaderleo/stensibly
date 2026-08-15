@@ -17,6 +17,7 @@ export interface OutlookMailboxNotification {
   readonly mailboxBindingId: string;
   readonly notificationId: string;
   readonly subscriptionId: string;
+  readonly clientStateVerified: boolean;
   readonly lifecycleEvent: OutlookMailboxLifecycleEvent;
   readonly observedAt: string;
   readonly receivedAt: string;
@@ -89,7 +90,7 @@ export async function reconcileOutlookMailbox(
   const now = canonicalTimestamp(input.now, "Outlook reconciliation time");
   const notification = input.notification === null
     ? null
-    : admitNotification(input.notification);
+    : admitOutlookMailboxNotification(input.notification);
   if (notification && notification.mailboxBindingId !== input.state.mailboxBindingId) {
     throw new RangeError("Outlook notification mailbox binding mismatch");
   }
@@ -415,9 +416,14 @@ function subscriptionObservation(input: {
   });
 }
 
-function admitNotification(value: OutlookMailboxNotification): OutlookMailboxNotification {
+export function admitOutlookMailboxNotification(
+  value: OutlookMailboxNotification,
+): OutlookMailboxNotification {
   if (value.provider !== "outlook") {
     throw new RangeError("Outlook notification provider is invalid");
+  }
+  if (value.clientStateVerified !== true) {
+    throw new RangeError("Outlook notification client state was not verified");
   }
   const lifecycleEvent = value.lifecycleEvent;
   if (
@@ -438,6 +444,7 @@ function admitNotification(value: OutlookMailboxNotification): OutlookMailboxNot
     mailboxBindingId: providerId(value.mailboxBindingId, "Outlook mailbox binding ID"),
     notificationId: providerId(value.notificationId, "Outlook notification ID"),
     subscriptionId: providerId(value.subscriptionId, "Outlook notification subscription ID"),
+    clientStateVerified: true,
     lifecycleEvent,
     observedAt,
     receivedAt,
