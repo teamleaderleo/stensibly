@@ -1,8 +1,6 @@
 import type { GmailAccessTokenProvider } from "./gmail-mailbox-api.js";
 import { GmailMailboxDispositionApiClient } from "./gmail-mailbox-disposition-api.js";
-import {
-  consumeGmailMailboxDisposition,
-} from "./gmail-mailbox-disposition-consumer.js";
+import { consumeGmailMailboxDisposition } from "./gmail-mailbox-disposition-consumer.js";
 import {
   reconcileGmailMailboxDispositionEffect,
   type CurrentDurableStnMailboxState,
@@ -15,9 +13,7 @@ import {
   GmailMailProvider,
   type GmailOutboundClient,
 } from "./gmail-mail-provider.js";
-import {
-  GmailOutboundApiClient,
-} from "./gmail-outbound-api.js";
+import { GmailOutboundApiClient } from "./gmail-outbound-api.js";
 import {
   MailDeliveryPendingReconciliationError,
   MailOutboundService,
@@ -270,14 +266,13 @@ export class HostedGmailOutboundService {
       }
 
       if (execution.status === "applied" || execution.status === "noop" || execution.status === "ignored_draft" || execution.status === "replayed") {
-        const outcome = execution.outcome;
         return Object.freeze({
           status: "settled",
           stnThreadId: execution.effect.binding.stnThreadId,
           stnStateRevision: execution.effect.stnStateRevision,
           providerMessageId: execution.effect.binding.providerMessageId,
           effectId: execution.effect.effectId,
-          outcome,
+          outcome: execution.outcome,
         });
       }
       if (execution.status === "reconciliation_required") {
@@ -304,12 +299,15 @@ export class HostedGmailOutboundService {
         if (recovered === "retry_current") continue;
         return recovered;
       }
-      return blockedReceipt(
-        execution.effect?.binding.stnThreadId ?? receipt.threadId,
-        execution.effect?.stnStateRevision ?? (await this.#requiredCurrentState(receipt.threadId)).revision,
-        receipt.providerMessageId,
-        execution.reason,
-      );
+      if (execution.status === "blocked") {
+        return blockedReceipt(
+          execution.effect?.binding.stnThreadId ?? receipt.threadId,
+          execution.effect?.stnStateRevision ?? (await this.#requiredCurrentState(receipt.threadId)).revision,
+          receipt.providerMessageId,
+          execution.reason,
+        );
+      }
+      throw new TypeError("Hosted Gmail disposition execution result is invalid");
     }
 
     const state = await this.#requiredCurrentState(receipt.threadId);
