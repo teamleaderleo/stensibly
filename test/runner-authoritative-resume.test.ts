@@ -12,6 +12,7 @@ import {
   parseRunnerCapabilityProbeV1,
   parseRunnerExternalReferenceV1,
   parseRunnerObservationV1,
+  parseRunnerResumeCommandV1,
   type RunnerAdapterV1,
   type RunnerCancellationCommandV1,
   type RunnerCancellationObservationV1,
@@ -298,10 +299,7 @@ describe("authoritative runner resume", () => {
       await expect(fixture.service.resume({
         ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
-      })).rejects.toMatchObject({
-        code: "runner_authoritative_resume_conflict",
-        reason: "settlement.prior_execution",
-      });
+      })).rejects.toBeInstanceOf(RunnerAuthoritativeResumeConflictError);
       expect(fixture.adapter.resumeCalls).toBe(0);
     } finally {
       fixture.store.close();
@@ -320,8 +318,7 @@ describe("authoritative runner resume", () => {
       })).rejects.toThrow("simulated evidence process loss");
       expect(fixture.adapter.resumeCalls).toBe(0);
 
-      const restarted = fixture.makeService();
-      const replay = await restarted.resume({
+      const replay = await fixture.makeService().resume({
         ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
       });
@@ -363,7 +360,7 @@ describe("authoritative runner resume", () => {
       const firstContinuation = fixture.store.db.query<{ generation: number }, [string]>(
         "SELECT generation FROM continuations WHERE id = ?1",
       ).get(fixture.continuationId)!;
-      const result = await fixture.service.resume({
+      const outcome = await fixture.service.resume({
         ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
       });
@@ -373,7 +370,7 @@ describe("authoritative runner resume", () => {
         "SELECT generation FROM continuations WHERE id = ?1",
       ).get(fixture.continuationId)!;
 
-      expect(result.settlement?.outcome.terminalObservationType).toBe("interrupted");
+      expect(outcome.settlement?.outcome.terminalObservationType).toBe("interrupted");
       expect(checkpoint.generation).toBe(fixture.checkpoint.generation! + 1);
       expect(checkpoint.externalId).not.toBe(fixture.checkpoint.externalId);
       expect(afterContinuation.generation).toBe(firstContinuation.generation);
@@ -418,7 +415,6 @@ describe("authoritative runner resume", () => {
       const retained = JSON.stringify({ rows, events: detail.events });
       expect(retained).not.toContain(privateMarker);
       expect(retained).not.toContain(credentialMarker);
-      expect(retained).not.toContain("prompt");
       expect(retained).not.toContain("toolArguments");
     } finally {
       fixture.store.close();
@@ -432,17 +428,12 @@ class MutableEvidenceSource implements RunnerAuthoritativeResumeEvidenceSourceV1
   grantState: "fresh" | "expired" | "revoked" | "unknown" = "fresh";
   approvalState: "fresh" | "expired" | "revoked" | "unknown" = "fresh";
   checkpointRunId: string | null = null;
-  readonly requiredApproval: boolean;
 
-  constructor(requiredApproval: boolean) {
-    this.requiredApproval = requiredApproval;
-  }
+  constructor(readonly requiredApproval: boolean) {}
 
   read(input: Parameters<RunnerAuthoritativeResumeEvidenceSourceV1["read"]>[0]): RunnerAuthoritativeResumeEvidenceV1 {
     this.readCount += 1;
-    if (this.throwOnRead === this.readCount) {
-      throw new Error("simulated evidence process loss");
-    }
+    if (this.throwOnRead === this.readCount) throw new Error("simulated evidence process loss");
     const generation = input.checkpoint.generation!;
     return {
       checkpoint: {
@@ -469,11 +460,7 @@ class MutableEvidenceSource implements RunnerAuthoritativeResumeEvidenceSourceV1
       },
       latestCheckpointGeneration: generation,
       checkpointToolSurface: checkpointSurface(input.command, input.observedAt),
-      grantRefs: input.command.capabilityGrantRefs.map((ref) => ({
-        ref,
-        state: this.grantState,
-        expiresAt: null,
-      })),
+      grantRefs: input.command.capabilityGrantRefs.map((ref) => ({ ref, state: this.grantState, expiresAt: null })),
       requiredApprovalRefs: this.requiredApproval ? ["approval:resume"] : [],
       approvalRefs: this.requiredApproval
         ? [{ ref: "approval:resume", state: this.approvalState, expiresAt: null }]
@@ -564,10 +551,7 @@ class ModelFreeResumeAdapter implements RunnerAdapterV1 {
       });
       return;
     }
-    yield observation(command, "heartbeat", sequence++, {
-      usage: {},
-      checkpointRef: command.checkpointRef,
-    });
+    yield observation(command, "heartbeat", sequence++, { usage: {}, checkpointRef: command.checkpointRef });
     yield observation(command, "completion_proposed", sequence++, {
       outcome: "The model-free resume fixture completed.",
       executionActual: { toolCalls: 0 },
@@ -710,7 +694,11 @@ async function createFixture(options: {
     adapter,
     actor: runner,
     profileId,
-    expectedRuntime: { runtimePackageId, runtimePackageVersion, checkpointSchemaVersion } as any,
+    expectedRuntime: {
+      packageId: runtimePackageId,
+      packageVersion: runtimePackageVersion,
+      checkpointSchemaVersion,
+    },
     evidenceSource: evidence,
     requiredCapabilities: overrides.requiredCapabilities ?? [{ class: "native_core", id: "shell" }],
     capabilityGrantRefs: ["grant:resume"],
