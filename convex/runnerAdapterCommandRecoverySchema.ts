@@ -3,11 +3,13 @@ import { v } from "convex/values";
 import { mailboxIntakeTables } from "./mailboxIntakeSchema";
 import { mailOutboundTables } from "./mailOutboundSchema";
 import { mailSemanticAdmissionTables } from "./mailSemanticAdmissionSchema";
+import { outlookRuntimeTables } from "./outlookRuntimeSchema";
 
 export const runnerAdapterCommandRecoveryTables = {
   ...mailboxIntakeTables,
   ...mailSemanticAdmissionTables,
   ...mailOutboundTables,
+  ...outlookRuntimeTables,
   runnerAdapterCommandRecoveries: defineTable({
     workspaceId: v.id("workspaces"),
     commandId: v.id("runnerAdapterCommands"),
