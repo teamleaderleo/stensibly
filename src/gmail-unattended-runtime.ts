@@ -5,22 +5,11 @@ import {
   reconcileGmailMailbox,
   type GmailMailboxReconciliationResult,
 } from "./gmail-mailbox-intake.js";
-import { HostedMailboxIntakeService } from "./mailbox-intake-convex-service.js";
 import {
-  createMailboxSubscriptionState,
-  type MailboxObservation,
-} from "./mailbox-intake-contract.js";
-
-export interface GmailMaterialObservationSinkResult {
-  readonly operatorAttentionMessageIds: ReadonlySet<string>;
-}
-
-export interface GmailMaterialObservationSink {
-  admitMaterialObservations(input: {
-    readonly observations: readonly MailboxObservation[];
-    readonly mailboxBindingId: string;
-  }): Promise<GmailMaterialObservationSinkResult>;
-}
+  HostedMailboxIntakeService,
+  type DurableMailboxObservationProjection,
+} from "./mailbox-intake-convex-service.js";
+import { createMailboxSubscriptionState } from "./mailbox-intake-contract.js";
 
 export interface GmailUnattendedRuntimeOptions {
   mailboxAddress: string;
@@ -30,7 +19,6 @@ export interface GmailUnattendedRuntimeOptions {
   gmail: GmailMailboxApiClient;
   actions: GmailMailboxActionClient;
   intake: HostedMailboxIntakeService;
-  materialSink?: GmailMaterialObservationSink;
   knownOutboundProviderMessageIds?: () => Promise<ReadonlySet<string>>;
   now?: () => string;
 }
@@ -53,7 +41,6 @@ export class GmailUnattendedRuntime {
   readonly #gmail: GmailMailboxApiClient;
   readonly #actions: GmailMailboxActionClient;
   readonly #intake: HostedMailboxIntakeService;
-  readonly #materialSink: GmailMaterialObservationSink | undefined;
   readonly #knownOutbound: (() => Promise<ReadonlySet<string>>) | undefined;
   readonly #now: () => string;
 
@@ -65,7 +52,6 @@ export class GmailUnattendedRuntime {
     this.#gmail = options.gmail;
     this.#actions = options.actions;
     this.#intake = options.intake;
-    this.#materialSink = options.materialSink;
     this.#knownOutbound = options.knownOutboundProviderMessageIds;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
@@ -114,6 +100,12 @@ export class GmailUnattendedRuntime {
     return await this.#reconcile(snapshot, notification, `gmail-push:${notification.notificationId}`);
   }
 
+  async listRecentMaterialObservations(
+    limit = 100,
+  ): Promise<readonly DurableMailboxObservationProjection[]> {
+    return await this.#intake.listRecentMaterialObservations(this.#mailboxBindingId, limit);
+  }
+
   async #reconcile(
     snapshot: NonNullable<Awaited<ReturnType<HostedMailboxIntakeService["get"]>>>,
     notification: ReturnType<typeof parseGmailPubSubNotification> | null,
@@ -145,20 +137,17 @@ export class GmailUnattendedRuntime {
     const material = result.observations.filter((observation) =>
       observation.wakeEligible && observation.loopDisposition === "ordinary"
     );
-    const sinkResult = material.length > 0 && this.#materialSink
-      ? await this.#materialSink.admitMaterialObservations({
-          observations: Object.freeze([...material]),
-          mailboxBindingId: this.#mailboxBindingId,
-        })
-      : { operatorAttentionMessageIds: new Set<string>() };
     let archivedMessages = 0;
-    const messageIds = new Set(
+    const archiveCandidates = new Set(
       result.observations
+        .filter((observation) =>
+          observation.eventType === "mail.message.created"
+          || observation.eventType === "mail.label.added"
+        )
         .map((observation) => observation.providerMessageId)
         .filter((value): value is string => value !== null),
     );
-    for (const messageId of messageIds) {
-      if (sinkResult.operatorAttentionMessageIds.has(messageId)) continue;
+    for (const messageId of archiveCandidates) {
       await this.#actions.archiveMessage(messageId);
       archivedMessages += 1;
     }
