@@ -13,6 +13,11 @@ export interface MailSourceReference {
   reference: string;
 }
 
+export interface MailContinuationRoute {
+  mailProvider: string;
+  sourceSystem: string;
+}
+
 export interface MailOutboundEnvelopeInput {
   thread: MailThreadRecord;
   sourceFingerprint: string;
@@ -24,7 +29,7 @@ export interface MailOutboundEnvelopeInput {
   blocker?: string | null;
   resolutionCondition: string;
   threadState: MailThreadState;
-  continuationRoute?: string | null;
+  continuationRoute?: MailContinuationRoute | null;
   references?: readonly MailSourceReference[];
 }
 
@@ -62,7 +67,7 @@ interface AdmittedEnvelopeSemantics {
   blocker: string | null;
   resolutionCondition: string;
   threadState: MailThreadState;
-  continuationRoute: string | null;
+  continuationRoute: Readonly<MailContinuationRoute> | null;
   references: readonly MailSourceReference[];
 }
 
@@ -77,7 +82,7 @@ export function renderMailOutboundEnvelope(
   const materialFingerprint = sha256(stableJson(semantics));
   const launchLine = semantics.continuationRoute === null
     ? `Continue ${thread.handle}.`
-    : `Continue ${thread.handle} via ${semantics.continuationRoute}.`;
+    : `In ${semantics.continuationRoute.mailProvider}, continue ${thread.handle}. Then refresh the referenced ${semantics.continuationRoute.sourceSystem} state.`;
   const subject = `[${thread.handle}] ${thread.canonicalSubject}`;
   const body = renderBody(semantics, launchLine);
   if (Buffer.byteLength(body, "utf8") > maxBodyBytes) {
@@ -163,13 +168,7 @@ function admitEnvelopeSemantics(
       : exactMailDisplayText(input.blocker, "Outbound mail blocker", 1200),
     resolutionCondition,
     threadState,
-    continuationRoute: input.continuationRoute === undefined || input.continuationRoute === null
-      ? null
-      : exactMailDisplayText(
-          input.continuationRoute,
-          "Outbound mail continuation route",
-          160,
-        ),
+    continuationRoute: admitContinuationRoute(input.continuationRoute),
     references,
   });
 }
@@ -205,6 +204,34 @@ function renderReadList(semantics: AdmittedEnvelopeSemantics): string {
 function renderObserved(semantics: AdmittedEnvelopeSemantics): string {
   if (semantics.sourceRevision === null) return semantics.whatChanged;
   return `${semantics.whatChanged} Revision observed: ${semantics.sourceRevision}; refresh before action.`;
+}
+
+function admitContinuationRoute(
+  input: MailContinuationRoute | null | undefined,
+): Readonly<MailContinuationRoute> | null {
+  if (input === undefined || input === null) return null;
+  if (
+    typeof input !== "object"
+    || Array.isArray(input)
+    || Object.getPrototypeOf(input) !== Object.prototype
+    || Object.keys(input).length !== 2
+    || !Object.hasOwn(input, "mailProvider")
+    || !Object.hasOwn(input, "sourceSystem")
+  ) {
+    throw new TypeError("Outbound mail continuation route is invalid");
+  }
+  return Object.freeze({
+    mailProvider: exactMailDisplayText(
+      input.mailProvider,
+      "Outbound mail continuation provider",
+      80,
+    ),
+    sourceSystem: exactMailDisplayText(
+      input.sourceSystem,
+      "Outbound mail continuation source system",
+      80,
+    ),
+  });
 }
 
 function admitReferences(
