@@ -83,7 +83,7 @@ export const gmailMailboxDispositionTables = {
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_workspace_id_and_provider_and_account_binding_and_mailbox_address_and_provider_thread_id_and_provider_message_id", [
+    .index("by_workspace_provider_account_binding_mailbox_thread_message", [
       "workspaceId",
       "provider",
       "accountBinding",

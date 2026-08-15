@@ -414,7 +414,7 @@ async function laneByTarget(
 ) {
   return await ctx.db
     .query("gmailMailboxDispositionLanes")
-    .withIndex("by_workspace_id_and_provider_and_account_binding_and_mailbox_address_and_provider_thread_id_and_provider_message_id", (q) => q
+    .withIndex("by_workspace_provider_account_binding_mailbox_thread_message", (q) => q
       .eq("workspaceId", workspaceId)
       .eq("provider", "gmail")
       .eq("accountBinding", target.accountBinding)
