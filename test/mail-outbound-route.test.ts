@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { sha256 } from "../src/canonical-json.ts";
 import { InMemoryMailProvider } from "../src/in-memory-mail-provider.ts";
+import {
+  type MailContinuationRoute,
+} from "../src/mail-outbound-envelope.ts";
 import { MailOutboundService } from "../src/mail-outbound-service.ts";
 import { createMailThreadHandle } from "../src/mail-thread-contract.ts";
 import { SqliteMailThreadStore } from "../src/mail-thread-store.ts";
@@ -11,7 +14,10 @@ const mailbox = {
   mailboxAddress: "operator@example.com",
 };
 
-function command(sourceIdentity: string, continuationRoute?: string | null) {
+function command(
+  sourceIdentity: string,
+  continuationRoute?: MailContinuationRoute | null,
+) {
   return {
     workspace: "workspace_main",
     project: "stensibly",
@@ -49,11 +55,11 @@ test("service keeps the pure envelope route neutral unless the caller chooses a 
 
   const routed = await service.publish(command(
     "attention:route:gmail",
-    "Gmail + GitHub only",
+    { mailProvider: "Gmail", sourceSystem: "GitHub" },
   ));
   const routedMessage = provider.messagesForThread(routed.receipt.providerThreadId!)[0]!;
   expect(routedMessage.body).toStartWith(
-    `Continue ${routed.thread.handle} via Gmail + GitHub only.\n`,
+    `In Gmail, continue ${routed.thread.handle}. Then refresh the referenced GitHub state.\n`,
   );
   store.close();
 });
