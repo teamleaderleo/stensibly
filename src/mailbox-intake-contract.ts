@@ -4,8 +4,8 @@ export const mailboxObservationEventTypes = [
   "mail.message.created",
   "mail.message.updated",
   "mail.message.deleted",
-  "mail.label.added",
-  "mail.label.removed",
+  "mail.scope.added",
+  "mail.scope.removed",
   "mail.subscription.degraded",
   "mail.subscription.recovered",
 ] as const;
@@ -62,7 +62,7 @@ export interface MailboxObservation {
   readonly providerCursor: string;
   readonly providerMessageId: string | null;
   readonly providerThreadId: string | null;
-  readonly providerLabelId: string | null;
+  readonly providerScopeId: string | null;
   readonly observedAt: string;
   readonly receivedAt: string;
   readonly wakeEligible: boolean;
@@ -91,7 +91,7 @@ export interface CreateMailboxObservationInput {
   providerCursor: string;
   providerMessageId: string | null;
   providerThreadId: string | null;
-  providerLabelId: string | null;
+  providerScopeId: string | null;
   observedAt: string;
   receivedAt: string;
   wakeEligible: boolean;
@@ -168,15 +168,15 @@ export function createMailboxObservation(
     input.providerThreadId,
     "Mailbox provider thread ID",
   );
-  const providerLabelId = optionalIdentity(
-    input.providerLabelId,
-    "Mailbox provider label ID",
+  const providerScopeId = optionalIdentity(
+    input.providerScopeId,
+    "Mailbox provider scope ID",
   );
   validateEventIdentity(
     eventType,
     providerMessageId,
     providerThreadId,
-    providerLabelId,
+    providerScopeId,
   );
   const observedAt = canonicalTimestamp(input.observedAt, "Mailbox observed time");
   const receivedAt = canonicalTimestamp(input.receivedAt, "Mailbox received time");
@@ -202,7 +202,7 @@ export function createMailboxObservation(
     providerCursor,
     providerMessageId,
     providerThreadId,
-    providerLabelId,
+    providerScopeId,
     observedAt,
     receivedAt,
     wakeEligible: input.wakeEligible,
@@ -309,24 +309,24 @@ function validateEventIdentity(
   eventType: MailboxObservationEventType,
   providerMessageId: string | null,
   providerThreadId: string | null,
-  providerLabelId: string | null,
+  providerScopeId: string | null,
 ): void {
   if (eventType.startsWith("mail.message.") && providerMessageId === null) {
     throw new RangeError("Mailbox message observations require a provider message ID");
   }
-  if (eventType.startsWith("mail.label.")) {
-    if (providerMessageId === null || providerLabelId === null) {
-      throw new RangeError("Mailbox label observations require message and label identities");
+  if (eventType.startsWith("mail.scope.")) {
+    if (providerMessageId === null || providerScopeId === null) {
+      throw new RangeError("Mailbox scope observations require message and scope identities");
     }
   }
   if (eventType.startsWith("mail.subscription.")) {
     if (
       providerMessageId !== null
       || providerThreadId !== null
-      || providerLabelId !== null
+      || providerScopeId !== null
     ) {
       throw new RangeError(
-        "Mailbox subscription observations cannot bind message, thread, or label identities",
+        "Mailbox subscription observations cannot bind message, thread, or scope identities",
       );
     }
   }
