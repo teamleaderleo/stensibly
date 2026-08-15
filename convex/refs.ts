@@ -59,6 +59,9 @@ export const convexApi = {
     get: mutationRef("workerEnrolments:get"),
     resolveCurrent: mutationRef("workerEnrolments:resolveCurrent"),
   },
+  workSelectionClaims: {
+    accept: mutationRef("workSelectionClaims:accept"),
+  },
   callsignLeases: {
     reserve: mutationRef("callsignLeases:reserve"),
     renew: mutationRef("callsignLeases:renew"),
