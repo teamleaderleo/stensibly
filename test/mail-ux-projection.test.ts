@@ -123,8 +123,9 @@ describe("mail UX projection", () => {
     expect(digest.authorizesMutation).toBe(false);
   });
 
-  test("records relay context cost without pretending a partial relay proved third-worker succession", () => {
-    const reduction = relayContextReduction(18_000, {
+  test("records relay context cost and whether isolation was a real fresh chat", () => {
+    const measurement = {
+      workerIsolation: "same_chat_protocol_replay" as const,
       operatorTaps: 4,
       turnsToUsefulAction: 1,
       mailMessagesFetched: 1,
@@ -134,8 +135,10 @@ describe("mail UX projection", () => {
       oldTranscriptNeeded: false,
       successorSucceeded: true,
       thirdWorkerSucceeded: null,
-    });
+    };
+    const reduction = relayContextReduction(18_000, measurement);
 
+    expect(measurement.workerIsolation).toBe("same_chat_protocol_replay");
     expect(reduction.savedBytes).toBe(17_520);
     expect(reduction.reductionRatio).toBeCloseTo(0.9733, 4);
   });
