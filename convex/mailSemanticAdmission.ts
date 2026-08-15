@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { admitMailSemanticAdmissionEvidenceJson } from "../src/mail-semantic-admission-evidence";
+import { mailSemanticAdmissionProviderMessageIndex } from "./mailSemanticAdmissionIndexes";
 import {
   findWorkspace,
   normalizeWorkspace,
@@ -24,7 +25,7 @@ export const get = query({
     const row = await ctx.db
       .query("mailSemanticAdmissions")
       .withIndex(
-        "by_workspace_id_and_provider_and_mailbox_binding_id_and_provider_message_id",
+        mailSemanticAdmissionProviderMessageIndex,
         (q) => q.eq("workspaceId", workspace._id)
           .eq("provider", "gmail")
           .eq("mailboxBindingId", args.mailboxBindingId)
@@ -48,7 +49,7 @@ export const admit = mutation({
     const existing = await ctx.db
       .query("mailSemanticAdmissions")
       .withIndex(
-        "by_workspace_id_and_provider_and_mailbox_binding_id_and_provider_message_id",
+        mailSemanticAdmissionProviderMessageIndex,
         (q) => q.eq("workspaceId", workspace._id)
           .eq("provider", evidence.provider)
           .eq("mailboxBindingId", evidence.mailboxBindingId)
