@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { sha256 } from "../src/canonical-json.ts";
 import { InMemoryMailProvider } from "../src/in-memory-mail-provider.ts";
 import {
+  MailDeliveryConflictError,
   MailDeliveryPendingReconciliationError,
   MailOutboundService,
   type PublishMailThreadCommand,
@@ -135,5 +136,36 @@ test("durable settlement cannot rewrite effect or projection destination", async
     receipt: reconciledReceipt,
     projection: wrongDestinationProjection,
   })).rejects.toThrow("Mail provider projection does not match its outbound effect");
+  store.close();
+});
+
+test("a failed first delivery keeps the exact destination bound across later material", async () => {
+  const store = new SqliteMailThreadStore({ path: ":memory:" });
+  const provider = new InMemoryMailProvider();
+  provider.setMode("definite_failure");
+  const service = new MailOutboundService({
+    store,
+    provider,
+    now: () => "2026-08-15T07:04:00.000Z",
+    threadIdFactory: () => "mail_thread_destination_failed",
+    handleFactory: () => createMailThreadHandle("handoff", "R8N4"),
+  });
+
+  const sourceIdentity = "attention:destination-failed";
+  const failed = await service.publish(command(sourceIdentity));
+  expect(failed.outcome).toBe("failed");
+  expect(failed.receipt.mailboxAddress).toBe(mailbox.mailboxAddress);
+
+  provider.setMode("normal");
+  await expect(service.publish({
+    ...command(sourceIdentity),
+    sourceFingerprint: sha256("attention:destination-failed:changed"),
+    whatChanged: "A later material update arrived after the failed delivery.",
+    mailbox: {
+      ...mailbox,
+      mailboxAddress: "operator+other@example.com",
+    },
+  })).rejects.toBeInstanceOf(MailDeliveryConflictError);
+  expect(provider.sentMessageCount).toBe(0);
   store.close();
 });
