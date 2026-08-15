@@ -24,11 +24,13 @@ function thread() {
 }
 
 describe("mail thread contract", () => {
-  test("normalizes short human-copyable STN handles and excludes confusing characters", () => {
+  test("normalizes short human-copyable STN handles and matches the landed eye-safe alphabet", () => {
     expect(createMailThreadHandle("handoff", "7k3q")).toBe("STN-HANDOFF:7K3Q");
     expect(parseMailThreadHandle("stn-handoff:7k3q")).toBe("STN-HANDOFF:7K3Q");
     expect(() => createMailThreadHandle("review", "O0I1")).toThrow(TypeError);
+    expect(() => createMailThreadHandle("handoff", "7L3Q")).toThrow(TypeError);
     expect(() => createMailThreadHandle("handoff", "ABC")).toThrow(TypeError);
+    expect(() => createMailThreadHandle("handoff", "ABCDEFGH2")).toThrow(TypeError);
   });
 
   test("renders the bounded #1489 dogfood handoff deterministically", () => {
@@ -61,7 +63,7 @@ describe("mail thread contract", () => {
     expect(first).toEqual(second);
     expect(first.subject).toBe("[STN-HANDOFF:7K3Q] Continue outbound mail threads");
     expect(first.launchLine).toBe(
-      "In Gmail, continue STN-HANDOFF:7K3Q. Then refresh the referenced GitHub state.",
+      "Continue STN-HANDOFF:7K3Q via Gmail + GitHub only.",
     );
     expect(first.body).toStartWith(`${first.launchLine}\n\nHandle: STN-HANDOFF:7K3Q\n`);
     expect(first.body).toContain("Subject: github:teamleaderleo/stensibly#1492");
@@ -116,10 +118,10 @@ describe("mail thread contract", () => {
     expect(alternate.handle).toBe(providerNeutral.handle);
     expect(providerNeutral.launchLine).toBe("Continue STN-HANDOFF:7K3Q.");
     expect(gmail.launchLine).toBe(
-      "In Gmail, continue STN-HANDOFF:7K3Q. Then refresh the referenced GitHub state.",
+      "Continue STN-HANDOFF:7K3Q via Gmail + GitHub only.",
     );
     expect(alternate.launchLine).toBe(
-      "In mail provider, continue STN-HANDOFF:7K3Q. Then refresh the referenced source system state.",
+      "Continue STN-HANDOFF:7K3Q via mail provider + source system only.",
     );
     expect(providerNeutral.materialFingerprint).not.toBe(gmail.materialFingerprint);
   });
