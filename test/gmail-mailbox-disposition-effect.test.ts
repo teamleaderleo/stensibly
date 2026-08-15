@@ -3,6 +3,7 @@ import {
   buildGmailMailboxDispositionEffect,
   executeGmailMailboxDispositionEffect,
   reconcileGmailMailboxDispositionEffect,
+  settledGmailMessageBindingFromDeliveryReceipt,
   type CurrentDurableStnMailboxState,
   type CurrentDurableStnMailboxStateReader,
   type GmailMailboxDispositionEffect,
@@ -15,6 +16,7 @@ import {
   type GmailMessageLabelSnapshot,
   type SettledGmailMessageBinding,
 } from "../src/gmail-mailbox-disposition-effect.ts";
+import type { MailDeliveryReceipt } from "../src/mail-provider.ts";
 import type { MailAttentionClass } from "../src/mail-ux-projection.ts";
 
 const binding: SettledGmailMessageBinding = {
@@ -22,10 +24,37 @@ const binding: SettledGmailMessageBinding = {
   provider: "gmail",
   stnThreadId: "attn_H7MK",
   accountBinding: "gmail:operator-primary",
+  mailboxAddress: "operator@example.com",
   providerThreadId: "thread_H7MK",
   providerMessageId: "message_H7MK",
   stensiblyLabelId: "Label_6",
 };
+
+function receipt(
+  overrides: Partial<MailDeliveryReceipt> = {},
+): MailDeliveryReceipt {
+  return {
+    version: 1,
+    outboundEffectId: "mail_effect_H7MK",
+    threadId: binding.stnThreadId,
+    handle: "STN-DECISION:H7MK",
+    provider: "gmail",
+    accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
+    attemptNumber: 1,
+    contentFingerprint: "a".repeat(64),
+    rfcMessageId: "<h7mk@stensibly.local>",
+    providerRequestId: "request_H7MK",
+    providerThreadId: binding.providerThreadId,
+    providerMessageId: binding.providerMessageId,
+    attemptedAt: "2026-08-15T07:00:00.000Z",
+    result: "sent",
+    failureClass: null,
+    recoveryAction: "none",
+    containsSecrets: false,
+    ...overrides,
+  };
+}
 
 function state(
   overrides: Partial<CurrentDurableStnMailboxState> = {},
@@ -62,6 +91,7 @@ class MemoryEffectStore implements GmailMailboxDispositionEffectStore {
       if (
         record.status !== "settled"
         && record.effect.binding.accountBinding === target.accountBinding
+        && record.effect.binding.mailboxAddress === target.mailboxAddress
         && record.effect.binding.providerThreadId === target.providerThreadId
         && record.effect.binding.providerMessageId === target.providerMessageId
       ) {
@@ -146,6 +176,7 @@ class FakeLabelClient implements GmailMailboxLabelClient {
 
   async mutateMessageLabels(input: {
     accountBinding: string;
+    mailboxAddress: string;
     providerThreadId: string;
     providerMessageId: string;
     dispositionEffectId: string;
@@ -153,6 +184,7 @@ class FakeLabelClient implements GmailMailboxLabelClient {
     removeLabelIds: readonly string[];
   }) {
     expect(input.accountBinding).toBe(binding.accountBinding);
+    expect(input.mailboxAddress).toBe(binding.mailboxAddress);
     expect(input.providerThreadId).toBe(binding.providerThreadId);
     expect(input.providerMessageId).toBe(binding.providerMessageId);
     this.mutations.push({
@@ -175,6 +207,7 @@ class FakeLabelClient implements GmailMailboxLabelClient {
       source: "gmail_message_label_snapshot",
       provider: "gmail",
       accountBinding: binding.accountBinding,
+      mailboxAddress: binding.mailboxAddress,
       providerThreadId: binding.providerThreadId,
       providerMessageId: this.mismatchMessageId ?? binding.providerMessageId,
       labelIds: [...this.labels],
@@ -192,6 +225,23 @@ function executionFixture() {
 }
 
 describe("Gmail mailbox disposition effect", () => {
+  test("consumes the merged outbound delivery receipt instead of inventing provider identity", () => {
+    expect(settledGmailMessageBindingFromDeliveryReceipt({
+      receipt: receipt(),
+      stensiblyLabelId: "Label_6",
+    })).toEqual(binding);
+
+    expect(() => settledGmailMessageBindingFromDeliveryReceipt({
+      receipt: receipt({
+        result: "ambiguous",
+        providerThreadId: null,
+        providerMessageId: null,
+        recoveryAction: "reconcile_before_retry",
+      }),
+      stensiblyLabelId: "Label_6",
+    })).toThrow("settled successful Gmail delivery receipt");
+  });
+
   test("full #1522 matrix keeps semantic class independent from human visibility", () => {
     const classes: MailAttentionClass[] = ["handoff", "review", "decision", "incident"];
     for (const attentionClass of classes) {
@@ -394,7 +444,7 @@ describe("Gmail mailbox disposition effect", () => {
     expect(fixture.labelClient.mutations).toHaveLength(1);
   });
 
-  test("current durable STN state is authoritative and mail/provider identity conflicts fail closed", async () => {
+  test("current durable STN state is authoritative and provider identity conflicts fail closed", async () => {
     const fixture = executionFixture();
     fixture.stateReader.current = {
       ...state({ operatorAttentionRequired: false }),
