@@ -36,7 +36,7 @@ function state(overrides: Partial<MailboxSubscriptionState> = {}): MailboxSubscr
   });
 }
 
-function notification(historyId = "105", messageId = "pubsub-1") {
+function notification(historyId: string | number = "105", messageId = "pubsub-1") {
   const data = Buffer.from(JSON.stringify({
     emailAddress: mailboxAddress,
     historyId,
@@ -99,6 +99,17 @@ describe("Gmail mailbox intake", () => {
       receivedAt: "2026-08-15T12:00:02.000Z",
     });
     expect(JSON.stringify(parsed)).not.toContain(mailboxAddress);
+  });
+
+  test("canonicalizes a positive safe numeric Pub/Sub history ID", () => {
+    expect(notification(1234567890).targetHistoryId).toBe("1234567890");
+  });
+
+  test("rejects numeric Pub/Sub history IDs that cannot be represented exactly", () => {
+    expect(() => notification(1.5)).toThrow("positive safe integer");
+    expect(() => notification(Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      "positive safe integer",
+    );
   });
 
   test("reconciles label-scoped history, suppresses self-echo wake, and advances once complete", async () => {

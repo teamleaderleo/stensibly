@@ -660,6 +660,12 @@ function compareHistoryIds(left: string, right: string): number {
 }
 
 function gmailHistoryId(value: unknown, label: string): string {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new RangeError(`${label} must be a positive safe integer`);
+    }
+    return String(value);
+  }
   return exactText(value, label, 40, historyIdPattern);
 }
 
