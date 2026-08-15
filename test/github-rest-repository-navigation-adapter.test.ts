@@ -335,7 +335,7 @@ function directoryPayload(
     type,
     sha,
     size,
-    url: `https://api.github.test/repos/teamleaderleo/stensibly/contents/${path.split("/").map(encodeURIComponent).join("/")}`,
+    url: `https://api.github.test/repos/teamleaderleo/stensibly/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${commitSha}`,
   };
 }
 
