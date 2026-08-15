@@ -1,4 +1,7 @@
-import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
+import {
+  canonicalJsonString,
+  fingerprintCanonicalRequest,
+} from "./idempotency-request-fingerprint.js";
 import {
   createMailboxObservation,
   createMailboxSubscriptionState,
@@ -27,7 +30,7 @@ const subscriptionKeys = [
   "health",
   "recoveryReason",
 ] as const;
-const observationKeys = [
+const observationV2Keys = [
   "containsRawContent",
   "eventType",
   "grantsAuthority",
@@ -46,6 +49,35 @@ const observationKeys = [
   "sourceSchema",
   "version",
   "wakeEligible",
+] as const;
+const observationV1Keys = [
+  "containsRawContent",
+  "eventType",
+  "grantsAuthority",
+  "loopDisposition",
+  "mailboxBindingId",
+  "observationId",
+  "observedAt",
+  "provider",
+  "providerCursor",
+  "providerLabelId",
+  "providerMessageId",
+  "providerThreadId",
+  "receivedAt",
+  "semanticFingerprint",
+  "sourceEventId",
+  "sourceSchema",
+  "version",
+  "wakeEligible",
+] as const;
+const legacyObservationEventTypes = [
+  "mail.message.created",
+  "mail.message.updated",
+  "mail.message.deleted",
+  "mail.label.added",
+  "mail.label.removed",
+  "mail.subscription.degraded",
+  "mail.subscription.recovered",
 ] as const;
 
 export function admitMailboxSubscriptionStateJson(
@@ -79,10 +111,11 @@ export function admitMailboxSubscriptionStateJson(
 
 export function admitMailboxObservationJson(value: unknown): MailboxObservation {
   const decoded = parseCanonicalRecord(value, "Mailbox observation");
-  requireExactKeys(decoded, observationKeys, "Mailbox observation");
-  if (decoded.version !== 1) {
+  if (decoded.version === 1) return admitLegacyMailboxObservationV1(decoded);
+  if (decoded.version !== 2) {
     throw new RangeError("Mailbox observation version is invalid");
   }
+  requireExactKeys(decoded, observationV2Keys, "Mailbox observation");
   const recreated = createMailboxObservation({
     provider: decoded.provider as never,
     mailboxBindingId: decoded.mailboxBindingId as never,
@@ -107,6 +140,74 @@ export function admitMailboxObservationJson(value: unknown): MailboxObservation 
     throw new RangeError("Mailbox observation identity is inconsistent");
   }
   return recreated;
+}
+
+function admitLegacyMailboxObservationV1(
+  decoded: Record<string, unknown>,
+): MailboxObservation {
+  requireExactKeys(decoded, observationV1Keys, "Legacy mailbox observation");
+  if (
+    typeof decoded.eventType !== "string"
+    || !legacyObservationEventTypes.includes(
+      decoded.eventType as typeof legacyObservationEventTypes[number],
+    )
+  ) {
+    throw new RangeError("Legacy mailbox observation event type is invalid");
+  }
+  if (decoded.containsRawContent !== false || decoded.grantsAuthority !== false) {
+    throw new RangeError("Mailbox observation identity is inconsistent");
+  }
+
+  const legacySemantics = {
+    version: 1 as const,
+    provider: decoded.provider,
+    mailboxBindingId: decoded.mailboxBindingId,
+    sourceSchema: decoded.sourceSchema,
+    sourceEventId: decoded.sourceEventId,
+    eventType: decoded.eventType,
+    providerCursor: decoded.providerCursor,
+    providerMessageId: decoded.providerMessageId,
+    providerThreadId: decoded.providerThreadId,
+    providerLabelId: decoded.providerLabelId,
+    observedAt: decoded.observedAt,
+    receivedAt: decoded.receivedAt,
+    wakeEligible: decoded.wakeEligible,
+    loopDisposition: decoded.loopDisposition,
+    containsRawContent: false as const,
+    grantsAuthority: false as const,
+  };
+  const expectedSemanticFingerprint = fingerprintCanonicalRequest(legacySemantics);
+  const identityDigest = fingerprintCanonicalRequest({
+    version: 1,
+    provider: decoded.provider,
+    mailboxBindingId: decoded.mailboxBindingId,
+    sourceSchema: decoded.sourceSchema,
+    sourceEventId: decoded.sourceEventId,
+    eventType: decoded.eventType,
+  }).slice("sha256:".length);
+  const expectedObservationId = `mail:${String(decoded.provider)}:${identityDigest}`;
+  if (
+    decoded.observationId !== expectedObservationId
+    || decoded.semanticFingerprint !== expectedSemanticFingerprint
+  ) {
+    throw new RangeError("Mailbox observation identity is inconsistent");
+  }
+
+  return createMailboxObservation({
+    provider: decoded.provider as never,
+    mailboxBindingId: decoded.mailboxBindingId as never,
+    sourceSchema: decoded.sourceSchema as never,
+    sourceEventId: decoded.sourceEventId as never,
+    eventType: decoded.eventType as never,
+    providerCursor: decoded.providerCursor as never,
+    providerMessageId: decoded.providerMessageId as never,
+    providerThreadId: decoded.providerThreadId as never,
+    providerLabelId: decoded.providerLabelId as never,
+    observedAt: decoded.observedAt as never,
+    receivedAt: decoded.receivedAt as never,
+    wakeEligible: decoded.wakeEligible as never,
+    loopDisposition: decoded.loopDisposition as never,
+  });
 }
 
 function parseCanonicalRecord(value: unknown, label: string): Record<string, unknown> {
