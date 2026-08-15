@@ -10,10 +10,28 @@ import {
 const initializeRef = makeFunctionReference<"mutation">("mailboxIntake:initialize");
 const commitRef = makeFunctionReference<"mutation">("mailboxIntake:commitReconciliation");
 const getRef = makeFunctionReference<"query">("mailboxIntake:getBinding");
+const listRecentRef = makeFunctionReference<"query">("mailboxIntake:listRecentObservations");
 
 export interface MailboxIntakeSnapshot {
   readonly state: MailboxSubscriptionState;
   readonly revision: number;
+}
+
+export interface DurableMailboxObservationProjection {
+  readonly observationId: string;
+  readonly semanticFingerprint: string;
+  readonly provider: "gmail" | "outlook";
+  readonly eventType: MailboxObservation["eventType"];
+  readonly providerCursor: string;
+  readonly providerMessageId: string | null;
+  readonly providerThreadId: string | null;
+  readonly providerLabelId: string | null;
+  readonly observedAt: string;
+  readonly receivedAt: string;
+  readonly wakeEligible: boolean;
+  readonly loopDisposition: MailboxObservation["loopDisposition"];
+  readonly containsRawContent: false;
+  readonly grantsAuthority: false;
 }
 
 export interface HostedMailboxIntakeServiceOptions {
@@ -98,6 +116,23 @@ export class HostedMailboxIntakeService {
     });
   }
 
+  async listRecentMaterialObservations(
+    mailboxBindingId: string,
+    limit = 100,
+  ): Promise<readonly DurableMailboxObservationProjection[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError("Mailbox material observation limit is invalid");
+    }
+    const raw = await this.#client.query(listRecentRef, this.#args({
+      mailboxBindingId,
+      limit,
+    }));
+    if (!Array.isArray(raw)) throw new Error("Mailbox intake storage returned an invalid observation list");
+    const material = raw.map((value) => durableObservation(value))
+      .filter((observation) => observation.wakeEligible && observation.loopDisposition === "ordinary");
+    return Object.freeze(material);
+  }
+
   #args(input: Record<string, unknown>): Record<string, unknown> {
     return {
       ...input,
@@ -105,6 +140,49 @@ export class HostedMailboxIntakeService {
       workspace: this.#workspace,
     };
   }
+}
+
+function durableObservation(value: unknown): DurableMailboxObservationProjection {
+  const row = record(value);
+  const provider = row.provider;
+  if (provider !== "gmail" && provider !== "outlook") {
+    throw new Error("Mailbox observation provider is invalid");
+  }
+  const eventType = row.eventType;
+  if (
+    eventType !== "mail.message.created"
+    && eventType !== "mail.message.updated"
+    && eventType !== "mail.message.deleted"
+    && eventType !== "mail.label.added"
+    && eventType !== "mail.label.removed"
+    && eventType !== "mail.subscription.degraded"
+    && eventType !== "mail.subscription.recovered"
+  ) throw new Error("Mailbox observation event type is invalid");
+  const loopDisposition = row.loopDisposition;
+  if (
+    loopDisposition !== "ordinary"
+    && loopDisposition !== "self_echo"
+    && loopDisposition !== "automatic"
+  ) throw new Error("Mailbox observation loop disposition is invalid");
+  if (row.containsRawContent !== false || row.grantsAuthority !== false) {
+    throw new Error("Mailbox observation projection widened its privacy or authority boundary");
+  }
+  return Object.freeze({
+    observationId: text(row.observationId, "Mailbox observation ID"),
+    semanticFingerprint: text(row.semanticFingerprint, "Mailbox observation fingerprint"),
+    provider,
+    eventType,
+    providerCursor: text(row.providerCursor, "Mailbox observation cursor"),
+    providerMessageId: nullableText(row.providerMessageId, "Mailbox provider message ID"),
+    providerThreadId: nullableText(row.providerThreadId, "Mailbox provider thread ID"),
+    providerLabelId: nullableText(row.providerLabelId, "Mailbox provider label ID"),
+    observedAt: text(row.observedAt, "Mailbox observation time"),
+    receivedAt: text(row.receivedAt, "Mailbox receipt time"),
+    wakeEligible: row.wakeEligible === true,
+    loopDisposition,
+    containsRawContent: false,
+    grantsAuthority: false,
+  });
 }
 
 function record(value: unknown): Record<string, unknown> {
