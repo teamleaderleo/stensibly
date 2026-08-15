@@ -26,7 +26,7 @@ describe("GmailMailboxDispositionApiClient", () => {
         });
       }
       return response({ id: "gmail_message_exact" });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const client = new GmailMailboxDispositionApiClient({
       tokenProvider: { async getAccessToken() { return "token-for-exact-mailbox"; } },
       accountBinding: "gmail_operator_primary",
@@ -78,7 +78,7 @@ describe("GmailMailboxDispositionApiClient", () => {
       fetch: (async () => {
         calls += 1;
         return response({});
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     await expect(client.readMessageLabels({
@@ -127,7 +127,7 @@ describe("GmailMailboxDispositionApiClient", () => {
               threadId: "gmail_thread_exact",
               labelIds: ["Label_6"],
             });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     const snapshot = await client.readMessageLabels({
@@ -148,7 +148,7 @@ describe("GmailMailboxDispositionApiClient", () => {
       accountBinding: "gmail_operator_primary",
       mailboxAddress: "operator@example.com",
       stensiblyLabelId: "Label_6",
-      fetch: (async () => { throw new Error("connection dropped"); }) as typeof fetch,
+      fetch: (async () => { throw new Error("connection dropped"); }) as unknown as typeof fetch,
     });
     await expect(client.mutateMessageLabels({
       accountBinding: "gmail_operator_primary",
