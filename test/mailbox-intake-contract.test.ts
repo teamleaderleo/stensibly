@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { admitMailboxObservationJson } from "../src/mailbox-intake-admission.ts";
+import {
+  canonicalJsonString,
+  fingerprintCanonicalRequest,
+} from "../src/idempotency-request-fingerprint.ts";
 import {
   createMailboxObservation,
   createMailboxSubscriptionState,
@@ -75,7 +80,7 @@ describe("mailbox intake contract", () => {
     });
 
     expect(observation).toMatchObject({
-      version: 1,
+      version: 2,
       provider: "gmail",
       mailboxBindingId: "mailbox_operator_primary",
       sourceSchema: "gmail-history",
@@ -97,7 +102,7 @@ describe("mailbox intake contract", () => {
     expect(Object.isFrozen(observation)).toBe(true);
   });
 
-  test("canonicalizes Gmail label events into provider-neutral scope events", () => {
+  test("canonicalizes Gmail label inputs into provider-neutral scope observations", () => {
     const observation = createMailboxObservation({
       provider: "gmail",
       mailboxBindingId: "mailbox_operator_primary",
@@ -115,11 +120,61 @@ describe("mailbox intake contract", () => {
     });
 
     expect(observation).toMatchObject({
+      version: 2,
       eventType: "mail.scope.added",
       providerScopeId: "Label_5",
     });
     expect(JSON.stringify(observation)).not.toContain("mail.label.added");
     expect(JSON.stringify(observation)).not.toContain("providerLabelId");
+  });
+
+  test("admits merged #1495 v1 observations and projects them into provider-neutral v2", () => {
+    const legacySemantics = {
+      version: 1 as const,
+      provider: "gmail",
+      mailboxBindingId: "mailbox_operator_primary",
+      sourceSchema: "gmail-history",
+      sourceEventId: "history:103:labelAdded:m_3:Label_5",
+      eventType: "mail.label.added",
+      providerCursor: "103",
+      providerMessageId: "m_3",
+      providerThreadId: "t_3",
+      providerLabelId: "Label_5",
+      observedAt: "2026-08-15T12:01:00.000Z",
+      receivedAt: "2026-08-15T12:01:01.000Z",
+      wakeEligible: true,
+      loopDisposition: "ordinary",
+      containsRawContent: false as const,
+      grantsAuthority: false as const,
+    };
+    const identityDigest = fingerprintCanonicalRequest({
+      version: 1,
+      provider: legacySemantics.provider,
+      mailboxBindingId: legacySemantics.mailboxBindingId,
+      sourceSchema: legacySemantics.sourceSchema,
+      sourceEventId: legacySemantics.sourceEventId,
+      eventType: legacySemantics.eventType,
+    }).slice("sha256:".length);
+    const legacy = {
+      ...legacySemantics,
+      observationId: `mail:gmail:${identityDigest}`,
+      semanticFingerprint: fingerprintCanonicalRequest(legacySemantics),
+    };
+
+    const admitted = admitMailboxObservationJson(canonicalJsonString(legacy));
+
+    expect(admitted).toMatchObject({
+      version: 2,
+      provider: "gmail",
+      eventType: "mail.scope.added",
+      providerMessageId: "m_3",
+      providerThreadId: "t_3",
+      providerScopeId: "Label_5",
+      wakeEligible: true,
+      containsRawContent: false,
+      grantsAuthority: false,
+    });
+    expect(JSON.stringify(admitted)).not.toContain("providerLabelId");
   });
 
   test("rejects mailbox state that crosses provider and scope contracts", () => {
