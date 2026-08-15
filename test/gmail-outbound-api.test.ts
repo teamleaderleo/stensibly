@@ -80,7 +80,7 @@ describe("GmailOutboundApiClient", () => {
     const fetchImpl = (async () => new Response(JSON.stringify({
       messages: [{ id: "gmail_message_1" }],
       nextPageToken: "more",
-    }))) as typeof fetch;
+    }))) as unknown as typeof fetch;
     const client = new GmailOutboundApiClient({
       tokenProvider: tokenProvider(),
       apiBaseUrl: "https://gmail.example.test",
@@ -91,7 +91,7 @@ describe("GmailOutboundApiClient", () => {
   });
 
   test("provider and transport failures expose sanitized errors without bearer material", async () => {
-    const fetchImpl = (async () => new Response("provider secret prose", { status: 503 })) as typeof fetch;
+    const fetchImpl = (async () => new Response("provider secret prose", { status: 503 })) as unknown as typeof fetch;
     const client = new GmailOutboundApiClient({
       tokenProvider: tokenProvider(),
       apiBaseUrl: "https://gmail.example.test",
