@@ -1,9 +1,11 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 import { mailboxIntakeTables } from "./mailboxIntakeSchema";
+import { mailSemanticAdmissionTables } from "./mailSemanticAdmissionSchema";
 
 export const runnerAdapterCommandRecoveryTables = {
   ...mailboxIntakeTables,
+  ...mailSemanticAdmissionTables,
   runnerAdapterCommandRecoveries: defineTable({
     workspaceId: v.id("workspaces"),
     commandId: v.id("runnerAdapterCommands"),
