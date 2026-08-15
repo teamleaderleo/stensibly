@@ -1,4 +1,8 @@
 import {
+  freezeMailDeliveryReceipt,
+  type MailDeliveryReceipt,
+} from "./mail-provider.js";
+import {
   gmailMailboxDispositionForState,
   type GmailMailboxDisposition,
   type MailAttentionClass,
@@ -17,6 +21,7 @@ export interface SettledGmailMessageBinding {
   provider: "gmail";
   stnThreadId: string;
   accountBinding: string;
+  mailboxAddress: string;
   providerThreadId: string;
   providerMessageId: string;
   stensiblyLabelId: string;
@@ -41,6 +46,7 @@ export interface GmailMessageLabelSnapshot {
   source: "gmail_message_label_snapshot";
   provider: "gmail";
   accountBinding: string;
+  mailboxAddress: string;
   providerThreadId: string;
   providerMessageId: string;
   labelIds: readonly string[];
@@ -51,11 +57,13 @@ export interface GmailMessageLabelSnapshot {
 export interface GmailMailboxLabelClient {
   readMessageLabels(input: {
     accountBinding: string;
+    mailboxAddress: string;
     providerThreadId: string;
     providerMessageId: string;
   }): Promise<GmailMessageLabelSnapshot | null>;
   mutateMessageLabels(input: {
     accountBinding: string;
+    mailboxAddress: string;
     providerThreadId: string;
     providerMessageId: string;
     dispositionEffectId: string;
@@ -181,6 +189,31 @@ export type GmailMailboxDispositionReconciliationResult =
       effect: GmailMailboxDispositionEffect;
     };
 
+export function settledGmailMessageBindingFromDeliveryReceipt(input: {
+  receipt: MailDeliveryReceipt;
+  stensiblyLabelId: string;
+}): SettledGmailMessageBinding {
+  const receipt = freezeMailDeliveryReceipt(input.receipt);
+  if (
+    receipt.provider !== "gmail"
+    || (receipt.result !== "sent" && receipt.result !== "reconciled")
+    || receipt.providerThreadId === null
+    || receipt.providerMessageId === null
+  ) {
+    throw new TypeError("Gmail disposition requires a settled successful Gmail delivery receipt");
+  }
+  return freezeBinding({
+    source: "settled_gmail_message_binding",
+    provider: "gmail",
+    stnThreadId: receipt.threadId,
+    accountBinding: receipt.accountBinding,
+    mailboxAddress: receipt.mailboxAddress,
+    providerThreadId: receipt.providerThreadId,
+    providerMessageId: receipt.providerMessageId,
+    stensiblyLabelId: input.stensiblyLabelId,
+  });
+}
+
 export async function executeGmailMailboxDispositionEffect(input: {
   binding: SettledGmailMessageBinding;
   stateReader: CurrentDurableStnMailboxStateReader;
@@ -267,6 +300,7 @@ export async function executeGmailMailboxDispositionEffect(input: {
   try {
     await input.labelClient.mutateMessageLabels({
       accountBinding: binding.accountBinding,
+      mailboxAddress: binding.mailboxAddress,
       providerThreadId: binding.providerThreadId,
       providerMessageId: binding.providerMessageId,
       dispositionEffectId: effect.effectId,
@@ -434,6 +468,7 @@ export function buildGmailMailboxDispositionEffect(
     GMAIL_MAILBOX_DISPOSITION_EFFECT_VERSION,
     binding.stnThreadId,
     binding.accountBinding,
+    binding.mailboxAddress,
     binding.providerThreadId,
     binding.providerMessageId,
     binding.stensiblyLabelId,
@@ -517,6 +552,7 @@ function snapshotMatchesBinding(
 ): boolean {
   return snapshot.provider === "gmail"
     && snapshot.accountBinding === binding.accountBinding
+    && snapshot.mailboxAddress === binding.mailboxAddress
     && snapshot.providerThreadId === binding.providerThreadId
     && snapshot.providerMessageId === binding.providerMessageId;
 }
@@ -534,6 +570,7 @@ function freezeBinding(input: SettledGmailMessageBinding): SettledGmailMessageBi
     provider: "gmail",
     stnThreadId: exactIdentifier(input.stnThreadId, "STN thread ID", 240),
     accountBinding: exactIdentifier(input.accountBinding, "Gmail account binding", 320),
+    mailboxAddress: exactIdentifier(input.mailboxAddress, "Gmail mailbox address", 320),
     providerThreadId: exactIdentifier(input.providerThreadId, "Gmail thread ID", 320),
     providerMessageId: exactIdentifier(input.providerMessageId, "Gmail message ID", 320),
     stensiblyLabelId,
@@ -582,6 +619,7 @@ function freezeSnapshot(input: GmailMessageLabelSnapshot): GmailMessageLabelSnap
     source: "gmail_message_label_snapshot",
     provider: "gmail",
     accountBinding: exactIdentifier(input.accountBinding, "Gmail account binding", 320),
+    mailboxAddress: exactIdentifier(input.mailboxAddress, "Gmail mailbox address", 320),
     providerThreadId: exactIdentifier(input.providerThreadId, "Gmail thread ID", 320),
     providerMessageId: exactIdentifier(input.providerMessageId, "Gmail message ID", 320),
     labelIds: Object.freeze([...new Set(labels)]),
