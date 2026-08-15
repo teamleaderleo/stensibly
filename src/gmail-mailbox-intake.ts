@@ -243,7 +243,7 @@ export async function reconcileGmailMailbox(
     }
     workingState = replaceState(workingState, {
       subscription: {
-        externalId: null,
+        externalId: workingState.subscription.externalId,
         expiresAt: epochMillisToIso(
           renewed.expiration,
           "Gmail watch expiration",
@@ -309,7 +309,7 @@ export async function reconcileGmailMailbox(
         pageHistoryId,
         state: workingState,
         observedAt: notification?.publishedAt ?? now,
-        receivedAt: now,
+        receivedAt: notification?.receivedAt ?? now,
         knownOutboundProviderMessageIds:
           input.knownOutboundProviderMessageIds ?? emptyProviderIds,
       })) {
