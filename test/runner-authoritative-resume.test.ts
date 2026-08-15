@@ -5,7 +5,7 @@ import {
   type EffectiveToolSurfaceSnapshot,
 } from "../src/effective-tool-surface.ts";
 import { compatibilityExecutionEnvelope } from "../src/execution-envelope-default.ts";
-import { proposeContinuation, resolveContinuation } from "../src/continuations.ts";
+import { getContinuation, proposeContinuation, resolveContinuation } from "../src/continuations.ts";
 import {
   RUNNER_ADAPTER_V1,
   parseRunnerAdapterDescriptorV1,
@@ -72,10 +72,11 @@ const descriptor = parseRunnerAdapterDescriptorV1({
 });
 
 describe("authoritative runner resume", () => {
-  test("healthy interrupted run resumes exactly once and settles through the durable command ledger", async () => {
+  test("a real durable terminal observation settles exactly once", async () => {
     const fixture = await createFixture();
     try {
-      const preview = await fixture.service.preview(fixture.intent("resume:healthy"));
+      const input = fixture.intent("resume:healthy");
+      const preview = await fixture.service.preview(input);
       expect(preview).toMatchObject({
         decision: "eligible",
         authorizesMutation: false,
@@ -83,15 +84,17 @@ describe("authoritative runner resume", () => {
       });
 
       const first = await fixture.service.resume({
-        ...fixture.intent("resume:healthy"),
+        ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
       });
       const replay = await fixture.service.resume({
-        ...fixture.intent("resume:healthy"),
+        ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
       });
 
       expect(first.disposition).toBe("executed");
+      expect(first.terminalObservation?.type).toBe("completion_proposed");
+      expect(first.observationCount).toBeGreaterThan(0);
       expect(first.settlement).toMatchObject({
         commandId: first.commandId,
         outcome: {
@@ -101,13 +104,85 @@ describe("authoritative runner resume", () => {
           containsCredentials: false,
         },
       });
+      const detail = await fixture.ledger.getItem(fixture.itemId);
+      expect(detail.events.some((event) =>
+        event.type === "run.adapter.observation"
+        && event.payload.commandId === first.commandId
+        && event.payload.observationId === first.terminalObservation?.observationId
+        && event.payload.observationType === "completion_proposed"
+      )).toBe(true);
       expect(replay).toMatchObject({
         disposition: "settled_replay",
         commandId: first.commandId,
         settlement: first.settlement,
-        observations: [],
+        observationCount: first.observationCount,
+        observationsSha256: first.observationsSha256,
       });
       expect(fixture.adapter.resumeCalls).toBe(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("missing terminal observation stays unresolved", async () => {
+    const fixture = await createFixture({ omitTerminal: true });
+    try {
+      const input = fixture.intent("resume:no-terminal");
+      const preview = await fixture.service.preview(input);
+      const outcome = await fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      });
+      const stored = await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: input.idempotencyKey });
+
+      expect(outcome.disposition).toBe("waiting_reconciliation");
+      expect(outcome.terminalObservation).toBeNull();
+      expect(outcome.settlement).toBeNull();
+      expect(stored?.settlement).toBeNull();
+      expect(fixture.adapter.resumeCalls).toBe(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("stale terminal-looking durable data cannot mint settlement", async () => {
+    const fixture = await createFixture({ omitTerminal: true });
+    try {
+      await fixture.ledger.recordEvent({
+        id: fixture.itemId,
+        actor: runner,
+        type: "run.adapter.observation",
+        payload: {
+          version: 1,
+          observationId: "stale-terminal-looking-observation",
+          observationType: "completion_proposed",
+          observationFingerprint: `sha256:${"9".repeat(64)}`,
+          commandId: "stale-command",
+          runId: fixture.runId,
+          runGeneration: 999,
+          leaseGeneration: 999,
+          adapterId,
+          adapterVersion,
+          profileId,
+          profileVersion,
+          observedAt: fixture.clock.toISOString(),
+          referenceCount: 0,
+          referencesFingerprint: sha256(stableJson([])),
+          containsPrivateContent: false,
+          containsCredentials: false,
+        },
+        idempotencyKey: "stale-terminal-looking-event",
+      });
+      const input = fixture.intent("resume:stale-terminal-looking");
+      const preview = await fixture.service.preview(input);
+      const outcome = await fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      });
+
+      expect(outcome.disposition).toBe("waiting_reconciliation");
+      expect(outcome.settlement).toBeNull();
+      expect((await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: input.idempotencyKey }))?.settlement).toBeNull();
     } finally {
       fixture.store.close();
     }
@@ -306,6 +381,29 @@ describe("authoritative runner resume", () => {
     }
   });
 
+  test("a newer settled command does not hide an older unresolved command", async () => {
+    const fixture = await createFixture({ olderUnresolvedBeforeNewerSettled: true });
+    try {
+      const input = fixture.intent("resume:older-unresolved");
+      const preview = await fixture.service.preview(input);
+      expect(preview.decision).toBe("blocked");
+      await expect(fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      })).rejects.toMatchObject({
+        code: "runner_authoritative_resume_conflict",
+        reason: "settlement.prior_execution",
+      });
+      const older = await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: fixture.olderUnresolvedKey! });
+      const newer = await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: fixture.newerSettledKey! });
+      expect(older?.settlement).toBeNull();
+      expect(newer?.settlement?.outcome.terminalObservationType).toBe("interrupted");
+      expect(fixture.adapter.resumeCalls).toBe(0);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
   test("crash after reservation leaves an explicit reconciliation state and restart does not redispatch", async () => {
     const fixture = await createFixture();
     try {
@@ -315,7 +413,9 @@ describe("authoritative runner resume", () => {
       await expect(fixture.service.resume({
         ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
-      })).rejects.toThrow("simulated evidence process loss");
+      })).rejects.toMatchObject({
+        reason: "evidence_unavailable",
+      });
       expect(fixture.adapter.resumeCalls).toBe(0);
 
       const replay = await fixture.makeService().resume({
@@ -352,28 +452,187 @@ describe("authoritative runner resume", () => {
     }
   });
 
-  test("second interruption publishes a newer checkpoint without rewriting prior continuation evidence", async () => {
+  test("successive interruptions advance checkpoint and continuation lineage and stale lineage never regains authority", async () => {
     const fixture = await createFixture({ interruptWithNewCheckpoint: true });
     try {
-      const input = fixture.intent("resume:second-interruption");
+      const firstInput = fixture.intent("resume:interruption-one");
+      const firstPreview = await fixture.service.preview(firstInput);
+      const first = await fixture.service.resume({
+        ...firstInput,
+        expectedResumeFenceFingerprint: firstPreview.resumeFenceFingerprint,
+      });
+      const afterFirstRun = await fixture.ledger.getRun(fixture.runId);
+      const afterFirstCheckpoint = parseRunnerExternalReferenceV1(JSON.parse(afterFirstRun.checkpoint!));
+      const afterFirstContinuation = getContinuation(fixture.store, fixture.continuationId);
+
+      expect(first.disposition).toBe("executed");
+      expect(first.terminalObservation?.type).toBe("interrupted");
+      expect(afterFirstCheckpoint.generation).toBe(fixture.checkpoint.generation! + 1);
+      expect(afterFirstContinuation.generation).toBe(fixture.continuationGeneration + 1);
+
+      const firstReplay = await fixture.service.resume({
+        ...firstInput,
+        expectedResumeFenceFingerprint: firstPreview.resumeFenceFingerprint,
+      });
+      expect(firstReplay.disposition).toBe("settled_replay");
+      expect(getContinuation(fixture.store, fixture.continuationId).generation).toBe(fixture.continuationGeneration + 1);
+      expect(fixture.adapter.resumeCalls).toBe(1);
+
+      const secondInput = fixture.intent("resume:interruption-two");
+      await expect(fixture.service.resume({
+        ...secondInput,
+        expectedResumeFenceFingerprint: firstPreview.resumeFenceFingerprint,
+      })).rejects.toMatchObject({ reason: "stale_resume_fence" });
+      expect(fixture.adapter.resumeCalls).toBe(1);
+
+      const secondPreview = await fixture.service.preview(secondInput);
+      const second = await fixture.service.resume({
+        ...secondInput,
+        expectedResumeFenceFingerprint: secondPreview.resumeFenceFingerprint,
+      });
+      const afterSecondRun = await fixture.ledger.getRun(fixture.runId);
+      const afterSecondCheckpoint = parseRunnerExternalReferenceV1(JSON.parse(afterSecondRun.checkpoint!));
+      const afterSecondContinuation = getContinuation(fixture.store, fixture.continuationId);
+
+      expect(second.disposition).toBe("executed");
+      expect(second.terminalObservation?.type).toBe("interrupted");
+      expect(afterSecondCheckpoint.generation).toBe(afterFirstCheckpoint.generation! + 1);
+      expect(afterSecondContinuation.generation).toBe(afterFirstContinuation.generation + 1);
+      expect(fixture.adapter.resumeCalls).toBe(2);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("same-generation lease renewal during an admitted resume remains valid", async () => {
+    const fixture = await createFixture();
+    try {
+      const before = await fixture.ledger.getRun(fixture.runId);
+      fixture.adapter.afterResumeAccepted = async () => {
+        const current = await fixture.ledger.getRun(fixture.runId);
+        await fixture.ledger.heartbeatRun({
+          id: current.id,
+          actor: runner,
+          expectedGeneration: current.generation,
+          expectedLeaseGeneration: current.leaseGeneration,
+          leaseSeconds: 7200,
+          idempotencyKey: "renew:same-generation-in-flight",
+        });
+      };
+      const input = fixture.intent("resume:same-generation-renewal");
       const preview = await fixture.service.preview(input);
-      const firstContinuation = fixture.store.db.query<{ generation: number }, [string]>(
-        "SELECT generation FROM continuations WHERE id = ?1",
-      ).get(fixture.continuationId)!;
       const outcome = await fixture.service.resume({
         ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
       });
-      const run = await fixture.ledger.getRun(fixture.runId);
-      const checkpoint = parseRunnerExternalReferenceV1(JSON.parse(run.checkpoint!));
-      const afterContinuation = fixture.store.db.query<{ generation: number }, [string]>(
-        "SELECT generation FROM continuations WHERE id = ?1",
-      ).get(fixture.continuationId)!;
+      const after = await fixture.ledger.getRun(fixture.runId);
 
-      expect(outcome.settlement?.outcome.terminalObservationType).toBe("interrupted");
-      expect(checkpoint.generation).toBe(fixture.checkpoint.generation! + 1);
-      expect(checkpoint.externalId).not.toBe(fixture.checkpoint.externalId);
-      expect(afterContinuation.generation).toBe(firstContinuation.generation);
+      expect(outcome.disposition).toBe("executed");
+      expect(after.generation).toBe(before.generation);
+      expect(after.leaseGeneration).toBe(before.leaseGeneration);
+      expect(Date.parse(after.leaseExpiresAt!)).toBeGreaterThan(Date.parse(before.leaseExpiresAt!));
+      expect(fixture.adapter.resumeCalls).toBe(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("run generation advance during an in-flight resume fences the stale effect", async () => {
+    const fixture = await createFixture();
+    try {
+      const before = await fixture.ledger.getRun(fixture.runId);
+      fixture.adapter.afterResumeAccepted = async () => {
+        const current = await fixture.ledger.getRun(fixture.runId);
+        await fixture.ledger.transitionRun({
+          id: current.id,
+          actor: runner,
+          command: "run",
+          expectedGeneration: current.generation,
+          expectedLeaseGeneration: current.leaseGeneration,
+          idempotencyKey: "advance:generation-in-flight",
+        });
+      };
+      const input = fixture.intent("resume:generation-advance-in-flight");
+      const preview = await fixture.service.preview(input);
+      const outcome = await fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      });
+      const after = await fixture.ledger.getRun(fixture.runId);
+
+      expect(outcome.disposition).toBe("waiting_reconciliation");
+      expect(outcome.settlement).toBeNull();
+      expect(after.generation).toBe(before.generation + 1);
+      expect((await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: input.idempotencyKey }))?.settlement).toBeNull();
+      expect(fixture.adapter.resumeCalls).toBe(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("lease expiry during an in-flight resume fences settlement", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.adapter.afterResumeAccepted = async () => {
+        const current = await fixture.ledger.getRun(fixture.runId);
+        fixture.clock.setTime(Date.parse(current.leaseExpiresAt!) + 1);
+      };
+      const input = fixture.intent("resume:lease-expiry-in-flight");
+      const preview = await fixture.service.preview(input);
+      const outcome = await fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      });
+
+      expect(outcome.disposition).toBe("waiting_reconciliation");
+      expect(outcome.settlement).toBeNull();
+      expect((await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: input.idempotencyKey }))?.settlement).toBeNull();
+      expect(fixture.adapter.resumeCalls).toBe(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("a newer command settlement arriving during resume leaves the older command unresolved", async () => {
+    const fixture = await createFixture();
+    try {
+      const input = fixture.intent("resume:newer-settlement-race");
+      const preview = await fixture.service.preview(input);
+      fixture.adapter.afterResumeAccepted = async () => {
+        const current = await fixture.ledger.getRun(fixture.runId);
+        const fingerprint = `sha256:${"7".repeat(64)}`;
+        const newer = await fixture.ledger.reserveRunnerAdapterCommand({
+          project,
+          itemId: fixture.itemId,
+          runId: fixture.runId,
+          runGeneration: current.generation,
+          leaseGeneration: current.leaseGeneration,
+          actor: runner,
+          adapterId,
+          profileId,
+          requestFingerprint: `sha256:${"6".repeat(64)}`,
+          commandId: `newer-race-${fixture.runId}`,
+          commandFingerprint: fingerprint,
+          idempotencyKey: `newer-race:${fixture.runId}`,
+        });
+        if (newer.dispatchAuthorized) {
+          await fixture.ledger.settleRunnerAdapterCommand({
+            commandId: newer.command.commandId,
+            commandFingerprint: fingerprint,
+            outcome: priorOutcome(fixture.checkpoint, "newer-race-terminal"),
+          });
+        }
+      };
+      const outcome = await fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      });
+      const older = await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: input.idempotencyKey });
+      const newer = await fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: `newer-race:${fixture.runId}` });
+
+      expect(outcome.disposition).toBe("waiting_reconciliation");
+      expect(older?.settlement).toBeNull();
+      expect(newer?.settlement?.outcome.terminalObservationType).toBe("interrupted");
     } finally {
       fixture.store.close();
     }
@@ -396,14 +655,13 @@ describe("authoritative runner resume", () => {
     }
   });
 
-  test("durable command and observation receipts exclude private checkpoint contents and credentials", async () => {
-    const privateMarker = "PRIVATE_CHECKPOINT_CONTENT_DO_NOT_RETAIN";
-    const credentialMarker = "github_pat_fixture_secret_do_not_retain";
-    const fixture = await createFixture({ privateMarker, credentialMarker });
+  test("public result and durable receipts exclude raw private observations", async () => {
+    const privateMarker = "PRIVATE_PROMPT_AND_TOOL_ARGUMENTS_DO_NOT_RETAIN";
+    const fixture = await createFixture({ privateMarker });
     try {
       const input = fixture.intent("resume:privacy");
       const preview = await fixture.service.preview(input);
-      await fixture.service.resume({
+      const outcome = await fixture.service.resume({
         ...input,
         expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
       });
@@ -412,10 +670,41 @@ describe("authoritative runner resume", () => {
         settlement_json: string | null;
       }, []>("SELECT request_json, settlement_json FROM runner_adapter_commands").all();
       const detail = await fixture.ledger.getItem(fixture.itemId);
+      const publicResult = JSON.stringify(outcome);
       const retained = JSON.stringify({ rows, events: detail.events });
+
+      expect(outcome.disposition).toBe("executed");
+      expect(publicResult).not.toContain(privateMarker);
+      expect(publicResult).not.toContain("private_fixture");
+      expect(publicResult).not.toContain("work_step");
       expect(retained).not.toContain(privateMarker);
-      expect(retained).not.toContain(credentialMarker);
       expect(retained).not.toContain("toolArguments");
+      expect(outcome).not.toHaveProperty("observations");
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("private evidence failures use fixed non-echoing errors", async () => {
+    const privateMarker = "PRIVATE_EVIDENCE_FAILURE_DO_NOT_ECHO";
+    const fixture = await createFixture();
+    try {
+      const input = fixture.intent("resume:private-evidence-error");
+      const preview = await fixture.service.preview(input);
+      fixture.evidence.throwMessage = privateMarker;
+      fixture.evidence.throwOnRead = fixture.evidence.readCount + 1;
+      let thrown: unknown;
+      try {
+        await fixture.service.resume({
+          ...input,
+          expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(RunnerAuthoritativeResumeConflictError);
+      expect(String((thrown as Error).message)).not.toContain(privateMarker);
+      expect(thrown).toMatchObject({ reason: "evidence_unavailable" });
     } finally {
       fixture.store.close();
     }
@@ -425,6 +714,7 @@ describe("authoritative runner resume", () => {
 class MutableEvidenceSource implements RunnerAuthoritativeResumeEvidenceSourceV1 {
   readCount = 0;
   throwOnRead: number | null = null;
+  throwMessage = "simulated evidence process loss";
   grantState: "fresh" | "expired" | "revoked" | "unknown" = "fresh";
   approvalState: "fresh" | "expired" | "revoked" | "unknown" = "fresh";
   checkpointRunId: string | null = null;
@@ -433,7 +723,7 @@ class MutableEvidenceSource implements RunnerAuthoritativeResumeEvidenceSourceV1
 
   read(input: Parameters<RunnerAuthoritativeResumeEvidenceSourceV1["read"]>[0]): RunnerAuthoritativeResumeEvidenceV1 {
     this.readCount += 1;
-    if (this.throwOnRead === this.readCount) throw new Error("simulated evidence process loss");
+    if (this.throwOnRead === this.readCount) throw new Error(this.throwMessage);
     const generation = input.checkpoint.generation!;
     return {
       checkpoint: {
@@ -480,8 +770,9 @@ class ModelFreeResumeAdapter implements RunnerAdapterV1 {
   missingRequiredCapability = false;
   addGithub = false;
   interruptWithNewCheckpoint = false;
+  omitTerminal = false;
   privateMarker: string | null = null;
-  credentialMarker: string | null = null;
+  afterResumeAccepted: (() => Promise<void> | void) | null = null;
   lastSnapshot: EffectiveToolSurfaceSnapshot | null = null;
 
   describe() {
@@ -524,12 +815,13 @@ class ModelFreeResumeAdapter implements RunnerAdapterV1 {
     if (!snapshot) throw new Error("resume fixture requires current capability inspection");
     let sequence = 1;
     yield observation(command, "resume_accepted", sequence++);
+    await this.afterResumeAccepted?.();
     yield observation(command, "execution_started", sequence++);
     yield observation(command, "tool_surface_observed", sequence++, { snapshot });
-    if (this.privateMarker || this.credentialMarker) {
+    if (this.privateMarker) {
       yield observation(command, "work_step", sequence++, {
         phase: "private_fixture",
-        summary: `${this.privateMarker ?? ""} ${this.credentialMarker ?? ""}`.trim(),
+        summary: this.privateMarker,
       });
     }
     if (this.interruptWithNewCheckpoint) {
@@ -537,7 +829,7 @@ class ModelFreeResumeAdapter implements RunnerAdapterV1 {
       const next = parseRunnerExternalReferenceV1({
         ...current,
         externalId: `${current.externalId}:next`,
-        digest: `sha256:${"e".repeat(64)}`,
+        digest: sha256(`${current.digest}:${current.generation}:next`),
         generation: current.generation! + 1,
         createdAt: new Date(Date.parse(command.issuedAt) + 5_000).toISOString(),
       });
@@ -552,6 +844,7 @@ class ModelFreeResumeAdapter implements RunnerAdapterV1 {
       return;
     }
     yield observation(command, "heartbeat", sequence++, { usage: {}, checkpointRef: command.checkpointRef });
+    if (this.omitTerminal) return;
     yield observation(command, "completion_proposed", sequence++, {
       outcome: "The model-free resume fixture completed.",
       executionActual: { toolCalls: 0 },
@@ -575,9 +868,10 @@ async function createFixture(options: {
   missingRequiredCapability?: boolean;
   requiredApproval?: boolean;
   settlePrior?: boolean;
+  olderUnresolvedBeforeNewerSettled?: boolean;
   interruptWithNewCheckpoint?: boolean;
+  omitTerminal?: boolean;
   privateMarker?: string;
-  credentialMarker?: string;
 } = {}) {
   const store = new StensiblyStore(":memory:");
   const ledger = new SqliteWorkLedger(store);
@@ -646,45 +940,24 @@ async function createFixture(options: {
     checkpoint: stableJson(checkpoint),
     idempotencyKey: `checkpoint:${claimed.id}`,
   });
-  const priorFingerprint = `sha256:${"1".repeat(64)}`;
-  const prior = await ledger.reserveRunnerAdapterCommand({
-    project,
-    itemId: item.id,
-    runId: run.id,
-    runGeneration: run.generation,
-    leaseGeneration: run.leaseGeneration,
-    actor: runner,
-    adapterId,
-    profileId,
-    requestFingerprint: `sha256:${"2".repeat(64)}`,
-    commandId: `prior-${run.id}`,
-    commandFingerprint: priorFingerprint,
-    idempotencyKey: `prior:${run.id}`,
-  });
-  if (prior.dispatchAuthorized && options.settlePrior !== false) {
-    await ledger.settleRunnerAdapterCommand({
-      commandId: prior.command.commandId,
-      commandFingerprint: priorFingerprint,
-      outcome: {
-        version: 1,
-        kind: "bounded_episode_completed",
-        observationCount: 1,
-        observationsSha256: `sha256:${"3".repeat(64)}`,
-        terminalObservationId: `prior-interrupted-${run.id}`,
-        terminalObservationType: "interrupted",
-        latestCheckpointExternalId: checkpoint.externalId,
-        latestCheckpointSha256: sha256(stableJson(checkpoint)),
-        containsPrivateContent: false,
-        containsCredentials: false,
-      },
-    });
+
+  let olderUnresolvedKey: string | null = null;
+  let newerSettledKey: string | null = null;
+  if (options.olderUnresolvedBeforeNewerSettled) {
+    olderUnresolvedKey = `prior-unresolved:${run.id}`;
+    await reservePrior(ledger, item.id, run, checkpoint, olderUnresolvedKey, "4", false);
+    newerSettledKey = `prior-newer-settled:${run.id}`;
+    await reservePrior(ledger, item.id, run, checkpoint, newerSettledKey, "5", true);
+  } else {
+    await reservePrior(ledger, item.id, run, checkpoint, `prior:${run.id}`, "1", options.settlePrior !== false);
   }
+
   const evidence = new MutableEvidenceSource(options.requiredApproval ?? false);
   const adapter = new ModelFreeResumeAdapter();
   adapter.missingRequiredCapability = options.missingRequiredCapability ?? false;
   adapter.interruptWithNewCheckpoint = options.interruptWithNewCheckpoint ?? false;
+  adapter.omitTerminal = options.omitTerminal ?? false;
   adapter.privateMarker = options.privateMarker ?? null;
-  adapter.credentialMarker = options.credentialMarker ?? null;
 
   const makeService = (overrides: {
     requiredCapabilities?: readonly { class: "native_core" | "app_connector"; id: string }[];
@@ -724,7 +997,57 @@ async function createFixture(options: {
     runId: run.id,
     continuationId: continuation.id,
     continuationGeneration: continuation.generation,
+    olderUnresolvedKey,
+    newerSettledKey,
     intent,
+  };
+}
+
+async function reservePrior(
+  ledger: SqliteWorkLedger,
+  itemId: string,
+  run: Awaited<ReturnType<SqliteWorkLedger["getRun"]>>,
+  checkpoint: RunnerExternalReferenceV1,
+  idempotencyKey: string,
+  digit: string,
+  settle: boolean,
+): Promise<void> {
+  const commandFingerprint = `sha256:${digit.repeat(64)}`;
+  const reservation = await ledger.reserveRunnerAdapterCommand({
+    project,
+    itemId,
+    runId: run.id,
+    runGeneration: run.generation,
+    leaseGeneration: run.leaseGeneration,
+    actor: runner,
+    adapterId,
+    profileId,
+    requestFingerprint: `sha256:${digit === "9" ? "8".repeat(64) : digit.repeat(64)}`,
+    commandId: `prior-${digit}-${run.id}`,
+    commandFingerprint,
+    idempotencyKey,
+  });
+  if (reservation.dispatchAuthorized && settle) {
+    await ledger.settleRunnerAdapterCommand({
+      commandId: reservation.command.commandId,
+      commandFingerprint,
+      outcome: priorOutcome(checkpoint, `prior-interrupted-${digit}-${run.id}`),
+    });
+  }
+}
+
+function priorOutcome(checkpoint: RunnerExternalReferenceV1, terminalObservationId: string) {
+  return {
+    version: 1 as const,
+    kind: "bounded_episode_completed" as const,
+    observationCount: 1,
+    observationsSha256: `sha256:${"3".repeat(64)}`,
+    terminalObservationId,
+    terminalObservationType: "interrupted",
+    latestCheckpointExternalId: checkpoint.externalId,
+    latestCheckpointSha256: sha256(stableJson(checkpoint)),
+    containsPrivateContent: false as const,
+    containsCredentials: false as const,
   };
 }
 
