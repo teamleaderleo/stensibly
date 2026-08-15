@@ -11,12 +11,14 @@ export interface MailboxBinding {
   mailboxAddress: string;
 }
 
+export type MailProviderRfcMessageIdMode = "caller_assigned" | "provider_assigned";
+
 export interface MailProviderMessage {
   outboundEffectId: string;
   threadId: string;
   handle: string;
   contentFingerprint: string;
-  rfcMessageId: string;
+  rfcMessageId: string | null;
   subject: string;
   body: string;
   inReplyTo: string | null;
@@ -27,7 +29,7 @@ export interface MailProviderSendResult {
   providerThreadId: string;
   providerMessageId: string;
   providerRequestId: string | null;
-  rfcMessageId: string;
+  rfcMessageId: string | null;
   acceptedAt: string;
 }
 
@@ -39,8 +41,8 @@ export interface MailProviderProjection {
   providerThreadId: string;
   rootProviderMessageId: string;
   latestProviderMessageId: string;
-  rootRfcMessageId: string;
-  latestRfcMessageId: string;
+  rootRfcMessageId: string | null;
+  latestRfcMessageId: string | null;
   latestSentFingerprint: string;
   lastVerifiedSubject: string;
   lastVerifiedReferences: readonly string[];
@@ -63,6 +65,7 @@ export type MailProviderDeliveryLookup =
 
 export interface MailProvider {
   readonly provider: string;
+  readonly rfcMessageIdMode: MailProviderRfcMessageIdMode;
   createThread(
     binding: MailboxBinding,
     message: MailProviderMessage,
@@ -76,7 +79,7 @@ export interface MailProvider {
     binding: MailboxBinding,
     input: {
       outboundEffectId: string;
-      rfcMessageId: string;
+      rfcMessageId: string | null;
       expectedProviderThreadId: string | null;
     },
   ): Promise<MailProviderDeliveryLookup>;
@@ -93,7 +96,7 @@ export interface MailDeliveryReceipt {
   accountBinding: string;
   attemptNumber: number;
   contentFingerprint: string;
-  rfcMessageId: string;
+  rfcMessageId: string | null;
   providerRequestId: string | null;
   providerThreadId: string | null;
   providerMessageId: string | null;
@@ -113,7 +116,7 @@ export interface MailOutboundEffectRecord {
   accountBinding: string;
   attemptNumber: number;
   contentFingerprint: string;
-  rfcMessageId: string;
+  rfcMessageId: string | null;
   reservedAt: string;
   state: "reserved" | MailDeliveryResult;
   receipt: MailDeliveryReceipt | null;
@@ -161,8 +164,11 @@ export function freezeMailProviderMessage(input: MailProviderMessage): MailProvi
     throw new TypeError("Mail provider references are invalid");
   }
   const references = input.references.map((value) => exactRfcMessageId(value));
-  const rfcMessageId = exactRfcMessageId(input.rfcMessageId);
+  const rfcMessageId = optionalRfcMessageId(input.rfcMessageId);
   const inReplyTo = input.inReplyTo === null ? null : exactRfcMessageId(input.inReplyTo);
+  if (rfcMessageId === null && (inReplyTo !== null || references.length !== 0)) {
+    throw new TypeError("Provider-assigned RFC identity cannot carry caller-assigned reply ancestry");
+  }
   if (inReplyTo === null && references.length !== 0) {
     throw new TypeError("Root mail provider message cannot carry reply references");
   }
@@ -211,7 +217,7 @@ export function freezeMailProviderSendResult(
           "Provider mail request ID",
           320,
         ),
-    rfcMessageId: exactRfcMessageId(input.rfcMessageId),
+    rfcMessageId: optionalRfcMessageId(input.rfcMessageId),
     acceptedAt: exactMailThreadTimestamp(input.acceptedAt, "Provider mail acceptance time"),
   });
 }
@@ -220,6 +226,9 @@ export function freezeMailProviderProjection(
   input: MailProviderProjection,
 ): MailProviderProjection {
   if (input.version !== 1) throw new TypeError("Mail provider projection version is invalid");
+  if (!Array.isArray(input.lastVerifiedReferences) || input.lastVerifiedReferences.length > 32) {
+    throw new TypeError("Mail provider projection references are invalid");
+  }
   const references = input.lastVerifiedReferences.map((value) => exactRfcMessageId(value));
   return Object.freeze({
     version: 1,
@@ -245,8 +254,8 @@ export function freezeMailProviderProjection(
       "Mail projection latest message ID",
       320,
     ),
-    rootRfcMessageId: exactRfcMessageId(input.rootRfcMessageId),
-    latestRfcMessageId: exactRfcMessageId(input.latestRfcMessageId),
+    rootRfcMessageId: optionalRfcMessageId(input.rootRfcMessageId),
+    latestRfcMessageId: optionalRfcMessageId(input.latestRfcMessageId),
     latestSentFingerprint: exactMailThreadSha256(
       input.latestSentFingerprint,
       "Mail projection latest fingerprint",
@@ -297,7 +306,7 @@ export function freezeMailDeliveryReceipt(
       input.contentFingerprint,
       "Mail receipt content fingerprint",
     ),
-    rfcMessageId: exactRfcMessageId(input.rfcMessageId),
+    rfcMessageId: optionalRfcMessageId(input.rfcMessageId),
     providerRequestId: input.providerRequestId === null
       ? null
       : exactMailThreadIdentifier(input.providerRequestId, "Mail receipt provider request ID", 320),
@@ -325,6 +334,10 @@ export function exactRfcMessageId(value: unknown): string {
     throw new TypeError("RFC Message-ID is invalid");
   }
   return value;
+}
+
+export function optionalRfcMessageId(value: unknown): string | null {
+  return value === null ? null : exactRfcMessageId(value);
 }
 
 function exactProvider(value: unknown): string {
