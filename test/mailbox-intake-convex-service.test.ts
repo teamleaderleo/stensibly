@@ -69,7 +69,7 @@ function observation(
     providerCursor: "101",
     providerMessageId: `message-${id}`,
     providerThreadId: `thread-${id}`,
-    providerLabelId: null,
+    providerScopeId: null,
     observedAt: "2026-08-15T06:45:30.000Z",
     receivedAt: "2026-08-15T06:45:31.000Z",
     wakeEligible,
