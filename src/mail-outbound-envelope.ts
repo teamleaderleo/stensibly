@@ -68,7 +68,6 @@ interface AdmittedEnvelopeSemantics {
 
 const maxBodyBytes = 12 * 1024;
 const currentHandoffEndMarker = "--- STENSIBLY CURRENT HANDOFF END ---";
-const firstSliceContinuationRoute = "Gmail + GitHub only";
 
 export function renderMailOutboundEnvelope(
   input: MailOutboundEnvelopeInput,
@@ -164,15 +163,13 @@ function admitEnvelopeSemantics(
       : exactMailDisplayText(input.blocker, "Outbound mail blocker", 1200),
     resolutionCondition,
     threadState,
-    continuationRoute: input.continuationRoute === undefined
-      ? firstSliceContinuationRoute
-      : input.continuationRoute === null
-        ? null
-        : exactMailDisplayText(
-            input.continuationRoute,
-            "Outbound mail continuation route",
-            160,
-          ),
+    continuationRoute: input.continuationRoute === undefined || input.continuationRoute === null
+      ? null
+      : exactMailDisplayText(
+          input.continuationRoute,
+          "Outbound mail continuation route",
+          160,
+        ),
     references,
   });
 }
