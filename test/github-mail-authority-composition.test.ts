@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyGitHubMailReply,
   type GitHubMailReplyAuthorityBinding,
+  type GitHubMailReplyInput,
   type GitHubMailThreadBinding,
 } from "../src/github-mail-bridge.ts";
 import {
   classifyGitHubFormalReviewMailReply,
   type GitHubMailFormalReviewAuthorityBinding,
+  type GitHubMailFormalReviewInput,
 } from "../src/github-mail-formal-review-projection.ts";
 
 const head = "a".repeat(40);
@@ -49,15 +51,17 @@ function commentAuthority(
   };
 }
 
-function commentInput(overrides: Record<string, unknown> = {}) {
+function commentInput(
+  overrides: Partial<GitHubMailReplyInput> = {},
+): GitHubMailReplyInput {
   return {
     thread,
-    provider: "gmail" as const,
+    provider: "gmail",
     mailboxBindingId: "gmail:operator",
     providerThreadId: "gmail-thread-1517",
     providerMessageId: "mail-reply-1517",
     inReplyToMessageId: "mail-parent-1517",
-    replyClass: "mail.github_comment_proposal" as const,
+    replyClass: "mail.github_comment_proposal",
     body: "Bound harmless conversation comment.",
     expectedTargetSourceRevision: source,
     expectedHeadRevision: head,
@@ -88,19 +92,21 @@ function formalAuthority(
   };
 }
 
-function formalInput(overrides: Record<string, unknown> = {}) {
+function formalInput(
+  overrides: Partial<GitHubMailFormalReviewInput> = {},
+): GitHubMailFormalReviewInput {
   return {
     thread,
-    provider: "gmail" as const,
+    provider: "gmail",
     mailboxBindingId: "gmail:operator",
     providerThreadId: "gmail-thread-1517",
     providerMessageId: "mail-review-1517",
     inReplyToMessageId: "mail-parent-1517",
-    replyClass: "mail.github_review_proposal" as const,
+    replyClass: "mail.github_review_proposal",
     body: "Bound harmless formal review comment.",
     expectedTargetSourceRevision: source,
     expectedHeadRevision: head,
-    formalReviewVerdict: "COMMENT" as const,
+    formalReviewVerdict: "COMMENT",
     causal,
     authority: formalAuthority(),
     ...overrides,
@@ -144,19 +150,15 @@ describe("exact mailbox authority composition", () => {
   });
 
   test("missing exact destination fails closed before either effect is created", () => {
-    const comment = commentAuthority() as GitHubMailReplyAuthorityBinding & {
-      expectedMailboxAddress?: string;
-    };
-    delete comment.expectedMailboxAddress;
-    expect(() => classifyGitHubMailReply(commentInput({ authority: comment })))
-      .toThrow("exact server-owned mailbox destination");
+    const { expectedMailboxAddress: _commentAddress, ...commentWithoutDestination } = commentAuthority();
+    expect(() => classifyGitHubMailReply(commentInput({
+      authority: commentWithoutDestination as unknown as GitHubMailReplyAuthorityBinding,
+    }))).toThrow("exact server-owned mailbox destination");
 
-    const formal = formalAuthority() as GitHubMailFormalReviewAuthorityBinding & {
-      expectedMailboxAddress?: string;
-    };
-    delete formal.expectedMailboxAddress;
-    expect(() => classifyGitHubFormalReviewMailReply(formalInput({ authority: formal })))
-      .toThrow("exact server-owned mailbox destination");
+    const { expectedMailboxAddress: _formalAddress, ...formalWithoutDestination } = formalAuthority();
+    expect(() => classifyGitHubFormalReviewMailReply(formalInput({
+      authority: formalWithoutDestination as unknown as GitHubMailFormalReviewAuthorityBinding,
+    }))).toThrow("exact server-owned mailbox destination");
   });
 
   test("same provider message cannot replay onto a different canonical repository target", () => {
