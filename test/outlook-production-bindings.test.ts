@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   PRODUCTION_BINDING_CONTRACT,
   REQUIRED_PRODUCTION_BINDINGS,
@@ -23,7 +24,7 @@ describe("Outlook production Worker binding contract", () => {
 
     expect(REQUIRED_PRODUCTION_BINDINGS.STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID).toEqual({
       name: "STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID",
-      type: "plain_text",
+      type: "secret_text",
     });
     expect(REQUIRED_PRODUCTION_BINDINGS.STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN).toEqual({
       name: "STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN",
@@ -35,7 +36,7 @@ describe("Outlook production Worker binding contract", () => {
     });
     expect(REQUIRED_PRODUCTION_BINDINGS.STENSIBLY_OUTLOOK_FOLDER_ID).toEqual({
       name: "STENSIBLY_OUTLOOK_FOLDER_ID",
-      type: "plain_text",
+      type: "secret_text",
     });
     expect(REQUIRED_PRODUCTION_BINDINGS.STENSIBLY_OUTLOOK_MAILBOX?.text).toBe(
       "cheerleaderleo@outlook.com",
@@ -54,5 +55,22 @@ describe("Outlook production Worker binding contract", () => {
       "STENSIBLY_OUTLOOK_OAUTH_TENANT",
       "STENSIBLY_OUTLOOK_SUBSCRIPTION_ID",
     ]));
+  });
+
+  test("checks in the exact live custom domain and non-secret Outlook variables", () => {
+    const wrangler = JSON.parse(readFileSync("wrangler.jsonc", "utf8")) as {
+      routes?: Array<{ pattern?: string; custom_domain?: boolean }>;
+      vars?: Record<string, string>;
+    };
+    expect(wrangler.routes).toContainEqual({
+      pattern: "api.stensibly.com",
+      custom_domain: true,
+    });
+    expect(wrangler.vars).toMatchObject({
+      STENSIBLY_OUTLOOK_MAILBOX: "cheerleaderleo@outlook.com",
+      STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID: "outlook_operator_primary",
+      STENSIBLY_OUTLOOK_NOTIFICATION_URL:
+        "https://api.stensibly.com/internal/outlook/notifications",
+    });
   });
 });

@@ -23,10 +23,14 @@ const GRAPH_ORIGIN = "https://graph.microsoft.com";
 const GRAPH_API_ROOT = `${GRAPH_ORIGIN}/v1.0`;
 const MICROSOFT_CONSUMER_TOKEN_URL =
   "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+const OFFICIAL_OUTLOOK_NOTIFICATION_URL =
+  "https://api.stensibly.com/internal/outlook/notifications";
 const MAXIMUM_NOTIFICATION_BYTES = 64 * 1024;
 const MAXIMUM_NOTIFICATION_BATCH = 64;
 const MAXIMUM_RECENT_OBSERVATIONS = 100;
 const MAXIMUM_RECONCILIATION_OBSERVATIONS = 256;
+const MAXIMUM_SUBSCRIPTION_LIST_PAGES = 8;
+const MAXIMUM_SUBSCRIPTION_LIST_ENTRIES = 256;
 const GRAPH_SUBSCRIPTION_LIFETIME_MS = 6 * 24 * 60 * 60_000;
 const MAXIMUM_RECONCILIATION_ATTEMPTS = 3;
 
@@ -137,7 +141,10 @@ export function requireOutlookGraphBindings(
     throw new OutlookRuntimeRecoverableError("OUTLOOK_NOTIFICATION_URL_INVALID");
   }
   if (
-    parsedNotificationUrl.protocol !== "https:"
+    notificationUrl !== OFFICIAL_OUTLOOK_NOTIFICATION_URL
+    || parsedNotificationUrl.protocol !== "https:"
+    || parsedNotificationUrl.username !== ""
+    || parsedNotificationUrl.password !== ""
     || parsedNotificationUrl.pathname !== "/internal/outlook/notifications"
     || parsedNotificationUrl.search !== ""
     || parsedNotificationUrl.hash !== ""
@@ -479,7 +486,10 @@ class MicrosoftGraphMailboxClient implements OutlookMailboxClient {
     if (request.folderId !== this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID) {
       throw new OutlookRuntimeRecoverableError("OUTLOOK_FOLDER_BINDING_MISMATCH");
     }
-    const url = decodeGraphRef(request.pageRef ?? request.cursorRef);
+    const url = decodeGraphRef(
+      request.pageRef ?? request.cursorRef,
+      this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID,
+    );
     const response = await this.graphFetch(url, {
       headers: { Prefer: 'IdType="ImmutableId"' },
     });
@@ -531,8 +541,12 @@ class MicrosoftGraphMailboxClient implements OutlookMailboxClient {
     }
     return Object.freeze({
       changes: Object.freeze(changes),
-      ...(nextLink === undefined ? {} : { nextPageRef: encodeGraphRef(nextLink) }),
-      ...(deltaLink === undefined ? {} : { deltaRef: encodeGraphRef(deltaLink) }),
+      ...(nextLink === undefined
+        ? {}
+        : { nextPageRef: encodeGraphRef(nextLink, this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID) }),
+      ...(deltaLink === undefined
+        ? {}
+        : { deltaRef: encodeGraphRef(deltaLink, this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID) }),
     });
   }
 
@@ -576,6 +590,9 @@ class MicrosoftGraphMailboxClient implements OutlookMailboxClient {
   }
 
   private async createSubscription(): Promise<{ id: string; expiration: string }> {
+    const existing = await this.findExistingSubscription();
+    if (existing) return existing;
+
     const expirationDateTime = new Date(
       this.now.getTime() + GRAPH_SUBSCRIPTION_LIFETIME_MS,
     ).toISOString();
@@ -589,17 +606,81 @@ class MicrosoftGraphMailboxClient implements OutlookMailboxClient {
         changeType: "created,updated,deleted",
         notificationUrl: this.bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
         lifecycleNotificationUrl: this.bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
-        resource: `me/mailFolders/${encodeURIComponent(this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID)}/messages`,
+        resource: subscriptionResource(this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID),
         expirationDateTime,
         clientState: this.bindings.STENSIBLY_OUTLOOK_CLIENT_STATE,
       }),
     });
+    if (response.status === 409) {
+      const recovered = await this.findExistingSubscription();
+      if (recovered) return recovered;
+    }
     if (!response.ok) {
       throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_CREATE_FAILED");
     }
     return subscriptionProjection(
       await jsonRecord(response, "OUTLOOK_GRAPH_SUBSCRIPTION_INVALID"),
     );
+  }
+
+  private async findExistingSubscription(): Promise<{
+    id: string;
+    expiration: string;
+  } | null> {
+    const expectedResource = subscriptionResource(
+      this.bindings.STENSIBLY_OUTLOOK_FOLDER_ID,
+    );
+    const matches: Array<{ id: string; expiration: string }> = [];
+    let pageUrl: string | null = `${GRAPH_API_ROOT}/subscriptions`;
+    let pages = 0;
+    let entries = 0;
+
+    while (pageUrl !== null) {
+      pages += 1;
+      if (pages > MAXIMUM_SUBSCRIPTION_LIST_PAGES) {
+        throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_TOO_LARGE");
+      }
+      const response = await this.graphFetch(pageUrl);
+      if (!response.ok) {
+        throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_FAILED");
+      }
+      const payload = await jsonRecord(response, "OUTLOOK_GRAPH_SUBSCRIPTION_LIST_INVALID");
+      if (!Array.isArray(payload.value)) {
+        throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_INVALID");
+      }
+      entries += payload.value.length;
+      if (entries > MAXIMUM_SUBSCRIPTION_LIST_ENTRIES) {
+        throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_TOO_LARGE");
+      }
+      for (const raw of payload.value) {
+        if (!isRecord(raw)) {
+          throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_INVALID");
+        }
+        if (
+          raw.applicationId === this.bindings.STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID
+          && raw.changeType === "created,updated,deleted"
+          && raw.resource === expectedResource
+          && raw.notificationUrl === this.bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL
+          && raw.lifecycleNotificationUrl === this.bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL
+        ) {
+          matches.push(subscriptionProjection(raw));
+        }
+      }
+
+      const nextLink = payload["@odata.nextLink"];
+      if (nextLink === undefined) {
+        pageUrl = null;
+      } else if (typeof nextLink === "string") {
+        pageUrl = exactSubscriptionListUrl(nextLink).toString();
+      } else {
+        throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_INVALID");
+      }
+    }
+
+    if (matches.length > 1) {
+      throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_AMBIGUOUS");
+    }
+    return matches[0] ?? null;
   }
 
   private async graphFetch(input: string, init: RequestInit = {}): Promise<Response> {
@@ -722,11 +803,12 @@ async function admitNotificationBatch(
       throw new OutlookNotificationAdmissionError(400);
     }
   }
-  const text = await request.text();
-  if (
-    text.length < 2
-    || new TextEncoder().encode(text).byteLength > MAXIMUM_NOTIFICATION_BYTES
-  ) {
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.startsWith("application/json")) {
+    throw new OutlookNotificationAdmissionError(400);
+  }
+  const text = await readBoundedRequestText(request, MAXIMUM_NOTIFICATION_BYTES);
+  if (text.length < 2) {
     throw new OutlookNotificationAdmissionError(400);
   }
   let decoded: unknown;
@@ -913,11 +995,11 @@ function persistentRecoveryNotification(
 function initialDeltaRef(folderId: string): string {
   const url = `${GRAPH_API_ROOT}/me/mailFolders/${encodeURIComponent(folderId)}`
     + "/messages/delta?$select=id,conversationId&$top=64";
-  return encodeGraphRef(url);
+  return encodeGraphRef(url, folderId);
 }
 
-function encodeGraphRef(value: string): string {
-  const url = exactGraphUrl(value);
+function encodeGraphRef(value: string, folderId: string): string {
+  const url = exactGraphUrl(value, folderId);
   const bytes = new TextEncoder().encode(url.toString());
   const encoded = bytesToBase64Url(bytes);
   if (encoded.length > 4_096) {
@@ -926,31 +1008,120 @@ function encodeGraphRef(value: string): string {
   return encoded;
 }
 
-function decodeGraphRef(value: string): string {
+function decodeGraphRef(value: string, folderId: string): string {
   let decoded: string;
   try {
     decoded = new TextDecoder().decode(base64UrlToBytes(value));
   } catch {
     throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_DELTA_REFERENCE_INVALID");
   }
-  return exactGraphUrl(decoded).toString();
+  return exactGraphUrl(decoded, folderId).toString();
 }
 
-function exactGraphUrl(value: string): URL {
+function exactGraphUrl(value: string, folderId: string): URL {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_DELTA_REFERENCE_INVALID");
   }
+  const prefix = "/v1.0/me/mailFolders/";
+  const suffix = "/messages/delta";
+  let decodedFolderId: string;
+  try {
+    decodedFolderId = decodeURIComponent(
+      url.pathname.slice(prefix.length, url.pathname.length - suffix.length),
+    );
+  } catch {
+    throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_DELTA_REFERENCE_INVALID");
+  }
   if (
     url.origin !== GRAPH_ORIGIN
-    || !url.pathname.startsWith("/v1.0/me/mailFolders/")
-    || !url.pathname.includes("/messages/delta")
+    || url.username !== ""
+    || url.password !== ""
+    || !url.pathname.startsWith(prefix)
+    || !url.pathname.endsWith(suffix)
+    || decodedFolderId !== folderId
   ) {
     throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_DELTA_REFERENCE_INVALID");
   }
   return url;
+}
+
+function exactSubscriptionListUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_INVALID");
+  }
+  if (
+    url.origin !== GRAPH_ORIGIN
+    || url.username !== ""
+    || url.password !== ""
+    || url.pathname !== "/v1.0/subscriptions"
+  ) {
+    throw new OutlookRuntimeRecoverableError("OUTLOOK_GRAPH_SUBSCRIPTION_LIST_INVALID");
+  }
+  return url;
+}
+
+function subscriptionResource(folderId: string): string {
+  return `me/mailFolders/${encodeURIComponent(folderId)}/messages`;
+}
+
+async function readBoundedRequestText(
+  request: Request,
+  maximumBytes: number,
+): Promise<string> {
+  if (request.bodyUsed) throw new OutlookNotificationAdmissionError(400);
+  if (!request.body) return "";
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = request.body.getReader();
+  } catch {
+    throw new OutlookNotificationAdmissionError(400);
+  }
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      length += next.value.byteLength;
+      if (length > maximumBytes) {
+        try {
+          await reader.cancel("Outlook notification exceeds the configured bound");
+        } catch {
+          // The stream may already be closed or errored.
+        }
+        throw new OutlookNotificationAdmissionError(400);
+      }
+      chunks.push(next.value.slice());
+    }
+  } catch (error) {
+    if (error instanceof OutlookNotificationAdmissionError) throw error;
+    try {
+      await reader.cancel("Outlook notification could not be read");
+    } catch {
+      // The stream may already be closed or errored.
+    }
+    throw new OutlookNotificationAdmissionError(400);
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new OutlookNotificationAdmissionError(400);
+  }
 }
 
 async function sealRefreshToken(

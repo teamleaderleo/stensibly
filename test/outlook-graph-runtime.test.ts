@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   handleOutlookNotificationRequest,
+  requireOutlookGraphBindings,
   runOutlookScheduledReconciliation,
   type OutlookGraphBindings,
   type OutlookRuntimeStore,
@@ -136,6 +137,9 @@ function graphHarness(store: MemoryStore) {
     if (url.includes("/v1.0/me?$select=mail,userPrincipalName")) {
       return Response.json({ mail: bindings.STENSIBLY_OUTLOOK_MAILBOX });
     }
+    if (url.endsWith("/v1.0/subscriptions") && init?.method !== "POST") {
+      return Response.json({ value: [] });
+    }
     if (url.endsWith("/v1.0/subscriptions")) {
       expect(init?.method).toBe("POST");
       expect(new Headers(init?.headers).get("prefer")).toBe('IdType="ImmutableId"');
@@ -175,6 +179,14 @@ function graphHarness(store: MemoryStore) {
 }
 
 describe("Outlook Graph runtime", () => {
+  test("refuses to send protected client state to a non-official notification origin", () => {
+    expect(() => requireOutlookGraphBindings({
+      ...bindings,
+      STENSIBLY_OUTLOOK_NOTIFICATION_URL:
+        "https://example.com/internal/outlook/notifications",
+    })).toThrow("OUTLOOK_NOTIFICATION_URL_INVALID");
+  });
+
   test("echoes Microsoft's decoded validation token as text/plain without provider work", async () => {
     const response = await handleOutlookNotificationRequest(
       new Request(
@@ -222,6 +234,38 @@ describe("Outlook Graph runtime", () => {
     expect(reads).toBe(0);
   });
 
+  test("cancels an undeclared oversized notification body before buffering the whole stream", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 50) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new TextEncoder().encode("x".repeat(2_048)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await handleOutlookNotificationRequest(
+      new Request(bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+      bindings,
+      { store: new MemoryStore() },
+    );
+
+    expect(response.status).toBe(400);
+    expect(cancelled).toBe(true);
+    expect(pulls).toBeLessThan(50);
+  });
+
   test("refreshes as a consumer public client, seals a rotated refresh token, creates the folder subscription, and commits immutable delta", async () => {
     const store = new MemoryStore();
     const graph = graphHarness(store);
@@ -247,6 +291,73 @@ describe("Outlook Graph runtime", () => {
     expect(store.auth?.sealedRefreshToken.includes("rotated-refresh-token")).toBe(false);
     expect(graph.tokenRequests()).toBe(1);
     expect(graph.deltaRequests()).toBe(1);
+  });
+
+  test("recovers a prior lost create response by reusing the one exact Graph subscription", async () => {
+    const store = new MemoryStore();
+    const graph = graphHarness(store);
+    let createRequests = 0;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      if (url.endsWith("/v1.0/subscriptions") && init?.method !== "POST") {
+        return Response.json({
+          value: [{
+            id: "graph_subscription_from_lost_response",
+            applicationId: bindings.STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID,
+            changeType: "created,updated,deleted",
+            resource: `me/mailFolders/${bindings.STENSIBLY_OUTLOOK_FOLDER_ID}/messages`,
+            notificationUrl: bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
+            lifecycleNotificationUrl: bindings.STENSIBLY_OUTLOOK_NOTIFICATION_URL,
+            expirationDateTime: "2026-08-21T06:45:00.000Z",
+          }],
+        });
+      }
+      if (url.endsWith("/v1.0/subscriptions") && init?.method === "POST") {
+        createRequests += 1;
+      }
+      return await graph.fetchImpl(input, init);
+    }) as typeof fetch;
+
+    const result = await runOutlookScheduledReconciliation(bindings, {
+      store,
+      fetch: fetchImpl,
+      now: () => now,
+    });
+
+    expect(result.complete).toBe(true);
+    expect(store.state?.subscription.externalId).toBe(
+      "graph_subscription_from_lost_response",
+    );
+    expect(createRequests).toBe(0);
+  });
+
+  test("rejects a durable delta reference that drifts to another folder before Graph dispatch", async () => {
+    const store = new MemoryStore();
+    const graph = graphHarness(store);
+    await runOutlookScheduledReconciliation(bindings, {
+      store,
+      fetch: graph.fetchImpl,
+      now: () => now,
+    });
+    const encoded = btoa(
+      "https://graph.microsoft.com/v1.0/me/mailFolders/foreign/messages/delta?$deltatoken=x",
+    ).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_");
+    store.state = {
+      ...store.state!,
+      cursor: { kind: "outlook_delta_ref", value: encoded },
+    };
+    const callsBefore = graph.calls.length;
+
+    await expect(runOutlookScheduledReconciliation(bindings, {
+      store,
+      fetch: graph.fetchImpl,
+      now: () => now,
+    })).rejects.toMatchObject({ code: "OUTLOOK_GRAPH_DELTA_REFERENCE_INVALID" });
+    expect(graph.calls).toHaveLength(callsBefore);
   });
 
   test("keeps exact duplicate webhook replay quiet after the first reconciliation", async () => {
