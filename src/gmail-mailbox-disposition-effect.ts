@@ -47,6 +47,7 @@ export interface GmailMessageLabelSnapshot {
   isDraft: boolean;
 }
 
+// Intentionally label-only. This consumer cannot send, retry, reply, or reconcile mail delivery.
 export interface GmailMailboxLabelClient {
   readMessageLabels(input: {
     accountBinding: string;
@@ -97,6 +98,9 @@ export type GmailMailboxDispositionReserveResult =
   | { status: "reserved" }
   | { status: "existing"; record: GmailMailboxDispositionEffectRecord };
 
+// The store must reserve atomically and return any unsettled effect for the same exact
+// provider target. An uncertain mutation therefore fences both exact replay and newer
+// STN-state effects until read-only label reconciliation clears the old effect.
 export interface GmailMailboxDispositionEffectStore {
   findOutstandingForTarget(
     binding: SettledGmailMessageBinding,
@@ -162,7 +166,10 @@ export type GmailMailboxDispositionReconciliationResult =
       status: "superseded";
       effect: GmailMailboxDispositionEffect;
       currentStateRevision: string;
-      recoveryAction: "reconcile_old_effect_before_current_state_effect";
+      priorEffectCleared: boolean;
+      recoveryAction:
+        | "apply_current_state_effect"
+        | "reconcile_old_effect_before_current_state_effect";
     }
   | {
       status: "blocked";
@@ -318,24 +325,26 @@ export async function reconcileGmailMailboxDispositionEffect(input: {
   if (stateRead.status === "conflict") {
     return { status: "blocked", reason: "current_state_identity_conflict", effect };
   }
-  if (stateRead.state.revision !== effect.stnStateRevision) {
-    return {
-      status: "superseded",
-      effect,
-      currentStateRevision: stateRead.state.revision,
-      recoveryAction: "reconcile_old_effect_before_current_state_effect",
-    };
-  }
+  const currentRevision = stateRead.state.revision;
+  const superseded = currentRevision !== effect.stnStateRevision;
 
   let snapshot: GmailMessageLabelSnapshot | null;
   try {
     snapshot = await input.labelClient.readMessageLabels(effect.binding);
   } catch {
-    return {
-      status: "pending",
-      effect,
-      recoveryAction: "reconcile_exact_gmail_message_labels",
-    };
+    return superseded
+      ? {
+          status: "superseded",
+          effect,
+          currentStateRevision: currentRevision,
+          priorEffectCleared: false,
+          recoveryAction: "reconcile_old_effect_before_current_state_effect",
+        }
+      : {
+          status: "pending",
+          effect,
+          recoveryAction: "reconcile_exact_gmail_message_labels",
+        };
   }
   if (snapshot === null) {
     return { status: "blocked", reason: "provider_message_missing", effect };
@@ -346,18 +355,53 @@ export async function reconcileGmailMailboxDispositionEffect(input: {
   }
   if (admitted.isDraft) {
     await input.effectStore.markSettled(effect.effectId, "ignored_draft");
-    return { status: "reconciled", effect };
+    return superseded
+      ? {
+          status: "superseded",
+          effect,
+          currentStateRevision: currentRevision,
+          priorEffectCleared: true,
+          recoveryAction: "apply_current_state_effect",
+        }
+      : { status: "reconciled", effect };
   }
   if (labelsSatisfy(effect, admitted.labelIds)) {
     await input.effectStore.markSettled(effect.effectId, "reconciled");
-    return { status: "reconciled", effect };
+    return superseded
+      ? {
+          status: "superseded",
+          effect,
+          currentStateRevision: currentRevision,
+          priorEffectCleared: true,
+          recoveryAction: "apply_current_state_effect",
+        }
+      : { status: "reconciled", effect };
   }
   if (input.phase === "precondition_read") {
+    if (superseded) {
+      await input.effectStore.markSettled(effect.effectId, "noop");
+      return {
+        status: "superseded",
+        effect,
+        currentStateRevision: currentRevision,
+        priorEffectCleared: true,
+        recoveryAction: "apply_current_state_effect",
+      };
+    }
     await input.effectStore.releasePreconditionRetry(effect.effectId);
     return {
       status: "retry_safe",
       effect,
       recoveryAction: "retry_same_effect_after_precondition_read",
+    };
+  }
+  if (superseded) {
+    return {
+      status: "superseded",
+      effect,
+      currentStateRevision: currentRevision,
+      priorEffectCleared: false,
+      recoveryAction: "reconcile_old_effect_before_current_state_effect",
     };
   }
   return {
