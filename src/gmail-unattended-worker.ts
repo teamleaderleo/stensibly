@@ -1,7 +1,11 @@
 import { ConvexHttpClient } from "convex/browser";
+import { ConvexMailThreadStore } from "./convex-mail-thread-store.js";
 import { GmailMailboxActionClient } from "./gmail-mailbox-actions.js";
 import { GmailMailboxApiClient } from "./gmail-mailbox-api.js";
-import { GmailUnattendedRuntime } from "./gmail-unattended-runtime.js";
+import {
+  GmailUnattendedRuntime,
+  type GmailOutboundProviderMessageDisposition,
+} from "./gmail-unattended-runtime.js";
 import {
   GoogleOAuthRefreshTokenProvider,
 } from "./google-oauth-refresh-token.js";
@@ -9,6 +13,7 @@ import {
   GooglePubSubAuthenticationError,
   GooglePubSubOidcVerifier,
 } from "./google-pubsub-oidc.js";
+import type { HostedMailboxMaterialObservationDrain } from "./mailbox-material-observation-drain.js";
 import { HostedMailboxIntakeService } from "./mailbox-intake-convex-service.js";
 
 export const GMAIL_PUBSUB_PATH = "/internal/gmail/pubsub" as const;
@@ -28,11 +33,20 @@ export interface GmailUnattendedEnvironment {
   STENSIBLY_GMAIL_PUBSUB_SUBSCRIPTION?: string;
   STENSIBLY_GMAIL_PUBSUB_AUDIENCE?: string;
   STENSIBLY_GMAIL_PUBSUB_SERVICE_ACCOUNT?: string;
+  CF_VERSION_METADATA?: { readonly id?: string };
+}
+
+export interface GmailUnattendedMountDependencies {
+  readonly materialObservationDrain?: Pick<
+    HostedMailboxMaterialObservationDrain,
+    "drainObservationIds" | "drainRecent"
+  >;
 }
 
 export interface GmailUnattendedMount {
   readonly runtime: GmailUnattendedRuntime;
   readonly verifier: GooglePubSubOidcVerifier;
+  readonly pushBindingGeneration?: string;
 }
 
 export function gmailUnattendedConfigured(env: GmailUnattendedEnvironment): boolean {
@@ -41,10 +55,17 @@ export function gmailUnattendedConfigured(env: GmailUnattendedEnvironment): bool
 
 export function createGmailUnattendedMountFromEnv(
   env: GmailUnattendedEnvironment,
+  dependencies: GmailUnattendedMountDependencies = {},
 ): GmailUnattendedMount | null {
   if (!gmailUnattendedConfigured(env)) return null;
   const convexUrl = required(env.CONVEX_URL, "CONVEX_URL");
   const serviceSecret = required(env.STENSIBLY_SERVICE_SECRET, "STENSIBLY_SERVICE_SECRET");
+  const workspace = env.STENSIBLY_WORKSPACE ?? "default";
+  const mailboxBindingId = required(
+    env.STENSIBLY_GMAIL_MAILBOX_BINDING_ID,
+    "STENSIBLY_GMAIL_MAILBOX_BINDING_ID",
+  );
+  const pushBindingGeneration = requiredVersionGeneration(env.CF_VERSION_METADATA?.id);
   const tokenProvider = new GoogleOAuthRefreshTokenProvider({
     clientId: required(env.STENSIBLY_GMAIL_OAUTH_CLIENT_ID, "STENSIBLY_GMAIL_OAUTH_CLIENT_ID"),
     clientSecret: required(env.STENSIBLY_GMAIL_OAUTH_CLIENT_SECRET, "STENSIBLY_GMAIL_OAUTH_CLIENT_SECRET"),
@@ -59,14 +80,42 @@ export function createGmailUnattendedMountFromEnv(
   const intake = new HostedMailboxIntakeService({
     client,
     serviceSecret,
-    workspace: env.STENSIBLY_WORKSPACE ?? "default",
+    workspace,
   });
+  const outboundStore = new ConvexMailThreadStore({
+    client,
+    serviceSecret,
+    workspace,
+  });
+  const outboundProviderMessageLookup = async (
+    providerMessageId: string,
+  ): Promise<GmailOutboundProviderMessageDisposition> => {
+    const effect = await outboundStore.getDeliveryEffectByProviderMessageId(
+      "gmail",
+      mailboxBindingId,
+      providerMessageId,
+    );
+    if (effect === null) return "ordinary";
+    if (effect.state !== "sent" && effect.state !== "reconciled") {
+      throw new Error("Hosted Gmail outbound provider-message identity requires reconciliation");
+    }
+    const receipt = effect.receipt;
+    if (
+      effect.provider !== "gmail"
+      || effect.accountBinding !== mailboxBindingId
+      || receipt === null
+      || receipt.provider !== "gmail"
+      || receipt.accountBinding !== mailboxBindingId
+      || receipt.providerMessageId !== providerMessageId
+      || receipt.result !== effect.state
+    ) {
+      throw new Error("Hosted Gmail outbound provider-message identity is ambiguous");
+    }
+    return "self_echo";
+  };
   const runtime = new GmailUnattendedRuntime({
     mailboxAddress: required(env.STENSIBLY_GMAIL_MAILBOX, "STENSIBLY_GMAIL_MAILBOX"),
-    mailboxBindingId: required(
-      env.STENSIBLY_GMAIL_MAILBOX_BINDING_ID,
-      "STENSIBLY_GMAIL_MAILBOX_BINDING_ID",
-    ),
+    mailboxBindingId,
     labelId: required(env.STENSIBLY_GMAIL_WATCH_LABEL_ID, "STENSIBLY_GMAIL_WATCH_LABEL_ID"),
     pubsubSubscription: required(
       env.STENSIBLY_GMAIL_PUBSUB_SUBSCRIPTION,
@@ -75,6 +124,11 @@ export function createGmailUnattendedMountFromEnv(
     gmail,
     actions,
     intake,
+    pushBindingGeneration,
+    outboundProviderMessageLookup,
+    ...(dependencies.materialObservationDrain
+      ? { materialObservationDrain: dependencies.materialObservationDrain }
+      : {}),
   });
   const verifier = new GooglePubSubOidcVerifier({
     audience: required(env.STENSIBLY_GMAIL_PUBSUB_AUDIENCE, "STENSIBLY_GMAIL_PUBSUB_AUDIENCE"),
@@ -83,7 +137,7 @@ export function createGmailUnattendedMountFromEnv(
       "STENSIBLY_GMAIL_PUBSUB_SERVICE_ACCOUNT",
     ),
   });
-  return Object.freeze({ runtime, verifier });
+  return Object.freeze({ runtime, verifier, pushBindingGeneration });
 }
 
 export async function handleGmailPubSubRequest(
@@ -115,7 +169,10 @@ export async function handleGmailPubSubRequest(
     return new Response("Invalid push envelope", { status: 400 });
   }
   try {
-    const result = await mount.runtime.receivePubSubEnvelope(envelope);
+    const result = await mount.runtime.receivePubSubEnvelope(
+      envelope,
+      mount.pushBindingGeneration,
+    );
     return new Response(null, {
       status: 204,
       headers: {
@@ -152,6 +209,19 @@ const gmailConfigNames = [
   "STENSIBLY_GMAIL_PUBSUB_AUDIENCE",
   "STENSIBLY_GMAIL_PUBSUB_SERVICE_ACCOUNT",
 ] as const satisfies readonly (keyof GmailUnattendedEnvironment)[];
+
+function requiredVersionGeneration(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value.trim() !== value
+    || value.length < 1
+    || value.length > 1024
+    || !/^[A-Za-z0-9][A-Za-z0-9._:@/+=-]*$/u.test(value)
+  ) {
+    throw new Error("Gmail unattended configuration requires CF_VERSION_METADATA.id");
+  }
+  return value;
+}
 
 function required(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > 64 * 1024) {

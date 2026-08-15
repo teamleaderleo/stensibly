@@ -40,6 +40,7 @@ export interface MailboxSubscriptionProjection {
   readonly expiresAt: string | null;
   readonly health: MailboxSubscriptionHealth;
   readonly recoveryReason: string | null;
+  readonly healthGeneration?: string | null;
 }
 
 export interface MailboxSubscriptionState {
@@ -289,6 +290,13 @@ function createSubscription(
     recoveryReason: value.recoveryReason === null
       ? null
       : boundedIdentity(value.recoveryReason, "Mailbox subscription recovery reason"),
+    ...(value.healthGeneration === undefined
+      ? {}
+      : {
+          healthGeneration: value.healthGeneration === null
+            ? null
+            : boundedIdentity(value.healthGeneration, "Mailbox subscription health generation"),
+        }),
   });
 }
 

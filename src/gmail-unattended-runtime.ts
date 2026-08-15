@@ -9,6 +9,7 @@ import {
   type GmailMailboxReconciliationResult,
   type GmailPubSubNotification,
 } from "./gmail-mailbox-intake.js";
+import type { HostedMailboxMaterialObservationDrain } from "./mailbox-material-observation-drain.js";
 import {
   HostedMailboxIntakeService,
   type DurableMailboxObservationProjection,
@@ -22,6 +23,10 @@ import {
 } from "./mailbox-intake-contract.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
+type GmailWatchResponse = Awaited<ReturnType<GmailMailboxApiClient["renewWatch"]>>;
+
+export type GmailOutboundProviderMessageDisposition = "ordinary" | "self_echo";
+
 export interface GmailUnattendedRuntimeOptions {
   mailboxAddress: string;
   mailboxBindingId: string;
@@ -30,7 +35,14 @@ export interface GmailUnattendedRuntimeOptions {
   gmail: GmailMailboxApiClient;
   actions: GmailMailboxActionClient;
   intake: HostedMailboxIntakeService;
-  knownOutboundProviderMessageIds?: () => Promise<ReadonlySet<string>>;
+  pushBindingGeneration?: string;
+  outboundProviderMessageLookup?: (
+    providerMessageId: string,
+  ) => Promise<GmailOutboundProviderMessageDisposition>;
+  materialObservationDrain?: Pick<
+    HostedMailboxMaterialObservationDrain,
+    "drainObservationIds" | "drainRecent"
+  >;
   now?: () => string;
 }
 
@@ -54,7 +66,13 @@ export class GmailUnattendedRuntime {
   readonly #gmail: GmailMailboxApiClient;
   readonly #actions: GmailMailboxActionClient;
   readonly #intake: HostedMailboxIntakeService;
-  readonly #knownOutbound: (() => Promise<ReadonlySet<string>>) | undefined;
+  readonly #pushBindingGeneration: string | null;
+  readonly #outboundProviderMessageLookup:
+    | ((providerMessageId: string) => Promise<GmailOutboundProviderMessageDisposition>)
+    | undefined;
+  readonly #materialObservationDrain:
+    | Pick<HostedMailboxMaterialObservationDrain, "drainObservationIds" | "drainRecent">
+    | undefined;
   readonly #now: () => string;
 
   constructor(options: GmailUnattendedRuntimeOptions) {
@@ -65,7 +83,11 @@ export class GmailUnattendedRuntime {
     this.#gmail = options.gmail;
     this.#actions = options.actions;
     this.#intake = options.intake;
-    this.#knownOutbound = options.knownOutboundProviderMessageIds;
+    this.#pushBindingGeneration = options.pushBindingGeneration === undefined
+      ? null
+      : identity(options.pushBindingGeneration, "Gmail push binding generation");
+    this.#outboundProviderMessageLookup = options.outboundProviderMessageLookup;
+    this.#materialObservationDrain = options.materialObservationDrain;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -77,45 +99,53 @@ export class GmailUnattendedRuntime {
         labelIds: [this.#labelId],
         labelFilterBehavior: "include",
       });
-      const now = this.#now();
       const state = createMailboxSubscriptionState({
         mailboxBindingId: this.#mailboxBindingId,
         provider: "gmail",
         scope: { kind: "label", externalId: this.#labelId },
         cursor: { kind: "gmail_history_id", value: watch.historyId },
-        coverage: "continuous",
+        coverage: "unknown",
         subscription: {
           externalId: this.#pubsubSubscription,
           expiresAt: epochMillisToIso(watch.expiration),
-          health: "healthy",
-          recoveryReason: null,
+          health: "recovering",
+          recoveryReason: "initial_snapshot_pending",
+          healthGeneration: this.#pushBindingGeneration,
         },
         lastNotificationId: null,
-        lastSuccessfulReconciliationAt: now,
+        lastSuccessfulReconciliationAt: null,
       });
-      snapshot = await this.#intake.initialize(state);
-      const archivedMessages = await this.#enforceQuietHandoffMailbox();
-      return freezeResult(
-        snapshot.revision,
-        state.cursor.value,
-        0,
-        0,
-        archivedMessages,
-        false,
-        null,
-      );
+      try {
+        snapshot = await this.#intake.initialize(state);
+      } catch (error) {
+        if (!isBindingConflict(error)) throw error;
+        snapshot = await this.#intake.get(this.#mailboxBindingId);
+        if (!snapshot) throw new Error("Mailbox intake binding disappeared during bootstrap");
+      }
+      if (requiresFullSync(snapshot.state)) {
+        return await this.#recoverFullSync(
+          snapshot,
+          null,
+          null,
+          snapshot.state.cursor.value === watch.historyId ? watch : undefined,
+        );
+      }
     }
     if (requiresFullSync(snapshot.state)) {
-      return await this.#recoverFullSync(snapshot, null);
+      return await this.#recoverFullSync(snapshot, null, null);
     }
     return await this.#reconcile(
       snapshot,
       null,
       reconciliationId("periodic", snapshot.state.cursor.value, this.#now()),
+      null,
     );
   }
 
-  async receivePubSubEnvelope(envelope: unknown): Promise<GmailUnattendedResult> {
+  async receivePubSubEnvelope(
+    envelope: unknown,
+    authenticatedPushGeneration?: string,
+  ): Promise<GmailUnattendedResult> {
     const receivedAt = this.#now();
     const notification = parseGmailPubSubNotification(envelope, {
       expectedMailboxAddress: this.#mailboxAddress,
@@ -123,18 +153,28 @@ export class GmailUnattendedRuntime {
       mailboxBindingId: this.#mailboxBindingId,
       receivedAt,
     });
+    const authenticatedGeneration = authenticatedPushGeneration === undefined
+      ? null
+      : identity(authenticatedPushGeneration, "Authenticated Gmail push generation");
+    if (
+      authenticatedGeneration !== null
+      && authenticatedGeneration !== this.#pushBindingGeneration
+    ) {
+      throw new Error("Authenticated Gmail push generation does not match the deployed binding generation");
+    }
     await this.#gmail.verifyMailboxAddress(this.#mailboxAddress);
     const snapshot = await this.#intake.get(this.#mailboxBindingId);
     if (!snapshot) {
       throw new Error("Gmail mailbox binding must be bootstrapped before push delivery");
     }
     if (requiresFullSync(snapshot.state)) {
-      return await this.#recoverFullSync(snapshot, notification);
+      return await this.#recoverFullSync(snapshot, notification, authenticatedGeneration);
     }
     return await this.#reconcile(
       snapshot,
       notification,
       reconciliationId("push", notification.notificationId),
+      authenticatedGeneration,
     );
   }
 
@@ -151,52 +191,54 @@ export class GmailUnattendedRuntime {
     snapshot: MailboxIntakeSnapshot,
     notification: GmailPubSubNotification | null,
     reconciliationIdValue: string,
+    authenticatedPushGeneration: string | null,
   ): Promise<GmailUnattendedResult> {
-    const knownOutboundProviderMessageIds = this.#knownOutbound
-      ? await this.#knownOutbound()
-      : undefined;
     const now = this.#now();
     const duplicateNotification = notification?.notificationId
       === snapshot.state.lastNotificationId;
+    const renewalRequired = watchRenewalDue(snapshot.state, now);
     const forceRenewalCatchUp = notification !== null
       && notificationCovered(snapshot.state, notification)
-      && watchRenewalDue(snapshot.state, now);
+      && renewalRequired;
     const reconciliationNotification = forceRenewalCatchUp ? null : notification;
     const result = await reconcileGmailMailbox({
       state: snapshot.state,
       notification: reconciliationNotification,
       client: this.#gmail,
       now,
-      ...(knownOutboundProviderMessageIds ? { knownOutboundProviderMessageIds } : {}),
     });
-    const nextState = forceRenewalCatchUp && notification
+    const rawNextState = forceRenewalCatchUp && notification
       ? stateWithNotification(result.state, notification.notificationId)
       : result.state;
+    const nextState = this.#applyPushHealth(
+      rawNextState,
+      snapshot.state,
+      authenticatedPushGeneration,
+      renewalRequired,
+    );
+    const observations = await this.#prepareObservations(result.observations, nextState);
 
     if (
       duplicateNotification
-      && result.observations.length === 0
+      && observations.length === 0
       && canonicalState(nextState) === canonicalState(snapshot.state)
     ) {
-      const archivedMessages = await this.#enforceQuietHandoffMailbox();
-      return freezeResult(
-        snapshot.revision,
-        snapshot.state.cursor.value,
-        0,
-        0,
-        archivedMessages,
+      return await this.#finish(
+        snapshot,
+        [],
         true,
         result.recoveryAction,
       );
     }
 
     let committed: MailboxIntakeSnapshot;
-    let committedObservations = result.observations;
+    let committedObservations = observations;
+    let recoveryAction = result.recoveryAction;
     try {
       committed = await this.#intake.commit({
         previous: snapshot,
         nextState,
-        observations: result.observations,
+        observations,
         reconciliationId: reconciliationIdValue,
       });
     } catch (error) {
@@ -204,76 +246,98 @@ export class GmailUnattendedRuntime {
       const winner = await this.#intake.get(this.#mailboxBindingId);
       if (!winner) throw new Error("Mailbox intake binding disappeared during reconciliation");
       if (
-        result.observations.length === 0
+        observations.length === 0
         && compareHistoryIds(winner.state.cursor.value, nextState.cursor.value) >= 0
       ) {
-        const archivedMessages = await this.#enforceQuietHandoffMailbox();
-        return freezeResult(
-          winner.revision,
-          winner.state.cursor.value,
-          0,
-          0,
-          archivedMessages,
+        const winnerState = this.#applyPushHealth(
+          winner.state,
+          winner.state,
+          authenticatedPushGeneration,
+          watchRenewalDue(winner.state, this.#now()),
+        );
+        if (canonicalState(winnerState) === canonicalState(winner.state)) {
+          return await this.#finish(
+            winner,
+            [],
+            duplicateNotification,
+            null,
+          );
+        }
+        committed = await this.#intake.commit({
+          previous: winner,
+          nextState: winnerState,
+          observations: [],
+          reconciliationId: `${reconciliationIdValue}:winner-health`,
+        });
+        return await this.#finish(
+          committed,
+          [],
           duplicateNotification,
           null,
         );
       }
 
+      const retryNow = this.#now();
+      const retryRenewalRequired = watchRenewalDue(winner.state, retryNow);
+      const retryForceRenewalCatchUp = notification !== null
+        && notificationCovered(winner.state, notification)
+        && retryRenewalRequired;
       const retry = await reconcileGmailMailbox({
         state: winner.state,
-        notification,
+        notification: retryForceRenewalCatchUp ? null : notification,
         client: this.#gmail,
-        now: this.#now(),
-        ...(knownOutboundProviderMessageIds ? { knownOutboundProviderMessageIds } : {}),
+        now: retryNow,
       });
+      const retryRawState = retryForceRenewalCatchUp && notification
+        ? stateWithNotification(retry.state, notification.notificationId)
+        : retry.state;
+      const retryState = this.#applyPushHealth(
+        retryRawState,
+        winner.state,
+        authenticatedPushGeneration,
+        retryRenewalRequired,
+      );
+      const retryObservations = await this.#prepareObservations(
+        retry.observations,
+        retryState,
+      );
       if (
-        retry.observations.length === 0
-        && canonicalState(retry.state) === canonicalState(winner.state)
+        retryObservations.length === 0
+        && canonicalState(retryState) === canonicalState(winner.state)
       ) {
-        const archivedMessages = await this.#enforceQuietHandoffMailbox();
-        return freezeResult(
-          winner.revision,
-          winner.state.cursor.value,
-          0,
-          0,
-          archivedMessages,
+        return await this.#finish(
+          winner,
+          [],
           notification?.notificationId === winner.state.lastNotificationId,
           retry.recoveryAction,
         );
       }
-      committedObservations = retry.observations;
+      committedObservations = retryObservations;
+      recoveryAction = retry.recoveryAction;
       committed = await this.#intake.commit({
         previous: winner,
-        nextState: retry.state,
-        observations: retry.observations,
+        nextState: retryState,
+        observations: retryObservations,
         reconciliationId: `${reconciliationIdValue}:retry`,
       });
     }
 
-    const materialObservations = committedObservations.filter((observation) =>
-      observation.wakeEligible && observation.loopDisposition === "ordinary"
-    ).length;
-    const archivedMessages = await this.#enforceQuietHandoffMailbox();
-    return freezeResult(
-      committed.revision,
-      committed.state.cursor.value,
-      committedObservations.length,
-      materialObservations,
-      archivedMessages,
+    return await this.#finish(
+      committed,
+      committedObservations,
       duplicateNotification,
-      result.recoveryAction,
+      recoveryAction,
     );
   }
 
   async #recoverFullSync(
     snapshot: MailboxIntakeSnapshot,
     notification: GmailPubSubNotification | null,
+    authenticatedPushGeneration: string | null,
+    suppliedWatch?: GmailWatchResponse,
   ): Promise<GmailUnattendedResult> {
     const now = this.#now();
-    const knownOutboundProviderMessageIds = this.#knownOutbound
-      ? await this.#knownOutbound()
-      : new Set<string>();
-    const watch = await this.#gmail.renewWatch({
+    const watch = suppliedWatch ?? await this.#gmail.renewWatch({
       labelIds: [this.#labelId],
       labelFilterBehavior: "include",
     });
@@ -291,8 +355,9 @@ export class GmailUnattendedRuntime {
       subscription: {
         externalId: this.#pubsubSubscription,
         expiresAt: epochMillisToIso(watch.expiration),
-        health: "healthy",
-        recoveryReason: null,
+        health: "recovering",
+        recoveryReason: "push_transport_unverified",
+        healthGeneration: this.#pushBindingGeneration,
       },
       lastNotificationId: snapshot.state.lastNotificationId,
       lastSuccessfulReconciliationAt: snapshot.state.lastSuccessfulReconciliationAt,
@@ -302,7 +367,6 @@ export class GmailUnattendedRuntime {
       notification: null,
       client: this.#gmail,
       now,
-      knownOutboundProviderMessageIds,
     });
     if (!catchUp.complete || catchUp.recoveryAction !== null) {
       throw new Error("Gmail full-sync history catch-up did not complete");
@@ -314,55 +378,52 @@ export class GmailUnattendedRuntime {
       throw new Error("Gmail full-sync did not reach the notification cursor");
     }
 
+    const preparedCatchUp = await this.#classifyOutboundObservations(catchUp.observations);
     const changedMessageIds = new Set(
-      catchUp.observations.flatMap((observation) =>
+      preparedCatchUp.flatMap((observation) =>
         observation.providerMessageId ? [observation.providerMessageId] : []
       ),
     );
-    const snapshotObservations = members
-      .filter((member) => !changedMessageIds.has(member.id))
-      .map((member) => fullSyncMembershipObservation({
+    const snapshotObservations: MailboxObservation[] = [];
+    for (const member of members) {
+      if (changedMessageIds.has(member.id)) continue;
+      const disposition = await this.#outboundDisposition(member.id);
+      snapshotObservations.push(fullSyncMembershipObservation({
         member,
         mailboxBindingId: this.#mailboxBindingId,
         labelId: this.#labelId,
         providerCursor: catchUp.state.cursor.value,
         now,
-        selfEcho: knownOutboundProviderMessageIds.has(member.id),
+        disposition,
       }));
-    const recoveryObservation = createMailboxObservation({
-      provider: "gmail",
-      mailboxBindingId: this.#mailboxBindingId,
-      sourceSchema: "gmail-subscription",
-      sourceEventId: fullSyncSourceId("recovered", baselineCursor),
-      eventType: "mail.subscription.recovered",
-      providerCursor: catchUp.state.cursor.value,
-      providerMessageId: null,
-      providerThreadId: null,
-      providerScopeId: null,
-      observedAt: now,
-      receivedAt: now,
-      wakeEligible: false,
-      loopDisposition: "automatic",
-    });
-    const observations = Object.freeze([
-      ...snapshotObservations,
-      ...catchUp.observations,
-      recoveryObservation,
-    ]);
-    const nextState = createMailboxSubscriptionState({
+    }
+
+    const rawNextState = createMailboxSubscriptionState({
       ...catchUp.state,
       coverage: "continuous",
       subscription: {
         ...catchUp.state.subscription,
-        health: "healthy",
-        recoveryReason: null,
+        health: "recovering",
+        recoveryReason: "push_transport_unverified",
+        healthGeneration: this.#pushBindingGeneration,
       },
       lastNotificationId: notification?.notificationId
         ?? catchUp.state.lastNotificationId,
       lastSuccessfulReconciliationAt: now,
     });
+    const nextState = this.#applyPushHealth(
+      rawNextState,
+      snapshot.state,
+      authenticatedPushGeneration,
+      true,
+    );
+    const observations = Object.freeze([
+      ...snapshotObservations,
+      ...filterRecoveredObservations(preparedCatchUp, nextState),
+    ]);
 
     let committed: MailboxIntakeSnapshot;
+    let committedObservations = observations;
     try {
       committed = await this.#intake.commit({
         previous: snapshot,
@@ -384,21 +445,145 @@ export class GmailUnattendedRuntime {
       ) {
         throw error;
       }
-      committed = winner;
+      const winnerState = this.#applyPushHealth(
+        winner.state,
+        winner.state,
+        authenticatedPushGeneration,
+        false,
+      );
+      if (canonicalState(winnerState) === canonicalState(winner.state)) {
+        committed = winner;
+      } else {
+        committed = await this.#intake.commit({
+          previous: winner,
+          nextState: winnerState,
+          observations: [],
+          reconciliationId: reconciliationId(
+            "fullsync-winner-health",
+            winner.state.cursor.value,
+          ),
+        });
+      }
+      committedObservations = [];
     }
 
-    const materialObservations = observations.filter((observation) =>
-      observation.wakeEligible && observation.loopDisposition === "ordinary"
-    ).length;
-    const archivedMessages = await this.#enforceQuietHandoffMailbox();
-    return freezeResult(
-      committed.revision,
-      committed.state.cursor.value,
-      observations.length,
-      materialObservations,
-      archivedMessages,
+    return await this.#finish(
+      committed,
+      committedObservations,
       false,
       null,
+    );
+  }
+
+  async #prepareObservations(
+    observations: readonly MailboxObservation[],
+    nextState: MailboxSubscriptionState,
+  ): Promise<readonly MailboxObservation[]> {
+    const classified = await this.#classifyOutboundObservations(observations);
+    return filterRecoveredObservations(classified, nextState);
+  }
+
+  async #classifyOutboundObservations(
+    observations: readonly MailboxObservation[],
+  ): Promise<readonly MailboxObservation[]> {
+    if (!this.#outboundProviderMessageLookup) return observations;
+    const classified: MailboxObservation[] = [];
+    const cache = new Map<string, GmailOutboundProviderMessageDisposition>();
+    for (const observation of observations) {
+      if (
+        observation.providerMessageId === null
+        || observation.wakeEligible !== true
+        || observation.loopDisposition !== "ordinary"
+      ) {
+        classified.push(observation);
+        continue;
+      }
+      let disposition = cache.get(observation.providerMessageId);
+      if (!disposition) {
+        disposition = await this.#outboundDisposition(observation.providerMessageId);
+        cache.set(observation.providerMessageId, disposition);
+      }
+      classified.push(
+        disposition === "self_echo"
+          ? observationWithDisposition(observation, "self_echo")
+          : observation,
+      );
+    }
+    return Object.freeze(classified);
+  }
+
+  async #outboundDisposition(
+    providerMessageId: string,
+  ): Promise<GmailOutboundProviderMessageDisposition> {
+    if (!this.#outboundProviderMessageLookup) return "ordinary";
+    const disposition = await this.#outboundProviderMessageLookup(providerMessageId);
+    if (disposition !== "ordinary" && disposition !== "self_echo") {
+      throw new Error("Hosted Gmail outbound provider-message lookup returned an invalid disposition");
+    }
+    return disposition;
+  }
+
+  #applyPushHealth(
+    next: MailboxSubscriptionState,
+    previous: MailboxSubscriptionState,
+    authenticatedPushGeneration: string | null,
+    renewalRequired: boolean,
+  ): MailboxSubscriptionState {
+    const generation = this.#pushBindingGeneration;
+    if (next.subscription.health === "degraded") {
+      return createMailboxSubscriptionState({
+        ...next,
+        subscription: {
+          ...next.subscription,
+          healthGeneration: generation,
+        },
+      });
+    }
+    const callbackVerified = generation !== null
+      && authenticatedPushGeneration === generation
+      && next.coverage === "continuous";
+    const priorVerified = generation !== null
+      && !renewalRequired
+      && previous.subscription.health === "healthy"
+      && previous.subscription.healthGeneration === generation;
+    const healthy = callbackVerified || priorVerified;
+    return createMailboxSubscriptionState({
+      ...next,
+      subscription: {
+        ...next.subscription,
+        health: healthy ? "healthy" : "recovering",
+        recoveryReason: healthy ? null : "push_transport_unverified",
+        healthGeneration: generation,
+      },
+    });
+  }
+
+  async #finish(
+    snapshot: MailboxIntakeSnapshot,
+    observations: readonly MailboxObservation[],
+    duplicate: boolean,
+    recoveryAction: GmailUnattendedResult["recoveryAction"],
+  ): Promise<GmailUnattendedResult> {
+    const materialObservationIds = observations
+      .filter((observation) =>
+        observation.wakeEligible && observation.loopDisposition === "ordinary"
+      )
+      .map((observation) => observation.observationId);
+    if (this.#materialObservationDrain) {
+      if (materialObservationIds.length > 0) {
+        await this.#materialObservationDrain.drainObservationIds(materialObservationIds);
+      }
+      await this.#materialObservationDrain.drainRecent();
+    }
+    const archivedMessages = await this.#enforceQuietHandoffMailbox();
+    return freezeResult(
+      snapshot.revision,
+      snapshot.state.cursor.value,
+      observations.length,
+      materialObservationIds.length,
+      archivedMessages,
+      duplicate,
+      recoveryAction,
     );
   }
 
@@ -410,14 +595,48 @@ export class GmailUnattendedRuntime {
   }
 }
 
+function observationWithDisposition(
+  observation: MailboxObservation,
+  disposition: "self_echo",
+): MailboxObservation {
+  return createMailboxObservation({
+    provider: observation.provider,
+    mailboxBindingId: observation.mailboxBindingId,
+    sourceSchema: observation.sourceSchema,
+    sourceEventId: observation.sourceEventId,
+    eventType: observation.eventType,
+    providerCursor: observation.providerCursor,
+    providerMessageId: observation.providerMessageId,
+    providerThreadId: observation.providerThreadId,
+    providerScopeId: observation.providerScopeId,
+    observedAt: observation.observedAt,
+    receivedAt: observation.receivedAt,
+    wakeEligible: false,
+    loopDisposition: disposition,
+  });
+}
+
+function filterRecoveredObservations(
+  observations: readonly MailboxObservation[],
+  nextState: MailboxSubscriptionState,
+): readonly MailboxObservation[] {
+  if (nextState.subscription.health === "healthy") return observations;
+  return Object.freeze(
+    observations.filter((observation) =>
+      observation.eventType !== "mail.subscription.recovered"
+    ),
+  );
+}
+
 function fullSyncMembershipObservation(input: {
   member: GmailLabelSnapshotMessage;
   mailboxBindingId: string;
   labelId: string;
   providerCursor: string;
   now: string;
-  selfEcho: boolean;
+  disposition: GmailOutboundProviderMessageDisposition;
 }): MailboxObservation {
+  const selfEcho = input.disposition === "self_echo";
   return createMailboxObservation({
     provider: "gmail",
     mailboxBindingId: input.mailboxBindingId,
@@ -430,8 +649,8 @@ function fullSyncMembershipObservation(input: {
     providerScopeId: input.labelId,
     observedAt: input.now,
     receivedAt: input.now,
-    wakeEligible: !input.selfEcho,
-    loopDisposition: input.selfEcho ? "self_echo" : "ordinary",
+    wakeEligible: !selfEcho,
+    loopDisposition: selfEcho ? "self_echo" : "ordinary",
   });
 }
 
@@ -440,9 +659,7 @@ function fullSyncSourceId(kind: string, value: string): string {
 }
 
 function requiresFullSync(state: MailboxSubscriptionState): boolean {
-  return state.coverage === "unknown"
-    && state.subscription.health === "degraded"
-    && state.subscription.recoveryReason === "history_cursor_expired";
+  return state.coverage === "unknown";
 }
 
 function watchRenewalDue(state: MailboxSubscriptionState, now: string): boolean {
@@ -496,6 +713,14 @@ function reconciliationId(kind: string, ...parts: string[]): string {
 }
 
 function isRevisionConflict(error: unknown): boolean {
+  return errorMessageIncludes(error, "MAILBOX_INTAKE_REVISION_CONFLICT");
+}
+
+function isBindingConflict(error: unknown): boolean {
+  return errorMessageIncludes(error, "MAILBOX_INTAKE_BINDING_CONFLICT");
+}
+
+function errorMessageIncludes(error: unknown, expected: string): boolean {
   if (!(error instanceof Error)) return false;
   try {
     const descriptor = Object.getOwnPropertyDescriptor(error, "message");
@@ -503,7 +728,7 @@ function isRevisionConflict(error: unknown): boolean {
       descriptor
       && "value" in descriptor
       && typeof descriptor.value === "string"
-      && descriptor.value.includes("MAILBOX_INTAKE_REVISION_CONFLICT"),
+      && descriptor.value.includes(expected),
     );
   } catch {
     return false;

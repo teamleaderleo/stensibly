@@ -249,6 +249,28 @@ export const getBinding = query({
   },
 });
 
+export const getObservation = query({
+  args: {
+    ...serviceArgs,
+    mailboxBindingId: v.string(),
+    observationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) return null;
+    const row = await ctx.db
+      .query("mailboxIntakeObservations")
+      .withIndex("by_workspace_id_and_observation_id", (q) =>
+        q.eq("workspaceId", workspace._id)
+          .eq("observationId", args.observationId),
+      )
+      .unique();
+    if (!row || row.mailboxBindingId !== args.mailboxBindingId) return null;
+    return projectObservation(row.observationJson);
+  },
+});
+
 export const listRecentObservations = query({
   args: {
     ...serviceArgs,
@@ -271,27 +293,29 @@ export const listRecentObservations = query({
       )
       .order("desc")
       .take(args.limit);
-    return rows.map((row) => {
-      const observation = admitMailboxObservationJson(row.observationJson);
-      return {
-        observationId: observation.observationId,
-        semanticFingerprint: observation.semanticFingerprint,
-        provider: observation.provider,
-        eventType: observation.eventType,
-        providerCursor: observation.providerCursor,
-        providerMessageId: observation.providerMessageId,
-        providerThreadId: observation.providerThreadId,
-        providerScopeId: observation.providerScopeId,
-        observedAt: observation.observedAt,
-        receivedAt: observation.receivedAt,
-        wakeEligible: observation.wakeEligible,
-        loopDisposition: observation.loopDisposition,
-        containsRawContent: false as const,
-        grantsAuthority: false as const,
-      };
-    });
+    return rows.map((row) => projectObservation(row.observationJson));
   },
 });
+
+function projectObservation(observationJson: string) {
+  const observation = admitMailboxObservationJson(observationJson);
+  return {
+    observationId: observation.observationId,
+    semanticFingerprint: observation.semanticFingerprint,
+    provider: observation.provider,
+    eventType: observation.eventType,
+    providerCursor: observation.providerCursor,
+    providerMessageId: observation.providerMessageId,
+    providerThreadId: observation.providerThreadId,
+    providerScopeId: observation.providerScopeId,
+    observedAt: observation.observedAt,
+    receivedAt: observation.receivedAt,
+    wakeEligible: observation.wakeEligible,
+    loopDisposition: observation.loopDisposition,
+    containsRawContent: false as const,
+    grantsAuthority: false as const,
+  };
+}
 
 function assertStateContinuation(
   current: ReturnType<typeof admitMailboxSubscriptionStateJson>,

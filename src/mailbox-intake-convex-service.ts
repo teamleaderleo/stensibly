@@ -10,6 +10,7 @@ import {
 const initializeRef = makeFunctionReference<"mutation">("mailboxIntake:initialize");
 const commitRef = makeFunctionReference<"mutation">("mailboxIntake:commitReconciliation");
 const getRef = makeFunctionReference<"query">("mailboxIntake:getBinding");
+const getObservationRef = makeFunctionReference<"query">("mailboxIntake:getObservation");
 const listRecentRef = makeFunctionReference<"query">("mailboxIntake:listRecentObservations");
 
 export interface MailboxIntakeSnapshot {
@@ -79,6 +80,14 @@ export class HostedMailboxIntakeService {
           ? "healthy"
           : subscription.health === "recovering" ? "recovering" : "degraded",
         recoveryReason: nullableText(subscription.recoveryReason, "Mailbox recovery reason"),
+        ...(Object.prototype.hasOwnProperty.call(subscription, "healthGeneration")
+          ? {
+              healthGeneration: nullableText(
+                subscription.healthGeneration,
+                "Mailbox subscription health generation",
+              ),
+            }
+          : {}),
       },
       lastNotificationId: nullableText(row.lastNotificationId, "Mailbox notification ID"),
       lastSuccessfulReconciliationAt: nullableText(
@@ -116,6 +125,20 @@ export class HostedMailboxIntakeService {
       state: input.nextState,
       revision: positiveRevision(result.revision),
     });
+  }
+
+  async getMaterialObservation(
+    mailboxBindingId: string,
+    observationId: string,
+  ): Promise<DurableMailboxObservationProjection | null> {
+    const raw = await this.#client.query(getObservationRef, this.#args({
+      mailboxBindingId: required(mailboxBindingId, "Mailbox binding ID"),
+      observationId: required(observationId, "Mailbox observation ID"),
+    }));
+    if (raw === null) return null;
+    const observation = durableObservation(raw);
+    if (!observation.wakeEligible || observation.loopDisposition !== "ordinary") return null;
+    return observation;
   }
 
   async listRecentMaterialObservations(

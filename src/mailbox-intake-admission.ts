@@ -24,11 +24,15 @@ const stateKeys = [
 ] as const;
 const scopeKeys = ["externalId", "kind"] as const;
 const cursorKeys = ["kind", "value"] as const;
-const subscriptionKeys = [
+const legacySubscriptionKeys = [
   "expiresAt",
   "externalId",
   "health",
   "recoveryReason",
+] as const;
+const generationSubscriptionKeys = [
+  ...legacySubscriptionKeys,
+  "healthGeneration",
 ] as const;
 const observationV2Keys = [
   "containsRawContent",
@@ -87,9 +91,14 @@ export function admitMailboxSubscriptionStateJson(
   requireExactKeys(decoded, stateKeys, "Mailbox subscription state");
   requireExactKeys(decoded.scope, scopeKeys, "Mailbox subscription scope");
   requireExactKeys(decoded.cursor, cursorKeys, "Mailbox subscription cursor");
+  if (!isRecord(decoded.subscription)) {
+    throw new RangeError("Mailbox subscription projection must be a record");
+  }
   requireExactKeys(
     decoded.subscription,
-    subscriptionKeys,
+    Object.prototype.hasOwnProperty.call(decoded.subscription, "healthGeneration")
+      ? generationSubscriptionKeys
+      : legacySubscriptionKeys,
     "Mailbox subscription projection",
   );
   if (decoded.version !== 1) {
