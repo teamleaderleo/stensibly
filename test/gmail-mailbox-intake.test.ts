@@ -15,6 +15,7 @@ const mailboxAddress = "operator@example.com";
 const mailboxBindingId = "mailbox_operator_primary";
 const labelId = "Label_Stensibly";
 const now = "2026-08-15T12:00:00.000Z";
+const subscription = "projects/stensibly/subscriptions/gmail-mailbox";
 
 function state(overrides: Partial<MailboxSubscriptionState> = {}): MailboxSubscriptionState {
   return createMailboxSubscriptionState({
@@ -46,9 +47,10 @@ function notification(historyId = "105", messageId = "pubsub-1") {
       messageId,
       publishTime: "2026-08-15T12:00:01.000Z",
     },
-    subscription: "projects/stensibly/subscriptions/gmail-mailbox",
+    subscription,
   }, {
     expectedMailboxAddress: mailboxAddress,
+    expectedSubscription: subscription,
     mailboxBindingId,
     receivedAt: "2026-08-15T12:00:02.000Z",
   });
