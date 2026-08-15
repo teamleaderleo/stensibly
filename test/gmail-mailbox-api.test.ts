@@ -17,13 +17,19 @@ function tokenProvider(): GmailAccessTokenProvider {
   };
 }
 
+function fetchFixture(
+  implementation: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return implementation as typeof fetch;
+}
+
 describe("Gmail mailbox API adapter", () => {
   test("reads label-scoped history with the exact durable cursor and minimizes provider payloads", async () => {
     const requests: Array<{ url: URL; init?: RequestInit }> = [];
     const client = new GmailMailboxApiClient({
       tokenProvider: tokenProvider(),
       topicName,
-      fetch: async (input, init) => {
+      fetch: fetchFixture(async (input, init) => {
         const url = new URL(String(input));
         requests.push({ url, init });
         return Response.json({
@@ -50,7 +56,7 @@ describe("Gmail mailbox API adapter", () => {
           nextPageToken: "page_2",
           historyId: "105",
         });
-      },
+      }),
     });
 
     const page = await client.listHistory({
@@ -104,7 +110,7 @@ describe("Gmail mailbox API adapter", () => {
     const client = new GmailMailboxApiClient({
       tokenProvider: tokenProvider(),
       topicName,
-      fetch: async (input, init) => {
+      fetch: fetchFixture(async (input, init) => {
         requests.push({
           url: new URL(String(input)),
           init,
@@ -114,7 +120,7 @@ describe("Gmail mailbox API adapter", () => {
           historyId: "120",
           expiration: "1787486400000",
         });
-      },
+      }),
     });
 
     const renewed = await client.renewWatch({
@@ -142,7 +148,8 @@ describe("Gmail mailbox API adapter", () => {
     const client = new GmailMailboxApiClient({
       tokenProvider: tokenProvider(),
       topicName,
-      fetch: async () => new Response("private provider explanation", { status: 404 }),
+      fetch: fetchFixture(async () =>
+        new Response("private provider explanation", { status: 404 })),
     });
 
     await expect(client.listHistory({
@@ -155,10 +162,10 @@ describe("Gmail mailbox API adapter", () => {
     const rejected = new GmailMailboxApiClient({
       tokenProvider: tokenProvider(),
       topicName,
-      fetch: async () => new Response(
+      fetch: fetchFixture(async () => new Response(
         `private body with ${secretToken}`,
         { status: 429 },
-      ),
+      )),
     });
 
     let rejectedError: unknown;
@@ -178,9 +185,9 @@ describe("Gmail mailbox API adapter", () => {
     const transport = new GmailMailboxApiClient({
       tokenProvider: tokenProvider(),
       topicName,
-      fetch: async () => {
+      fetch: fetchFixture(async () => {
         throw new Error(`network failure ${secretToken}`);
-      },
+      }),
     });
     await expect(transport.listHistory({
       startHistoryId: "100",
