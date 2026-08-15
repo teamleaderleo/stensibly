@@ -35,6 +35,7 @@ export interface MailDigestRow {
   temperature: MailThreadTemperature;
   attentionClass: MailAttentionClass;
   title: string;
+  current: string;
   nextAction: string;
   ageHours: number;
   strongestSource: string;
@@ -144,6 +145,7 @@ export function compileMailDigest(
       temperature,
       attentionClass: thread.attentionClass,
       title: thread.title,
+      current: thread.current,
       nextAction: thread.nextAction,
       ageHours: age,
       strongestSource: thread.strongestSource,
