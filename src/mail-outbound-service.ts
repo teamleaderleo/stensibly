@@ -29,6 +29,7 @@ import {
   type MailProvider,
   type MailProviderMessage,
   type MailProviderProjection,
+  type MailProviderRfcMessageIdMode,
   type MailProviderSendResult,
 } from "./mail-provider.js";
 import type { MailThreadStore } from "./mail-thread-store.js";
@@ -169,7 +170,13 @@ export class MailOutboundService {
       binding.provider,
       binding.accountBinding,
     );
-    let effect = createEffect(thread, envelope, binding, this.#now());
+    let effect = createEffect(
+      thread,
+      envelope,
+      binding,
+      this.#provider.rfcMessageIdMode,
+      this.#now(),
+    );
 
     const reservation = await this.#store.reserveDeliveryEffect(effect);
     if (reservation.outcome === "conflict") {
@@ -214,7 +221,10 @@ export class MailOutboundService {
       throw new MailDeliveryPendingReconciliationError(settled);
     }
 
-    if (providerResult.rfcMessageId !== effect.rfcMessageId) {
+    if (
+      effect.rfcMessageId !== null
+      && providerResult.rfcMessageId !== effect.rfcMessageId
+    ) {
       const receipt = ambiguousReceipt(effect, "mail_provider_message_identity_mismatch");
       const settled = await this.#store.settleDeliveryEffect({ effect, receipt });
       throw new MailDeliveryPendingReconciliationError(settled);
@@ -440,8 +450,15 @@ function createEffect(
   thread: MailThreadRecord,
   envelope: MailOutboundEnvelope,
   binding: MailboxBinding,
+  rfcMessageIdMode: MailProviderRfcMessageIdMode,
   reservedAt: string,
 ): MailOutboundEffectRecord {
+  if (
+    rfcMessageIdMode !== "caller_assigned"
+    && rfcMessageIdMode !== "provider_assigned"
+  ) {
+    throw new TypeError("Mail provider RFC Message-ID mode is invalid");
+  }
   const digest = sha256(stableJson({
     version: 1,
     threadId: thread.threadId,
@@ -459,7 +476,9 @@ function createEffect(
     accountBinding: binding.accountBinding,
     attemptNumber: 1,
     contentFingerprint: envelope.materialFingerprint,
-    rfcMessageId: `<stn.${hex}@mail.stensibly.com>`,
+    rfcMessageId: rfcMessageIdMode === "caller_assigned"
+      ? `<stn.${hex}@mail.stensibly.com>`
+      : null,
     reservedAt,
     state: "reserved",
     receipt: null,
@@ -472,9 +491,12 @@ function createProviderMessage(
   effect: MailOutboundEffectRecord,
   projection: MailProviderProjection | null,
 ): MailProviderMessage {
-  const references = projection
-    ? appendReference(projection.lastVerifiedReferences, projection.latestRfcMessageId)
-    : [];
+  const latestRfcMessageId = effect.rfcMessageId === null
+    ? null
+    : projection?.latestRfcMessageId ?? null;
+  const references = latestRfcMessageId === null
+    ? []
+    : appendReference(projection?.lastVerifiedReferences ?? [], latestRfcMessageId);
   return freezeMailProviderMessage({
     outboundEffectId: effect.outboundEffectId,
     threadId: thread.threadId,
@@ -483,7 +505,7 @@ function createProviderMessage(
     rfcMessageId: effect.rfcMessageId,
     subject: envelope.subject,
     body: envelope.body,
-    inReplyTo: projection?.latestRfcMessageId ?? null,
+    inReplyTo: latestRfcMessageId,
     references,
   });
 }
