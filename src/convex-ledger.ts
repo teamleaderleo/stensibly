@@ -50,8 +50,13 @@ import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type {
   ReserveRunnerAdapterCommandInput,
   RunnerAdapterCommandLedger,
+  RunnerAdapterCommandReservation,
   SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import type {
+  ClaimRunnerAdapterCommandRecoveryInput,
+  RunnerAdapterCommandRecoveryClaim,
+} from "./runner-adapter-command-recovery.js";
 import type {
   HeartbeatWorkRunInput,
   ListWorkRunsInput,
@@ -300,6 +305,15 @@ export class ConvexWorkLedger implements
     ) as Awaited<ReturnType<RunnerLedger["claimRunnerWork"]>>;
   }
 
+  async getRunnerAdapterCommandByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<RunnerAdapterCommandReservation | null> {
+    return await this.client.query(
+      convexApi.runnerAdapterCommands.getByIdempotencyKey,
+      this.args({ idempotencyKey }),
+    ) as RunnerAdapterCommandReservation | null;
+  }
+
   async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
     return await this.client.mutation(
       convexApi.runnerAdapterCommands.reserve,
@@ -312,6 +326,15 @@ export class ConvexWorkLedger implements
       convexApi.runnerAdapterCommands.settle,
       this.args(input),
     ) as Awaited<ReturnType<RunnerAdapterCommandLedger["settleRunnerAdapterCommand"]>>;
+  }
+
+  async claimRunnerAdapterCommandRecovery(
+    input: ClaimRunnerAdapterCommandRecoveryInput,
+  ): Promise<RunnerAdapterCommandRecoveryClaim> {
+    return await this.client.mutation(
+      convexApi.runnerAdapterCommandRecoveries.claim,
+      this.args(input),
+    ) as RunnerAdapterCommandRecoveryClaim;
   }
 
   async enrolWorker(input: WorkerEnrolmentProviderInput): Promise<unknown> {
