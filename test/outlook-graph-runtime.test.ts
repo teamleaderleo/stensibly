@@ -67,7 +67,9 @@ class MemoryStore implements OutlookRuntimeStore {
   }): Promise<void> {
     expect(input.mailboxBindingId).toBe(bindings.STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID);
     expect(input.expectedRevision).toBe(this.revision);
-    expect(input.expectedCursor).toBe(this.state?.cursor.value);
+    const currentState = this.state;
+    expect(currentState).not.toBeNull();
+    expect(input.expectedCursor).toBe(currentState!.cursor.value);
     this.state = input.state;
     this.revision += 1;
     this.commitCount += 1;
