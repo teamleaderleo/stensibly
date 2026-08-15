@@ -20,6 +20,7 @@ export type MailValueTier = "urgent" | "high" | "normal" | "low";
 export interface MailCurrentSourceReadback {
   sourceRef: string;
   checkedAt: string;
+  githubCheckedAt: string;
   disposition: MailCurrentDisposition;
   valueTier: MailValueTier;
   currentRevision: string | null;
@@ -46,6 +47,7 @@ export type MailSelectionRejectionReason =
   | "wrong_class"
   | "source_not_reread"
   | "stale_source_readback"
+  | "stale_github_readback"
   | "waiting"
   | "resolved"
   | "superseded"
@@ -133,8 +135,14 @@ export function selectMailContinuation(
       continue;
     }
     currentSourceReads += 1;
-    if (Date.parse(readback.checkedAt) < Date.parse(checkpoint.messageAt)) {
+    const checkpointAt = Date.parse(checkpoint.messageAt);
+    if (Date.parse(readback.checkedAt) < checkpointAt) {
       rejections.push(rejection(checkpoint, "stale_source_readback"));
+      rejectedByCurrentSource += 1;
+      continue;
+    }
+    if (Date.parse(readback.githubCheckedAt) < checkpointAt) {
+      rejections.push(rejection(checkpoint, "stale_github_readback"));
       rejectedByCurrentSource += 1;
       continue;
     }
@@ -303,6 +311,7 @@ function assertReadback(readback: MailCurrentSourceReadback): void {
     if (value.trim().length === 0) throw new TypeError(`${field} must be non-empty`);
   }
   parseTimestamp(readback.checkedAt, "checkedAt");
+  parseTimestamp(readback.githubCheckedAt, "githubCheckedAt");
   if (readback.currentRevision !== null && readback.currentRevision.trim().length === 0) {
     throw new TypeError("currentRevision must be null or non-empty");
   }
