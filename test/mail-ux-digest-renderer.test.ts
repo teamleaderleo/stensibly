@@ -14,6 +14,7 @@ function thread(
   return {
     handle,
     attentionClass: "handoff",
+    operatorAttentionRequired: false,
     title: "Continue mail UX dogfood",
     changed: "Continuation changed materially.",
     current: "github:teamleaderleo/stensibly#1493",
@@ -33,6 +34,7 @@ describe("mail UX digest renderer", () => {
     const digest = compileMailDigest([
       thread("STN-REVIEW:Q7MP", {
         attentionClass: "review",
+        operatorAttentionRequired: true,
         title: "Review compact continuation fixture",
         current: "PR #1494 requires human review",
         actionableAt: "2026-08-15T04:00:00.000Z",

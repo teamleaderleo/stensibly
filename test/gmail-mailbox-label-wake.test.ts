@@ -73,17 +73,20 @@ describe("Gmail watched-label wake eligibility", () => {
     );
 
     expect(ordinary).toMatchObject({
-      eventType: "mail.label.added",
+      eventType: "mail.scope.added",
+      providerScopeId: "Label_5",
       wakeEligible: true,
       loopDisposition: "ordinary",
     });
     expect(selfEcho).toMatchObject({
-      eventType: "mail.label.added",
+      eventType: "mail.scope.added",
+      providerScopeId: "Label_5",
       wakeEligible: false,
       loopDisposition: "self_echo",
     });
     expect(removed).toMatchObject({
-      eventType: "mail.label.removed",
+      eventType: "mail.scope.removed",
+      providerScopeId: "Label_5",
       wakeEligible: false,
     });
   });

@@ -149,8 +149,8 @@ describe("Gmail mailbox intake", () => {
     expect(result.state.lastSuccessfulReconciliationAt).toBe(now);
     expect(result.observations.map((entry) => entry.eventType)).toEqual([
       "mail.message.created",
-      "mail.label.added",
-      "mail.label.removed",
+      "mail.scope.added",
+      "mail.scope.removed",
       "mail.message.deleted",
     ]);
     expect(result.observations.some((entry) => entry.providerMessageId === "m_unrelated")).toBe(false);
