@@ -20,12 +20,13 @@ export type InMemoryMailProviderMode =
 
 interface StoredMessage {
   binding: MailboxBinding;
-  message: MailProviderMessage;
+  message: MailProviderMessage & { rfcMessageId: string };
   result: MailProviderSendResult;
 }
 
 export class InMemoryMailProvider implements MailProvider {
   readonly provider: string;
+  readonly rfcMessageIdMode = "caller_assigned" as const;
   #mode: InMemoryMailProviderMode = "normal";
   #counter = 0;
   readonly #byRfcMessageId = new Map<string, StoredMessage[]>();
@@ -60,7 +61,7 @@ export class InMemoryMailProvider implements MailProvider {
   ): Promise<MailProviderSendResult> {
     const binding = freezeMailboxBinding(bindingInput);
     this.#assertProvider(binding);
-    const message = freezeMailProviderMessage(messageInput);
+    const message = this.#message(messageInput);
     if (message.inReplyTo !== null || message.references.length !== 0) {
       throw new MailProviderDefiniteFailure("mail_root_has_reply_ancestry");
     }
@@ -75,7 +76,7 @@ export class InMemoryMailProvider implements MailProvider {
     const binding = freezeMailboxBinding(bindingInput);
     this.#assertProvider(binding);
     const projection = freezeMailProviderProjection(projectionInput);
-    const message = freezeMailProviderMessage(messageInput);
+    const message = this.#message(messageInput);
     if (
       projection.provider !== this.provider
       || projection.accountBinding !== binding.accountBinding
@@ -83,7 +84,8 @@ export class InMemoryMailProvider implements MailProvider {
       throw new MailProviderDefiniteFailure("mail_projection_binding_mismatch");
     }
     if (
-      message.inReplyTo !== projection.latestRfcMessageId
+      projection.latestRfcMessageId === null
+      || message.inReplyTo !== projection.latestRfcMessageId
       || message.references.at(-1) !== projection.latestRfcMessageId
     ) {
       throw new MailProviderDefiniteFailure("mail_reply_ancestry_mismatch");
@@ -99,12 +101,15 @@ export class InMemoryMailProvider implements MailProvider {
     bindingInput: MailboxBinding,
     input: {
       outboundEffectId: string;
-      rfcMessageId: string;
+      rfcMessageId: string | null;
       expectedProviderThreadId: string | null;
     },
   ): Promise<MailProviderDeliveryLookup> {
     const binding = freezeMailboxBinding(bindingInput);
     this.#assertProvider(binding);
+    if (input.rfcMessageId === null) {
+      return { status: "missing", coverage: "unknown" };
+    }
     const candidates = (this.#byRfcMessageId.get(input.rfcMessageId) ?? [])
       .filter((candidate) => candidate.binding.accountBinding === binding.accountBinding)
       .filter((candidate) => candidate.message.outboundEffectId === input.outboundEffectId);
@@ -124,7 +129,7 @@ export class InMemoryMailProvider implements MailProvider {
 
   #send(
     binding: MailboxBinding,
-    message: MailProviderMessage,
+    message: MailProviderMessage & { rfcMessageId: string },
     existingThreadId: string | null,
   ): MailProviderSendResult {
     if (this.#mode === "definite_failure") {
@@ -150,6 +155,14 @@ export class InMemoryMailProvider implements MailProvider {
       throw new MailProviderAmbiguousFailure("mail_provider_response_lost");
     }
     return result;
+  }
+
+  #message(input: MailProviderMessage): MailProviderMessage & { rfcMessageId: string } {
+    const message = freezeMailProviderMessage(input);
+    if (message.rfcMessageId === null) {
+      throw new MailProviderDefiniteFailure("mail_provider_requires_caller_assigned_rfc_message_id");
+    }
+    return message as MailProviderMessage & { rfcMessageId: string };
   }
 
   #assertProvider(binding: MailboxBinding): void {
