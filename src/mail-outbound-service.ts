@@ -29,6 +29,7 @@ import {
   type MailProvider,
   type MailProviderMessage,
   type MailProviderProjection,
+  type MailProviderRfcMessageIdMode,
   type MailProviderSendResult,
 } from "./mail-provider.js";
 import type { MailThreadStore } from "./mail-thread-store.js";
@@ -72,7 +73,6 @@ export interface MailOutboundServiceDependencies {
 
 export class MailDeliveryPendingReconciliationError extends Error {
   readonly effect: MailOutboundEffectRecord;
-
   constructor(effect: MailOutboundEffectRecord) {
     super("Mail delivery requires reconciliation before another provider dispatch");
     this.name = "MailDeliveryPendingReconciliationError";
@@ -82,7 +82,6 @@ export class MailDeliveryPendingReconciliationError extends Error {
 
 export class MailDeliveryConflictError extends Error {
   readonly effect: MailOutboundEffectRecord;
-
   constructor(effect: MailOutboundEffectRecord) {
     super("Mail outbound effect identity conflicts with a durable prior effect");
     this.name = "MailDeliveryConflictError";
@@ -92,7 +91,6 @@ export class MailDeliveryConflictError extends Error {
 
 export class MailThreadSourceConflictError extends Error {
   readonly thread: MailThreadRecord;
-
   constructor(thread: MailThreadRecord) {
     super("Mail thread source identity is already bound to incompatible canonical thread identity");
     this.name = "MailThreadSourceConflictError";
@@ -103,7 +101,6 @@ export class MailThreadSourceConflictError extends Error {
 export class MailProjectionReceiptMismatchError extends Error {
   readonly thread: MailThreadRecord;
   readonly projection: MailProviderProjection;
-
   constructor(thread: MailThreadRecord, projection: MailProviderProjection) {
     super("Mail provider projection has no matching durable outbound effect receipt");
     this.name = "MailProjectionReceiptMismatchError";
@@ -114,7 +111,6 @@ export class MailProjectionReceiptMismatchError extends Error {
 
 export class MailDestinationBindingConflictError extends Error {
   readonly thread: MailThreadRecord;
-
   constructor(thread: MailThreadRecord) {
     super("Mail provider destination changed for an existing canonical provider projection");
     this.name = "MailDestinationBindingConflictError";
@@ -133,10 +129,8 @@ export class MailOutboundService {
     this.#store = dependencies.store;
     this.#provider = dependencies.provider;
     this.#now = dependencies.now ?? (() => new Date().toISOString());
-    this.#threadIdFactory = dependencies.threadIdFactory
-      ?? (() => `mail_thread_${randomUUID()}`);
-    this.#handleFactory = dependencies.handleFactory
-      ?? ((threadClass) => generateMailThreadHandle(threadClass));
+    this.#threadIdFactory = dependencies.threadIdFactory ?? (() => `mail_thread_${randomUUID()}`);
+    this.#handleFactory = dependencies.handleFactory ?? ((threadClass) => generateMailThreadHandle(threadClass));
   }
 
   async publish(command: PublishMailThreadCommand): Promise<MailPublishResult> {
@@ -181,22 +175,18 @@ export class MailOutboundService {
       }));
     }
 
-    let effect = createEffect(thread, envelope, binding, this.#now());
-
+    let effect = createEffect(
+      thread,
+      envelope,
+      binding,
+      this.#provider.rfcMessageIdMode,
+      this.#now(),
+    );
     const reservation = await this.#store.reserveDeliveryEffect(effect);
-    if (reservation.outcome === "conflict") {
-      throw new MailDeliveryConflictError(reservation.effect);
-    }
-    if (reservation.outcome === "blocked") {
-      throw new MailDeliveryPendingReconciliationError(reservation.effect);
-    }
+    if (reservation.outcome === "conflict") throw new MailDeliveryConflictError(reservation.effect);
+    if (reservation.outcome === "blocked") throw new MailDeliveryPendingReconciliationError(reservation.effect);
     if (reservation.outcome === "replay") {
-      return await this.#replayResult(
-        reservation.effect,
-        thread,
-        envelope,
-        existingProjection,
-      );
+      return await this.#replayResult(reservation.effect, thread, envelope, existingProjection);
     }
     effect = reservation.effect;
 
@@ -208,73 +198,44 @@ export class MailOutboundService {
         : await this.#provider.createThread(binding, message);
     } catch (error) {
       if (error instanceof MailProviderDefiniteFailure) {
-        const receipt = failedReceipt(effect, error.code);
-        const settled = await this.#store.settleDeliveryEffect({ effect, receipt });
-        return {
-          thread,
-          envelope,
-          receipt: settled.receipt!,
-          projection: existingProjection,
-          outcome: "failed",
-        };
+        const settled = await this.#store.settleDeliveryEffect({ effect, receipt: failedReceipt(effect, error.code) });
+        return { thread, envelope, receipt: settled.receipt!, projection: existingProjection, outcome: "failed" };
       }
-      const code = error instanceof MailProviderAmbiguousFailure
-        ? error.code
-        : "mail_provider_outcome_ambiguous";
-      const receipt = ambiguousReceipt(effect, code);
-      const settled = await this.#store.settleDeliveryEffect({ effect, receipt });
+      const code = error instanceof MailProviderAmbiguousFailure ? error.code : "mail_provider_outcome_ambiguous";
+      const settled = await this.#store.settleDeliveryEffect({ effect, receipt: ambiguousReceipt(effect, code) });
       throw new MailDeliveryPendingReconciliationError(settled);
     }
 
-    if (providerResult.rfcMessageId !== effect.rfcMessageId) {
-      const receipt = ambiguousReceipt(effect, "mail_provider_message_identity_mismatch");
-      const settled = await this.#store.settleDeliveryEffect({ effect, receipt });
+    if (effect.rfcMessageId !== null && providerResult.rfcMessageId !== effect.rfcMessageId) {
+      const settled = await this.#store.settleDeliveryEffect({
+        effect,
+        receipt: ambiguousReceipt(effect, "mail_provider_message_identity_mismatch"),
+      });
       throw new MailDeliveryPendingReconciliationError(settled);
     }
 
     let projection: MailProviderProjection;
     try {
-      projection = projectionFromSend(
-        thread,
-        binding,
-        envelope,
-        message,
-        providerResult,
-        existingProjection,
-      );
+      projection = projectionFromSend(thread, binding, envelope, message, providerResult, existingProjection);
     } catch (error) {
-      const code = error instanceof MailProviderAmbiguousFailure
-        ? error.code
-        : "mail_provider_projection_invalid";
-      const receipt = ambiguousReceipt(effect, code);
-      const settled = await this.#store.settleDeliveryEffect({ effect, receipt });
+      const code = error instanceof MailProviderAmbiguousFailure ? error.code : "mail_provider_projection_invalid";
+      const settled = await this.#store.settleDeliveryEffect({ effect, receipt: ambiguousReceipt(effect, code) });
       throw new MailDeliveryPendingReconciliationError(settled);
     }
 
-    const receipt = sentReceipt(effect, providerResult);
     const settled = await this.#store.settleDeliveryEffect({
       effect,
-      receipt,
+      receipt: sentReceipt(effect, providerResult),
       projection,
     });
-    return {
-      thread,
-      envelope,
-      receipt: settled.receipt!,
-      projection,
-      outcome: "sent",
-    };
+    return { thread, envelope, receipt: settled.receipt!, projection, outcome: "sent" };
   }
 
-  async reconcile(input: {
-    outboundEffectId: string;
-    mailbox: MailboxBinding;
-  }): Promise<MailPublishResult | null> {
+  async reconcile(input: { outboundEffectId: string; mailbox: MailboxBinding }): Promise<MailPublishResult | null> {
     const binding = freezeMailboxBinding(input.mailbox);
     if (binding.provider !== this.#provider.provider) {
       throw new TypeError("Mail reconciliation provider does not match mailbox binding");
     }
-
     let effect = await this.#store.getDeliveryEffect(input.outboundEffectId);
     if (!effect) return null;
     const thread = await this.#store.getThreadByHandle(effect.handle);
@@ -284,15 +245,9 @@ export class MailOutboundService {
       || effect.provider !== binding.provider
       || effect.accountBinding !== binding.accountBinding
       || effect.mailboxAddress !== binding.mailboxAddress
-    ) {
-      throw new MailDeliveryConflictError(effect);
-    }
+    ) throw new MailDeliveryConflictError(effect);
 
-    const projection = await this.#store.getProviderProjection(
-      thread.threadId,
-      binding.provider,
-      binding.accountBinding,
-    );
+    const projection = await this.#store.getProviderProjection(thread.threadId, binding.provider, binding.accountBinding);
     assertProjectionDestination(thread, projection, binding);
     const envelope = envelopeFromEffect(thread, effect);
 
@@ -305,7 +260,6 @@ export class MailOutboundService {
         outcome: effect.state === "failed" ? "failed" : "replayed",
       };
     }
-
     if (effect.state === "reserved") {
       effect = await this.#store.settleDeliveryEffect({
         effect,
@@ -318,49 +272,28 @@ export class MailOutboundService {
       rfcMessageId: effect.rfcMessageId,
       expectedProviderThreadId: projection?.providerThreadId ?? null,
     });
-
     if (lookup.status === "found") {
       const message = createProviderMessage(thread, envelope, effect, projection);
       let nextProjection: MailProviderProjection;
       try {
-        nextProjection = projectionFromSend(
-          thread,
-          binding,
-          envelope,
-          message,
-          lookup.result,
-          projection,
-        );
+        nextProjection = projectionFromSend(thread, binding, envelope, message, lookup.result, projection);
       } catch {
         throw new MailDeliveryPendingReconciliationError(effect);
       }
-      const receipt = reconciledReceipt(effect, lookup.result);
       const settled = await this.#store.settleDeliveryEffect({
         effect,
-        receipt,
+        receipt: reconciledReceipt(effect, lookup.result),
         projection: nextProjection,
       });
-      return {
-        thread,
-        envelope,
-        receipt: settled.receipt!,
-        projection: nextProjection,
-        outcome: "reconciled",
-      };
+      return { thread, envelope, receipt: settled.receipt!, projection: nextProjection, outcome: "reconciled" };
     }
-
     if (lookup.status === "missing" && lookup.coverage === "complete") {
-      const receipt = failedReceipt(effect, "mail_delivery_missing_after_complete_reconciliation");
-      const settled = await this.#store.settleDeliveryEffect({ effect, receipt });
-      return {
-        thread,
-        envelope,
-        receipt: settled.receipt!,
-        projection,
-        outcome: "failed",
-      };
+      const settled = await this.#store.settleDeliveryEffect({
+        effect,
+        receipt: failedReceipt(effect, "mail_delivery_missing_after_complete_reconciliation"),
+      });
+      return { thread, envelope, receipt: settled.receipt!, projection, outcome: "failed" };
     }
-
     throw new MailDeliveryPendingReconciliationError(effect);
   }
 
@@ -372,22 +305,13 @@ export class MailOutboundService {
     const parent = command.continuesFromHandle === undefined || command.continuesFromHandle === null
       ? null
       : await this.#store.getThreadByHandle(parseMailThreadHandle(command.continuesFromHandle));
-    if (command.continuesFromHandle && !parent) {
-      throw new Error("Mail continuation parent handle is missing");
-    }
-
-    const existing = await this.#store.getThreadBySource(
-      command.workspace,
-      command.project,
-      command.sourceIdentity,
-    );
+    if (command.continuesFromHandle && !parent) throw new Error("Mail continuation parent handle is missing");
+    const existing = await this.#store.getThreadBySource(command.workspace, command.project, command.sourceIdentity);
     if (existing) {
       assertThreadMatchesCommand(existing, command, parent);
       return existing;
     }
-
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const now = this.#now();
       const candidate = createMailThreadRecord({
         threadId: this.#threadIdFactory(),
         handle: this.#handleFactory(command.threadClass),
@@ -398,14 +322,10 @@ export class MailOutboundService {
         sourceIdentity: command.sourceIdentity,
         resolutionCondition: command.resolutionCondition,
         continuesFromThreadId: parent?.threadId ?? null,
-        createdAt: now,
+        createdAt: this.#now(),
       });
       const reservation = await this.#store.reserveThread(candidate);
-      if (reservation.outcome === "created" || reservation.outcome === "existing") {
-        assertThreadMatchesCommand(reservation.thread, command, parent);
-        return reservation.thread;
-      }
-      if (reservation.outcome === "source_conflict") {
+      if (reservation.outcome === "created" || reservation.outcome === "existing" || reservation.outcome === "source_conflict") {
         assertThreadMatchesCommand(reservation.thread, command, parent);
         return reservation.thread;
       }
@@ -419,25 +339,13 @@ export class MailOutboundService {
     envelope: MailOutboundEnvelope,
     projection: MailProviderProjection | null,
   ): Promise<MailPublishResult> {
-    if (effect.state === "reserved" || effect.state === "ambiguous") {
-      throw new MailDeliveryPendingReconciliationError(effect);
-    }
+    if (effect.state === "reserved" || effect.state === "ambiguous") throw new MailDeliveryPendingReconciliationError(effect);
     if (!effect.receipt) throw new Error("Terminal mail delivery effect is missing its receipt");
-    return {
-      thread,
-      envelope,
-      receipt: effect.receipt,
-      projection,
-      outcome: effect.state === "failed" ? "failed" : "replayed",
-    };
+    return { thread, envelope, receipt: effect.receipt, projection, outcome: effect.state === "failed" ? "failed" : "replayed" };
   }
 }
 
-function assertThreadMatchesCommand(
-  thread: MailThreadRecord,
-  command: PublishMailThreadCommand,
-  parent: MailThreadRecord | null,
-): void {
+function assertThreadMatchesCommand(thread: MailThreadRecord, command: PublishMailThreadCommand, parent: MailThreadRecord | null): void {
   if (
     thread.workspace !== command.workspace
     || thread.project !== command.project
@@ -445,27 +353,23 @@ function assertThreadMatchesCommand(
     || thread.canonicalSubject !== command.canonicalSubject
     || thread.sourceIdentity !== command.sourceIdentity
     || thread.continuesFromThreadId !== (parent?.threadId ?? null)
-  ) {
-    throw new MailThreadSourceConflictError(thread);
-  }
+  ) throw new MailThreadSourceConflictError(thread);
 }
 
-function assertProjectionDestination(
-  thread: MailThreadRecord,
-  projection: MailProviderProjection | null,
-  binding: MailboxBinding,
-): void {
-  if (projection && projection.mailboxAddress !== binding.mailboxAddress) {
-    throw new MailDestinationBindingConflictError(thread);
-  }
+function assertProjectionDestination(thread: MailThreadRecord, projection: MailProviderProjection | null, binding: MailboxBinding): void {
+  if (projection && projection.mailboxAddress !== binding.mailboxAddress) throw new MailDestinationBindingConflictError(thread);
 }
 
 function createEffect(
   thread: MailThreadRecord,
   envelope: MailOutboundEnvelope,
   binding: MailboxBinding,
+  rfcMessageIdMode: MailProviderRfcMessageIdMode,
   reservedAt: string,
 ): MailOutboundEffectRecord {
+  if (rfcMessageIdMode !== "caller_assigned" && rfcMessageIdMode !== "provider_assigned") {
+    throw new TypeError("Mail provider RFC Message-ID mode is invalid");
+  }
   const digest = sha256(stableJson({
     version: 1,
     threadId: thread.threadId,
@@ -485,7 +389,7 @@ function createEffect(
     mailboxAddress: binding.mailboxAddress,
     attemptNumber: 1,
     contentFingerprint: envelope.materialFingerprint,
-    rfcMessageId: `<stn.${hex}@mail.stensibly.com>`,
+    rfcMessageId: rfcMessageIdMode === "caller_assigned" ? `<stn.${hex}@mail.stensibly.com>` : null,
     reservedAt,
     state: "reserved",
     receipt: null,
@@ -498,9 +402,10 @@ function createProviderMessage(
   effect: MailOutboundEffectRecord,
   projection: MailProviderProjection | null,
 ): MailProviderMessage {
-  const references = projection
-    ? appendReference(projection.lastVerifiedReferences, projection.latestRfcMessageId)
-    : [];
+  const latestRfcMessageId = effect.rfcMessageId === null ? null : projection?.latestRfcMessageId ?? null;
+  const references = latestRfcMessageId === null
+    ? []
+    : appendReference(projection?.lastVerifiedReferences ?? [], latestRfcMessageId);
   return freezeMailProviderMessage({
     outboundEffectId: effect.outboundEffectId,
     threadId: thread.threadId,
@@ -509,15 +414,12 @@ function createProviderMessage(
     rfcMessageId: effect.rfcMessageId,
     subject: envelope.subject,
     body: envelope.body,
-    inReplyTo: projection?.latestRfcMessageId ?? null,
+    inReplyTo: latestRfcMessageId,
     references,
   });
 }
 
-function appendReference(
-  prior: readonly string[],
-  latest: string,
-): readonly string[] {
+function appendReference(prior: readonly string[], latest: string): readonly string[] {
   const next = prior.includes(latest) ? [...prior] : [...prior, latest];
   return Object.freeze(next.slice(-32));
 }
@@ -554,10 +456,7 @@ function projectionFromSend(
   });
 }
 
-function sentReceipt(
-  effect: MailOutboundEffectRecord,
-  result: MailProviderSendResult,
-): MailDeliveryReceipt {
+function sentReceipt(effect: MailOutboundEffectRecord, result: MailProviderSendResult): MailDeliveryReceipt {
   return freezeMailDeliveryReceipt({
     version: 1,
     outboundEffectId: effect.outboundEffectId,
@@ -580,20 +479,11 @@ function sentReceipt(
   });
 }
 
-function reconciledReceipt(
-  effect: MailOutboundEffectRecord,
-  result: MailProviderSendResult,
-): MailDeliveryReceipt {
-  return freezeMailDeliveryReceipt({
-    ...sentReceipt(effect, result),
-    result: "reconciled",
-  });
+function reconciledReceipt(effect: MailOutboundEffectRecord, result: MailProviderSendResult): MailDeliveryReceipt {
+  return freezeMailDeliveryReceipt({ ...sentReceipt(effect, result), result: "reconciled" });
 }
 
-function ambiguousReceipt(
-  effect: MailOutboundEffectRecord,
-  failureClass: string,
-): MailDeliveryReceipt {
+function ambiguousReceipt(effect: MailOutboundEffectRecord, failureClass: string): MailDeliveryReceipt {
   return freezeMailDeliveryReceipt({
     version: 1,
     outboundEffectId: effect.outboundEffectId,
@@ -616,10 +506,7 @@ function ambiguousReceipt(
   });
 }
 
-function failedReceipt(
-  effect: MailOutboundEffectRecord,
-  failureClass: string,
-): MailDeliveryReceipt {
+function failedReceipt(effect: MailOutboundEffectRecord, failureClass: string): MailDeliveryReceipt {
   return freezeMailDeliveryReceipt({
     version: 1,
     outboundEffectId: effect.outboundEffectId,
@@ -642,10 +529,7 @@ function failedReceipt(
   });
 }
 
-function envelopeFromEffect(
-  thread: MailThreadRecord,
-  effect: MailOutboundEffectRecord,
-): MailOutboundEnvelope {
+function envelopeFromEffect(thread: MailThreadRecord, effect: MailOutboundEffectRecord): MailOutboundEnvelope {
   return Object.freeze({
     version: 1,
     threadId: thread.threadId,
