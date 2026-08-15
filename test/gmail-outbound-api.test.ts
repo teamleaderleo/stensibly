@@ -14,44 +14,45 @@ function tokenProvider() {
 describe("GmailOutboundApiClient", () => {
   test("sends raw Gmail messages with protected bearer access and reads bounded reconciliation metadata", async () => {
     const requests: { url: URL; init: RequestInit }[] = [];
+    const fetchImpl = (async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({ url, init: init ?? {} });
+      const authorization = new Headers(init?.headers).get("Authorization");
+      expect(authorization).toBe(`Bearer ${accessToken}`);
+      if (url.pathname.endsWith("/messages/send")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.raw).toBe("YWJjZA");
+        expect(body.threadId).toBe("gmail_thread_1");
+        return new Response(JSON.stringify({ id: "gmail_message_2", threadId: "gmail_thread_1" }));
+      }
+      if (url.pathname.endsWith("/messages")) {
+        expect(url.searchParams.get("q")).toBe(`rfc822msgid:${rfcMessageId}`);
+        expect(url.searchParams.get("maxResults")).toBe("64");
+        return new Response(JSON.stringify({ messages: [{ id: "gmail_message_2" }] }));
+      }
+      if (url.pathname.endsWith("/messages/gmail_message_2")) {
+        expect(url.searchParams.get("format")).toBe("metadata");
+        return new Response(JSON.stringify({
+          id: "gmail_message_2",
+          threadId: "gmail_thread_1",
+          internalDate: String(Date.parse("2026-08-15T08:00:00.000Z")),
+          payload: {
+            headers: [
+              { name: "Message-ID", value: rfcMessageId },
+              { name: "X-Stensibly-Effect", value: "mailfx_1234567890abcdef" },
+              { name: "Subject", value: "[STN-HANDOFF:K8R4] Hosted continuation" },
+              { name: "References", value: "<root@example.com>" },
+            ],
+          },
+        }));
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
     const client = new GmailOutboundApiClient({
       tokenProvider: tokenProvider(),
       apiBaseUrl: "https://gmail.example.test",
       now: () => Date.parse("2026-08-15T08:00:00.000Z"),
-      fetch: async (input, init) => {
-        const url = new URL(String(input));
-        requests.push({ url, init: init ?? {} });
-        const authorization = new Headers(init?.headers).get("Authorization");
-        expect(authorization).toBe(`Bearer ${accessToken}`);
-        if (url.pathname.endsWith("/messages/send")) {
-          const body = JSON.parse(String(init?.body));
-          expect(body.raw).toBe("YWJjZA");
-          expect(body.threadId).toBe("gmail_thread_1");
-          return new Response(JSON.stringify({ id: "gmail_message_2", threadId: "gmail_thread_1" }));
-        }
-        if (url.pathname.endsWith("/messages")) {
-          expect(url.searchParams.get("q")).toBe(`rfc822msgid:${rfcMessageId}`);
-          expect(url.searchParams.get("maxResults")).toBe("64");
-          return new Response(JSON.stringify({ messages: [{ id: "gmail_message_2" }] }));
-        }
-        if (url.pathname.endsWith("/messages/gmail_message_2")) {
-          expect(url.searchParams.get("format")).toBe("metadata");
-          return new Response(JSON.stringify({
-            id: "gmail_message_2",
-            threadId: "gmail_thread_1",
-            internalDate: String(Date.parse("2026-08-15T08:00:00.000Z")),
-            payload: {
-              headers: [
-                { name: "Message-ID", value: rfcMessageId },
-                { name: "X-Stensibly-Effect", value: "mailfx_1234567890abcdef" },
-                { name: "Subject", value: "[STN-HANDOFF:K8R4] Hosted continuation" },
-                { name: "References", value: "<root@example.com>" },
-              ],
-            },
-          }));
-        }
-        throw new Error("unexpected request");
-      },
+      fetch: fetchImpl,
     });
 
     const sent = await client.sendRaw({ raw: "YWJjZA", threadId: "gmail_thread_1" });
@@ -76,23 +77,25 @@ describe("GmailOutboundApiClient", () => {
   });
 
   test("pagination or oversized reconciliation scope fails closed instead of claiming complete absence", async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      messages: [{ id: "gmail_message_1" }],
+      nextPageToken: "more",
+    }))) as typeof fetch;
     const client = new GmailOutboundApiClient({
       tokenProvider: tokenProvider(),
       apiBaseUrl: "https://gmail.example.test",
-      fetch: async () => new Response(JSON.stringify({
-        messages: [{ id: "gmail_message_1" }],
-        nextPageToken: "more",
-      })),
+      fetch: fetchImpl,
     });
     await expect(client.findMessagesByRfcMessageId({ rfcMessageId }))
       .rejects.toBeInstanceOf(GmailOutboundApiError);
   });
 
   test("provider and transport failures expose sanitized errors without bearer material", async () => {
+    const fetchImpl = (async () => new Response("provider secret prose", { status: 503 })) as typeof fetch;
     const client = new GmailOutboundApiClient({
       tokenProvider: tokenProvider(),
       apiBaseUrl: "https://gmail.example.test",
-      fetch: async () => new Response("provider secret prose", { status: 503 }),
+      fetch: fetchImpl,
     });
     let caught: unknown;
     try {
