@@ -12,7 +12,7 @@ const staleHead = "b".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491_exact_head",
-  handle: "STN-INCIDENT:1491EXACT",
+  handle: "STN-INCIDENT:X7AC",
   project: "stensibly",
   repository,
   pullRequestNumber: 1491,
