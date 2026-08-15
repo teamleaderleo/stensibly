@@ -1,4 +1,3 @@
-import type { ConvexTest } from "convex-test";
 import { sha256 } from "../src/canonical-json";
 import { ConvexMailThreadStore } from "../src/convex-mail-thread-store";
 import { InMemoryMailProvider } from "../src/in-memory-mail-provider";
@@ -22,18 +21,18 @@ export const mailbox = Object.freeze({
   mailboxAddress: "operator@example.com",
 });
 
-export function caller(t: ConvexTest) {
+export function caller(t: any) {
   return {
     query: async (reference: any, args: Record<string, unknown>) => await t.query(reference, args),
     mutation: async (reference: any, args: Record<string, unknown>) => await t.mutation(reference, args),
   };
 }
 
-export function hostedStore(t: ConvexTest): ConvexMailThreadStore {
+export function hostedStore(t: any): ConvexMailThreadStore {
   return new ConvexMailThreadStore({ client: caller(t), serviceSecret, workspace });
 }
 
-export async function seedWorkspace(t: ConvexTest) {
+export async function seedWorkspace(t: any) {
   await t.run(async (ctx: any) => {
     await ctx.db.insert("workspaces", {
       externalId: "ws_test",
