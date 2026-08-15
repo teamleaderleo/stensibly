@@ -4,14 +4,18 @@ export const mailboxObservationEventTypes = [
   "mail.message.created",
   "mail.message.updated",
   "mail.message.deleted",
-  "mail.label.added",
-  "mail.label.removed",
+  "mail.scope.added",
+  "mail.scope.removed",
   "mail.subscription.degraded",
   "mail.subscription.recovered",
 ] as const;
 
 export type MailboxObservationEventType =
   typeof mailboxObservationEventTypes[number];
+export type MailboxObservationInputEventType =
+  | MailboxObservationEventType
+  | "mail.label.added"
+  | "mail.label.removed";
 export type MailboxProvider = "gmail" | "outlook";
 export type MailboxCoverage = "continuous" | "unknown";
 export type MailboxLoopDisposition = "ordinary" | "self_echo" | "automatic";
@@ -51,7 +55,7 @@ export interface MailboxSubscriptionState {
 }
 
 export interface MailboxObservation {
-  readonly version: 1;
+  readonly version: 2;
   readonly provider: MailboxProvider;
   readonly mailboxBindingId: string;
   readonly sourceSchema: MailboxObservationSourceSchema;
@@ -62,7 +66,7 @@ export interface MailboxObservation {
   readonly providerCursor: string;
   readonly providerMessageId: string | null;
   readonly providerThreadId: string | null;
-  readonly providerLabelId: string | null;
+  readonly providerScopeId: string | null;
   readonly observedAt: string;
   readonly receivedAt: string;
   readonly wakeEligible: boolean;
@@ -87,11 +91,12 @@ export interface CreateMailboxObservationInput {
   mailboxBindingId: string;
   sourceSchema: MailboxObservationSourceSchema;
   sourceEventId: string;
-  eventType: MailboxObservationEventType;
+  eventType: MailboxObservationInputEventType;
   providerCursor: string;
   providerMessageId: string | null;
   providerThreadId: string | null;
-  providerLabelId: string | null;
+  providerScopeId?: string | null;
+  providerLabelId?: string | null;
   observedAt: string;
   receivedAt: string;
   wakeEligible: boolean;
@@ -152,11 +157,7 @@ export function createMailboxObservation(
   ] as const);
   validateSourceSchema(provider, sourceSchema);
   const sourceEventId = boundedIdentity(input.sourceEventId, "Mailbox source event ID");
-  const eventType = enumValue(
-    input.eventType,
-    "Mailbox observation event type",
-    mailboxObservationEventTypes,
-  );
+  const eventType = normalizeEventType(input.eventType);
   const providerCursor = provider === "gmail"
     ? gmailHistoryId(input.providerCursor, "Gmail history cursor")
     : boundedOpaqueReference(input.providerCursor, "Outlook delta cursor reference");
@@ -168,15 +169,25 @@ export function createMailboxObservation(
     input.providerThreadId,
     "Mailbox provider thread ID",
   );
-  const providerLabelId = optionalIdentity(
-    input.providerLabelId,
-    "Mailbox provider label ID",
+  if (
+    input.providerScopeId !== undefined
+    && input.providerLabelId !== undefined
+    && input.providerScopeId !== input.providerLabelId
+  ) {
+    throw new RangeError("Mailbox provider scope identity is inconsistent");
+  }
+  const rawScopeId = input.providerScopeId !== undefined
+    ? input.providerScopeId
+    : input.providerLabelId ?? null;
+  const providerScopeId = optionalIdentity(
+    rawScopeId,
+    "Mailbox provider scope ID",
   );
   validateEventIdentity(
     eventType,
     providerMessageId,
     providerThreadId,
-    providerLabelId,
+    providerScopeId,
   );
   const observedAt = canonicalTimestamp(input.observedAt, "Mailbox observed time");
   const receivedAt = canonicalTimestamp(input.receivedAt, "Mailbox received time");
@@ -193,7 +204,7 @@ export function createMailboxObservation(
   );
 
   const canonicalSemantics = {
-    version: 1 as const,
+    version: 2 as const,
     provider,
     mailboxBindingId,
     sourceSchema,
@@ -202,7 +213,7 @@ export function createMailboxObservation(
     providerCursor,
     providerMessageId,
     providerThreadId,
-    providerLabelId,
+    providerScopeId,
     observedAt,
     receivedAt,
     wakeEligible: input.wakeEligible,
@@ -212,7 +223,7 @@ export function createMailboxObservation(
   };
   const semanticFingerprint = fingerprintCanonicalRequest(canonicalSemantics);
   const identityDigest = fingerprintCanonicalRequest({
-    version: 1,
+    version: 2,
     provider,
     mailboxBindingId,
     sourceSchema,
@@ -225,6 +236,16 @@ export function createMailboxObservation(
     observationId: `mail:${provider}:${identityDigest}`,
     semanticFingerprint,
   });
+}
+
+function normalizeEventType(value: unknown): MailboxObservationEventType {
+  if (value === "mail.label.added") return "mail.scope.added";
+  if (value === "mail.label.removed") return "mail.scope.removed";
+  return enumValue(
+    value,
+    "Mailbox observation event type",
+    mailboxObservationEventTypes,
+  );
 }
 
 function createScope(value: MailboxScope): MailboxScope {
@@ -309,24 +330,24 @@ function validateEventIdentity(
   eventType: MailboxObservationEventType,
   providerMessageId: string | null,
   providerThreadId: string | null,
-  providerLabelId: string | null,
+  providerScopeId: string | null,
 ): void {
   if (eventType.startsWith("mail.message.") && providerMessageId === null) {
     throw new RangeError("Mailbox message observations require a provider message ID");
   }
-  if (eventType.startsWith("mail.label.")) {
-    if (providerMessageId === null || providerLabelId === null) {
-      throw new RangeError("Mailbox label observations require message and label identities");
+  if (eventType.startsWith("mail.scope.")) {
+    if (providerMessageId === null || providerScopeId === null) {
+      throw new RangeError("Mailbox scope observations require message and scope identities");
     }
   }
   if (eventType.startsWith("mail.subscription.")) {
     if (
       providerMessageId !== null
       || providerThreadId !== null
-      || providerLabelId !== null
+      || providerScopeId !== null
     ) {
       throw new RangeError(
-        "Mailbox subscription observations cannot bind message, thread, or label identities",
+        "Mailbox subscription observations cannot bind message, thread, or scope identities",
       );
     }
   }
@@ -398,7 +419,7 @@ function enumValue<const T extends readonly string[]>(
   label: string,
   values: T,
 ): T[number] {
-  if (typeof value !== "string" || !values.includes(value)) {
+  if (typeof value !== "string" || !values.includes(value as T[number])) {
     throw new RangeError(`${label} is invalid`);
   }
   return value as T[number];

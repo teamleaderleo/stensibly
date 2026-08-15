@@ -13,6 +13,12 @@ const workerEnrolmentOperation = v.union(
   v.literal("release"),
 );
 
+const workResponsibilityRole = v.union(
+  v.literal("general"),
+  v.literal("implementation"),
+  v.literal("independent_review"),
+);
+
 export const workerEnrolmentTables = {
   workerEnrolments: defineTable({
     workspaceId: v.id("workspaces"),
@@ -61,6 +67,52 @@ export const workerEnrolmentTables = {
     clientId: v.string(),
     idempotencyKey: v.string(),
     operation: workerEnrolmentOperation,
+    request: v.any(),
+    result: v.any(),
+    createdAt: v.number(),
+  }).index("by_workspace_owner_idempotency", [
+    "workspaceId",
+    "actorId",
+    "clientId",
+    "idempotencyKey",
+  ]),
+
+  workSelectionAcceptances: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    itemId: v.id("items"),
+    workerEnrolmentId: v.id("workerEnrolments"),
+    externalId: v.string(),
+    workerRef: v.string(),
+    actorId: v.string(),
+    clientId: v.string(),
+    recommendationFingerprint: v.string(),
+    selectedItemVersion: v.number(),
+    selectedClaimGeneration: v.number(),
+    responsibilityRole: workResponsibilityRole,
+    independenceKey: v.optional(v.string()),
+    acceptedClaimGeneration: v.number(),
+    claimExpiresAt: v.number(),
+    acceptedAt: v.number(),
+    grantsResponsibility: v.literal(true),
+    grantsAuthority: v.literal(false),
+  })
+    .index("by_workspace_external", ["workspaceId", "externalId"])
+    .index("by_workspace_worker_accepted", ["workspaceId", "workerRef", "acceptedAt"])
+    .index("by_workspace_independence_role", [
+      "workspaceId",
+      "independenceKey",
+      "responsibilityRole",
+      "acceptedAt",
+    ])
+    .index("by_item_accepted", ["itemId", "acceptedAt"]),
+
+  workSelectionCommands: defineTable({
+    workspaceId: v.id("workspaces"),
+    actorId: v.string(),
+    clientId: v.string(),
+    idempotencyKey: v.string(),
+    requestFingerprint: v.string(),
     request: v.any(),
     result: v.any(),
     createdAt: v.number(),

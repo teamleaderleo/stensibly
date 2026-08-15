@@ -4,10 +4,16 @@ export type MailAttentionClass = "handoff" | "review" | "decision" | "incident";
 export type MailThreadState = "active" | "waiting" | "resolved";
 export type MailThreadTemperature = "hot" | "active" | "waiting" | "resolved" | "stranded";
 export type RelayWorkerIsolation = "same_chat_protocol_replay" | "fresh_chat";
+export type GmailMailboxDispositionReason =
+  | "operator_attention"
+  | "routine"
+  | "waiting"
+  | "resolved";
 
 export interface MailThreadSnapshot {
   handle: string;
   attentionClass: MailAttentionClass;
+  operatorAttentionRequired: boolean;
   title: string;
   changed: string;
   current: string;
@@ -49,6 +55,13 @@ export interface MailDigestProjection {
   counts: Readonly<Record<MailThreadTemperature, number>>;
   authorizesOperation: false;
   authorizesMutation: false;
+}
+
+export interface GmailMailboxDisposition {
+  label: "Stensibly";
+  archive: boolean;
+  markRead: boolean;
+  reason: GmailMailboxDispositionReason;
 }
 
 export interface RelayMeasurement {
@@ -178,6 +191,44 @@ export function gmailViewLabel(_temperature: MailThreadTemperature): "Stensibly"
   return "Stensibly";
 }
 
+// The operator Inbox is an attention view. Every STN message remains durable under one label.
+// Only unresolved work explicitly requiring the operator stays visible and unread.
+export function gmailMailboxDisposition(
+  thread: MailThreadSnapshot,
+): GmailMailboxDisposition {
+  assertThread(thread);
+  if (thread.state === "resolved") {
+    return Object.freeze({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "resolved",
+    });
+  }
+  if (thread.state === "waiting") {
+    return Object.freeze({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "waiting",
+    });
+  }
+  if (thread.operatorAttentionRequired) {
+    return Object.freeze({
+      label: "Stensibly",
+      archive: false,
+      markRead: false,
+      reason: "operator_attention",
+    });
+  }
+  return Object.freeze({
+    label: "Stensibly",
+    archive: true,
+    markRead: true,
+    reason: "routine",
+  });
+}
+
 export function relayContextReduction(
   baselineBytes: number,
   measurement: RelayMeasurement,
@@ -218,6 +269,9 @@ function compareDigestRows(left: MailDigestRow, right: MailDigestRow): number {
 function assertThread(thread: MailThreadSnapshot): void {
   if (!HANDLE_PATTERN.test(thread.handle)) {
     throw new TypeError("mail handle must be a canonical STN handle");
+  }
+  if (typeof thread.operatorAttentionRequired !== "boolean") {
+    throw new TypeError("operatorAttentionRequired must be boolean");
   }
   for (const [field, value] of Object.entries({
     title: thread.title,

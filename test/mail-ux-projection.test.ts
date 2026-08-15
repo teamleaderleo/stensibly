@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyMailThreadTemperature,
   compileMailDigest,
+  gmailMailboxDisposition,
   gmailViewLabel,
   relayContextReduction,
   renderMaterialMailMessage,
@@ -17,6 +18,7 @@ function thread(
   return {
     handle,
     attentionClass: "handoff",
+    operatorAttentionRequired: false,
     title: "Continue bounded mail UX dogfood",
     changed: "Compact continuation fixture is ready for a fresh-source reread.",
     current: "github:teamleaderleo/stensibly#1493 at main ba5c571c8550",
@@ -70,6 +72,73 @@ describe("mail UX projection", () => {
     expect(gmailViewLabel("stranded")).toBe("Stensibly");
     expect(gmailViewLabel("waiting")).toBe("Stensibly");
     expect(gmailViewLabel("resolved")).toBe("Stensibly");
+  });
+
+  test("archives routine mail and preserves only unresolved explicit operator attention", () => {
+    const routineReview = thread("STN-REVIEW:REV2", {
+      attentionClass: "review",
+      operatorAttentionRequired: false,
+    });
+    const routineDecision = thread("STN-DECISION:D7C3", {
+      attentionClass: "decision",
+      operatorAttentionRequired: false,
+    });
+    const routineIncident = thread("STN-INCIDENT:C7D3", {
+      attentionClass: "incident",
+      operatorAttentionRequired: false,
+    });
+    const humanDecision = thread("STN-DECISION:DEC3", {
+      attentionClass: "decision",
+      operatorAttentionRequired: true,
+    });
+    const waitingHuman = thread("STN-REVIEW:WAXT", {
+      attentionClass: "review",
+      operatorAttentionRequired: true,
+      state: "waiting",
+    });
+    const resolvedIncident = thread("STN-INCIDENT:FX22", {
+      attentionClass: "incident",
+      operatorAttentionRequired: true,
+      state: "resolved",
+      resolvedAt: "2026-08-15T06:10:00.000Z",
+    });
+
+    expect(gmailMailboxDisposition(routineReview)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "routine",
+    });
+    expect(gmailMailboxDisposition(routineDecision)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "routine",
+    });
+    expect(gmailMailboxDisposition(routineIncident)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "routine",
+    });
+    expect(gmailMailboxDisposition(humanDecision)).toEqual({
+      label: "Stensibly",
+      archive: false,
+      markRead: false,
+      reason: "operator_attention",
+    });
+    expect(gmailMailboxDisposition(waitingHuman)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "waiting",
+    });
+    expect(gmailMailboxDisposition(resolvedIncident)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "resolved",
+    });
   });
 
   test("digest keeps urgent and stranded work ahead of routine continuation", () => {
