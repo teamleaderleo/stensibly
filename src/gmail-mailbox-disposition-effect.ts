@@ -53,7 +53,6 @@ export interface GmailMessageLabelSnapshot {
   isDraft: boolean;
 }
 
-// Intentionally label-only. This consumer cannot send, retry, reply, or reconcile mail delivery.
 export interface GmailMailboxLabelClient {
   readMessageLabels(input: {
     accountBinding: string;
@@ -106,9 +105,6 @@ export type GmailMailboxDispositionReserveResult =
   | { status: "reserved" }
   | { status: "existing"; record: GmailMailboxDispositionEffectRecord };
 
-// The store must reserve atomically and return any unsettled effect for the same exact
-// provider target. An uncertain mutation therefore fences both exact replay and newer
-// STN-state effects until read-only label reconciliation clears the old effect.
 export interface GmailMailboxDispositionEffectStore {
   findOutstandingForTarget(
     binding: SettledGmailMessageBinding,
@@ -361,6 +357,8 @@ export async function reconcileGmailMailboxDispositionEffect(input: {
   }
   const currentRevision = stateRead.state.revision;
   const superseded = currentRevision !== effect.stnStateRevision;
+  const currentRequiresHumanAttention =
+    stateRead.state.state === "active" && stateRead.state.operatorAttentionRequired;
 
   let snapshot: GmailMessageLabelSnapshot | null;
   try {
@@ -429,7 +427,7 @@ export async function reconcileGmailMailboxDispositionEffect(input: {
       recoveryAction: "retry_same_effect_after_precondition_read",
     };
   }
-  if (superseded) {
+  if (superseded && currentRequiresHumanAttention) {
     await input.effectStore.markSettled(effect.effectId, "noop");
     return {
       status: "superseded",
@@ -437,6 +435,15 @@ export async function reconcileGmailMailboxDispositionEffect(input: {
       currentStateRevision: currentRevision,
       priorEffectCleared: true,
       recoveryAction: "apply_current_state_effect",
+    };
+  }
+  if (superseded) {
+    return {
+      status: "superseded",
+      effect,
+      currentStateRevision: currentRevision,
+      priorEffectCleared: false,
+      recoveryAction: "reconcile_old_effect_before_current_state_effect",
     };
   }
   return {
