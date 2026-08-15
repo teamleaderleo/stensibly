@@ -1,8 +1,8 @@
 # Current dogfood wave: durable agent operations
 
 **Status:** active P0 rollout
-**Last reconciled:** 2026-08-11
-**Exact source base before this revision:** `ed35efd36149aabb086168872b9e05e0c5dce2ee`
+**Last reconciled:** 2026-08-15
+**Exact source base before this revision:** `bd860e71fec610e43e008b93d702a6bb3f4d7dc0`
 **Sustained-use incident:** #490
 **Programme:** #491
 **Canonical queue:** #301
@@ -94,14 +94,22 @@ runner host (#1303), and hosted Convex runner parity are merged. These are
 alternative model/runtime adapters under the same runner authority and durable
 ledger contracts; neither SDK is a second product direction.
 
-The current host slice is deliberately model-free and bounded. It proves exact
-capability binding, lease authority, atomic dispatch reservation, checkpoint
-privacy, observation limits, and no blind redispatch. The first command-inbox
-slice now also settles a completed bounded episode with content-minimised outcome
-evidence and replays that exact settlement after response loss without another
-model call. A reservation left unsettled by a crash remains explicitly ambiguous
-and cannot redispatch. Durable command recovery, full restartable continuation,
-and live model/provider mounting remain follow-up work.
+The bounded host now proves exact capability binding, lease authority, atomic
+dispatch reservation, checkpoint privacy, observation limits, terminal
+settlement/replay, and recovery ownership after the original run authority
+expires. #1479 made a fresh host read durable command state before reconstruction
+and claim stranded command recovery without authorizing redispatch or resume.
+#1481 tightened SQLite and Convex reads so a reservation and settlement must bind
+the same exact command identity before any ledger consumer sees the pair.
+
+#1484 adds the first model-free resume-inspection layer for interrupted work. It
+compiles admitted checkpoint, continuation, capability, authority, grant,
+approval, and prior-settlement facts into an immutable `eligible`, `blocked`, or
+`unknown` receipt plus deterministic operator-facing sections. Every receipt is
+read-only and fixes `authorizesMutation: false` and `authorizesResume: false`.
+Actual Control Room source assembly, a separately owned authoritative resume
+command, full restartable continuation, and live model/provider mounting remain
+follow-up work.
 
 ## Current composite operation
 
@@ -179,7 +187,7 @@ reconciled from durable operation/provider evidence before another write.
 | P0 | Project attachment onboarding (#334/#1329) | Scrapbook dogfood proved `repo known + attachment missing`; v11 recovery is merged | Repeat the Scrapbook setup journey through explicit attachment acceptance and guarded read verification | An unattached known repository leads to one clear setup continuation and becomes repository-ready only after accepted attachment + guarded read proof |
 | P1 | Reconciliation and compensation (#154/#1325) | Branch, retained-PR, and complete repository-file tree readback are merged and live | Add exact-SHA branch deletion/restoration and PR-close/file-restore compensators; use runner Git CAS because GitHub REST ref deletion has no expected-old-SHA fence | Ambiguous provider outcomes settle from independent evidence and reversible operations can be safely compensated |
 | P1 | Operation catalogue | The first four outcome tools are live in snapshot v14 | Refresh ChatGPT and dogfood `repo_health`, `branch_tidy`, and `ci_diagnose`; land only a dedicated safe PR under a runner lease | Agents can request common outcomes without manually orchestrating long raw-tool chains |
-| P1 | Restartable runner execution (#1470) | Both SDK adapters, the bounded host, atomic command reservation, and terminal settlement/replay exist; an unsettled reservation still requires explicit recovery | Add recovery ownership and checkpoint-lineage contracts before live model mounting | One runner episode survives process restart without duplicate model or tool effects |
+| P1 | Restartable runner execution (#1470/#676) | Both SDK adapters, bounded host dispatch/settlement, stranded-command recovery ownership, coherent durable command reads, checkpoint lineage, and read-only resume inspection are merged | Assemble the authoritative resume-inspection receipt from live run/checkpoint/capability evidence in the Control Room; then introduce a separately owned resume command using exact generation, authority, capability, grant, and settlement fences | An operator can inspect exact resume eligibility after process loss before any model/tool effect, and a later authoritative resume continues the same lineage without duplicate effects |
 
 ## Definition of done for the wave
 
@@ -209,7 +217,8 @@ prove:
 2. Dogfood one bounded publish-change operation, exact replay, and publication
    response-loss recovery.
 3. Dogfood `repo_health`, plan-only `branch_tidy`, and `ci_diagnose` in ChatGPT.
-4. Add recovery ownership and checkpoint lineage for reservations that never settle.
+4. Wire the read-only resume-inspection receipt into live Control Room source
+   assembly, then add separately fenced authoritative resume command execution.
 5. Add a runner-backed exact-SHA branch delete/restore compensator before any
    branch-tidy apply mode; do not emulate CAS with REST read-then-delete.
 6. Instrument catalogue → policy → registration → invocation → admission →
