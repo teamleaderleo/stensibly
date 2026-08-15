@@ -3,6 +3,7 @@ export const operationWorkflowKinds = [
   "github_land_pr",
   "github_branch_compensation",
   "github_pull_request_compensation",
+  "github_repository_file_compensation",
 ] as const;
 
 export type OperationWorkflowKind = typeof operationWorkflowKinds[number];
