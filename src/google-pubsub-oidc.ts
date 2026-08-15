@@ -24,8 +24,12 @@ export class GooglePubSubAuthenticationError extends Error {
   }
 }
 
+interface GoogleJwk extends JsonWebKey {
+  kid: string;
+}
+
 interface CachedJwks {
-  keys: readonly JsonWebKey[];
+  keys: readonly GoogleJwk[];
   expiresAt: number;
 }
 
@@ -93,11 +97,18 @@ export class GooglePubSubOidcVerifier {
     } catch {
       throw new GooglePubSubAuthenticationError();
     }
-    const signed = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
-    const signature = base64Url(encodedSignature);
+    const signed = Uint8Array.from(
+      new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
+    ).buffer;
+    const signature = Uint8Array.from(base64Url(encodedSignature)).buffer;
     let verified = false;
     try {
-      verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", cryptoKey, signature, signed);
+      verified = await crypto.subtle.verify(
+        "RSASSA-PKCS1-v1_5",
+        cryptoKey,
+        signature,
+        signed,
+      );
     } catch {
       verified = false;
     }
@@ -105,7 +116,7 @@ export class GooglePubSubOidcVerifier {
     return Object.freeze({ issuer, audience: this.#audience, email: this.#serviceAccountEmail, subject });
   }
 
-  async #key(kid: string): Promise<JsonWebKey> {
+  async #key(kid: string): Promise<GoogleJwk> {
     const now = this.#now();
     if (!this.#cached || this.#cached.expiresAt <= now) this.#cached = await this.#loadJwks(now);
     let key = this.#cached.keys.find((candidate) => candidate.kid === kid);
@@ -131,9 +142,13 @@ export class GooglePubSubOidcVerifier {
     if (!Array.isArray(body.keys) || body.keys.length < 1 || body.keys.length > 32) {
       throw new GooglePubSubAuthenticationError();
     }
-    const keys = body.keys.map((key) => {
+    const keys = body.keys.map((key): GoogleJwk => {
       if (!key || typeof key !== "object" || Array.isArray(key)) throw new GooglePubSubAuthenticationError();
-      return Object.freeze({ ...(key as JsonWebKey) });
+      const candidate = key as JsonWebKey & { kid?: unknown };
+      if (typeof candidate.kid !== "string" || candidate.kid.length < 1 || candidate.kid.length > 512) {
+        throw new GooglePubSubAuthenticationError();
+      }
+      return Object.freeze({ ...candidate, kid: candidate.kid });
     });
     const maxAge = cacheMaxAge(response.headers.get("cache-control"));
     return { keys: Object.freeze(keys), expiresAt: now + maxAge * 1_000 };
