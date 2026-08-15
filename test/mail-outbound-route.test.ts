@@ -59,7 +59,7 @@ test("service keeps the pure envelope route neutral unless the caller chooses a 
   ));
   const routedMessage = provider.messagesForThread(routed.receipt.providerThreadId!)[0]!;
   expect(routedMessage.body).toStartWith(
-    `In Gmail, continue ${routed.thread.handle}. Then refresh the referenced GitHub state.\n`,
+    `Continue ${routed.thread.handle} via Gmail + GitHub only.\n`,
   );
   store.close();
 });
