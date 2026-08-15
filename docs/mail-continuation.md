@@ -43,10 +43,11 @@ hidden context. The newest material checkpoint should normally suffice.
 
 ## Mailbox attention
 
-Routine agent handoffs and checkpoints stay searchable, archived, and labeled in the
-`Stensibly` mailbox view; a narrower handoff label may be used where configured. Keep
-them out of the operator Inbox. The operator Inbox is for genuine human attention:
-review, decision, incident, or an explicit human request.
+Routine agent handoffs and checkpoints stay searchable under the `Stensibly` mailbox
+view, archived, and read. Keep the operator Inbox for unresolved work whose current
+next action explicitly requires a human. `review`, `decision`, and `incident` classify
+the work; `operatorAttentionRequired` separately controls human visibility while that
+human action is outstanding. Waiting and resolved work returns to the quiet view.
 
 ## Authority and recovery
 
