@@ -80,9 +80,22 @@ export class GmailUnattendedRuntime {
         lastSuccessfulReconciliationAt: now,
       });
       snapshot = await this.#intake.initialize(state);
-      return freezeResult(snapshot.revision, state.cursor.value, 0, 0, 0, false, null);
+      const archivedMessages = await this.#enforceQuietHandoffMailbox();
+      return freezeResult(
+        snapshot.revision,
+        state.cursor.value,
+        0,
+        0,
+        archivedMessages,
+        false,
+        null,
+      );
     }
-    return await this.#reconcile(snapshot, null, `gmail-periodic:${snapshot.state.cursor.value}:${this.#now()}`);
+    return await this.#reconcile(
+      snapshot,
+      null,
+      `gmail-periodic:${snapshot.state.cursor.value}:${this.#now()}`,
+    );
   }
 
   async receivePubSubEnvelope(envelope: unknown): Promise<GmailUnattendedResult> {
@@ -97,13 +110,20 @@ export class GmailUnattendedRuntime {
     if (!snapshot) {
       throw new Error("Gmail mailbox binding must be bootstrapped before push delivery");
     }
-    return await this.#reconcile(snapshot, notification, `gmail-push:${notification.notificationId}`);
+    return await this.#reconcile(
+      snapshot,
+      notification,
+      `gmail-push:${notification.notificationId}`,
+    );
   }
 
   async listRecentMaterialObservations(
     limit = 100,
   ): Promise<readonly DurableMailboxObservationProjection[]> {
-    return await this.#intake.listRecentMaterialObservations(this.#mailboxBindingId, limit);
+    return await this.#intake.listRecentMaterialObservations(
+      this.#mailboxBindingId,
+      limit,
+    );
   }
 
   async #reconcile(
@@ -126,7 +146,16 @@ export class GmailUnattendedRuntime {
       && result.observations.length === 0
       && canonicalState(result.state) === canonicalState(snapshot.state)
     ) {
-      return freezeResult(snapshot.revision, snapshot.state.cursor.value, 0, 0, 0, true, result.recoveryAction);
+      const archivedMessages = await this.#enforceQuietHandoffMailbox();
+      return freezeResult(
+        snapshot.revision,
+        snapshot.state.cursor.value,
+        0,
+        0,
+        archivedMessages,
+        true,
+        result.recoveryAction,
+      );
     }
     const committed = await this.#intake.commit({
       previous: snapshot,
@@ -134,32 +163,26 @@ export class GmailUnattendedRuntime {
       observations: result.observations,
       reconciliationId,
     });
-    const material = result.observations.filter((observation) =>
+    const materialObservations = result.observations.filter((observation) =>
       observation.wakeEligible && observation.loopDisposition === "ordinary"
-    );
-    let archivedMessages = 0;
-    const archiveCandidates = new Set(
-      result.observations
-        .filter((observation) =>
-          observation.eventType === "mail.message.created"
-          || observation.eventType === "mail.label.added"
-        )
-        .map((observation) => observation.providerMessageId)
-        .filter((value): value is string => value !== null),
-    );
-    for (const messageId of archiveCandidates) {
-      await this.#actions.archiveMessage(messageId);
-      archivedMessages += 1;
-    }
+    ).length;
+    const archivedMessages = await this.#enforceQuietHandoffMailbox();
     return freezeResult(
       committed.revision,
       committed.state.cursor.value,
       result.observations.length,
-      material.length,
+      materialObservations,
       archivedMessages,
       result.duplicateNotification,
       result.recoveryAction,
     );
+  }
+
+  async #enforceQuietHandoffMailbox(): Promise<number> {
+    return await this.#actions.archiveMessagesWithLabels([
+      this.#labelId,
+      "INBOX",
+    ]);
   }
 }
 
@@ -188,9 +211,13 @@ function canonicalState(value: unknown): string {
 }
 
 function epochMillisToIso(value: string): string {
-  if (!/^[1-9][0-9]{10,16}$/u.test(value)) throw new RangeError("Gmail watch expiration is invalid");
+  if (!/^[1-9][0-9]{10,16}$/u.test(value)) {
+    throw new RangeError("Gmail watch expiration is invalid");
+  }
   const milliseconds = Number(value);
-  if (!Number.isSafeInteger(milliseconds)) throw new RangeError("Gmail watch expiration is invalid");
+  if (!Number.isSafeInteger(milliseconds)) {
+    throw new RangeError("Gmail watch expiration is invalid");
+  }
   return new Date(milliseconds).toISOString();
 }
 
@@ -206,7 +233,12 @@ function identity(value: unknown, label: string): string {
 }
 
 function email(value: unknown): string {
-  if (typeof value !== "string" || value.trim() !== value || value.length > 320 || !/^[^\s@]+@[^\s@]+$/u.test(value)) {
+  if (
+    typeof value !== "string"
+    || value.trim() !== value
+    || value.length > 320
+    || !/^[^\s@]+@[^\s@]+$/u.test(value)
+  ) {
     throw new RangeError("Gmail mailbox address is invalid");
   }
   return value.toLowerCase();
