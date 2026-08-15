@@ -61,7 +61,8 @@ export interface RelayMeasurement {
   thirdWorkerSucceeded: boolean | null;
 }
 
-const HANDLE_PATTERN = /^STN-(HANDOFF|REVIEW|DECISION|INCIDENT):[A-Z0-9]{4,8}$/;
+// Short Crockford-like alphabet: omit 0/O and 1/I/L so a handle can be copied by eye.
+const HANDLE_PATTERN = /^STN-(HANDOFF|REVIEW|DECISION|INCIDENT):[A-HJ-KM-NP-Z2-9]{4,8}$/;
 const encoder = new TextEncoder();
 
 export function renderMaterialMailMessage(thread: MailThreadSnapshot): MaterialMailMessage {
@@ -131,9 +132,8 @@ export function compileMailDigest(
   const rows = threads.map((thread) => {
     const temperature = classifyMailThreadTemperature(thread, asOf, strandedAfterHours);
     const ageFrom = thread.actionableAt ?? thread.updatedAt;
-    const age = parseTimestamp(ageFrom, "actionableAt") > now
-      ? 0
-      : Math.floor((now - parseTimestamp(ageFrom, "actionableAt")) / 3_600_000);
+    const ageFromMs = parseTimestamp(ageFrom, thread.actionableAt === null ? "updatedAt" : "actionableAt");
+    const age = ageFromMs > now ? 0 : Math.floor((now - ageFromMs) / 3_600_000);
     return {
       handle: thread.handle,
       temperature,
@@ -166,17 +166,9 @@ export function compileMailDigest(
   });
 }
 
-export function gmailViewLabel(temperature: MailThreadTemperature): string {
-  switch (temperature) {
-    case "hot":
-    case "active":
-    case "stranded":
-      return "Stensibly/Attention";
-    case "waiting":
-      return "Stensibly/Waiting";
-    case "resolved":
-      return "Stensibly/Resolved";
-  }
+// Start with one provider view. The digest carries temperature; finer labels need dogfood proof.
+export function gmailViewLabel(_temperature: MailThreadTemperature): "Stensibly" {
+  return "Stensibly";
 }
 
 export function relayContextReduction(
