@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { GmailUnattendedRuntime } from "../src/gmail-unattended-runtime.ts";
 import {
   GMAIL_PUBSUB_PATH,
+  gmailReconciliationFailureCode,
   handleGmailPubSubRequest,
   runGmailScheduledReconciliation,
   type GmailUnattendedMount,
@@ -109,6 +110,23 @@ test("publishes only a fixed reconciliation failure code", async () => {
   expect(response?.headers.get("x-stensibly-gmail-failure"))
     .toBe("gmail_push_subscription_mismatch");
   expect(await response?.text()).toBe("Mailbox reconciliation failed");
+});
+
+test("classifies every live push-envelope admission boundary without retaining prose", () => {
+  const cases = [
+    ["Gmail Pub/Sub subscription is invalid", "gmail_push_subscription_invalid"],
+    ["Gmail Pub/Sub data must be base64url", "gmail_push_data_encoding_invalid"],
+    ["Gmail Pub/Sub data must be UTF-8 JSON", "gmail_push_data_json_invalid"],
+    ["Gmail Pub/Sub message ID is invalid", "gmail_push_message_id_invalid"],
+    ["Gmail notification history ID is invalid", "gmail_push_history_id_invalid"],
+    ["Gmail Pub/Sub publish time is invalid", "gmail_push_publish_time_invalid"],
+  ] as const;
+
+  for (const [message, code] of cases) {
+    expect(gmailReconciliationFailureCode(new RangeError(message))).toBe(code);
+  }
+  expect(gmailReconciliationFailureCode(new RangeError("private provider prose")))
+    .toBe("gmail_payload_or_invariant_invalid");
 });
 
 test("cancels an undeclared Gmail push body as soon as it exceeds 64 KiB", async () => {
