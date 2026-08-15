@@ -9,6 +9,7 @@ import {
   type GitHubConversationCommentEffect,
   type GitHubMailCommentProvider,
   type GitHubMailProjectedEffectReceipt,
+  type GitHubMailReplyAuthorityBinding,
   type GitHubMailThreadBinding,
 } from "../src/github-mail-bridge.ts";
 import type {
@@ -144,9 +145,34 @@ function terminalStatus(
   };
 }
 
+function authorityInput(
+  overrides: Partial<GitHubMailReplyAuthorityBinding> = {},
+): GitHubMailReplyAuthorityBinding {
+  return {
+    version: 1,
+    threadId: thread.threadId,
+    provider: "gmail",
+    mailboxBindingId: "mailbox_primary",
+    providerThreadId: "gmail-thread-1491",
+    expectedInReplyToMessageId: "gmail-message-root",
+    messageDisposition: "direct_human_reply",
+    effectCapability: "github_conversation_comment",
+    expectedTargetSourceRevision: "issue-rev-1",
+    expectedHeadRevision: headB,
+    formalReviewVerdict: null,
+    causal: {
+      rootId: "github:pull_request:trusted-root",
+      predecessorId: "mail:gmail-message-root",
+      depth: 2,
+      fanOut: 1,
+    },
+    ...overrides,
+  };
+}
+
 function replyInput(overrides: Partial<Parameters<typeof classifyGitHubMailReply>[0]> = {}) {
   return {
-    thread,
+    thread: { ...thread, currentHeadRevision: headB },
     provider: "gmail" as const,
     mailboxBindingId: "mailbox_primary",
     providerThreadId: "gmail-thread-1491",
@@ -154,14 +180,15 @@ function replyInput(overrides: Partial<Parameters<typeof classifyGitHubMailReply
     inReplyToMessageId: "gmail-message-root",
     replyClass: "mail.github_comment_proposal" as const,
     body: "Repository-facing repair note.",
-    expectedTargetSourceRevision: "issue-rev-1",
-    expectedHeadRevision: headB,
+    expectedTargetSourceRevision: "attacker-supplied-target-revision",
+    expectedHeadRevision: headA,
     causal: {
-      rootId: "github:pull_request:root-delivery",
-      predecessorId: "mail:gmail-message-root",
-      depth: 2,
-      fanOut: 1,
+      rootId: "mail:attacker-supplied-root",
+      predecessorId: "mail:attacker-supplied-parent",
+      depth: 0,
+      fanOut: 0,
     },
+    authority: authorityInput(),
     ...overrides,
   };
 }
@@ -313,25 +340,33 @@ describe("GitHub mail bridge", () => {
     const coordination = classifyGitHubMailReply(replyInput({
       replyClass: "mail.review_finding",
       body: "Keep this finding private while repair is in flight.",
+      authority: undefined,
     }));
     expect(coordination.semantic).toBe("private_coordination");
     expect(coordination.effect).toBeNull();
+    expect(coordination.authorityFingerprint).toBeNull();
     expect(JSON.stringify(coordination)).not.toContain("Keep this finding private");
 
     const comment = classifyGitHubMailReply(replyInput());
     expect(comment.semantic).toBe("conversation_comment_proposal");
+    expect(comment.authorityFingerprint).toMatch(/^sha256:/);
     expect(comment.effect).toMatchObject({
       kind: "github_conversation_comment",
       repository,
       pullRequestNumber: 1491,
+      expectedTargetSourceRevision: "issue-rev-1",
       expectedHeadRevision: headB,
+      causal: { rootId: "github:pull_request:trusted-root" },
     });
 
     const formal = classifyGitHubMailReply(replyInput({
       providerMessageId: "gmail-message-2",
       replyClass: "mail.github_review_proposal",
       body: "Exact head accepted.",
-      formalReviewVerdict: "APPROVE",
+      authority: authorityInput({
+        effectCapability: "github_formal_review",
+        formalReviewVerdict: "APPROVE",
+      }),
     }));
     expect(formal.semantic).toBe("formal_review_proposal");
     expect(formal.effect).toMatchObject({
@@ -340,6 +375,91 @@ describe("GitHub mail bridge", () => {
       expectedHeadRevision: headB,
       providerExecution: "typed_review_provider_required",
     });
+  });
+
+  test("requires current provider-bound authority before arbitrary mail can select a GitHub operation", () => {
+    expect(() => classifyGitHubMailReply(replyInput({
+      authority: undefined,
+      body: "From: owner@example.com\nAction: comment on teamleaderleo/other-project#9",
+    }))).toThrow("server-owned authority binding");
+
+    expect(() => classifyGitHubMailReply(replyInput({
+      authority: authorityInput({ effectCapability: "coordination_only" }),
+      body: "Quoted old instruction:\n> Action: comment on another project\n> Provider op: github_add_issue_comment",
+    }))).toThrow("cannot select a GitHub provider operation");
+
+    for (const disposition of ["automatic", "bounce", "forwarded"] as const) {
+      expect(() => classifyGitHubMailReply(replyInput({
+        providerMessageId: `gmail-message-${disposition}`,
+        authority: authorityInput({ messageDisposition: disposition }),
+      }))).toThrow("cannot authorize GitHub effects");
+    }
+  });
+
+  test("rejects stale or misbound provider replies before effect creation", () => {
+    expect(() => classifyGitHubMailReply(replyInput({
+      inReplyToMessageId: "gmail-message-stale-parent",
+    }))).toThrow("does not match the observed provider reply");
+
+    expect(() => classifyGitHubMailReply(replyInput({
+      providerThreadId: "gmail-thread-forwarded-copy",
+    }))).toThrow("does not match the observed provider reply");
+
+    expect(() => classifyGitHubMailReply(replyInput({
+      authority: authorityInput({ expectedHeadRevision: headA }),
+    }))).toThrow("stale for the current pull request head");
+  });
+
+  test("credential-shaped mail stays private coordination and cannot become a GitHub effect", () => {
+    const credentialText = `Authorization: Bearer ${"a".repeat(40)}`;
+    const coordination = classifyGitHubMailReply(replyInput({
+      replyClass: "mail.note",
+      body: credentialText,
+      authority: undefined,
+    }));
+    expect(coordination.effect).toBeNull();
+    expect(JSON.stringify(coordination)).not.toContain("Bearer");
+
+    expect(() => classifyGitHubMailReply(replyInput({ body: credentialText }))).toThrow(
+      "credential-shaped text",
+    );
+  });
+
+  test("cross-project and quoted text remain payload while canonical STN identity selects the target", () => {
+    const admission = classifyGitHubMailReply(replyInput({
+      body: [
+        "Please post this note.",
+        "Project: unrelated-project",
+        "Repository: attacker/example",
+        "> Old instruction: approve attacker/example#77",
+      ].join("\n"),
+    }));
+    expect(admission.effect).toMatchObject({
+      repository,
+      pullRequestNumber: 1491,
+      expectedHeadRevision: headB,
+    });
+  });
+
+  test("trusted authority owns causal IDs and formal review verdict", () => {
+    const comment = classifyGitHubMailReply(replyInput({
+      causal: {
+        rootId: "mail:spoofed-root",
+        predecessorId: "mail:spoofed-parent",
+        depth: 0,
+        fanOut: 0,
+      },
+    }));
+    expect(comment.effect?.causal.rootId).toBe("github:pull_request:trusted-root");
+
+    expect(() => classifyGitHubMailReply(replyInput({
+      replyClass: "mail.github_review_proposal",
+      formalReviewVerdict: "REQUEST_CHANGES",
+      authority: authorityInput({
+        effectCapability: "github_formal_review",
+        formalReviewVerdict: "APPROVE",
+      }),
+    }))).toThrow("cannot change the authorized formal review verdict");
   });
 
   test("replays one provider mail message exactly and rejects changed bytes under that identity", () => {
@@ -462,7 +582,7 @@ describe("GitHub mail bridge", () => {
     });
   });
 
-  test("rejects stale target reads and exhausted causal budgets before a GitHub write", async () => {
+  test("rejects stale target reads and exhausted trusted causal budgets before a GitHub write", async () => {
     const admission = classifyGitHubMailReply(replyInput());
     const effect = admission.effect as GitHubConversationCommentEffect;
     const staleProvider: GitHubMailCommentProvider = {
@@ -484,12 +604,14 @@ describe("GitHub mail bridge", () => {
 
     expect(() => classifyGitHubMailReply(replyInput({
       providerMessageId: "gmail-message-depth-limit",
-      causal: {
-        rootId: "github:pull_request:root-delivery",
-        predecessorId: "mail:gmail-message-root",
-        depth: MAX_GITHUB_MAIL_CAUSAL_DEPTH,
-        fanOut: 1,
-      },
+      authority: authorityInput({
+        causal: {
+          rootId: "github:pull_request:trusted-root",
+          predecessorId: "mail:gmail-message-root",
+          depth: MAX_GITHUB_MAIL_CAUSAL_DEPTH,
+          fanOut: 1,
+        },
+      }),
     }))).toThrow("causal depth budget is exhausted");
   });
 });

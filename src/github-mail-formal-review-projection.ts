@@ -6,6 +6,8 @@ import {
   type GitHubMailAttentionDecision,
   type GitHubMailBridgeSignal,
   type GitHubMailCausalContext,
+  type GitHubMailEffectCapability,
+  type GitHubMailMessageDisposition,
   type GitHubMailProjectedEffectReceipt,
   type GitHubMailThreadBinding,
 } from "./github-mail-bridge.js";
@@ -34,6 +36,23 @@ import {
 } from "./github-provider-validation.js";
 import { fingerprintCanonicalRequest } from "./idempotency-request-fingerprint.js";
 
+const credentialShapedMailTextPattern = /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/iu;
+
+export interface GitHubMailFormalReviewAuthorityBinding {
+  readonly version: typeof GITHUB_MAIL_BRIDGE_VERSION;
+  readonly threadId: string;
+  readonly provider: "gmail" | "outlook";
+  readonly mailboxBindingId: string;
+  readonly providerThreadId: string;
+  readonly expectedInReplyToMessageId: string;
+  readonly messageDisposition: GitHubMailMessageDisposition;
+  readonly effectCapability: GitHubMailEffectCapability;
+  readonly expectedTargetSourceRevision: string;
+  readonly expectedHeadRevision: string;
+  readonly formalReviewVerdict: GitHubPullRequestReviewAction;
+  readonly causal: GitHubMailCausalContext;
+}
+
 export interface GitHubMailFormalReviewInput {
   readonly thread: GitHubMailThreadBinding;
   readonly provider: "gmail" | "outlook";
@@ -47,6 +66,7 @@ export interface GitHubMailFormalReviewInput {
   readonly expectedHeadRevision: string;
   readonly formalReviewVerdict: GitHubPullRequestReviewAction;
   readonly causal: GitHubMailCausalContext;
+  readonly authority?: GitHubMailFormalReviewAuthorityBinding;
   readonly previousAdmission?: GitHubMailFormalReviewAdmission;
 }
 
@@ -80,6 +100,9 @@ export interface GitHubMailFormalReviewAdmission {
   readonly bodySha256: string;
   readonly bodyByteLength: number;
   readonly replyFingerprint: string;
+  readonly authorityFingerprint: string;
+  readonly messageDisposition: GitHubMailMessageDisposition;
+  readonly effectCapability: "github_formal_review";
   readonly replay: boolean;
   readonly effect: GitHubMailFormalReviewProposal;
   readonly containsRawMailBody: false;
@@ -122,10 +145,9 @@ export type GitHubMailAttentionWithFormalReviews = Omit<
 };
 
 /**
- * Formal-review-specific mail admission. It preserves the exact #1491 reply /
- * effect identity algorithm while extending the closed verdict vocabulary with
- * COMMENT. Target repository/PR comes only from the admitted STN thread; prose
- * has no target-selection channel.
+ * Formal-review-specific mail admission. Target repository/PR, provider ancestry,
+ * exact head, verdict, and causal lineage come from a server-owned authority
+ * binding. Mail body and visible sender data remain evidence only.
  */
 export function classifyGitHubFormalReviewMailReply(
   input: GitHubMailFormalReviewInput,
@@ -146,23 +168,36 @@ export function classifyGitHubFormalReviewMailReply(
     "Provider mail parent message ID",
     512,
   );
+  const authority = validateFormalReviewAuthority({
+    authority: input.authority,
+    thread,
+    provider,
+    mailboxBindingId,
+    providerThreadId,
+    inReplyToMessageId,
+  });
   const visibleBody = exactMailBody(input.body);
   const canonical = canonicalBody(visibleBody);
+  if (credentialShapedMailTextPattern.test(canonical)) {
+    throw new RangeError("Mail formal review body contains credential-shaped text");
+  }
   const bodySha256 = sha256(canonical);
   const bodyByteLength = byteLength(canonical);
-  const expectedTargetSourceRevision = hash(
-    input.expectedTargetSourceRevision,
-    "Expected GitHub target source revision",
-  );
-  const expectedHeadRevision = fullRevision(
-    input.expectedHeadRevision,
-    "Expected GitHub pull request head revision",
-  );
-  const verdict = reviewAction(input.formalReviewVerdict);
+  const expectedTargetSourceRevision = authority.binding.expectedTargetSourceRevision;
+  const expectedHeadRevision = authority.binding.expectedHeadRevision;
+  const verdict = authority.binding.formalReviewVerdict;
+  if (
+    input.expectedTargetSourceRevision !== expectedTargetSourceRevision
+    || input.expectedHeadRevision.toLowerCase() !== expectedHeadRevision
+    || input.formalReviewVerdict !== verdict
+    || stableJson(validateCausal(input.causal)) !== stableJson(authority.binding.causal)
+  ) {
+    throw new RangeError("Mail formal review semantics cannot override server-owned authority");
+  }
   if ((verdict === "REQUEST_CHANGES" || verdict === "COMMENT") && !canonical) {
     throw new RangeError(`${verdict} GitHub review proposal requires a body`);
   }
-  const causal = validateCausal(input.causal);
+  const causal = authority.binding.causal;
   const replyFingerprint = fingerprintCanonicalRequest({
     provider,
     mailboxBindingId,
@@ -176,6 +211,7 @@ export function classifyGitHubFormalReviewMailReply(
     expectedTargetSourceRevision,
     expectedHeadRevision,
     formalReviewVerdict: verdict,
+    authorityFingerprint: authority.fingerprint,
   });
   const replyId = `stn-mail-reply:${digestSuffix(fingerprintCanonicalRequest({
     provider,
@@ -208,6 +244,7 @@ export function classifyGitHubFormalReviewMailReply(
     verdict,
     bodySha256,
     bodyByteLength,
+    authorityFingerprint: authority.fingerprint,
   });
   const effect: GitHubMailFormalReviewProposal = deepFreeze({
     kind: "github_formal_review",
@@ -238,6 +275,9 @@ export function classifyGitHubFormalReviewMailReply(
     bodySha256,
     bodyByteLength,
     replyFingerprint,
+    authorityFingerprint: authority.fingerprint,
+    messageDisposition: authority.binding.messageDisposition,
+    effectCapability: "github_formal_review",
     replay,
     effect,
     containsRawMailBody: false,
@@ -509,6 +549,8 @@ function assertAdmissionBinding(
     admission.version !== GITHUB_MAIL_BRIDGE_VERSION
     || admission.replyClass !== "mail.github_review_proposal"
     || admission.semantic !== "formal_review_proposal"
+    || admission.effectCapability !== "github_formal_review"
+    || admission.messageDisposition !== "direct_human_reply"
     || admission.threadId !== thread.threadId
     || effect.threadId !== thread.threadId
     || normalizeGitHubRepository(effect.repository) !== thread.repository
@@ -517,6 +559,72 @@ function assertAdmissionBinding(
   ) {
     throw new RangeError("GitHub formal review mail admission is bound to another STN target");
   }
+}
+
+function validateFormalReviewAuthority(input: {
+  authority: GitHubMailFormalReviewAuthorityBinding | undefined;
+  thread: GitHubMailThreadBinding;
+  provider: "gmail" | "outlook";
+  mailboxBindingId: string;
+  providerThreadId: string;
+  inReplyToMessageId: string;
+}): { binding: GitHubMailFormalReviewAuthorityBinding; fingerprint: string } {
+  const raw = input.authority;
+  if (!raw || raw.version !== GITHUB_MAIL_BRIDGE_VERSION) {
+    throw new RangeError("Formal review mail requires a server-owned authority binding");
+  }
+  const binding = deepFreeze({
+    version: GITHUB_MAIL_BRIDGE_VERSION,
+    threadId: identity(raw.threadId, "Authorized STN thread ID", 240),
+    provider: raw.provider,
+    mailboxBindingId: identity(raw.mailboxBindingId, "Authorized mailbox binding ID", 240),
+    providerThreadId: identity(raw.providerThreadId, "Authorized provider mail thread ID", 512),
+    expectedInReplyToMessageId: identity(
+      raw.expectedInReplyToMessageId,
+      "Authorized provider mail parent message ID",
+      512,
+    ),
+    messageDisposition: raw.messageDisposition,
+    effectCapability: raw.effectCapability,
+    expectedTargetSourceRevision: hash(
+      raw.expectedTargetSourceRevision,
+      "Authorized GitHub target source revision",
+    ),
+    expectedHeadRevision: fullRevision(
+      raw.expectedHeadRevision,
+      "Authorized GitHub pull request head revision",
+    ),
+    formalReviewVerdict: reviewAction(raw.formalReviewVerdict),
+    causal: validateCausal(raw.causal),
+  });
+  if (binding.provider !== "gmail" && binding.provider !== "outlook") {
+    throw new RangeError("Authorized mail provider is invalid");
+  }
+  if (
+    binding.messageDisposition !== "direct_human_reply"
+    || binding.effectCapability !== "github_formal_review"
+  ) {
+    throw new RangeError("Automatic, bounce, forwarded, or coordination-only mail cannot authorize a formal GitHub review");
+  }
+  if (
+    binding.threadId !== input.thread.threadId
+    || binding.provider !== input.provider
+    || binding.mailboxBindingId !== input.mailboxBindingId
+    || binding.providerThreadId !== input.providerThreadId
+    || binding.expectedInReplyToMessageId !== input.inReplyToMessageId
+  ) {
+    throw new RangeError("Formal review authority does not match the observed provider reply");
+  }
+  if (
+    input.thread.currentHeadRevision === null
+    || binding.expectedHeadRevision !== input.thread.currentHeadRevision
+  ) {
+    throw new RangeError("Formal review mail authority is stale for the current pull request head");
+  }
+  return deepFreeze({
+    binding,
+    fingerprint: fingerprintCanonicalRequest(binding),
+  });
 }
 
 function validateThread(input: GitHubMailThreadBinding): GitHubMailThreadBinding {
