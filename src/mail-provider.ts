@@ -348,7 +348,7 @@ function exactMailboxAddress(value: unknown): string {
   ) {
     throw new TypeError("Mail provider mailbox address is invalid");
   }
-  return value.toLowerCase();
+  return value;
 }
 
 function exactMailBody(value: unknown): string {
