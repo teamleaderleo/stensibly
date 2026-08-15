@@ -23,6 +23,10 @@ export interface ReserveRunnerAdapterCommandInput {
   idempotencyKey: string;
 }
 
+export interface GetRunnerAdapterCommandInput {
+  idempotencyKey: string;
+}
+
 export interface RunnerAdapterCommandReservationRecord
   extends ReserveRunnerAdapterCommandInput {
   reservedAt: string;
@@ -53,6 +57,11 @@ export interface RunnerAdapterCommandSettlementRecord
   settledAt: string;
 }
 
+export interface RunnerAdapterCommandLookup {
+  command: RunnerAdapterCommandReservationRecord;
+  settlement: RunnerAdapterCommandSettlementRecord | null;
+}
+
 export type RunnerAdapterCommandSettlement = {
   outcome: "settled" | "replayed";
   settlement: RunnerAdapterCommandSettlementRecord;
@@ -73,6 +82,9 @@ export type RunnerAdapterCommandReservation =
   };
 
 export interface RunnerAdapterCommandLedger {
+  getRunnerAdapterCommand(
+    input: GetRunnerAdapterCommandInput,
+  ): Promise<RunnerAdapterCommandLookup | null>;
   reserveRunnerAdapterCommand(
     input: ReserveRunnerAdapterCommandInput,
   ): Promise<RunnerAdapterCommandReservation>;
@@ -95,10 +107,23 @@ export function runnerAdapterCommandLedger(
 ): RunnerAdapterCommandLedger | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<RunnerAdapterCommandLedger>;
-  return typeof candidate.reserveRunnerAdapterCommand === "function"
+  return typeof candidate.getRunnerAdapterCommand === "function"
+      && typeof candidate.reserveRunnerAdapterCommand === "function"
       && typeof candidate.settleRunnerAdapterCommand === "function"
     ? candidate as RunnerAdapterCommandLedger
     : null;
+}
+
+export function normalizeRunnerAdapterCommandLookupInput(
+  input: GetRunnerAdapterCommandInput,
+): GetRunnerAdapterCommandInput {
+  return Object.freeze({
+    idempotencyKey: boundedText(
+      input.idempotencyKey,
+      "Runner adapter command idempotency key",
+      240,
+    ),
+  });
 }
 
 export function normalizeRunnerAdapterCommandReservation(
@@ -134,6 +159,21 @@ export function normalizeRunnerAdapterCommandReservation(
       "Runner adapter command idempotency key",
       240,
     ),
+  });
+}
+
+export function admitRunnerAdapterCommandReservationRecord(
+  value: RunnerAdapterCommandReservationRecord,
+): RunnerAdapterCommandReservationRecord {
+  exactKeys(value, [
+    "project", "itemId", "runId", "runGeneration", "leaseGeneration", "actor",
+    "adapterId", "profileId", "requestFingerprint", "commandId", "commandFingerprint",
+    "idempotencyKey", "reservedAt",
+  ], "Runner adapter command reservation record");
+  const normalized = normalizeRunnerAdapterCommandReservation(value);
+  return Object.freeze({
+    ...normalized,
+    reservedAt: canonicalTimestamp(value.reservedAt, "Runner adapter command reservation time"),
   });
 }
 

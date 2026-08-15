@@ -1,12 +1,16 @@
 import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 import {
+  admitRunnerAdapterCommandReservationRecord,
   admitRunnerAdapterCommandSettlementRecord,
+  normalizeRunnerAdapterCommandLookupInput,
   normalizeRunnerAdapterCommandReservation,
   normalizeRunnerAdapterCommandSettlement,
   runnerAdapterCommandOutcomeSha256,
   runnerAdapterCommandStableRequest,
   RunnerAdapterCommandConflictError,
+  type GetRunnerAdapterCommandInput,
   type ReserveRunnerAdapterCommandInput,
+  type RunnerAdapterCommandLookup,
   type RunnerAdapterCommandReservation,
   type RunnerAdapterCommandReservationRecord,
   type RunnerAdapterCommandSettlement,
@@ -76,6 +80,20 @@ function ensureSettlementColumns(store: StensiblyStore): void {
   if (!columns.some((column) => column.name === "settled_at")) {
     store.db.exec("ALTER TABLE runner_adapter_commands ADD COLUMN settled_at TEXT");
   }
+}
+
+export function getSqliteRunnerAdapterCommand(
+  store: StensiblyStore,
+  rawInput: GetRunnerAdapterCommandInput,
+): RunnerAdapterCommandLookup | null {
+  ensureRunnerAdapterCommandSchema(store);
+  const input = normalizeRunnerAdapterCommandLookupInput(rawInput);
+  const row = reservationByIdempotencyKey(store, input.idempotencyKey);
+  if (!row) return null;
+  return Object.freeze({
+    command: parseReservation(row),
+    settlement: row.settlement_json === null ? null : parseSettlement(row),
+  });
 }
 
 export function reserveSqliteRunnerAdapterCommand(
@@ -214,20 +232,24 @@ function reservationByCommandId(
   `).get(commandId) ?? null;
 }
 
+function parseReservation(row: ReservationRow): RunnerAdapterCommandReservationRecord {
+  const request = JSON.parse(row.request_json) as ReserveRunnerAdapterCommandInput;
+  return admitRunnerAdapterCommandReservationRecord({ ...request, reservedAt: row.reserved_at });
+}
+
 function replay(row: ReservationRow, stableRequestJson: string): RunnerAdapterCommandReservation {
   if (row.stable_request_json !== stableRequestJson) {
     throw new RunnerAdapterCommandConflictError(
       "Runner adapter command idempotency key was already used for a different command",
     );
   }
-  const input = JSON.parse(row.request_json) as ReserveRunnerAdapterCommandInput;
-  return reservation(
-    "replayed",
-    false,
-    input,
-    row.reserved_at,
-    row.settlement_json === null ? null : parseSettlement(row),
-  );
+  const command = parseReservation(row);
+  return Object.freeze({
+    outcome: "replayed" as const,
+    dispatchAuthorized: false as const,
+    command,
+    settlement: row.settlement_json === null ? null : parseSettlement(row),
+  });
 }
 
 function requireAuthority(

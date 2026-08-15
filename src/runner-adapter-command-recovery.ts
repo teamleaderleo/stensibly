@@ -53,6 +53,12 @@ export type RunnerAdapterCommandRecoveryClaim = {
   claim: RunnerAdapterCommandRecoveryClaimRecord;
 };
 
+export interface RunnerAdapterCommandRecoveryLedger {
+  claimRunnerAdapterCommandRecovery(
+    input: ClaimRunnerAdapterCommandRecoveryInput,
+  ): Promise<RunnerAdapterCommandRecoveryClaim>;
+}
+
 export function normalizeRunnerAdapterCommandRecoveryInput(
   input: ClaimRunnerAdapterCommandRecoveryInput,
 ): ClaimRunnerAdapterCommandRecoveryInput {

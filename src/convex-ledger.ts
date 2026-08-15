@@ -48,10 +48,15 @@ import type {
 } from "./operation-receipt-contracts.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type {
+  GetRunnerAdapterCommandInput,
   ReserveRunnerAdapterCommandInput,
   RunnerAdapterCommandLedger,
   SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import type {
+  ClaimRunnerAdapterCommandRecoveryInput,
+  RunnerAdapterCommandRecoveryLedger,
+} from "./runner-adapter-command-recovery.js";
 import type {
   HeartbeatWorkRunInput,
   ListWorkRunsInput,
@@ -117,6 +122,7 @@ export class ConvexWorkLedger implements
   GitHubProjectContextLedger,
   RunnerLedger,
   RunnerAdapterCommandLedger,
+  RunnerAdapterCommandRecoveryLedger,
   WorkerEnrolmentProvider,
   WorkerEnrolmentResolver
 {
@@ -300,6 +306,13 @@ export class ConvexWorkLedger implements
     ) as Awaited<ReturnType<RunnerLedger["claimRunnerWork"]>>;
   }
 
+  async getRunnerAdapterCommand(input: GetRunnerAdapterCommandInput) {
+    return await this.client.query(
+      convexApi.runnerAdapterCommands.get,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerAdapterCommandLedger["getRunnerAdapterCommand"]>>;
+  }
+
   async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
     return await this.client.mutation(
       convexApi.runnerAdapterCommands.reserve,
@@ -312,6 +325,13 @@ export class ConvexWorkLedger implements
       convexApi.runnerAdapterCommands.settle,
       this.args(input),
     ) as Awaited<ReturnType<RunnerAdapterCommandLedger["settleRunnerAdapterCommand"]>>;
+  }
+
+  async claimRunnerAdapterCommandRecovery(input: ClaimRunnerAdapterCommandRecoveryInput) {
+    return await this.client.mutation(
+      convexApi.runnerAdapterCommandRecoveries.claim,
+      this.args(input),
+    ) as Awaited<ReturnType<RunnerAdapterCommandRecoveryLedger["claimRunnerAdapterCommandRecovery"]>>;
   }
 
   async enrolWorker(input: WorkerEnrolmentProviderInput): Promise<unknown> {

@@ -29,9 +29,14 @@ import {
 import { assertRunnerCommandAuthorityActiveV1 } from "./runner-command-authority.js";
 import type {
   RunnerAdapterCommandLedger,
+  RunnerAdapterCommandReservationRecord,
   RunnerAdapterCommandSettlementRecord,
 } from "./runner-adapter-command-contracts.js";
 import { admitRunnerAdapterCommandSettlementRecord } from "./runner-adapter-command-contracts.js";
+import type {
+  RunnerAdapterCommandRecoveryClaimRecord,
+  RunnerAdapterCommandRecoveryLedger,
+} from "./runner-adapter-command-recovery.js";
 import { runAuthorityFence } from "./authority-fence.js";
 import type { ClaimRunnerWorkInput, RunnerLedger } from "./runner-contracts.js";
 import type { ActorInput } from "./schemas.js";
@@ -43,7 +48,8 @@ export const RUNNER_ADAPTER_HOST_VERSION = "0.1.0";
 export type RunnerAdapterHostLedgerV1 =
   & WorkLedger
   & RunnerLedger
-  & RunnerAdapterCommandLedger;
+  & RunnerAdapterCommandLedger
+  & RunnerAdapterCommandRecoveryLedger;
 
 export interface RunnerAdapterHostOptionsV1 {
   ledger: RunnerAdapterHostLedgerV1;
@@ -72,11 +78,12 @@ export interface RunnerAdapterHostStartInputV1 {
 
 export interface RunnerAdapterHostExecutionV1 {
   version: typeof RUNNER_ADAPTER_HOST_V1;
-  disposition: "executed" | "already_dispatched" | "settled_replay";
+  disposition: "executed" | "already_dispatched" | "settled_replay" | "recovery_claimed";
   command: RunnerStartCommandV1 | null;
   observations: readonly RunnerObservationV1[];
   latestCheckpoint: RunnerExternalReferenceV1 | null;
   settlement: RunnerAdapterCommandSettlementRecord | null;
+  recovery: RunnerAdapterCommandRecoveryClaimRecord | null;
   run: WorkRun;
 }
 
@@ -140,6 +147,7 @@ export class RunnerAdapterHostV1 {
     input: RunnerAdapterHostStartInputV1,
   ): Promise<RunnerAdapterHostExecutionV1 | null> {
     const operationId = boundedIdentifier(input.operationId, "Runner host operation ID");
+    const correlationId = input.correlationId ?? null;
     const claim: ClaimRunnerWorkInput = {
       actor: this.#options.actor,
       runnerType: this.#options.descriptor.adapterId,
@@ -154,8 +162,98 @@ export class RunnerAdapterHostV1 {
     };
     const claimed = await this.#options.ledger.claimRunnerWork(claim);
     if (!claimed) return null;
+    assertRunBinding(claimed, this.#options);
 
+    const commandReceiptKey = hostIdempotencyKey("command", operationId, claimed.id);
+    const prior = await this.#options.ledger.getRunnerAdapterCommand({
+      idempotencyKey: commandReceiptKey,
+    });
     const run = await this.#options.ledger.getRun(claimed.id);
+
+    if (prior !== null) {
+      assertReplayRunIdentity(run, claimed, this.#options);
+      assertReservationBinding(prior.command, claimed, this.#options, commandReceiptKey);
+      const expectedRequestFingerprint = digest(
+        this.#reservationRequest(
+          claim,
+          operationId,
+          correlationId,
+          claimed,
+          prior.command.project,
+        ),
+      );
+      if (prior.command.requestFingerprint !== expectedRequestFingerprint) {
+        throw new RangeError(
+          "Runner adapter command idempotency key was already used for a different command",
+        );
+      }
+      const settlement = prior.settlement === null
+        ? null
+        : admitRunnerAdapterCommandSettlementRecord(prior.settlement);
+      if (
+        settlement !== null
+        && (
+          settlement.commandId !== prior.command.commandId
+          || settlement.commandFingerprint !== prior.command.commandFingerprint
+        )
+      ) {
+        throw new RangeError("Runner adapter command replay settlement changed command identity");
+      }
+      if (settlement !== null) {
+        return executionResult(
+          "settled_replay",
+          null,
+          [],
+          null,
+          settlement,
+          null,
+          run,
+        );
+      }
+      if (reservationAuthorityStillLive(run, prior.command, invocationTime(this.#options.now))) {
+        return executionResult(
+          "already_dispatched",
+          null,
+          [],
+          null,
+          null,
+          null,
+          run,
+        );
+      }
+      const recovery = await this.#options.ledger.claimRunnerAdapterCommandRecovery({
+        commandId: prior.command.commandId,
+        commandFingerprint: prior.command.commandFingerprint,
+        actor: this.#options.actor,
+        leaseSeconds: Math.min(this.#options.leaseSeconds, 3_600),
+        idempotencyKey: hostIdempotencyKey(
+          "recovery",
+          operationId,
+          prior.command.commandId,
+        ),
+      });
+      if (
+        recovery.claim.commandId !== prior.command.commandId
+        || recovery.claim.commandFingerprint !== prior.command.commandFingerprint
+        || recovery.claim.runId !== prior.command.runId
+        || recovery.claim.runGeneration !== prior.command.runGeneration
+        || recovery.claim.leaseGeneration !== prior.command.leaseGeneration
+        || recovery.claim.authorizesRedispatch !== false
+        || recovery.claim.authorizesResume !== false
+      ) {
+        throw new RangeError("Runner adapter command recovery changed reserved command identity");
+      }
+      return executionResult(
+        "recovery_claimed",
+        null,
+        [],
+        null,
+        null,
+        recovery.claim,
+        run,
+      );
+    }
+
     assertRunBinding(run, this.#options);
     if (
       run.status !== "starting"
@@ -166,12 +264,14 @@ export class RunnerAdapterHostV1 {
     }
     const detail = await this.#options.ledger.getItem(run.itemId);
     const project = detail.item.project;
-    const commandReceiptKey = hostIdempotencyKey("command", operationId, run.id);
+    const requestFingerprint = digest(
+      this.#reservationRequest(claim, operationId, correlationId, claimed, project),
+    );
     const command = await this.#buildCommand(
       operationId,
       run,
       project,
-      input.correlationId ?? null,
+      correlationId,
     );
     const commandFingerprint = digest(command);
     const reservation = await this.#options.ledger.reserveRunnerAdapterCommand({
@@ -183,9 +283,7 @@ export class RunnerAdapterHostV1 {
       actor: this.#options.actor,
       adapterId: command.adapterId,
       profileId: command.profileId,
-      requestFingerprint: digest(
-        this.#reservationRequest(claim, operationId, command, run, project),
-      ),
+      requestFingerprint,
       commandId: command.commandId,
       commandFingerprint,
       idempotencyKey: commandReceiptKey,
@@ -209,6 +307,7 @@ export class RunnerAdapterHostV1 {
         [],
         null,
         settlement,
+        null,
         run,
       );
     }
@@ -299,6 +398,7 @@ export class RunnerAdapterHostV1 {
       consumed.observations,
       consumed.latestCheckpoint,
       settlement.settlement,
+      null,
       consumed.run,
     );
   }
@@ -306,7 +406,7 @@ export class RunnerAdapterHostV1 {
   #reservationRequest(
     claim: ClaimRunnerWorkInput,
     operationId: string,
-    command: RunnerStartCommandV1,
+    correlationId: string | null,
     run: WorkRun,
     project: string,
   ) {
@@ -316,7 +416,7 @@ export class RunnerAdapterHostV1 {
       requestedProject: claim.project ?? null,
       requestedRunId: claim.runId ?? null,
       requestedExternalRunId: claim.externalRunId ?? null,
-      correlationId: command.correlationId,
+      correlationId,
       project,
       itemId: run.itemId,
       runId: run.id,
@@ -658,6 +758,53 @@ function assertRunBinding(
   }
 }
 
+function assertReplayRunIdentity(
+  run: WorkRun,
+  claimed: WorkRun,
+  options: Pick<NormalizedHostOptions, "descriptor" | "profile">,
+): void {
+  if (
+    run.id !== claimed.id
+    || run.itemId !== claimed.itemId
+    || run.runnerType !== options.descriptor.adapterId
+    || run.runnerProfile !== options.profile.id
+  ) {
+    throw new RangeError("Runner command replay no longer matches the durable run identity");
+  }
+}
+
+function assertReservationBinding(
+  command: RunnerAdapterCommandReservationRecord,
+  claimed: WorkRun,
+  options: Pick<NormalizedHostOptions, "descriptor" | "profile" | "actor">,
+  commandReceiptKey: string,
+): void {
+  if (
+    command.idempotencyKey !== commandReceiptKey
+    || command.itemId !== claimed.itemId
+    || command.runId !== claimed.id
+    || command.runGeneration !== claimed.generation
+    || command.leaseGeneration !== claimed.leaseGeneration
+    || command.actor.id !== options.actor.id
+    || command.adapterId !== options.descriptor.adapterId
+    || command.profileId !== options.profile.id
+  ) {
+    throw new RangeError("Runner adapter command reservation no longer matches the host claim");
+  }
+}
+
+function reservationAuthorityStillLive(
+  run: WorkRun,
+  command: RunnerAdapterCommandReservationRecord,
+  now: Date,
+): boolean {
+  return run.generation === command.runGeneration
+    && run.leaseGeneration === command.leaseGeneration
+    && run.leaseOwnerId === command.actor.id
+    && run.leaseExpiresAt !== null
+    && Date.parse(run.leaseExpiresAt) > now.getTime();
+}
+
 function serializeReference(reference: RunnerExternalReferenceV1): string {
   const serialized = stableJson(reference);
   if (serialized.length > 10_000) {
@@ -672,6 +819,7 @@ function executionResult(
   observations: readonly RunnerObservationV1[],
   latestCheckpoint: RunnerExternalReferenceV1 | null,
   settlement: RunnerAdapterCommandSettlementRecord | null,
+  recovery: RunnerAdapterCommandRecoveryClaimRecord | null,
   run: WorkRun,
 ): RunnerAdapterHostExecutionV1 {
   return Object.freeze({
@@ -681,6 +829,7 @@ function executionResult(
     observations: Object.freeze([...observations]),
     latestCheckpoint,
     settlement,
+    recovery,
     run,
   });
 }
