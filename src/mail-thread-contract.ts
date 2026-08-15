@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-
 export const mailThreadClasses = [
   "handoff",
   "review",
@@ -87,7 +85,7 @@ export function createMailThreadHandle(
 export function generateMailThreadHandle(
   threadClass: MailThreadClass,
   tokenLength = 6,
-  entropy: Uint8Array = randomBytes(tokenLength),
+  entropy: Uint8Array = secureMailThreadEntropy(tokenLength),
 ): MailThreadHandle {
   if (!Number.isInteger(tokenLength) || tokenLength < 4 || tokenLength > 8) {
     throw new RangeError("Mail thread handle length is invalid");
@@ -251,6 +249,12 @@ export function exactMailThreadSha256(value: unknown, label: string): string {
 
 export function exactMailDisplayText(value: unknown, label: string, max: number): string {
   return exactDisplayText(value, label, max);
+}
+
+function secureMailThreadEntropy(length: number): Uint8Array {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return bytes;
 }
 
 function exactThreadClass(value: unknown): MailThreadClass {
