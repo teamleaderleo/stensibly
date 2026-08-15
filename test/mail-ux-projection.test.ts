@@ -83,12 +83,12 @@ describe("mail UX projection", () => {
       attentionClass: "decision",
       operatorAttentionRequired: true,
     });
-    const waitingHuman = thread("STN-REVIEW:WAIT", {
+    const waitingHuman = thread("STN-REVIEW:WAXT", {
       attentionClass: "review",
       operatorAttentionRequired: true,
       state: "waiting",
     });
-    const resolvedIncident = thread("STN-INCIDENT:FIX2", {
+    const resolvedIncident = thread("STN-INCIDENT:FX22", {
       attentionClass: "incident",
       operatorAttentionRequired: true,
       state: "resolved",
