@@ -166,20 +166,43 @@ export function assertOperationWorkflowTransition(
   if (current.steps.length !== next.steps.length) {
     throw new RangeError("Operation workflow plan changed after reservation");
   }
+  if (current.terminalAt !== null) throw new RangeError("Terminal operation workflow cannot transition");
+
+  const cancellationTransition = current.cancellationRequestedAt === null
+    && next.cancellationRequestedAt !== null;
   let changed = 0;
+  let planned = 0;
   for (let index = 0; index < current.steps.length; index += 1) {
     const before = current.steps[index]!;
     const after = next.steps[index]!;
     assertStepIdentity(before, after);
+    if (before.state === "planned") planned += 1;
     if (stableJson(before) === stableJson(after)) continue;
     changed += 1;
+    if (cancellationTransition) {
+      if (before.state !== "planned" || after.state !== "cancelled") {
+        throw new RangeError("Operation workflow cancellation can only stop unscheduled steps");
+      }
+      assertStepTransition(before, after);
+      continue;
+    }
     assertStepTransition(before, after);
   }
-  if (changed !== 1) throw new RangeError("Operation workflow must transition exactly one step");
-  if (current.terminalAt !== null) throw new RangeError("Terminal operation workflow cannot transition");
+
+  if (cancellationTransition) {
+    if (next.cancellationRequestedAt !== next.updatedAt) {
+      throw new RangeError("Operation workflow cancellation time must equal its update time");
+    }
+    if (changed !== planned) {
+      throw new RangeError("Operation workflow cancellation must stop every unscheduled step");
+    }
+    return { current, next };
+  }
+
   if (current.cancellationRequestedAt !== next.cancellationRequestedAt) {
     throw new RangeError("Step transition cannot alter cancellation state");
   }
+  if (changed !== 1) throw new RangeError("Operation workflow must transition exactly one step");
   return { current, next };
 }
 
@@ -192,6 +215,7 @@ export function deriveOperationWorkflowState(
   if (states.has("compensation_failed")) return "escalated";
   if (states.has("compensating")) return "compensating";
   if (states.has("rejected")) {
+    if (cancellationRequested && steps.some((step) => step.state === "cancelled")) return "failed";
     if (steps.some((step) => step.state === "verified")) return "partially_completed";
     return steps.some((step) => step.state === "compensated") ? "compensated" : "failed";
   }
@@ -200,6 +224,13 @@ export function deriveOperationWorkflowState(
   }
   if (steps.every((step) => step.state === "verified")) return "succeeded";
   if (cancellationRequested && steps.every((step) => step.state === "planned" || step.state === "cancelled")) {
+    return "cancelled";
+  }
+  if (
+    cancellationRequested
+    && steps.some((step) => step.state === "cancelled")
+    && steps.every((step) => step.state === "verified" || step.state === "compensated" || step.state === "cancelled")
+  ) {
     return "cancelled";
   }
   if (steps.some((step) => step.state !== "planned")) return "running";

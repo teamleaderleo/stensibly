@@ -1,5 +1,6 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
+import { mailSemanticAdmissionProviderMessageIndex } from "./mailSemanticAdmissionIndexes";
 
 export const mailSemanticAdmissionTables = {
   mailSemanticAdmissions: defineTable({
@@ -15,7 +16,7 @@ export const mailSemanticAdmissionTables = {
     admissionJson: v.string(),
     createdAt: v.number(),
   })
-    .index("by_workspace_id_and_provider_and_mailbox_binding_id_and_provider_message_id", [
+    .index(mailSemanticAdmissionProviderMessageIndex, [
       "workspaceId",
       "provider",
       "mailboxBindingId",

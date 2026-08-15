@@ -16,12 +16,15 @@ import { GitHubRestActionsJobDetailAdapter } from "./github-rest-actions-job-det
 import { GitHubRestActionsRunAdapter } from "./github-rest-actions-run-adapter.js";
 import { GitHubRestCommitStatusAdapter } from "./github-rest-commit-status-adapter.js";
 import { GitHubRestPullRequestReviewThreadAdapter } from "./github-rest-pull-request-review-thread-adapter.js";
+import { GitHubRestRepositoryNavigationAdapter } from "./github-rest-repository-navigation-adapter.js";
 import type { WorkLedger } from "./ledger.js";
 import { projectAttachmentLedger } from "./project-attachment-ledger.js";
 
 export const hostedGitHubDelegatedReadTools = Object.freeze([
   "get_repo",
+  "list_directory",
   "fetch_file",
+  "resolve_ref",
   "get_pr_info",
   "get_pr_diff",
   "list_pull_request_review_threads",
@@ -70,6 +73,10 @@ interface HostedGitHubDelegatedReadConfig {
   jobDetailReadsEnabled: boolean;
 }
 
+const navigationTools = new Set<string>([
+  "list_directory",
+  "resolve_ref",
+]);
 const actionsRunTools = new Set<string>([
   "fetch_commit_workflow_runs",
   "fetch_workflow_run_jobs",
@@ -80,10 +87,11 @@ const actionsJobDetailTools = new Set<string>([
 ]);
 
 /**
- * Mounts a private eight-tool delegated-read service when the explicit hosted
- * flag and the complete GitHub App configuration are present. A separate exact
- * flag extends that declaration to the reviewed ten-tool job-detail surface.
- * Public MCP dispatch and discovery remain separately controlled.
+ * Mounts the guarded delegated-read service when the exact hosted flag and
+ * complete GitHub App configuration are present. The base declaration includes
+ * bounded repository navigation; a separate exact flag extends it with the two
+ * reviewed Actions job-detail reads. Public MCP dispatch and discovery remain
+ * separately controlled.
  */
 export function mountHostedGitHubDelegatedReadProviderFromEnv<
   T extends WorkLedger,
@@ -132,6 +140,9 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
     apiBaseUrl: config.apiBaseUrl,
     ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
   };
+  const navigationAdapter = new GitHubRestRepositoryNavigationAdapter(
+    adapterOptions,
+  );
   const pullRequestAdapter = new GitHubRestPullRequestReviewThreadAdapter(
     adapterOptions,
   );
@@ -143,7 +154,9 @@ export function mountHostedGitHubDelegatedReadProviderFromEnv<
   const adapter: GitHubDelegatedReadAdapter = Object.freeze({
     callReadTool: (
       input: Parameters<GitHubDelegatedReadAdapter["callReadTool"]>[0],
-    ) => input.tool === "get_commit_combined_status"
+    ) => navigationTools.has(input.tool)
+      ? navigationAdapter.callReadTool(input)
+      : input.tool === "get_commit_combined_status"
       ? statusAdapter.callReadTool(input)
       : actionsJobDetailTools.has(input.tool)
       ? actionsJobDetailAdapter

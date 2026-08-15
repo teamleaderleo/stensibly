@@ -1,5 +1,8 @@
 import { Hono } from "hono";
-import { assembleControlRoomResumeInspectionV1 } from "./control-room-resume-inspection.js";
+import {
+  assembleControlRoomResumeInspectionV1,
+  type ControlRoomResumeEvidenceSourceV1,
+} from "./control-room-resume-inspection.js";
 import { renderControlRoomResumeInspection } from "./control-room-resume-view.js";
 import {
   createHttpAuthMiddleware,
@@ -15,6 +18,7 @@ export function createControlRoomResumeInspectionRoutes(
   store: StensiblyStore,
   authenticator: ApiTokenAuthenticator,
   authOptions: HttpAuthOptions = { required: false },
+  currentEvidenceSource: ControlRoomResumeEvidenceSourceV1 | null = null,
 ): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
   app.use("*", createHttpAuthMiddleware(authenticator, authOptions));
@@ -25,7 +29,7 @@ export function createControlRoomResumeInspectionRoutes(
     const denied = requireHttpAccess(context, "read", project);
     if (denied) return denied;
     return context.html(renderControlRoomResumeInspection(
-      assembleControlRoomResumeInspectionV1(store, run.id),
+      assembleControlRoomResumeInspectionV1(store, run.id, currentEvidenceSource),
     ));
   });
 
@@ -35,7 +39,7 @@ export function createControlRoomResumeInspectionRoutes(
     const denied = requireHttpAccess(context, "read", project);
     if (denied) return denied;
     return context.json({
-      inspection: assembleControlRoomResumeInspectionV1(store, run.id),
+      inspection: assembleControlRoomResumeInspectionV1(store, run.id, currentEvidenceSource),
     });
   });
 
