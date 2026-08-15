@@ -33,7 +33,7 @@ describe("GitHub REST pull-request compensation adapter", () => {
         return Response.json(apiPullRequest(state), {
           headers: method === "PATCH" ? { "x-github-request-id": "PR:CLOSE:42" } : {},
         });
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     expect(await adapter.getPullRequestForCompensation({
@@ -86,7 +86,7 @@ describe("GitHub REST pull-request compensation adapter", () => {
       tokenProvider,
       fetch: (async () => {
         throw new Error("connection reset");
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
     await expect(transport.closePullRequest({
       repositoryFullName: repository,
@@ -96,7 +96,7 @@ describe("GitHub REST pull-request compensation adapter", () => {
 
     const unavailable = new GitHubRestPullRequestCompensationAdapter({
       tokenProvider,
-      fetch: (async () => Response.json({ message: "retry later" }, { status: 503 })) as typeof fetch,
+      fetch: (async () => Response.json({ message: "retry later" }, { status: 503 })) as unknown as typeof fetch,
     });
     await expect(unavailable.closePullRequest({
       repositoryFullName: repository,
@@ -113,7 +113,7 @@ describe("GitHub REST pull-request compensation adapter", () => {
           expiresAt: "2026-08-16T00:00:00.000Z",
         }),
       },
-      fetch: (async () => Response.json({ message: "forbidden" }, { status: 403 })) as typeof fetch,
+      fetch: (async () => Response.json({ message: "forbidden" }, { status: 403 })) as unknown as typeof fetch,
     });
     await expect(adapter.closePullRequest({
       repositoryFullName: repository,
@@ -137,7 +137,7 @@ describe("GitHub REST pull-request compensation adapter", () => {
           ...apiPullRequest("open").head,
           repo: { full_name: "teamleaderleo/other" },
         },
-      })) as typeof fetch,
+      })) as unknown as typeof fetch,
     });
     await expect(drift.getPullRequestForCompensation({
       repositoryFullName: repository,
@@ -154,7 +154,7 @@ describe("GitHub REST pull-request compensation adapter", () => {
         cancel() {
           cancelled = true;
         },
-      }), { status: 200 })) as typeof fetch,
+      }), { status: 200 })) as unknown as typeof fetch,
     });
     await expect(oversized.getPullRequestForCompensation({
       repositoryFullName: repository,
