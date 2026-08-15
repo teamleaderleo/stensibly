@@ -1,5 +1,6 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
+import { gmailMailboxDispositionTables } from "./gmailMailboxDispositionSchema";
 import { mailboxIntakeTables } from "./mailboxIntakeSchema";
 import { mailOutboundTables } from "./mailOutboundSchema";
 import { mailSemanticAdmissionTables } from "./mailSemanticAdmissionSchema";
@@ -9,6 +10,7 @@ export const runnerAdapterCommandRecoveryTables = {
   ...mailboxIntakeTables,
   ...mailSemanticAdmissionTables,
   ...mailOutboundTables,
+  ...gmailMailboxDispositionTables,
   ...outlookRuntimeTables,
   runnerAdapterCommandRecoveries: defineTable({
     workspaceId: v.id("workspaces"),
