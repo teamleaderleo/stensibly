@@ -430,12 +430,13 @@ export async function reconcileGmailMailboxDispositionEffect(input: {
     };
   }
   if (superseded) {
+    await input.effectStore.markSettled(effect.effectId, "noop");
     return {
       status: "superseded",
       effect,
       currentStateRevision: currentRevision,
-      priorEffectCleared: false,
-      recoveryAction: "reconcile_old_effect_before_current_state_effect",
+      priorEffectCleared: true,
+      recoveryAction: "apply_current_state_effect",
     };
   }
   return {
