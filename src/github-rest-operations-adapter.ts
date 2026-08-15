@@ -98,7 +98,8 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
       .slice(0, maximumBranches);
     const observedAt = timestamp(this.#now());
     const nowMs = Date.parse(observedAt);
-    const evaluated = await Promise.all(candidates.map(async (branch) => {
+    const evaluated: Array<GitHubBranchTidyPlan["candidates"][number]> = [];
+    for (const branch of candidates) {
       const [comparisonResponse, commitResponse] = await Promise.all([
         this.#json(
           "GET",
@@ -122,7 +123,7 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
       if (aheadBy > 0) reasons.push("unique_commits");
       if (ageDays < minimumAgeDays) reasons.push("too_recent");
       if (reasons.length === 0) reasons.push("merged_or_fully_contained");
-      return Object.freeze({
+      evaluated.push(Object.freeze({
         branch: branch.name,
         expectedSha: branch.sha,
         protected: branch.protected,
@@ -134,8 +135,8 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
         eligible: reasons.length === 1 && reasons[0] === "merged_or_fully_contained",
         reasons: Object.freeze(reasons),
         recovery: Object.freeze({ kind: "recreate_branch" as const, branch: branch.name, commitSha: branch.sha }),
-      });
-    }));
+      }));
+    }
     evaluated.sort((left, right) =>
       left.branch < right.branch ? -1 : left.branch > right.branch ? 1 : 0
     );
