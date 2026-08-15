@@ -14,24 +14,25 @@ function response(value: unknown, status = 200) {
 describe("GmailMailboxDispositionApiClient", () => {
   test("reads and mutates only the exact configured Gmail message", async () => {
     const calls: Array<{ url: string; method: string; body: string | null }> = [];
+    const fakeFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: typeof init?.body === "string" ? init.body : null });
+      if (method === "GET") {
+        return response({
+          id: "gmail_message_exact",
+          threadId: "gmail_thread_exact",
+          labelIds: ["SENT", "INBOX", "UNREAD"],
+        });
+      }
+      return response({ id: "gmail_message_exact" });
+    }) as typeof fetch;
     const client = new GmailMailboxDispositionApiClient({
       tokenProvider: { async getAccessToken() { return "token-for-exact-mailbox"; } },
       accountBinding: "gmail_operator_primary",
       mailboxAddress: "operator@example.com",
       stensiblyLabelId: "Label_6",
-      fetch: async (input, init) => {
-        const url = String(input);
-        const method = init?.method ?? "GET";
-        calls.push({ url, method, body: typeof init?.body === "string" ? init.body : null });
-        if (method === "GET") {
-          return response({
-            id: "gmail_message_exact",
-            threadId: "gmail_thread_exact",
-            labelIds: ["SENT", "INBOX", "UNREAD"],
-          });
-        }
-        return response({ id: "gmail_message_exact" });
-      },
+      fetch: fakeFetch,
     });
 
     const target = {
@@ -56,10 +57,12 @@ describe("GmailMailboxDispositionApiClient", () => {
     });
 
     expect(calls).toHaveLength(2);
-    expect(calls[0].url).toContain("/gmail/v1/users/me/messages/gmail_message_exact?");
-    expect(calls[0].url).not.toContain("messages?");
-    expect(calls[1].url).toContain("/gmail/v1/users/me/messages/gmail_message_exact/modify");
-    expect(JSON.parse(calls[1].body!)).toEqual({
+    const readCall = calls[0]!;
+    const mutateCall = calls[1]!;
+    expect(readCall.url).toContain("/gmail/v1/users/me/messages/gmail_message_exact?");
+    expect(readCall.url).not.toContain("messages?");
+    expect(mutateCall.url).toContain("/gmail/v1/users/me/messages/gmail_message_exact/modify");
+    expect(JSON.parse(mutateCall.body!)).toEqual({
       addLabelIds: ["Label_6"],
       removeLabelIds: ["INBOX", "UNREAD"],
     });
@@ -72,10 +75,10 @@ describe("GmailMailboxDispositionApiClient", () => {
       accountBinding: "gmail_operator_primary",
       mailboxAddress: "operator@example.com",
       stensiblyLabelId: "Label_6",
-      fetch: async () => {
+      fetch: (async () => {
         calls += 1;
         return response({});
-      },
+      }) as typeof fetch,
     });
 
     await expect(client.readMessageLabels({
@@ -115,7 +118,7 @@ describe("GmailMailboxDispositionApiClient", () => {
       accountBinding: "gmail_operator_primary",
       mailboxAddress: "operator@example.com",
       stensiblyLabelId: "Label_6",
-      fetch: async () => {
+      fetch: (async () => {
         providerCalls += 1;
         return providerCalls === 1
           ? response({ error: "unauthorized" }, 401)
@@ -124,7 +127,7 @@ describe("GmailMailboxDispositionApiClient", () => {
               threadId: "gmail_thread_exact",
               labelIds: ["Label_6"],
             });
-      },
+      }) as typeof fetch,
     });
 
     const snapshot = await client.readMessageLabels({
@@ -145,7 +148,7 @@ describe("GmailMailboxDispositionApiClient", () => {
       accountBinding: "gmail_operator_primary",
       mailboxAddress: "operator@example.com",
       stensiblyLabelId: "Label_6",
-      fetch: async () => { throw new Error("connection dropped"); },
+      fetch: (async () => { throw new Error("connection dropped"); }) as typeof fetch,
     });
     await expect(client.mutateMessageLabels({
       accountBinding: "gmail_operator_primary",
