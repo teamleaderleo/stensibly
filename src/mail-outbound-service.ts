@@ -112,6 +112,16 @@ export class MailProjectionReceiptMismatchError extends Error {
   }
 }
 
+export class MailDestinationBindingConflictError extends Error {
+  readonly thread: MailThreadRecord;
+
+  constructor(thread: MailThreadRecord) {
+    super("Mail provider destination changed for an existing canonical provider projection");
+    this.name = "MailDestinationBindingConflictError";
+    this.thread = thread;
+  }
+}
+
 export class MailOutboundService {
   readonly #store: MailThreadStore;
   readonly #provider: MailProvider;
@@ -151,6 +161,13 @@ export class MailOutboundService {
       references: command.references,
     });
 
+    const existingProjection = await this.#store.getProviderProjection(
+      thread.threadId,
+      binding.provider,
+      binding.accountBinding,
+    );
+    assertProjectionDestination(thread, existingProjection, binding);
+
     if (
       thread.currentMaterialFingerprint !== envelope.materialFingerprint
       || thread.resolutionCondition !== envelope.resolutionCondition
@@ -164,11 +181,6 @@ export class MailOutboundService {
       }));
     }
 
-    const existingProjection = await this.#store.getProviderProjection(
-      thread.threadId,
-      binding.provider,
-      binding.accountBinding,
-    );
     const effect = createEffect(thread, envelope, binding, this.#now());
 
     if (existingProjection?.latestSentFingerprint === envelope.materialFingerprint) {
@@ -292,6 +304,7 @@ export class MailOutboundService {
       binding.provider,
       binding.accountBinding,
     );
+    assertProjectionDestination(thread, projection, binding);
     const envelope = envelopeFromEffect(thread, effect);
 
     if (effect.state === "sent" || effect.state === "reconciled" || effect.state === "failed") {
@@ -448,6 +461,16 @@ function assertThreadMatchesCommand(
   }
 }
 
+function assertProjectionDestination(
+  thread: MailThreadRecord,
+  projection: MailProviderProjection | null,
+  binding: MailboxBinding,
+): void {
+  if (projection && projection.mailboxAddress !== binding.mailboxAddress) {
+    throw new MailDestinationBindingConflictError(thread);
+  }
+}
+
 function createEffect(
   thread: MailThreadRecord,
   envelope: MailOutboundEnvelope,
@@ -519,11 +542,15 @@ function projectionFromSend(
   if (existing && result.providerThreadId !== existing.providerThreadId) {
     throw new MailProviderAmbiguousFailure("mail_provider_reply_thread_changed");
   }
+  if (existing && existing.mailboxAddress !== binding.mailboxAddress) {
+    throw new MailProviderAmbiguousFailure("mail_provider_reply_destination_changed");
+  }
   return freezeMailProviderProjection({
     version: 1,
     threadId: thread.threadId,
     provider: binding.provider,
     accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
     providerThreadId: result.providerThreadId,
     rootProviderMessageId: existing?.rootProviderMessageId ?? result.providerMessageId,
     latestProviderMessageId: result.providerMessageId,
