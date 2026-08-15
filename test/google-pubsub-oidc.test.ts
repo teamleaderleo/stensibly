@@ -27,7 +27,7 @@ test("verifies RS256 audience and exact PubSub service-account identity", async 
   const fakeFetch = (async () => new Response(JSON.stringify({ keys: [publicJwk] }), {
     status: 200,
     headers: { "cache-control": "public, max-age=3600" },
-  })) as typeof fetch;
+  })) as unknown as typeof fetch;
   const verifier = new GooglePubSubOidcVerifier({
     audience,
     serviceAccountEmail: serviceAccount,
@@ -60,7 +60,7 @@ test("rejects a validly signed token for another service account", async () => {
     iat: Math.floor(now / 1000),
     exp: Math.floor(now / 1000) + 600,
   });
-  const fakeFetch = (async () => new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 })) as typeof fetch;
+  const fakeFetch = (async () => new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 })) as unknown as typeof fetch;
   const verifier = new GooglePubSubOidcVerifier({
     audience,
     serviceAccountEmail: serviceAccount,
