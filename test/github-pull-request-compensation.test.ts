@@ -376,13 +376,13 @@ function observation(
     updatedAt: state === "closed"
       ? "2026-08-15T08:10:00.000Z"
       : retained.updatedAt,
+    ...overrides,
   };
   const withoutRevision = { ...value } as any;
   delete withoutRevision.sourceRevision;
   return {
     ...value,
     sourceRevision: githubPullRequestSourceRevision(withoutRevision),
-    ...overrides,
   };
 }
 
