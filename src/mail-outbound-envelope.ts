@@ -47,6 +47,8 @@ interface AdmittedEnvelopeSemantics {
   version: 1;
   threadId: string;
   handle: string;
+  workspace: string;
+  project: string;
   threadClass: string;
   canonicalSubject: string;
   sourceIdentity: string;
@@ -115,6 +117,8 @@ function admitEnvelopeSemantics(
     version: 1,
     threadId: thread.threadId,
     handle: thread.handle,
+    workspace: thread.workspace,
+    project: thread.project,
     threadClass: thread.threadClass,
     canonicalSubject: thread.canonicalSubject,
     sourceIdentity: thread.sourceIdentity,
@@ -173,7 +177,7 @@ function renderBody(
     semantics.nextAction,
     "",
     `Handle: ${semantics.handle}`,
-    `Project: ${semantics.sourceIdentity.includes(":") ? semantics.sourceIdentity.split(":", 1)[0] ?? "stensibly" : "stensibly"}`,
+    `Project: ${semantics.project}`,
     `Subject: ${semantics.sourceObject}`,
   ];
   if (semantics.sourceRevision !== null) lines.push(`Revision: ${semantics.sourceRevision}`);
@@ -223,16 +227,7 @@ function admitReferences(
 }
 
 function exactReference(value: unknown): string {
-  if (
-    typeof value !== "string"
-    || value.length < 1
-    || value.length > 800
-    || value !== value.trim()
-    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(value)
-  ) {
-    throw new TypeError("Outbound mail source reference is invalid");
-  }
-  return value;
+  return exactMailDisplayText(value, "Outbound mail source reference", 800);
 }
 
 function exactThreadState(value: unknown): MailThreadState {
