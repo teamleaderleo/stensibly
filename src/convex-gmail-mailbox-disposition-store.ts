@@ -53,11 +53,20 @@ implements CurrentDurableStnMailboxStateReader, GmailMailboxDispositionEffectSto
     this.#workspace = workspaceSlug(options.workspace ?? "default");
   }
 
-  async putCurrentState(stateInput: CurrentDurableStnMailboxState): Promise<CurrentDurableStnMailboxState> {
+  async putCurrentState(
+    stateInput: CurrentDurableStnMailboxState,
+    expectedRevision?: string | null,
+  ): Promise<CurrentDurableStnMailboxState> {
     const state = freezeCurrentState(stateInput);
+    const args: Record<string, unknown> = { stateJson: JSON.stringify(state) };
+    if (expectedRevision !== undefined) {
+      args.expectedRevision = expectedRevision === null
+        ? null
+        : exact(expectedRevision, "Expected STN state revision", 320);
+    }
     const value = responseRecord(await this.#client.mutation(
       convexApi.gmailMailboxDisposition.putCurrentState,
-      this.#args({ stateJson: JSON.stringify(state) }),
+      this.#args(args),
     ), "Hosted Gmail disposition state write");
     return parseCurrentStateJson(value.stateJson);
   }
