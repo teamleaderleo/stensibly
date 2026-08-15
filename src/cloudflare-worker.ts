@@ -4,6 +4,12 @@ import {
   type OAuthRegistrationRateLimiter,
 } from "./mcp-oauth-registration-admission.js";
 import {
+  createGmailUnattendedMountFromEnv,
+  handleGmailPubSubRequest,
+  runGmailScheduledReconciliation,
+  type GmailUnattendedEnvironment,
+} from "./gmail-unattended-worker.js";
+import {
   observeWorkerRequest,
   type WorkerVersionReceipt,
 } from "./worker-observability.js";
@@ -14,7 +20,7 @@ export interface CloudflareWorkerVersionMetadata {
   timestamp?: string;
 }
 
-export interface CloudflareBindings {
+export interface CloudflareBindings extends GmailUnattendedEnvironment {
   CONVEX_URL: string;
   STENSIBLY_SERVICE_SECRET: string;
   STENSIBLY_WORKSPACE?: string;
@@ -48,8 +54,15 @@ export interface CloudflareBindings {
   CF_VERSION_METADATA?: CloudflareWorkerVersionMetadata;
 }
 
+interface WaitUntilContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
 const worker = {
   async fetch(request: Request, env: CloudflareBindings): Promise<Response> {
+    const gmailMount = createGmailUnattendedMountFromEnv(env);
+    const gmailResponse = await handleGmailPubSubRequest(request, gmailMount);
+    if (gmailResponse) return gmailResponse;
     return await observeWorkerRequest(
       request,
       async (observedRequest) => {
@@ -69,6 +82,16 @@ const worker = {
         workerVersion: workerVersionReceipt(env.CF_VERSION_METADATA),
       },
     );
+  },
+
+  async scheduled(
+    _controller: unknown,
+    env: CloudflareBindings,
+    context: WaitUntilContext,
+  ): Promise<void> {
+    const mount = createGmailUnattendedMountFromEnv(env);
+    if (!mount) return;
+    context.waitUntil(runGmailScheduledReconciliation(mount));
   },
 };
 
