@@ -187,7 +187,13 @@ export class GitHubRestRepositoryNavigationAdapter
     }
     const seen = new Set<string>();
     const entries = provider.payload.map((entry) => {
-      const parsed = directoryEntry(entry, path, admitted.repositoryFullName, this.#apiBaseUrl);
+      const parsed = directoryEntry(
+        entry,
+        path,
+        ref,
+        admitted.repositoryFullName,
+        this.#apiBaseUrl,
+      );
       if (seen.has(parsed.path)) {
         throw rejected(
           "github_delegated_provider_invalid_response",
@@ -316,6 +322,7 @@ export class GitHubRestRepositoryNavigationAdapter
 function directoryEntry(
   value: unknown,
   requestedPath: string,
+  requestedCommitSha: string,
   repositoryFullName: string,
   apiBaseUrl: string,
 ): Readonly<{
@@ -344,7 +351,12 @@ function directoryEntry(
   }
   const objectSha = commitSha(record.sha);
   if (typeof record.url === "string") {
-    verifyApiUrl(record.url, apiBaseUrl, contentsResourcePath(repositoryFullName, path));
+    verifyApiUrl(
+      record.url,
+      apiBaseUrl,
+      contentsResourcePath(repositoryFullName, path),
+      requestedCommitSha,
+    );
   }
   let size: number | null = null;
   if (type === "file" && record.size !== undefined) {
@@ -541,7 +553,12 @@ function encodedRepository(repository: string): string {
   return `${encodeURIComponent(owner!)}/${encodeURIComponent(name!)}`;
 }
 
-function verifyApiUrl(value: string, apiBaseUrl: string, expectedPath: string): void {
+function verifyApiUrl(
+  value: string,
+  apiBaseUrl: string,
+  expectedPath: string,
+  expectedRef?: string,
+): void {
   let url: URL;
   let base: URL;
   try {
@@ -553,12 +570,15 @@ function verifyApiUrl(value: string, apiBaseUrl: string, expectedPath: string): 
       "GitHub delegated provider returned an invalid API URL",
     );
   }
+  const expectedSearch = expectedRef === undefined
+    ? ""
+    : `?ref=${encodeURIComponent(expectedRef)}`;
   if (
     url.protocol !== base.protocol
     || url.host.toLowerCase() !== base.host.toLowerCase()
     || url.username
     || url.password
-    || url.search
+    || url.search !== expectedSearch
     || url.hash
     || url.pathname !== `${base.pathname.replace(/\/$/u, "")}${expectedPath}`
   ) {
@@ -654,8 +674,13 @@ function exactIdentity(value: unknown, label: string, maximum: number): string {
 }
 
 function exactCredentialReference(value: unknown): string {
-  if (typeof value !== "string" || !/^env:\/\/[A-Z0-9_]{1,200}$/u.test(value)) {
-    throw new RangeError("GitHub delegated credential reference is invalid");
+  if (
+    typeof value !== "string"
+    || !/^(?:env|secret):\/\/[A-Za-z0-9][A-Za-z0-9._/-]{0,231}$/u.test(value)
+  ) {
+    throw new RangeError(
+      "GitHub delegated credential reference must use env:// or secret://",
+    );
   }
   return value;
 }
