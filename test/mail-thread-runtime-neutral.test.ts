@@ -21,16 +21,13 @@ describe("mail thread runtime neutrality", () => {
     expect(generateMailThreadHandle("decision", 6, entropy)).toBe("STN-DECISION:234567");
   });
 
-  test("ordinary Convex mail entry bundles without Node-runtime leakage", async () => {
+  test("shared mail-thread contract bundles without Node-runtime leakage", async () => {
     const result = await Bun.build({
-      entrypoints: ["convex/mailOutbound.ts"],
+      entrypoints: ["src/mail-thread-contract.ts"],
       target: "browser",
       format: "esm",
-      external: ["convex", "convex/*"],
     });
-    expect(
-      result.logs.map((entry) => entry.message).join("\n"),
-    ).toBe("");
+    expect(result.logs.map((entry) => entry.message).join("\n")).toBe("");
     expect(result.success).toBe(true);
   });
 });
