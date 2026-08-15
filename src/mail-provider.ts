@@ -36,6 +36,7 @@ export interface MailProviderProjection {
   threadId: string;
   provider: string;
   accountBinding: string;
+  mailboxAddress: string;
   providerThreadId: string;
   rootProviderMessageId: string;
   latestProviderMessageId: string;
@@ -230,6 +231,7 @@ export function freezeMailProviderProjection(
       "Mail projection account binding",
       240,
     ),
+    mailboxAddress: exactMailboxAddress(input.mailboxAddress),
     providerThreadId: exactMailThreadIdentifier(
       input.providerThreadId,
       "Mail projection provider thread ID",
@@ -352,15 +354,11 @@ function exactMailboxAddress(value: unknown): string {
 }
 
 function exactMailBody(value: unknown): string {
-  if (
-    typeof value !== "string"
-    || value.length < 1
-    || Buffer.byteLength(value, "utf8") > 12 * 1024
-    || /\u0000/u.test(value)
-  ) {
+  const body = exactMailDisplayText(value, "Mail provider body", 12 * 1024);
+  if (Buffer.byteLength(body, "utf8") > 12 * 1024) {
     throw new TypeError("Mail provider body is invalid");
   }
-  return value;
+  return body;
 }
 
 function exactDeliveryResult(value: unknown): MailDeliveryResult {
