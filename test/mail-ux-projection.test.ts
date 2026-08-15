@@ -44,7 +44,7 @@ describe("mail UX projection", () => {
     expect(message.authorizesMutation).toBe(false);
   });
 
-  test("derives a tiny state label taxonomy from thread temperature", () => {
+  test("keeps thread temperature in the projection while Gmail starts with one view", () => {
     const hot = thread("STN-REVIEW:AAAA", {
       attentionClass: "review",
     });
@@ -65,38 +65,38 @@ describe("mail UX projection", () => {
     expect(classifyMailThreadTemperature(stranded, asOf)).toBe("stranded");
     expect(classifyMailThreadTemperature(resolved, asOf)).toBe("resolved");
 
-    expect(gmailViewLabel("hot")).toBe("Stensibly/Attention");
-    expect(gmailViewLabel("active")).toBe("Stensibly/Attention");
-    expect(gmailViewLabel("stranded")).toBe("Stensibly/Attention");
-    expect(gmailViewLabel("waiting")).toBe("Stensibly/Waiting");
-    expect(gmailViewLabel("resolved")).toBe("Stensibly/Resolved");
+    expect(gmailViewLabel("hot")).toBe("Stensibly");
+    expect(gmailViewLabel("active")).toBe("Stensibly");
+    expect(gmailViewLabel("stranded")).toBe("Stensibly");
+    expect(gmailViewLabel("waiting")).toBe("Stensibly");
+    expect(gmailViewLabel("resolved")).toBe("Stensibly");
   });
 
   test("digest keeps urgent and stranded work ahead of routine continuation", () => {
     const digest = compileMailDigest([
-      thread("STN-HANDOFF:ACT1", {
+      thread("STN-HANDOFF:ACT2", {
         title: "Routine continuation",
         updatedAt: "2026-08-15T06:15:00.000Z",
         actionableAt: "2026-08-15T06:15:00.000Z",
       }),
-      thread("STN-HANDOFF:OLD1", {
+      thread("STN-HANDOFF:XGD2", {
         title: "Stranded continuation",
         updatedAt: "2026-08-13T00:00:00.000Z",
         actionableAt: "2026-08-13T00:00:00.000Z",
       }),
-      thread("STN-REVIEW:REV1", {
+      thread("STN-REVIEW:REV2", {
         attentionClass: "review",
         title: "Old review",
         updatedAt: "2026-08-15T05:00:00.000Z",
         actionableAt: "2026-08-15T04:00:00.000Z",
       }),
-      thread("STN-DECISION:DEC1", {
+      thread("STN-DECISION:DEC3", {
         attentionClass: "decision",
         title: "New decision",
         updatedAt: "2026-08-15T06:00:00.000Z",
         actionableAt: "2026-08-15T05:30:00.000Z",
       }),
-      thread("STN-HANDOFF:DONE", {
+      thread("STN-HANDOFF:DNE4", {
         title: "Resolved handoff",
         state: "resolved",
         updatedAt: "2026-08-15T05:45:00.000Z",
@@ -106,11 +106,11 @@ describe("mail UX projection", () => {
     ], asOf);
 
     expect(digest.rows.map((row) => row.handle)).toEqual([
-      "STN-REVIEW:REV1",
-      "STN-DECISION:DEC1",
-      "STN-HANDOFF:OLD1",
-      "STN-HANDOFF:ACT1",
-      "STN-HANDOFF:DONE",
+      "STN-REVIEW:REV2",
+      "STN-DECISION:DEC3",
+      "STN-HANDOFF:XGD2",
+      "STN-HANDOFF:ACT2",
+      "STN-HANDOFF:DNE4",
     ]);
     expect(digest.counts).toEqual({
       hot: 2,
@@ -140,9 +140,9 @@ describe("mail UX projection", () => {
     expect(reduction.reductionRatio).toBeCloseTo(0.9733, 4);
   });
 
-  test("rejects ambiguous handles and inconsistent resolution state", () => {
+  test("rejects eye-confusing handles and inconsistent resolution state", () => {
     expect(() => renderMaterialMailMessage(thread("STN-HANDOFF:O0O0")))
-      .not.toThrow();
+      .toThrow("mail handle must be a canonical STN handle");
     expect(() => renderMaterialMailMessage(thread("handoff:q7mp")))
       .toThrow("mail handle must be a canonical STN handle");
     expect(() => renderMaterialMailMessage(thread("STN-HANDOFF:Q7MP", {
