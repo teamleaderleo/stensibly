@@ -182,6 +182,7 @@ export async function reconcileGmailMailbox(
   const expired = expirationMs !== null && expirationMs <= nowMs;
   const renewalDue = expirationMs === null || expirationMs - nowMs <= renewalWindowMs;
   let emitRecovered = workingState.subscription.health !== "healthy";
+  let renewalAdvancedCursor = false;
 
   if (expired && workingState.subscription.health === "healthy") {
     observations.push(subscriptionObservation({
@@ -241,6 +242,7 @@ export async function reconcileGmailMailbox(
     if (compareHistoryIds(renewedHistoryId, currentCursor) < 0) {
       throw new RangeError("Gmail renewed watch cursor regressed");
     }
+    renewalAdvancedCursor = compareHistoryIds(renewedHistoryId, currentCursor) > 0;
     workingState = replaceState(workingState, {
       subscription: {
         externalId: workingState.subscription.externalId,
@@ -256,7 +258,7 @@ export async function reconcileGmailMailbox(
     });
   }
 
-  if (notificationAlreadyCovered) {
+  if (notificationAlreadyCovered && !renewalAdvancedCursor) {
     workingState = replaceState(workingState, {
       subscription: {
         ...workingState.subscription,
