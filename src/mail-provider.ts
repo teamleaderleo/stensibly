@@ -92,6 +92,7 @@ export interface MailDeliveryReceipt {
   handle: string;
   provider: string;
   accountBinding: string;
+  mailboxAddress: string;
   attemptNumber: number;
   contentFingerprint: string;
   rfcMessageId: string;
@@ -112,6 +113,7 @@ export interface MailOutboundEffectRecord {
   handle: string;
   provider: string;
   accountBinding: string;
+  mailboxAddress: string;
   attemptNumber: number;
   contentFingerprint: string;
   rfcMessageId: string;
@@ -221,6 +223,9 @@ export function freezeMailProviderProjection(
   input: MailProviderProjection,
 ): MailProviderProjection {
   if (input.version !== 1) throw new TypeError("Mail provider projection version is invalid");
+  if (!Array.isArray(input.lastVerifiedReferences) || input.lastVerifiedReferences.length > 32) {
+    throw new TypeError("Mail provider projection references are invalid");
+  }
   const references = input.lastVerifiedReferences.map((value) => exactRfcMessageId(value));
   return Object.freeze({
     version: 1,
@@ -294,6 +299,7 @@ export function freezeMailDeliveryReceipt(
       "Mail receipt account binding",
       240,
     ),
+    mailboxAddress: exactMailboxAddress(input.mailboxAddress),
     attemptNumber: input.attemptNumber,
     contentFingerprint: exactMailThreadSha256(
       input.contentFingerprint,
