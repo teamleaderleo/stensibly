@@ -72,8 +72,8 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
       `${repoPath(repository)}/branches?per_page=100&page=1`,
       token.token,
       5,
+      maximumBranches + 1,
     );
-    if (branches.length > 500) throw new Error("GitHub branch tidy scan exceeds 500 branches");
     const pulls = await this.#pages(
       `${repoPath(repository)}/pulls?state=open&per_page=100&page=1`,
       pullToken.token,
@@ -247,7 +247,12 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
     });
   }
 
-  async #pages(path: string, token: string, maximumPages: number): Promise<unknown[]> {
+  async #pages(
+    path: string,
+    token: string,
+    maximumPages: number,
+    maximumItems?: number,
+  ): Promise<unknown[]> {
     const output: unknown[] = [];
     let next: string | null = `${this.#base}/${path}`;
     const template = new URL(next);
@@ -259,7 +264,13 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
       visited.add(next);
       const response = await this.#requestUrl("GET", next, token);
       if (!Array.isArray(response.payload)) throw new Error("GitHub operation page was invalid");
-      output.push(...response.payload);
+      if (maximumItems === undefined) {
+        output.push(...response.payload);
+      } else {
+        const remaining = maximumItems - output.length;
+        output.push(...response.payload.slice(0, Math.max(0, remaining)));
+        if (output.length >= maximumItems) return output;
+      }
       next = nextLink(response.link, this.#base, template, page);
     }
     return output;
