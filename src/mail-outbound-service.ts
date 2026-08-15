@@ -181,20 +181,7 @@ export class MailOutboundService {
       }));
     }
 
-    const effect = createEffect(thread, envelope, binding, this.#now());
-
-    if (existingProjection?.latestSentFingerprint === envelope.materialFingerprint) {
-      const durableEffect = await this.#store.getDeliveryEffect(effect.outboundEffectId);
-      if (!durableEffect) {
-        throw new MailProjectionReceiptMismatchError(thread, existingProjection);
-      }
-      return await this.#replayResult(
-        durableEffect,
-        thread,
-        envelope,
-        existingProjection,
-      );
-    }
+    let effect = createEffect(thread, envelope, binding, this.#now());
 
     const reservation = await this.#store.reserveDeliveryEffect(effect);
     if (reservation.outcome === "conflict") {
@@ -211,6 +198,7 @@ export class MailOutboundService {
         existingProjection,
       );
     }
+    effect = reservation.effect;
 
     const message = createProviderMessage(thread, envelope, effect, existingProjection);
     let providerResult: MailProviderSendResult;
