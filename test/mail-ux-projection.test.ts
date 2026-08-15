@@ -79,6 +79,14 @@ describe("mail UX projection", () => {
       attentionClass: "review",
       operatorAttentionRequired: false,
     });
+    const routineDecision = thread("STN-DECISION:D7C3", {
+      attentionClass: "decision",
+      operatorAttentionRequired: false,
+    });
+    const routineIncident = thread("STN-INCIDENT:C7D3", {
+      attentionClass: "incident",
+      operatorAttentionRequired: false,
+    });
     const humanDecision = thread("STN-DECISION:DEC3", {
       attentionClass: "decision",
       operatorAttentionRequired: true,
@@ -96,6 +104,18 @@ describe("mail UX projection", () => {
     });
 
     expect(gmailMailboxDisposition(routineReview)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "routine",
+    });
+    expect(gmailMailboxDisposition(routineDecision)).toEqual({
+      label: "Stensibly",
+      archive: true,
+      markRead: true,
+      reason: "routine",
+    });
+    expect(gmailMailboxDisposition(routineIncident)).toEqual({
       label: "Stensibly",
       archive: true,
       markRead: true,
