@@ -8,6 +8,7 @@ import {
 
 const now = "2026-08-15T12:00:00.000Z";
 const mailboxAddress = "operator@example.com";
+const subscription = "projects/stensibly/subscriptions/gmail-mailbox";
 
 function expiredState() {
   return createMailboxSubscriptionState({
@@ -37,8 +38,10 @@ function notification(historyId: string, messageId: string) {
       messageId,
       publishTime: "2026-08-15T11:59:58.000Z",
     },
+    subscription,
   }, {
     expectedMailboxAddress: mailboxAddress,
+    expectedSubscription: subscription,
     mailboxBindingId: "mailbox_operator_primary",
     receivedAt: now,
   });
