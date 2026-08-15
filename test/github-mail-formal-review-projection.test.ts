@@ -25,8 +25,8 @@ const head = "1111111111111111111111111111111111111111";
 const source = `sha256:${"2".repeat(64)}`;
 const thread: GitHubMailThreadBinding = {
   version: 1,
-  threadId: "STN-REVIEW:FORMAL1",
-  handle: "STN-REVIEW:FORMAL1",
+  threadId: "STN-REVIEW:F7RM",
+  handle: "STN-REVIEW:F7RM",
   project: "stensibly",
   repository: "teamleaderleo/stensibly",
   pullRequestNumber: 777,

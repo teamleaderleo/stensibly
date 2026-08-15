@@ -10,7 +10,7 @@ const revision = "d".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491_ci",
-  handle: "STN-INCIDENT:1491",
+  handle: "STN-INCIDENT:C7F9",
   project: "stensibly",
   repository,
   pullRequestNumber: 1491,
