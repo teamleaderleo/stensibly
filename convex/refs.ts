@@ -63,6 +63,18 @@ export const convexApi = {
     getEffect: queryRef("mailOutbound:getEffect"),
     getEffectByProviderMessage: queryRef("mailOutbound:getEffectByProviderMessage"),
   },
+  gmailMailboxDisposition: {
+    putCurrentState: mutationRef("gmailMailboxDisposition:putCurrentState"),
+    getCurrentState: queryRef("gmailMailboxDisposition:getCurrentState"),
+    recordSettledDelivery: mutationRef("gmailMailboxDisposition:recordSettledDelivery"),
+    getSettledDelivery: queryRef("gmailMailboxDisposition:getSettledDelivery"),
+    getEffect: queryRef("gmailMailboxDisposition:getEffect"),
+    findOutstanding: queryRef("gmailMailboxDisposition:findOutstanding"),
+    reserveEffect: mutationRef("gmailMailboxDisposition:reserveEffect"),
+    markReconciliationRequired: mutationRef("gmailMailboxDisposition:markReconciliationRequired"),
+    markSettled: mutationRef("gmailMailboxDisposition:markSettled"),
+    releasePreconditionRetry: mutationRef("gmailMailboxDisposition:releasePreconditionRetry"),
+  },
   workerEnrolments: {
     enrol: mutationRef("workerEnrolments:enrol"),
     heartbeat: mutationRef("workerEnrolments:heartbeat"),
