@@ -1,4 +1,7 @@
 import {
+  ConvexGmailMailboxDispositionStore,
+} from "./convex-gmail-mailbox-disposition-store.js";
+import {
   ConvexMailThreadStore,
   type MailOutboundConvexCaller,
 } from "./convex-mail-thread-store.js";
@@ -30,8 +33,14 @@ export function createHostedGmailOutboundRuntime(
     serviceSecret: options.convexServiceSecret,
     workspace: options.binding.workspace,
   });
+  const mailboxDispositionStore = new ConvexGmailMailboxDispositionStore({
+    client: options.convexClient,
+    serviceSecret: options.convexServiceSecret,
+    workspace: options.binding.workspace,
+  });
   return createHostedGmailOutboundService({
     store,
+    mailboxDispositionStore,
     tokenProvider: options.tokenProvider,
     gmailApiBaseUrl: options.gmailApiBaseUrl,
     fetch: options.fetch,
