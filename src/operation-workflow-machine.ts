@@ -106,6 +106,9 @@ export function reserveOperationWorkflowStep(
   if (workflow.state === "waiting_reconciliation") {
     throw new RangeError("Operation workflow requires reconciliation before dispatch");
   }
+  if (workflow.cancellationRequestedAt !== null) {
+    throw new RangeError("Operation workflow cancellation stops new provider dispatch");
+  }
   const index = workflow.steps.findIndex((step) => step.id === stepId);
   if (index < 0) throw new RangeError("Operation workflow step does not exist");
   const step = workflow.steps[index]!;
@@ -121,6 +124,32 @@ export function reserveOperationWorkflowStep(
     state: "dispatch_reserved",
     reservedAt,
   }, reservedAt);
+}
+
+export function requestOperationWorkflowCancellation(
+  workflowInput: OperationWorkflow,
+  requestedAt: string,
+): OperationWorkflow {
+  const workflow = admitOperationWorkflow(workflowInput);
+  if (workflow.terminalAt !== null) {
+    throw new RangeError("Terminal operation workflow cannot be cancelled");
+  }
+  if (workflow.cancellationRequestedAt !== null) return workflow;
+  const steps = workflow.steps.map((step) => step.state === "planned"
+    ? { ...step, state: "cancelled" as const }
+    : step);
+  const state = deriveOperationWorkflowState(steps, true);
+  const terminal = terminalStates.has(state);
+  return admitOperationWorkflow({
+    ...workflow,
+    revision: workflow.revision + 1,
+    state,
+    steps,
+    cancellationRequestedAt: requestedAt,
+    updatedAt: requestedAt,
+    terminalAt: terminal ? requestedAt : null,
+    recovery: { nextAction: recoveryForState(state) },
+  });
 }
 
 export function settleOperationWorkflowStep(
