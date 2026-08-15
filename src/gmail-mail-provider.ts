@@ -48,6 +48,7 @@ export interface GmailOutboundClient {
 
 export class GmailMailProvider implements MailProvider {
   readonly provider = "gmail";
+  readonly rfcMessageIdMode = "caller_assigned" as const;
   readonly #client: GmailOutboundClient;
   readonly #now: () => string;
 
@@ -64,7 +65,7 @@ export class GmailMailProvider implements MailProvider {
     messageInput: MailProviderMessage,
   ): Promise<MailProviderSendResult> {
     const binding = this.#binding(bindingInput);
-    const message = freezeMailProviderMessage(messageInput);
+    const message = this.#message(messageInput);
     if (message.inReplyTo !== null || message.references.length !== 0) {
       throw new MailProviderDefiniteFailure("gmail_root_has_reply_ancestry");
     }
@@ -78,7 +79,7 @@ export class GmailMailProvider implements MailProvider {
   ): Promise<MailProviderSendResult> {
     const binding = this.#binding(bindingInput);
     const projection = freezeMailProviderProjection(projectionInput);
-    const message = freezeMailProviderMessage(messageInput);
+    const message = this.#message(messageInput);
     if (projection.provider !== "gmail" || projection.accountBinding !== binding.accountBinding) {
       throw new MailProviderDefiniteFailure("gmail_projection_binding_mismatch");
     }
@@ -86,7 +87,8 @@ export class GmailMailProvider implements MailProvider {
       throw new MailProviderDefiniteFailure("gmail_reply_subject_changed");
     }
     if (
-      message.inReplyTo !== projection.latestRfcMessageId
+      projection.latestRfcMessageId === null
+      || message.inReplyTo !== projection.latestRfcMessageId
       || message.references.at(-1) !== projection.latestRfcMessageId
     ) {
       throw new MailProviderDefiniteFailure("gmail_reply_ancestry_mismatch");
@@ -98,7 +100,7 @@ export class GmailMailProvider implements MailProvider {
     bindingInput: MailboxBinding,
     input: {
       outboundEffectId: string;
-      rfcMessageId: string;
+      rfcMessageId: string | null;
       expectedProviderThreadId: string | null;
     },
   ): Promise<MailProviderDeliveryLookup> {
@@ -108,6 +110,9 @@ export class GmailMailProvider implements MailProvider {
       "Gmail reconciliation outbound effect ID",
       240,
     );
+    if (input.rfcMessageId === null) {
+      throw new MailProviderDefiniteFailure("gmail_reconciliation_requires_rfc_message_id");
+    }
     const rfcMessageId = exactRfcMessageId(input.rfcMessageId);
     const expectedProviderThreadId = input.expectedProviderThreadId === null
       ? null
@@ -167,7 +172,7 @@ export class GmailMailProvider implements MailProvider {
 
   async #dispatch(
     binding: MailboxBinding,
-    message: MailProviderMessage,
+    message: MailProviderMessage & { rfcMessageId: string },
     providerThreadId: string | null,
   ): Promise<MailProviderSendResult> {
     const raw = buildGmailRawMessage(binding, message);
@@ -208,6 +213,14 @@ export class GmailMailProvider implements MailProvider {
     }
     return binding;
   }
+
+  #message(input: MailProviderMessage): MailProviderMessage & { rfcMessageId: string } {
+    const message = freezeMailProviderMessage(input);
+    if (message.rfcMessageId === null) {
+      throw new MailProviderDefiniteFailure("gmail_requires_caller_assigned_rfc_message_id");
+    }
+    return message as MailProviderMessage & { rfcMessageId: string };
+  }
 }
 
 export function buildGmailRawMessage(
@@ -219,6 +232,9 @@ export function buildGmailRawMessage(
     throw new TypeError("Gmail raw message requires a Gmail mailbox binding");
   }
   const message = freezeMailProviderMessage(messageInput);
+  if (message.rfcMessageId === null) {
+    throw new TypeError("Gmail raw message requires a caller-assigned RFC Message-ID");
+  }
   const headers = [
     `To: ${binding.mailboxAddress}`,
     `Subject: ${encodeHeaderValue(message.subject)}`,
