@@ -295,6 +295,7 @@ export class MailOutboundService {
       || thread.threadId !== effect.threadId
       || effect.provider !== binding.provider
       || effect.accountBinding !== binding.accountBinding
+      || effect.mailboxAddress !== binding.mailboxAddress
     ) {
       throw new MailDeliveryConflictError(effect);
     }
@@ -482,6 +483,7 @@ function createEffect(
     threadId: thread.threadId,
     provider: binding.provider,
     accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
     contentFingerprint: envelope.materialFingerprint,
   }));
   const hex = digest.slice("sha256:".length);
@@ -492,6 +494,7 @@ function createEffect(
     handle: thread.handle,
     provider: binding.provider,
     accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
     attemptNumber: 1,
     contentFingerprint: envelope.materialFingerprint,
     rfcMessageId: `<stn.${hex}@mail.stensibly.com>`,
@@ -574,6 +577,7 @@ function sentReceipt(
     handle: effect.handle,
     provider: effect.provider,
     accountBinding: effect.accountBinding,
+    mailboxAddress: effect.mailboxAddress,
     attemptNumber: effect.attemptNumber,
     contentFingerprint: effect.contentFingerprint,
     rfcMessageId: effect.rfcMessageId,
@@ -609,6 +613,7 @@ function ambiguousReceipt(
     handle: effect.handle,
     provider: effect.provider,
     accountBinding: effect.accountBinding,
+    mailboxAddress: effect.mailboxAddress,
     attemptNumber: effect.attemptNumber,
     contentFingerprint: effect.contentFingerprint,
     rfcMessageId: effect.rfcMessageId,
@@ -634,6 +639,7 @@ function failedReceipt(
     handle: effect.handle,
     provider: effect.provider,
     accountBinding: effect.accountBinding,
+    mailboxAddress: effect.mailboxAddress,
     attemptNumber: effect.attemptNumber,
     contentFingerprint: effect.contentFingerprint,
     rfcMessageId: effect.rfcMessageId,
