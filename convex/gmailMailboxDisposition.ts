@@ -26,7 +26,11 @@ const encoder = new TextEncoder();
 type ReadCtx = QueryContext;
 
 export const putCurrentState = mutation({
-  args: { ...serviceArgs, stateJson: v.string() },
+  args: {
+    ...serviceArgs,
+    stateJson: v.string(),
+    expectedRevision: v.optional(v.union(v.string(), v.null())),
+  },
   handler: async (ctx, args) => {
     const workspace = await requiredWorkspace(ctx, args.serviceSecret, args.workspace);
     const state = admitCurrentStateJson(args.stateJson);
@@ -41,10 +45,20 @@ export const putCurrentState = mutation({
       const current = admitCurrentStateJson(existing.stateJson);
       if (current.revision === state.revision) {
         if (stableJson(current) !== stateJson) throw new Error("GMAIL_DISPOSITION_STATE_REVISION_CONFLICT");
-        return { stateJson: existing.stateJson, duplicate: true };
+        return { stateJson: existing.stateJson, duplicate: true, retainedCurrent: true };
       }
+      if (args.expectedRevision === undefined) {
+        return { stateJson: existing.stateJson, duplicate: true, retainedCurrent: true };
+      }
+      if (
+        args.expectedRevision === null
+        || current.revision !== identifier(args.expectedRevision, "Expected STN state revision", 320)
+      ) throw new Error("GMAIL_DISPOSITION_STATE_CAS_CONFLICT");
       await ctx.db.patch(existing._id, { revision: state.revision, stateJson, updatedAt: Date.now() });
-      return { stateJson, duplicate: false };
+      return { stateJson, duplicate: false, retainedCurrent: false };
+    }
+    if (args.expectedRevision !== undefined && args.expectedRevision !== null) {
+      throw new Error("GMAIL_DISPOSITION_STATE_CAS_CONFLICT");
     }
     const now = Date.now();
     await ctx.db.insert("gmailMailboxDispositionStates", {
@@ -55,7 +69,7 @@ export const putCurrentState = mutation({
       createdAt: now,
       updatedAt: now,
     });
-    return { stateJson, duplicate: false };
+    return { stateJson, duplicate: false, retainedCurrent: false };
   },
 });
 
