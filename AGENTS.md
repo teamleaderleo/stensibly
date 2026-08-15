@@ -40,6 +40,14 @@ Before substantive repository work:
 7. Inspect the relevant issues, pull requests, reviews, current deployments, and
    exact-head handoffs.
 
+## Mail continuation bootstrap
+
+For mail-based continuation, read [`docs/mail-continuation.md`](docs/mail-continuation.md)
+before provider lookup. Source-explicit launch wording controls the first lookup; when
+it names Gmail, search Gmail for the exact `STN-*` handle first. Refresh referenced
+GitHub state before acting. Ordinary relay chats use official mail and GitHub surfaces
+and keep the Stensibly developer connector out.
+
 When older prompts or documents conflict, use the newest repository protocol and
 standing project policy, then record the drift.
 
