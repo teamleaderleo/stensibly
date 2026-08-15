@@ -8,7 +8,7 @@ This is the read-only fresh-chat path for prompts such as:
 - `Take my highest-value eligible Stensibly review.`
 - `Read the latest Stensibly digest and continue one useful lane.`
 
-The selector treats Gmail as a bounded checkpoint index and GitHub as the source that must be refreshed before a checkpoint can become eligible. Mail never authorizes a repository operation.
+The selector treats Gmail as a bounded checkpoint index. Current disposition can come from the strongest current evidence, while a GitHub reread newer than the mail checkpoint remains a mandatory pre-action guard. Mail carries continuation and zero repository authority.
 
 ## Bounded Gmail discovery
 
@@ -19,28 +19,30 @@ in:inbox subject:"[STN-" -in:trash -in:spam
 label:Stensibly subject:"[STN-" -in:trash -in:spam
 ```
 
-Use a small result cap for each query, merge by provider message identity, extract the stable `STN-*` handle, and keep only the newest checkpoint per handle. Drafts are human workspaces and do not enter routine selection.
+Use a small result cap for each query, merge by provider message identity, extract the stable `STN-*` handle, and keep only the newest checkpoint per handle. Drafts are human workspaces and stay outside routine selection.
 
-Archived messages may remain searchable or labeled. They do not become operator work merely because they exist: a current GitHub reread must classify the newest checkpoint as `actionable` or `stranded` before it is selectable.
+Archived messages may remain searchable or labeled. A current disposition must classify the newest checkpoint as `actionable` or `stranded` before it is selectable, so archived history alone never becomes operator work.
 
 For a requested class, filter after newest-handle collapse. `oldest_actionable_handoff` admits handoffs; `highest_value_eligible_review` admits reviews; `useful_lane` admits all four attention classes.
 
-## Current-source gate
+## Current-evidence gate
 
-Before fetching any candidate body, reread the checkpoint's referenced GitHub object and record a bounded readback newer than the mail checkpoint:
+Before fetching any candidate body, record current evidence newer than the mail checkpoint and a GitHub reread newer than that checkpoint:
 
 ```text
 actionable  current executable action exists
 stranded    unresolved executable recovery exists after the quiet threshold
 waiting     external prerequisite or another owner must move first
-resolved    resolution already exists in current GitHub state
+resolved    checkpoint resolution already exists in current evidence
 superseded  a newer lane/current outcome replaced this checkpoint
 unknown     current evidence cannot classify safely
 ```
 
-`actionable` and `stranded` are eligible. The other dispositions stay out of action selection. A source readback older than the mail checkpoint is rejected.
+`actionable` and `stranded` are eligible. The other dispositions stay out of action selection. A stale disposition readback is rejected. A stale GitHub readback is rejected independently, even when Gmail or another current source proves the disposition.
 
-Only after deterministic selection does the worker fetch the selected Gmail body. `selectedNeedsBodyFetch` remains true until that happens. `readyForAction` becomes true only when the selected body has been fetched. If the body reveals a stricter or different current source than the metadata/readback used for selection, reread GitHub again before acting.
+This separation is important for provider-oriented handoffs. A Gmail-thread verification can become `resolved` because current Gmail evidence satisfies its resolution condition, while the worker still refreshes the referenced GitHub issue/PR before taking that provider action.
+
+Only after deterministic selection does the worker fetch the selected Gmail body. `selectedNeedsBodyFetch` remains true until that happens. `readyForAction` becomes true only when the selected body has been fetched. If the body reveals a stricter or different current source than the metadata/readback used for selection, refresh that source and GitHub again before acting.
 
 ## Deterministic ordering
 
@@ -50,31 +52,45 @@ Only after deterministic selection does the worker fetch the selected Gmail body
 
 `useful_lane` uses the same value ordering, then attention class `incident > decision > review > handoff`, then stranded ahead of equally ranked fresh work, then age and stable identity.
 
-A digest email is optional. If a bounded search finds no persisted Stensibly digest, compile the same read-only useful-lane projection from current material checkpoints; do not expand the mailbox merely to manufacture a digest.
+A digest email is optional. If a bounded search finds no persisted Stensibly digest, compile the same read-only useful-lane projection from current material checkpoints; keep the mailbox-wide history outside the query.
 
 ## Live Gmail dogfood — 2026-08-15
 
-The connected mailbox had roughly nine thousand Inbox messages, while the Stensibly label surfaces were tens of messages. The labels also changed during the run as another lane advanced mail, so provider label membership is treated as a discovery view rather than durable work state.
+The connected mailbox had roughly nine thousand Inbox messages, while the Stensibly label surfaces were tens of messages. Label membership changed during the run as concurrent mail lanes advanced, so provider labels are discovery views and the selector refreshes them.
 
-Current checkpoint outcomes after GitHub reread:
+The final label refresh returned 17 messages / 7 threads under `Stensibly` and 9 messages / 2 threads under `Stensibly/Handoffs`. A separate bounded Inbox query then surfaced a new two-message `STN-HANDOFF:6X7N` thread that arrived during this implementation pass and had not yet been moved into the Stensibly view.
+
+Current checkpoint outcomes after source refresh and dogfood action:
 
 - `STN-HANDOFF:K8R4` — `waiting`: the source-first fresh-chat relay is accepted; native GitHub reply-by-email remains blocked until an authentic GitHub notification reaches the canonical Gmail mailbox. Its newest Gmail reply contains recursive quoted ancestry, so rejecting it before body fetch saves substantial context.
 - `STN-HANDOFF:Q7MP` — `superseded`: the compact exact-handle UX slice merged and this work moved to the broader-entrypoint lane.
+- `STN-HANDOFF:6X7N` — `resolved`: it arrived live during the run. After refreshing #1492 and draft PR #1497, the selected body asked only to verify exact-handle search returned the root plus material update in one Gmail provider thread. The bounded search had both message IDs under thread `1a0042906fe7ad02`, satisfying the checkpoint resolution.
 - `STN-REVIEW:7K3R` — `resolved`: GitHub already contains the exact repository-facing comment proposed by the Gmail message.
-- `STN-REVIEW:R7MK` — `actionable`, high value: PR #1487 remains open/draft at `11273c03a9726ed67be392ebe72763b4453cd2af`, diverged from current main by 10 ahead / 3 behind in the observed comparison, and its exact-head CI failed in the Bun-test step. The useful action is inspect the failing evidence and repair/rebase before any land decision.
+- `STN-REVIEW:R7MK` — `actionable`, high value: PR #1487 remains open/draft at `11273c03a9726ed67be392ebe72763b4453cd2af`, diverged from refreshed main by 10 ahead / 4 behind, and its exact-head CI failed in the Bun-test step. The useful action is inspect the failing evidence and repair/rebase before any land decision.
 
-No persisted `Stensibly digest` message existed in the mailbox during this run. The useful-lane fallback therefore selects the same R7MK repair from the current checkpoint set.
+No persisted `Stensibly digest` message existed in the mailbox during this run. The useful-lane fallback therefore selects the R7MK repair from current checkpoint evidence.
 
 Observed broad-entrypoint results:
 
 ```text
-oldest actionable handoff       -> none
+oldest actionable handoff       -> STN-HANDOFF:6X7N when it raced into Inbox
+                                  -> one useful verification action; now resolved
+                                  -> immediate rerun selects none
 highest-value eligible review   -> STN-REVIEW:R7MK
 digest/useful-lane fallback     -> STN-REVIEW:R7MK
 ```
 
-For the selected review, full-body retrieval cost is one Gmail message and 1,318 UTF-8 body bytes. The broad prompt reaches a useful current-source action in one turn and produced zero wrong selections in this dogfood run. Search metadata/snippets are index results and are tracked separately from full-body context bytes.
+Independent useful-action costs from the live run:
+
+```text
+entrypoint                       body messages   body bytes   turns   wrong selections
+oldest actionable handoff       1               1,665        1       0
+highest-value eligible review   1               1,318        1       0
+digest/useful-lane fallback     1               1,318        1       0
+```
+
+The 1,665-byte handoff body included quoted ancestry; after its resolution, future selection rejects it before any body fetch. Search metadata/snippets are index results and are tracked separately from full-body context bytes.
 
 ## Fence
 
-This module is a pure read-only projection. It performs no Gmail mutation, GitHub mutation, responsibility acceptance, approval, merge, deploy, or other provider effect. Provider operations still require their existing current-state and authority paths.
+This module is a pure read-only projection. It performs zero Gmail mutation, GitHub mutation, responsibility acceptance, approval, merge, deploy, or other provider effect. Provider operations continue through their existing current-state and authority paths.
