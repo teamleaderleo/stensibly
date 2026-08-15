@@ -38,7 +38,7 @@ function decodeRaw(raw: string): string {
 }
 
 describe("Gmail mail provider", () => {
-  test("creates a raw MIME thread then replies through exact Gmail thread identity and RFC ancestry", async () => {
+  test("creates a raw MIME thread then replies through exact Gmail thread identity and RFC ancestry without quoting prior body content", async () => {
     const sends: Array<{ raw: string; threadId?: string }> = [];
     const client: GmailOutboundClient = {
       async sendRaw(input) {
@@ -106,6 +106,8 @@ describe("Gmail mail provider", () => {
     expect(replyMime).toContain(`In-Reply-To: ${rootMessage.rfcMessageId}\r\n`);
     expect(replyMime).toContain(`References: ${rootMessage.rfcMessageId}\r\n`);
     expect(replyMime).toContain(`Message-ID: ${replyMessage.rfcMessageId}\r\n`);
+    expect(replyMime).toContain("Candidate repaired.");
+    expect(replyMime).not.toContain("Candidate ready.");
   });
 
   test("treats a lost or malformed Gmail send response as ambiguous", async () => {
