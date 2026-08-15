@@ -130,8 +130,8 @@ export function registerGitHubCapabilityTools(
     "github_call_tool",
     {
       description: jobDetailEnabled
-        ? "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, exact-run job metadata, bounded workflow-job steps, and bounded workflow-job text logs. Artifacts and writes remain unavailable."
-        : "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one file at an immutable commit, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata. Steps, logs, and artifacts remain unavailable.",
+        ? "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one bounded directory at an immutable commit, one file at an immutable commit, exact fully-qualified branch/tag ref resolution, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, exact-run job metadata, bounded workflow-job steps, and bounded workflow-job text logs. Artifacts and writes remain unavailable."
+        : "Call one currently enabled guarded GitHub read through the project's accepted repository attachment and hosted GitHub App binding. The public subset includes repository metadata, one bounded directory at an immutable commit, one file at an immutable commit, exact fully-qualified branch/tag ref resolution, exact pull-request metadata, bounded pull-request diff or patch text, bounded pull-request review threads, exact combined commit status, exact-commit workflow runs, and exact-run job metadata. Steps, logs, artifacts, and writes remain unavailable.",
       inputSchema: {
         project: projectSchema(),
         repository: repositorySchema(),
@@ -139,8 +139,15 @@ export function registerGitHubCapabilityTools(
         arguments: z.union([
           z.object({}).strict(),
           z.object({
+            path: z.string().max(4_096),
+            ref: z.string().regex(/^[a-f0-9]{40}$/),
+          }).strict(),
+          z.object({
             path: z.string().min(1).max(4_096),
             ref: z.string().regex(/^[a-f0-9]{40}$/),
+          }).strict(),
+          z.object({
+            ref: z.string().min(12).max(240).regex(/^refs\/(?:heads|tags)\/[^\s]+$/),
           }).strict(),
           z.object({
             pr_number: z.number().int().min(1),
