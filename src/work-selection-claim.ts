@@ -116,7 +116,6 @@ export function compileWorkSelectionRecommendation(input: {
   };
   const workFingerprint = fingerprintCanonicalRequest(workIdentity);
   const semantics = {
-    version: WORK_SELECTION_RECOMMENDATION_VERSION,
     selectedHandle: input.selectedHandle,
     ...workIdentity,
     workFingerprint,
