@@ -4,10 +4,14 @@ import type {
   GmailMailboxDispositionEffect,
   GmailMailboxDispositionEffectRecord,
   GmailMailboxDispositionEffectStore,
+  GmailMailboxDispositionReconciliationPhase,
   GmailMailboxDispositionReserveResult,
+  GmailMailboxDispositionSettledOutcome,
 } from "../src/gmail-mailbox-disposition-effect.ts";
 import type { MailDeliveryReceipt } from "../src/mail-provider.ts";
 
+const providerThreadId = "thread_receipt_bound";
+const providerMessageId = "message_receipt_bound";
 const receipt: MailDeliveryReceipt = {
   version: 1,
   outboundEffectId: "mail_effect_receipt_bound",
@@ -20,8 +24,8 @@ const receipt: MailDeliveryReceipt = {
   contentFingerprint: "b".repeat(64),
   rfcMessageId: "<receipt-bound@stensibly.local>",
   providerRequestId: "request_receipt_bound",
-  providerThreadId: "thread_receipt_bound",
-  providerMessageId: "message_receipt_bound",
+  providerThreadId,
+  providerMessageId,
   attemptedAt: "2026-08-15T07:20:00.000Z",
   result: "sent",
   failureClass: null,
@@ -49,12 +53,18 @@ class OneEffectStore implements GmailMailboxDispositionEffectStore {
     return { status: "reserved" };
   }
 
-  async markReconciliationRequired(effectId: string, phase: any) {
+  async markReconciliationRequired(
+    effectId: string,
+    phase: GmailMailboxDispositionReconciliationPhase,
+  ) {
     if (!this.record || this.record.effect.effectId !== effectId) throw new Error("missing effect");
     this.record = { ...this.record, status: "reconciliation_required", reconciliationPhase: phase };
   }
 
-  async markSettled(effectId: string, outcome: any) {
+  async markSettled(
+    effectId: string,
+    outcome: GmailMailboxDispositionSettledOutcome,
+  ) {
     if (!this.record || this.record.effect.effectId !== effectId) throw new Error("missing effect");
     this.record = {
       ...this.record,
@@ -97,8 +107,8 @@ describe("receipt-bound Gmail mailbox disposition consumer", () => {
           expect(input).toEqual({
             accountBinding: receipt.accountBinding,
             mailboxAddress: receipt.mailboxAddress,
-            providerThreadId: receipt.providerThreadId,
-            providerMessageId: receipt.providerMessageId,
+            providerThreadId,
+            providerMessageId,
           });
           return {
             source: "gmail_message_label_snapshot",
@@ -112,8 +122,8 @@ describe("receipt-bound Gmail mailbox disposition consumer", () => {
           mutations += 1;
           expect(input.accountBinding).toBe(receipt.accountBinding);
           expect(input.mailboxAddress).toBe(receipt.mailboxAddress);
-          expect(input.providerThreadId).toBe(receipt.providerThreadId);
-          expect(input.providerMessageId).toBe(receipt.providerMessageId);
+          expect(input.providerThreadId).toBe(providerThreadId);
+          expect(input.providerMessageId).toBe(providerMessageId);
           expect(input.addLabelIds).toEqual(["Label_6"]);
           expect(input.removeLabelIds).toEqual(["INBOX", "UNREAD"]);
           for (const label of input.addLabelIds) labels.add(label);
@@ -124,12 +134,13 @@ describe("receipt-bound Gmail mailbox disposition consumer", () => {
     });
 
     expect(result.status).toBe("applied");
+    if (result.status !== "applied") throw new Error("expected applied disposition");
     expect(result.effect.binding).toMatchObject({
       stnThreadId: receipt.threadId,
       accountBinding: receipt.accountBinding,
       mailboxAddress: receipt.mailboxAddress,
-      providerThreadId: receipt.providerThreadId,
-      providerMessageId: receipt.providerMessageId,
+      providerThreadId,
+      providerMessageId,
     });
     expect(result.effect.authorizesMailSend).toBe(false);
     expect(labels).toEqual(new Set(["SENT", "Label_6"]));
