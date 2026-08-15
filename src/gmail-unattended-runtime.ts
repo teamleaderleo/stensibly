@@ -39,6 +39,7 @@ export interface GmailUnattendedRuntimeOptions {
   outboundProviderMessageLookup?: (
     providerMessageId: string,
   ) => Promise<GmailOutboundProviderMessageDisposition>;
+  knownOutboundProviderMessageIds?: () => Promise<ReadonlySet<string>>;
   materialObservationDrain?: Pick<
     HostedMailboxMaterialObservationDrain,
     "drainObservationIds" | "drainRecent"
@@ -70,6 +71,7 @@ export class GmailUnattendedRuntime {
   readonly #outboundProviderMessageLookup:
     | ((providerMessageId: string) => Promise<GmailOutboundProviderMessageDisposition>)
     | undefined;
+  readonly #knownOutbound: (() => Promise<ReadonlySet<string>>) | undefined;
   readonly #materialObservationDrain:
     | Pick<HostedMailboxMaterialObservationDrain, "drainObservationIds" | "drainRecent">
     | undefined;
@@ -87,6 +89,7 @@ export class GmailUnattendedRuntime {
       ? null
       : identity(options.pushBindingGeneration, "Gmail push binding generation");
     this.#outboundProviderMessageLookup = options.outboundProviderMessageLookup;
+    this.#knownOutbound = options.knownOutboundProviderMessageIds;
     this.#materialObservationDrain = options.materialObservationDrain;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
@@ -223,12 +226,7 @@ export class GmailUnattendedRuntime {
       && observations.length === 0
       && canonicalState(nextState) === canonicalState(snapshot.state)
     ) {
-      return await this.#finish(
-        snapshot,
-        [],
-        true,
-        result.recoveryAction,
-      );
+      return await this.#finish(snapshot, [], true, result.recoveryAction);
     }
 
     let committed: MailboxIntakeSnapshot;
@@ -256,12 +254,7 @@ export class GmailUnattendedRuntime {
           watchRenewalDue(winner.state, this.#now()),
         );
         if (canonicalState(winnerState) === canonicalState(winner.state)) {
-          return await this.#finish(
-            winner,
-            [],
-            duplicateNotification,
-            null,
-          );
+          return await this.#finish(winner, [], duplicateNotification, null);
         }
         committed = await this.#intake.commit({
           previous: winner,
@@ -269,12 +262,7 @@ export class GmailUnattendedRuntime {
           observations: [],
           reconciliationId: `${reconciliationIdValue}:winner-health`,
         });
-        return await this.#finish(
-          committed,
-          [],
-          duplicateNotification,
-          null,
-        );
+        return await this.#finish(committed, [], duplicateNotification, null);
       }
 
       const retryNow = this.#now();
@@ -401,12 +389,14 @@ export class GmailUnattendedRuntime {
     const rawNextState = createMailboxSubscriptionState({
       ...catchUp.state,
       coverage: "continuous",
-      subscription: {
-        ...catchUp.state.subscription,
-        health: "recovering",
-        recoveryReason: "push_transport_unverified",
-        healthGeneration: this.#pushBindingGeneration,
-      },
+      subscription: this.#pushBindingGeneration === null
+        ? catchUp.state.subscription
+        : {
+            ...catchUp.state.subscription,
+            health: "recovering",
+            recoveryReason: "push_transport_unverified",
+            healthGeneration: this.#pushBindingGeneration,
+          },
       lastNotificationId: notification?.notificationId
         ?? catchUp.state.lastNotificationId,
       lastSuccessfulReconciliationAt: now,
@@ -419,7 +409,11 @@ export class GmailUnattendedRuntime {
     );
     const observations = Object.freeze([
       ...snapshotObservations,
-      ...filterRecoveredObservations(preparedCatchUp, nextState),
+      ...filterRecoveredObservations(
+        preparedCatchUp,
+        nextState,
+        snapshot.state.subscription.recoveryReason === "initial_snapshot_pending",
+      ),
     ]);
 
     let committed: MailboxIntakeSnapshot;
@@ -467,12 +461,7 @@ export class GmailUnattendedRuntime {
       committedObservations = [];
     }
 
-    return await this.#finish(
-      committed,
-      committedObservations,
-      false,
-      null,
-    );
+    return await this.#finish(committed, committedObservations, false, null);
   }
 
   async #prepareObservations(
@@ -486,7 +475,7 @@ export class GmailUnattendedRuntime {
   async #classifyOutboundObservations(
     observations: readonly MailboxObservation[],
   ): Promise<readonly MailboxObservation[]> {
-    if (!this.#outboundProviderMessageLookup) return observations;
+    if (!this.#outboundProviderMessageLookup && !this.#knownOutbound) return observations;
     const classified: MailboxObservation[] = [];
     const cache = new Map<string, GmailOutboundProviderMessageDisposition>();
     for (const observation of observations) {
@@ -515,12 +504,17 @@ export class GmailUnattendedRuntime {
   async #outboundDisposition(
     providerMessageId: string,
   ): Promise<GmailOutboundProviderMessageDisposition> {
-    if (!this.#outboundProviderMessageLookup) return "ordinary";
-    const disposition = await this.#outboundProviderMessageLookup(providerMessageId);
-    if (disposition !== "ordinary" && disposition !== "self_echo") {
-      throw new Error("Hosted Gmail outbound provider-message lookup returned an invalid disposition");
+    if (this.#outboundProviderMessageLookup) {
+      const disposition = await this.#outboundProviderMessageLookup(providerMessageId);
+      if (disposition !== "ordinary" && disposition !== "self_echo") {
+        throw new Error("Hosted Gmail outbound provider-message lookup returned an invalid disposition");
+      }
+      return disposition;
     }
-    return disposition;
+    if (this.#knownOutbound) {
+      return (await this.#knownOutbound()).has(providerMessageId) ? "self_echo" : "ordinary";
+    }
+    return "ordinary";
   }
 
   #applyPushHealth(
@@ -530,6 +524,7 @@ export class GmailUnattendedRuntime {
     renewalRequired: boolean,
   ): MailboxSubscriptionState {
     const generation = this.#pushBindingGeneration;
+    if (generation === null) return next;
     if (next.subscription.health === "degraded") {
       return createMailboxSubscriptionState({
         ...next,
@@ -539,11 +534,9 @@ export class GmailUnattendedRuntime {
         },
       });
     }
-    const callbackVerified = generation !== null
-      && authenticatedPushGeneration === generation
+    const callbackVerified = authenticatedPushGeneration === generation
       && next.coverage === "continuous";
-    const priorVerified = generation !== null
-      && !renewalRequired
+    const priorVerified = !renewalRequired
       && previous.subscription.health === "healthy"
       && previous.subscription.healthGeneration === generation;
     const healthy = callbackVerified || priorVerified;
@@ -619,8 +612,9 @@ function observationWithDisposition(
 function filterRecoveredObservations(
   observations: readonly MailboxObservation[],
   nextState: MailboxSubscriptionState,
+  forceDrop = false,
 ): readonly MailboxObservation[] {
-  if (nextState.subscription.health === "healthy") return observations;
+  if (!forceDrop && nextState.subscription.health === "healthy") return observations;
   return Object.freeze(
     observations.filter((observation) =>
       observation.eventType !== "mail.subscription.recovered"
