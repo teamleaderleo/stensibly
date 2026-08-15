@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { sha256 } from "../src/canonical-json.ts";
 import { InMemoryMailProvider } from "../src/in-memory-mail-provider.ts";
 import {
+  MailDeliveryConflictError,
   MailDeliveryPendingReconciliationError,
+  MailDestinationBindingConflictError,
   MailOutboundService,
   type PublishMailThreadCommand,
 } from "../src/mail-outbound-service.ts";
@@ -142,6 +144,33 @@ describe("outbound mail service", () => {
     store.close();
   });
 
+  test("rejects mailbox alias drift before canonical material changes or provider dispatch", async () => {
+    const store = new SqliteMailThreadStore({ path: ":memory:" });
+    const provider = new InMemoryMailProvider();
+    const service = new MailOutboundService({
+      store,
+      provider,
+      now: clock(),
+      ...factories(["7K3Q"]),
+    });
+
+    const first = await service.publish(command());
+    const priorFingerprint = first.thread.currentMaterialFingerprint;
+    await expect(service.publish(command({
+      sourceFingerprint: sha256("attention-alias-drift"),
+      whatChanged: "Attempted destination drift.",
+      mailbox: {
+        ...mailbox,
+        mailboxAddress: "operator+other@example.com",
+      },
+    }))).rejects.toBeInstanceOf(MailDestinationBindingConflictError);
+
+    expect(provider.sentMessageCount).toBe(1);
+    const persisted = await service.getThreadByHandle(first.thread.handle);
+    expect(persisted?.currentMaterialFingerprint).toBe(priorFingerprint);
+    store.close();
+  });
+
   test("holds an ambiguous provider success for reconciliation before any resend", async () => {
     const store = new SqliteMailThreadStore({ path: ":memory:" });
     const provider = new InMemoryMailProvider();
@@ -162,6 +191,7 @@ describe("outbound mail service", () => {
     }
     expect(pending).not.toBeNull();
     expect(pending!.effect.state).toBe("ambiguous");
+    expect(pending!.effect.mailboxAddress).toBe(mailbox.mailboxAddress);
     expect(pending!.effect.receipt?.recoveryAction).toBe("reconcile_before_retry");
     expect(provider.sentMessageCount).toBe(1);
 
@@ -171,6 +201,14 @@ describe("outbound mail service", () => {
     expect(provider.sentMessageCount).toBe(1);
 
     provider.setMode("normal");
+    await expect(service.reconcile({
+      outboundEffectId: pending!.effect.outboundEffectId,
+      mailbox: {
+        ...mailbox,
+        mailboxAddress: "operator+other@example.com",
+      },
+    })).rejects.toBeInstanceOf(MailDeliveryConflictError);
+
     const reconciled = await service.reconcile({
       outboundEffectId: pending!.effect.outboundEffectId,
       mailbox,

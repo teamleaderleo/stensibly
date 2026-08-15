@@ -14,6 +14,7 @@ import {
   type MailProviderSendResult,
 } from "./mail-provider.js";
 import {
+  exactMailDisplayText,
   exactMailThreadIdentifier,
   exactMailThreadTimestamp,
 } from "./mail-thread-contract.js";
@@ -45,6 +46,8 @@ export interface GmailOutboundClient {
     rfcMessageId: string;
   }): Promise<readonly unknown[]>;
 }
+
+const maximumReconciliationCandidates = 64;
 
 export class GmailMailProvider implements MailProvider {
   readonly provider = "gmail";
@@ -79,7 +82,11 @@ export class GmailMailProvider implements MailProvider {
     const binding = this.#binding(bindingInput);
     const projection = freezeMailProviderProjection(projectionInput);
     const message = freezeMailProviderMessage(messageInput);
-    if (projection.provider !== "gmail" || projection.accountBinding !== binding.accountBinding) {
+    if (
+      projection.provider !== "gmail"
+      || projection.accountBinding !== binding.accountBinding
+      || projection.mailboxAddress !== binding.mailboxAddress
+    ) {
       throw new MailProviderDefiniteFailure("gmail_projection_binding_mismatch");
     }
     if (message.subject !== projection.lastVerifiedSubject) {
@@ -124,6 +131,9 @@ export class GmailMailProvider implements MailProvider {
     }
     if (!Array.isArray(rawCandidates)) {
       return { status: "missing", coverage: "unknown" };
+    }
+    if (rawCandidates.length > maximumReconciliationCandidates) {
+      return { status: "ambiguous", candidateCount: rawCandidates.length };
     }
     const candidates: GmailLocatedMessage[] = [];
     for (const candidate of rawCandidates) {
@@ -289,7 +299,7 @@ function admitLocatedMessage(value: unknown, now: () => string): GmailLocatedMes
       "Gmail located effect ID",
       240,
     ),
-    subject: typeof record.subject === "string" ? record.subject : "",
+    subject: exactMailDisplayText(record.subject, "Gmail located subject", 320),
     references: Object.freeze(referencesRaw.map((entry) => exactRfcMessageId(entry))),
     requestId: record.requestId === undefined || record.requestId === null
       ? null

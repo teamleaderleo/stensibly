@@ -112,6 +112,16 @@ export class MailProjectionReceiptMismatchError extends Error {
   }
 }
 
+export class MailDestinationBindingConflictError extends Error {
+  readonly thread: MailThreadRecord;
+
+  constructor(thread: MailThreadRecord) {
+    super("Mail provider destination changed for an existing canonical provider projection");
+    this.name = "MailDestinationBindingConflictError";
+    this.thread = thread;
+  }
+}
+
 export class MailOutboundService {
   readonly #store: MailThreadStore;
   readonly #provider: MailProvider;
@@ -151,6 +161,13 @@ export class MailOutboundService {
       references: command.references,
     });
 
+    const existingProjection = await this.#store.getProviderProjection(
+      thread.threadId,
+      binding.provider,
+      binding.accountBinding,
+    );
+    assertProjectionDestination(thread, existingProjection, binding);
+
     if (
       thread.currentMaterialFingerprint !== envelope.materialFingerprint
       || thread.resolutionCondition !== envelope.resolutionCondition
@@ -164,11 +181,6 @@ export class MailOutboundService {
       }));
     }
 
-    const existingProjection = await this.#store.getProviderProjection(
-      thread.threadId,
-      binding.provider,
-      binding.accountBinding,
-    );
     let effect = createEffect(thread, envelope, binding, this.#now());
 
     const reservation = await this.#store.reserveDeliveryEffect(effect);
@@ -271,6 +283,7 @@ export class MailOutboundService {
       || thread.threadId !== effect.threadId
       || effect.provider !== binding.provider
       || effect.accountBinding !== binding.accountBinding
+      || effect.mailboxAddress !== binding.mailboxAddress
     ) {
       throw new MailDeliveryConflictError(effect);
     }
@@ -280,6 +293,7 @@ export class MailOutboundService {
       binding.provider,
       binding.accountBinding,
     );
+    assertProjectionDestination(thread, projection, binding);
     const envelope = envelopeFromEffect(thread, effect);
 
     if (effect.state === "sent" || effect.state === "reconciled" || effect.state === "failed") {
@@ -436,6 +450,16 @@ function assertThreadMatchesCommand(
   }
 }
 
+function assertProjectionDestination(
+  thread: MailThreadRecord,
+  projection: MailProviderProjection | null,
+  binding: MailboxBinding,
+): void {
+  if (projection && projection.mailboxAddress !== binding.mailboxAddress) {
+    throw new MailDestinationBindingConflictError(thread);
+  }
+}
+
 function createEffect(
   thread: MailThreadRecord,
   envelope: MailOutboundEnvelope,
@@ -447,6 +471,7 @@ function createEffect(
     threadId: thread.threadId,
     provider: binding.provider,
     accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
     contentFingerprint: envelope.materialFingerprint,
   }));
   const hex = digest.slice("sha256:".length);
@@ -457,6 +482,7 @@ function createEffect(
     handle: thread.handle,
     provider: binding.provider,
     accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
     attemptNumber: 1,
     contentFingerprint: envelope.materialFingerprint,
     rfcMessageId: `<stn.${hex}@mail.stensibly.com>`,
@@ -507,11 +533,15 @@ function projectionFromSend(
   if (existing && result.providerThreadId !== existing.providerThreadId) {
     throw new MailProviderAmbiguousFailure("mail_provider_reply_thread_changed");
   }
+  if (existing && existing.mailboxAddress !== binding.mailboxAddress) {
+    throw new MailProviderAmbiguousFailure("mail_provider_reply_destination_changed");
+  }
   return freezeMailProviderProjection({
     version: 1,
     threadId: thread.threadId,
     provider: binding.provider,
     accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
     providerThreadId: result.providerThreadId,
     rootProviderMessageId: existing?.rootProviderMessageId ?? result.providerMessageId,
     latestProviderMessageId: result.providerMessageId,
@@ -535,6 +565,7 @@ function sentReceipt(
     handle: effect.handle,
     provider: effect.provider,
     accountBinding: effect.accountBinding,
+    mailboxAddress: effect.mailboxAddress,
     attemptNumber: effect.attemptNumber,
     contentFingerprint: effect.contentFingerprint,
     rfcMessageId: effect.rfcMessageId,
@@ -570,6 +601,7 @@ function ambiguousReceipt(
     handle: effect.handle,
     provider: effect.provider,
     accountBinding: effect.accountBinding,
+    mailboxAddress: effect.mailboxAddress,
     attemptNumber: effect.attemptNumber,
     contentFingerprint: effect.contentFingerprint,
     rfcMessageId: effect.rfcMessageId,
@@ -595,6 +627,7 @@ function failedReceipt(
     handle: effect.handle,
     provider: effect.provider,
     accountBinding: effect.accountBinding,
+    mailboxAddress: effect.mailboxAddress,
     attemptNumber: effect.attemptNumber,
     contentFingerprint: effect.contentFingerprint,
     rfcMessageId: effect.rfcMessageId,
