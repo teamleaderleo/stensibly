@@ -188,6 +188,15 @@ export class SqliteMailThreadStore implements MailThreadStore {
       throw new TypeError("New mail delivery effect must be the first reserved attempt without a receipt");
     }
     const transaction = this.#db.transaction((): MailDeliveryReservation => {
+      const priorThreadEffect = this.#latestThreadEffect(
+        requested.threadId,
+        requested.provider,
+        requested.accountBinding,
+      );
+      if (priorThreadEffect && priorThreadEffect.mailboxAddress !== requested.mailboxAddress) {
+        return { outcome: "conflict", effect: priorThreadEffect };
+      }
+
       const lane = this.#laneEffect(
         requested.threadId,
         requested.provider,
@@ -486,6 +495,21 @@ export class SqliteMailThreadStore implements MailThreadStore {
     const row = this.#db.query<EffectRow, [string]>(`
       SELECT effect_json FROM mail_delivery_effects WHERE outbound_effect_id = ?1
     `).get(outboundEffectId);
+    return row ? parseEffect(row.effect_json) : null;
+  }
+
+  #latestThreadEffect(
+    threadId: string,
+    provider: string,
+    accountBinding: string,
+  ): MailOutboundEffectRecord | null {
+    const row = this.#db.query<EffectRow, [string, string, string]>(`
+      SELECT effect_json
+      FROM mail_delivery_effects
+      WHERE thread_id = ?1 AND provider = ?2 AND account_binding = ?3
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(threadId, provider, accountBinding);
     return row ? parseEffect(row.effect_json) : null;
   }
 
