@@ -188,6 +188,67 @@ describe("authoritative runner resume", () => {
     }
   });
 
+  test("settlement-only metadata cannot mint terminal replay without the durable observation", async () => {
+    const fixture = await createFixture();
+    try {
+      const input = fixture.intent("resume:settlement-only");
+      const preview = await fixture.service.preview(input);
+      const run = await fixture.ledger.getRun(fixture.runId);
+      const requestFingerprint = sha256(stableJson({
+        version: 1,
+        runId: input.runId,
+        idempotencyKey: input.idempotencyKey,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+        actorId: runner.id,
+        adapterId,
+        profileId,
+      }));
+      const commandFingerprint = sha256("synthetic-settlement-only-command");
+      const reservation = await fixture.ledger.reserveRunnerAdapterCommand({
+        project,
+        itemId: fixture.itemId,
+        runId: fixture.runId,
+        runGeneration: run.generation,
+        leaseGeneration: run.leaseGeneration,
+        actor: runner,
+        adapterId,
+        profileId,
+        requestFingerprint,
+        commandId: preview.commandId,
+        commandFingerprint,
+        idempotencyKey: input.idempotencyKey,
+      });
+      expect(reservation.dispatchAuthorized).toBe(true);
+      await fixture.ledger.settleRunnerAdapterCommand({
+        commandId: preview.commandId,
+        commandFingerprint,
+        outcome: {
+          version: 1,
+          kind: "bounded_episode_completed",
+          observationCount: 1,
+          observationsSha256: sha256("synthetic-result-only-observations"),
+          terminalObservationId: `${preview.commandId}:synthetic-terminal`,
+          terminalObservationType: "completion_proposed",
+          latestCheckpointExternalId: null,
+          latestCheckpointSha256: null,
+          containsPrivateContent: false,
+          containsCredentials: false,
+        },
+      });
+
+      const replay = await fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: preview.resumeFenceFingerprint,
+      });
+      expect(replay.disposition).toBe("waiting_reconciliation");
+      expect(replay.terminalObservation).toBeNull();
+      expect(replay.settlement).toBeNull();
+      expect(fixture.adapter.resumeCalls).toBe(0);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
   test("changed reuse of one resume idempotency key conflicts without redispatch", async () => {
     const fixture = await createFixture();
     try {
