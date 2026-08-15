@@ -117,7 +117,7 @@ export function createGmailUnattendedMountFromEnv(
     mailboxAddress: required(env.STENSIBLY_GMAIL_MAILBOX, "STENSIBLY_GMAIL_MAILBOX"),
     mailboxBindingId,
     labelId: required(env.STENSIBLY_GMAIL_WATCH_LABEL_ID, "STENSIBLY_GMAIL_WATCH_LABEL_ID"),
-    pubsubSubscription: required(
+    pubsubSubscription: requiredResourceBinding(
       env.STENSIBLY_GMAIL_PUBSUB_SUBSCRIPTION,
       "STENSIBLY_GMAIL_PUBSUB_SUBSCRIPTION",
     ),
@@ -282,4 +282,8 @@ function required(value: unknown, label: string): string {
     throw new Error(`Gmail unattended configuration requires ${label}`);
   }
   return value;
+}
+
+function requiredResourceBinding(value: unknown, label: string): string {
+  return required(typeof value === "string" ? value.trim() : value, label);
 }
