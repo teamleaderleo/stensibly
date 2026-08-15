@@ -6,6 +6,8 @@ import {
 } from "../src/gmail-mail-provider.ts";
 import {
   MailProviderAmbiguousFailure,
+  MailProviderDefiniteFailure,
+  freezeMailProviderMessage,
   freezeMailProviderProjection,
   type MailProviderMessage,
 } from "../src/mail-provider.ts";
@@ -81,6 +83,7 @@ describe("Gmail mail provider", () => {
       threadId: "mail_thread_1492",
       provider: "gmail",
       accountBinding: "gmail_operator_primary",
+      mailboxAddress: "operator@example.com",
       providerThreadId: "gmail_thread_1",
       rootProviderMessageId: "gmail_message_root",
       latestProviderMessageId: "gmail_message_root",
@@ -108,6 +111,11 @@ describe("Gmail mail provider", () => {
     expect(replyMime).toContain(`Message-ID: ${replyMessage.rfcMessageId}\r\n`);
     expect(replyMime).toContain("Candidate repaired.");
     expect(replyMime).not.toContain("Candidate ready.");
+
+    await expect(provider.replyThread({
+      ...binding,
+      mailboxAddress: "operator+other@example.com",
+    }, projection, replyMessage)).rejects.toBeInstanceOf(MailProviderDefiniteFailure);
   });
 
   test("treats a lost or malformed Gmail send response as ambiguous", async () => {
@@ -186,5 +194,53 @@ describe("Gmail mail provider", () => {
       status: "missing",
       coverage: "complete",
     });
+  });
+
+  test("bounds reconciliation candidates and rejects hostile metadata instead of parsing it as identity", async () => {
+    let candidates: readonly unknown[] = Array.from({ length: 65 }, (_, index) => ({
+      id: `gmail_message_${index}`,
+      threadId: "gmail_thread_1",
+      rfcMessageId: "<stn.1234567890abcdef@mail.stensibly.com>",
+      outboundEffectId: "mailfx_1234567890abcdef",
+      subject: "[STN-HANDOFF:7K3Q] Continue outbound mail threads",
+      acceptedAt: "2026-08-15T06:00:01.000Z",
+    }));
+    const provider = new GmailMailProvider({
+      async sendRaw() {
+        throw new Error("unused");
+      },
+      async findMessagesByRfcMessageId() {
+        return candidates;
+      },
+    });
+    const lookup = {
+      outboundEffectId: "mailfx_1234567890abcdef",
+      rfcMessageId: "<stn.1234567890abcdef@mail.stensibly.com>",
+      expectedProviderThreadId: null,
+    };
+
+    expect(await provider.getDeliveryProjection(binding, lookup)).toEqual({
+      status: "ambiguous",
+      candidateCount: 65,
+    });
+
+    candidates = [{
+      id: "gmail_message_hostile",
+      threadId: "gmail_thread_1",
+      rfcMessageId: lookup.rfcMessageId,
+      outboundEffectId: lookup.outboundEffectId,
+      subject: `Bearer ${"a".repeat(40)}`,
+      acceptedAt: "2026-08-15T06:00:01.000Z",
+    }];
+    expect(await provider.getDeliveryProjection(binding, lookup)).toEqual({
+      status: "ambiguous",
+      candidateCount: 2,
+    });
+  });
+
+  test("low-level provider body admission rejects credential-shaped text", () => {
+    expect(() => freezeMailProviderMessage(message({
+      body: `Authorization: Bearer ${"a".repeat(40)}`,
+    }))).toThrow("Mail provider body is invalid");
   });
 });
