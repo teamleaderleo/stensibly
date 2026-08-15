@@ -15,6 +15,12 @@ export interface RunnerAdapterCommandReadResult {
   settlement: RunnerAdapterCommandSettlementRecord | null;
 }
 
+export interface RunnerAdapterCommandReadLedger {
+  getRunnerAdapterCommand(
+    input: GetRunnerAdapterCommandInput,
+  ): Promise<RunnerAdapterCommandReadResult | null>;
+}
+
 export function normalizeRunnerAdapterCommandReadInput(
   input: GetRunnerAdapterCommandInput,
 ): GetRunnerAdapterCommandInput {
