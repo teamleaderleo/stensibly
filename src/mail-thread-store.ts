@@ -6,6 +6,7 @@ import {
   type MailThreadRecord,
 } from "./mail-thread-contract.js";
 import {
+  freezeMailboxBinding,
   freezeMailDeliveryReceipt,
   freezeMailProviderProjection,
   type MailDeliveryReceipt,
@@ -187,6 +188,15 @@ export class SqliteMailThreadStore implements MailThreadStore {
       throw new TypeError("New mail delivery effect must be the first reserved attempt without a receipt");
     }
     const transaction = this.#db.transaction((): MailDeliveryReservation => {
+      const priorThreadEffect = this.#latestThreadEffect(
+        requested.threadId,
+        requested.provider,
+        requested.accountBinding,
+      );
+      if (priorThreadEffect && priorThreadEffect.mailboxAddress !== requested.mailboxAddress) {
+        return { outcome: "conflict", effect: priorThreadEffect };
+      }
+
       const lane = this.#laneEffect(
         requested.threadId,
         requested.provider,
@@ -204,6 +214,9 @@ export class SqliteMailThreadStore implements MailThreadStore {
         requested.contentFingerprint,
       );
       if (latest) {
+        if (latest.mailboxAddress !== requested.mailboxAddress) {
+          return { outcome: "conflict", effect: latest };
+        }
         if (latest.state === "reserved" || latest.state === "ambiguous") {
           return { outcome: "blocked", effect: latest };
         }
@@ -216,7 +229,10 @@ export class SqliteMailThreadStore implements MailThreadStore {
           if (!projection) {
             throw new Error("Successful mail delivery effect is missing its provider projection");
           }
-          if (projection.latestSentFingerprint === requested.contentFingerprint) {
+          if (
+            projection.mailboxAddress === requested.mailboxAddress
+            && projection.latestSentFingerprint === requested.contentFingerprint
+          ) {
             return { outcome: "replay", effect: latest };
           }
         }
@@ -284,6 +300,7 @@ export class SqliteMailThreadStore implements MailThreadStore {
         projection.threadId !== effect.threadId
         || projection.provider !== effect.provider
         || projection.accountBinding !== effect.accountBinding
+        || projection.mailboxAddress !== effect.mailboxAddress
         || projection.latestSentFingerprint !== effect.contentFingerprint
       )
     ) {
@@ -484,6 +501,21 @@ export class SqliteMailThreadStore implements MailThreadStore {
     return row ? parseEffect(row.effect_json) : null;
   }
 
+  #latestThreadEffect(
+    threadId: string,
+    provider: string,
+    accountBinding: string,
+  ): MailOutboundEffectRecord | null {
+    const row = this.#db.query<EffectRow, [string, string, string]>(`
+      SELECT effect_json
+      FROM mail_delivery_effects
+      WHERE thread_id = ?1 AND provider = ?2 AND account_binding = ?3
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(threadId, provider, accountBinding);
+    return row ? parseEffect(row.effect_json) : null;
+  }
+
   #latestMaterialEffect(
     threadId: string,
     provider: string,
@@ -595,7 +627,8 @@ export class SqliteMailThreadStore implements MailThreadStore {
     if (current) {
       const prior = parseProjection(current.projection_json);
       if (
-        prior.providerThreadId !== projection.providerThreadId
+        prior.mailboxAddress !== projection.mailboxAddress
+        || prior.providerThreadId !== projection.providerThreadId
         || prior.rootProviderMessageId !== projection.rootProviderMessageId
         || prior.rootRfcMessageId !== projection.rootRfcMessageId
       ) {
@@ -642,6 +675,7 @@ function retryEffect(
     threadId: base.threadId,
     provider: base.provider,
     accountBinding: base.accountBinding,
+    mailboxAddress: base.mailboxAddress,
     contentFingerprint: base.contentFingerprint,
     attemptNumber,
   }));
@@ -686,6 +720,7 @@ function sameEffectIdentity(
     && left.handle === right.handle
     && left.provider === right.provider
     && left.accountBinding === right.accountBinding
+    && left.mailboxAddress === right.mailboxAddress
     && left.attemptNumber === right.attemptNumber
     && left.contentFingerprint === right.contentFingerprint
     && left.rfcMessageId === right.rfcMessageId;
@@ -700,6 +735,7 @@ function receiptMatchesEffect(
     && receipt.handle === effect.handle
     && receipt.provider === effect.provider
     && receipt.accountBinding === effect.accountBinding
+    && receipt.mailboxAddress === effect.mailboxAddress
     && receipt.attemptNumber === effect.attemptNumber
     && receipt.contentFingerprint === effect.contentFingerprint
     && receipt.rfcMessageId === effect.rfcMessageId;
@@ -729,6 +765,7 @@ function freezeEffect(input: MailOutboundEffectRecord): MailOutboundEffectRecord
     || typeof input.handle !== "string"
     || typeof input.provider !== "string"
     || typeof input.accountBinding !== "string"
+    || typeof input.mailboxAddress !== "string"
     || !Number.isInteger(input.attemptNumber)
     || input.attemptNumber < 1
     || typeof input.contentFingerprint !== "string"
@@ -738,9 +775,23 @@ function freezeEffect(input: MailOutboundEffectRecord): MailOutboundEffectRecord
   ) {
     throw new TypeError("Stored mail delivery effect is invalid");
   }
+  const binding = freezeMailboxBinding({
+    provider: input.provider,
+    accountBinding: input.accountBinding,
+    mailboxAddress: input.mailboxAddress,
+  });
   const receipt = input.receipt === null ? null : freezeMailDeliveryReceipt(input.receipt);
   if ((input.state === "reserved") !== (receipt === null)) {
     throw new TypeError("Stored mail delivery effect state and receipt disagree");
   }
-  return Object.freeze({ ...input, receipt });
+  if (receipt && !receiptMatchesEffect(receipt, input)) {
+    throw new TypeError("Stored mail delivery receipt does not match its effect identity");
+  }
+  return Object.freeze({
+    ...input,
+    provider: binding.provider,
+    accountBinding: binding.accountBinding,
+    mailboxAddress: binding.mailboxAddress,
+    receipt,
+  });
 }
