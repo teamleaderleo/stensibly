@@ -82,6 +82,35 @@ test("acknowledges only after authenticated durable reconciliation returns", asy
   expect(received).toEqual(envelope);
 });
 
+test("publishes only a fixed reconciliation failure code", async () => {
+  const mount = {
+    verifier: {
+      verifyAuthorizationHeader: async () => ({
+        issuer: "https://accounts.google.com",
+        audience: callback,
+        email: "push@example.iam.gserviceaccount.com",
+        subject: "123",
+      }),
+    } as unknown as GooglePubSubOidcVerifier,
+    runtime: {
+      receivePubSubEnvelope: async () => {
+        throw new RangeError("Gmail Pub/Sub subscription binding mismatch");
+      },
+    } as unknown as GmailUnattendedRuntime,
+  } satisfies GmailUnattendedMount;
+
+  const response = await handleGmailPubSubRequest(new Request(callback, {
+    method: "POST",
+    headers: { authorization: "Bearer accepted" },
+    body: JSON.stringify({ message: { data: "encoded" } }),
+  }), mount);
+
+  expect(response?.status).toBe(503);
+  expect(response?.headers.get("x-stensibly-gmail-failure"))
+    .toBe("gmail_push_subscription_mismatch");
+  expect(await response?.text()).toBe("Mailbox reconciliation failed");
+});
+
 test("cancels an undeclared Gmail push body as soon as it exceeds 64 KiB", async () => {
   let cancelled = false;
   let runtimeCalls = 0;

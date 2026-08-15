@@ -1,7 +1,13 @@
 import { ConvexHttpClient } from "convex/browser";
 import { ConvexMailThreadStore } from "./convex-mail-thread-store.js";
-import { GmailMailboxActionClient } from "./gmail-mailbox-actions.js";
-import { GmailMailboxApiClient } from "./gmail-mailbox-api.js";
+import {
+  GmailMailboxActionClient,
+  GmailMailboxActionError,
+} from "./gmail-mailbox-actions.js";
+import {
+  GmailMailboxApiClient,
+  GmailMailboxProviderError,
+} from "./gmail-mailbox-api.js";
 import {
   GmailUnattendedRuntime,
   type GmailOutboundProviderMessageDisposition,
@@ -191,12 +197,33 @@ export async function handleGmailPubSubRequest(
         "X-Stensibly-Mailbox-Observations": String(result.admittedObservations),
       },
     });
-  } catch {
+  } catch (error) {
+    const failureCode = gmailReconciliationFailureCode(error);
+    console.log(JSON.stringify({
+      event: "gmail.reconciliation_failed",
+      failureCode,
+    }));
     return new Response("Mailbox reconciliation failed", {
       status: 503,
-      headers: { "Retry-After": "60" },
+      headers: {
+        "Retry-After": "60",
+        "X-Stensibly-Gmail-Failure": failureCode,
+      },
     });
   }
+}
+
+export function gmailReconciliationFailureCode(error: unknown): string {
+  if (error instanceof GmailMailboxProviderError) {
+    return `gmail_provider_${error.operation}_failed`;
+  }
+  if (error instanceof GmailMailboxActionError) return "gmail_hygiene_failed";
+  if (error instanceof Error) {
+    const known = knownReconciliationFailures[error.message];
+    if (known) return known;
+    if (error instanceof RangeError) return "gmail_payload_or_invariant_invalid";
+  }
+  return "gmail_intake_or_runtime_failed";
 }
 
 export async function runGmailScheduledReconciliation(
@@ -263,6 +290,20 @@ const gmailConfigNames = [
   "STENSIBLY_GMAIL_PUBSUB_AUDIENCE",
   "STENSIBLY_GMAIL_PUBSUB_SERVICE_ACCOUNT",
 ] as const satisfies readonly (keyof GmailUnattendedEnvironment)[];
+
+const knownReconciliationFailures: Readonly<Record<string, string>> = Object.freeze({
+  "Gmail Pub/Sub subscription binding mismatch": "gmail_push_subscription_mismatch",
+  "Gmail Pub/Sub mailbox binding mismatch": "gmail_push_mailbox_mismatch",
+  "Gmail mailbox binding must be bootstrapped before push delivery":
+    "gmail_binding_not_bootstrapped",
+  "Authenticated Gmail push generation does not match the deployed binding generation":
+    "gmail_push_generation_mismatch",
+  "Mailbox intake binding disappeared during bootstrap": "gmail_binding_disappeared",
+  "Mailbox intake binding disappeared during reconciliation": "gmail_binding_disappeared",
+  "Gmail full-sync watch cursor regressed": "gmail_full_sync_cursor_regressed",
+  "Gmail full-sync history catch-up did not complete": "gmail_full_sync_incomplete",
+  "Gmail full-sync did not reach the notification cursor": "gmail_full_sync_incomplete",
+});
 
 function requiredVersionGeneration(value: unknown): string {
   if (
