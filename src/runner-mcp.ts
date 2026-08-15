@@ -9,8 +9,18 @@ import { getRunnerContextPacket } from "./context-packets.js";
 import { executionActualSchema } from "./execution-envelope-contracts.js";
 import type { WorkLedger } from "./ledger.js";
 import { asToolResult } from "./mcp-tool-result.js";
+import {
+  runnerAdapterCommandLedger,
+  type RunnerAdapterCommandLedger,
+  type RunnerAdapterCommandReservationRecord,
+} from "./runner-adapter-command-contracts.js";
+import type { RunnerAdapterCommandRecoveryLedger } from "./runner-adapter-command-recovery.js";
 import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
-import { runnerLedger, type RunnerConcurrencyPolicy } from "./runner-contracts.js";
+import {
+  runnerLedger,
+  type RunnerConcurrencyPolicy,
+  type RunnerLedger,
+} from "./runner-contracts.js";
 import { runStatuses } from "./runs.js";
 import { actorSchema } from "./schemas.js";
 
@@ -24,6 +34,8 @@ export function createRunnerMcpServer(
 ): McpServer {
   const runs = runnerLedger(ledger);
   if (!runs) throw new Error("Runner lifecycle is unavailable on this backend");
+  const commands = runnerAdapterCommandLedger(ledger);
+  const recoveries = runnerAdapterCommandRecoveryLedger(ledger);
   const concurrency = normalizeRunnerConcurrencyPolicy(options.concurrency);
 
   const server = new McpServer(
@@ -32,6 +44,8 @@ export function createRunnerMcpServer(
       instructions: [
         "This endpoint is for runner processes, not general ledger clients.",
         "Claim one queued or retry-eligible run, then use the returned authority fence, generation, and lease generation for every guarded mutation.",
+        "Reserve adapter command identity before external execution and settle the same durable command after consuming its bounded observations.",
+        "A stranded reservation may be claimed for recovery ownership only; recovery claims do not authorize redispatch or resume.",
         "Move a claimed run from starting to running, heartbeat before the lease expires, and finish it with a terminal transition.",
         "Retry admission, blocked-run reassignment, and cancellation remain server- or supervisor-owned operations.",
         "The returned context packet is bounded and redacted; durable item state remains authoritative.",
@@ -154,7 +168,163 @@ export function createRunnerMcpServer(
     }),
   );
 
+  if (commands) registerRunnerAdapterCommandTools(server, runs, commands, recoveries);
+
   return server;
+}
+
+function registerRunnerAdapterCommandTools(
+  server: McpServer,
+  runs: RunnerLedger,
+  commands: RunnerAdapterCommandLedger,
+  recoveries: RunnerAdapterCommandRecoveryLedger | null,
+): void {
+  server.registerTool(
+    "get_runner_adapter_command",
+    {
+      description: "Read one durable runner adapter command reservation and any terminal settlement by its exact idempotency identity. The caller supplies project scope and the server verifies it against the stored reservation.",
+      inputSchema: {
+        project: projectSchema(),
+        idempotencyKey: z.string().trim().min(1).max(240),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ project, idempotencyKey }) => asToolResult(async () => {
+      const lookup = await commands.getRunnerAdapterCommand({ idempotencyKey });
+      if (!lookup) return null;
+      requireReservationProject(lookup.command, project);
+      return lookup;
+    }),
+  );
+
+  server.registerTool(
+    "reserve_runner_adapter_command",
+    {
+      description: "Atomically reserve one adapter dispatch under the current run authority. Exact replay returns the stored reservation without authorizing another dispatch.",
+      inputSchema: {
+        project: projectSchema(),
+        itemId: z.string().trim().min(1).max(240),
+        runId: z.string().trim().min(1).max(240),
+        runGeneration: z.number().int().min(1),
+        leaseGeneration: z.number().int().min(1),
+        actor: actorSchema,
+        adapterId: z.string().trim().min(1).max(80),
+        profileId: z.string().trim().min(1).max(79),
+        requestFingerprint: fingerprintSchema(),
+        commandId: z.string().trim().min(1).max(160),
+        commandFingerprint: fingerprintSchema(),
+        idempotencyKey: z.string().trim().min(1).max(240),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => asToolResult(async () => {
+      const run = await runs.getRun(input.runId);
+      requireReservationRunnerProfile(run, input.adapterId, input.profileId);
+      return await commands.reserveRunnerAdapterCommand(input);
+    }),
+  );
+
+  server.registerTool(
+    "settle_runner_adapter_command",
+    {
+      description: "Settle the exact reserved adapter command with bounded terminal episode evidence. Project and reservation identity are cross-checked before settlement.",
+      inputSchema: {
+        project: projectSchema(),
+        reservationIdempotencyKey: z.string().trim().min(1).max(240),
+        commandId: z.string().trim().min(1).max(160),
+        commandFingerprint: fingerprintSchema(),
+        outcome: commandOutcomeSchema(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ project, reservationIdempotencyKey, ...input }) => asToolResult(async () => {
+      await requireStoredReservation(
+        commands,
+        project,
+        reservationIdempotencyKey,
+        input.commandId,
+        input.commandFingerprint,
+      );
+      return await commands.settleRunnerAdapterCommand(input);
+    }),
+  );
+
+  if (!recoveries) return;
+  server.registerTool(
+    "claim_runner_adapter_command_recovery",
+    {
+      description: "Claim temporary recovery ownership for an exact stranded adapter command. The returned claim can coordinate reconciliation only and never authorizes redispatch or resume.",
+      inputSchema: {
+        project: projectSchema(),
+        reservationIdempotencyKey: z.string().trim().min(1).max(240),
+        commandId: z.string().trim().min(1).max(160),
+        commandFingerprint: fingerprintSchema(),
+        actor: actorSchema,
+        leaseSeconds: z.number().int().min(30).max(3_600),
+        idempotencyKey: z.string().trim().min(1).max(240),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ project, reservationIdempotencyKey, ...input }) => asToolResult(async () => {
+      await requireStoredReservation(
+        commands,
+        project,
+        reservationIdempotencyKey,
+        input.commandId,
+        input.commandFingerprint,
+      );
+      return await recoveries.claimRunnerAdapterCommandRecovery(input);
+    }),
+  );
+}
+
+async function requireStoredReservation(
+  commands: RunnerAdapterCommandLedger,
+  project: string,
+  idempotencyKey: string,
+  commandId: string,
+  commandFingerprint: string,
+): Promise<void> {
+  const lookup = await commands.getRunnerAdapterCommand({ idempotencyKey });
+  if (!lookup) {
+    throw new RangeError("Runner adapter command reservation does not exist");
+  }
+  requireReservationProject(lookup.command, project);
+  if (
+    lookup.command.commandId !== commandId
+    || lookup.command.commandFingerprint !== commandFingerprint
+  ) {
+    throw new RangeError("Runner adapter command reservation identity changed");
+  }
+}
+
+function requireReservationProject(
+  command: RunnerAdapterCommandReservationRecord,
+  project: string,
+): void {
+  if (command.project !== project) {
+    throw new RangeError("Runner adapter command reservation belongs to another project");
+  }
+}
+
+function requireReservationRunnerProfile(
+  run: { runnerType: string; runnerProfile: string },
+  adapterId: string,
+  profileId: string,
+): void {
+  if (run.runnerType !== adapterId || run.runnerProfile !== profileId) {
+    throw new RangeError("Runner adapter command adapter or profile does not match the run");
+  }
+}
+
+function runnerAdapterCommandRecoveryLedger(
+  value: unknown,
+): RunnerAdapterCommandRecoveryLedger | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<RunnerAdapterCommandRecoveryLedger>;
+  return typeof candidate.claimRunnerAdapterCommandRecovery === "function"
+    ? candidate as RunnerAdapterCommandRecoveryLedger
+    : null;
 }
 
 function projectSchema() {
@@ -164,6 +334,25 @@ function projectSchema() {
     .min(1)
     .max(80)
     .regex(/^[a-z0-9][a-z0-9-_]*$/, "Use a lowercase project slug");
+}
+
+function fingerprintSchema() {
+  return z.string().trim().regex(/^sha256:[a-f0-9]{64}$/u);
+}
+
+function commandOutcomeSchema() {
+  return z.object({
+    version: z.literal(1),
+    kind: z.literal("bounded_episode_completed"),
+    observationCount: z.number().int().min(1).max(32),
+    observationsSha256: fingerprintSchema(),
+    terminalObservationId: z.string().trim().min(1).max(160),
+    terminalObservationType: z.string().trim().min(1).max(80),
+    latestCheckpointExternalId: z.string().trim().min(1).max(512).nullable(),
+    latestCheckpointSha256: fingerprintSchema().nullable(),
+    containsPrivateContent: z.literal(false),
+    containsCredentials: z.literal(false),
+  }).strict();
 }
 
 function usageSchema() {
