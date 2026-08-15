@@ -38,6 +38,7 @@ class MemoryDispositionStore implements HostedGmailMailboxDispositionStore {
   readonly states = new Map<string, CurrentDurableStnMailboxState>();
   readonly deliveries = new Map<string, MailDeliveryReceipt>();
   readonly effects = new Map<string, GmailMailboxDispositionEffectRecord>();
+  failRecordSettledDeliveryOnce = false;
 
   async putCurrentState(state: CurrentDurableStnMailboxState) {
     const prior = this.states.get(state.stnThreadId);
@@ -53,6 +54,10 @@ class MemoryDispositionStore implements HostedGmailMailboxDispositionStore {
   }
 
   async recordSettledDelivery(receipt: MailDeliveryReceipt) {
+    if (this.failRecordSettledDeliveryOnce) {
+      this.failRecordSettledDeliveryOnce = false;
+      throw new Error("simulated crash before disposition reservation");
+    }
     const prior = this.deliveries.get(receipt.threadId);
     if (!prior || Date.parse(receipt.attemptedAt) >= Date.parse(prior.attemptedAt)) {
       this.deliveries.set(receipt.threadId, structuredClone(receipt));
@@ -129,6 +134,7 @@ type MutationMode = "success" | "apply_then_throw" | "throw_before_apply" | "par
 
 class FakeLabelClient implements GmailMailboxLabelClient {
   readonly labels = new Map<string, Set<string>>();
+  initialLabels: readonly string[] = ["SENT"];
   mutations = 0;
   reads = 0;
   mutationMode: MutationMode = "success";
@@ -173,7 +179,7 @@ class FakeLabelClient implements GmailMailboxLabelClient {
   messageLabels(providerMessageId: string) {
     let labels = this.labels.get(providerMessageId);
     if (!labels) {
-      labels = new Set(["SENT"]);
+      labels = new Set(this.initialLabels);
       this.labels.set(providerMessageId, labels);
     }
     return labels;
@@ -210,21 +216,22 @@ function serviceFixture() {
   const gmailClient = new FakeGmailClient();
   const mailboxDispositionStore = new MemoryDispositionStore();
   const gmailLabelClient = new FakeLabelClient();
+  const binding = {
+    workspace: "test",
+    project: "stensibly",
+    accountBinding: "gmail_operator_primary",
+    mailboxAddress: "operator@example.com",
+    stensiblyLabelId: "Label_6",
+  };
   const service = new HostedGmailOutboundService({
     store,
     gmailClient,
     mailboxDispositionStore,
     gmailLabelClient,
-    binding: {
-      workspace: "test",
-      project: "stensibly",
-      accountBinding: "gmail_operator_primary",
-      mailboxAddress: "operator@example.com",
-      stensiblyLabelId: "Label_6",
-    },
+    binding,
     now: () => "2026-08-15T08:10:00.000Z",
   });
-  return { store, gmailClient, mailboxDispositionStore, gmailLabelClient, service };
+  return { store, gmailClient, mailboxDispositionStore, gmailLabelClient, binding, service };
 }
 
 describe("HostedGmailOutboundService automatic disposition", () => {
@@ -239,6 +246,35 @@ describe("HostedGmailOutboundService automatic disposition", () => {
     expect(f.gmailLabelClient.mutations).toBe(1);
 
     const replay = await f.service.publish(material());
+    expect(replay.outcome).toBe("replayed");
+    expect(replay.mailboxDisposition?.status).toBe("settled");
+    expect(f.gmailClient.sent).toBe(1);
+    expect(f.gmailLabelClient.mutations).toBe(1);
+    f.store.close();
+  });
+
+  test("a crash after durable delivery but before disposition reservation recovers on service replay without duplicate mail", async () => {
+    const f = serviceFixture();
+    f.mailboxDispositionStore.failRecordSettledDeliveryOnce = true;
+    await expect(f.service.publish(material({
+      sourceIdentity: "attention:hosted:pre-reservation-crash",
+      sourceFingerprint: sha256("hosted-pre-reservation-crash"),
+    }))).rejects.toThrow("simulated crash before disposition reservation");
+    expect(f.gmailClient.sent).toBe(1);
+    expect(f.mailboxDispositionStore.effects.size).toBe(0);
+
+    const restarted = new HostedGmailOutboundService({
+      store: f.store,
+      gmailClient: f.gmailClient,
+      mailboxDispositionStore: f.mailboxDispositionStore,
+      gmailLabelClient: f.gmailLabelClient,
+      binding: f.binding,
+      now: () => "2026-08-15T08:10:00.000Z",
+    });
+    const replay = await restarted.publish(material({
+      sourceIdentity: "attention:hosted:pre-reservation-crash",
+      sourceFingerprint: sha256("hosted-pre-reservation-crash"),
+    }));
     expect(replay.outcome).toBe("replayed");
     expect(replay.mailboxDisposition?.status).toBe("settled");
     expect(f.gmailClient.sent).toBe(1);
@@ -263,7 +299,7 @@ describe("HostedGmailOutboundService automatic disposition", () => {
     expect(f.gmailLabelClient.messageLabels(messageId)).toEqual(new Set(["SENT", "Label_6", "INBOX", "UNREAD"]));
     expect(f.gmailClient.sent).toBe(1);
 
-    // Human browsing is provider presentation only; durable coordination state is unchanged.
+    // Human browsing changes provider presentation only; durable coordination state stays active + required.
     f.gmailLabelClient.messageLabels(messageId).delete("UNREAD");
     const durable = await f.service.getCurrentMailboxState(first.thread.threadId);
     expect(durable?.operatorAttentionRequired).toBe(true);
@@ -312,13 +348,7 @@ describe("HostedGmailOutboundService automatic disposition", () => {
       gmailClient: f.gmailClient,
       mailboxDispositionStore: f.mailboxDispositionStore,
       gmailLabelClient: f.gmailLabelClient,
-      binding: {
-        workspace: "test",
-        project: "stensibly",
-        accountBinding: "gmail_operator_primary",
-        mailboxAddress: "operator@example.com",
-        stensiblyLabelId: "Label_6",
-      },
+      binding: f.binding,
       now: () => "2026-08-15T08:10:00.000Z",
     });
     const replay = await restarted.publish(material({
@@ -346,6 +376,35 @@ describe("HostedGmailOutboundService automatic disposition", () => {
     }));
     expect(replay.mailboxDisposition?.status).toBe("reconciliation_required");
     expect(f.gmailLabelClient.mutations).toBe(1);
+    f.store.close();
+  });
+
+  test("newer genuine attention safely supersedes an older partially applied quiet mutation", async () => {
+    const f = serviceFixture();
+    f.gmailLabelClient.initialLabels = ["SENT", "INBOX", "UNREAD"];
+    f.gmailLabelClient.mutationMode = "partial_then_throw";
+    const first = await f.service.publish(material({
+      sourceIdentity: "attention:hosted:partial-quiet",
+      sourceFingerprint: sha256("hosted-partial-quiet-v1"),
+    }));
+    expect(first.mailboxDisposition?.status).toBe("reconciliation_required");
+    const messageId = first.receipt.providerMessageId!;
+    expect(f.gmailLabelClient.messageLabels(messageId)).toEqual(new Set(["SENT", "Label_6", "UNREAD"]));
+    expect(f.gmailLabelClient.mutations).toBe(1);
+
+    f.gmailLabelClient.mutationMode = "success";
+    const attention = await f.service.updateCurrentMailboxState({
+      source: "durable_stn_state",
+      stnThreadId: first.thread.threadId,
+      revision: "state-partial-r2",
+      attentionClass: "handoff",
+      operatorAttentionRequired: true,
+      state: "active",
+    });
+    expect(attention.status).toBe("settled");
+    expect(f.gmailClient.sent).toBe(1);
+    expect(f.gmailLabelClient.mutations).toBe(2);
+    expect(f.gmailLabelClient.messageLabels(messageId)).toEqual(new Set(["SENT", "Label_6", "UNREAD", "INBOX"]));
     f.store.close();
   });
 });
