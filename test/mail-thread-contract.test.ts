@@ -31,7 +31,7 @@ describe("mail thread contract", () => {
     expect(() => createMailThreadHandle("handoff", "ABC")).toThrow(TypeError);
   });
 
-  test("renders deterministic material envelopes from canonical STN identity", () => {
+  test("renders the bounded #1489 dogfood handoff deterministically", () => {
     const input = {
       thread: thread(),
       sourceFingerprint: sha256("attention-v1"),
@@ -56,13 +56,59 @@ describe("mail thread contract", () => {
 
     expect(first).toEqual(second);
     expect(first.subject).toBe("[STN-HANDOFF:7K3Q] Continue outbound mail threads");
-    expect(first.launchLine).toBe("Continue STN-HANDOFF:7K3Q.");
-    expect(first.body).toContain("Handle: STN-HANDOFF:7K3Q");
-    expect(first.body).toContain("Project: stensibly");
+    expect(first.launchLine).toBe(
+      "Continue STN-HANDOFF:7K3Q via Gmail + GitHub only.",
+    );
+    expect(first.body).toStartWith(`${first.launchLine}\n\nHandle: STN-HANDOFF:7K3Q\n`);
     expect(first.body).toContain("Subject: github:teamleaderleo/stensibly#1492");
-    expect(first.body).toContain("Revision: abcdef0123456789");
+    expect(first.body).toContain(
+      "Read: github:teamleaderleo/stensibly#1492; Issue: https://github.com/teamleaderleo/stensibly/issues/1492",
+    );
+    expect(first.body).toContain(
+      "Observed: The outbound mail primitive has a candidate implementation. Revision observed: abcdef0123456789; refresh before action.",
+    );
+    expect(first.body).toContain(
+      "Reason: A fresh-worker continuation is ready for review.",
+    );
+    expect(first.body).toContain(
+      "Action: Review exact candidate abcdef0123456789 and record one verdict.",
+    );
+    expect(first.body).toEndWith("--- STENSIBLY CURRENT HANDOFF END ---");
+    expect(first.body).not.toContain("Current:");
     expect(first.containsSecrets).toBe(false);
     expect(first.materialFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  test("keeps the canonical handle independent from the continuation route", () => {
+    const base = {
+      thread: thread(),
+      sourceFingerprint: sha256("attention-v1"),
+      whatChanged: "Candidate is ready.",
+      attentionReason: "Review is the current attention action.",
+      nextAction: "Review revision aaaa.",
+      sourceObject: "github:teamleaderleo/stensibly#1492",
+      sourceRevision: "aaaa",
+      resolutionCondition: "Review verdict recorded.",
+      threadState: "open" as const,
+    };
+    const gmail = renderMailOutboundEnvelope(base);
+    const providerNeutral = renderMailOutboundEnvelope({
+      ...base,
+      continuationRoute: null,
+    });
+    const alternate = renderMailOutboundEnvelope({
+      ...base,
+      continuationRoute: "mail provider + source system",
+    });
+
+    expect(gmail.handle).toBe("STN-HANDOFF:7K3Q");
+    expect(providerNeutral.handle).toBe(gmail.handle);
+    expect(alternate.handle).toBe(gmail.handle);
+    expect(providerNeutral.launchLine).toBe("Continue STN-HANDOFF:7K3Q.");
+    expect(alternate.launchLine).toBe(
+      "Continue STN-HANDOFF:7K3Q via mail provider + source system.",
+    );
+    expect(providerNeutral.materialFingerprint).not.toBe(gmail.materialFingerprint);
   });
 
   test("material fingerprint changes only when admitted outbound semantics change", () => {
