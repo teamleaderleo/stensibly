@@ -281,7 +281,7 @@ export const listRecentObservations = query({
         providerCursor: observation.providerCursor,
         providerMessageId: observation.providerMessageId,
         providerThreadId: observation.providerThreadId,
-        providerLabelId: observation.providerLabelId,
+        providerScopeId: observation.providerScopeId,
         observedAt: observation.observedAt,
         receivedAt: observation.receivedAt,
         wakeEligible: observation.wakeEligible,
