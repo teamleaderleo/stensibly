@@ -264,6 +264,7 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
       visited.add(next);
       const response = await this.#requestUrl("GET", next, token);
       if (!Array.isArray(response.payload)) throw new Error("GitHub operation page was invalid");
+      const linkedNext = nextLink(response.link, this.#base, template, page);
       if (maximumItems === undefined) {
         output.push(...response.payload);
       } else {
@@ -271,7 +272,7 @@ export class GitHubRestOperationsAdapter implements GitHubOperationsProvider {
         output.push(...response.payload.slice(0, Math.max(0, remaining)));
         if (output.length >= maximumItems) return output;
       }
-      next = nextLink(response.link, this.#base, template, page);
+      next = linkedNext;
     }
     return output;
   }
