@@ -262,7 +262,10 @@ describe("ConvexMailThreadStore parity", () => {
     const restarted = outboundService(hostedStore(t), provider);
     await expect(restarted.publish(command("attention:hosted:after-reserve")))
       .rejects.toBeInstanceOf(MailDeliveryPendingReconciliationError);
-    const missing = await restarted.reconcile(effect.outboundEffectId);
+    const missing = await restarted.reconcile({
+      outboundEffectId: effect.outboundEffectId,
+      mailbox,
+    });
     expect(missing?.outcome).toBe("failed");
     const retried = await restarted.publish(command("attention:hosted:after-reserve"));
     expect(retried.outcome).toBe("sent");
@@ -282,7 +285,10 @@ describe("ConvexMailThreadStore parity", () => {
     const effect = crashing.lastReservation!;
 
     const restarted = outboundService(hostedStore(t), provider);
-    const reconciled = await restarted.reconcile(effect.outboundEffectId);
+    const reconciled = await restarted.reconcile({
+      outboundEffectId: effect.outboundEffectId,
+      mailbox,
+    });
     expect(reconciled?.outcome).toBe("reconciled");
     expect(provider.sentMessageCount).toBe(1);
     const replay = await restarted.publish(command("attention:hosted:before-settle"));
@@ -331,7 +337,10 @@ describe("ConvexMailThreadStore parity", () => {
 
     provider.setMode("normal");
     const restarted = outboundService(hostedStore(t), provider);
-    const reconciled = await restarted.reconcile(pending!.effect.outboundEffectId);
+    const reconciled = await restarted.reconcile({
+      outboundEffectId: pending!.effect.outboundEffectId,
+      mailbox,
+    });
     expect(reconciled?.outcome).toBe("reconciled");
     expect(provider.sentMessageCount).toBe(1);
 
