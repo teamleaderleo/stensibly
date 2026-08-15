@@ -63,7 +63,7 @@ describe("mail thread contract", () => {
     expect(first).toEqual(second);
     expect(first.subject).toBe("[STN-HANDOFF:7K3Q] Continue outbound mail threads");
     expect(first.launchLine).toBe(
-      "Continue STN-HANDOFF:7K3Q via Gmail + GitHub only.",
+      "In Gmail, continue STN-HANDOFF:7K3Q. Then refresh the referenced GitHub state.",
     );
     expect(first.body).toStartWith(`${first.launchLine}\n\nHandle: STN-HANDOFF:7K3Q\n`);
     expect(first.body).toContain("Subject: github:teamleaderleo/stensibly#1492");
@@ -118,10 +118,10 @@ describe("mail thread contract", () => {
     expect(alternate.handle).toBe(providerNeutral.handle);
     expect(providerNeutral.launchLine).toBe("Continue STN-HANDOFF:7K3Q.");
     expect(gmail.launchLine).toBe(
-      "Continue STN-HANDOFF:7K3Q via Gmail + GitHub only.",
+      "In Gmail, continue STN-HANDOFF:7K3Q. Then refresh the referenced GitHub state.",
     );
     expect(alternate.launchLine).toBe(
-      "Continue STN-HANDOFF:7K3Q via mail provider + source system only.",
+      "In mail provider, continue STN-HANDOFF:7K3Q. Then refresh the referenced source system state.",
     );
     expect(providerNeutral.materialFingerprint).not.toBe(gmail.materialFingerprint);
   });
