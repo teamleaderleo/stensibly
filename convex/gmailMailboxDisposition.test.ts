@@ -88,6 +88,28 @@ describe("durable Gmail mailbox disposition persistence", () => {
     }))).rejects.toThrow("GMAIL_DISPOSITION_STATE_REVISION_CONFLICT");
   });
 
+  test("publish-style stale seeds retain the durable winner while explicit transitions CAS", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    const store = hostedStore(t);
+    await store.putCurrentState(state());
+    const current = state("state-r2", {
+      attentionClass: "decision",
+      operatorAttentionRequired: true,
+    });
+    expect(await store.putCurrentState(current, "state-r1")).toEqual(current);
+
+    const stale = state("state-stale", {
+      attentionClass: "review",
+      operatorAttentionRequired: false,
+    });
+    expect(await store.putCurrentState(stale)).toEqual(current);
+    expect(await store.readCurrentState({ stnThreadId: current.stnThreadId })).toEqual(current);
+
+    await expect(store.putCurrentState(state("state-r3"), "state-r1"))
+      .rejects.toThrow("GMAIL_DISPOSITION_STATE_CAS_CONFLICT");
+  });
+
   test("two Worker instances converge on one logical effect and altered effect replay conflicts", async () => {
     const t = convexTest(schema, modules);
     await seedWorkspace(t);
@@ -133,7 +155,7 @@ describe("durable Gmail mailbox disposition persistence", () => {
       operatorAttentionRequired: true,
     });
     const restarted = hostedStore(t);
-    await restarted.putCurrentState(newerState);
+    await restarted.putCurrentState(newerState, "state-r1");
     const newerEffect = buildGmailMailboxDispositionEffect(binding, newerState);
     await expect(restarted.reserveEffect(newerEffect)).rejects.toBeInstanceOf(GmailMailboxDispositionLaneBlockedError);
     const outstanding = await restarted.findOutstandingForTarget(binding);
