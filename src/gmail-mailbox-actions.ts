@@ -52,7 +52,7 @@ export class GmailMailboxActionClient {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ removeLabelIds: ["INBOX"] }),
+          body: JSON.stringify({ removeLabelIds: ["INBOX", "UNREAD"] }),
         },
       );
     } catch {
