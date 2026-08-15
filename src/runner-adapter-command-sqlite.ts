@@ -13,6 +13,12 @@ import {
   type RunnerAdapterCommandSettlementRecord,
   type SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import {
+  admitRunnerAdapterCommandReadResult,
+  normalizeRunnerAdapterCommandReadInput,
+  type GetRunnerAdapterCommandInput,
+  type RunnerAdapterCommandReadResult,
+} from "./runner-adapter-command-read.js";
 import { ensureRunSchema } from "./runs.js";
 import type { StensiblyStore } from "./store.js";
 
@@ -76,6 +82,21 @@ function ensureSettlementColumns(store: StensiblyStore): void {
   if (!columns.some((column) => column.name === "settled_at")) {
     store.db.exec("ALTER TABLE runner_adapter_commands ADD COLUMN settled_at TEXT");
   }
+}
+
+export function getSqliteRunnerAdapterCommand(
+  store: StensiblyStore,
+  rawInput: GetRunnerAdapterCommandInput,
+): RunnerAdapterCommandReadResult | null {
+  ensureRunnerAdapterCommandSchema(store);
+  const input = normalizeRunnerAdapterCommandReadInput(rawInput);
+  const row = reservationByIdempotencyKey(store, input.idempotencyKey);
+  if (!row) return null;
+  return admitRunnerAdapterCommandReadResult({
+    request: JSON.parse(row.request_json) as unknown,
+    reservedAt: row.reserved_at,
+    settlement: row.settlement_json === null ? null : parseSettlement(row),
+  });
 }
 
 export function reserveSqliteRunnerAdapterCommand(
