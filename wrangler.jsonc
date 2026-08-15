@@ -7,6 +7,12 @@
   "workers_dev": true,
   "preview_urls": true,
   "minify": true,
+  "routes": [
+    {
+      "pattern": "api.stensibly.com",
+      "custom_domain": true
+    }
+  ],
   "version_metadata": {
     "binding": "CF_VERSION_METADATA"
   },
@@ -22,6 +28,9 @@
       "head_sampling_rate": 1
     }
   },
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
   "vars": {
     "STENSIBLY_WORKSPACE": "default",
     "STENSIBLY_GITHUB_PROVIDER_PROJECT": "stensibly",
@@ -30,6 +39,9 @@
     "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED": "true",
     "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED": "true",
     "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED": "true",
+    "STENSIBLY_OUTLOOK_MAILBOX": "cheerleaderleo@outlook.com",
+    "STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID": "outlook_operator_primary",
+    "STENSIBLY_OUTLOOK_NOTIFICATION_URL": "https://api.stensibly.com/internal/outlook/notifications",
     "STENSIBLY_ALLOWED_ORIGINS": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app",
     "STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS": "https://chatgpt.com"
   },
