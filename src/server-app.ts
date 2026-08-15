@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createApiV1 } from "./api-v1.js";
 import { createApp } from "./app.js";
 import { createContextPacketApi } from "./context-api.js";
+import { createControlRoomResumeInspectionRoutes } from "./control-room-resume-routes.js";
 import { createCorsMiddleware } from "./cors.js";
 import {
   registerGitHubProviderEventRoutes,
@@ -54,12 +55,13 @@ export function createServerApp(
   const ledger = options.ledger ?? new SqliteWorkLedger(store);
   const authenticator = options.authenticator ?? new SqliteTokenProvider(store);
   const authOptions = options.httpAuth ?? { required: false };
+  const localSqliteBackend = ledger instanceof SqliteWorkLedger && options.backend !== "convex";
   const runnerMcpOptions = {
     ...options.runnerMcp,
     concurrency: normalizeRunnerConcurrencyPolicy(options.runnerMcp?.concurrency),
   };
   const repositorySetupObservations = options.repositorySetupObservations
-    ?? (ledger instanceof SqliteWorkLedger && options.backend !== "convex"
+    ?? (localSqliteBackend
       ? new SqliteProjectRepositorySetupObservationLedger(store)
       : null);
 
@@ -113,6 +115,12 @@ export function createServerApp(
   }
   app.route("/api/v1", createApiV1(authenticator, ledger, authOptions));
   app.route("/api/v1", createContextPacketApi(authenticator, ledger, authOptions));
+  if (localSqliteBackend) {
+    app.route(
+      "/",
+      createControlRoomResumeInspectionRoutes(store, authenticator, authOptions),
+    );
+  }
   app.route("/", createApp(store, authOptions));
   return app;
 }
