@@ -272,6 +272,32 @@ describe("GitHubPullRequestReviewProviderService", () => {
     expect(adapter.createCalls).toBe(1);
   });
 
+  test("provider success with uncertain readback enters reconciliation instead of blind replay", async () => {
+    const adapter = new FakeReviewAdapter();
+    adapter.getReviewFails = true;
+    const provider = service(adapter);
+    let pending: GitHubPullRequestReviewPendingReconciliationError | null = null;
+    try {
+      await provider.submitReview(submitInput(adapter));
+    } catch (error) {
+      if (error instanceof GitHubPullRequestReviewPendingReconciliationError) {
+        pending = error;
+      } else {
+        throw error;
+      }
+    }
+    expect(pending?.receipt.state).toBe("pending_reconciliation");
+    expect(pending?.receipt.providerReviewId).toBe("9001");
+    expect(pending?.receipt.providerRequestId).toBe("req-9001");
+    expect(adapter.createCalls).toBe(1);
+
+    await expect(provider.submitReview({
+      ...submitInput(adapter),
+      previousReceipt: pending!.receipt,
+    })).rejects.toBeInstanceOf(GitHubPullRequestReviewPendingReconciliationError);
+    expect(adapter.createCalls).toBe(1);
+  });
+
   test("uncertain outcome with no readback enters reconciliation and a retry stays fenced", async () => {
     const adapter = new FakeReviewAdapter();
     adapter.ambiguousCreateWithoutWrite = true;
@@ -302,7 +328,7 @@ describe("GitHubPullRequestReviewProviderService", () => {
     await expect(provider.submitReview(submitInput(adapter, {
       action: "REQUEST_CHANGES",
       body: "",
-    }))).rejects.toThrow("requires a visible review body");
+    }))).rejects.toThrow("REQUEST_CHANGES GitHub reviews require a visible review body");
     expect(adapter.createCalls).toBe(0);
   });
 });
