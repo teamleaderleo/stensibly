@@ -98,8 +98,8 @@ export interface CreateMailboxObservationInput {
   loopDisposition: MailboxLoopDisposition;
 }
 
-const identityPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,1023}$/u;
-const opaqueReferencePattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,4095}$/u;
+const identityPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/+=-]{0,1023}$/u;
+const opaqueReferencePattern = /^[A-Za-z0-9][A-Za-z0-9._:@/+=-]{0,4095}$/u;
 const historyIdPattern = /^[1-9][0-9]{0,39}$/u;
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const credentialPattern = /(?:^|[._:/-])(?:(?:env|secret):\/\/|github_pat_|gh[pousr]_|stn\.tok_|sk-|xox[baprs]-)/iu;
@@ -172,7 +172,12 @@ export function createMailboxObservation(
     input.providerLabelId,
     "Mailbox provider label ID",
   );
-  validateEventIdentity(eventType, providerMessageId, providerLabelId);
+  validateEventIdentity(
+    eventType,
+    providerMessageId,
+    providerThreadId,
+    providerLabelId,
+  );
   const observedAt = canonicalTimestamp(input.observedAt, "Mailbox observed time");
   const receivedAt = canonicalTimestamp(input.receivedAt, "Mailbox received time");
   if (Date.parse(observedAt) > Date.parse(receivedAt) + 5 * 60_000) {
@@ -303,6 +308,7 @@ function validateSourceSchema(
 function validateEventIdentity(
   eventType: MailboxObservationEventType,
   providerMessageId: string | null,
+  providerThreadId: string | null,
   providerLabelId: string | null,
 ): void {
   if (eventType.startsWith("mail.message.") && providerMessageId === null) {
@@ -314,8 +320,14 @@ function validateEventIdentity(
     }
   }
   if (eventType.startsWith("mail.subscription.")) {
-    if (providerMessageId !== null || providerLabelId !== null) {
-      throw new RangeError("Mailbox subscription observations cannot bind message or label identities");
+    if (
+      providerMessageId !== null
+      || providerThreadId !== null
+      || providerLabelId !== null
+    ) {
+      throw new RangeError(
+        "Mailbox subscription observations cannot bind message, thread, or label identities",
+      );
     }
   }
 }
