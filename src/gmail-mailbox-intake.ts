@@ -1,0 +1,587 @@
+import {
+  createMailboxObservation,
+  createMailboxSubscriptionState,
+  type MailboxObservation,
+  type MailboxSubscriptionState,
+} from "./mailbox-intake-contract.js";
+
+export interface GmailPubSubNotification {
+  readonly provider: "gmail";
+  readonly mailboxBindingId: string;
+  readonly notificationId: string;
+  readonly targetHistoryId: string;
+  readonly publishedAt: string;
+  readonly receivedAt: string;
+}
+
+export interface GmailHistoryMessageRef {
+  id: string;
+  threadId?: string;
+  labelIds?: string[];
+}
+
+export interface GmailHistoryRecord {
+  id: string;
+  messagesAdded?: Array<{ message: GmailHistoryMessageRef }>;
+  messagesDeleted?: Array<{ message: GmailHistoryMessageRef }>;
+  labelsAdded?: Array<{ message: GmailHistoryMessageRef; labelIds: string[] }>;
+  labelsRemoved?: Array<{ message: GmailHistoryMessageRef; labelIds: string[] }>;
+}
+
+export interface GmailHistoryPage {
+  historyId: string;
+  history?: GmailHistoryRecord[];
+  nextPageToken?: string;
+}
+
+export interface GmailHistoryClient {
+  listHistory(request: {
+    startHistoryId: string;
+    labelId: string;
+    pageToken?: string;
+  }): Promise<GmailHistoryPage>;
+  renewWatch(request: {
+    labelIds: string[];
+    labelFilterBehavior: "include";
+  }): Promise<{ historyId: string; expiration: string }>;
+}
+
+export class GmailHistoryCursorExpiredError extends Error {
+  constructor() {
+    super("Gmail history cursor expired");
+    this.name = "GmailHistoryCursorExpiredError";
+  }
+}
+
+export interface GmailMailboxReconciliationResult {
+  readonly complete: boolean;
+  readonly duplicateNotification: boolean;
+  readonly state: MailboxSubscriptionState;
+  readonly observations: readonly MailboxObservation[];
+  readonly recoveryAction: "full_sync_required" | null;
+}
+
+export interface ReconcileGmailMailboxInput {
+  state: MailboxSubscriptionState;
+  notification: GmailPubSubNotification | null;
+  client: GmailHistoryClient;
+  now: string;
+  knownOutboundProviderMessageIds?: ReadonlySet<string>;
+  renewalWindowMs?: number;
+}
+
+const historyIdPattern = /^[1-9][0-9]{0,39}$/u;
+const pubSubIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,1023}$/u;
+const maximumPubSubDataBytes = 16 * 1024;
+const maximumHistoryPages = 32;
+const defaultRenewalWindowMs = 24 * 60 * 60_000;
+
+export function parseGmailPubSubNotification(
+  value: unknown,
+  input: {
+    expectedMailboxAddress: string;
+    mailboxBindingId: string;
+    receivedAt: string;
+  },
+): GmailPubSubNotification {
+  const envelope = record(value, "Gmail Pub/Sub envelope");
+  const message = record(envelope.message, "Gmail Pub/Sub message");
+  const data = exactText(message.data, "Gmail Pub/Sub data", maximumPubSubDataBytes * 2);
+  const decoded = decodeBase64Url(data);
+  if (decoded.byteLength > maximumPubSubDataBytes) {
+    throw new RangeError("Gmail Pub/Sub data exceeds the configured bound");
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decoded));
+  } catch {
+    throw new RangeError("Gmail Pub/Sub data must be UTF-8 JSON");
+  }
+  const body = record(payload, "Gmail Pub/Sub data");
+  const expectedMailbox = canonicalMailboxAddress(input.expectedMailboxAddress);
+  const observedMailbox = canonicalMailboxAddress(body.emailAddress);
+  if (observedMailbox !== expectedMailbox) {
+    throw new RangeError("Gmail Pub/Sub mailbox binding mismatch");
+  }
+  const mailboxBindingId = safeProviderId(input.mailboxBindingId, "Mailbox binding ID");
+  const notificationId = safeProviderId(message.messageId, "Gmail Pub/Sub message ID");
+  const targetHistoryId = gmailHistoryId(body.historyId, "Gmail notification history ID");
+  const publishedAt = canonicalTimestamp(message.publishTime, "Gmail Pub/Sub publish time");
+  const receivedAt = canonicalTimestamp(input.receivedAt, "Gmail notification receipt time");
+  if (Date.parse(publishedAt) > Date.parse(receivedAt) + 5 * 60_000) {
+    throw new RangeError("Gmail Pub/Sub publish time is too far in the future");
+  }
+  return Object.freeze({
+    provider: "gmail" as const,
+    mailboxBindingId,
+    notificationId,
+    targetHistoryId,
+    publishedAt,
+    receivedAt,
+  });
+}
+
+export async function reconcileGmailMailbox(
+  input: ReconcileGmailMailboxInput,
+): Promise<GmailMailboxReconciliationResult> {
+  assertGmailState(input.state);
+  const now = canonicalTimestamp(input.now, "Gmail reconciliation time");
+  const notification = input.notification;
+  if (notification && notification.mailboxBindingId !== input.state.mailboxBindingId) {
+    throw new RangeError("Gmail notification mailbox binding mismatch");
+  }
+
+  if (notification?.notificationId === input.state.lastNotificationId) {
+    return frozenResult({
+      complete: true,
+      duplicateNotification: true,
+      state: input.state,
+      observations: [],
+      recoveryAction: null,
+    });
+  }
+
+  const currentCursor = input.state.cursor.value;
+  if (notification && compareHistoryIds(notification.targetHistoryId, currentCursor) <= 0) {
+    return frozenResult({
+      complete: true,
+      duplicateNotification: false,
+      state: replaceState(input.state, {
+        lastNotificationId: notification.notificationId,
+      }),
+      observations: [],
+      recoveryAction: null,
+    });
+  }
+
+  const observations: MailboxObservation[] = [];
+  let workingState = input.state;
+  const renewalWindowMs = input.renewalWindowMs ?? defaultRenewalWindowMs;
+  if (!Number.isSafeInteger(renewalWindowMs) || renewalWindowMs < 0) {
+    throw new RangeError("Gmail watch renewal window is invalid");
+  }
+
+  const expirationMs = workingState.subscription.expiresAt === null
+    ? null
+    : Date.parse(workingState.subscription.expiresAt);
+  const nowMs = Date.parse(now);
+  const expired = expirationMs !== null && expirationMs <= nowMs;
+  const renewalDue = expirationMs === null || expirationMs - nowMs <= renewalWindowMs;
+  let emitRecovered = workingState.subscription.health !== "healthy";
+
+  if (expired) {
+    observations.push(subscriptionObservation({
+      state: workingState,
+      eventType: "mail.subscription.degraded",
+      sourceEventId: `watch-expired:${workingState.subscription.expiresAt ?? "unknown"}`,
+      now,
+    }));
+    workingState = replaceState(workingState, {
+      subscription: {
+        ...workingState.subscription,
+        health: "degraded",
+        recoveryReason: "watch_expired",
+      },
+    });
+    emitRecovered = true;
+  }
+
+  if (renewalDue) {
+    const renewed = await input.client.renewWatch({
+      labelIds: [workingState.scope.externalId],
+      labelFilterBehavior: "include",
+    });
+    const renewedHistoryId = gmailHistoryId(renewed.historyId, "Gmail renewed watch history ID");
+    if (compareHistoryIds(renewedHistoryId, currentCursor) < 0) {
+      throw new RangeError("Gmail renewed watch cursor regressed");
+    }
+    const expiration = epochMillisToIso(renewed.expiration, "Gmail watch expiration");
+    workingState = replaceState(workingState, {
+      subscription: {
+        externalId: null,
+        expiresAt: expiration,
+        health: emitRecovered ? "recovering" : "healthy",
+        recoveryReason: emitRecovered ? workingState.subscription.recoveryReason : null,
+      },
+    });
+  }
+
+  let pageToken: string | undefined;
+  let finalHistoryId = currentCursor;
+  const admittedById = new Map<string, MailboxObservation>();
+  try {
+    for (let pageIndex = 0; pageIndex < maximumHistoryPages; pageIndex += 1) {
+      const page = await input.client.listHistory({
+        startHistoryId: currentCursor,
+        labelId: workingState.scope.externalId,
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const pageHistoryId = gmailHistoryId(page.historyId, "Gmail history page cursor");
+      if (compareHistoryIds(pageHistoryId, currentCursor) < 0) {
+        throw new RangeError("Gmail history cursor regressed");
+      }
+      if (compareHistoryIds(pageHistoryId, finalHistoryId) > 0) {
+        finalHistoryId = pageHistoryId;
+      }
+      for (const observation of mapHistoryPage({
+        page,
+        state: workingState,
+        observedAt: notification?.publishedAt ?? now,
+        receivedAt: now,
+        knownOutboundProviderMessageIds:
+          input.knownOutboundProviderMessageIds ?? new Set<string>(),
+      })) {
+        admittedById.set(observation.observationId, observation);
+      }
+      pageToken = page.nextPageToken;
+      if (!pageToken) break;
+      if (pageIndex === maximumHistoryPages - 1) {
+        throw new RangeError("Gmail history reconciliation exceeded the page bound");
+      }
+    }
+  } catch (error) {
+    if (error instanceof GmailHistoryCursorExpiredError) {
+      const degradedState = replaceState(input.state, {
+        coverage: "unknown",
+        subscription: {
+          ...input.state.subscription,
+          health: "degraded",
+          recoveryReason: "history_cursor_expired",
+        },
+      });
+      return frozenResult({
+        complete: false,
+        duplicateNotification: false,
+        state: degradedState,
+        observations: [subscriptionObservation({
+          state: degradedState,
+          eventType: "mail.subscription.degraded",
+          sourceEventId: `history-cursor-expired:${currentCursor}`,
+          now,
+        })],
+        recoveryAction: "full_sync_required",
+      });
+    }
+    throw error;
+  }
+
+  observations.push(...admittedById.values());
+  workingState = replaceState(workingState, {
+    cursor: { kind: "gmail_history_id", value: finalHistoryId },
+    coverage: "continuous",
+    subscription: {
+      ...workingState.subscription,
+      health: "healthy",
+      recoveryReason: null,
+    },
+    lastNotificationId: notification?.notificationId
+      ?? workingState.lastNotificationId,
+    lastSuccessfulReconciliationAt: now,
+  });
+
+  if (emitRecovered) {
+    observations.push(subscriptionObservation({
+      state: workingState,
+      eventType: "mail.subscription.recovered",
+      sourceEventId: `watch-recovered:${workingState.subscription.expiresAt ?? now}`,
+      now,
+    }));
+  }
+
+  return frozenResult({
+    complete: true,
+    duplicateNotification: false,
+    state: workingState,
+    observations,
+    recoveryAction: null,
+  });
+}
+
+function mapHistoryPage(input: {
+  page: GmailHistoryPage;
+  state: MailboxSubscriptionState;
+  observedAt: string;
+  receivedAt: string;
+  knownOutboundProviderMessageIds: ReadonlySet<string>;
+}): MailboxObservation[] {
+  const observations: MailboxObservation[] = [];
+  for (const entry of input.page.history ?? []) {
+    const historyId = gmailHistoryId(entry.id, "Gmail history entry ID");
+    for (const item of entry.messagesAdded ?? []) {
+      if (!hasLabel(item.message, input.state.scope.externalId)) continue;
+      observations.push(messageObservation({
+        state: input.state,
+        historyId,
+        action: "messageAdded",
+        eventType: "mail.message.created",
+        message: item.message,
+        observedAt: input.observedAt,
+        receivedAt: input.receivedAt,
+        knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
+      }));
+    }
+    for (const item of entry.messagesDeleted ?? []) {
+      if (!hasLabel(item.message, input.state.scope.externalId)) continue;
+      observations.push(messageObservation({
+        state: input.state,
+        historyId,
+        action: "messageDeleted",
+        eventType: "mail.message.deleted",
+        message: item.message,
+        observedAt: input.observedAt,
+        receivedAt: input.receivedAt,
+        knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
+      }));
+    }
+    for (const item of entry.labelsAdded ?? []) {
+      if (!item.labelIds?.includes(input.state.scope.externalId)) continue;
+      observations.push(labelObservation({
+        state: input.state,
+        historyId,
+        action: "labelAdded",
+        eventType: "mail.label.added",
+        message: item.message,
+        observedAt: input.observedAt,
+        receivedAt: input.receivedAt,
+        knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
+      }));
+    }
+    for (const item of entry.labelsRemoved ?? []) {
+      if (!item.labelIds?.includes(input.state.scope.externalId)) continue;
+      observations.push(labelObservation({
+        state: input.state,
+        historyId,
+        action: "labelRemoved",
+        eventType: "mail.label.removed",
+        message: item.message,
+        observedAt: input.observedAt,
+        receivedAt: input.receivedAt,
+        knownOutboundProviderMessageIds: input.knownOutboundProviderMessageIds,
+      }));
+    }
+  }
+  return observations;
+}
+
+function messageObservation(input: {
+  state: MailboxSubscriptionState;
+  historyId: string;
+  action: string;
+  eventType: "mail.message.created" | "mail.message.deleted";
+  message: GmailHistoryMessageRef;
+  observedAt: string;
+  receivedAt: string;
+  knownOutboundProviderMessageIds: ReadonlySet<string>;
+}): MailboxObservation {
+  const messageId = safeProviderId(input.message.id, "Gmail message ID");
+  const loopDisposition = input.knownOutboundProviderMessageIds.has(messageId)
+    ? "self_echo" as const
+    : "ordinary" as const;
+  return createMailboxObservation({
+    provider: "gmail",
+    mailboxBindingId: input.state.mailboxBindingId,
+    sourceSchema: "gmail-history",
+    sourceEventId: `${input.historyId}:${input.action}:${messageId}`,
+    eventType: input.eventType,
+    providerCursor: input.historyId,
+    providerMessageId: messageId,
+    providerThreadId: optionalProviderId(input.message.threadId, "Gmail thread ID"),
+    providerLabelId: null,
+    observedAt: input.observedAt,
+    receivedAt: input.receivedAt,
+    wakeEligible: input.eventType === "mail.message.created"
+      && loopDisposition === "ordinary",
+    loopDisposition,
+  });
+}
+
+function labelObservation(input: {
+  state: MailboxSubscriptionState;
+  historyId: string;
+  action: string;
+  eventType: "mail.label.added" | "mail.label.removed";
+  message: GmailHistoryMessageRef;
+  observedAt: string;
+  receivedAt: string;
+  knownOutboundProviderMessageIds: ReadonlySet<string>;
+}): MailboxObservation {
+  const messageId = safeProviderId(input.message.id, "Gmail message ID");
+  const loopDisposition = input.knownOutboundProviderMessageIds.has(messageId)
+    ? "self_echo" as const
+    : "ordinary" as const;
+  return createMailboxObservation({
+    provider: "gmail",
+    mailboxBindingId: input.state.mailboxBindingId,
+    sourceSchema: "gmail-history",
+    sourceEventId: `${input.historyId}:${input.action}:${messageId}:${input.state.scope.externalId}`,
+    eventType: input.eventType,
+    providerCursor: input.historyId,
+    providerMessageId: messageId,
+    providerThreadId: optionalProviderId(input.message.threadId, "Gmail thread ID"),
+    providerLabelId: input.state.scope.externalId,
+    observedAt: input.observedAt,
+    receivedAt: input.receivedAt,
+    wakeEligible: false,
+    loopDisposition,
+  });
+}
+
+function subscriptionObservation(input: {
+  state: MailboxSubscriptionState;
+  eventType: "mail.subscription.degraded" | "mail.subscription.recovered";
+  sourceEventId: string;
+  now: string;
+}): MailboxObservation {
+  return createMailboxObservation({
+    provider: "gmail",
+    mailboxBindingId: input.state.mailboxBindingId,
+    sourceSchema: "gmail-subscription",
+    sourceEventId: input.sourceEventId,
+    eventType: input.eventType,
+    providerCursor: input.state.cursor.value,
+    providerMessageId: null,
+    providerThreadId: null,
+    providerLabelId: null,
+    observedAt: input.now,
+    receivedAt: input.now,
+    wakeEligible: false,
+    loopDisposition: "automatic",
+  });
+}
+
+function replaceState(
+  state: MailboxSubscriptionState,
+  changes: Partial<Omit<MailboxSubscriptionState, "version" | "provider" | "mailboxBindingId" | "scope">>,
+): MailboxSubscriptionState {
+  return createMailboxSubscriptionState({
+    mailboxBindingId: state.mailboxBindingId,
+    provider: "gmail",
+    scope: state.scope,
+    cursor: changes.cursor ?? state.cursor,
+    coverage: changes.coverage ?? state.coverage,
+    subscription: changes.subscription ?? state.subscription,
+    lastNotificationId: changes.lastNotificationId === undefined
+      ? state.lastNotificationId
+      : changes.lastNotificationId,
+    lastSuccessfulReconciliationAt:
+      changes.lastSuccessfulReconciliationAt === undefined
+        ? state.lastSuccessfulReconciliationAt
+        : changes.lastSuccessfulReconciliationAt,
+  });
+}
+
+function assertGmailState(state: MailboxSubscriptionState): void {
+  if (
+    state.version !== 1
+    || state.provider !== "gmail"
+    || state.scope.kind !== "label"
+    || state.cursor.kind !== "gmail_history_id"
+  ) {
+    throw new RangeError("Gmail reconciliation requires label-scoped Gmail state");
+  }
+  gmailHistoryId(state.cursor.value, "Gmail history cursor");
+}
+
+function hasLabel(message: GmailHistoryMessageRef, labelId: string): boolean {
+  return Array.isArray(message.labelIds) && message.labelIds.includes(labelId);
+}
+
+function compareHistoryIds(left: string, right: string): number {
+  const a = BigInt(gmailHistoryId(left, "Gmail history ID"));
+  const b = BigInt(gmailHistoryId(right, "Gmail history ID"));
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function gmailHistoryId(value: unknown, label: string): string {
+  return exactText(value, label, 40, historyIdPattern);
+}
+
+function safeProviderId(value: unknown, label: string): string {
+  return exactText(value, label, 1_024, pubSubIdPattern);
+}
+
+function optionalProviderId(value: unknown, label: string): string | null {
+  return value === undefined || value === null ? null : safeProviderId(value, label);
+}
+
+function canonicalMailboxAddress(value: unknown): string {
+  if (typeof value !== "string") throw new RangeError("Gmail mailbox address is invalid");
+  const canonical = value.trim().toLowerCase();
+  if (
+    canonical.length < 3
+    || canonical.length > 320
+    || canonical.includes("\n")
+    || canonical.includes("\r")
+    || !canonical.includes("@")
+  ) {
+    throw new RangeError("Gmail mailbox address is invalid");
+  }
+  return canonical;
+}
+
+function exactText(
+  value: unknown,
+  label: string,
+  maximumLength: number,
+  pattern?: RegExp,
+): string {
+  if (
+    typeof value !== "string"
+    || value.length < 1
+    || value.length > maximumLength
+    || value !== value.trim()
+    || (pattern && !pattern.test(value))
+  ) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return value;
+}
+
+function canonicalTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || value !== value.trim()) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) throw new RangeError(`${label} is invalid`);
+  const canonical = new Date(parsed).toISOString();
+  if (canonical !== value) throw new RangeError(`${label} must be canonical ISO time`);
+  return canonical;
+}
+
+function epochMillisToIso(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^\d{1,16}$/u.test(value)) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new RangeError(`${label} is invalid`);
+  }
+  return new Date(parsed).toISOString();
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new RangeError(`${label} must be a record`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const normalized = value.replace(/-/gu, "+").replace(/_/gu, "/");
+  const remainder = normalized.length % 4;
+  const padded = normalized + (remainder === 0 ? "" : "=".repeat(4 - remainder));
+  let binary: string;
+  try {
+    binary = atob(padded);
+  } catch {
+    throw new RangeError("Gmail Pub/Sub data must be base64url");
+  }
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function frozenResult(
+  value: GmailMailboxReconciliationResult,
+): GmailMailboxReconciliationResult {
+  Object.freeze(value.observations);
+  return Object.freeze(value);
+}
