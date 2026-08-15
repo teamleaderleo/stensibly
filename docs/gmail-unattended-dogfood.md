@@ -18,10 +18,12 @@ The hosted Worker owns two entry points:
   from the durable Gmail `historyId` cursor, and repairs quiet-mail Inbox hygiene.
 
 The Worker watches only `Label_5`. Reconciliation uses the merged #1495 contracts and
-commits the next cursor plus admitted observations atomically in Convex. A downstream
-mail/GitHub bridge consumes durable `wakeEligible + ordinary` observation rows by
-observation identity; Pub/Sub delivery is never the only chance to process a material
-reply.
+commits the next cursor plus admitted observations atomically in Convex. The downstream
+material projection consumes the canonical provider-neutral mailbox observation v2
+fields from #1513, including `mail.scope.added` / `mail.scope.removed` and
+`providerScopeId`. A downstream mail/GitHub bridge consumes durable
+`wakeEligible + ordinary` observation rows by observation identity; Pub/Sub delivery is
+never the only chance to process a material reply.
 
 `Stensibly/Handoffs` is the quiet agent-continuation lane. Every runtime pass performs a
 bounded Gmail query for messages carrying both `Label_5` and `INBOX`, then removes
