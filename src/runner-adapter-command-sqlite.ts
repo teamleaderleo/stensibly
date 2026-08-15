@@ -78,6 +78,16 @@ function ensureSettlementColumns(store: StensiblyStore): void {
   }
 }
 
+export function getSqliteRunnerAdapterCommandByIdempotencyKey(
+  store: StensiblyStore,
+  rawIdempotencyKey: string,
+): RunnerAdapterCommandReservation | null {
+  ensureRunnerAdapterCommandSchema(store);
+  const idempotencyKey = lookupIdempotencyKey(rawIdempotencyKey);
+  const row = reservationByIdempotencyKey(store, idempotencyKey);
+  return row === null ? null : replay(row, row.stable_request_json);
+}
+
 export function reserveSqliteRunnerAdapterCommand(
   store: StensiblyStore,
   rawInput: ReserveRunnerAdapterCommandInput,
@@ -309,4 +319,17 @@ function parseSettlement(row: ReservationRow): RunnerAdapterCommandSettlementRec
     );
   }
   return value;
+}
+
+function lookupIdempotencyKey(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new TypeError("Runner adapter command lookup idempotency key must be a string");
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 240) {
+    throw new RangeError(
+      "Runner adapter command lookup idempotency key must be between 1 and 240 characters",
+    );
+  }
+  return normalized;
 }
