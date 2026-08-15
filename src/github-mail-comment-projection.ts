@@ -4,7 +4,10 @@ import {
   type GitHubMailCommentProvider,
   type GitHubMailProjectedEffectReceipt,
 } from "./github-mail-bridge.js";
-import type { GitHubProviderRequestContext } from "./github-provider-contracts.js";
+import type {
+  GitHubProviderRequestContext,
+  GitHubPullRequestResult,
+} from "./github-provider-contracts.js";
 import {
   evaluateGitHubOutboundText,
   type GitHubExternalContactAuthority,
@@ -13,8 +16,15 @@ import {
 } from "./github-outbound-text-policy.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 
+export interface GitHubMailPullRequestProvider extends GitHubMailCommentProvider {
+  getPullRequest(input: {
+    repositoryFullName: string;
+    pullRequestNumber: number;
+  }): Promise<GitHubPullRequestResult>;
+}
+
 export interface GovernedGitHubMailCommentProjectionInput {
-  readonly provider: GitHubMailCommentProvider;
+  readonly provider: GitHubMailPullRequestProvider;
   readonly context: GitHubProviderRequestContext;
   readonly effect: GitHubConversationCommentEffect;
   readonly body: string;
@@ -62,6 +72,23 @@ export async function executeGovernedGitHubMailCommentProjection(
     throw new GitHubMailOutboundTextRejectedError(outboundTextReceipt);
   }
 
+  const currentPullRequest = await input.provider.getPullRequest({
+    repositoryFullName: repository,
+    pullRequestNumber: input.effect.pullRequestNumber,
+  });
+  if (currentPullRequest.number !== input.effect.pullRequestNumber) {
+    throw new RangeError("GitHub mail projection current pull request identity changed");
+  }
+  if (
+    input.effect.expectedHeadRevision !== null
+    && currentPullRequest.headSha !== input.effect.expectedHeadRevision
+  ) {
+    throw new GitHubMailStaleHeadError(
+      input.effect.expectedHeadRevision,
+      currentPullRequest.headSha,
+    );
+  }
+
   const providerEffectReceipt = await executeGitHubConversationCommentEffect({
     provider: input.provider,
     context: input.context,
@@ -79,5 +106,17 @@ export class GitHubMailOutboundTextRejectedError extends Error {
   readonly name = "GitHubMailOutboundTextRejectedError";
   constructor(readonly receipt: GitHubOutboundTextReceipt) {
     super("GitHub mail comment projection was rejected by outbound text policy");
+  }
+}
+
+export class GitHubMailStaleHeadError extends Error {
+  readonly name = "GitHubMailStaleHeadError";
+  readonly recoveryAction = "refresh_mail_handoff_before_retry" as const;
+
+  constructor(
+    readonly expectedHeadRevision: string,
+    readonly currentHeadRevision: string,
+  ) {
+    super("GitHub pull request head changed after mail admission");
   }
 }
