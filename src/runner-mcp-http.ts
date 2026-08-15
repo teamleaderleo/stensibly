@@ -1,5 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { WorkLedger } from "./ledger.js";
+import { runnerAdapterCommandLedger } from "./runner-adapter-command-contracts.js";
 import { createRunnerMcpServer } from "./runner-mcp.js";
 import {
   runnerLedger,
@@ -24,11 +25,23 @@ export interface RunnerMcpHttpOptions {
   authenticator: ApiTokenAuthenticator;
 }
 
-const readTools = new Set(["get_runner_run", "list_runner_runs"]);
+const readTools = new Set([
+  "get_runner_run",
+  "list_runner_runs",
+  "get_runner_adapter_command",
+]);
 const writeTools = new Set([
   "claim_runner_work",
   "heartbeat_runner_run",
   "transition_runner_run",
+  "reserve_runner_adapter_command",
+  "settle_runner_adapter_command",
+  "claim_runner_adapter_command_recovery",
+]);
+const storedCommandTools = new Set([
+  "get_runner_adapter_command",
+  "settle_runner_adapter_command",
+  "claim_runner_adapter_command_recovery",
 ]);
 
 export async function handleRunnerMcpHttpRequest(
@@ -170,6 +183,13 @@ async function resolveProject(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string | undefined> {
+  if (storedCommandTools.has(toolName)) {
+    return storedCommandProject(ledger, toolName, args);
+  }
+  if (toolName === "reserve_runner_adapter_command") {
+    return (await runProject(ledger, stringArgument(args, "runId")))
+      ?? stringArgument(args, "project");
+  }
   if (toolName === "list_runner_runs") return stringArgument(args, "project");
   if (toolName === "claim_runner_work") {
     const explicit = stringArgument(args, "project");
@@ -177,6 +197,29 @@ async function resolveProject(
     return runProject(ledger, stringArgument(args, "runId"));
   }
   return runProject(ledger, stringArgument(args, "id"));
+}
+
+async function storedCommandProject(
+  ledger: WorkLedger,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<string | undefined> {
+  const suppliedProject = stringArgument(args, "project");
+  const commands = runnerAdapterCommandLedger(ledger);
+  if (!commands) return suppliedProject;
+  const idempotencyKey = stringArgument(
+    args,
+    toolName === "get_runner_adapter_command"
+      ? "idempotencyKey"
+      : "reservationIdempotencyKey",
+  );
+  if (!idempotencyKey) return suppliedProject;
+  try {
+    const lookup = await commands.getRunnerAdapterCommand({ idempotencyKey });
+    return lookup?.command.project ?? suppliedProject;
+  } catch {
+    return suppliedProject;
+  }
 }
 
 async function runProject(
