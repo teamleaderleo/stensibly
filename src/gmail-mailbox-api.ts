@@ -99,9 +99,7 @@ export class GmailMailboxApiClient implements GmailHistoryClient {
       );
     }
 
-    const response = await this.#request(url, {
-      method: "GET",
-    }, "history");
+    const response = await this.#request(url, { method: "GET" });
     if (response.status === 404) {
       throw new GmailHistoryCursorExpiredError();
     }
@@ -141,7 +139,6 @@ export class GmailMailboxApiClient implements GmailHistoryClient {
           labelFilterBehavior: "include",
         }),
       },
-      "watch",
     );
     if (!response.ok) {
       throw new GmailMailboxProviderError({
@@ -156,11 +153,7 @@ export class GmailMailboxApiClient implements GmailHistoryClient {
     });
   }
 
-  async #request(
-    url: URL,
-    init: RequestInit,
-    operation: "history" | "watch",
-  ): Promise<Response> {
+  async #request(url: URL, init: RequestInit): Promise<Response> {
     let token: string;
     try {
       token = accessToken(await this.#tokens.getAccessToken());
@@ -201,34 +194,51 @@ function mapHistoryPage(value: unknown): GmailHistoryPage {
 
 function mapHistoryRecord(value: unknown): GmailHistoryRecord {
   const source = record(value, "Gmail history record");
-  return Object.freeze({
-    id: gmailHistoryId(source.id, "Gmail history record ID"),
-    ...mapChangeArray(source.messagesAdded, "messagesAdded", (entry) => {
+  const messagesAdded = mapOptionalChangeArray(
+    source.messagesAdded,
+    "Gmail messages-added records",
+    (entry) => {
       const item = record(entry, "Gmail message-added record");
-      return Object.freeze({
-        message: mapMessageRef(item.message),
-      });
-    }),
-    ...mapChangeArray(source.messagesDeleted, "messagesDeleted", (entry) => {
+      return Object.freeze({ message: mapMessageRef(item.message) });
+    },
+  );
+  const messagesDeleted = mapOptionalChangeArray(
+    source.messagesDeleted,
+    "Gmail messages-deleted records",
+    (entry) => {
       const item = record(entry, "Gmail message-deleted record");
-      return Object.freeze({
-        message: mapMessageRef(item.message),
-      });
-    }),
-    ...mapChangeArray(source.labelsAdded, "labelsAdded", (entry) => {
+      return Object.freeze({ message: mapMessageRef(item.message) });
+    },
+  );
+  const labelsAdded = mapOptionalChangeArray(
+    source.labelsAdded,
+    "Gmail labels-added records",
+    (entry) => {
       const item = record(entry, "Gmail labels-added record");
       return Object.freeze({
         message: mapMessageRef(item.message),
         labelIds: mapLabelIds(item.labelIds),
       });
-    }),
-    ...mapChangeArray(source.labelsRemoved, "labelsRemoved", (entry) => {
+    },
+  );
+  const labelsRemoved = mapOptionalChangeArray(
+    source.labelsRemoved,
+    "Gmail labels-removed records",
+    (entry) => {
       const item = record(entry, "Gmail labels-removed record");
       return Object.freeze({
         message: mapMessageRef(item.message),
         labelIds: mapLabelIds(item.labelIds),
       });
-    }),
+    },
+  );
+
+  return Object.freeze({
+    id: gmailHistoryId(source.id, "Gmail history record ID"),
+    ...(messagesAdded === undefined ? {} : { messagesAdded }),
+    ...(messagesDeleted === undefined ? {} : { messagesDeleted }),
+    ...(labelsAdded === undefined ? {} : { labelsAdded }),
+    ...(labelsRemoved === undefined ? {} : { labelsRemoved }),
   });
 }
 
@@ -252,16 +262,13 @@ function mapLabelIds(value: unknown): string[] {
     .map((label) => providerId(label, "Gmail label ID"));
 }
 
-function mapChangeArray<T>(
+function mapOptionalChangeArray<T>(
   value: unknown,
-  key: string,
+  label: string,
   mapper: (entry: unknown) => T,
-): Record<string, T[]> {
-  if (value === undefined) return {};
-  return {
-    [key]: boundedArray(value, maximumChangeItems, `Gmail ${key} records`)
-      .map(mapper),
-  };
+): T[] | undefined {
+  if (value === undefined) return undefined;
+  return boundedArray(value, maximumChangeItems, label).map(mapper);
 }
 
 async function readProviderJson(response: Response): Promise<unknown> {
