@@ -47,6 +47,7 @@ export interface PublishMailThreadCommand {
   blocker?: string | null;
   resolutionCondition: string;
   threadState: MailThreadState;
+  continuationRoute?: string | null;
   references?: readonly MailSourceReference[];
   continuesFromHandle?: string | null;
   mailbox: MailboxBinding;
@@ -145,6 +146,7 @@ export class MailOutboundService {
       blocker: command.blocker,
       resolutionCondition: command.resolutionCondition,
       threadState: command.threadState,
+      continuationRoute: command.continuationRoute,
       references: command.references,
     });
 
