@@ -37,7 +37,7 @@ test("refreshes once, caches the access token, and never echoes credential failu
 });
 
 test("normalizes provider failure without credential text", async () => {
-  const fakeFetch = (async () => new Response("do-not-echo-provider-body", { status: 401 })) as typeof fetch;
+  const fakeFetch = (async () => new Response("do-not-echo-provider-body", { status: 401 })) as unknown as typeof fetch;
   const provider = new GoogleOAuthRefreshTokenProvider({
     clientId: "client-id",
     clientSecret: "do-not-echo-client-secret",
