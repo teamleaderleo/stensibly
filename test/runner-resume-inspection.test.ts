@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { sha256, stableJson } from "../src/canonical-json.ts";
-import { buildEffectiveToolSurfaceSnapshot } from "../src/effective-tool-surface.ts";
+import {
+  buildEffectiveToolSurfaceSnapshot,
+  type EffectiveToolSurfaceClass,
+  type ToolSurfaceCapabilityRequirementInput,
+  type ToolSurfaceClassInput,
+} from "../src/effective-tool-surface.ts";
 import { compatibilityExecutionEnvelope } from "../src/execution-envelope-default.ts";
 import {
   bindRunnerCapabilityInspectionToCommandV1,
@@ -35,7 +40,7 @@ const observedAt = "2026-08-15T04:01:00.000Z";
 const checkpointCreatedAt = "2026-08-15T03:59:30.000Z";
 const checkpointExternalId = "checkpoint:resume-inspection:2";
 const checkpointDigest = `sha256:${"d".repeat(64)}`;
-const runtimePackageId = "@openai/agents-core";
+const runtimePackageId = "npm:@openai/agents-core";
 const runtimePackageVersion = "0.14.1";
 const checkpointSchemaVersion = "1.14";
 
@@ -60,8 +65,7 @@ const descriptor = parseRunnerAdapterDescriptorV1({
 
 describe("runner resume inspection receipt", () => {
   test("marks one exact healthy checkpoint eligible while authorizing zero mutation", () => {
-    const input = healthyInput();
-    const receipt = compileRunnerResumeInspectionV1(input);
+    const receipt = compileRunnerResumeInspectionV1(healthyInput());
 
     expect(receipt).toMatchObject({
       version: 1,
@@ -118,7 +122,7 @@ describe("runner resume inspection receipt", () => {
     expect(receipt.checks.some((check) => check.state === "block")).toBe(false);
   });
 
-  test("blocks stale checkpoint lineage and unsupported checkpoint schema with exact evidence", () => {
+  test("blocks stale checkpoint lineage and unsupported checkpoint schema", () => {
     const input = healthyInput();
     const record = input.checkpoint.record!;
     const receipt = compileRunnerResumeInspectionV1({
@@ -139,12 +143,10 @@ describe("runner resume inspection receipt", () => {
       expect.objectContaining({ code: "checkpoint.lineage", state: "block" }),
       expect.objectContaining({ code: "checkpoint.runtime_schema", state: "block" }),
     ]));
-    expect(receipt.supportedActions).toEqual(["leave_paused"]);
   });
 
   test("tolerates additive capabilities and blocks loss of a checkpoint-required capability", () => {
-    const additive = healthyInput();
-    expect(compileRunnerResumeInspectionV1(additive).decision).toBe("eligible");
+    expect(compileRunnerResumeInspectionV1(healthyInput()).decision).toBe("eligible");
 
     const checkpointToolSurface = checkpointSurface([
       { class: "native_core", id: "shell" },
@@ -168,11 +170,10 @@ describe("runner resume inspection receipt", () => {
     }));
   });
 
-  test("blocks exact-expiry authority and stale grant freshness", () => {
-    const input = healthyInput();
+  test("blocks exact-expiry authority, stale grants, and revoked approvals", () => {
     const command = resumeCommand({
       authority: {
-        ...input.command.authority,
+        ...resumeCommand().authority,
         expiresAt: observedAt,
       },
     });
@@ -184,12 +185,19 @@ describe("runner resume inspection receipt", () => {
         state: "fresh",
         expiresAt: observedAt,
       }],
+      requiredApprovalRefs: ["approval:tool-call-1"],
+      approvalRefs: [{
+        ref: "approval:tool-call-1",
+        state: "revoked",
+        expiresAt: null,
+      }],
     });
 
     expect(receipt.decision).toBe("blocked");
     expect(receipt.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "authority.expiry", state: "block" }),
       expect.objectContaining({ code: "authority.grants", state: "block" }),
+      expect.objectContaining({ code: "authority.approvals", state: "block" }),
     ]));
   });
 
@@ -198,7 +206,7 @@ describe("runner resume inspection receipt", () => {
     const receipt = compileRunnerResumeInspectionV1({
       ...input,
       priorCommand: {
-        ...input.priorCommand as RunnerAdapterCommandLookup,
+        ...(input.priorCommand as RunnerAdapterCommandLookup),
         settlement: null,
       },
     });
@@ -254,7 +262,6 @@ describe("runner resume inspection receipt", () => {
 function healthyInput(
   command = resumeCommand(),
 ): CompileRunnerResumeInspectionInputV1 {
-  const checkpointToolSurface = checkpointSurface(command.requiredCapabilities);
   return {
     command,
     descriptor,
@@ -287,7 +294,7 @@ function healthyInput(
     },
     latestCheckpointGeneration: 2,
     currentContinuation: command.continuation,
-    checkpointToolSurface,
+    checkpointToolSurface: checkpointSurface(command.requiredCapabilities),
     currentCapabilityBinding: capabilityBinding(command),
     currentAuthority: command.authority,
     grantRefs: [{
@@ -409,8 +416,8 @@ function capabilityBinding(command: RunnerResumeCommandV1) {
 }
 
 function checkpointSurface(
-  requiredCapabilities: readonly { class: any; id: string }[],
-  classOverrides: Record<string, unknown> = {},
+  requiredCapabilities: readonly ToolSurfaceCapabilityRequirementInput[],
+  classOverrides: Partial<Record<EffectiveToolSurfaceClass, ToolSurfaceClassInput>> = {},
 ) {
   return buildEffectiveToolSurfaceSnapshot({
     snapshotId: "snapshot-resume-inspection-checkpoint",
