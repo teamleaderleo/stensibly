@@ -289,7 +289,7 @@ export class MailOutboundService {
       binding.provider,
       binding.accountBinding,
     );
-    const envelope = envelopeFromThread(thread);
+    const envelope = envelopeFromEffect(thread, effect);
 
     if (effect.state === "sent" || effect.state === "reconciled" || effect.state === "failed") {
       return {
@@ -526,7 +526,7 @@ function projectionFromSend(
     latestProviderMessageId: result.providerMessageId,
     rootRfcMessageId: existing?.rootRfcMessageId ?? result.rfcMessageId,
     latestRfcMessageId: result.rfcMessageId,
-    latestSentFingerprint: envelope.materialFingerprint,
+    latestSentFingerprint: message.contentFingerprint,
     lastVerifiedSubject: envelope.subject,
     lastVerifiedReferences: message.references,
     verifiedAt: result.acceptedAt,
@@ -618,10 +618,10 @@ function failedReceipt(
   });
 }
 
-function envelopeFromThread(thread: MailThreadRecord): MailOutboundEnvelope {
-  if (!thread.currentMaterialFingerprint) {
-    throw new Error("Mail delivery effect references a thread without material state");
-  }
+function envelopeFromEffect(
+  thread: MailThreadRecord,
+  effect: MailOutboundEffectRecord,
+): MailOutboundEnvelope {
   return Object.freeze({
     version: 1,
     threadId: thread.threadId,
@@ -629,8 +629,8 @@ function envelopeFromThread(thread: MailThreadRecord): MailOutboundEnvelope {
     subject: `[${thread.handle}] ${thread.canonicalSubject}`,
     body: `Continue ${thread.handle}.`,
     launchLine: `Continue ${thread.handle}.`,
-    sourceFingerprint: thread.currentMaterialFingerprint,
-    materialFingerprint: thread.currentMaterialFingerprint,
+    sourceFingerprint: effect.contentFingerprint,
+    materialFingerprint: effect.contentFingerprint,
     sourceObject: thread.sourceIdentity,
     sourceRevision: null,
     resolutionCondition: thread.resolutionCondition,
