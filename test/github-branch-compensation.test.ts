@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { sha256, stableJson } from "../src/canonical-json";
+import { stableJson } from "../src/canonical-json";
 import {
   GitHubBranchCompensationConflictError,
   GitHubBranchCompensationPendingReconciliationError,
@@ -39,12 +39,8 @@ const sourceId = "opw_publish_fixture";
 
 describe("durable GitHub branch compensation", () => {
   test("exact recorded candidate head deletes once and exact replay returns the settled result", async () => {
-    const fixture = setup([
-      present(candidateSha),
-      absent(),
-    ]);
+    const fixture = setup([present(candidateSha), absent()]);
     const input = deleteInput("delete:exact");
-
     const first = await fixture.service.execute(input);
     const replay = await fixture.service.execute(input);
 
@@ -59,12 +55,11 @@ describe("durable GitHub branch compensation", () => {
     });
   });
 
-  test("advanced branch conflicts before runner mutation", async () => {
+  test("advanced branch conflicts before runner mutation and replays that settled conflict", async () => {
     const fixture = setup([present(otherSha)]);
-    await expectConflict(
-      fixture.service.execute(deleteInput("delete:advanced")),
-      "github_branch_compensation_head_conflict",
-    );
+    const input = deleteInput("delete:advanced");
+    await expectConflict(fixture.service.execute(input), "github_branch_compensation_head_conflict");
+    await expectConflict(fixture.service.execute(input), "github_branch_compensation_head_conflict");
     expect(fixture.runner.calls).toBe(0);
   });
 
@@ -135,11 +130,7 @@ describe("durable GitHub branch compensation", () => {
       absent(), present(candidateSha),
     ]);
     const deleted = await fixture.service.execute(deleteInput("delete:for-restore"));
-    const restore = restoreInput(
-      "restore:exact",
-      deleted.id,
-      deleted.idempotencyKey,
-    );
+    const restore = restoreInput("restore:exact", deleted.id, deleted.idempotencyKey);
     const restored = await fixture.service.execute(restore);
     expect(restored.state).toBe("succeeded");
     expect(fixture.runner.restoreCalls).toHaveLength(1);
@@ -159,11 +150,7 @@ describe("durable GitHub branch compensation", () => {
     ]);
     const deleted = await fixture.service.execute(deleteInput("delete:occupied-restore"));
     await expectConflict(
-      fixture.service.execute(restoreInput(
-        "restore:occupied",
-        deleted.id,
-        deleted.idempotencyKey,
-      )),
+      fixture.service.execute(restoreInput("restore:occupied", deleted.id, deleted.idempotencyKey)),
       "github_branch_compensation_restore_occupied",
     );
     expect(fixture.runner.restoreCalls).toHaveLength(0);
@@ -173,17 +160,13 @@ describe("durable GitHub branch compensation", () => {
     const fixture = setup([present(candidateSha), absent()]);
     const deleted = await fixture.service.execute(deleteInput("delete:identity"));
     await expectConflict(
-      fixture.service.execute(restoreInput(
-        "restore:wrong-delete",
-        deleted.id,
-        "delete:some-other-key",
-      )),
+      fixture.service.execute(restoreInput("restore:wrong-delete", deleted.id, "delete:some-other-key")),
       "github_branch_compensation_delete_identity_conflict",
     );
     expect(fixture.runner.restoreCalls).toHaveLength(0);
   });
 
-  test("default, protected, explicitly excluded, and unknown-protection refs never dispatch mutation", async () => {
+  test("default, protected, excluded, and unproved-protection refs fail closed before runner mutation", async () => {
     const defaultFixture = setup([present(candidateSha, { defaultBranchRef: targetRef })]);
     await expectConflict(
       defaultFixture.service.execute(deleteInput("delete:default")),
@@ -206,8 +189,10 @@ describe("durable GitHub branch compensation", () => {
     expect(excludedFixture.runner.calls).toBe(0);
 
     const unknownFixture = setup([present(candidateSha, { protection: "unknown" })]);
-    await expect(unknownFixture.service.execute(deleteInput("delete:unknown-protection")))
-      .rejects.toBeInstanceOf(GitHubBranchCompensationPendingReconciliationError);
+    await expectConflict(
+      unknownFixture.service.execute(deleteInput("delete:unknown-protection")),
+      "github_branch_compensation_protection_unknown",
+    );
     expect(unknownFixture.runner.calls).toBe(0);
   });
 
@@ -311,12 +296,7 @@ function sourceWorkflow(fileState: "verified" | "pending_reconciliation") {
       {
         kind: "github_create_file",
         providerIdempotencyKey: "source:file",
-        command: {
-          repository,
-          branch,
-          path: "fixture.txt",
-          expectedParentSha: initialSha,
-        },
+        command: { repository, branch, path: "fixture.txt", expectedParentSha: initialSha },
         compensation: {
           disposition: "compensatable",
           kind: "github_restore_file_preimage",
@@ -547,9 +527,7 @@ class MemoryWorkflowStore implements OperationWorkflowStore {
     this.#rows.set(this.#key(workflow.project, workflow.idempotencyKey), structuredClone(workflow));
   }
 
-  async reserveOperationWorkflow(
-    workflow: OperationWorkflow,
-  ): Promise<OperationWorkflowReservation> {
+  async reserveOperationWorkflow(workflow: OperationWorkflow): Promise<OperationWorkflowReservation> {
     const key = this.#key(workflow.project, workflow.idempotencyKey);
     const current = this.#rows.get(key);
     if (!current) {
@@ -564,10 +542,7 @@ class MemoryWorkflowStore implements OperationWorkflowStore {
     };
   }
 
-  async transitionOperationWorkflow(input: {
-    current: OperationWorkflow;
-    next: OperationWorkflow;
-  }): Promise<OperationWorkflow> {
+  async transitionOperationWorkflow(input: { current: OperationWorkflow; next: OperationWorkflow }) {
     const admitted = assertOperationWorkflowTransition(input.current, input.next);
     const key = this.#key(admitted.current.project, admitted.current.idempotencyKey);
     const current = this.#rows.get(key);
