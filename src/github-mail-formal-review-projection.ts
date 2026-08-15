@@ -21,7 +21,10 @@ export function classifyGitHubFormalReviewMailReply(
   input: GitHubMailFormalReviewInput,
 ): core.GitHubMailFormalReviewAdmission {
   const authority = input.authority;
-  if (!authority || typeof authority.expectedMailboxAddress !== "string") {
+  if (!authority) {
+    throw new RangeError("Formal review mail requires a server-owned authority binding");
+  }
+  if (typeof authority.expectedMailboxAddress !== "string") {
     throw new RangeError(
       "Formal review mail requires an exact server-owned mailbox destination",
     );
