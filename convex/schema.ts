@@ -275,7 +275,11 @@ export default defineSchema({
     projectId: v.id("projects"),
     externalId: v.string(),
     idempotencyKey: v.string(),
-    kind: v.union(v.literal("github_publish_change"), v.literal("github_land_pr")),
+    kind: v.union(
+      v.literal("github_publish_change"),
+      v.literal("github_land_pr"),
+      v.literal("github_branch_compensation"),
+    ),
     requestSha256: v.string(),
     state: v.union(
       v.literal("reserved"),
