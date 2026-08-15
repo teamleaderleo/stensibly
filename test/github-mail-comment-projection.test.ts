@@ -3,12 +3,13 @@ import { buildGitHubIssueContext } from "../src/github-issue-context.ts";
 import {
   classifyGitHubMailReply,
   type GitHubConversationCommentEffect,
-  type GitHubMailCommentProvider,
   type GitHubMailThreadBinding,
 } from "../src/github-mail-bridge.ts";
 import {
   executeGovernedGitHubMailCommentProjection,
   GitHubMailOutboundTextRejectedError,
+  GitHubMailStaleHeadError,
+  type GitHubMailPullRequestProvider,
 } from "../src/github-mail-comment-projection.ts";
 import type {
   GitHubProviderReceipt,
@@ -18,6 +19,7 @@ import { canonicalBody, sha256, stableJson } from "../src/github-provider-valida
 
 const repository = "teamleaderleo/stensibly";
 const head = "e".repeat(40);
+const base = "f".repeat(40);
 const thread: GitHubMailThreadBinding = {
   version: 1,
   threadId: "attn_1491_projection",
@@ -63,8 +65,34 @@ function effectFor(body: string): GitHubConversationCommentEffect {
   return admission.effect as GitHubConversationCommentEffect;
 }
 
-function providerForBody(expectedBody: string): GitHubMailCommentProvider {
+function providerForBody(
+  expectedBody: string,
+  currentHeadRevision = head,
+): GitHubMailPullRequestProvider {
   return {
+    async getPullRequest() {
+      return {
+        kind: "pull_request" as const,
+        number: 1491,
+        providerNodeId: "PR_1491",
+        title: "Bridge GitHub attention and mail replies",
+        head: "lark/1491-mail-bridge",
+        headSha: currentHeadRevision,
+        base: "main",
+        baseSha: base,
+        draft: false,
+        state: "open" as const,
+        canonicalUrl: "https://github.com/teamleaderleo/stensibly/pull/1491",
+        createdAt: "2026-08-15T05:53:07.000Z",
+        updatedAt: "2026-08-15T06:45:00.000Z",
+        bodyRevision: {
+          byteLength: 10,
+          sha256: sha256("Issue body"),
+        },
+        sourceRevision: `pr-rev-${currentHeadRevision.slice(0, 12)}`,
+        containsBody: false as const,
+      };
+    },
     async getIssue() {
       return buildGitHubIssueContext({
         owner: "teamleaderleo",
@@ -162,11 +190,52 @@ describe("governed GitHub comment projection from mail", () => {
     });
   });
 
+  test("rejects a stale emailed PR head before any GitHub comment write", async () => {
+    const body = "Apply this comment only to the exact emailed candidate.";
+    const effect = effectFor(body);
+    const advancedHead = "a".repeat(40);
+    const baseProvider = providerForBody(body, advancedHead);
+    let commentWriteCalled = false;
+    const provider: GitHubMailPullRequestProvider = {
+      ...baseProvider,
+      async addIssueComment(input) {
+        commentWriteCalled = true;
+        return baseProvider.addIssueComment(input);
+      },
+    };
+
+    try {
+      await executeGovernedGitHubMailCommentProjection({
+        provider,
+        context,
+        effect,
+        body,
+        workspace: "internal",
+        authorityGeneration: 7,
+        outboundPolicy: policy,
+        externalContactAuthority: null,
+      });
+      throw new Error("expected stale-head rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(GitHubMailStaleHeadError);
+      expect(error).toMatchObject({
+        expectedHeadRevision: head,
+        currentHeadRevision: advancedHead,
+        recoveryAction: "refresh_mail_handoff_before_retry",
+      });
+    }
+    expect(commentWriteCalled).toBe(false);
+  });
+
   test("rejects an uncontrolled repository reference before any GitHub provider call", async () => {
     const body = "Please also inspect outsider/foreign-repo#42.";
     const effect = effectFor(body);
     let providerCalled = false;
-    const provider: GitHubMailCommentProvider = {
+    const provider: GitHubMailPullRequestProvider = {
+      async getPullRequest() {
+        providerCalled = true;
+        throw new Error("provider should stay untouched");
+      },
       async getIssue() {
         providerCalled = true;
         throw new Error("provider should stay untouched");
