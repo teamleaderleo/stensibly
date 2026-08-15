@@ -13,8 +13,7 @@ test("verifies RS256 audience and exact PubSub service-account identity", async 
     true,
     ["sign", "verify"],
   );
-  const publicJwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
-  publicJwk.kid = "test-key";
+  const publicJwk = { ...(await crypto.subtle.exportKey("jwk", keys.publicKey)), kid: "test-key" };
   const now = Date.parse("2026-08-15T06:45:00.000Z");
   const jwt = await signJwt(keys.privateKey, {
     iss: "https://accounts.google.com",
@@ -25,14 +24,15 @@ test("verifies RS256 audience and exact PubSub service-account identity", async 
     iat: Math.floor(now / 1000) - 10,
     exp: Math.floor(now / 1000) + 600,
   });
+  const fakeFetch = (async () => new Response(JSON.stringify({ keys: [publicJwk] }), {
+    status: 200,
+    headers: { "cache-control": "public, max-age=3600" },
+  })) as typeof fetch;
   const verifier = new GooglePubSubOidcVerifier({
     audience,
     serviceAccountEmail: serviceAccount,
     now: () => now,
-    fetch: async () => new Response(JSON.stringify({ keys: [publicJwk] }), {
-      status: 200,
-      headers: { "cache-control": "public, max-age=3600" },
-    }),
+    fetch: fakeFetch,
   });
   const identity = await verifier.verifyAuthorizationHeader(`Bearer ${jwt}`);
   expect(identity).toEqual({
@@ -49,8 +49,7 @@ test("rejects a validly signed token for another service account", async () => {
     true,
     ["sign", "verify"],
   );
-  const publicJwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
-  publicJwk.kid = "test-key";
+  const publicJwk = { ...(await crypto.subtle.exportKey("jwk", keys.publicKey)), kid: "test-key" };
   const now = Date.parse("2026-08-15T06:45:00.000Z");
   const jwt = await signJwt(keys.privateKey, {
     iss: "accounts.google.com",
@@ -61,11 +60,12 @@ test("rejects a validly signed token for another service account", async () => {
     iat: Math.floor(now / 1000),
     exp: Math.floor(now / 1000) + 600,
   });
+  const fakeFetch = (async () => new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 })) as typeof fetch;
   const verifier = new GooglePubSubOidcVerifier({
     audience,
     serviceAccountEmail: serviceAccount,
     now: () => now,
-    fetch: async () => new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 }),
+    fetch: fakeFetch,
   });
   await expect(verifier.verifyAuthorizationHeader(`Bearer ${jwt}`))
     .rejects.toBeInstanceOf(GooglePubSubAuthenticationError);
@@ -78,7 +78,7 @@ async function signJwt(privateKey: CryptoKey, payload: Record<string, unknown>):
   const signature = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     privateKey,
-    new TextEncoder().encode(input),
+    Uint8Array.from(new TextEncoder().encode(input)).buffer,
   );
   return `${input}.${Buffer.from(signature).toString("base64url")}`;
 }
