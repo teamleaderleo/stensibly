@@ -81,8 +81,11 @@ import type {
   RunnerAdapterCommandLedger,
   SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import type { ClaimRunnerAdapterCommandRecoveryInput } from "./runner-adapter-command-recovery.js";
+import { claimSqliteRunnerAdapterCommandRecovery } from "./runner-adapter-command-recovery-sqlite.js";
 import {
   ensureRunnerAdapterCommandSchema,
+  getSqliteRunnerAdapterCommandByIdempotencyKey,
   reserveSqliteRunnerAdapterCommand,
   settleSqliteRunnerAdapterCommand,
 } from "./runner-adapter-command-sqlite.js";
@@ -380,12 +383,20 @@ export class SqliteWorkLedger implements
     return claimRunnerWork(this.store, input);
   }
 
+  async getRunnerAdapterCommandByIdempotencyKey(idempotencyKey: string) {
+    return getSqliteRunnerAdapterCommandByIdempotencyKey(this.store, idempotencyKey);
+  }
+
   async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
     return reserveSqliteRunnerAdapterCommand(this.store, input);
   }
 
   async settleRunnerAdapterCommand(input: SettleRunnerAdapterCommandInput) {
     return settleSqliteRunnerAdapterCommand(this.store, input);
+  }
+
+  async claimRunnerAdapterCommandRecovery(input: ClaimRunnerAdapterCommandRecoveryInput) {
+    return claimSqliteRunnerAdapterCommandRecovery(this.store, input);
   }
 
   async getRun(id: string) {
