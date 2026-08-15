@@ -10,7 +10,7 @@ import {
   upsertActor,
 } from "./lib/domain";
 import { sameCanonical } from "./lib/executionEnvelope";
-import { mutation } from "./lib/server";
+import { mutation, query } from "./lib/server";
 import { actorValidator, serviceArgs, type ActorInput } from "./lib/validators";
 import {
   admitRunnerAdapterCommandSettlementRecord,
@@ -20,6 +20,38 @@ import {
 } from "../src/runner-adapter-command-contracts";
 
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/u;
+
+export const getByIdempotencyKey = query({
+  args: {
+    ...serviceArgs,
+    idempotencyKey: v.string(),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const idempotencyKey = assertText(
+      args.idempotencyKey,
+      "Runner adapter command lookup idempotency key",
+      240,
+    );
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) return null;
+    const row = await ctx.db
+      .query("runnerAdapterCommands")
+      .withIndex("by_workspace_id_and_idempotency_key", (q) =>
+        q.eq("workspaceId", workspace._id).eq("idempotencyKey", idempotencyKey)
+      )
+      .unique();
+    if (!row) return null;
+    return publicReservation(
+      "replayed",
+      false,
+      row.request,
+      row.reservedAt,
+      admittedStoredSettlement(row),
+    );
+  },
+});
 
 export const reserve = mutation({
   args: {
