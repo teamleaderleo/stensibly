@@ -59,11 +59,7 @@ describe("selected work acceptance and claim", () => {
     });
 
     const losingWorker = left.outcome === "rejected" ? a : b;
-    const refreshedSecond = await t.query(convexApi.items.get, {
-      serviceSecret: secret,
-      workspace,
-      id: second.id,
-    }) as any;
+    const refreshedSecond = await readItem(t, second.id);
     const nextRecommendation = recommendationFor(refreshedSecond, "STN-HANDOFF:N7QK");
     const reselection = await t.mutation(
       acceptRef,
@@ -165,11 +161,7 @@ describe("selected work acceptance and claim", () => {
       expectedClaimGeneration: implementation.claim.claimGeneration,
       idempotencyKey: "release:implementation",
     });
-    const refreshedReview = await t.query(convexApi.items.get, {
-      serviceSecret: secret,
-      workspace,
-      id: reviewItem.id,
-    }) as any;
+    const refreshedReview = await readItem(t, reviewItem.id);
     expect(await t.mutation(acceptRef, acceptanceInput(
       reviewer,
       recommendationFor(refreshedReview, "STN-REVIEW:R7MK", "independent_review", key),
@@ -277,6 +269,15 @@ async function createItem(t: ReturnType<typeof convexTest>, title: string, prior
     priority,
     idempotencyKey: `item:${title}`,
   }) as any;
+}
+
+async function readItem(t: ReturnType<typeof convexTest>, id: string) {
+  const result = await t.query(convexApi.items.get, {
+    serviceSecret: secret,
+    workspace,
+    id,
+  }) as any;
+  return result.item;
 }
 
 function recommendationFor(
