@@ -24,6 +24,7 @@ export interface MailOutboundEnvelopeInput {
   blocker?: string | null;
   resolutionCondition: string;
   threadState: MailThreadState;
+  continuationRoute?: string | null;
   references?: readonly MailSourceReference[];
 }
 
@@ -61,10 +62,12 @@ interface AdmittedEnvelopeSemantics {
   blocker: string | null;
   resolutionCondition: string;
   threadState: MailThreadState;
+  continuationRoute: string | null;
   references: readonly MailSourceReference[];
 }
 
 const maxBodyBytes = 12 * 1024;
+const currentHandoffEndMarker = "--- STENSIBLY CURRENT HANDOFF END ---";
 
 export function renderMailOutboundEnvelope(
   input: MailOutboundEnvelopeInput,
@@ -72,7 +75,9 @@ export function renderMailOutboundEnvelope(
   const thread = freezeMailThreadRecord(input.thread);
   const semantics = admitEnvelopeSemantics(input, thread);
   const materialFingerprint = sha256(stableJson(semantics));
-  const launchLine = `Continue ${thread.handle}.`;
+  const launchLine = semantics.continuationRoute === null
+    ? `Continue ${thread.handle}.`
+    : `Continue ${thread.handle} via ${semantics.continuationRoute}.`;
   const subject = `[${thread.handle}] ${thread.canonicalSubject}`;
   const body = renderBody(semantics, launchLine);
   if (Buffer.byteLength(body, "utf8") > maxBodyBytes) {
@@ -158,6 +163,13 @@ function admitEnvelopeSemantics(
       : exactMailDisplayText(input.blocker, "Outbound mail blocker", 1200),
     resolutionCondition,
     threadState,
+    continuationRoute: input.continuationRoute === undefined || input.continuationRoute === null
+      ? null
+      : exactMailDisplayText(
+          input.continuationRoute,
+          "Outbound mail continuation route",
+          160,
+        ),
     references,
   });
 }
@@ -167,33 +179,32 @@ function renderBody(
   launchLine: string,
 ): string {
   const lines = [
-    "What changed",
-    semantics.whatChanged,
-    "",
-    "Why this reached attention",
-    semantics.attentionReason,
-    "",
-    "Next",
-    semantics.nextAction,
+    launchLine,
     "",
     `Handle: ${semantics.handle}`,
-    `Project: ${semantics.project}`,
     `Subject: ${semantics.sourceObject}`,
-  ];
-  if (semantics.sourceRevision !== null) lines.push(`Revision: ${semantics.sourceRevision}`);
-  if (semantics.blocker !== null) lines.push(`Blocker: ${semantics.blocker}`);
-  lines.push(
+    `Read: ${renderReadList(semantics)}`,
+    `Observed: ${renderObserved(semantics)}`,
+    `Reason: ${semantics.attentionReason}`,
+    `Action: ${semantics.nextAction}`,
     `Resolution: ${semantics.resolutionCondition}`,
-    "",
-    launchLine,
-  );
-  if (semantics.references.length > 0) {
-    lines.push("", "Sources");
-    for (const reference of semantics.references) {
-      lines.push(`- ${reference.label}: ${reference.reference}`);
-    }
-  }
+  ];
+  if (semantics.blocker !== null) lines.push(`Blocker: ${semantics.blocker}`);
+  lines.push("", currentHandoffEndMarker);
   return lines.join("\n");
+}
+
+function renderReadList(semantics: AdmittedEnvelopeSemantics): string {
+  const sources = [semantics.sourceObject];
+  for (const reference of semantics.references) {
+    sources.push(`${reference.label}: ${reference.reference}`);
+  }
+  return sources.join("; ");
+}
+
+function renderObserved(semantics: AdmittedEnvelopeSemantics): string {
+  if (semantics.sourceRevision === null) return semantics.whatChanged;
+  return `${semantics.whatChanged} Revision observed: ${semantics.sourceRevision}; refresh before action.`;
 }
 
 function admitReferences(
